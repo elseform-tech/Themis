@@ -1,0 +1,32 @@
+.themis-approval {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.themis-approval-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.themis-approval-tool {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--themis-text);
+}
+
+.themis-approval-summary {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--themis-text-2);
+  overflow-wrap: break-word;
+}
+
+.themis-approval-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

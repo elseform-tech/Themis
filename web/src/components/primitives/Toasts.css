@@ -1,0 +1,64 @@
+.themis-toasts {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 70;
+  max-width: 22rem;
+}
+
+.themis-toast {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  background-color: var(--themis-raised);
+  color: var(--themis-text);
+  border: 1px solid var(--themis-border);
+  border-left-width: 4px;
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+.themis-toast--info {
+  border-left-color: var(--themis-info);
+}
+
+.themis-toast--success {
+  border-left-color: var(--themis-success);
+}
+
+.themis-toast--warning {
+  border-left-color: var(--themis-warning);
+}
+
+.themis-toast--danger {
+  border-left-color: var(--themis-danger);
+}
+
+.themis-toast-message {
+  flex: 1;
+}
+
+.themis-toast-dismiss {
+  font-family: inherit;
+  background-color: transparent;
+  color: var(--themis-text-2);
+  border: none;
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 0.125rem;
+}
+
+.themis-toast-dismiss:hover {
+  color: var(--themis-text);
+}
+
+.themis-toast-timer { position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: currentColor; opacity: .4; transform-origin: left; animation: themis-toast-expire 6s linear forwards; }
+@keyframes themis-toast-expire { to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .themis-toast-timer { display: none; } }

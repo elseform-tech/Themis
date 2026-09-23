@@ -1,0 +1,16 @@
+# Build outputs
+/target/
+web/dist/
+web/node_modules/
+node_modules/
+
+# Secrets (never commit keys)
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json

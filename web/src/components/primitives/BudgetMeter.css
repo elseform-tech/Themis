@@ -1,0 +1,40 @@
+.themis-budget {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 8rem;
+}
+
+.themis-budget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.themis-budget-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--themis-text-2);
+}
+
+.themis-budget-percent {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--themis-text-3);
+}
+
+.themis-budget-track {
+  height: 0.5rem;
+  border-radius: 9999px;
+  background-color: var(--themis-raised);
+  border: 1px solid var(--themis-border);
+  overflow: hidden;
+}
+
+.themis-budget-fill {
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--themis-accent);
+  transition: width 0.2s ease;
+}

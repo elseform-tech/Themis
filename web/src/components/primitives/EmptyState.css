@@ -1,0 +1,21 @@
+.themis-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.themis-empty-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--themis-text);
+}
+
+.themis-empty-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--themis-text-2);
+}

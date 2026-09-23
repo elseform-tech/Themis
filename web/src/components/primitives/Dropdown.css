@@ -1,0 +1,70 @@
+.themis-dropdown {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.themis-dropdown-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--themis-text-2);
+}
+
+.themis-dropdown-button {
+  font-family: inherit;
+  font-size: 0.875rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  background-color: var(--themis-surface);
+  color: var(--themis-text);
+  border: 1px solid var(--themis-border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  min-width: 10rem;
+}
+
+.themis-dropdown-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.themis-dropdown-caret {
+  color: var(--themis-text-3);
+}
+
+.themis-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 0.25rem 0 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  background-color: var(--themis-raised);
+  border: 1px solid var(--themis-border);
+  border-radius: 0.5rem;
+  z-index: 40;
+  outline: none;
+}
+
+.themis-dropdown-item {
+  font-size: 0.875rem;
+  color: var(--themis-text);
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  cursor: pointer;
+}
+
+.themis-dropdown-item--active {
+  background-color: var(--themis-surface);
+  color: var(--themis-accent);
+}
+
+.themis-dropdown-item--disabled {
+  color: var(--themis-text-3);
+  cursor: not-allowed;
+}

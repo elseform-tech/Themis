@@ -1,0 +1,133 @@
+.themis-filetree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background-color: var(--themis-surface);
+  border: 1px solid var(--themis-border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.themis-filetree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  border-bottom: 1px solid var(--themis-border-subtle);
+}
+
+.themis-filetree-row:last-child {
+  border-bottom: none;
+}
+
+.themis-filetree-row--selected {
+  background-color: var(--themis-raised);
+}
+
+.themis-filetree-select {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  font-family: inherit;
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0.125rem;
+  text-align: left;
+}
+
+.themis-filetree-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.themis-filetree-status--modified {
+  background-color: var(--themis-warning);
+  color: var(--themis-canvas);
+}
+
+.themis-filetree-status--added {
+  background-color: var(--themis-success);
+  color: var(--themis-canvas);
+}
+
+.themis-filetree-status--deleted {
+  background-color: var(--themis-danger);
+  color: var(--themis-canvas);
+}
+
+.themis-filetree-status--renamed {
+  background-color: var(--themis-info);
+  color: var(--themis-canvas);
+}
+
+.themis-filetree-path {
+  flex: 1;
+  font-size: 0.8125rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--themis-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.themis-filetree-pre {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--themis-text-3);
+  border: 1px solid var(--themis-border);
+  border-radius: 9999px;
+  padding: 0 0.375rem;
+  flex-shrink: 0;
+}
+
+.themis-filetree-actions {
+  display: inline-flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.themis-filetree-btn {
+  font-family: inherit;
+  width: 1.625rem;
+  height: 1.625rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--themis-border);
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.themis-filetree-btn--accept {
+  background-color: var(--themis-surface);
+  color: var(--themis-success);
+}
+
+.themis-filetree-btn--accept:hover:not(:disabled) {
+  background-color: var(--themis-success);
+  color: var(--themis-canvas);
+}
+
+.themis-filetree-btn--discard {
+  background-color: var(--themis-surface);
+  color: var(--themis-danger);
+}
+
+.themis-filetree-btn--discard:hover:not(:disabled) {
+  background-color: var(--themis-danger);
+  color: var(--themis-canvas);
+}
+
+.themis-filetree-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

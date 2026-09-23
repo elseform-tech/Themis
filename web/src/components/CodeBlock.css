@@ -1,0 +1,54 @@
+.themis-codeblock {
+  --cb-comment: var(--themis-text-3);
+  --cb-string: var(--themis-success);
+  --cb-keyword: var(--themis-info);
+  --cb-number: var(--themis-warning);
+
+  background-color: var(--themis-canvas);
+  color: var(--themis-text);
+  border: 1px solid var(--themis-border);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  margin: 0;
+}
+
+.themis-codeblock-line {
+  display: block;
+  white-space: pre;
+}
+
+.themis-codeblock-lineno {
+  display: inline-block;
+  min-width: 2.5rem;
+  padding-right: 1rem;
+  text-align: right;
+  color: var(--themis-text-3);
+  user-select: none;
+}
+
+.themis-codeblock-token--comment {
+  color: var(--cb-comment);
+  font-style: italic;
+}
+
+.themis-codeblock-token--string {
+  color: var(--cb-string);
+}
+
+.themis-codeblock-token--keyword {
+  color: var(--cb-keyword);
+}
+
+.themis-codeblock-token--number {
+  color: var(--cb-number);
+}
+
+[data-theme="light"] .themis-codeblock {
+  --cb-string: #226b3a;
+  --cb-keyword: #1755a3;
+  --cb-number: #815917;
+}

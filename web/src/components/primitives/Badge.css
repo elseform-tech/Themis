@@ -1,0 +1,42 @@
+.themis-badge {
+  display: inline-block;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 9999px;
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--themis-border);
+  background-color: var(--themis-raised);
+  color: var(--themis-text-2);
+}
+
+.themis-badge--success {
+  background-color: var(--themis-success);
+  border-color: var(--themis-success);
+  color: var(--themis-canvas);
+}
+
+.themis-badge--warning {
+  background-color: var(--themis-warning);
+  border-color: var(--themis-warning);
+  color: var(--themis-canvas);
+}
+
+.themis-badge--danger {
+  background-color: var(--themis-danger);
+  border-color: var(--themis-danger);
+  color: var(--themis-canvas);
+}
+
+.themis-badge--info {
+  background-color: var(--themis-info);
+  border-color: var(--themis-info);
+  color: var(--themis-canvas);
+}
+
+.themis-badge--accent {
+  background-color: var(--themis-accent);
+  border-color: var(--themis-accent);
+  color: var(--themis-accent-ink);
+}

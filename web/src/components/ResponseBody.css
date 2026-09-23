@@ -1,0 +1,19 @@
+.themis-response { font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; }
+.themis-response > :first-child { margin-top: 0; }
+.themis-response > :last-child { margin-bottom: 0; }
+.themis-response p { margin: .6em 0; }
+.themis-response h1, .themis-response h2, .themis-response h3, .themis-response h4 { font-weight: 600; line-height: 1.4; margin: 1em 0 .5em; }
+.themis-response h1 { font-size: 1.25rem; }.themis-response h2 { font-size: 1.1rem; }.themis-response h3, .themis-response h4 { font-size: .9375rem; }
+.themis-response ul, .themis-response ol { padding-left: 1.5em; margin: .5em 0; }
+.themis-response li { margin: .25em 0; }
+.themis-response a { color: var(--themis-info); text-decoration: underline; }
+.themis-response :not(pre) > code { background: var(--themis-raised); border-radius: 4px; padding: 2px 4px; font-size: .9em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.themis-response blockquote { border-left: 2px solid var(--themis-border); padding-left: 12px; margin: 12px 0; color: var(--themis-text-2); }
+.themis-response-table { overflow-x: auto; margin: 12px 0; }.themis-response table { border-collapse: collapse; width: 100%; }.themis-response th, .themis-response td { border: 1px solid var(--themis-border); padding: 6px 10px; text-align: left; }
+.themis-code-panel { margin: 12px 0; border: 1px solid var(--themis-border); border-radius: 8px; overflow: hidden; }
+.themis-code-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--themis-surface); font-size: .6875rem; color: var(--themis-text-2); }
+.themis-code-toolbar button { border: 0; background: none; color: inherit; cursor: pointer; font: inherit; padding: 2px 4px; }
+.themis-code-panel .themis-codeblock { border: 0; border-radius: 0; padding: 10px 12px; }
+.themis-diagram iframe { border: 0; width: 100%; display: block; }.themis-diagram > details > summary { padding: 6px 10px; cursor: pointer; color: var(--themis-text-2); font-size: .75rem; }
+.themis-diagram > p { padding: 10px; font-size: .75rem; color: var(--themis-text-2); }
+[data-theme="light"] .themis-response a { color: #1755a3; }

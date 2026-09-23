@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/* Themis theme tokens — approved values, do not restyle without review. */
+
+:root,
+[data-theme="dark"] {
+  --themis-canvas: #0b0e13;
+  --themis-surface: #12161d;
+  --themis-raised: #1a2029;
+  --themis-border: #262e3a;
+  --themis-border-subtle: #1c232e;
+  --themis-text: #e8eaf0;
+  --themis-text-2: #9aa3b2;
+  --themis-text-3: #6b7484;
+  --themis-accent: #d9a73e;
+  --themis-accent-hover: #e5b95c;
+  --themis-accent-ink: #1a1405;
+  --themis-success: #3fb950;
+  --themis-warning: #d29922;
+  --themis-danger: #f85149;
+  --themis-info: #58a6ff;
+  --themis-add-bg: rgba(63, 185, 80, 0.14);
+  --themis-del-bg: rgba(248, 81, 73, 0.14);
+}
+
+[data-theme="light"] {
+  --themis-canvas: #f6f4ef;
+  --themis-surface: #ffffff;
+  --themis-raised: #ffffff;
+  --themis-border: #e2dcd0;
+  --themis-border-subtle: #ece7db;
+  --themis-text: #1c1a15;
+  --themis-text-2: #5c574a;
+  --themis-text-3: #767163;
+  --themis-accent: #9a6b1f;
+  --themis-accent-hover: #b07a24;
+  --themis-accent-ink: #ffffff;
+  --themis-success: #3fb950;
+  --themis-warning: #d29922;
+  --themis-danger: #f85149;
+  --themis-info: #58a6ff;
+  --themis-add-bg: rgba(63, 185, 80, 0.14);
+  --themis-del-bg: rgba(248, 81, 73, 0.14);
+}
+
+body {
+  background-color: var(--themis-canvas);
+  color: var(--themis-text);
+}

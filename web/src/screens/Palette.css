@@ -1,0 +1,59 @@
+.themis-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: min(32rem, 80vw);
+}
+
+.themis-palette-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.themis-palette-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--themis-text);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.themis-palette-row--active {
+  background-color: var(--themis-raised);
+  border-color: var(--themis-border);
+}
+
+.themis-palette-group {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--themis-text-3);
+  min-width: 4.5rem;
+}
+
+.themis-palette-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.themis-palette-detail {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--themis-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 14rem;
+}

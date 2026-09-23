@@ -1,0 +1,252 @@
+import { useEffect, useState } from "react";
+import { Badge, Button, EmptyState, Input } from "../components";
+import type {
+  Diagnostics,
+  ProviderKind,
+  SecretStatus,
+  Settings,
+  ThemeMode,
+  UpdateStatus,
+} from "../lib/types";
+import {
+  checkForUpdates,
+  clearSecret,
+  getDiagnostics,
+  getSecretStatus,
+  setSecret,
+  updateSettings,
+  listGoModels,
+} from "../lib/tauri";
+import { describeError, toast, useApp } from "../state/store";
+import { pickProjectDirectory } from "./projectPick";
+import { copyDiagnostics } from "./diagnostics";
+import "./Settings.css";
+
+const PROVIDERS: ProviderKind[] = ["go", "openai", "anthropic", "ollama", "custom"];
+const THEMES: ThemeMode[] = ["dark", "light", "system"];
+const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go", "openai", "anthropic"];
+
+/** Pure rendering of one update status (null = never checked). */
+export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
+  if (status === null) {
+    return (
+      <p className="themis-settings-hint">
+        Not checked yet — press &ldquo;Check for updates&rdquo;.
+      </p>
+    );
+  }
+  switch (status.state) {
+    case "disabled":
+      return (
+        <div className="themis-settings-update">
+          <p className="themis-settings-hint">
+            Updates are disabled
+            {status.message !== undefined && status.message !== ""
+              ? `: ${status.message}`
+              : ""}
+            . See <span className="themis-settings-mono">docs/user-guide.md</span> →
+            Updates for setup.
+          </p>
+        </div>
+      );
+    case "up-to-date":
+      return (
+        <div className="themis-settings-update">
+          <p className="themis-settings-update-line">
+            <Badge tone="success">up to date</Badge>
+          </p>
+          {status.message !== undefined && status.message !== "" && (
+            <p className="themis-settings-hint">{status.message}</p>
+          )}
+        </div>
+      );
+    case "available":
+      return (
+        <div className="themis-settings-update">
+          <p className="themis-settings-update-line">
+            <Badge tone="warning">update available</Badge>
+            {status.version !== undefined && status.version !== "" && (
+              <span className="themis-settings-mono">{status.version}</span>
+            )}
+          </p>
+          {status.notes !== undefined && status.notes !== "" && (
+            <p className="themis-settings-hint">{status.notes}</p>
+          )}
+        </div>
+      );
+    case "error":
+      return (
+        <div className="themis-settings-update">
+          <p className="themis-settings-update-line">
+            <Badge tone="danger">check failed</Badge>
+          </p>
+          {status.message !== undefined && status.message !== "" && (
+            <p className="themis-settings-hint">{status.message}</p>
+          )}
+        </div>
+      );
+  }
+}
+
+export function SettingsScreen() {
+  const { state, dispatch } = useApp();
+  const [form, setForm] = useState<Settings>(state.settings);
+  const [models, setModels] = useState<string[]>([]);
+  const [connecting, setConnecting] = useState(false);
+  const [connection, setConnection] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [keys, setKeys] = useState<Record<string, string>>({});
+  const [keyBusy, setKeyBusy] = useState<string | null>(null);
+  const [section, setSection] = useState("General");
+  const [saved, setSaved] = useState("");
+  const [error, setError] = useState("");
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
+  const [copying, setCopying] = useState(false);
+
+  useEffect(() => {
+    setForm(state.settings);
+  }, [state.settings]);
+
+  async function testConnection() {
+    setConnecting(true); setConnection(""); setError("");
+    try { const models = await listGoModels(); setModels(models); setConnection(`Connected · ${models.length} models available`); }
+    catch (error: unknown) { setError(describeError(error)); }
+    finally { setConnecting(false); }
+  }
+
+  async function save(patch: Partial<Settings>) {
+    if (saving) return;
+    setSaving(true); setError(""); setSaved("");
+    try {
+      const settings = await updateSettings(patch);
+      dispatch({ type: "settings/patched", settings });
+      setSaved("Saved");
+    } catch (error: unknown) {
+      setError(describeError(error));
+      setForm(state.settings);
+    } finally { setSaving(false); }
+  }
+  async function chooseFolder() {
+    const picked = await pickProjectDirectory();
+    if (picked.kind === "path") await save({ projects_directory: picked.path });
+  }
+
+  async function refreshSecrets() {
+    try {
+      const status = await getSecretStatus();
+      dispatch({ type: "secrets/loaded", status });
+    } catch (error: unknown) {
+      toast(dispatch, `Secret status failed: ${describeError(error)}`, "warning");
+    }
+  }
+
+  async function saveKey(provider: (typeof SECRET_PROVIDERS)[number]) {
+    const value = (keys[provider] ?? "").trim();
+    if (value === "") return;
+    setKeyBusy(provider);
+    try {
+      await setSecret(provider, value);
+      setKeys((prev) => ({ ...prev, [provider]: "" }));
+      await refreshSecrets();
+      toast(dispatch, `Using ${provider} key for this session`, "success");
+    } catch (error: unknown) {
+      toast(dispatch, `Save ${provider} key failed: ${describeError(error)}`, "danger");
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+
+  // Manual-only: Themis never checks for updates on boot.
+  async function checkUpdates() {
+    if (checking) return;
+    setChecking(true);
+    try {
+      setUpdate(await checkForUpdates());
+    } catch (error: unknown) {
+      setUpdate({ state: "error", message: describeError(error) });
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function copyDiagnosticsToClipboard() {
+    if (copying) return;
+    setCopying(true);
+    try {
+      const loaded = await copyDiagnostics({
+        load: getDiagnostics,
+        writeClipboard: (text) => navigator.clipboard.writeText(text),
+        notify: (message, tone) => toast(dispatch, message, tone),
+      });
+      if (loaded !== null) setDiagnostics(loaded);
+    } finally {
+      setCopying(false);
+    }
+  }
+
+  async function clearKey(provider: (typeof SECRET_PROVIDERS)[number]) {
+    setKeyBusy(provider);
+    try {
+      await clearSecret(provider);
+      await refreshSecrets();
+      toast(dispatch, `Cleared ${provider} key`, "success");
+    } catch (error: unknown) {
+      toast(dispatch, `Clear ${provider} key failed: ${describeError(error)}`, "danger");
+    } finally {
+      setKeyBusy(null);
+    }
+  }
+
+  if (!state.settingsLoaded) {
+    return (
+      <div className="themis-settings">
+        <EmptyState title="Loading settings…" hint="Fetching stored preferences." />
+      </div>
+    );
+  }
+
+  return (
+    <div className="themis-settings">
+      <div className="themis-settings-heading"><div><h2 className="themis-settings-title">Settings</h2><p className="themis-settings-hint">App defaults · Changes save automatically.</p></div><span role="status" className="themis-settings-hint">{saving ? "Saving…" : saved}</span></div>
+      <nav className="themis-settings-tabs" aria-label="Settings sections">{["General", "Appearance", "Models & connections", "Permissions"].map(label => <button key={label} aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setSaved(""); }}>{label}</button>)}</nav>
+      {error && <p role="alert" className="themis-form-error">{error}</p>}
+      <fieldset disabled={saving} className="themis-settings-fields">
+      {section === "General" && <>
+        <section className="themis-settings-section" aria-label="Projects folder"><h3 className="themis-settings-subtitle">Projects folder</h3>
+          <Input id="projects-directory" label="Default projects folder" value={form.projects_directory} onChange={event => setForm(f => ({ ...f, projects_directory: event.target.value }))} onBlur={() => { if (form.projects_directory !== state.settings.projects_directory) void save({ projects_directory: form.projects_directory }); }} />
+          <div><Button variant="ghost" size="small" onClick={() => void chooseFolder()}>Choose folder…</Button></div>
+          <p className="themis-settings-hint">New projects are created here. Existing projects stay where they are.</p>
+          <p className="themis-settings-hint">Your selected project, thread and drafts are restored when you return.</p>
+        </section>
+        <section className="themis-settings-section" aria-label="Automations"><h3 className="themis-settings-subtitle">Automations</h3><label className="themis-settings-check"><input type="checkbox" checked={form.automations_enabled} onChange={event => void save({ automations_enabled: event.target.checked })} />Enable scheduled runs while Themis is open</label><p className="themis-settings-hint">Manage schedules in Automations. You can still run an automation manually when scheduling is off.</p></section>
+        <details className="themis-settings-section"><summary>Updates & diagnostics</summary><UpdateStatusView status={update} /><div><Button variant="ghost" size="small" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check for updates"}</Button><Button variant="ghost" size="small" disabled={copying} onClick={() => void copyDiagnosticsToClipboard()}>{copying ? "Copying…" : "Copy diagnostics"}</Button></div><p className="themis-settings-hint">Updates are checked only when you ask. Diagnostics include settings and recent errors, never API keys.</p>{diagnostics && <p className="themis-settings-hint">{diagnostics.app_version} · {diagnostics.os}</p>}</details>
+      </>}
+      {section === "Appearance" && <section className="themis-settings-section" aria-label="Appearance preferences">
+        <h3 className="themis-settings-subtitle">Appearance</h3>
+        <label className="themis-settings-control">Theme<select value={form.theme} onChange={event => void save({ theme: event.target.value as ThemeMode })}>{THEMES.map(theme => <option key={theme} value={theme}>{theme[0]?.toUpperCase()}{theme.slice(1)}</option>)}</select></label>
+        <label className="themis-settings-control">Text size<select value={form.text_size} onChange={event => void save({ text_size: Number(event.target.value) })}>{[12, 13, 14, 15, 16, 18].map(size => <option key={size} value={size}>{size}px{size === 13 ? " · Default" : ""}</option>)}</select></label>
+        <p className="themis-settings-hint">System font · Compact, clear text. Code keeps its monospace font.</p>
+        <label className="themis-settings-check"><input type="checkbox" checked={form.sidebar_hover} onChange={event => void save({ sidebar_hover: event.target.checked })} />Reveal the collapsed sidebar on hover</label><p className="themis-settings-hint">Hover at the left edge to reveal it. Use the arrow to keep it open, or ⌘ / Ctrl + B to toggle it.</p>
+        <div><Button variant="ghost" size="small" onClick={() => void save({ theme: "system", text_size: 13, sidebar_hover: true })}>Reset appearance</Button></div>
+      </section>}
+      {section === "Models & connections" && <>
+        <section className="themis-settings-section" aria-label="Model defaults"><h3 className="themis-settings-subtitle">Model defaults</h3>
+          <label className="themis-settings-control">Default provider<select value={form.default_provider} onChange={event => void save({ default_provider: event.target.value as ProviderKind, default_model: "" })}>{PROVIDERS.map(provider => <option key={provider} value={provider}>{provider === "go" ? "OpenCode Go" : provider === "openai" ? "OpenAI" : provider === "anthropic" ? "Anthropic" : provider === "ollama" ? "Ollama" : "Custom"}</option>)}</select></label>
+          <Input id="themis-default-model" label="Default model" placeholder="Provider default" value={form.default_model} onChange={event => setForm(f => ({ ...f, default_model: event.target.value }))} onBlur={() => { if (form.default_model !== state.settings.default_model) void save({ default_model: form.default_model.trim() }); }} />
+          {form.default_provider === "go" && <><div><Button variant="ghost" size="small" disabled={connecting || !state.secretStatus.go} onClick={() => void testConnection()}>{connecting ? "Connecting…" : "Test connection & load models"}</Button></div>{connection && <p role="status" className="themis-settings-hint">{connection}</p>}{models.length > 0 && <label className="themis-settings-control">Available Go models<select value={models.includes(form.default_model) ? form.default_model : ""} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>Choose a model</option>{models.map(model => <option key={model}>{model}</option>)}</select></label>}</>}
+          <p className="themis-settings-hint">Used for new threads. Existing threads keep their model.</p>
+          <details><summary>Advanced run limits</summary><Input id="themis-max-turns" label="Maximum turns per run (1–200)" type="number" min={1} max={200} value={form.max_turns} onChange={event => setForm(f => ({ ...f, max_turns: Number(event.target.value) }))} onBlur={() => { if (form.max_turns !== state.settings.max_turns) void save({ max_turns: form.max_turns }); }} /><Input id="themis-concurrency" label="Parallel runs (1–16)" type="number" min={1} max={16} value={form.concurrency_limit} onChange={event => setForm(f => ({ ...f, concurrency_limit: Number(event.target.value) }))} onBlur={() => { if (form.concurrency_limit !== state.settings.concurrency_limit) void save({ concurrency_limit: form.concurrency_limit }); }} /></details>
+          <div><Button variant="ghost" size="small" onClick={() => void save({ default_provider: "go", default_model: "", max_turns: 20, concurrency_limit: 3 })}>Reset model defaults</Button></div>
+        </section>
+        <section className="themis-settings-section" aria-label="Connections"><h3 className="themis-settings-subtitle">Connections</h3><p className="themis-settings-hint">Keys entered here last only until Themis closes. OpenCode Go can also use OPENCODE_KEY from the launch environment. No key is saved to disk.</p>
+          {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key"><div className="themis-settings-key-head"><strong>{provider === "go" ? "OpenCode Go" : provider === "openai" ? "OpenAI" : "Anthropic"}</strong><Badge tone={state.secretStatus[provider] ? "success" : "default"}>{state.secretStatus[provider] ? "Key available" : "Not configured"}</Badge></div>
+          <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Use for this session</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget session key</Button></div>{provider === "go" && <p className="themis-settings-hint">Forgetting a session key does not remove OPENCODE_KEY from your environment.</p>}</details></div>)}
+        </section>
+      </>}
+      {section === "Permissions" && <section className="themis-settings-section" aria-label="Permissions"><h3 className="themis-settings-subtitle">Built-in protections</h3><p className="themis-settings-hint">These protections apply to every project.</p><dl className="themis-permissions"><dt>File access</dt><dd>File tools stay inside the thread’s project or worktree.</dd><dt>Changes and commands</dt><dd>Writes, shell commands, network and destructive tool calls pause for approval.</dd><dt>Approval duration</dt><dd>“Always” remembers a tool decision for the current run only.</dd><dt>Your checkout</dt><dd>Review changes before merging the thread’s worktree into your project.</dd></dl></section>}
+      </fieldset>
+    </div>
+  );
+}

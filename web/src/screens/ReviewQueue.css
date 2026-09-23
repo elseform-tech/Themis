@@ -1,0 +1,74 @@
+.themis-review-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.themis-review-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.themis-review-queue-title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.themis-review-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.themis-review-card {
+  border: 1px solid var(--themis-border-subtle);
+  border-radius: 0.5rem;
+  background-color: var(--themis-surface);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.themis-review-card--done {
+  opacity: 0.85;
+}
+
+.themis-review-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.themis-review-name {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.themis-review-summary {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--themis-text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.themis-review-meta {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--themis-text-3);
+}
+
+.themis-review-actions {
+  display: flex;
+  gap: 0.5rem;
+}

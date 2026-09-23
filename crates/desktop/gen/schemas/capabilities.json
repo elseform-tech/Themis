@@ -1,0 +1,1 @@
+{"main":{"identifier":"main","description":"Main window: core access plus the file-dialog plugin for project picking.","local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}
