@@ -2,7 +2,7 @@ import type { ChatMessage } from "../state/reducer";
 
 type MessageRow = { kind: "message"; message: ChatMessage };
 type MilestoneRow = { kind: "milestone"; id: string; title: string; items: ChatMessage[]; active: boolean };
-type RunRow = { kind: "run"; id: string; runId: string; items: MilestoneRow[]; toolCount: number; active: boolean; failed: boolean; incomplete: boolean };
+type RunRow = { kind: "run"; id: string; runId: string; items: MilestoneRow[]; toolCount: number; active: boolean; failed: boolean };
 export type ConversationRow = MessageRow | MilestoneRow | RunRow;
 
 function milestones(messages: ChatMessage[], running: boolean): (MessageRow | MilestoneRow)[] {
@@ -37,7 +37,7 @@ export function groupConversation(messages: ChatMessage[], running: boolean): Co
   const rows: ConversationRow[] = [];
   let activity: ChatMessage[] = [];
   let runId: string | undefined;
-  const flush = (active: boolean, failed: boolean, incomplete = false) => {
+  const flush = (active: boolean, failed: boolean) => {
     if (!activity.length) return;
     if (runId) {
       const grouped = milestones(activity, true).filter((row): row is MilestoneRow => row.kind === "milestone");
@@ -45,7 +45,7 @@ export function groupConversation(messages: ChatMessage[], running: boolean): Co
         kind: "run", id: activity[0]!.id, runId,
         items: grouped.map((row, index) => ({ ...row, active: active && index === grouped.length - 1 })),
         toolCount: activity.filter(message => message.tool).length,
-        active, failed, incomplete,
+        active, failed,
       });
     } else rows.push(...milestones(activity, active));
     activity = [];
@@ -58,7 +58,7 @@ export function groupConversation(messages: ChatMessage[], running: boolean): Co
       runId = message.runId;
       activity.push(message);
     } else {
-      flush(false, message.role === "system" && message.text.startsWith("Run failed:"), !!message.incomplete);
+      flush(false, message.role === "system" && message.text.startsWith("Run failed:"));
       rows.push({ kind: "message", message });
     }
   }

@@ -65,17 +65,33 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
     let events = common::drain(&mut rx).await;
     assert!(events.iter().any(|event| matches!(event, RunEvent::ContextCheckpoint { summary } if summary.contains("Read note.txt"))), "{events:?}");
     assert!(has_finished(&events));
+    let requests = server.received_requests().await.unwrap();
+    let final_request: serde_json::Value =
+        serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    assert!(final_request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["role"] == "user" && message["content"] == "Read the note"));
 }
 
 #[tokio::test]
-async fn hard_cap_returns_incomplete_handoff_without_failing() {
+async fn hard_cap_returns_natural_handoff_without_failing() {
     let server = MockServer::start().await;
     common::mount_script(
         &server,
         vec![
-            common::tool_call_body("call_1", "write_file", json!({"file_path":"progress.txt","content":"step 1\n","append":true})),
-            common::final_text_body("The user requested ordered steps; step 1 was written to progress.txt."),
-            common::final_text_body("Completed: step 1 in progress.txt. Follow-up tasks: write step 2 and verify the file."),
+            common::tool_call_body(
+                "call_1",
+                "write_file",
+                json!({"file_path":"progress.txt","content":"step 1\n","append":true}),
+            ),
+            common::final_text_body(
+                "The user requested ordered steps; step 1 was written to progress.txt.",
+            ),
+            common::final_text_body(
+                "I wrote step 1 to progress.txt. Next, write step 2 and verify the file.",
+            ),
         ],
     )
     .await;
@@ -107,8 +123,10 @@ async fn hard_cap_returns_incomplete_handoff_without_failing() {
     )
     .await
     .unwrap();
-    assert!(answer.contains("Task incomplete after 1 turns"));
-    assert!(answer.contains("Follow-up tasks: write step 2"));
+    assert_eq!(
+        answer,
+        "I wrote step 1 to progress.txt. Next, write step 2 and verify the file."
+    );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("progress.txt")).unwrap(),
         "step 1\n"

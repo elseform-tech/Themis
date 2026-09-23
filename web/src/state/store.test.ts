@@ -81,12 +81,13 @@ describe("thread lifecycle events", () => {
     s = applyThreadEvent(s, envelope({ kind: "failed", error: "summary failed" }));
     expect(s.compacting[THREAD.id]).toBe(false);
   });
-  it("shows a capped request as incomplete without an error toast", () => {
+  it("shows an older incomplete handoff as a normal final reply", () => {
     let s = withThread();
     s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 1 }));
     s = applyThreadEvent(s, envelope({ kind: "incomplete", result: "Task incomplete. Follow-up tasks: verify." }));
     expect(s.running[THREAD.id]).toBe(false);
-    expect(s.messages[THREAD.id]?.slice(-1)[0]).toMatchObject({ role: "assistant", final: true, incomplete: true });
+    expect(s.messages[THREAD.id]?.slice(-1)[0]).toMatchObject({ role: "assistant", final: true });
+    expect(s.messages[THREAD.id]?.slice(-1)[0]).toHaveProperty("incomplete", true);
     expect(s.toasts).toHaveLength(0);
   });
   it("restores persisted conversation and marks an unfinished run interrupted", () => {

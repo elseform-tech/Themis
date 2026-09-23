@@ -166,7 +166,7 @@ export function ThreadView() {
           <p className="themis-thread-start">Describe what you’d like to build or change.</p>
         ) : (
           groupConversation(messages, running).map(row => row.kind === "message" ? <Message key={row.message.id} message={row.message} running={running} /> : row.kind === "milestone" ? <Milestone key={row.id} row={row} /> : <details key={row.id} className="themis-run-bucket" open={row.active || undefined}>
-            <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span>{row.active ? "Run activity · Working" : row.failed ? "Run activity · Failed" : row.incomplete ? "Run activity · Incomplete" : "Run activity · Completed"}</span><span className="themis-tool-status">{row.toolCount} tool{row.toolCount === 1 ? "" : "s"} · {row.items.length} milestone{row.items.length === 1 ? "" : "s"}</span></summary>
+            <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span>{row.active ? "Run activity · Working" : row.failed ? "Run activity · Failed" : "Run activity · Completed"}</span><span className="themis-tool-status">{row.toolCount} tool{row.toolCount === 1 ? "" : "s"} · {row.items.length} milestone{row.items.length === 1 ? "" : "s"}</span></summary>
             <div className="themis-run-bucket-body">{row.items.map(item => <Milestone key={item.id} row={item} />)}</div>
           </details>)
         )}

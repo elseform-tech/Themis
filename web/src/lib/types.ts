@@ -149,6 +149,7 @@ export interface PersistedMessage {
   text: string;
   runId?: string;
   final?: boolean;
+  /** Internal handoff marker; not shown as a conversation label. */
   incomplete?: boolean;
   tool?: { name: string; ok?: boolean; output?: string };
 }

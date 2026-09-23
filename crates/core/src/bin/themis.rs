@@ -407,7 +407,7 @@ fn print_event(event: &RunEvent) {
         }
         RunEvent::ContextCompacting => println!("compacting context"),
         RunEvent::ContextCheckpoint { .. } => println!("context checkpoint saved"),
-        RunEvent::Incomplete { result } => println!("incomplete: {result}"),
+        RunEvent::Incomplete { result } => println!("agent: {result}"),
         RunEvent::Finished { result } => println!("finished: {result}"),
         RunEvent::Failed { error } => println!("failed: {error}"),
     }

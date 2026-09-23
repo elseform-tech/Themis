@@ -103,6 +103,9 @@ describe("Workspace journey", () => {
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => receive({ thread_id: "status", run_id: "r", event: { kind: "finished", result: "Done" } }));
     expect(within(sidebar).getByRole("img", { name: "Done" })).toBeInTheDocument();
+    await act(async () => receive({ thread_id: "status", run_id: "old", event: { kind: "incomplete", result: "I completed the draft. Next, verify it." } }));
+    expect(within(sidebar).getByRole("img", { name: "Idle" })).toBeInTheDocument();
+    expect(screen.queryByText(/Run activity · Incomplete/)).not.toBeInTheDocument();
     await act(async () => receive({ thread_id: "status", run_id: "r2", event: { kind: "started", task: "retry", max_turns: 3 } }));
     expect(within(sidebar).getByRole("img", { name: "Working" })).toBeInTheDocument();
     await act(async () => receive({ thread_id: "status", run_id: "r2", event: { kind: "failed", error: "HTTP 503" } }));

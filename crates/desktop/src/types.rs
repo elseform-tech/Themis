@@ -774,14 +774,6 @@ mod tests {
             ThreadEvent::ContextCompacting
         );
         assert_eq!(
-            ThreadEvent::from(RunEvent::Incomplete {
-                result: "next".to_owned()
-            }),
-            ThreadEvent::Incomplete {
-                result: "next".to_owned()
-            }
-        );
-        assert_eq!(
             ThreadEvent::from(RunEvent::Finished {
                 result: "r".to_owned()
             }),

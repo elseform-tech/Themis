@@ -73,6 +73,12 @@ fn checkpoint_replaces_old_model_context_but_preserves_full_history() {
     let store = TranscriptStore::open(&path).unwrap();
     store.append_user("thread", "run", "Original task").unwrap();
     store
+        .append_user("thread", "run", "Middle request")
+        .unwrap();
+    store
+        .append_user("thread", "run", "Latest request")
+        .unwrap();
+    store
         .append_event(&ThreadEventEnvelope {
             thread_id: "thread".into(),
             run_id: "run".into(),
@@ -92,10 +98,14 @@ fn checkpoint_replaces_old_model_context_but_preserves_full_history() {
         .unwrap();
     drop(store);
     let reopened = TranscriptStore::open(&path).unwrap();
-    assert_eq!(reopened.history("thread").unwrap().len(), 3);
+    assert_eq!(reopened.history("thread").unwrap().len(), 5);
     let context = reopened.context("thread", 20).unwrap();
     assert_eq!(context.len(), 2);
     assert!(context[0].text.contains("Original task; read note.txt"));
+    assert!(context[0]
+        .text
+        .contains("Verbatim first and recent user requests (historical):\nOriginal task"));
+    assert!(context[0].text.contains("Middle request\nLatest request"));
     assert_eq!(context[1].text, "Done");
 }
 

@@ -148,10 +148,10 @@ function ThreadStatus({ thread }: { thread: ThreadInfo }) {
     ? state.approvals.some(approval => approval.thread_id === thread.id) ? "Needs approval" : "Working"
     : state.sendErrors[thread.id] || (last?.role === "system" && /^(Run failed:|Send failed:|Send rejected:)/.test(last.text)) ? "Failed"
     : last?.role === "system" && last.text.startsWith("Stopped by you.") ? "Stopped"
-    : last?.incomplete ? "Incomplete"
+    : last?.incomplete ? "Idle"
     : last?.final ? "Done"
     : thread.recovered ? "Interrupted" : "Idle";
   return <span role="img" aria-label={status} title={status} className={`themis-thread-status themis-thread-status--${status.toLowerCase().replace(/ /g, "-")}`}>
-    {status === "Working" ? <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" /></svg> : status === "Done" ? "✓" : status === "Failed" || status === "Needs approval" ? "!" : status === "Stopped" || status === "Interrupted" || status === "Incomplete" ? "■" : "·"}
+    {status === "Working" ? <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" /></svg> : status === "Done" ? "✓" : status === "Failed" || status === "Needs approval" ? "!" : status === "Stopped" || status === "Interrupted" ? "■" : "·"}
   </span>;
 }

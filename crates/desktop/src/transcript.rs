@@ -233,9 +233,33 @@ impl TranscriptStore {
             .map_err(|e| format!("read context: {e}"))?;
         let mut turns = Vec::new();
         if let Some((_, summary)) = checkpoint {
+            let first: Option<(i64, String)> = connection
+                .query_row(
+                    "SELECT seq,text FROM context_turns WHERE thread_id=?1 AND seq<=?2 AND role='user' ORDER BY seq LIMIT 1",
+                    params![thread_id, through_seq],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|e| format!("read first user request: {e}"))?;
+            let mut statement = connection
+                .prepare("SELECT seq,text FROM context_turns WHERE thread_id=?1 AND seq<=?2 AND role='user' ORDER BY seq DESC LIMIT 2")
+                .map_err(|e| format!("read checkpoint user requests: {e}"))?;
+            let mut requests: Vec<(i64, String)> = statement
+                .query_map(params![thread_id, through_seq], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })
+                .map_err(|e| format!("read checkpoint user requests: {e}"))?
+                .collect::<Result<_, _>>()
+                .map_err(|e| format!("read checkpoint user requests: {e}"))?;
+            requests.extend(first);
+            requests.sort_by_key(|request| request.0);
+            requests.dedup_by_key(|request| request.0);
             turns.push(ConversationTurn {
                 role: ConversationRole::Assistant,
-                text: format!("Earlier context checkpoint:\n{summary}"),
+                text: format!(
+                    "Earlier context checkpoint (historical; later user requests take precedence):\n{summary}\nVerbatim first and recent user requests (historical):\n{}",
+                    requests.into_iter().map(|request| request.1).collect::<Vec<_>>().join("\n")
+                ),
             });
         }
         for row in rows {
