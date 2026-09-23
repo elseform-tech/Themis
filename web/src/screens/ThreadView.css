@@ -343,6 +343,11 @@
 @media (prefers-reduced-motion: reduce) { .themis-shimmer { animation: none; background: none; color: var(--themis-text-2); } .themis-tool-chevron { transition: none; } }
 
 .themis-milestone { border: 1px solid var(--themis-border-subtle); border-radius: 8px; padding: 8px 12px; font-size: .8125rem; }
+.themis-run-bucket { border: 1px solid var(--themis-border); border-radius: 8px; padding: 10px 12px; font-size: .8125rem; }
+.themis-run-bucket > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; color: var(--themis-text-2); }
+.themis-run-bucket > summary::-webkit-details-marker { display: none; }
+.themis-run-bucket[open] > summary > .themis-tool-chevron { transform: rotate(90deg); }
+.themis-run-bucket-body { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }
 .themis-milestone > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; color: var(--themis-text-2); }
 .themis-milestone > summary::-webkit-details-marker { display: none; }
 .themis-milestone[open] > summary > .themis-tool-chevron { transform: rotate(90deg); }

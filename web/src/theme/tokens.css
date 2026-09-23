@@ -24,6 +24,9 @@
 }
 
 [data-theme="light"] {
+  --themis-link-light: #1755a3;
+  --themis-code-string-light: #226b3a;
+  --themis-code-number-light: #815917;
   --themis-canvas: #f6f4ef;
   --themis-surface: #ffffff;
   --themis-raised: #ffffff;

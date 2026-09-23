@@ -6,11 +6,11 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
 
 use serde_json::json;
 use themis_core::providers::{resolve, ProviderConfig, ProviderKind};
-use themis_core::runtime::{run_task, ApprovalDecision, RunEvent};
+use themis_core::runtime::{run_task, run_task_with_policy, ApprovalDecision, RunEvent, RunPolicy};
 use themis_core::tools::{boxed_tools, AllowAllHook, ApprovalHook, DenyAllHook};
 use wiremock::MockServer;
 
@@ -18,6 +18,53 @@ fn has_finished(events: &[RunEvent]) -> bool {
     events
         .iter()
         .any(|event| matches!(event, RunEvent::Finished { .. }))
+}
+
+#[tokio::test]
+async fn checkpoint_continues_same_request_after_segment_limit() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("call_1", "read_file", json!({"file_path":"note.txt"})),
+            common::final_text_body("Read note.txt; answer the original request next."),
+            common::final_text_body("Done after checkpoint"),
+        ],
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let tools = boxed_tools(dir.path(), Arc::clone(&approvals)).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let answer = run_task_with_policy(
+        llm,
+        tools,
+        "Read the note".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            segment_turns: 1,
+            total_turns: 3,
+            context_token_budget: 16000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "Done after checkpoint");
+    let events = common::drain(&mut rx).await;
+    assert!(events.iter().any(|event| matches!(event, RunEvent::ContextCheckpoint { summary } if summary.contains("Read note.txt"))), "{events:?}");
+    assert!(has_finished(&events));
 }
 
 #[tokio::test]

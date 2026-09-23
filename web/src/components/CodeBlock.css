@@ -48,7 +48,7 @@
 }
 
 [data-theme="light"] .themis-codeblock {
-  --cb-string: #226b3a;
-  --cb-keyword: #1755a3;
-  --cb-number: #815917;
+  --cb-string: var(--themis-code-string-light);
+  --cb-keyword: var(--themis-link-light);
+  --cb-number: var(--themis-code-number-light);
 }

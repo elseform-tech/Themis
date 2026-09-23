@@ -177,6 +177,7 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::ApprovalDecided { .. } => "approval_decided",
             ThreadEvent::Finished { .. } => "finished",
             ThreadEvent::Failed { .. } => "failed",
+            ThreadEvent::ContextCheckpoint { .. } => "context_checkpoint",
         })
         .collect()
 }

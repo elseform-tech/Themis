@@ -182,6 +182,9 @@ pub enum ThreadEvent {
         tool: String,
         decision: ApprovalDecision,
     },
+    ContextCheckpoint {
+        summary: String,
+    },
     Finished {
         result: String,
     },
@@ -203,6 +206,7 @@ impl From<RunEvent> for ThreadEvent {
                 tool,
                 decision: ApprovalDecision::from(decision),
             },
+            RunEvent::ContextCheckpoint { summary } => Self::ContextCheckpoint { summary },
             RunEvent::Finished { result } => Self::Finished { result },
             RunEvent::Failed { error } => Self::Failed { error },
         }
@@ -439,6 +443,10 @@ pub struct Settings {
     pub default_provider: ProviderKind,
     pub default_model: String,
     pub max_turns: u32,
+    #[serde(default = "default_max_total_turns")]
+    pub max_total_turns: u32,
+    #[serde(default = "default_context_token_budget")]
+    pub context_token_budget: u32,
     #[serde(default = "default_context_messages")]
     pub context_messages: u32,
     #[serde(default = "default_approval_timeout_seconds")]
@@ -480,6 +488,13 @@ pub const fn default_context_messages() -> u32 {
     20
 }
 
+pub const fn default_max_total_turns() -> u32 {
+    200
+}
+pub const fn default_context_token_budget() -> u32 {
+    16_000
+}
+
 pub const fn default_approval_timeout_seconds() -> u32 {
     300
 }
@@ -494,6 +509,8 @@ impl Default for Settings {
             default_provider: ProviderKind::Go,
             default_model: String::new(),
             max_turns: 20,
+            max_total_turns: default_max_total_turns(),
+            context_token_budget: default_context_token_budget(),
             context_messages: default_context_messages(),
             approval_timeout_seconds: default_approval_timeout_seconds(),
             confirm_reads: false,
@@ -519,6 +536,10 @@ pub struct SettingsPatch {
     pub default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_turns: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_token_budget: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_messages: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -966,6 +987,8 @@ mod tests {
                 "default_provider": "go",
                 "default_model": "",
                 "max_turns": 20,
+                "max_total_turns": 200,
+                "context_token_budget": 16000,
                 "context_messages": 20,
                 "approval_timeout_seconds": 300,
                 "confirm_reads": false,

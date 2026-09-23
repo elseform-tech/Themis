@@ -24,6 +24,25 @@ it("renders completed Mermaid in a sandbox with expandable source", async () => 
   expect(frame.getAttribute("srcdoc")).toContain("default-src 'none'");
   expect(screen.getByText("View source")).toBeInTheDocument();
 });
+it("enlarges Mermaid with zoom controls", async () => {
+  HTMLDialogElement.prototype.showModal = vi.fn();
+  HTMLDialogElement.prototype.close = vi.fn();
+  HTMLElement.prototype.setPointerCapture = vi.fn();
+  const { container } = render(<ResponseBody text={'```mermaid\nflowchart LR\n A-->B\n```'} />);
+  await screen.findByTitle("Mermaid diagram");
+  fireEvent.click(screen.getByRole("button", { name: "Enlarge diagram" }));
+  expect(screen.getByRole("dialog", { hidden: true })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Zoom in", hidden: true }));
+  expect(screen.getByText("125%")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "100%", hidden: true }));
+  expect(screen.getAllByText("100%")).toHaveLength(2);
+  const canvas = container.querySelector(".themis-diagram-canvas")!;
+  fireEvent.pointerDown(canvas, { button: 0, clientX: 10, clientY: 20, pointerId: 1 });
+  fireEvent.pointerMove(canvas, { clientX: 50, clientY: 45, pointerId: 1 });
+  expect(container.querySelector<HTMLElement>(".themis-diagram-stage")?.style.transform).toContain("translate(40px, 25px)");
+  fireEvent.click(screen.getByRole("button", { name: "Fit", hidden: true }));
+  expect(container.querySelector<HTMLElement>(".themis-diagram-stage")?.style.transform).toContain("translate(0px, 0px)");
+});
 it("keeps incomplete streaming diagrams as code", () => {
   render(<ResponseBody text={'```mermaid\nflowchart LR\n A--'} streaming />);
   expect(screen.queryByTitle("Mermaid diagram")).toBeNull();

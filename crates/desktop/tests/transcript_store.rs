@@ -66,6 +66,39 @@ fn legacy_display_messages_import_once_into_model_context() {
     assert_eq!(store.context("thread-a", 20).unwrap().len(), 2);
 }
 
+#[test]
+fn checkpoint_replaces_old_model_context_but_preserves_full_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sessions.sqlite3");
+    let store = TranscriptStore::open(&path).unwrap();
+    store.append_user("thread", "run", "Original task").unwrap();
+    store
+        .append_event(&ThreadEventEnvelope {
+            thread_id: "thread".into(),
+            run_id: "run".into(),
+            event: ThreadEvent::ContextCheckpoint {
+                summary: "Original task; read note.txt".into(),
+            },
+        })
+        .unwrap();
+    store
+        .append_event(&ThreadEventEnvelope {
+            thread_id: "thread".into(),
+            run_id: "run".into(),
+            event: ThreadEvent::Finished {
+                result: "Done".into(),
+            },
+        })
+        .unwrap();
+    drop(store);
+    let reopened = TranscriptStore::open(&path).unwrap();
+    assert_eq!(reopened.history("thread").unwrap().len(), 3);
+    let context = reopened.context("thread", 20).unwrap();
+    assert_eq!(context.len(), 2);
+    assert!(context[0].text.contains("Original task; read note.txt"));
+    assert_eq!(context[1].text, "Done");
+}
+
 #[tokio::test]
 async fn followup_after_restart_receives_prior_conversation() {
     let server = MockServer::start().await;

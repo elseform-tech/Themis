@@ -6,7 +6,7 @@ import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject,
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
 import { ResponseBody } from "../components/ResponseBody";
-import { groupConversation } from "./conversation";
+import { groupConversation, type ConversationRow } from "./conversation";
 import type { ChatMessage } from "../state/reducer";
 import "./ThreadView.css";
 
@@ -165,9 +165,9 @@ export function ThreadView() {
         {messages.length === 0 && stream === "" ? (
           <p className="themis-thread-start">Describe what you’d like to build or change.</p>
         ) : (
-          groupConversation(messages, running).map(row => row.kind === "message" ? <Message key={row.message.id} message={row.message} running={running} /> : <details key={row.id} className="themis-milestone" open={row.active || undefined}>
-            <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span className={row.active ? "themis-shimmer" : ""}>{row.title}</span><span className="themis-tool-status">{row.items.filter(item => item.tool).length} tool{row.items.filter(item => item.tool).length === 1 ? "" : "s"}{row.active ? " · Working" : ""}</span></summary>
-            <div className="themis-milestone-body">{row.items.map(message => <Message key={message.id} message={message} running={row.active} />)}</div>
+          groupConversation(messages, running).map(row => row.kind === "message" ? <Message key={row.message.id} message={row.message} running={running} /> : row.kind === "milestone" ? <Milestone key={row.id} row={row} /> : <details key={row.id} className="themis-run-bucket" open={row.active || undefined}>
+            <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span>{row.active ? "Run activity · Working" : row.failed ? "Run activity · Failed" : "Run activity · Completed"}</span><span className="themis-tool-status">{row.toolCount} tool{row.toolCount === 1 ? "" : "s"} · {row.items.length} milestone{row.items.length === 1 ? "" : "s"}</span></summary>
+            <div className="themis-run-bucket-body">{row.items.map(item => <Milestone key={item.id} row={item} />)}</div>
           </details>)
         )}
         {stream !== "" && (
@@ -225,6 +225,14 @@ export function ThreadView() {
 
     </div>
   );
+}
+
+function Milestone({ row }: { row: Extract<ConversationRow, { kind: "milestone" }> }) {
+  const tools = row.items.filter(item => item.tool).length;
+  return <details className="themis-milestone" open={row.active || undefined}>
+    <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span className={row.active ? "themis-shimmer" : ""}>{row.title}</span><span className="themis-tool-status">{tools} tool{tools === 1 ? "" : "s"}{row.active ? " · Working" : ""}</span></summary>
+    <div className="themis-milestone-body">{row.items.map(message => <Message key={message.id} message={message} running={row.active} />)}</div>
+  </details>;
 }
 
 function Message({ message, running }: { message: ChatMessage; running: boolean }) {

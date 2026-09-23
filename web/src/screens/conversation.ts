@@ -1,11 +1,13 @@
 import type { ChatMessage } from "../state/reducer";
 
-export type ConversationRow = { kind: "message"; message: ChatMessage } | { kind: "milestone"; id: string; title: string; items: ChatMessage[]; active: boolean };
+type MessageRow = { kind: "message"; message: ChatMessage };
+type MilestoneRow = { kind: "milestone"; id: string; title: string; items: ChatMessage[]; active: boolean };
+type RunRow = { kind: "run"; id: string; runId: string; items: MilestoneRow[]; toolCount: number; active: boolean; failed: boolean };
+export type ConversationRow = MessageRow | MilestoneRow | RunRow;
 
-/** Public milestone headings organize tool activity; old runs fall back to one bucket. */
-export function groupConversation(messages: ChatMessage[], running: boolean): ConversationRow[] {
-  const rows: ConversationRow[] = [];
-  let bucket: Extract<ConversationRow, { kind: "milestone" }> | undefined;
+function milestones(messages: ChatMessage[], running: boolean): (MessageRow | MilestoneRow)[] {
+  const rows: (MessageRow | MilestoneRow)[] = [];
+  let bucket: MilestoneRow | undefined;
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]!;
     const next = messages[index + 1];
@@ -27,5 +29,39 @@ export function groupConversation(messages: ChatMessage[], running: boolean): Co
     const text = heading ? heading[2]!.trim() : message.text;
     if (text || message.tool) bucket.items.push({ ...message, text });
   }
+  return rows;
+}
+
+/** Group a completed run's milestones under one row; retain legacy messages. */
+export function groupConversation(messages: ChatMessage[], running: boolean): ConversationRow[] {
+  const rows: ConversationRow[] = [];
+  let activity: ChatMessage[] = [];
+  let runId: string | undefined;
+  const flush = (active: boolean, failed: boolean) => {
+    if (!activity.length) return;
+    if (runId) {
+      const grouped = milestones(activity, true).filter((row): row is MilestoneRow => row.kind === "milestone");
+      rows.push({
+        kind: "run", id: activity[0]!.id, runId,
+        items: grouped.map((row, index) => ({ ...row, active: active && index === grouped.length - 1 })),
+        toolCount: activity.filter(message => message.tool).length,
+        active, failed,
+      });
+    } else rows.push(...milestones(activity, active));
+    activity = [];
+    runId = undefined;
+  };
+  for (const message of messages) {
+    const isActivity = message.role === "assistant" && !message.final;
+    if (isActivity) {
+      if (activity.length && message.runId !== runId) flush(false, false);
+      runId = message.runId;
+      activity.push(message);
+    } else {
+      flush(false, message.role === "system" && message.text.startsWith("Run failed:"));
+      rows.push({ kind: "message", message });
+    }
+  }
+  flush(running, false);
   return rows;
 }

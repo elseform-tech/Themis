@@ -131,6 +131,7 @@ export type ThreadEvent =
   | { kind: 'tool_started'; tool: string; summary: string }
   | { kind: 'tool_finished'; tool: string; ok: boolean; output?: string }
   | { kind: 'approval_decided'; tool: string; decision: ApprovalDecision }
+  | { kind: 'context_checkpoint'; summary: string }
   | { kind: 'finished'; result: string }
   | { kind: 'failed'; error: string };
 
@@ -203,6 +204,8 @@ export interface Settings {
   default_provider: ProviderKind;
   default_model: string;
   max_turns: number;
+  max_total_turns: number;
+  context_token_budget: number;
   context_messages: number;
   approval_timeout_seconds: number;
   confirm_reads: boolean;

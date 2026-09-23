@@ -95,6 +95,18 @@ impl SettingsStore {
                     format!("max_turns must be between {MAX_TURNS_MIN} and {MAX_TURNS_MAX}")
                 })?;
             }
+            if let Some(total) = patch.max_total_turns {
+                if !(1..=2000).contains(&total) {
+                    return Err("max_total_turns must be between 1 and 2000".to_owned());
+                }
+                current.max_total_turns = total as u32;
+            }
+            if let Some(budget) = patch.context_token_budget {
+                if !(2000..=200000).contains(&budget) {
+                    return Err("context_token_budget must be between 2000 and 200000".to_owned());
+                }
+                current.context_token_budget = budget as u32;
+            }
             if let Some(count) = patch.context_messages {
                 if !(CONTEXT_MESSAGES_MIN..=CONTEXT_MESSAGES_MAX).contains(&count) {
                     return Err(format!("context_messages must be between {CONTEXT_MESSAGES_MIN} and {CONTEXT_MESSAGES_MAX}"));

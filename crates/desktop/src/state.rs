@@ -13,7 +13,9 @@ use std::sync::Arc;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use themis_core::providers::{ProviderConfig, GO_DEFAULT_MODEL, GO_MODEL_ENV_VAR};
-use themis_core::runtime::{run_task_with_stop, CachingApprovals, ConversationTurn, RunEvent};
+use themis_core::runtime::{
+    run_task_with_policy, CachingApprovals, ConversationTurn, RunEvent, RunPolicy,
+};
 use themis_core::skills::{materialize_scripts, validate_skill_input};
 use themis_core::tools::{boxed_tools, ApprovalHook};
 
@@ -705,10 +707,7 @@ impl AppState {
         reasoning_effort: Option<String>,
     ) -> Result<RunHandle, String> {
         let settings = self.inner.settings.get().await;
-        let history = self
-            .inner
-            .transcript
-            .context(&thread_id, settings.context_messages.clamp(1, 100) as usize)?;
+        let history = self.inner.transcript.context(&thread_id, usize::MAX)?;
         let snapshot = {
             let mut threads = self.inner.threads.write().await;
             let record = threads
@@ -772,11 +771,17 @@ impl AppState {
         }
         self.persist_registry().await;
         // Clamp: updates are validated, but the file may predate validation.
-        let max_turns = usize::try_from(settings.max_turns)
+        let segment_turns = usize::try_from(settings.max_turns)
             .unwrap_or(crate::settings::MAX_TURNS_MAX as usize)
             .clamp(1, crate::settings::MAX_TURNS_MAX as usize);
+        let policy = RunPolicy {
+            segment_turns,
+            total_turns: settings.max_total_turns.clamp(1, 2000) as usize,
+            context_token_budget: settings.context_token_budget.clamp(2000, 200000) as usize,
+            recent_messages: settings.context_messages.clamp(1, 100) as usize,
+        };
         if let Err(error) = self
-            .spawn_run(&sink, &thread_id, &run_id, snapshot, text, max_turns)
+            .spawn_run(&sink, &thread_id, &run_id, snapshot, text, policy)
             .await
         {
             if let Err(save_error) = self.inner.transcript.append_event(&ThreadEventEnvelope {
@@ -1244,7 +1249,7 @@ impl AppState {
         run_id: &str,
         snapshot: RunSnapshot,
         task: String,
-        max_turns: usize,
+        policy: RunPolicy,
     ) -> Result<(), String> {
         let core_kind = snapshot.provider.core_kind();
         let api_key = self.api_key_for(snapshot.provider)?;
@@ -1322,7 +1327,36 @@ impl AppState {
             let terminated = Arc::new(AtomicBool::new(false));
             let pump_terminated = Arc::clone(&terminated);
             let pump = tokio::spawn(async move {
+                let mut pending_text = String::new();
                 while let Some(event) = events_rx.recv().await {
+                    if let RunEvent::AssistantText(delta) = &event {
+                        pending_text.push_str(delta);
+                        pump_sink.emit_thread_event(&ThreadEventEnvelope {
+                            thread_id: pump_thread.clone(),
+                            run_id: pump_run.clone(),
+                            event: ThreadEvent::AssistantText {
+                                text: delta.clone(),
+                            },
+                        });
+                        if pending_text.len() < 4096 {
+                            continue;
+                        }
+                    }
+                    if !pending_text.is_empty() {
+                        let envelope = ThreadEventEnvelope {
+                            thread_id: pump_thread.clone(),
+                            run_id: pump_run.clone(),
+                            event: ThreadEvent::AssistantText {
+                                text: std::mem::take(&mut pending_text),
+                            },
+                        };
+                        if let Err(error) = pump_state.inner.transcript.append_event(&envelope) {
+                            pump_state.record_error("save_thread_event", error);
+                        }
+                    }
+                    if matches!(event, RunEvent::AssistantText(_)) {
+                        continue;
+                    }
                     // A terminal event means the run is over: mark the thread
                     // idle BEFORE emitting, so observers (merge/discard,
                     // provider switch) never see `Finished` on a busy thread.
@@ -1353,17 +1387,27 @@ impl AppState {
                     }
                     pump_sink.emit_thread_event(&envelope);
                 }
+                if !pending_text.is_empty() {
+                    let envelope = ThreadEventEnvelope {
+                        thread_id: pump_thread.clone(),
+                        run_id: pump_run.clone(),
+                        event: ThreadEvent::AssistantText { text: pending_text },
+                    };
+                    if let Err(error) = pump_state.inner.transcript.append_event(&envelope) {
+                        pump_state.record_error("save_thread_event", error);
+                    }
+                }
             });
             // A panicking run must neither stick the thread busy nor leave the
             // UI waiting: join the run, then synthesize the terminal event.
             let run_outcome = tokio::spawn(async move {
-                run_task_with_stop(
+                run_task_with_policy(
                     llm,
                     themis_core::skills::filter_tools(tools, &skills),
                     themis_core::skills::compose_task(&task, &skills),
                     snapshot.history,
                     approvals,
-                    max_turns,
+                    policy,
                     events_tx,
                     stopped,
                 )

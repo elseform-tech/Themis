@@ -21,3 +21,15 @@ it("groups tools under milestones and keeps only the current milestone active", 
 it("keeps simple and legacy final answers outside buckets", () => {
   expect(groupConversation([{ id: "a", role: "assistant", text: "Hello" }], false)[0]?.kind).toBe("message");
 });
+
+it("puts completed run activity under one bucket while leaving its answer visible", () => {
+  const rows = groupConversation([
+    { id: "u", role: "user", text: "Fix it", runId: "run-1" },
+    { id: "m", role: "assistant", text: "Milestone: Inspect\nChecking", runId: "run-1" },
+    { id: "t", role: "assistant", text: "{}", runId: "run-1", tool: { name: "read_file", ok: true, output: "ok" } },
+    { id: "f", role: "assistant", text: "Done", runId: "run-1", final: true },
+  ], false);
+  expect(rows).toHaveLength(3);
+  expect(rows[1]).toMatchObject({ kind: "run", runId: "run-1", active: false, toolCount: 1, items: [{ kind: "milestone", title: "Inspect" }] });
+  expect(rows[2]).toMatchObject({ kind: "message", message: { text: "Done" } });
+});

@@ -405,6 +405,7 @@ fn print_event(event: &RunEvent) {
         RunEvent::ApprovalDecided { tool, decision } => {
             println!("approval: {tool} -> {decision}");
         }
+        RunEvent::ContextCheckpoint { .. } => println!("context checkpoint saved"),
         RunEvent::Finished { result } => println!("finished: {result}"),
         RunEvent::Failed { error } => println!("failed: {error}"),
     }

@@ -1,4 +1,4 @@
-import { Children, isValidElement, useEffect, useId, useMemo, useState } from "react";
+import { Children, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
@@ -16,6 +16,11 @@ function Diagram({ code }: { code: string }) {
   const id = `diagram-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
   const [svg, setSvg] = useState("");
   const [error, setError] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const dialog = useRef<HTMLDialogElement>(null);
+  const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const [theme, setTheme] = useState(document.documentElement.dataset.theme);
   useEffect(() => {
     const observer = new MutationObserver(() => setTheme(document.documentElement.dataset.theme));
@@ -35,10 +40,20 @@ function Diagram({ code }: { code: string }) {
     }).catch(() => { if (!cancelled) setError(true); });
     return () => { cancelled = true; };
   }, [code, theme, id]);
-  const viewBox = /viewBox="[^"]*?([\d.]+)\s+([\d.]+)"/.exec(svg);
-  const height = viewBox ? Math.min(560, Math.max(120, Number(viewBox[2]) + 24)) : 300;
+  useEffect(() => {
+    if (expanded) dialog.current?.showModal(); else dialog.current?.close();
+  }, [expanded]);
+  const viewBox = /viewBox="\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)"/.exec(svg);
+  const width = Math.max(320, Number(viewBox?.[1] ?? 800));
+  const height = Math.max(160, Number(viewBox?.[2] ?? 300));
+  const srcDoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><style>body{margin:0;padding:12px;box-sizing:border-box}svg{width:100%!important;max-width:none!important;height:auto!important;display:block}</style>${svg}`;
+  const frame = (scale: number) => <iframe title="Mermaid diagram" sandbox="" draggable={false} style={{ width: width * scale + 24, height: height * scale + 24 }} srcDoc={srcDoc} />;
   return <div className="themis-diagram">
-    {svg ? <iframe title="Mermaid diagram" sandbox="" style={{ height }} srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><style>body{margin:0;padding:12px;box-sizing:border-box}svg{max-width:100%;height:auto;display:block;margin:auto}</style>${svg}`} /> : !error && <p>Rendering diagram…</p>}
+    {svg ? <><div className="themis-diagram-preview">{frame(1)}<button className="themis-diagram-expand" aria-label="Enlarge diagram" title="Enlarge diagram" onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); setExpanded(true); }}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><path d="M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"/></svg></button></div>
+      {expanded && <dialog ref={dialog} className="themis-diagram-dialog" onClose={() => setExpanded(false)} aria-label="Enlarged Mermaid diagram">
+        <div className="themis-diagram-toolbar"><strong>Diagram</strong><button onClick={() => setZoom(Math.max(.5, +(zoom - .25).toFixed(2)))} aria-label="Zoom out">−</button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom(Math.min(3, +(zoom + .25).toFixed(2)))} aria-label="Zoom in">+</button><button onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }}>100%</button><button onClick={() => { const canvas = dialog.current?.querySelector(".themis-diagram-canvas"); if (canvas) { setZoom(Math.min(3, Math.max(.5, Math.min((canvas.clientWidth - 64) / (width + 24), (canvas.clientHeight - 64) / (height + 24))))); setOffset({ x: 0, y: 0 }); } }}>Fit</button><button onClick={() => setExpanded(false)} aria-label="Close diagram">Close</button></div>
+        <div className="themis-diagram-canvas" onPointerDown={(event) => { if (event.button !== 0) return; pan.current = { x: event.clientX, y: event.clientY, left: offset.x, top: offset.y }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!pan.current) return; setOffset({ x: pan.current.left + event.clientX - pan.current.x, y: pan.current.top + event.clientY - pan.current.y }); }} onPointerUp={() => { pan.current = null; }} onPointerCancel={() => { pan.current = null; }}><div className="themis-diagram-stage" style={{ width: width * zoom + 24, height: height * zoom + 24, transform: `translateX(-50%) translate(${offset.x}px, ${offset.y}px)` }}>{frame(zoom)}</div></div>
+      </dialog>}</> : !error && <p>Rendering diagram…</p>}
     <details open={error || undefined}><summary>{error ? "Diagram unavailable · View source" : "View source"}</summary><CodeBlock code={code} language="mermaid" /></details>
   </div>;
 }

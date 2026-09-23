@@ -156,6 +156,8 @@ export const DEFAULT_SETTINGS: Settings = {
   default_provider: "go",
   default_model: "",
   max_turns: 20,
+  max_total_turns: 200,
+  context_token_budget: 16000,
   context_messages: 20,
   approval_timeout_seconds: 300,
   confirm_reads: false,
@@ -348,6 +350,7 @@ export function applyThreadEvent(
         ok: event.decision === "deny" ? false : undefined,
       });
     }
+    case "context_checkpoint": return state;
     case "finished": {
       let next = appendMessage(state, threadId, {
         id: newId("msg"),
