@@ -182,8 +182,12 @@ pub enum ThreadEvent {
         tool: String,
         decision: ApprovalDecision,
     },
+    ContextCompacting,
     ContextCheckpoint {
         summary: String,
+    },
+    Incomplete {
+        result: String,
     },
     Finished {
         result: String,
@@ -206,7 +210,9 @@ impl From<RunEvent> for ThreadEvent {
                 tool,
                 decision: ApprovalDecision::from(decision),
             },
+            RunEvent::ContextCompacting => Self::ContextCompacting,
             RunEvent::ContextCheckpoint { summary } => Self::ContextCheckpoint { summary },
+            RunEvent::Incomplete { result } => Self::Incomplete { result },
             RunEvent::Finished { result } => Self::Finished { result },
             RunEvent::Failed { error } => Self::Failed { error },
         }
@@ -679,6 +685,10 @@ mod tests {
                 json!({"kind": "approval_decided", "tool": "shell", "decision": "once"}),
             ),
             (
+                ThreadEvent::ContextCompacting,
+                json!({"kind": "context_compacting"}),
+            ),
+            (
                 ThreadEvent::Finished {
                     result: "done".to_owned(),
                 },
@@ -759,6 +769,18 @@ mod tests {
                 }
             );
         }
+        assert_eq!(
+            ThreadEvent::from(RunEvent::ContextCompacting),
+            ThreadEvent::ContextCompacting
+        );
+        assert_eq!(
+            ThreadEvent::from(RunEvent::Incomplete {
+                result: "next".to_owned()
+            }),
+            ThreadEvent::Incomplete {
+                result: "next".to_owned()
+            }
+        );
         assert_eq!(
             ThreadEvent::from(RunEvent::Finished {
                 result: "r".to_owned()

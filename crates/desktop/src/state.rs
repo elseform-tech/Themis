@@ -1363,6 +1363,7 @@ impl AppState {
                     let terminal = matches!(
                         event,
                         themis_core::runtime::RunEvent::Finished { .. }
+                            | themis_core::runtime::RunEvent::Incomplete { .. }
                             | themis_core::runtime::RunEvent::Failed { .. }
                     );
                     let envelope = ThreadEventEnvelope {
@@ -1960,6 +1961,7 @@ impl AppState {
     ) {
         let summary = match event {
             RunEvent::Finished { result } => result.clone(),
+            RunEvent::Incomplete { result } => result.clone(),
             RunEvent::Failed { error } => format!("failed: {error}"),
             _ => return,
         };

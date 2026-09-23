@@ -122,8 +122,12 @@ pub enum RunEvent {
         /// The decision applied.
         decision: ApprovalDecision,
     },
+    /// Context summarization has started.
+    ContextCompacting,
     /// Durable summary saved at a safe boundary between model requests.
     ContextCheckpoint { summary: String },
+    /// The run reached its hard turn cap with a saved handoff and suggested next steps.
+    Incomplete { result: String },
     /// The model answered with plain text; the run is complete.
     Finished {
         /// The final answer.
@@ -464,7 +468,35 @@ pub async fn run_task_with_policy(
             return Err(error);
         }
     }
-    let error = format!("max turns overall ({}) reached without a final answer; completed work and a context checkpoint are saved for your next message", policy.total_turns);
+    if policy.context_token_budget != usize::MAX {
+        let prompt = "The request is still incomplete because the turn limit was reached. Without using tools, briefly report what was completed, what remains, and concrete follow-up tasks. Do not claim the task is finished.";
+        let mut handoff = messages.clone();
+        handoff.push(ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: prompt.to_owned(),
+        });
+        let details = llm
+            .chat(&handoff, None)
+            .await
+            .ok()
+            .and_then(|answer| answer.text());
+        let result = format!(
+            "Task incomplete after {} turns. Completed work and a context checkpoint are saved.\n\n{}",
+            policy.total_turns,
+            details.filter(|text| !text.trim().is_empty()).unwrap_or_else(|| "Follow-up tasks: Review the completed work, then send your next instruction to continue from the checkpoint.".to_owned())
+        );
+        emit(RunEvent::Incomplete {
+            result: result.clone(),
+        })
+        .await
+        .ok();
+        return Ok(result);
+    }
+    let error = format!(
+        "max turns overall ({}) reached without a final answer",
+        policy.total_turns
+    );
     emit(RunEvent::Failed {
         error: error.clone(),
     })
@@ -504,6 +536,7 @@ async fn compact_context(
     if older.is_empty() {
         return Ok(());
     }
+    events.send(RunEvent::ContextCompacting).await.ok();
     let mut summary = String::new();
     let mut batch = String::new();
     let max_chars = policy

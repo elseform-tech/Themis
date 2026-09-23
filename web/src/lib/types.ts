@@ -131,7 +131,9 @@ export type ThreadEvent =
   | { kind: 'tool_started'; tool: string; summary: string }
   | { kind: 'tool_finished'; tool: string; ok: boolean; output?: string }
   | { kind: 'approval_decided'; tool: string; decision: ApprovalDecision }
+  | { kind: 'context_compacting' }
   | { kind: 'context_checkpoint'; summary: string }
+  | { kind: 'incomplete'; result: string }
   | { kind: 'finished'; result: string }
   | { kind: 'failed'; error: string };
 
@@ -147,6 +149,7 @@ export interface PersistedMessage {
   text: string;
   runId?: string;
   final?: boolean;
+  incomplete?: boolean;
   tool?: { name: string; ok?: boolean; output?: string };
 }
 

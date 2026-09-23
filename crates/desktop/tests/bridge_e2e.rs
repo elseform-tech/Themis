@@ -178,6 +178,8 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::Finished { .. } => "finished",
             ThreadEvent::Failed { .. } => "failed",
             ThreadEvent::ContextCheckpoint { .. } => "context_checkpoint",
+            ThreadEvent::ContextCompacting => "context_compacting",
+            ThreadEvent::Incomplete { .. } => "incomplete",
         })
         .collect()
 }

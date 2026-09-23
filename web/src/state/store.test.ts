@@ -70,6 +70,25 @@ beforeEach(() => {
 });
 
 describe("thread lifecycle events", () => {
+  it("shows compaction only while a checkpoint is being written", () => {
+    let s = withThread();
+    s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 10 }));
+    s = applyThreadEvent(s, envelope({ kind: "context_compacting" }));
+    expect(s.compacting[THREAD.id]).toBe(true);
+    s = applyThreadEvent(s, envelope({ kind: "context_checkpoint", summary: "done" }));
+    expect(s.compacting[THREAD.id]).toBe(false);
+    s = applyThreadEvent(s, envelope({ kind: "context_compacting" }));
+    s = applyThreadEvent(s, envelope({ kind: "failed", error: "summary failed" }));
+    expect(s.compacting[THREAD.id]).toBe(false);
+  });
+  it("shows a capped request as incomplete without an error toast", () => {
+    let s = withThread();
+    s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 1 }));
+    s = applyThreadEvent(s, envelope({ kind: "incomplete", result: "Task incomplete. Follow-up tasks: verify." }));
+    expect(s.running[THREAD.id]).toBe(false);
+    expect(s.messages[THREAD.id]?.slice(-1)[0]).toMatchObject({ role: "assistant", final: true, incomplete: true });
+    expect(s.toasts).toHaveLength(0);
+  });
   it("restores persisted conversation and marks an unfinished run interrupted", () => {
     let s = withThread();
     s = reducer(s, { type: "thread/history-loaded", threadId: THREAD.id, history: [

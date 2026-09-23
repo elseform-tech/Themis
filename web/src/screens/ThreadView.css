@@ -328,7 +328,7 @@
 .themis-request-error { font-size: .8125rem; }
 .themis-request-error summary { cursor: pointer; }
 
-.themis-run-progress { font-size: .8125rem; color: var(--themis-text-2); padding: 6px 0; }
+.themis-run-progress { position: sticky; bottom: 0; z-index: 1; font-size: .8125rem; color: var(--themis-text-2); padding: 6px 0; background: var(--themis-canvas); }
 .themis-run-status { display: flex; align-items: center; gap: 12px; }
 .themis-run-status time { font-size: .75rem; font-variant-numeric: tabular-nums; color: var(--themis-text-3); }
 .themis-shimmer { background: linear-gradient(100deg, var(--themis-text-2) 30%, var(--themis-text) 50%, var(--themis-text-2) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }

@@ -84,6 +84,7 @@ export interface AppState {
   streams: Record<string, string>;
   traces: Record<string, ToolTraceEntry[]>;
   running: Record<string, boolean>;
+  compacting: Record<string, boolean>;
   runStartedAt: Record<string, number>;
   diffs: Record<string, DiffState | null>;
   comments: Record<string, ThreadComment[]>;
@@ -183,6 +184,7 @@ export const initialState: AppState = {
   streams: {},
   traces: {},
   running: {},
+  compacting: {},
   runStartedAt: {},
   diffs: {},
   comments: {},
@@ -284,6 +286,7 @@ export function applyThreadEvent(
         traces: { ...next.traces, [threadId]: [] },
         runStartedAt: { ...next.runStartedAt, [threadId]: Date.now() },
         streams: { ...next.streams, [threadId]: "" },
+        compacting: { ...next.compacting, [threadId]: false },
       };
       return next;
     }
@@ -350,7 +353,9 @@ export function applyThreadEvent(
         ok: event.decision === "deny" ? false : undefined,
       });
     }
-    case "context_checkpoint": return state;
+    case "context_compacting": return { ...state, compacting: { ...state.compacting, [threadId]: true } };
+    case "context_checkpoint": return { ...state, compacting: { ...state.compacting, [threadId]: false } };
+    case "incomplete":
     case "finished": {
       let next = appendMessage(state, threadId, {
         id: newId("msg"),
@@ -358,10 +363,12 @@ export function applyThreadEvent(
         text: event.result,
         runId,
         final: true,
+        incomplete: event.kind === "incomplete",
       });
       next = {
         ...next,
         streams: { ...next.streams, [threadId]: "" },
+        compacting: { ...next.compacting, [threadId]: false },
         approvals: next.approvals.filter(approval => approval.thread_id !== threadId),
       };
       return setThreadRunning(next, threadId, false);
@@ -378,6 +385,7 @@ export function applyThreadEvent(
       next = {
         ...next,
         streams: { ...next.streams, [threadId]: "" },
+        compacting: { ...next.compacting, [threadId]: false },
         approvals: next.approvals.filter(approval => approval.thread_id !== threadId),
       };
       return setThreadRunning(next, threadId, false);

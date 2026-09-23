@@ -68,6 +68,64 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
 }
 
 #[tokio::test]
+async fn hard_cap_returns_incomplete_handoff_without_failing() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("call_1", "write_file", json!({"file_path":"progress.txt","content":"step 1\n","append":true})),
+            common::final_text_body("The user requested ordered steps; step 1 was written to progress.txt."),
+            common::final_text_body("Completed: step 1 in progress.txt. Follow-up tasks: write step 2 and verify the file."),
+        ],
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let tools = boxed_tools(dir.path(), Arc::clone(&approvals)).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let answer = run_task_with_policy(
+        llm,
+        tools,
+        "Write ordered steps".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            segment_turns: 1,
+            total_turns: 1,
+            context_token_budget: 2000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert!(answer.contains("Task incomplete after 1 turns"));
+    assert!(answer.contains("Follow-up tasks: write step 2"));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("progress.txt")).unwrap(),
+        "step 1\n"
+    );
+    let events = common::drain(&mut rx).await;
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Incomplete { .. })));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { .. })));
+}
+
+#[tokio::test]
 async fn mock_multi_turn_edit_writes_file_and_finishes() {
     let server = MockServer::start().await;
     let tmp = tempfile::tempdir().unwrap();
