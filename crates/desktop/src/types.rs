@@ -439,6 +439,12 @@ pub struct Settings {
     pub default_provider: ProviderKind,
     pub default_model: String,
     pub max_turns: u32,
+    #[serde(default = "default_context_messages")]
+    pub context_messages: u32,
+    #[serde(default = "default_approval_timeout_seconds")]
+    pub approval_timeout_seconds: u32,
+    #[serde(default)]
+    pub confirm_reads: bool,
     /// Recently opened project roots (most recent first).
     #[serde(default)]
     pub recent_roots: Vec<String>,
@@ -470,6 +476,14 @@ const fn default_text_size() -> u32 {
     13
 }
 
+pub const fn default_context_messages() -> u32 {
+    20
+}
+
+pub const fn default_approval_timeout_seconds() -> u32 {
+    300
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -480,6 +494,9 @@ impl Default for Settings {
             default_provider: ProviderKind::Go,
             default_model: String::new(),
             max_turns: 20,
+            context_messages: default_context_messages(),
+            approval_timeout_seconds: default_approval_timeout_seconds(),
+            confirm_reads: false,
             recent_roots: Vec::new(),
             concurrency_limit: default_concurrency_limit(),
             automations_enabled: default_automations_enabled(),
@@ -502,6 +519,12 @@ pub struct SettingsPatch {
     pub default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_messages: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_timeout_seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm_reads: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recent_roots: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -943,6 +966,9 @@ mod tests {
                 "default_provider": "go",
                 "default_model": "",
                 "max_turns": 20,
+                "context_messages": 20,
+                "approval_timeout_seconds": 300,
+                "confirm_reads": false,
                 "recent_roots": [],
                 "concurrency_limit": 3,
                 "automations_enabled": true,

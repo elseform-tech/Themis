@@ -10,9 +10,10 @@ checkout; integrate changes with your Git client when ready.
    [maintainer-distribution](maintainer-distribution.md)) and open it.
 2. Drag **Themis** into Applications and launch it.
 
-Themis keeps its data outside your projects: settings in `settings.json` under
-the Tauri app-data directory. Entered API keys stay in backend memory for the
-current app session; Go can also read `OPENCODE_KEY` from its environment.
+Themis keeps its data outside your projects: settings in `settings.json` and
+conversation history in `sessions.sqlite3` under the Tauri app-data directory.
+Entered API keys are stored in macOS Keychain; Go can also read `OPENCODE_KEY`
+from its environment.
 
 ## Getting started
 
@@ -27,10 +28,10 @@ work in isolation. Open an existing folder through the project actions menu.
 ## Keys
 
 Use `OPENCODE_KEY` in the environment when launching Themis, or enter a key in
-Settings → Models & connections → Manage key → **Use for this session**.
-Entered keys remain only in backend memory until the app closes. They are not
-saved in the OS keychain, a database, settings files, or browser storage.
-Forgetting a session key does not unset an environment key. A Finder launch
+Settings → Models & connections → Manage key → **Save key**.
+Entered keys remain in macOS Keychain across app restarts. They are not saved
+in the conversation database, settings files, or browser storage.
+Forgetting a saved key does not unset an environment key. A Finder launch
 may not inherit environment variables exported by your shell.
 
 **Key available** reports presence only. **Test connection & load models**
@@ -64,12 +65,15 @@ backend configuration.
   an overlay after 300 ms. It closes 700 ms after leaving, unless focus is inside.
   Hover reveal can be disabled in Appearance. A visible button always reopens it.
 - Threads appear under their project. Rename long titles with the pencil beside the sidebar thread.
-  Drafts, conversation display, selection and scroll positions restore locally.
+  Drafts, selection and scroll positions restore locally. Conversation turns and
+  completed tool events restore from SQLite.
 - Enter or ⌘/Ctrl+Enter sends; Shift+Enter inserts a newline.
   ⌘/Ctrl+Shift+O or the composer + starts a new thread.
 
 Recent projects are remembered (max 10) and reopened automatically on launch;
-threads that were still running at shutdown are marked **recovered**.
+threads that were still running at shutdown are marked **recovered**. The last
+saved events remain visible, but the agent does not automatically rerun an
+interrupted tool or request. Review any changes before sending a follow-up.
 
 ## Thread changes and removal
 
@@ -88,7 +92,8 @@ summary, and the risk level (`read`, `write`, `execute`, `network`,
 - **Always** — allow this tool for the rest of the run (cached per tool).
 - **Deny** — refuse; the agent sees the denial and works around it or stops.
 
-Reads are auto-allowed. If you ignore a dialog for ~5 minutes it denies
+Reads are auto-allowed unless **Ask before read tools** is enabled in Permissions.
+If you ignore a dialog until the configured timeout, it denies
 automatically — hanging approvals never resolve to "yes". See
 [sandbox](sandbox.md) for the full policy.
 
@@ -136,10 +141,11 @@ The thread model field also accepts an explicit ID.
 
 ## Settings reference
 
-Settings has General, Appearance, Models & connections, and Permissions sections.
+Settings has General, Appearance, Models & connections, Permissions, and Advanced sections.
 Ordinary preferences save on change; text inputs save when focus leaves the field.
 Errors appear inline, and rejected changes leave the previous preferences intact.
-Permissions describes the fixed protections; it does not offer a blanket bypass.
+Permissions lets you require approval for read tools and set the approval
+timeout. Writes and commands still require approval.
 
 Preferences persisted to `settings.json`:
 
@@ -149,6 +155,9 @@ Preferences persisted to `settings.json`:
 | `default_provider` | Provider for new threads | `go` |
 | `default_model` | Model for new threads (`""` = provider default) | `""` |
 | `max_turns` | Max agent turns per run (backend validates 1–200) | `20` |
+| `context_messages` | Prior user/final assistant messages sent to the model (1–100) | `20` |
+| `approval_timeout_seconds` | Seconds before an unanswered approval is denied (30–600) | `300` |
+| `confirm_reads` | Require approval for read tools | `false` |
 | `recent_roots` | Recently opened projects, most recent first (max 10, managed automatically) | `[]` |
 | `concurrency_limit` | Max parallel runs across all threads (1–16); sends past the limit are rejected | `3` |
 | `automations_enabled` | Global automation kill-switch | `true` |
@@ -187,13 +196,12 @@ electricity.
 
 **What are the limits?**
 `max_turns` caps turns per run; `concurrency_limit` caps parallel runs;
-approval dialogs deny after ~5 minutes; each shell invocation captures at most
+approval dialogs deny after the configured timeout (default 5 minutes); each shell invocation captures at most
 32 KiB of output; provider HTTP calls time out after 120 s.
 
 **Where are my keys?**
-Entered keys stay in backend memory until the app closes. Go also reads
-`OPENCODE_KEY` from the environment. Themis does not write keys to the keychain
-or a database. Existing keychain entries from older builds are untouched.
+Entered keys stay in macOS Keychain until you forget them. Go also reads
+`OPENCODE_KEY` from the environment. Keys are not written to SQLite or settings.
 
 **Why is my project read-only?**
 Only git checkouts get worktrees. Folders without git open read-only: the

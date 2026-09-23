@@ -29,7 +29,7 @@ is denied outright).
   literal pipe character as an argument.
 - **Touch your checkout directly.** On git projects the agent works in a
   per-thread worktree; your files change only when you press **Merge**.
-- **See your keys.** API keys live in backend session memory or the launch environment and only presence
+- **See your keys.** API keys live in macOS Keychain or the launch environment and only presence
   (`set`/`missing`) crosses the bridge to the UI. Diagnostics, settings
   snapshots, logs, and error strings never carry secret values.
 - **Act silently on writes.** Every non-read tool call needs your decision
@@ -75,10 +75,10 @@ deletes the thread, its worktree, and its branch.
 - **Execution timeout**: shell commands default to 120 seconds.
 - **Environment scrubbing**: child processes receive an allowlisted environment;
   variable names containing KEY, TOKEN or SECRET are excluded. Go reads
-  `OPENCODE_KEY` in the backend; entered keys remain in backend session memory.
+  `OPENCODE_KEY` in the backend; entered keys remain in macOS Keychain.
 
 Related real timeouts: provider HTTP calls time out after 120 s, and approval
-dialogs deny after ~5 minutes.
+dialogs deny after the configured timeout (default 5 minutes).
 
 ## On a suspicious action
 

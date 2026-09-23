@@ -27,6 +27,18 @@ use serde::{Deserialize, Serialize};
 use crate::skills::{compose_task, filter_tools, Skill};
 use crate::tools::{Approval, ApprovalHook, RiskLevel, ToolAction};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConversationRole {
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationTurn {
+    pub role: ConversationRole,
+    pub text: String,
+}
+
 /// Serializable approval outcome recorded at an approval checkpoint.
 ///
 /// This mirrors [`Approval`] (which is not serde-derived) so [`RunEvent`] can
@@ -228,6 +240,7 @@ pub async fn run_task(
         llm,
         tools,
         task,
+        Vec::new(),
         approvals,
         max_turns,
         events,
@@ -237,10 +250,15 @@ pub async fn run_task(
 }
 
 /// Stops between model requests and tools. An action already executing finishes first.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "run inputs match the runtime boundary"
+)]
 pub async fn run_task_with_stop(
     llm: Arc<dyn LLMProvider>,
     tools: Vec<Box<dyn ToolT>>,
     task: String,
+    history: Vec<ConversationTurn>,
     approvals: Arc<dyn ApprovalHook>,
     max_turns: usize,
     events: tokio::sync::mpsc::Sender<RunEvent>,
@@ -257,11 +275,7 @@ pub async fn run_task_with_stop(
     .await
     .ok();
 
-    let mut messages = vec![ChatMessage { role: ChatRole::System, message_type: MessageType::Text, content: "Organize complex work into a few meaningful milestones, usually Inspect, Make changes, and Verify. Start a new milestone with a short public update whose first line is exactly Milestone: followed by a concise title, then an optional one-sentence update. Group related tool calls under that milestone; do not narrate every call or repeat the milestone heading. Skip milestones for simple questions. Report only public actions and outcomes, never private reasoning. Finish with a concise answer based on actual tool results.".to_owned() }, ChatMessage {
-        role: ChatRole::User,
-        message_type: MessageType::Text,
-        content: task,
-    }];
+    let mut messages = initial_messages(history, task);
 
     for _ in 0..max_turns {
         check_stopped(&stopped, &events).await?;
@@ -393,6 +407,24 @@ pub async fn run_task_with_stop(
     Err(anyhow!(error))
 }
 
+fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMessage> {
+    let mut messages = vec![ChatMessage { role: ChatRole::System, message_type: MessageType::Text, content: "Organize complex work into a few meaningful milestones, usually Inspect, Make changes, and Verify. Start a new milestone with a short public update whose first line is exactly Milestone: followed by a concise title, then an optional one-sentence update. Group related tool calls under that milestone; do not narrate every call or repeat the milestone heading. Skip milestones for simple questions. Report only public actions and outcomes, never private reasoning. Finish with a concise answer based on actual tool results.".to_owned() }];
+    messages.extend(history.into_iter().map(|turn| ChatMessage {
+        role: match turn.role {
+            ConversationRole::User => ChatRole::User,
+            ConversationRole::Assistant => ChatRole::Assistant,
+        },
+        message_type: MessageType::Text,
+        content: turn.text,
+    }));
+    messages.push(ChatMessage {
+        role: ChatRole::User,
+        message_type: MessageType::Text,
+        content: task,
+    });
+    messages
+}
+
 async fn check_stopped(
     stopped: &AtomicBool,
     events: &tokio::sync::mpsc::Sender<RunEvent>,
@@ -494,6 +526,28 @@ mod tests {
             summary: "test".to_owned(),
             risk: RiskLevel::Write,
         }
+    }
+
+    #[test]
+    fn prior_turns_precede_new_task_in_model_context() {
+        let messages = initial_messages(
+            vec![
+                ConversationTurn {
+                    role: ConversationRole::User,
+                    text: "Remember ORBIT-17".into(),
+                },
+                ConversationTurn {
+                    role: ConversationRole::Assistant,
+                    text: "Saved".into(),
+                },
+            ],
+            "What was the code?".into(),
+        );
+        assert_eq!(messages.len(), 4);
+        assert!(matches!(messages[1].role, ChatRole::User));
+        assert_eq!(messages[1].content, "Remember ORBIT-17");
+        assert!(matches!(messages[2].role, ChatRole::Assistant));
+        assert_eq!(messages[3].content, "What was the code?");
     }
 
     #[test]

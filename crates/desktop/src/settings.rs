@@ -8,6 +8,10 @@ use crate::types::{Settings, SettingsPatch};
 pub const MAX_TURNS_MIN: i64 = 1;
 /// Inclusive bounds for `max_turns` updates.
 pub const MAX_TURNS_MAX: i64 = 200;
+pub const CONTEXT_MESSAGES_MIN: i64 = 1;
+pub const CONTEXT_MESSAGES_MAX: i64 = 100;
+pub const APPROVAL_TIMEOUT_MIN: i64 = 30;
+pub const APPROVAL_TIMEOUT_MAX: i64 = 600;
 
 /// Inclusive bounds for `concurrency_limit` updates.
 pub const CONCURRENCY_MIN: i64 = 1;
@@ -90,6 +94,21 @@ impl SettingsStore {
                 current.max_turns = u32::try_from(max_turns).map_err(|_| {
                     format!("max_turns must be between {MAX_TURNS_MIN} and {MAX_TURNS_MAX}")
                 })?;
+            }
+            if let Some(count) = patch.context_messages {
+                if !(CONTEXT_MESSAGES_MIN..=CONTEXT_MESSAGES_MAX).contains(&count) {
+                    return Err(format!("context_messages must be between {CONTEXT_MESSAGES_MIN} and {CONTEXT_MESSAGES_MAX}"));
+                }
+                current.context_messages = count as u32;
+            }
+            if let Some(seconds) = patch.approval_timeout_seconds {
+                if !(APPROVAL_TIMEOUT_MIN..=APPROVAL_TIMEOUT_MAX).contains(&seconds) {
+                    return Err(format!("approval_timeout_seconds must be between {APPROVAL_TIMEOUT_MIN} and {APPROVAL_TIMEOUT_MAX}"));
+                }
+                current.approval_timeout_seconds = seconds as u32;
+            }
+            if let Some(confirm) = patch.confirm_reads {
+                current.confirm_reads = confirm;
             }
             if let Some(theme) = patch.theme {
                 current.theme = theme;
@@ -193,6 +212,38 @@ mod tests {
         // A fresh store over the same path sees the saved values.
         let reopened = SettingsStore::load(path);
         assert_eq!(reopened.get().await, updated);
+    }
+
+    #[tokio::test]
+    async fn context_and_approval_limits_validate_and_survive_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let store = SettingsStore::load(path.clone());
+        assert!(store
+            .update(SettingsPatch {
+                context_messages: Some(0),
+                ..Default::default()
+            })
+            .await
+            .is_err());
+        assert!(store
+            .update(SettingsPatch {
+                approval_timeout_seconds: Some(0),
+                ..Default::default()
+            })
+            .await
+            .is_err());
+        let saved = store
+            .update(SettingsPatch {
+                context_messages: Some(24),
+                approval_timeout_seconds: Some(90),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(saved.context_messages, 24);
+        assert_eq!(saved.approval_timeout_seconds, 90);
+        assert_eq!(SettingsStore::load(path).get().await, saved);
     }
 
     #[tokio::test]

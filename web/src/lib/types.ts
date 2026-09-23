@@ -140,6 +140,20 @@ export interface ThreadEventEnvelope {
   event: ThreadEvent;
 }
 
+export interface PersistedMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  text: string;
+  runId?: string;
+  final?: boolean;
+  tool?: { name: string; ok?: boolean; output?: string };
+}
+
+export type HistoryItem =
+  | { kind: "user"; run_id: string; text: string }
+  | { kind: "event"; envelope: ThreadEventEnvelope }
+  | { kind: "legacy"; message: PersistedMessage };
+
 export interface ApprovalRequest {
   thread_id: string;
   approval_id: string;
@@ -189,6 +203,9 @@ export interface Settings {
   default_provider: ProviderKind;
   default_model: string;
   max_turns: number;
+  context_messages: number;
+  approval_timeout_seconds: number;
+  confirm_reads: boolean;
   recent_roots: string[];
   /** Max parallel agent runs across all threads (1..=16). */
   concurrency_limit: number;

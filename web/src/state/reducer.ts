@@ -12,20 +12,14 @@ import type {
   Skill,
   ThreadComment,
   ThreadEventEnvelope,
+  HistoryItem,
+  PersistedMessage,
   ThreadInfo,
 } from "../lib/types";
 import type { ToastItem, ToastTone } from "../components";
 
-export type MessageRole = "user" | "assistant" | "system";
-
-export interface ChatMessage {
-  id: string;
-  role: MessageRole;
-  text: string;
-  runId?: string;
-  final?: boolean;
-  tool?: { name: string; ok?: boolean; output?: string };
-}
+export type MessageRole = PersistedMessage["role"];
+export type ChatMessage = PersistedMessage;
 
 export interface ToolTraceEntry {
   id: string;
@@ -126,6 +120,7 @@ export type AppAction =
       threadsByProject: Record<string, ThreadInfo[]>;
     }
   | { type: "thread/event"; envelope: ThreadEventEnvelope }
+  | { type: "thread/history-loaded"; threadId: string; history: HistoryItem[] }
   | { type: "message/append"; threadId: string; message: ChatMessage }
   | { type: "diff/set"; threadId: string; diff: DiffState | null }
   | { type: "comment/added"; threadId: string; comment: ThreadComment }
@@ -161,6 +156,9 @@ export const DEFAULT_SETTINGS: Settings = {
   default_provider: "go",
   default_model: "",
   max_turns: 20,
+  context_messages: 20,
+  approval_timeout_seconds: 300,
+  confirm_reads: false,
   recent_roots: [],
   concurrency_limit: 3,
   automations_enabled: true,
@@ -550,6 +548,24 @@ export function reducer(state: AppState, action: AppAction): AppState {
     }
     case "thread/event": {
       return applyThreadEvent(state, action.envelope);
+    }
+    case "thread/history-loaded": {
+      let next: AppState = {
+        ...state,
+        messages: { ...state.messages, [action.threadId]: [] },
+        streams: { ...state.streams, [action.threadId]: "" },
+        traces: { ...state.traces, [action.threadId]: [] },
+      };
+      for (const item of action.history) {
+        if (item.kind === "user") next = appendMessage(next, action.threadId, { id: newId("msg"), role: "user", text: item.text, runId: item.run_id });
+        else if (item.kind === "legacy") next = appendMessage(next, action.threadId, item.message);
+        else next = applyThreadEvent(next, item.envelope);
+      }
+      if (next.running[action.threadId]) {
+        next = appendMessage(next, action.threadId, { id: newId("msg"), role: "system", text: "Run interrupted. Review any changes, then send a follow-up to continue." });
+        next = setThreadRunning(next, action.threadId, false);
+      }
+      return { ...next, toasts: state.toasts };
     }
     case "message/append": {
       return appendMessage(state, action.threadId, action.message);

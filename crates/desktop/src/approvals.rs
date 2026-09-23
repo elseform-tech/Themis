@@ -45,6 +45,7 @@ pub struct DesktopApprovalHook {
     sink: Arc<dyn EventSink>,
     pending: PendingMap,
     timeout: Duration,
+    confirm_reads: bool,
     test_decisions: Option<Arc<Mutex<VecDeque<Approval>>>>,
 }
 
@@ -62,6 +63,7 @@ impl DesktopApprovalHook {
             sink,
             pending,
             timeout: APPROVAL_TIMEOUT,
+            confirm_reads: false,
             test_decisions: None,
         }
     }
@@ -70,6 +72,12 @@ impl DesktopApprovalHook {
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    #[must_use]
+    pub fn with_read_approval(mut self, confirm_reads: bool) -> Self {
+        self.confirm_reads = confirm_reads;
         self
     }
 
@@ -84,10 +92,10 @@ impl DesktopApprovalHook {
 
 impl ApprovalHook for DesktopApprovalHook {
     fn approve(&self, action: &ToolAction) -> Approval {
-        if action.risk == CoreRisk::Read {
+        if action.risk == CoreRisk::Read && !self.confirm_reads {
             return Approval::AllowOnce;
         }
-        if !self.is_git {
+        if !self.is_git && action.risk != CoreRisk::Read {
             return Approval::Deny;
         }
         if let Some(queue) = &self.test_decisions {
@@ -180,6 +188,19 @@ mod tests {
             Approval::AllowOnce
         );
         assert!(rx.try_recv().is_err(), "no dialog for reads");
+    }
+
+    #[test]
+    fn read_confirmation_can_require_an_approval() {
+        let (hook, mut rx) = hook_with_sink(true);
+        let hook = hook
+            .with_read_approval(true)
+            .with_timeout(Duration::from_millis(10));
+        assert_eq!(
+            hook.approve(&action("read_file", CoreRisk::Read)),
+            Approval::Deny
+        );
+        assert!(matches!(rx.try_recv(), Ok(TestEvent::Approval(_))));
     }
 
     #[test]

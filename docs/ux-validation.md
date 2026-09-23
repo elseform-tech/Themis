@@ -8,8 +8,8 @@
 - Direct workspace entry without onboarding. Name-only project creation under a configurable `~/ThemisOS/Projects` root, collision validation and Git initialization.
 - Settings split into General, Appearance, Models & connections and Permissions; ordinary preferences save independently with errors and rollback.
 - Diff sidebar and its entry points hidden. Worktree actions remain in Thread options. Tool calls live in the conversation in execution order, with expandable arguments and completion state; no separate activity area above the composer.
-- Per-thread local drafts, conversation display, selected thread and scroll restoration. These are UI history, not a replay of an interrupted agent run.
-- No keychain dependency or persisted API keys. Go uses `OPENCODE_KEY`, or entered keys remain in backend memory for the session. Existing keychain entries are untouched. Hashing a key would prevent using it for provider authentication.
+- Per-thread local drafts, selected thread and scroll restoration. Conversation history and completed run events are persisted in SQLite; an interrupted run is shown for review, not automatically replayed.
+- Entered API keys persist in macOS Keychain. Go can also use `OPENCODE_KEY` from the launch environment.
 - Stop checks safe boundaries, resolves pending approvals and frees run capacity. Merged threads cannot send new work into the main checkout.
 
 ## Local checks

@@ -35,6 +35,7 @@ npx tauri dev        # from crates/desktop
 npx tauri build      # from crates/desktop
 ```
 
-Keys entered in Settings live only in backend memory for the current app session.
-OpenCode Go can use `OPENCODE_KEY` exported in the app launch environment. Keys
-are never written to the keychain, SQLite, settings, or frontend storage.
+Keys entered in Settings are stored in macOS Keychain and remain available after
+restart. OpenCode Go can also use `OPENCODE_KEY` in the app launch environment.
+Conversation history is stored in SQLite under the app-data directory; keys are
+never stored in SQLite, settings, or frontend storage.

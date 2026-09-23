@@ -12,13 +12,14 @@ pub mod secrets;
 pub mod settings;
 pub mod sink;
 pub mod state;
+pub mod transcript;
 pub mod types;
 pub mod updater;
 pub mod worktree;
 
 use std::sync::Arc;
 
-use secrets::SessionStore;
+use secrets::ProductionSecretStore;
 use sink::TauriSink;
 use state::AppState;
 use tauri::Manager;
@@ -41,7 +42,7 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             let state = AppState::new(
                 data_dir.join("settings.json"),
-                Arc::new(SessionStore::new()),
+                Arc::new(ProductionSecretStore::new()),
             );
             state.set_scheduler_sink(Arc::new(TauriSink::new(app.handle().clone())));
             app.manage(state);
@@ -56,6 +57,8 @@ pub fn run() {
             commands::list_go_models,
             commands::create_thread,
             commands::get_thread,
+            commands::get_thread_history,
+            commands::import_legacy_history,
             commands::list_threads,
             commands::merge_thread,
             commands::discard_thread,

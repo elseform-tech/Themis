@@ -12,11 +12,13 @@ import {
   type ReactNode,
 } from "react";
 import type { ToastTone } from "../components";
-import type { ProjectInfo, ThreadInfo } from "../lib/types";
+import type { PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
 import type { Settings } from "../lib/types";
 import {
   getSecretStatus,
   getSettings,
+  getThreadHistory,
+  importLegacyHistory,
   listAutomations,
   listReviewItems,
   listSkills,
@@ -101,13 +103,13 @@ function describeError(error: unknown): string {
 export { describeError };
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState, defaults => ({ ...defaults, messages: readSession("messages", {}) }));
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const legacyMessages = useRef(readSession<Record<string, PersistedMessage[]>>("messages", {}));
   const restoredSession = useRef(false);
   const savedSelection = useRef(readSession<{ root: string; threadId: string } | null>("selection", null));
   useEffect(() => {
     if (restoredSession.current && state.activeProjectRoot && state.activeThreadId) writeSession("selection", { root: state.activeProjectRoot, threadId: state.activeThreadId });
   }, [state.activeProjectRoot, state.activeThreadId]);
-  useEffect(() => { writeSession("messages", state.messages); }, [state.messages]);
 
   // Subscribe to backend events once on mount.
   useEffect(() => {
@@ -178,6 +180,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const threads = await listThreads(root);
           if (!cancelled) {
             dispatch({ type: "thread/listed", projectRoot: root, threads });
+            await Promise.all(threads.map(async (thread) => {
+              try {
+                let history = await getThreadHistory(thread.id);
+                const legacy = legacyMessages.current[thread.id];
+                if (history.length === 0 && legacy?.length) {
+                  await importLegacyHistory(thread.id, legacy);
+                  history = await getThreadHistory(thread.id);
+                }
+                if (!cancelled) dispatch({ type: "thread/history-loaded", threadId: thread.id, history });
+              } catch (error: unknown) {
+                if (!cancelled) toast(dispatch, `Could not restore ${thread.title}: ${describeError(error)}`, "warning");
+              }
+            }));
           }
         } catch (error: unknown) {
           if (!cancelled) {

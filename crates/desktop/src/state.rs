@@ -13,7 +13,7 @@ use std::sync::Arc;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use themis_core::providers::{ProviderConfig, GO_DEFAULT_MODEL, GO_MODEL_ENV_VAR};
-use themis_core::runtime::{run_task_with_stop, CachingApprovals, RunEvent};
+use themis_core::runtime::{run_task_with_stop, CachingApprovals, ConversationTurn, RunEvent};
 use themis_core::skills::{materialize_scripts, validate_skill_input};
 use themis_core::tools::{boxed_tools, ApprovalHook};
 
@@ -25,6 +25,7 @@ use crate::diff::{
 use crate::secrets::{MemoryStore, SecretStore};
 use crate::settings::SettingsStore;
 use crate::sink::EventSink;
+use crate::transcript::{HistoryItem, TranscriptStore};
 use crate::types::{
     ApprovalDecision, Automation, AutomationInput, Diagnostics, DiagnosticsError, DiffState,
     MergeResult, ProjectInfo, ProviderKind, ReviewItem, ReviewStatus, RunAutomationNow, RunHandle,
@@ -98,6 +99,9 @@ struct ThreadRecord {
 /// Snapshot of the thread fields a run needs (taken under one short lock).
 struct RunSnapshot {
     reasoning_effort: Option<String>,
+    history: Vec<ConversationTurn>,
+    approval_timeout_seconds: u32,
+    confirm_reads: bool,
     /// Tool sandbox root: the shared project checkout.
     work_root: PathBuf,
     is_git: bool,
@@ -162,6 +166,7 @@ struct AppStateInner {
     threads: tokio::sync::RwLock<HashMap<String, ThreadRecord>>,
     pending: PendingMap,
     settings: SettingsStore,
+    transcript: TranscriptStore,
     secrets: Arc<dyn SecretStore>,
     custom_base_url_override: std::sync::Mutex<Option<String>>,
     worktrees_root: PathBuf,
@@ -260,6 +265,8 @@ impl AppState {
         secrets: Arc<dyn SecretStore>,
     ) -> Self {
         let app_dir = settings_app_dir(&settings_path);
+        let transcript = TranscriptStore::open(&app_dir.join("sessions.sqlite3"))
+            .expect("unable to open durable session store");
         let (threads, mut report) = load_and_reconcile(&worktrees_root, &registry_path);
         let skills_path = app_dir.join("skills.json");
         let automations_path = app_dir.join("automations.json");
@@ -274,6 +281,7 @@ impl AppState {
                 threads: tokio::sync::RwLock::new(threads),
                 pending: PendingMap::default(),
                 settings: SettingsStore::load(settings_path),
+                transcript,
                 secrets,
                 custom_base_url_override: std::sync::Mutex::new(None),
                 worktrees_root,
@@ -615,6 +623,20 @@ impl AppState {
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))
     }
 
+    pub async fn get_thread_history(&self, thread_id: &str) -> Result<Vec<HistoryItem>, String> {
+        self.get_thread(thread_id).await?;
+        self.inner.transcript.history(thread_id)
+    }
+
+    pub async fn import_legacy_history(
+        &self,
+        thread_id: &str,
+        messages: &[serde_json::Value],
+    ) -> Result<(), String> {
+        self.get_thread(thread_id).await?;
+        self.inner.transcript.import_legacy(thread_id, messages)
+    }
+
     /// Lists the threads on `project_root` (empty when the project has none).
     pub async fn list_threads(&self, project_root: String) -> Result<Vec<ThreadInfo>, String> {
         let root = canonical_project_dir(&project_root)?;
@@ -683,6 +705,10 @@ impl AppState {
         reasoning_effort: Option<String>,
     ) -> Result<RunHandle, String> {
         let settings = self.inner.settings.get().await;
+        let history = self
+            .inner
+            .transcript
+            .context(&thread_id, settings.context_messages.clamp(1, 100) as usize)?;
         let snapshot = {
             let mut threads = self.inner.threads.write().await;
             let record = threads
@@ -726,6 +752,9 @@ impl AppState {
                 .collect();
             RunSnapshot {
                 reasoning_effort,
+                history,
+                approval_timeout_seconds: settings.approval_timeout_seconds.clamp(30, 600),
+                confirm_reads: settings.confirm_reads,
                 work_root: record.project_root.clone(),
                 is_git: record.is_git,
                 provider: record.provider,
@@ -733,6 +762,14 @@ impl AppState {
                 skills: resolved,
             }
         };
+        if let Err(error) = self
+            .inner
+            .transcript
+            .append_user(&thread_id, &run_id, &text)
+        {
+            self.finish_run(&thread_id).await;
+            return Err(error);
+        }
         self.persist_registry().await;
         // Clamp: updates are validated, but the file may predate validation.
         let max_turns = usize::try_from(settings.max_turns)
@@ -742,6 +779,15 @@ impl AppState {
             .spawn_run(&sink, &thread_id, &run_id, snapshot, text, max_turns)
             .await
         {
+            if let Err(save_error) = self.inner.transcript.append_event(&ThreadEventEnvelope {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+                event: ThreadEvent::Failed {
+                    error: error.clone(),
+                },
+            }) {
+                self.record_error("save_thread_event", save_error);
+            }
             self.finish_run(&thread_id).await;
             return Err(error);
         }
@@ -1015,7 +1061,10 @@ impl AppState {
                          before discarding"
                     ));
                 }
-                Some(_) => threads.remove(&thread_id).expect("checked above"),
+                Some(_) => {
+                    self.inner.transcript.delete_thread(&thread_id)?;
+                    threads.remove(&thread_id).expect("checked above")
+                }
                 None => return Err(format!("unknown thread '{thread_id}'")),
             }
         };
@@ -1227,12 +1276,18 @@ impl AppState {
                     snapshot.provider.as_str()
                 )
             })?;
-        let hook = Arc::new(DesktopApprovalHook::new(
-            thread_id.to_owned(),
-            snapshot.is_git,
-            Arc::clone(sink),
-            Arc::clone(&self.inner.pending),
-        ));
+        let hook = Arc::new(
+            DesktopApprovalHook::new(
+                thread_id.to_owned(),
+                snapshot.is_git,
+                Arc::clone(sink),
+                Arc::clone(&self.inner.pending),
+            )
+            .with_timeout(std::time::Duration::from_secs(u64::from(
+                snapshot.approval_timeout_seconds,
+            )))
+            .with_read_approval(snapshot.confirm_reads),
+        );
         let approvals: Arc<dyn ApprovalHook> = CachingApprovals::wrap(hook);
         // Materialize skill scripts into the run workroot BEFORE building
         // tools: a failure aborts the spawn (the caller resets `running`),
@@ -1276,6 +1331,14 @@ impl AppState {
                         themis_core::runtime::RunEvent::Finished { .. }
                             | themis_core::runtime::RunEvent::Failed { .. }
                     );
+                    let envelope = ThreadEventEnvelope {
+                        thread_id: pump_thread.clone(),
+                        run_id: pump_run.clone(),
+                        event: ThreadEvent::from(event.clone()),
+                    };
+                    if let Err(error) = pump_state.inner.transcript.append_event(&envelope) {
+                        pump_state.record_error("save_thread_event", error);
+                    }
                     if terminal {
                         pump_state.finish_run(&pump_thread_id).await;
                         pump_terminated.store(true, Ordering::SeqCst);
@@ -1288,11 +1351,7 @@ impl AppState {
                             .complete_automation_run(&pump_sink, &pump_run, &event)
                             .await;
                     }
-                    pump_sink.emit_thread_event(&ThreadEventEnvelope {
-                        thread_id: pump_thread.clone(),
-                        run_id: pump_run.clone(),
-                        event: ThreadEvent::from(event),
-                    });
+                    pump_sink.emit_thread_event(&envelope);
                 }
             });
             // A panicking run must neither stick the thread busy nor leave the
@@ -1302,6 +1361,7 @@ impl AppState {
                     llm,
                     themis_core::skills::filter_tools(tools, &skills),
                     themis_core::skills::compose_task(&task, &skills),
+                    snapshot.history,
                     approvals,
                     max_turns,
                     events_tx,
@@ -1326,11 +1386,15 @@ impl AppState {
                 state
                     .finish_automation_run(&sink, &run_id, format!("failed: {error}"))
                     .await;
-                sink.emit_thread_event(&ThreadEventEnvelope {
+                let envelope = ThreadEventEnvelope {
                     thread_id: thread_id.clone(),
                     run_id: run_id.clone(),
                     event: ThreadEvent::Failed { error },
-                });
+                };
+                if let Err(error) = state.inner.transcript.append_event(&envelope) {
+                    state.record_error("save_thread_event", error);
+                }
+                sink.emit_thread_event(&envelope);
             }
         });
         Ok(())

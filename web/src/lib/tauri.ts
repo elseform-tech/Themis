@@ -9,6 +9,8 @@ import type {
   AutomationInput,
   Diagnostics,
   DiffState,
+  HistoryItem,
+  PersistedMessage,
   UpdateStatus,
   MergeResult,
   ProjectInfo,
@@ -61,6 +63,14 @@ export function createThread(
 
 export function sendMessage(threadId: string, text: string, reasoningEffort?: string): Promise<RunHandle> {
   return invoke('send_message', { threadId, text, reasoningEffort: reasoningEffort || null });
+}
+
+export function getThreadHistory(threadId: string): Promise<HistoryItem[]> {
+  return invoke('get_thread_history', { threadId });
+}
+
+export function importLegacyHistory(threadId: string, messages: PersistedMessage[]): Promise<void> {
+  return invoke('import_legacy_history', { threadId, messages });
 }
 
 export function listDiff(threadId: string): Promise<DiffState> {

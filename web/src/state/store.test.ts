@@ -70,6 +70,17 @@ beforeEach(() => {
 });
 
 describe("thread lifecycle events", () => {
+  it("restores persisted conversation and marks an unfinished run interrupted", () => {
+    let s = withThread();
+    s = reducer(s, { type: "thread/history-loaded", threadId: THREAD.id, history: [
+      { kind: "user", run_id: "r1", text: "Remember ORBIT-17" },
+      { kind: "event", envelope: envelope({ kind: "started", task: "Remember ORBIT-17", max_turns: 5 }) },
+      { kind: "event", envelope: envelope({ kind: "tool_started", tool: "read_file", summary: "read a file" }) },
+    ] });
+    expect(s.messages[THREAD.id]?.[0]?.text).toBe("Remember ORBIT-17");
+    expect(s.messages[THREAD.id]?.slice(-1)[0]?.text).toContain("interrupted");
+    expect(s.running[THREAD.id]).toBe(false);
+  });
   it("started marks running and resets the trace", () => {
     let s = withThread();
     s = reducer(s, {
@@ -230,7 +241,10 @@ describe("settings", () => {
         theme: "light",
         default_provider: "anthropic",
         default_model: "claude",
-        max_turns: 20,
+      max_turns: 20,
+      context_messages: 20,
+      approval_timeout_seconds: 300,
+      confirm_reads: false,
         recent_roots: ["/repo"],
         concurrency_limit: 4,
         automations_enabled: true,

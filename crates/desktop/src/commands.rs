@@ -21,6 +21,7 @@ use tauri_plugin_updater::UpdaterExt;
 
 use crate::sink::{EventSink, TauriSink};
 use crate::state::AppState;
+use crate::transcript::HistoryItem;
 use crate::types::{
     ApprovalDecision, Automation, AutomationInput, Diagnostics, DiffState, MergeResult,
     ProjectInfo, ProviderKind, ReviewItem, ReviewStatus, RunAutomationNow, RunHandle, SecretStatus,
@@ -116,6 +117,31 @@ pub async fn get_thread(
     thread_id: String,
 ) -> Result<ThreadInfo, String> {
     record_cmd!(state, "get_thread", state.get_thread(&thread_id).await)
+}
+
+#[tauri::command]
+pub async fn get_thread_history(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<Vec<HistoryItem>, String> {
+    record_cmd!(
+        state,
+        "get_thread_history",
+        state.get_thread_history(&thread_id).await
+    )
+}
+
+#[tauri::command]
+pub async fn import_legacy_history(
+    state: State<'_, AppState>,
+    thread_id: String,
+    messages: Vec<serde_json::Value>,
+) -> Result<(), String> {
+    record_cmd!(
+        state,
+        "import_legacy_history",
+        state.import_legacy_history(&thread_id, &messages).await
+    )
 }
 
 /// Lists the threads on a project directory.

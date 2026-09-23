@@ -1,10 +1,85 @@
 //! API-key storage behind a trait.
 //!
-//! Credentials exist only in process memory or the launch environment.
+//! On macOS credentials live in Keychain; Go also accepts its launch environment.
 //! Values never cross the bridge back to the frontend.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+#[cfg(target_os = "macos")]
+pub type ProductionSecretStore = KeychainStore;
+#[cfg(not(target_os = "macos"))]
+pub type ProductionSecretStore = SessionStore;
+
+#[cfg(target_os = "macos")]
+const KEYCHAIN_SERVICE: &str = "ai.themis.desktop";
+
+#[cfg(target_os = "macos")]
+pub struct KeychainStore;
+
+#[cfg(target_os = "macos")]
+impl KeychainStore {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn keychain_get(provider: &str) -> Option<String> {
+        match security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, provider) {
+            Ok(bytes) => String::from_utf8(bytes)
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+            Err(error) if error.code() == security_framework_sys::base::errSecItemNotFound => None,
+            Err(error) => {
+                eprintln!("themis: keychain read failed for {provider}: {error}");
+                None
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Default for KeychainStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl SecretStore for KeychainStore {
+    fn has(&self, provider: &str) -> bool {
+        self.get(provider).is_some()
+    }
+
+    fn get(&self, provider: &str) -> Option<String> {
+        Self::keychain_get(provider).or_else(|| {
+            (provider == "go")
+                .then(|| std::env::var("OPENCODE_KEY").ok())
+                .flatten()
+                .filter(|value| !value.trim().is_empty())
+        })
+    }
+
+    fn set(&self, provider: &str, value: &str) -> Result<(), String> {
+        security_framework::passwords::set_generic_password(
+            KEYCHAIN_SERVICE,
+            provider,
+            value.as_bytes(),
+        )
+        .map_err(|error| format!("could not save {provider} key in Keychain: {error}"))
+    }
+
+    fn clear(&self, provider: &str) -> Result<(), String> {
+        match security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, provider) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == security_framework_sys::base::errSecItemNotFound => {
+                Ok(())
+            }
+            Err(error) => Err(format!(
+                "could not forget {provider} key in Keychain: {error}"
+            )),
+        }
+    }
+}
 
 /// Stores one API key per provider name (`go`, `openai`, `anthropic`, `custom`).
 pub trait SecretStore: Send + Sync {
@@ -124,16 +199,19 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod session_tests {
+#[cfg(all(test, target_os = "macos"))]
+mod keychain_tests {
     use super::*;
     #[test]
-    fn entered_keys_do_not_survive_a_new_session() {
-        let first = SessionStore::new();
-        first.set("openai", "synthetic-session-key").unwrap();
-        assert!(first.has("openai"));
-        assert!(!SessionStore::new().has("openai"));
-        first.clear("openai").unwrap();
-        assert!(!first.has("openai"));
+    fn entered_keys_survive_new_store_and_can_be_forgotten() {
+        let provider = format!("synthetic-test-{}", uuid::Uuid::new_v4());
+        let first = KeychainStore::new();
+        first.set(&provider, "synthetic-test-key").unwrap();
+        assert_eq!(
+            KeychainStore::new().get(&provider).as_deref(),
+            Some("synthetic-test-key")
+        );
+        first.clear(&provider).unwrap();
+        assert!(KeychainStore::new().get(&provider).is_none());
     }
 }
