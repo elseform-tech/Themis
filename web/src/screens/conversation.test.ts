@@ -33,3 +33,10 @@ it("puts completed run activity under one bucket while leaving its answer visibl
   expect(rows[1]).toMatchObject({ kind: "run", runId: "run-1", active: false, toolCount: 1, durationMs: 12_500, items: [{ kind: "milestone", title: "Inspect" }] });
   expect(rows[2]).toMatchObject({ kind: "message", message: { text: "Done" } });
 });
+
+it("does not mark an older run's completed activity active during a follow-up run", () => {
+  const rows = groupConversation([
+    { id: "old", role: "assistant", text: "Milestone: Previous\nOld response", runId: "old-run" },
+  ], true, {}, "new-run");
+  expect(rows[0]).toMatchObject({ kind: "run", runId: "old-run", active: false });
+});

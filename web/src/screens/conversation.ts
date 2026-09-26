@@ -33,22 +33,23 @@ function milestones(messages: ChatMessage[], running: boolean): (MessageRow | Mi
 }
 
 /** Group a completed run's milestones under one row; retain legacy messages. */
-export function groupConversation(messages: ChatMessage[], running: boolean, runDurations: Record<string, number> = {}): ConversationRow[] {
+export function groupConversation(messages: ChatMessage[], running: boolean, runDurations: Record<string, number> = {}, activeRunId?: string): ConversationRow[] {
   const rows: ConversationRow[] = [];
   let activity: ChatMessage[] = [];
   let runId: string | undefined;
   const flush = (active: boolean) => {
     if (!activity.length) return;
+    const isActive = active && (runId === undefined ? activeRunId === undefined : runId === activeRunId);
     if (runId) {
       const grouped = milestones(activity, true).filter((row): row is MilestoneRow => row.kind === "milestone");
       rows.push({
         kind: "run", id: activity[0]!.id, runId,
-        items: grouped.map((row, index) => ({ ...row, active: active && index === grouped.length - 1 })),
+        items: grouped.map((row, index) => ({ ...row, active: isActive && index === grouped.length - 1 })),
         toolCount: activity.filter(message => message.tool).length,
         ...(runDurations[runId] === undefined ? {} : { durationMs: runDurations[runId] }),
-        active,
+        active: isActive,
       });
-    } else rows.push(...milestones(activity, active));
+    } else rows.push(...milestones(activity, isActive));
     activity = [];
     runId = undefined;
   };

@@ -111,6 +111,10 @@ describe("Workspace journey", () => {
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => {
       receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "started", task: "follow up", max_turns: 3 } });
+    });
+    expect(screen.getByText("Restored final answer").closest(".themis-thread-msg")).not.toHaveClass("themis-thread-msg--action-waiting");
+
+    await act(async () => {
       receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "assistant_text", text: "Milestone: Follow-up\nI will check one thing." } });
       receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "tool_started", tool: "read_file", summary: "check.txt" } });
     });

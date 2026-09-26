@@ -176,7 +176,7 @@ export function ThreadView() {
         {messages.length === 0 && stream === "" ? (
           <p className="themis-thread-start">Describe what you’d like to build or change.</p>
         ) : (
-          groupConversation(messages, running, runDurations).map(row => {
+          groupConversation(messages, running, runDurations, state.activeRunIds[thread.id]).map(row => {
             if (row.kind === "message") return <Message key={row.message.id} message={row.message} running={false} />;
             if (row.kind === "milestone") return <Milestone key={row.id} row={row} />;
             const durationMs = row.active ? elapsed * 1000 : row.durationMs;

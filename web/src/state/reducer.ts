@@ -84,6 +84,7 @@ export interface AppState {
   streams: Record<string, string>;
   traces: Record<string, ToolTraceEntry[]>;
   running: Record<string, boolean>;
+  activeRunIds: Record<string, string>;
   compacting: Record<string, boolean>;
   runStartedAt: Record<string, number>;
   runDurations: Record<string, number>;
@@ -185,6 +186,7 @@ export const initialState: AppState = {
   streams: {},
   traces: {},
   running: {},
+  activeRunIds: {},
   compacting: {},
   runStartedAt: {},
   runDurations: {},
@@ -231,6 +233,8 @@ export function pushToast(
 
 function setThreadRunning(state: AppState, threadId: string, running: boolean): AppState {
   const threadsByProject: Record<string, ThreadInfo[]> = {};
+  const activeRunIds = { ...state.activeRunIds };
+  if (!running) delete activeRunIds[threadId];
   for (const [root, threads] of Object.entries(state.threadsByProject)) {
     threadsByProject[root] = threads.map((t) =>
       t.id === threadId ? { ...t, running } : t,
@@ -240,6 +244,7 @@ function setThreadRunning(state: AppState, threadId: string, running: boolean): 
     ...state,
     threadsByProject,
     running: { ...state.running, [threadId]: running },
+    activeRunIds,
   };
 }
 
@@ -287,6 +292,7 @@ export function applyThreadEvent(
       next = {
         ...next,
         traces: { ...next.traces, [threadId]: [] },
+        activeRunIds: { ...next.activeRunIds, [threadId]: runId },
         runStartedAt: { ...next.runStartedAt, [threadId]: Date.now() },
         streams: { ...next.streams, [threadId]: "" },
         compacting: { ...next.compacting, [threadId]: false },
