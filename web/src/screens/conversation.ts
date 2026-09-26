@@ -39,7 +39,7 @@ export function groupConversation(messages: ChatMessage[], running: boolean, run
   let runId: string | undefined;
   const flush = (active: boolean) => {
     if (!activity.length) return;
-    const isActive = active && (runId === undefined ? activeRunId === undefined : runId === activeRunId);
+    const isActive = active && runId !== undefined && runId === activeRunId;
     if (runId) {
       const grouped = milestones(activity, true).filter((row): row is MilestoneRow => row.kind === "milestone");
       rows.push({

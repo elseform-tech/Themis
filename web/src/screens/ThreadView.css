@@ -356,3 +356,4 @@
 .themis-milestone-body .themis-thread-text { font-size: .8125rem; color: var(--themis-text-2); }
 .themis-thread-msg--action-waiting .themis-response > p, .themis-thread-msg--live .themis-response > p { background: linear-gradient(100deg, var(--themis-text-2) 30%, var(--themis-text) 50%, var(--themis-text-2) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .themis-thread-msg--action-waiting .themis-response > p, .themis-thread-msg--live .themis-response > p { animation: none; background: none; color: var(--themis-text-2); } }
+.themis-thread-msg--completed .themis-response > p { animation: none; background: none; color: var(--themis-text); }

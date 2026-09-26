@@ -45,6 +45,7 @@ export function ThreadView() {
   const composerBusy = running || sending;
   const trace = thread ? state.traces[thread.id] ?? [] : [];
   const toolPending = trace.find(entry => entry.ok === undefined && !entry.summary.startsWith("approval "));
+  const activeRunId = thread ? state.activeRunIds[thread.id] : undefined;
   const elapsed = thread ? Math.max(0, Math.floor((now - (state.runStartedAt[thread.id] ?? now)) / 1000)) : 0;
   useEffect(() => {
     if (!running) return;
@@ -177,8 +178,8 @@ export function ThreadView() {
           <p className="themis-thread-start">Describe what you’d like to build or change.</p>
         ) : (
           groupConversation(messages, running, runDurations, state.activeRunIds[thread.id]).map(row => {
-            if (row.kind === "message") return <Message key={row.message.id} message={row.message} running={false} />;
-            if (row.kind === "milestone") return <Milestone key={row.id} row={row} />;
+            if (row.kind === "message") return <Message key={row.message.id} message={row.message} />;
+            if (row.kind === "milestone") return <Milestone key={row.id} row={row} activeRunId={activeRunId} />;
             const durationMs = row.active ? elapsed * 1000 : row.durationMs;
             const durationSeconds = durationMs === undefined ? undefined : Math.floor(durationMs / 1000);
             const durationLabel = durationSeconds === undefined ? "" : durationSeconds < 60
@@ -186,7 +187,7 @@ export function ThreadView() {
               : `${Math.floor(durationSeconds / 60)}m${durationSeconds % 60 === 0 ? "" : ` ${durationSeconds % 60}s`} elapsed`;
             return <details key={row.id} className="themis-run-bucket" open={row.active || undefined}>
               <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span>Activities</span><span className="themis-run-meta">{row.toolCount} tool call{row.toolCount === 1 ? "" : "s"}{durationLabel && ` · ${durationLabel}`}</span></summary>
-              <div className="themis-run-bucket-body">{row.items.flatMap(item => item.items.map(message => <Message key={message.id} message={message} running={item.active} />))}</div>
+              <div className="themis-run-bucket-body">{row.items.flatMap(item => item.items.map(message => <Message key={message.id} message={message} activeRunId={item.active ? activeRunId : undefined} />))}</div>
             </details>;
           })
         )}
@@ -247,20 +248,22 @@ export function ThreadView() {
   );
 }
 
-function Milestone({ row }: { row: Extract<ConversationRow, { kind: "milestone" }> }) {
-  const body = <div className="themis-milestone-body">{row.items.map(message => <Message key={message.id} message={message} running={row.active} />)}</div>;
+function Milestone({ row, activeRunId }: { row: Extract<ConversationRow, { kind: "milestone" }>; activeRunId?: string }) {
+  const body = <div className="themis-milestone-body">{row.items.map(message => <Message key={message.id} message={message} activeRunId={row.active ? activeRunId : undefined} />)}</div>;
   return <details className="themis-milestone" open={row.active || undefined}>
     <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span className={row.active ? "themis-shimmer" : ""}>{row.title}</span></summary>
     {body}
   </details>;
 }
 
-function Message({ message, running }: { message: ChatMessage; running: boolean }) {
-  const actionWaiting = running && message.role === "assistant" && !message.final && !message.tool;
-  return <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}`}>
+function Message({ message, activeRunId }: { message: ChatMessage; activeRunId?: string }) {
+  const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
+  const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;
+  const completed = message.role === "assistant" && !isActiveRun;
+  return <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}${completed ? " themis-thread-msg--completed" : ""}`}>
     {message.tool ? <details className="themis-tool-message">
-      <summary className={message.tool.ok === undefined && running ? "themis-shimmer" : ""}><span className="themis-tool-chevron" aria-hidden="true">›</span><span aria-hidden="true">{message.tool.ok === undefined ? "◌" : message.tool.ok ? "✓" : "!"}</span> {message.tool.name.replace(/_/g, " ")}<span className="themis-tool-status">{message.tool.ok === undefined ? running ? "Running" : "Interrupted" : message.tool.ok ? "Done" : "Failed"}</span></summary>
-      <div className="themis-tool-detail"><strong>Input</strong><pre>{message.text}</pre><strong>Output</strong><pre>{message.tool.output ?? (message.tool.ok === undefined && running ? "Waiting for output…" : "Output was not recorded for this older call.")}</pre></div>
+      <summary className={message.tool.ok === undefined && isActiveRun ? "themis-shimmer" : ""}><span className="themis-tool-chevron" aria-hidden="true">›</span><span aria-hidden="true">{message.tool.ok === undefined ? "◌" : message.tool.ok ? "✓" : "!"}</span> {message.tool.name.replace(/_/g, " ")}<span className="themis-tool-status">{message.tool.ok === undefined ? isActiveRun ? "Running" : "Interrupted" : message.tool.ok ? "Done" : "Failed"}</span></summary>
+      <div className="themis-tool-detail"><strong>Input</strong><pre>{message.text}</pre><strong>Output</strong><pre>{message.tool.output ?? (message.tool.ok === undefined && isActiveRun ? "Waiting for output…" : "Output was not recorded for this older call.")}</pre></div>
     </details> : message.text.startsWith("Run failed:") ? <details className="themis-request-error"><summary>Request failed · Details</summary><p className="themis-thread-text">{message.text}</p></details> : message.role === "assistant" ? <ResponseBody text={message.text} /> : <p className="themis-thread-text">{message.text}</p>}
   </div>;
 }

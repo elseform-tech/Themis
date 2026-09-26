@@ -119,7 +119,10 @@ describe("Workspace journey", () => {
       receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "tool_started", tool: "read_file", summary: "check.txt" } });
     });
 
-    expect(screen.getByText("Restored final answer").closest(".themis-thread-msg")).not.toHaveClass("themis-thread-msg--action-waiting");
+    const oldReply = screen.getByText("Restored final answer").closest(".themis-thread-msg")!;
+    expect(oldReply).toHaveClass("themis-thread-msg--completed");
+    expect(oldReply).not.toHaveClass("themis-thread-msg--action-waiting");
+    expect(oldReply.querySelector(".themis-shimmer")).toBeNull();
     expect(screen.getByText("I will check one thing.").closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
   });
   it("collapses projects independently without changing the open conversation", async () => {
