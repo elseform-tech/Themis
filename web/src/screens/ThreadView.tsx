@@ -26,6 +26,8 @@ export function ThreadView() {
   const followOutput = useRef(true);
   const [models, setModels] = useState<string[]>([]);
   const [efforts, setEfforts] = useState<Record<string, string>>(() => readSession("efforts", {}));
+  const [savedRunDurations, setSavedRunDurations] = useState<Record<string, number>>(() => readSession("runDurations", {}));
+  const runDurations = { ...savedRunDurations, ...state.runDurations };
   const supportsEffort = !!thread && ["go", "openai"].includes(thread.provider) && /^(gpt-[56]|o3|o4)/.test(thread.model);
   const effort = thread && supportsEffort ? efforts[thread.id] ?? "" : "";
   const [stopping, setStopping] = useState(false);
@@ -65,6 +67,15 @@ export function ThreadView() {
     if (thread?.provider === "go") listGoModels().then(items => { if (!cancelled) setModels(items); }).catch(() => {});
     return () => { cancelled = true; };
   }, [thread?.provider]);
+
+  useEffect(() => {
+    if (Object.keys(state.runDurations).length === 0) return;
+    setSavedRunDurations(previous => {
+      const next = { ...previous, ...state.runDurations };
+      writeSession("runDurations", next);
+      return next;
+    });
+  }, [state.runDurations]);
 
   useEffect(() => {
     if (followOutput.current) endRef.current?.scrollIntoView({ block: "end" });
@@ -165,10 +176,19 @@ export function ThreadView() {
         {messages.length === 0 && stream === "" ? (
           <p className="themis-thread-start">Describe what you’d like to build or change.</p>
         ) : (
-          groupConversation(messages, running).map(row => row.kind === "message" ? <Message key={row.message.id} message={row.message} running={running} /> : row.kind === "milestone" ? <Milestone key={row.id} row={row} /> : <details key={row.id} className="themis-run-bucket" open={row.active || undefined}>
-            <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span>{row.active ? "Run activity · Working" : row.failed ? "Run activity · Failed" : "Run activity · Completed"}</span><span className="themis-tool-status">{row.toolCount} tool{row.toolCount === 1 ? "" : "s"} · {row.items.length} milestone{row.items.length === 1 ? "" : "s"}</span></summary>
-            <div className="themis-run-bucket-body">{row.items.map(item => <Milestone key={item.id} row={item} />)}</div>
-          </details>)
+          groupConversation(messages, running, runDurations).map(row => {
+            if (row.kind === "message") return <Message key={row.message.id} message={row.message} running={running} />;
+            if (row.kind === "milestone") return <Milestone key={row.id} row={row} />;
+            const durationMs = row.active ? elapsed * 1000 : row.durationMs;
+            const durationSeconds = durationMs === undefined ? undefined : Math.floor(durationMs / 1000);
+            const durationLabel = durationSeconds === undefined ? "" : durationSeconds < 60
+              ? `${durationSeconds}s elapsed`
+              : `${Math.floor(durationSeconds / 60)}m${durationSeconds % 60 === 0 ? "" : ` ${durationSeconds % 60}s`} elapsed`;
+            return <details key={row.id} className="themis-run-bucket" open={row.active || undefined}>
+              <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span>Activities</span><span className="themis-run-meta">{row.toolCount} tool call{row.toolCount === 1 ? "" : "s"}{durationLabel && ` · ${durationLabel}`}</span></summary>
+              <div className="themis-run-bucket-body">{row.items.flatMap(item => item.items.map(message => <Message key={message.id} message={message} running={item.active} />))}</div>
+            </details>;
+          })
         )}
         {stream !== "" && (
           <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--live">
@@ -228,15 +248,16 @@ export function ThreadView() {
 }
 
 function Milestone({ row }: { row: Extract<ConversationRow, { kind: "milestone" }> }) {
-  const tools = row.items.filter(item => item.tool).length;
+  const body = <div className="themis-milestone-body">{row.items.map(message => <Message key={message.id} message={message} running={row.active} />)}</div>;
   return <details className="themis-milestone" open={row.active || undefined}>
-    <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span className={row.active ? "themis-shimmer" : ""}>{row.title}</span><span className="themis-tool-status">{tools} tool{tools === 1 ? "" : "s"}{row.active ? " · Working" : ""}</span></summary>
-    <div className="themis-milestone-body">{row.items.map(message => <Message key={message.id} message={message} running={row.active} />)}</div>
+    <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span className={row.active ? "themis-shimmer" : ""}>{row.title}</span></summary>
+    {body}
   </details>;
 }
 
 function Message({ message, running }: { message: ChatMessage; running: boolean }) {
-  return <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}`}>
+  const actionWaiting = running && message.role === "assistant" && !message.tool;
+  return <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}`}>
     {message.tool ? <details className="themis-tool-message">
       <summary className={message.tool.ok === undefined && running ? "themis-shimmer" : ""}><span className="themis-tool-chevron" aria-hidden="true">›</span><span aria-hidden="true">{message.tool.ok === undefined ? "◌" : message.tool.ok ? "✓" : "!"}</span> {message.tool.name.replace(/_/g, " ")}<span className="themis-tool-status">{message.tool.ok === undefined ? running ? "Running" : "Interrupted" : message.tool.ok ? "Done" : "Failed"}</span></summary>
       <div className="themis-tool-detail"><strong>Input</strong><pre>{message.text}</pre><strong>Output</strong><pre>{message.tool.output ?? (message.tool.ok === undefined && running ? "Waiting for output…" : "Output was not recorded for this older call.")}</pre></div>

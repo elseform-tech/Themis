@@ -2,7 +2,7 @@ import type { ChatMessage } from "../state/reducer";
 
 type MessageRow = { kind: "message"; message: ChatMessage };
 type MilestoneRow = { kind: "milestone"; id: string; title: string; items: ChatMessage[]; active: boolean };
-type RunRow = { kind: "run"; id: string; runId: string; items: MilestoneRow[]; toolCount: number; active: boolean; failed: boolean };
+type RunRow = { kind: "run"; id: string; runId: string; items: MilestoneRow[]; toolCount: number; durationMs?: number; active: boolean };
 export type ConversationRow = MessageRow | MilestoneRow | RunRow;
 
 function milestones(messages: ChatMessage[], running: boolean): (MessageRow | MilestoneRow)[] {
@@ -33,11 +33,11 @@ function milestones(messages: ChatMessage[], running: boolean): (MessageRow | Mi
 }
 
 /** Group a completed run's milestones under one row; retain legacy messages. */
-export function groupConversation(messages: ChatMessage[], running: boolean): ConversationRow[] {
+export function groupConversation(messages: ChatMessage[], running: boolean, runDurations: Record<string, number> = {}): ConversationRow[] {
   const rows: ConversationRow[] = [];
   let activity: ChatMessage[] = [];
   let runId: string | undefined;
-  const flush = (active: boolean, failed: boolean) => {
+  const flush = (active: boolean) => {
     if (!activity.length) return;
     if (runId) {
       const grouped = milestones(activity, true).filter((row): row is MilestoneRow => row.kind === "milestone");
@@ -45,7 +45,8 @@ export function groupConversation(messages: ChatMessage[], running: boolean): Co
         kind: "run", id: activity[0]!.id, runId,
         items: grouped.map((row, index) => ({ ...row, active: active && index === grouped.length - 1 })),
         toolCount: activity.filter(message => message.tool).length,
-        active, failed,
+        ...(runDurations[runId] === undefined ? {} : { durationMs: runDurations[runId] }),
+        active,
       });
     } else rows.push(...milestones(activity, active));
     activity = [];
@@ -54,14 +55,14 @@ export function groupConversation(messages: ChatMessage[], running: boolean): Co
   for (const message of messages) {
     const isActivity = message.role === "assistant" && !message.final;
     if (isActivity) {
-      if (activity.length && message.runId !== runId) flush(false, false);
+      if (activity.length && message.runId !== runId) flush(false);
       runId = message.runId;
       activity.push(message);
     } else {
-      flush(false, message.role === "system" && message.text.startsWith("Run failed:"));
+      flush(false);
       rows.push({ kind: "message", message });
     }
   }
-  flush(running, false);
+  flush(running);
   return rows;
 }

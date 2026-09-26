@@ -28,8 +28,8 @@ it("puts completed run activity under one bucket while leaving its answer visibl
     { id: "m", role: "assistant", text: "Milestone: Inspect\nChecking", runId: "run-1" },
     { id: "t", role: "assistant", text: "{}", runId: "run-1", tool: { name: "read_file", ok: true, output: "ok" } },
     { id: "f", role: "assistant", text: "Done", runId: "run-1", final: true },
-  ], false);
+  ], false, { "run-1": 12_500 });
   expect(rows).toHaveLength(3);
-  expect(rows[1]).toMatchObject({ kind: "run", runId: "run-1", active: false, toolCount: 1, items: [{ kind: "milestone", title: "Inspect" }] });
+  expect(rows[1]).toMatchObject({ kind: "run", runId: "run-1", active: false, toolCount: 1, durationMs: 12_500, items: [{ kind: "milestone", title: "Inspect" }] });
   expect(rows[2]).toMatchObject({ kind: "message", message: { text: "Done" } });
 });

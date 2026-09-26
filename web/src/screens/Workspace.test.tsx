@@ -29,6 +29,7 @@ async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
   it("starts directly in the workspace and creates a project with only a name", async () => {
+    vi.useFakeTimers();
     vi.mocked(bridge.createProject).mockResolvedValue({ name: "My project", root: "/tmp/Themis/Projects/My project", is_git: true });
     vi.mocked(bridge.createThread).mockResolvedValue({ id: "thread1", title: "New thread", provider: "go", model: "minimax-m2.5", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] });
     await mount();
@@ -61,12 +62,28 @@ describe("Workspace journey", () => {
     await act(async () => receive({ thread_id: "thread1", run_id: "r", event: { kind: "started", task: "read", max_turns: 3 } }));
     expect(screen.getByText("Thinking…")).toBeInTheDocument();
     expect(screen.getByLabelText("Elapsed time")).toHaveTextContent("0:00");
+    await act(async () => { vi.advanceTimersByTime(12_000); });
     await act(async () => {
-      receive({ thread_id: "thread1", run_id: "r", event: { kind: "assistant_text", text: "I will read the file." } });
+      receive({ thread_id: "thread1", run_id: "r", event: { kind: "assistant_text", text: "Milestone: Inspect current files\nI will read the file." } });
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_started", tool: "read_file", summary: "check.txt" } });
-      receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_finished", tool: "read_file", ok: true, output: "ORBIT-17" } });
     });
+    const actionText = screen.getByText("I will read the file.");
+    expect(actionText.closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
+    expect(screen.getByText("read file").closest("summary")).toHaveClass("themis-shimmer");
+    await act(async () => {
+      receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_finished", tool: "read_file", ok: true, output: "ORBIT-17" } });
+      receive({ thread_id: "thread1", run_id: "r", event: { kind: "finished", result: "Verified." } });
+    });
+    const activitySummary = screen.getByText("Activities").closest("summary")!;
+    expect(activitySummary).toHaveTextContent(/1 tool call · 12s elapsed/);
+    expect(activitySummary).not.toHaveTextContent("milestone");
+    const activities = activitySummary.parentElement as HTMLDetailsElement;
+    expect(activities.open).toBe(false);
+    fireEvent.click(activitySummary);
+    expect(activities.open).toBe(true);
     expect(screen.getByText("I will read the file.")).toBeInTheDocument();
+    expect(screen.queryByText("Inspect current files")).toBeNull();
+    expect(screen.getByText("read file")).toBeInTheDocument();
     expect(screen.getByText("ORBIT-17")).toBeInTheDocument();
     expect(screen.queryByText("Task progress")).toBeNull();
     vi.mocked(bridge.createThread).mockResolvedValueOnce({ ...updated, id: "thread2" });
