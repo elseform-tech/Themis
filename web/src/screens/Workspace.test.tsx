@@ -10,7 +10,7 @@ vi.mock("../lib/tauri", async importOriginal => ({
   getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
-  setProvider: vi.fn(), getThread: vi.fn(), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
+  setProvider: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
   openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => ["minimax-m2.5", "gpt-5.6-luna"]),
 }));
 const settings = { ...DEFAULT_SETTINGS, projects_directory: "/tmp/Themis/Projects" };
@@ -96,6 +96,27 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.createThread).mockResolvedValueOnce({ ...updated, id: "thread2" });
     await act(async () => fireEvent.keyDown(document, { key: "O", ctrlKey: true, shiftKey: true }));
     expect(bridge.createThread).toHaveBeenCalledTimes(2);
+  });
+  it("keeps restored legacy replies static during a follow-up run", async () => {
+    const thread = { id: "legacy-thread", title: "Legacy", provider: "go" as const, model: "minimax-m2.5", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/legacy"] });
+    vi.mocked(bridge.openProject).mockResolvedValue({ root: "/tmp/legacy", name: "Legacy", is_git: true });
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThreadHistory).mockResolvedValue([{ kind: "legacy", message: { id: "old-answer", role: "assistant", text: "Restored final answer" } }]);
+    await mount();
+    expect(await screen.findByText("Restored final answer")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Follow up" } });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
+    const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => {
+      receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "started", task: "follow up", max_turns: 3 } });
+      receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "assistant_text", text: "Milestone: Follow-up\nI will check one thing." } });
+      receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "tool_started", tool: "read_file", summary: "check.txt" } });
+    });
+
+    expect(screen.getByText("Restored final answer").closest(".themis-thread-msg")).not.toHaveClass("themis-thread-msg--action-waiting");
+    expect(screen.getByText("I will check one thing.").closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
   });
   it("collapses projects independently without changing the open conversation", async () => {
     const first = { id: "a", title: "First thread", provider: "go" as const, model: "minimax-m2.5", running: false, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };
