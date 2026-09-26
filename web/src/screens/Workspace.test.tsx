@@ -86,6 +86,13 @@ describe("Workspace journey", () => {
     expect(screen.getByText("read file")).toBeInTheDocument();
     expect(screen.getByText("ORBIT-17")).toBeInTheDocument();
     expect(screen.queryByText("Task progress")).toBeNull();
+    await act(async () => {
+      receive({ thread_id: "thread1", run_id: "r2", event: { kind: "started", task: "follow up", max_turns: 3 } });
+      receive({ thread_id: "thread1", run_id: "r2", event: { kind: "assistant_text", text: "Milestone: Follow-up\nI will check one more thing." } });
+      receive({ thread_id: "thread1", run_id: "r2", event: { kind: "tool_started", tool: "list_files", summary: "workspace" } });
+    });
+    expect(screen.getByText("Verified.").closest(".themis-thread-msg")).not.toHaveClass("themis-thread-msg--action-waiting");
+    expect(screen.getByText("I will check one more thing.").closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
     vi.mocked(bridge.createThread).mockResolvedValueOnce({ ...updated, id: "thread2" });
     await act(async () => fireEvent.keyDown(document, { key: "O", ctrlKey: true, shiftKey: true }));
     expect(bridge.createThread).toHaveBeenCalledTimes(2);

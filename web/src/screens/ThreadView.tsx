@@ -256,7 +256,7 @@ function Milestone({ row }: { row: Extract<ConversationRow, { kind: "milestone" 
 }
 
 function Message({ message, running }: { message: ChatMessage; running: boolean }) {
-  const actionWaiting = running && message.role === "assistant" && !message.tool;
+  const actionWaiting = running && message.role === "assistant" && !message.final && !message.tool;
   return <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}`}>
     {message.tool ? <details className="themis-tool-message">
       <summary className={message.tool.ok === undefined && running ? "themis-shimmer" : ""}><span className="themis-tool-chevron" aria-hidden="true">›</span><span aria-hidden="true">{message.tool.ok === undefined ? "◌" : message.tool.ok ? "✓" : "!"}</span> {message.tool.name.replace(/_/g, " ")}<span className="themis-tool-status">{message.tool.ok === undefined ? running ? "Running" : "Interrupted" : message.tool.ok ? "Done" : "Failed"}</span></summary>
