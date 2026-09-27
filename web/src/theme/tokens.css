@@ -54,14 +54,14 @@
   --themis-add-bg: rgba(63, 185, 80, 0.14);
   --themis-del-bg: rgba(248, 81, 73, 0.14);
   --themis-composer-bg: #fbfaf7;
-  --themis-user-message-bg: #e8e7e4;
+  --themis-user-message-bg: var(--themis-raised);
   --themis-user-message-border: #cac7bf;
   --themis-nav-hover-bg: #f1eee8;
-  --themis-nav-active-bg: #e5e0d6;
+  --themis-nav-active-bg: var(--themis-raised);
   --themis-nav-text: #38352f;
   --themis-nav-icon: #6e685d;
-  --themis-shimmer-base: #675b48;
-  --themis-shimmer-highlight: #9a6b1f;
+  --themis-shimmer-base: #5d5d5d;
+  --themis-shimmer-highlight: var(--themis-raised);
 }
 
 body {
