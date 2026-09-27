@@ -8,6 +8,8 @@ import { readSession, writeSession } from "../state/session";
 import "./Sidebar.css";
 
 const views: Array<[MainView, string]> = [["thread", "Threads"], ["skills", "Skills"], ["automations", "Automations"], ["queue", "Review queue"]];
+type SidebarIconName = "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search";
+const viewIcons: Record<MainView, SidebarIconName> = { thread: "thread", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { state, dispatch } = useApp();
@@ -86,7 +88,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   }
   function nav(view: MainView, label: string) {
     return <button key={view} type="button" className={`themis-sidebar-row ${state.mainView === view ? "themis-sidebar-row--active" : ""}`} aria-current={state.mainView === view ? "page" : undefined} onClick={() => dispatch({ type: "ui/view", view })}>
-      <span className="themis-sidebar-name">{label}</span>{view === "queue" && pending > 0 && <Badge tone="warning">{pending}</Badge>}
+      <SidebarIcon name={viewIcons[view]} /><span className="themis-sidebar-name">{label}</span>{view === "queue" && pending > 0 && <Badge tone="warning">{pending}</Badge>}
     </button>;
   }
   return <>
@@ -102,13 +104,13 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
         </div>
         <nav className="themis-sidebar-nav" aria-label="Main views">{views.map(([view, label]) => nav(view, label))}</nav>
         <div className="themis-sidebar-projects">
-          <div className="themis-sidebar-head"><h2 className="themis-sidebar-title">Projects</h2><div className="themis-project-actions"><Button size="small" variant="ghost" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>+</Button><details><summary aria-label="Project actions" title="Project actions">···</summary><div className="themis-project-menu"><Button variant="ghost" size="small" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open existing folder…</Button></div></details></div></div>
+          <div className="themis-sidebar-head"><h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="project" /><span>Projects</span></h2><div className="themis-project-actions"><Button size="small" variant="ghost" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>+</Button><details><summary aria-label="Project actions" title="Project actions">···</summary><div className="themis-project-menu"><Button variant="ghost" size="small" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open existing folder…</Button></div></details></div></div>
           {state.projects.length === 0 ? <p className="themis-sidebar-note">Create your first project to begin.</p> : <ul className="themis-sidebar-list">{state.projects.map(project => <li className="themis-project" key={project.root}>
-            <div className="themis-project-heading"><button type="button" className="themis-sidebar-row themis-project-row" title={project.root} aria-expanded={!collapsedProjects[project.root]} onClick={() => setProjectCollapsed(project.root, !collapsedProjects[project.root])}><span aria-hidden="true">{collapsedProjects[project.root] ? "›" : "⌄"}</span><span className="themis-sidebar-name">{project.name}</span></button><Button variant="ghost" size="small" aria-label={`New thread in ${project.name}`} title="New thread" onClick={() => { setProjectCollapsed(project.root, false); void newThread(project.root); }}>+</Button></div>
-            {!collapsedProjects[project.root] && <ul className="themis-sidebar-list themis-thread-list">{(state.threadsByProject[project.root] ?? []).map(thread => <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={thread.title} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}><span className="themis-sidebar-name">{thread.title}</span><ThreadStatus thread={thread} /></button><div className="themis-thread-row-actions"><button aria-label={`Edit ${thread.title}`} title="Edit thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => { setEditError(""); setEditing({ ...thread, projectRoot: project.root }); }}>✎</button><button aria-label={`Remove ${thread.title}`} title="Remove thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => setRemoving({ ...thread, projectRoot: project.root })}><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 6v5M9 6v5"/></svg></button></div></li>)}</ul>}
+            <div className="themis-project-heading"><button type="button" className="themis-sidebar-row themis-project-row" title={project.root} aria-expanded={!collapsedProjects[project.root]} onClick={() => setProjectCollapsed(project.root, !collapsedProjects[project.root])}><span aria-hidden="true">{collapsedProjects[project.root] ? "›" : "⌄"}</span><SidebarIcon name="project" /><span className="themis-sidebar-name">{project.name}</span></button><Button variant="ghost" size="small" aria-label={`New thread in ${project.name}`} title="New thread" onClick={() => { setProjectCollapsed(project.root, false); void newThread(project.root); }}>+</Button></div>
+            {!collapsedProjects[project.root] && <ul className="themis-sidebar-list themis-thread-list">{(state.threadsByProject[project.root] ?? []).map(thread => <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={thread.title} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}><SidebarIcon name="thread" /><span className="themis-sidebar-name">{thread.title}</span><ThreadStatus thread={thread} /></button><div className="themis-thread-row-actions"><button aria-label={`Edit ${thread.title}`} title="Edit thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => { setEditError(""); setEditing({ ...thread, projectRoot: project.root }); }}>✎</button><button aria-label={`Remove ${thread.title}`} title="Remove thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => setRemoving({ ...thread, projectRoot: project.root })}><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 6v5M9 6v5"/></svg></button></div></li>)}</ul>}
           </li>)}</ul>}
         </div>
-        <div className="themis-sidebar-footer">{nav("settings", "Settings")}<button className="themis-sidebar-row" onClick={() => setHelp(true)}>Help & shortcuts</button><button className="themis-sidebar-row themis-sidebar-note" onClick={() => dispatch({ type: "ui/palette", open: true })}>Search commands <kbd>⌘ / Ctrl K</kbd></button></div>
+        <div className="themis-sidebar-footer">{nav("settings", "Settings")}<button className="themis-sidebar-row" onClick={() => setHelp(true)}><SidebarIcon name="help" /><span className="themis-sidebar-name">Help & shortcuts</span></button><button className="themis-sidebar-row themis-sidebar-note" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /><span className="themis-sidebar-name">Search commands</span><kbd>⌘ / Ctrl K</kbd></button></div>
       </aside>
     </div>
     <Dialog open={state.projectDialogOpen} title="Create project" onClose={() => { if (!busy) dispatch({ type: "ui/project-dialog", open: false }); }}>
@@ -137,6 +139,19 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     </Dialog>
     <Dialog open={help} title="Help & shortcuts" onClose={() => setHelp(false)}><div className="themis-help"><p>Create a project, describe what you want, then review the result.</p><dl><dt>Find a project, thread or command</dt><dd>⌘ / Ctrl + K</dd><dt>Show or hide sidebar</dt><dd>⌘ / Ctrl + B</dd><dt>Send a message</dt><dd>Enter or ⌘ / Ctrl + Enter · Shift + Enter for a new line</dd><dt>New thread</dt><dd>⌘ / Ctrl + Shift + O</dd><dt>Close a panel or dialog</dt><dd>Escape</dd></dl><p>Agent changes stay in a separate worktree until you choose Merge. Actions requiring permission pause for your decision.</p></div></Dialog>
   </>;
+}
+
+function SidebarIcon({ name }: { name: SidebarIconName }) {
+  return <svg className="themis-sidebar-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    {name === "thread" && <><path d="M3 4.5A2.5 2.5 0 0 1 5.5 2h9A2.5 2.5 0 0 1 17 4.5v6a2.5 2.5 0 0 1-2.5 2.5H8l-4 3v-3.5A2.5 2.5 0 0 1 3 10z"/><path d="M6.5 6.5h7M6.5 9.5h5"/></>}
+    {name === "skills" && <><path d="m8 2 1.7 4.8L14.5 8.5l-4.8 1.7L8 15l-1.7-4.8-4.8-1.7 4.8-1.7L8 2Z"/><path d="m15.5 12 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></>}
+    {name === "automations" && <><path d="M15.7 6.2A6.5 6.5 0 0 0 4.3 4L3 5.3"/><path d="M3 2.5v2.8h2.8M4.3 13.8A6.5 6.5 0 0 0 15.7 16l1.3-1.3"/><path d="M17 17.5v-2.8h-2.8"/></>}
+    {name === "queue" && <><path d="m2.5 5 1.5 1.5 2.5-3M8 5h9M2.5 10l1.5 1.5 2.5-3M8 10h9M2.5 15l1.5 1.5 2.5-3M8 15h9"/></>}
+    {name === "project" && <path d="M2.5 5.5A1.5 1.5 0 0 1 4 4h4l1.5 2h6.5A1.5 1.5 0 0 1 17.5 7.5v7A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5z"/>}
+    {name === "settings" && <><path d="M3 5h14M3 10h14M3 15h14"/><circle cx="7" cy="5" r="1.5" fill="var(--themis-surface)"/><circle cx="13" cy="10" r="1.5" fill="var(--themis-surface)"/><circle cx="8" cy="15" r="1.5" fill="var(--themis-surface)"/></>}
+    {name === "help" && <><circle cx="10" cy="10" r="7.5"/><path d="M7.9 7.4a2.2 2.2 0 1 1 3.8 1.5c-1.1 1-1.7 1.2-1.7 2.6"/><path d="M10 14.6h.01"/></>}
+    {name === "search" && <><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.5 12.5 4.2 4.2"/></>}
+  </svg>;
 }
 
 function ThreadStatus({ thread }: { thread: ThreadInfo }) {

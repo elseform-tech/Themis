@@ -9,9 +9,11 @@
 .themis-brand svg { width: 23px; height: 23px; color: #f3c766; }
 .themis-brand strong { flex: 1; font-size: 16px; letter-spacing: -.4px; font-weight: 500; }
 .themis-sidebar-nav { display: grid; gap: 1px; padding: 8px 10px 20px; }
-.themis-sidebar-row { width: 100%; display: flex; align-items: center; gap: 8px; border-radius: 5px; background: transparent; color: var(--themis-text-2); border: 0; font: inherit; font-size: .8125rem; min-height: 31px; padding: 6px 10px; cursor: pointer; text-align: left; }
-.themis-sidebar-row:hover { background: color-mix(in srgb, var(--themis-text) 4%, transparent); color: var(--themis-text); }
-.themis-sidebar-row--active { background: color-mix(in srgb, var(--themis-text) 6%, transparent); color: var(--themis-text); }
+.themis-sidebar-row { width: 100%; display: flex; align-items: center; gap: 8px; border-radius: 5px; background: transparent; color: var(--themis-nav-text, var(--themis-text-2)); border: 0; font: inherit; font-size: .8125rem; min-height: 31px; padding: 6px 10px; cursor: pointer; text-align: left; }
+.themis-sidebar-row:hover { background: var(--themis-nav-hover-bg, color-mix(in srgb, var(--themis-text) 4%, transparent)); color: var(--themis-text); }
+.themis-sidebar-row--active { background: var(--themis-nav-active-bg, color-mix(in srgb, var(--themis-text) 6%, transparent)); color: var(--themis-text); }
+.themis-sidebar-icon { width: 16px; height: 16px; flex: 0 0 16px; color: var(--themis-nav-icon, var(--themis-text-2)); }
+.themis-sidebar-row:hover .themis-sidebar-icon, .themis-sidebar-row--active .themis-sidebar-icon { color: var(--themis-accent); }
 .themis-sidebar-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .themis-sidebar-projects { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px; }
 .themis-sidebar-head, .themis-project-heading, .themis-project-actions { display: flex; align-items: center; justify-content: space-between; gap: 3px; }
@@ -58,3 +60,6 @@
 
 .themis-brand button { color: #f7f5ff; }
 .themis-brand button:hover { background: #ffffff18; }
+.themis-sidebar-title-line { display: flex; align-items: center; gap: 8px; }
+.themis-project-row > .themis-sidebar-icon { width: 14px; height: 14px; flex-basis: 14px; }
+.themis-thread-row > .themis-sidebar-icon { width: 14px; height: 14px; flex-basis: 14px; opacity: .72; }

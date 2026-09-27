@@ -56,7 +56,7 @@
 
 .themis-thread-msg--user {
   align-self: flex-end;
-  border-color: var(--themis-border);
+  border-color: var(--themis-user-message-border, var(--themis-border));
 }
 
 .themis-thread-msg--system {
@@ -289,7 +289,7 @@
 .themis-thread-provider { flex-wrap: wrap; }
 .themis-thread-stream { padding: 28px max(24px, calc((100% - 780px) / 2)); gap: 24px; }
 .themis-thread-msg { border: 0; padding: 0; background: transparent; max-width: 100%; }
-.themis-thread-msg--user { background: var(--themis-surface); padding: 12px 16px; max-width: 85%; }
+.themis-thread-msg--user { background: var(--themis-user-message-bg, var(--themis-surface)); padding: 12px 16px; max-width: 85%; }
 .themis-thread-msg--system { color: var(--themis-danger); }
 .themis-thread-text { line-height: 1.65; }
 .themis-thread-role { font-size: .75rem; text-transform: none; letter-spacing: 0; color: var(--themis-text-2); }
@@ -306,7 +306,7 @@
 .themis-thread-trace > summary { font-size: .75rem; }
 
 .themis-thread-stream { padding: 18px max(20px, calc((100% - 720px) / 2)); gap: 18px; }
-.themis-thread-composer { width: min(calc(100% - 40px), 720px); margin: 8px auto 20px; padding: 8px 10px; border: 1px solid var(--themis-border); border-radius: 12px; background: var(--themis-surface); gap: 4px; }
+.themis-thread-composer { width: min(calc(100% - 40px), 720px); margin: 8px auto 20px; padding: 8px 10px; border: 1px solid var(--themis-border); border-radius: 12px; background: var(--themis-composer-bg, var(--themis-surface)); gap: 4px; }
 .themis-thread-input { min-height: 52px; padding: 6px 4px; border: 0; border-radius: 0; background: transparent; resize: none; }
 .themis-thread-input:focus-visible { outline: none; }
 .themis-thread-composer:focus-within { border-color: var(--themis-text-3); }
@@ -323,6 +323,7 @@
 .themis-tool-message summary::-webkit-details-marker { display: none; }
 .themis-tool-status { color: var(--themis-text-3); font-size: .6875rem; }
 .themis-tool-message pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; margin: 6px 0 0; background: var(--themis-surface); border-radius: 6px; font-size: .75rem; }
+[data-theme="light"] .themis-tool-message pre { background: var(--themis-raised); }
 
 .themis-thread-msg--stopped { color: var(--themis-text-2); }
 .themis-request-error { font-size: .8125rem; }
@@ -331,7 +332,7 @@
 .themis-run-progress { position: sticky; bottom: 0; z-index: 1; font-size: .8125rem; color: var(--themis-text-2); padding: 6px 0; background: var(--themis-canvas); }
 .themis-run-status { display: flex; align-items: center; gap: 12px; }
 .themis-run-status time { font-size: .75rem; font-variant-numeric: tabular-nums; color: var(--themis-text-3); }
-.themis-shimmer { background: linear-gradient(100deg, var(--themis-text-2) 30%, var(--themis-text) 50%, var(--themis-text-2) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }
+.themis-shimmer { background: linear-gradient(100deg, var(--themis-shimmer-base, var(--themis-text-2)) 30%, var(--themis-shimmer-highlight, var(--themis-text)) 50%, var(--themis-shimmer-base, var(--themis-text-2)) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }
 @keyframes themis-shimmer { from { background-position: 160% 0; } to { background-position: -60% 0; } }
 .themis-tool-chevron { display: inline-block; transition: transform 150ms ease; font-size: 17px; }
 .themis-tool-message[open] .themis-tool-chevron { transform: rotate(90deg); }
@@ -354,6 +355,6 @@
 .themis-milestone[open] > summary > .themis-tool-chevron { transform: rotate(90deg); }
 .themis-milestone-body { display: flex; flex-direction: column; gap: 12px; padding: 14px 0 4px 20px; }
 .themis-milestone-body .themis-thread-text { font-size: .8125rem; color: var(--themis-text-2); }
-.themis-thread-msg--action-waiting .themis-response > p, .themis-thread-msg--live .themis-response > p { background: linear-gradient(100deg, var(--themis-text-2) 30%, var(--themis-text) 50%, var(--themis-text-2) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }
+.themis-thread-msg--action-waiting .themis-response > p, .themis-thread-msg--live .themis-response > p { background: linear-gradient(100deg, var(--themis-shimmer-base, var(--themis-text-2)) 30%, var(--themis-shimmer-highlight, var(--themis-text)) 50%, var(--themis-shimmer-base, var(--themis-text-2)) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .themis-thread-msg--action-waiting .themis-response > p, .themis-thread-msg--live .themis-response > p { animation: none; background: none; color: var(--themis-text-2); } }
 .themis-thread-msg--completed .themis-response > p { animation: none; background: none; color: var(--themis-text); }
