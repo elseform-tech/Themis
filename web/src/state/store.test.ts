@@ -1,5 +1,5 @@
 // Pure reducer tests — no DOM, no Tauri imports (via ./reducer only).
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import type {
   ApprovalRequest,
   ProjectInfo,
@@ -70,6 +70,28 @@ beforeEach(() => {
 });
 
 describe("thread lifecycle events", () => {
+  it("records elapsed time for live runs but not when replaying history", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      let s = applyThreadEvent(withThread(), envelope({ kind: "started", task: "work", max_turns: 1 }));
+      now.mockReturnValue(13_500);
+      s = applyThreadEvent(s, envelope({ kind: "finished", result: "done" }));
+      expect(s.runDurations).toEqual({ r1: 12_500 });
+    } finally {
+      now.mockRestore();
+    }
+
+    const restored = reducer(withThread(), {
+      type: "thread/history-loaded",
+      threadId: THREAD.id,
+      history: [
+        { kind: "event", envelope: envelope({ kind: "started", task: "work", max_turns: 1 }) },
+        { kind: "event", envelope: envelope({ kind: "finished", result: "done" }) },
+      ],
+    });
+    expect(restored.runDurations).toEqual({});
+  });
+
   it("shows compaction only while a checkpoint is being written", () => {
     let s = withThread();
     s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 10 }));

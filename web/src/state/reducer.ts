@@ -84,8 +84,10 @@ export interface AppState {
   streams: Record<string, string>;
   traces: Record<string, ToolTraceEntry[]>;
   running: Record<string, boolean>;
+  activeRunIds: Record<string, string>;
   compacting: Record<string, boolean>;
   runStartedAt: Record<string, number>;
+  runDurations: Record<string, number>;
   diffs: Record<string, DiffState | null>;
   comments: Record<string, ThreadComment[]>;
   approvals: ApprovalRequest[];
@@ -184,8 +186,10 @@ export const initialState: AppState = {
   streams: {},
   traces: {},
   running: {},
+  activeRunIds: {},
   compacting: {},
   runStartedAt: {},
+  runDurations: {},
   diffs: {},
   comments: {},
   approvals: [],
@@ -229,6 +233,8 @@ export function pushToast(
 
 function setThreadRunning(state: AppState, threadId: string, running: boolean): AppState {
   const threadsByProject: Record<string, ThreadInfo[]> = {};
+  const activeRunIds = { ...state.activeRunIds };
+  if (!running) delete activeRunIds[threadId];
   for (const [root, threads] of Object.entries(state.threadsByProject)) {
     threadsByProject[root] = threads.map((t) =>
       t.id === threadId ? { ...t, running } : t,
@@ -238,6 +244,7 @@ function setThreadRunning(state: AppState, threadId: string, running: boolean): 
     ...state,
     threadsByProject,
     running: { ...state.running, [threadId]: running },
+    activeRunIds,
   };
 }
 
@@ -276,6 +283,7 @@ function appendMessage(
 export function applyThreadEvent(
   state: AppState,
   envelope: ThreadEventEnvelope,
+  measureDuration = true,
 ): AppState {
   const { thread_id: threadId, run_id: runId, event } = envelope;
   switch (event.kind) {
@@ -284,6 +292,7 @@ export function applyThreadEvent(
       next = {
         ...next,
         traces: { ...next.traces, [threadId]: [] },
+        activeRunIds: { ...next.activeRunIds, [threadId]: runId },
         runStartedAt: { ...next.runStartedAt, [threadId]: Date.now() },
         streams: { ...next.streams, [threadId]: "" },
         compacting: { ...next.compacting, [threadId]: false },
@@ -365,6 +374,13 @@ export function applyThreadEvent(
         final: true,
         incomplete: event.kind === "incomplete",
       });
+      const startedAt = next.runStartedAt[threadId];
+      if (measureDuration && startedAt !== undefined) {
+        next = {
+          ...next,
+          runDurations: { ...next.runDurations, [runId]: Math.max(0, Date.now() - startedAt) },
+        };
+      }
       next = {
         ...next,
         streams: { ...next.streams, [threadId]: "" },
@@ -381,6 +397,13 @@ export function applyThreadEvent(
         text: stopped ? event.error : `Run failed: ${event.error}`,
         runId,
       });
+      const startedAt = next.runStartedAt[threadId];
+      if (measureDuration && startedAt !== undefined) {
+        next = {
+          ...next,
+          runDurations: { ...next.runDurations, [runId]: Math.max(0, Date.now() - startedAt) },
+        };
+      }
       if (!stopped) next = pushToast(next, `Run failed: ${event.error}`, "danger");
       next = {
         ...next,
@@ -570,7 +593,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       for (const item of action.history) {
         if (item.kind === "user") next = appendMessage(next, action.threadId, { id: newId("msg"), role: "user", text: item.text, runId: item.run_id });
         else if (item.kind === "legacy") next = appendMessage(next, action.threadId, item.message);
-        else next = applyThreadEvent(next, item.envelope);
+        else next = applyThreadEvent(next, item.envelope, false);
       }
       if (next.running[action.threadId]) {
         next = appendMessage(next, action.threadId, { id: newId("msg"), role: "system", text: "Run interrupted. Review any changes, then send a follow-up to continue." });

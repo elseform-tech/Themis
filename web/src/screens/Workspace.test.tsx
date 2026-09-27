@@ -10,7 +10,7 @@ vi.mock("../lib/tauri", async importOriginal => ({
   getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
-  setProvider: vi.fn(), getThread: vi.fn(), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
+  setProvider: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
   openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => ["minimax-m2.5", "gpt-5.6-luna"]),
 }));
 const settings = { ...DEFAULT_SETTINGS, projects_directory: "/tmp/Themis/Projects" };
@@ -29,6 +29,7 @@ async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
   it("starts directly in the workspace and creates a project with only a name", async () => {
+    vi.useFakeTimers();
     vi.mocked(bridge.createProject).mockResolvedValue({ name: "My project", root: "/tmp/Themis/Projects/My project", is_git: true });
     vi.mocked(bridge.createThread).mockResolvedValue({ id: "thread1", title: "New thread", provider: "go", model: "minimax-m2.5", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] });
     await mount();
@@ -61,17 +62,68 @@ describe("Workspace journey", () => {
     await act(async () => receive({ thread_id: "thread1", run_id: "r", event: { kind: "started", task: "read", max_turns: 3 } }));
     expect(screen.getByText("Thinking…")).toBeInTheDocument();
     expect(screen.getByLabelText("Elapsed time")).toHaveTextContent("0:00");
+    await act(async () => { vi.advanceTimersByTime(12_000); });
     await act(async () => {
-      receive({ thread_id: "thread1", run_id: "r", event: { kind: "assistant_text", text: "I will read the file." } });
+      receive({ thread_id: "thread1", run_id: "r", event: { kind: "assistant_text", text: "Milestone: Inspect current files\nI will read the file." } });
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_started", tool: "read_file", summary: "check.txt" } });
-      receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_finished", tool: "read_file", ok: true, output: "ORBIT-17" } });
     });
+    const actionText = screen.getByText("I will read the file.");
+    expect(actionText.closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
+    expect(screen.getByText("read file").closest("summary")).toHaveClass("themis-shimmer");
+    await act(async () => {
+      receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_finished", tool: "read_file", ok: true, output: "ORBIT-17" } });
+      receive({ thread_id: "thread1", run_id: "r", event: { kind: "finished", result: "Verified." } });
+    });
+    const activitySummary = screen.getByText("Activities").closest("summary")!;
+    expect(activitySummary).toHaveTextContent(/1 tool call · 12s elapsed/);
+    expect(activitySummary).not.toHaveTextContent("milestone");
+    const activities = activitySummary.parentElement as HTMLDetailsElement;
+    expect(activities.open).toBe(false);
+    fireEvent.click(activitySummary);
+    expect(activities.open).toBe(true);
     expect(screen.getByText("I will read the file.")).toBeInTheDocument();
+    expect(screen.queryByText("Inspect current files")).toBeNull();
+    expect(screen.getByText("read file")).toBeInTheDocument();
     expect(screen.getByText("ORBIT-17")).toBeInTheDocument();
     expect(screen.queryByText("Task progress")).toBeNull();
+    await act(async () => {
+      receive({ thread_id: "thread1", run_id: "r2", event: { kind: "started", task: "follow up", max_turns: 3 } });
+      receive({ thread_id: "thread1", run_id: "r2", event: { kind: "assistant_text", text: "Milestone: Follow-up\nI will check one more thing." } });
+      receive({ thread_id: "thread1", run_id: "r2", event: { kind: "tool_started", tool: "list_files", summary: "workspace" } });
+    });
+    expect(screen.getByText("Verified.").closest(".themis-thread-msg")).not.toHaveClass("themis-thread-msg--action-waiting");
+    expect(screen.getByText("I will check one more thing.").closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
     vi.mocked(bridge.createThread).mockResolvedValueOnce({ ...updated, id: "thread2" });
     await act(async () => fireEvent.keyDown(document, { key: "O", ctrlKey: true, shiftKey: true }));
     expect(bridge.createThread).toHaveBeenCalledTimes(2);
+  });
+  it("keeps restored legacy replies static during a follow-up run", async () => {
+    const thread = { id: "legacy-thread", title: "Legacy", provider: "go" as const, model: "minimax-m2.5", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/legacy"] });
+    vi.mocked(bridge.openProject).mockResolvedValue({ root: "/tmp/legacy", name: "Legacy", is_git: true });
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThreadHistory).mockResolvedValue([{ kind: "legacy", message: { id: "old-answer", role: "assistant", text: "Restored final answer" } }]);
+    await mount();
+    expect(await screen.findByText("Restored final answer")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Follow up" } });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
+    const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => {
+      receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "started", task: "follow up", max_turns: 3 } });
+    });
+    expect(screen.getByText("Restored final answer").closest(".themis-thread-msg")).not.toHaveClass("themis-thread-msg--action-waiting");
+
+    await act(async () => {
+      receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "assistant_text", text: "Milestone: Follow-up\nI will check one thing." } });
+      receive({ thread_id: thread.id, run_id: "next-run", event: { kind: "tool_started", tool: "read_file", summary: "check.txt" } });
+    });
+
+    const oldReply = screen.getByText("Restored final answer").closest(".themis-thread-msg")!;
+    expect(oldReply).toHaveClass("themis-thread-msg--completed");
+    expect(oldReply).not.toHaveClass("themis-thread-msg--action-waiting");
+    expect(oldReply.querySelector(".themis-shimmer")).toBeNull();
+    expect(screen.getByText("I will check one thing.").closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
   });
   it("collapses projects independently without changing the open conversation", async () => {
     const first = { id: "a", title: "First thread", provider: "go" as const, model: "minimax-m2.5", running: false, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };

@@ -21,6 +21,15 @@
   --themis-info: #58a6ff;
   --themis-add-bg: rgba(63, 185, 80, 0.14);
   --themis-del-bg: rgba(248, 81, 73, 0.14);
+  --themis-composer-bg: var(--themis-surface);
+  --themis-user-message-bg: var(--themis-surface);
+  --themis-user-message-border: var(--themis-border);
+  --themis-nav-hover-bg: color-mix(in srgb, var(--themis-text) 4%, transparent);
+  --themis-nav-active-bg: color-mix(in srgb, var(--themis-text) 6%, transparent);
+  --themis-nav-text: var(--themis-text-2);
+  --themis-nav-icon: var(--themis-text-2);
+  --themis-shimmer-base: var(--themis-text-2);
+  --themis-shimmer-highlight: var(--themis-text);
 }
 
 [data-theme="light"] {
@@ -29,7 +38,7 @@
   --themis-code-number-light: #815917;
   --themis-canvas: #f6f4ef;
   --themis-surface: #ffffff;
-  --themis-raised: #ffffff;
+  --themis-raised: #dedede;
   --themis-border: #e2dcd0;
   --themis-border-subtle: #ece7db;
   --themis-text: #1c1a15;
@@ -44,6 +53,15 @@
   --themis-info: #58a6ff;
   --themis-add-bg: rgba(63, 185, 80, 0.14);
   --themis-del-bg: rgba(248, 81, 73, 0.14);
+  --themis-composer-bg: #fbfaf7;
+  --themis-user-message-bg: var(--themis-raised);
+  --themis-user-message-border: #cac7bf;
+  --themis-nav-hover-bg: #f1eee8;
+  --themis-nav-active-bg: var(--themis-raised);
+  --themis-nav-text: #38352f;
+  --themis-nav-icon: #6e685d;
+  --themis-shimmer-base: #5d5d5d;
+  --themis-shimmer-highlight: var(--themis-raised);
 }
 
 body {
