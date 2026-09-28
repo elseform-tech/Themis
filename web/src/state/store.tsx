@@ -16,6 +16,7 @@ import type { PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
 import {
   getSecretStatus,
   getSettings,
+  getThread,
   getThreadHistory,
   importLegacyHistory,
   listAutomations,
@@ -119,6 +120,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (cancelled) return;
           dispatch({ type: "review/added", review: item });
           toast(dispatch, `New review item: ${item.title}`, "info");
+          void listAutomations().then(async automations => {
+            if (cancelled) return;
+            dispatch({ type: "automation/loaded", automations });
+            const projectRoot = automations.find(automation => automation.id === item.automation_id)?.project_root;
+            if (!projectRoot) return;
+            const thread = await getThread(item.thread_id);
+            if (!cancelled) dispatch({ type: "thread/synced", projectRoot, thread });
+          }).catch(() => {});
         });
         if (cancelled) {
           offThread();

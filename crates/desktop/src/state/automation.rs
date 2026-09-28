@@ -25,9 +25,23 @@ impl AppState {
             id: uuid::Uuid::new_v4().to_string(),
             name: input.name,
             project_root: root.to_string_lossy().into_owned(),
+            target_thread_id: input.target_thread_id.clone(),
             provider: input.provider,
-            model: input.model,
-            skill_ids: dedup_ids(input.skill_ids),
+            model: if input.target_thread_id.is_some() {
+                String::new()
+            } else {
+                input.model
+            },
+            reasoning_effort: if input.target_thread_id.is_some() {
+                None
+            } else {
+                input.reasoning_effort
+            },
+            skill_ids: if input.target_thread_id.is_some() {
+                Vec::new()
+            } else {
+                dedup_ids(input.skill_ids)
+            },
             interval_mins,
             task: input.task,
             enabled: input.enabled,
@@ -67,9 +81,23 @@ impl AppState {
             .ok_or_else(|| format!("unknown automation '{automation_id}'"))?;
         automation.name = input.name;
         automation.project_root = root.to_string_lossy().into_owned();
+        automation.target_thread_id = input.target_thread_id.clone();
         automation.provider = input.provider;
-        automation.model = input.model;
-        automation.skill_ids = dedup_ids(input.skill_ids);
+        automation.model = if input.target_thread_id.is_some() {
+            String::new()
+        } else {
+            input.model
+        };
+        automation.reasoning_effort = if input.target_thread_id.is_some() {
+            None
+        } else {
+            input.reasoning_effort
+        };
+        automation.skill_ids = if input.target_thread_id.is_some() {
+            Vec::new()
+        } else {
+            dedup_ids(input.skill_ids)
+        };
         automation.interval_mins = interval_mins;
         automation.task = input.task;
         automation.enabled = input.enabled;
@@ -131,10 +159,20 @@ impl AppState {
             ));
         }
         canonical_project_dir(&input.project_root)?;
-        if input.provider.core_kind() == themis_core::providers::ProviderKind::Go {
-            check_go_model(&input.model)?;
+        if input.provider != ProviderKind::Go {
+            return Err("Only OpenCode Go is supported".to_owned());
         }
-        self.check_skill_ids(&input.skill_ids).await?;
+        if let Some(thread_id) = &input.target_thread_id {
+            let threads = self.inner.threads.read().await;
+            let thread = threads
+                .get(thread_id)
+                .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
+            if thread.project_root != canonical_project_dir(&input.project_root)? {
+                return Err("Selected thread is in a different project".to_owned());
+            }
+        } else {
+            self.check_skill_ids(&input.skill_ids).await?;
+        }
         Ok(())
     }
 
@@ -192,9 +230,9 @@ impl AppState {
     /// it is retried on the next tick. No-op while the global
     /// `automations_enabled` kill-switch is off.
     ///
-    /// Firing only ever creates a thread plus a run; there is deliberately
-    /// no code path from the scheduler to [`AppState::merge_thread`] —
-    /// automation output always waits for human review.
+    /// Firing runs in the selected thread or creates a new one. There is
+    /// deliberately no path to [`AppState::merge_thread`] — output waits for
+    /// human review.
     pub async fn tick_automations_once(&self, sink: &Arc<dyn EventSink>) {
         if !self.inner.settings.get().await.automations_enabled {
             return;
@@ -226,9 +264,7 @@ impl AppState {
         }
     }
 
-    /// Fires one automation: creates its thread (provider/model/skills from
-    /// the automation, titled `Automation <name> — <timestamp>`) and sends
-    /// the automation task as the run.
+    /// Fires one automation in its selected thread or a new project thread.
     async fn fire_automation(
         &self,
         sink: &Arc<dyn EventSink>,
@@ -245,29 +281,67 @@ impl AppState {
                 automation.id
             ));
         }
-        let now = Utc::now();
-        let info = self
-            .create_thread(
-                automation.project_root.clone(),
-                automation.provider,
-                Some(automation.model.clone()),
+        let (thread_id, model, effort) = if let Some(thread_id) = &automation.target_thread_id {
+            let threads = self.inner.threads.read().await;
+            let thread = threads.get(thread_id).ok_or_else(|| {
+                format!("automation target thread '{thread_id}' no longer exists")
+            })?;
+            if thread.project_root != canonical_project_dir(&automation.project_root)? {
+                return Err("Automation target thread moved to a different project".to_owned());
+            }
+            (
+                thread_id.clone(),
+                thread.model.clone(),
+                thread.reasoning_effort.clone(),
             )
-            .await?;
+        } else {
+            (
+                String::new(),
+                automation.model.clone(),
+                automation.reasoning_effort.clone(),
+            )
+        };
+        if let Some(effort) = &effort {
+            let models = self.list_go_models().await?;
+            if !models
+                .iter()
+                .any(|item| item.id == model && item.effort_levels.contains(effort))
+            {
+                return Err(format!(
+                    "Effort '{effort}' is unavailable for model '{}'",
+                    model
+                ));
+            }
+        }
+        let now = Utc::now();
         let title = format!(
             "Automation {} — {}",
             automation.name,
             now.to_rfc3339_opts(SecondsFormat::Secs, true)
         );
-        {
-            let mut threads = self.inner.threads.write().await;
-            let record = threads
-                .get_mut(&info.id)
-                .ok_or_else(|| format!("automation thread '{}' vanished", info.id))?;
-            record.title = title.clone();
-            record.titled = true;
-            record.skill_ids = automation.skill_ids.clone();
-        }
-        self.persist_registry().await;
+        let thread_id = if automation.target_thread_id.is_some() {
+            thread_id
+        } else {
+            let info = self
+                .create_thread(
+                    automation.project_root.clone(),
+                    automation.provider,
+                    Some(model),
+                )
+                .await?;
+            {
+                let mut threads = self.inner.threads.write().await;
+                let record = threads
+                    .get_mut(&info.id)
+                    .ok_or_else(|| format!("automation thread '{}' vanished", info.id))?;
+                record.title = title.clone();
+                record.titled = true;
+                record.reasoning_effort = automation.reasoning_effort.clone();
+                record.skill_ids = automation.skill_ids.clone();
+            }
+            self.persist_registry().await;
+            info.id
+        };
         let run_id = uuid::Uuid::new_v4().to_string();
         // Register BEFORE spawning: the pump attributes terminal events via
         // this map, and registering after the spawn could miss a fast failure.
@@ -279,27 +353,28 @@ impl AppState {
                 run_id.clone(),
                 AutomationRunContext {
                     automation_id: automation.id.clone(),
-                    thread_id: info.id.clone(),
+                    thread_id: thread_id.clone(),
                     title,
                 },
             );
         match self
-            .send_message_with_id(
+            .send_message_with_options(
                 Arc::clone(sink),
-                info.id.clone(),
+                thread_id.clone(),
                 automation.task.clone(),
                 run_id.clone(),
+                effort,
             )
             .await
         {
-            Ok(_) => Ok((info.id, run_id)),
+            Ok(_) => Ok((thread_id, run_id)),
             Err(err) => {
                 self.inner
                     .automation_runs
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .remove(&run_id);
-                if err.contains(GATE_SATURATED_MARKER) {
+                if err.contains(GATE_SATURATED_MARKER) || err.contains("is busy") {
                     // Lost a gate race with another run: skip WITHOUT
                     // advancing; the automation stays due for the next tick.
                     return Err(err);
@@ -383,7 +458,6 @@ impl AppState {
             reviews.insert(item.id.clone(), item.clone());
         }
         self.persist_reviews().await;
-        sink.emit_review_item(&item);
         {
             let mut automations = self.inner.automations.write().await;
             if let Some(automation) = automations.get_mut(&context.automation_id) {
@@ -394,5 +468,6 @@ impl AppState {
             }
         }
         self.persist_automations().await;
+        sink.emit_review_item(&item);
     }
 }

@@ -12,7 +12,7 @@ use crate::approvals::DesktopApprovalHook;
 use crate::sink::EventSink;
 use crate::types::{ThreadEvent, ThreadEventEnvelope};
 
-use super::{check_go_model, AppState, RunSnapshot, CUSTOM_BASE_URL_ENV_VAR};
+use super::{AppState, RunSnapshot};
 
 /// Channel capacity for the run-event pump (runs emit a handful of events).
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
@@ -28,27 +28,40 @@ impl AppState {
         task: String,
         policy: RunPolicy,
     ) -> Result<(), String> {
-        let core_kind = snapshot.provider.core_kind();
-        let api_key = self.api_key_for(snapshot.provider)?;
-        if core_kind == themis_core::providers::ProviderKind::Go {
-            check_go_model(&snapshot.model)?;
+        if snapshot.provider != crate::types::ProviderKind::Go {
+            return Err(
+                "This thread used a retired provider; select an OpenCode Go model to continue"
+                    .to_owned(),
+            );
         }
-        let mut config = ProviderConfig::new(core_kind, api_key);
+        let api_key = self.api_key_for(snapshot.provider)?;
+        if let Some(effort) = &snapshot.reasoning_effort {
+            let catalog = self.inner.go_catalog.read().await;
+            let supported = catalog
+                .iter()
+                .find(|model| model.id == snapshot.model)
+                .is_some_and(|model| model.effort_levels.contains(effort));
+            if !supported {
+                return Err(format!(
+                    "Effort '{effort}' is unavailable for model '{}'",
+                    snapshot.model
+                ));
+            }
+        }
+        let mut config = ProviderConfig::new(themis_core::providers::ProviderKind::Go, api_key);
         config.reasoning_effort = snapshot.reasoning_effort;
         config.session_id = Some(thread_id.to_owned());
         if !snapshot.model.trim().is_empty() {
             config = config.with_model(snapshot.model.clone());
         }
-        if core_kind == themis_core::providers::ProviderKind::Custom {
-            match self.custom_base_url() {
-                Some(url) => config = config.with_base_url(url),
-                None => {
-                    return Err(format!(
-                        "provider 'custom' needs a base URL: set the \
-                         {CUSTOM_BASE_URL_ENV_VAR} environment variable"
-                    ));
-                }
-            }
+        if let Some(url) = self
+            .inner
+            .go_base_url_override
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+        {
+            config = config.with_base_url(url);
         }
         let llm = themis_core::providers::resolve(&config)
             .await

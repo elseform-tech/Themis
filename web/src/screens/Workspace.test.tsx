@@ -10,8 +10,8 @@ vi.mock("../lib/tauri", async importOriginal => ({
   getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
-  setProvider: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
-  openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => ["minimax-m2.5", "gpt-5.6-luna"]),
+  setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
+  openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", effort_levels: [] }, { id: "gpt-5.6-luna", effort_levels: ["low", "medium", "high"] }]),
 }));
 const settings = { ...DEFAULT_SETTINGS, projects_directory: "/tmp/Themis/Projects" };
 beforeEach(() => {
@@ -19,7 +19,7 @@ beforeEach(() => {
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), clear: () => storage.clear() });
   vi.mocked(bridge.getSettings).mockResolvedValue(settings);
-  vi.mocked(bridge.getSecretStatus).mockResolvedValue({ go: true, openai: false, anthropic: false });
+  vi.mocked(bridge.getSecretStatus).mockResolvedValue({ go: true });
   vi.mocked(bridge.updateSettings).mockImplementation(async patch => ({ ...settings, ...patch }));
   window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() });
   HTMLElement.prototype.scrollIntoView = vi.fn();
@@ -28,20 +28,47 @@ afterEach(() => vi.useRealTimers());
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("shows a finished automation thread and pending review without opening it", async () => {
+    const root = "/tmp/automation-project";
+    const thread = { id: "scheduled-thread", title: "Scheduled check", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    const automation = { id: "automation-1", name: "Scheduled check", project_root: root, provider: "go" as const, model: thread.model, skill_ids: [], interval_mins: 60, task: "Check", enabled: false, last_run_at: null, next_run_at: "2026-09-28T22:00:00Z", run_count: 1 };
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
+    vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Automation project", is_git: true });
+    vi.mocked(bridge.listThreads).mockResolvedValue([]);
+    vi.mocked(bridge.listAutomations).mockResolvedValue([automation]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    await mount();
+    const review = { id: "review-1", automation_id: automation.id, thread_id: thread.id, created_at: "2026-09-28T21:00:00Z", title: "Scheduled check", summary: "Completed", status: "pending" as const };
+    const onReview = vi.mocked(bridge.onReviewItemAdded).mock.calls[0]![0];
+    const onThread = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => {
+      onReview(review);
+      onThread({ thread_id: thread.id, run_id: "run-1", event: { kind: "finished", result: "Completed" } });
+    });
+    const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+    expect(within(within(sidebar).getByRole("button", { name: /^Scheduled check/ })).getByRole("img", { name: "Done" })).toBeInTheDocument();
+    const queueButton = within(sidebar).getByRole("button", { name: /Review queue\s*1/ });
+    fireEvent.click(queueButton);
+    expect(screen.getByRole("tab", { name: "Pending (1)" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Reviewed (0)" })).toBeInTheDocument();
+  });
+
   it("starts directly in the workspace and creates a project with only a name", async () => {
     vi.useFakeTimers();
     vi.mocked(bridge.createProject).mockResolvedValue({ name: "My project", root: "/tmp/Themis/Projects/My project", is_git: true });
-    vi.mocked(bridge.createThread).mockResolvedValue({ id: "thread1", title: "New thread", provider: "go", model: "minimax-m2.5", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] });
+    vi.mocked(bridge.createThread).mockResolvedValue({ id: "thread1", title: "New thread", provider: "go", model: "muse-spark-1.3-contributor", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] });
     await mount();
     expect(screen.queryByText(/welcome to themis/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "New project" }));
     fireEvent.change(screen.getByLabelText("Project name"), { target: { value: "My project" } });
     await act(async () => fireEvent.submit(screen.getByLabelText("Project name").closest("form")!));
     expect(bridge.createProject).toHaveBeenCalledWith("My project", undefined);
-    expect(bridge.createThread).toHaveBeenCalledWith("/tmp/Themis/Projects/My project", "go", "minimax-m2.5");
+    expect(bridge.createThread).toHaveBeenCalledWith("/tmp/Themis/Projects/My project", "go", "muse-spark-1.3-contributor");
     expect(screen.getByLabelText("Message")).toBeEnabled();
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("minimax-m2.5");
-    expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("muse-spark-1.3-contributor");
+    expect(screen.getByRole("combobox", { name: "Model" }).closest(".themis-composer-model-picker")).toHaveTextContent("Go");
+    fireEvent.click(screen.getByTitle("Reasoning effort"));
+    expect(screen.getByRole("slider", { name: "Reasoning effort" })).toBeDisabled();
     expect(screen.queryByLabelText("Diff review panel")).toBeNull();
     expect(screen.queryByText("Review changes")).toBeNull();
     expect(screen.queryByText("Activity")).toBeNull();
@@ -50,8 +77,10 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.getThread).mockResolvedValue(updated);
     await act(async () => fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "gpt-5.6-luna" } }));
     expect(bridge.setProvider).toHaveBeenCalledWith("thread1", "go", "gpt-5.6-luna");
-    expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toBeEnabled();
-    fireEvent.change(screen.getByRole("combobox", { name: "Reasoning effort" }), { target: { value: "low" } });
+    expect(screen.getByRole("slider", { name: "Reasoning effort" })).toBeEnabled();
+    vi.mocked(bridge.setThreadEffort).mockResolvedValue({ ...updated, reasoning_effort: "low" });
+    await act(async () => fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "1" } }));
+    expect(bridge.setThreadEffort).toHaveBeenCalledWith("thread1", "low");
     fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Read the test file" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
     expect(bridge.sendMessage).toHaveBeenCalledWith("thread1", "Read the test file", "low");
@@ -100,7 +129,7 @@ describe("Workspace journey", () => {
     expect(bridge.createThread).toHaveBeenCalledTimes(2);
   });
   it("keeps restored legacy replies static during a follow-up run", async () => {
-    const thread = { id: "legacy-thread", title: "Legacy", provider: "go" as const, model: "minimax-m2.5", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    const thread = { id: "legacy-thread", title: "Legacy", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/legacy"] });
     vi.mocked(bridge.openProject).mockResolvedValue({ root: "/tmp/legacy", name: "Legacy", is_git: true });
     vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
@@ -128,7 +157,7 @@ describe("Workspace journey", () => {
     expect(screen.getByText("I will check one thing.").closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
   });
   it("collapses projects independently without changing the open conversation", async () => {
-    const first = { id: "a", title: "First thread", provider: "go" as const, model: "minimax-m2.5", running: false, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };
+    const first = { id: "a", title: "First thread", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/one", "/tmp/two"] });
     vi.mocked(bridge.openProject).mockImplementation(async root => ({ root, name: root.endsWith("one") ? "One" : "Two", is_git: true }));
     vi.mocked(bridge.listThreads).mockImplementation(async root => [root.endsWith("one") ? first : { ...first, id: "b", title: "Second thread" }]);
@@ -146,7 +175,7 @@ describe("Workspace journey", () => {
     expect(screen.getByRole("button", { name: /^First thread/ })).toBeInTheDocument();
   });
   it("shows restored running, completed, failed, and stopped thread status", async () => {
-    const thread = { id: "status", title: "Status thread", provider: "go" as const, model: "minimax-m2.5", running: true, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };
+    const thread = { id: "status", title: "Status thread", provider: "go" as const, model: "muse-spark-1.3-contributor", running: true, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/one"] });
     vi.mocked(bridge.openProject).mockResolvedValue({ root: "/tmp/one", name: "One", is_git: true });
     vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
@@ -191,5 +220,16 @@ describe("Workspace journey", () => {
     await act(async () => fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "light" } }));
     expect(screen.getByRole("alert")).toHaveTextContent("Disk is full");
     expect(screen.getByLabelText("Theme")).toHaveValue("system");
+  });
+  it("selects the default model from the Go catalog", async () => {
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Models & connections" })));
+    expect(bridge.listGoModels).toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "Default model" })).toBeNull();
+    const select = screen.getByRole("combobox", { name: "Default model" });
+    expect(select).toHaveValue("muse-spark-1.3-contributor");
+    await act(async () => fireEvent.change(select, { target: { value: "gpt-5.6-luna" } }));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ default_model: "gpt-5.6-luna" });
   });
 });

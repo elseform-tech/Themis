@@ -1,21 +1,23 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
+import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 import {
   Badge,
   Button,
   Dialog,
-  Dropdown,
   EmptyState,
   Input,
 } from "../components";
-import type { ProviderKind } from "../lib/types";
 import {
   createAutomation,
+  createProject,
   deleteAutomation,
-  listAutomations,
+  listGoModels,
   runAutomationNow,
   setAutomationEnabled,
   updateAutomation,
 } from "../lib/tauri";
+import type { GoModel } from "../lib/types";
 import { describeError, toast, useApp } from "../state/store";
 import {
   automationToForm,
@@ -25,10 +27,8 @@ import {
   validateAutomationForm,
   type AutomationFormState,
 } from "./automationForm";
-import { pickProjectDirectory } from "./projectPick";
 import "./Automations.css";
 
-const PROVIDERS: ProviderKind[] = ["go", "openai", "anthropic", "ollama", "custom"];
 
 function formatTime(iso: string | null): string {
   if (iso === null) return "never";
@@ -48,13 +48,47 @@ export function Automations() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
-  const [browsing, setBrowsing] = useState(false);
+  const [newProjectName, setNewProjectName] = useState<string | null>(null);
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [projectError, setProjectError] = useState("");
+  const [models, setModels] = useState<GoModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  const [modelRefresh, setModelRefresh] = useState(0);
+  const targetMode = dialog.mode === "closed" ? "closed" : dialog.form.targetMode;
+  const threadChoices = state.projects.flatMap(project =>
+    (state.threadsByProject[project.root] ?? []).map(thread => ({ project, thread })),
+  );
+  const selectedThread = dialog.mode === "closed" ? undefined : threadChoices.find(choice => choice.thread.id === dialog.form.targetThreadId);
+  const selectedModel = dialog.mode === "closed" ? undefined : models.find(model => model.id === dialog.form.model);
+  const effortLevels = selectedModel?.effort_levels ?? [];
+
+  useEffect(() => {
+    if (targetMode !== "new" || !state.secretStatus.go) return;
+    let active = true;
+    setModelsLoading(true); setModelsError(""); setModels([]);
+    void listGoModels().then(models => {
+      if (active) setModels(models);
+    }).catch((error: unknown) => {
+      if (active) setModelsError(describeError(error));
+    }).finally(() => {
+      if (active) setModelsLoading(false);
+    });
+    return () => { active = false; };
+  }, [targetMode, state.secretStatus.go, modelRefresh]);
 
   function openCreate() {
     setSaveError(null);
+    setNewProjectName(null);
+    setProjectError("");
     setDialog({
       mode: "create",
-      form: emptyAutomationForm(state.settings.default_provider),
+      form: {
+        ...emptyAutomationForm(state.settings.default_provider),
+        targetThreadId: state.activeThreadId ?? "",
+        projectRoot: state.activeProjectRoot ?? "",
+        model: state.settings.default_model,
+      },
     });
   }
 
@@ -62,6 +96,8 @@ export function Automations() {
     const automation = state.automations.find((a) => a.id === automationId);
     if (automation === undefined) return;
     setSaveError(null);
+    setNewProjectName(null);
+    setProjectError("");
     setDialog({ mode: "edit", automationId, form: automationToForm(automation) });
   }
 
@@ -71,18 +107,19 @@ export function Automations() {
     );
   }
 
-  async function browse() {
-    if (dialog.mode === "closed" || browsing) return;
-    setBrowsing(true);
+  async function makeProject() {
+    if (dialog.mode === "closed" || creatingProject || !newProjectName?.trim()) return;
+    setCreatingProject(true);
+    setProjectError("");
     try {
-      const picked = await pickProjectDirectory();
-      if (picked.kind === "path") {
-        patchForm({ projectRoot: picked.path });
-      } else if (picked.kind === "unavailable") {
-        toast(dispatch, "Folder picker unavailable — type the path instead", "warning");
-      }
+      const project = await createProject(newProjectName.trim());
+      dispatch({ type: "project/opened", project, select: false });
+      patchForm({ projectRoot: project.root });
+      setNewProjectName(null);
+    } catch (error: unknown) {
+      setProjectError(describeError(error));
     } finally {
-      setBrowsing(false);
+      setCreatingProject(false);
     }
   }
 
@@ -98,10 +135,25 @@ export function Automations() {
 
   async function save() {
     if (dialog.mode === "closed" || saving) return;
+    if (dialog.form.targetMode === "new") {
+      const selected = selectedModel;
+      if (!selected) { setSaveError("Select an available OpenCode Go model."); return; }
+      if (dialog.form.effort && !selected.effort_levels.includes(dialog.form.effort)) {
+        setSaveError("Select an effort level available for this model."); return;
+      }
+    }
     const invalid = validateAutomationForm(dialog.form);
     if (invalid !== null) {
       setSaveError(invalid);
       return;
+    }
+    if (dialog.form.targetMode === "continue") {
+      if (!selectedThread) { setSaveError("Select an existing thread to continue."); return; }
+    } else {
+      if (!state.projects.some(project => project.root === dialog.form.projectRoot)) {
+        setSaveError("Select a project for the automation thread.");
+        return;
+      }
     }
     setSaving(true);
     setSaveError(null);
@@ -159,12 +211,6 @@ export function Automations() {
     try {
       const run = await runAutomationNow(automationId);
       toast(dispatch, `Run started (thread ${run.thread_id})`, "success");
-      try {
-        const automations = await listAutomations();
-        dispatch({ type: "automation/loaded", automations });
-      } catch {
-        // Non-fatal: the run started; counts refresh on next boot.
-      }
     } catch (error: unknown) {
       toast(dispatch, `Run failed: ${describeError(error)}`, "danger");
     } finally {
@@ -198,6 +244,7 @@ export function Automations() {
       ) : (
         <ul className="themis-automations-list">
           {state.automations.map((automation) => {
+            const target = threadChoices.find(choice => choice.thread.id === automation.target_thread_id);
             const skillNames = automation.skill_ids.map(
               (id) =>
                 state.skills.find((s) => s.id === id)?.name ?? id,
@@ -217,6 +264,10 @@ export function Automations() {
                 </div>
                 <dl className="themis-automations-meta">
                   <div>
+                    <dt>Run in</dt>
+                    <dd>{automation.target_thread_id ? `Continue ${target?.thread.title ?? "missing thread"}` : "New thread each run"}</dd>
+                  </div>
+                  <div>
                     <dt>Project</dt>
                     <dd title={automation.project_root}>
                       {automation.project_root}
@@ -225,8 +276,9 @@ export function Automations() {
                   <div>
                     <dt>Provider</dt>
                     <dd>
-                      {automation.provider} ·{" "}
-                      {automation.model === "" ? "default" : automation.model}
+                      OpenCode Go ·{" "}
+                      {automation.target_thread_id ? target?.thread.model ?? "unavailable" : automation.model || "default"}
+                      {(automation.target_thread_id ? target?.thread.reasoning_effort : automation.reasoning_effort) ? ` · ${automation.target_thread_id ? target?.thread.reasoning_effort : automation.reasoning_effort}` : ""}
                     </dd>
                   </div>
                   <div>
@@ -235,8 +287,8 @@ export function Automations() {
                   </div>
                   <div>
                     <dt>Skills</dt>
-                    <dd title={skillNames.join(", ")}>
-                      {automation.skill_ids.length === 0
+                    <dd title={automation.target_thread_id ? "Inherited from thread" : skillNames.join(", ")}>
+                      {automation.target_thread_id ? "From thread" : automation.skill_ids.length === 0
                         ? "none"
                         : `${automation.skill_ids.length}: ${skillNames.join(", ")}`}
                     </dd>
@@ -301,7 +353,7 @@ export function Automations() {
         open={dialog.mode !== "closed"}
         title={dialog.mode === "edit" ? "Edit automation" : "New automation"}
         onClose={() => {
-          if (!saving) setDialog({ mode: "closed" });
+          if (!saving && !creatingProject) setDialog({ mode: "closed" });
         }}
       >
         {dialog.mode !== "closed" && (
@@ -314,49 +366,60 @@ export function Automations() {
               disabled={saving}
               onChange={(event) => patchForm({ name: event.target.value })}
             />
+            <label className="themis-automations-field">Run in
+              <select aria-label="Run in" value={dialog.form.targetMode} disabled={saving} onChange={event => patchForm({ targetMode: event.target.value as "continue" | "new", targetThreadId: "", projectRoot: "" })}>
+                <option value="continue">Continue an existing thread</option>
+                <option value="new">Create a new thread each run</option>
+              </select>
+            </label>
+            {dialog.form.targetMode === "continue" ? <>
+              <label className="themis-automations-field">Thread to continue
+                <select aria-label="Thread to continue" value={selectedThread?.thread.id ?? ""} disabled={saving} onChange={event => {
+                  const choice = threadChoices.find(item => item.thread.id === event.target.value);
+                  patchForm({ targetThreadId: event.target.value, projectRoot: choice?.project.root ?? "" });
+                }}>
+                  <option value="" disabled>{dialog.form.targetThreadId ? "Thread unavailable — choose another" : "Choose a thread"}</option>
+                  {state.projects.map(project => {
+                    const threads = state.threadsByProject[project.root] ?? [];
+                    return threads.length > 0 && <optgroup key={project.root} label={project.name}>
+                      {threads.map(thread => <option key={thread.id} value={thread.id}>{thread.title}</option>)}
+                    </optgroup>;
+                  })}
+                </select>
+              </label>
+              <span className="themis-automations-hint">Each heartbeat continues this thread with its current model, effort, and skills.</span>
+              {selectedThread && <p className="themis-automations-hint">{selectedThread.project.name} · {selectedThread.thread.model} · {selectedThread.thread.reasoning_effort || "Default effort"}</p>}
+            </> : <>
             <div className="themis-automations-field">
-              <div className="themis-automations-root-row">
-                <Input
-                  id="themis-automation-root"
-                  label="Project root"
-                  placeholder="/path/to/project"
-                  value={dialog.form.projectRoot}
-                  disabled={saving}
-                  onChange={(event) =>
-                    patchForm({ projectRoot: event.target.value })
-                  }
-                />
-                <Button
-                  variant="ghost"
-                  size="small"
-                  disabled={saving || browsing}
-                  onClick={() => void browse()}
-                >
-                  {browsing ? "…" : "Browse…"}
-                </Button>
+              <label className="themis-automations-label" htmlFor="themis-automation-project">Project for new threads</label>
+              <div className="themis-automations-project-row">
+                <select id="themis-automation-project" value={state.projects.some(project => project.root === dialog.form.projectRoot) ? dialog.form.projectRoot : ""} disabled={saving || creatingProject} onChange={event => patchForm({ projectRoot: event.target.value })}>
+                  <option value="" disabled>{dialog.form.projectRoot ? "Current project unavailable — choose a project" : "Choose a project"}</option>
+                  {state.projects.map(project => <option key={project.root} value={project.root}>{project.name} · {project.root}</option>)}
+                </select>
+                <Button variant="ghost" size="small" disabled={saving || creatingProject} onClick={() => { setNewProjectName(""); setProjectError(""); }}>New project…</Button>
               </div>
+              <span className="themis-automations-hint">Each run starts a thread in the selected project.</span>
+              {newProjectName !== null && <div className="themis-automations-project-create">
+                <Input id="themis-automation-project-name" label="New project name" value={newProjectName} disabled={creatingProject} onChange={event => setNewProjectName(event.target.value)} />
+                <span className="themis-automations-hint">Create in {state.settings.projects_directory}</span>
+                <div className="themis-automations-project-actions"><Button variant="ghost" size="small" disabled={creatingProject} onClick={() => { setNewProjectName(null); setProjectError(""); }}>Cancel</Button><Button variant="primary" size="small" disabled={creatingProject || !newProjectName.trim()} onClick={() => void makeProject()}>{creatingProject ? "Creating…" : "Create project"}</Button></div>
+                {projectError && <p className="themis-automations-error" role="alert">{projectError}</p>}
+              </div>}
             </div>
-            <div className="themis-automations-row">
-              <Dropdown
-                items={PROVIDERS.map((p) => ({ id: p, label: p }))}
-                value={dialog.form.provider}
-                onSelect={(id) =>
-                  patchForm({ provider: id as ProviderKind })
-                }
-                label="Provider"
-                disabled={saving}
-              />
-              <Input
-                id="themis-automation-model"
-                label="Model"
-                placeholder="default"
-                value={dialog.form.model}
-                disabled={saving}
-                onChange={(event) =>
-                  patchForm({ model: event.target.value })
-                }
-              />
+            <label className="themis-automations-field">Model
+              <span className="themis-automations-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={selectedModel ? dialog.form.model : ""} disabled={saving || modelsLoading || !state.secretStatus.go || models.length === 0} onChange={event => patchForm({ model: event.target.value, effort: "" })}>
+                <option value="" disabled>{modelsLoading ? "Loading models…" : !state.secretStatus.go ? "Connect OpenCode Go to load models" : models.length === 0 ? "No models available" : selectedModel ? "Choose a model" : `Current model unavailable: ${dialog.form.model || "default"}`}</option>
+                {models.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
+              </select></span>
+            </label>
+            <div className="themis-automations-field">
+              <label htmlFor="themis-automation-effort">Reasoning effort · {dialog.form.effort || "Default"}</label>
+              <input id="themis-automation-effort" aria-label="Reasoning effort" type="range" min="0" max={Math.max(1, effortLevels.length)} step="1" value={Math.max(0, ["", ...effortLevels].indexOf(dialog.form.effort))} disabled={saving || modelsLoading || !state.secretStatus.go || effortLevels.length === 0} aria-valuetext={dialog.form.effort || "Default"} onChange={event => patchForm({ effort: ["", ...effortLevels][Number(event.target.value)] ?? "" })} />
+              <span className="themis-automations-hint">Default → {effortLevels[effortLevels.length - 1] ?? "No catalog levels"}</span>
             </div>
+            {modelsError && <p className="themis-automations-error" role="alert">{modelsError}</p>}
+            <Button variant="ghost" size="small" disabled={saving || modelsLoading || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button>
             <div className="themis-automations-field">
               <span className="themis-automations-label">Skills</span>
               {state.skills.length === 0 ? (
@@ -382,6 +445,7 @@ export function Automations() {
                 </div>
               )}
             </div>
+            </>}
             <Input
               id="themis-automation-interval"
               label="Interval (minutes, ≥ 1)"
@@ -431,14 +495,14 @@ export function Automations() {
             <div className="themis-automations-dialog-actions">
               <Button
                 variant="ghost"
-                disabled={saving}
+                disabled={saving || creatingProject}
                 onClick={() => setDialog({ mode: "closed" })}
               >
                 Cancel
               </Button>
               <Button
                 variant="primary"
-                disabled={saving}
+                disabled={saving || creatingProject || newProjectName !== null}
                 onClick={() => void save()}
               >
                 {saving ? "Saving…" : "Save"}

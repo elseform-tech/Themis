@@ -65,28 +65,6 @@ async fn cli_run_writes_file_and_exits_zero() {
 }
 
 #[tokio::test]
-async fn cli_go_requires_explicit_model() {
-    let tmp = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_themis"))
-        .arg("run")
-        .arg("do nothing")
-        .arg("--project")
-        .arg(tmp.path())
-        .arg("--provider")
-        .arg("go")
-        .arg("--api-key")
-        .arg("test-key")
-        .arg("--yes")
-        .env_remove("THEMIS_GO_MODEL")
-        .output()
-        .unwrap();
-
-    assert_eq!(output.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("refresh_go_models"), "stderr: {stderr}");
-}
-
-#[tokio::test]
 async fn cli_skills_file_applies_and_materializes() {
     let server = MockServer::start().await;
     let tmp = tempfile::tempdir().unwrap();

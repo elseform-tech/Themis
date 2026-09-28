@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Badge, Button, EmptyState, Input } from "../components";
+import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
+import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 import type {
   Diagnostics,
-  ProviderKind,
+  GoModel,
   SecretStatus,
   Settings,
   ThemeMode,
@@ -22,9 +24,8 @@ import { pickProjectDirectory } from "./projectPick";
 import { copyDiagnostics } from "./diagnostics";
 import "./Settings.css";
 
-const PROVIDERS: ProviderKind[] = ["go", "openai", "anthropic", "ollama", "custom"];
 const THEMES: ThemeMode[] = ["dark", "light", "system"];
-const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go", "openai", "anthropic"];
+const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
 
 /** Pure rendering of one update status (null = never checked). */
 export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
@@ -91,9 +92,10 @@ export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
 export function SettingsScreen() {
   const { state, dispatch } = useApp();
   const [form, setForm] = useState<Settings>(state.settings);
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<GoModel[]>([]);
   const [connecting, setConnecting] = useState(false);
   const [connection, setConnection] = useState("");
+  const [modelRefresh, setModelRefresh] = useState(0);
   const [saving, setSaving] = useState(false);
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [keyBusy, setKeyBusy] = useState<string | null>(null);
@@ -109,12 +111,19 @@ export function SettingsScreen() {
     setForm(state.settings);
   }, [state.settings]);
 
-  async function testConnection() {
-    setConnecting(true); setConnection(""); setError("");
-    try { const models = await listGoModels(); setModels(models); setConnection(`Connected · ${models.length} models available`); }
-    catch (error: unknown) { setError(describeError(error)); }
-    finally { setConnecting(false); }
-  }
+  useEffect(() => {
+    if (section !== "Models & connections" || !state.secretStatus.go) return;
+    let active = true;
+    setConnecting(true); setConnection(""); setError(""); setModels([]);
+    void listGoModels().then(models => {
+      if (active) { setModels(models); setConnection(`Connected · ${models.length} models available`); }
+    }).catch((error: unknown) => {
+      if (active) setError(describeError(error));
+    }).finally(() => {
+      if (active) setConnecting(false);
+    });
+    return () => { active = false; };
+  }, [section, state.secretStatus.go, modelRefresh]);
 
   async function save(patch: Partial<Settings>) {
     if (saving) return;
@@ -233,14 +242,13 @@ export function SettingsScreen() {
       </section>}
       {section === "Models & connections" && <>
         <section className="themis-settings-section" aria-label="Model defaults"><h3 className="themis-settings-subtitle">Model defaults</h3>
-          <label className="themis-settings-control">Default provider<select value={form.default_provider} onChange={event => void save({ default_provider: event.target.value as ProviderKind, default_model: "" })}>{PROVIDERS.map(provider => <option key={provider} value={provider}>{provider === "go" ? "OpenCode Go" : provider === "openai" ? "OpenAI" : provider === "anthropic" ? "Anthropic" : provider === "ollama" ? "Ollama" : "Custom"}</option>)}</select></label>
-          <Input id="themis-default-model" label="Default model" placeholder="Provider default" value={form.default_model} onChange={event => setForm(f => ({ ...f, default_model: event.target.value }))} onBlur={() => { if (form.default_model !== state.settings.default_model) void save({ default_model: form.default_model.trim() }); }} />
-          {form.default_provider === "go" && <><div><Button variant="ghost" size="small" disabled={connecting || !state.secretStatus.go} onClick={() => void testConnection()}>{connecting ? "Connecting…" : "Test connection & load models"}</Button></div>{connection && <p role="status" className="themis-settings-hint">{connection}</p>}{models.length > 0 && <label className="themis-settings-control">Available Go models<select value={models.includes(form.default_model) ? form.default_model : ""} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>Choose a model</option>{models.map(model => <option key={model}>{model}</option>)}</select></label>}</>}
+          <label className="themis-settings-control">Default model<span className="themis-settings-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Default model" value={models.some(model => model.id === form.default_model) ? form.default_model : ""} disabled={connecting || !state.secretStatus.go || models.length === 0} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>{connecting ? "Loading models…" : !state.secretStatus.go ? "Connect OpenCode Go to load models" : models.length === 0 ? "No models available" : models.some(model => model.id === form.default_model) ? "Choose a model" : `Current model unavailable: ${form.default_model}`}</option>{models.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}</select></span></label>
+          <div><Button variant="ghost" size="small" disabled={connecting || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button></div>{connection && <p role="status" className="themis-settings-hint">{connection}</p>}
           <p className="themis-settings-hint">Used for new threads. Existing threads keep their model.</p>
-          <div><Button variant="ghost" size="small" onClick={() => void save({ default_provider: "go", default_model: "" })}>Reset model defaults</Button></div>
+          <div><Button variant="ghost" size="small" onClick={() => void save({ default_provider: "go", default_model: "muse-spark-1.3-contributor" })}>Reset model defaults</Button></div>
         </section>
         <section className="themis-settings-section" aria-label="Connections"><h3 className="themis-settings-subtitle">Connections</h3><p className="themis-settings-hint">Keys entered here are saved in macOS Keychain and remain available after restart. OpenCode Go can also use OPENCODE_KEY from the launch environment.</p>
-          {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key"><div className="themis-settings-key-head"><strong>{provider === "go" ? "OpenCode Go" : provider === "openai" ? "OpenAI" : "Anthropic"}</strong><Badge tone={state.secretStatus[provider] ? "success" : "default"}>{state.secretStatus[provider] ? "Key available" : "Not configured"}</Badge></div>
+          {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key"><div className="themis-settings-key-head"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><Badge tone={state.secretStatus[provider] ? "success" : "default"}>{state.secretStatus[provider] ? "Key available" : "Not configured"}</Badge></div>
           <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget saved key</Button></div>{provider === "go" && <p className="themis-settings-hint">Forgetting a saved key does not remove OPENCODE_KEY from your environment.</p>}</details></div>)}
         </section>
       </>}

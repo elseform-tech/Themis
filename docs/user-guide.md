@@ -34,11 +34,11 @@ in the conversation database, settings files, or browser storage.
 Forgetting a saved key does not unset an environment key. A Finder launch
 may not inherit environment variables exported by your shell.
 
-**Key available** reports presence only. **Test connection & load models**
-checks the Go model catalog and provides a model selector. New Go threads use
-`minimax-m2.5` if no default model has been selected. Other providers use their
-configured defaults. Ollama needs no key; custom endpoints still require
-backend configuration.
+**Key available** reports presence only. Settings loads the Go model catalog
+automatically and lets you select a default model; **Refresh models** reloads it.
+New Go threads use `muse-spark-1.3-contributor` by default. The composer lists
+models available to the connected Go account. Its effort control uses the
+selected model's catalog levels and stays visible when no levels are listed.
 
 ## Projects, threads, runs
 
@@ -51,9 +51,9 @@ backend configuration.
   trace; non-read tool calls raise an approval dialog (see Approvals below).
 - **⌘/Ctrl+K** opens the command palette: jump to threads and projects, or run
   actions (new thread, open project, toggle theme, open settings). **Esc** closes the topmost layer.
-- Hover or focus a sidebar thread to edit its name/provider/model/skills or remove it.
-  Model and reasoning effort selectors sit together inside the composer. Effort overrides currently support Go/OpenAI GPT-5 and o3/o4
-  models; other models use their provider default. Tool calls appear inline
+- Hover or focus a sidebar thread to edit its name or remove it.
+  Select a Go model in the composer and use the horizontal effort slider when
+  that model offers effort levels. Tool calls appear inline
   in the conversation with a chevron, expandable input/output and completion status.
   Public text streams as it arrives. Related updates and tool calls sit inside
   milestone groups; the current group opens while completed groups collapse.
@@ -110,8 +110,14 @@ scripts. Attach skills to a thread to scope what it may use.
 
 ## Automations and the review queue
 
-The **Automations** tab schedules recurring work: name, project, provider,
-model, skills, interval in minutes (≥ 1), task prompt, and an enabled flag.
+The **Automations** tab schedules recurring work with a name, interval in
+minutes (≥ 1), task prompt, and enabled flag. Choose where each run goes:
+
+- **Continue an existing thread**: select a thread. Each run uses that thread's
+  current model, reasoning effort, and skills, and adds to its history.
+- **Create a new thread each run**: select an existing project or create one,
+  then choose a Go catalog model, its available reasoning effort, and skills.
+  Older automations keep this behavior.
 
 - The scheduler only runs **while the app is open**, and only when
   **automations_enabled** is on in Settings (the global kill-switch).
@@ -122,22 +128,18 @@ model, skills, interval in minutes (≥ 1), task prompt, and an enabled flag.
 
 ## Providers
 
-Supported providers: `go` (OpenCode Go, the default), `openai`, `anthropic`,
-`ollama`, `custom`. Set thread defaults in Settings; override per thread.
+OpenCode Go is the supported provider. Set the default Go model in Settings;
+choose a model per thread in the composer.
 
 Model resolution order for a run:
 
 1. The thread's explicit model (thread header or `default_model` setting).
-2. The provider's environment fallback: `THEMIS_GO_MODEL`,
-   `THEMIS_OPENAI_MODEL`, `THEMIS_ANTHROPIC_MODEL`, `THEMIS_OLLAMA_MODEL`,
-   `THEMIS_CUSTOM_MODEL`.
-3. The built-in default. For Go this is the last-resort `go-default` — treat
-   it as a fallback, not a recommendation; set a real model.
+2. The Go environment fallback: `THEMIS_GO_MODEL`.
+3. The built-in default: `muse-spark-1.3-contributor`.
 
-Go speaks the OpenAI chat-completions wire format at
-`https://opencode.ai/zen/go/v1` (override per-thread only via a custom
-endpoint). Use **Test connection & load models** in Settings to retrieve current model IDs.
-The thread model field also accepts an explicit ID.
+Go uses the OpenCode Go API at `https://opencode.ai/zen/go/v1`.
+Settings, the composer, and the automation editor select from current Go model
+IDs. Their effort controls follow the selected model's catalog levels.
 
 ## Settings reference
 
@@ -189,10 +191,8 @@ never included** — only the settings snapshot and error strings.
 ## FAQ
 
 **What does Themis cost?**
-Themis itself makes no paid calls. You pay your model provider under your own
-key (BYOK). Cost per run ≈ model price × tokens; keep `max_turns` low and
-prefer cheaper models for triage. Local `ollama` models cost nothing but
-electricity.
+Themis itself makes no paid calls. OpenCode Go billing applies under your own
+key. Keep `max_turns` low when testing long tasks.
 
 **What are the limits?**
 `max_turns` caps turns per run; `concurrency_limit` caps parallel runs;

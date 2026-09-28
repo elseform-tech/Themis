@@ -125,14 +125,14 @@ async fn followup_after_restart_receives_prior_conversation() {
         .await
         .unwrap();
     first
-        .set_secret("custom".into(), "synthetic-test-key".into())
+        .set_secret("go".into(), "synthetic-test-key".into())
         .await
         .unwrap();
-    first.set_custom_base_url_override(Some(server.uri()));
+    first.set_go_base_url_override(Some(server.uri()));
     let thread = first
         .create_thread(
             project.path().to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".into()),
         )
         .await
@@ -156,10 +156,10 @@ async fn followup_after_restart_receives_prior_conversation() {
     drop(first);
     let second = AppState::new_for_test(settings);
     second
-        .set_secret("custom".into(), "synthetic-test-key".into())
+        .set_secret("go".into(), "synthetic-test-key".into())
         .await
         .unwrap();
-    second.set_custom_base_url_override(Some(server.uri()));
+    second.set_go_base_url_override(Some(server.uri()));
     assert_eq!(
         second.get_thread_history(&thread.id).await.unwrap().len(),
         4

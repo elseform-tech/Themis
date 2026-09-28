@@ -151,7 +151,7 @@ async fn merge_and_discard_reject_busy_threads() {
     let thread = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".to_owned()),
         )
         .await
@@ -210,7 +210,7 @@ async fn concurrency_gate_rejects_when_saturated() {
             state
                 .create_thread(
                     root.to_string_lossy().into_owned(),
-                    ProviderKind::Custom,
+                    ProviderKind::Go,
                     Some("test-model".to_owned()),
                 )
                 .await
@@ -288,7 +288,7 @@ async fn concurrency_limit_setting_is_honored() {
     let first = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".to_owned()),
         )
         .await
@@ -296,7 +296,7 @@ async fn concurrency_limit_setting_is_honored() {
     let second = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".to_owned()),
         )
         .await
@@ -397,7 +397,7 @@ async fn legacy_threads_resume_in_shared_checkout_and_keep_old_work() {
     let thread = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".into()),
         )
         .await

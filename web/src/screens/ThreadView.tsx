@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../components";
-import type { ProviderKind } from "../lib/types";
-import { getThread, listGoModels, sendMessage, setProvider, stopThread } from "../lib/tauri";
+import type { GoModel } from "../lib/types";
+import { getThread, listGoModels, sendMessage, setProvider, setThreadEffort, stopThread } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
@@ -23,12 +23,13 @@ export function ThreadView() {
     setDrafts(previous => { const next = { ...previous, [thread.id]: value }; writeSession("drafts", next); return next; });
   }
   const newThread = useNewThread();
-  const [models, setModels] = useState<string[]>([]);
-  const [efforts, setEfforts] = useState<Record<string, string>>(() => readSession("efforts", {}));
+  const [models, setModels] = useState<GoModel[]>([]);
+  const threadId = thread?.id;
   const [savedRunDurations, setSavedRunDurations] = useState<Record<string, number>>(() => readSession("runDurations", {}));
   const runDurations = { ...savedRunDurations, ...state.runDurations };
-  const supportsEffort = !!thread && ["go", "openai"].includes(thread.provider) && /^(gpt-[56]|o3|o4)/.test(thread.model);
-  const effort = thread && supportsEffort ? efforts[thread.id] ?? "" : "";
+  const effortLevels = models.find(model => model.id === thread?.model)?.effort_levels ?? [];
+  const savedEffort = thread?.reasoning_effort ?? "";
+  const effort = effortLevels.includes(savedEffort) ? savedEffort : "";
   const [stopping, setStopping] = useState(false);
   const [sending, setSending] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -38,7 +39,7 @@ export function ThreadView() {
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
   const readOnly = project !== null && !project.is_git;
-  const composerDisabled = thread === null || running || sending || readOnly || project === null;
+  const composerDisabled = thread === null || thread.provider !== "go" || running || sending || readOnly || project === null;
   const composerBusy = running || sending;
   const trace = thread ? state.traces[thread.id] ?? [] : [];
   useEffect(() => {
@@ -53,9 +54,9 @@ export function ThreadView() {
   useEffect(() => {
     let cancelled = false;
     setModels([]);
-    if (thread?.provider === "go") listGoModels().then(items => { if (!cancelled) setModels(items); }).catch(() => {});
+    if (threadId) listGoModels().then(items => { if (!cancelled) setModels(items); }).catch(() => {});
     return () => { cancelled = true; };
-  }, [thread?.provider]);
+  }, [threadId]);
 
   useEffect(() => {
     if (Object.keys(state.runDurations).length === 0) return;
@@ -110,14 +111,14 @@ export function ThreadView() {
     }
   }
 
-  async function applyProvider(provider: ProviderKind, selectedModel?: string) {
+  async function applyProvider(selectedModel: string) {
     if (thread === null || running) return;
     setSwitching(true);
     try {
-      const model = (selectedModel ?? thread.model).trim();
+      const model = selectedModel.trim();
       await setProvider(
         thread.id,
-        provider,
+        "go",
         model === "" ? undefined : model,
       );
       if (state.activeProjectRoot !== null) {
@@ -170,7 +171,7 @@ export function ThreadView() {
         thread={thread}
         draft={draft}
         models={models}
-        supportsEffort={supportsEffort}
+        effortLevels={effortLevels}
         effort={effort}
         composerDisabled={composerDisabled}
         composerBusy={composerBusy}
@@ -179,20 +180,16 @@ export function ThreadView() {
         stopping={stopping}
         switching={switching}
         sendError={sendError}
-        secretConfigured={
-          thread.provider === "ollama" || thread.provider === "custom"
-            ? true
-            : Boolean(state.secretStatus[thread.provider])
-        }
+        secretConfigured={state.secretStatus.go}
         onDraftChange={setDraft}
         onSend={() => void send()}
         onStop={() => void stop()}
         onNewThread={() => void newThread()}
-        onProviderChange={model => void applyProvider(thread.provider, model)}
+        onProviderChange={model => void applyProvider(model)}
         onEffortChange={value => {
-          const next = { ...efforts, [thread.id]: value };
-          setEfforts(next);
-          writeSession("efforts", next);
+          void setThreadEffort(thread.id, value)
+            .then(updated => dispatch({ type: "thread/updated", projectRoot: project.root, thread: updated }))
+            .catch(error => toast(dispatch, `Effort change failed: ${describeError(error)}`, "danger"));
         }}
         onOpenSettings={() => dispatch({ type: "ui/view", view: "settings" })}
       />

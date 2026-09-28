@@ -480,31 +480,39 @@
     "id": "COMPUTER-APP-010",
     "scope": "product",
     "runner": "@Computer",
-    "title": "Switch provider settings and inspect safe diagnostics",
-    "target": "Packaged app Settings, provider picker, and Diagnostics",
+    "title": "Choose an OpenCode Go model and catalog effort in the composer",
+    "target": "Packaged app Go composer, Settings, and Diagnostics",
     "covers": [
       "providers",
       "settings",
-      "diagnostics",
-      "conversation"
+      "conversation",
+      "composer",
+      "model-effort"
     ],
-    "plannedEnvironment": "Current packaged macOS app with synthetic local provider endpoints and no real credentials.",
+    "plannedEnvironment": "Current packaged macOS app built from this worktree, disposable project, synthetic Go key, and local mock Go model and chat endpoints.",
     "preconditions": [
-      "Use disposable provider settings and mock HTTP endpoints.",
-      "Do not call a live provider."
+      "Use a disposable project and synthetic key.",
+      "Point Go requests to deterministic local mock endpoints; do not call a live provider."
     ],
     "steps": [
-      "Choose a provider and model, save settings, and send a short fixture prompt.",
-      "Switch to a second mock provider and repeat in a new thread.",
-      "Open Diagnostics and inspect provider errors and environment details."
+      "Open the Go composer and confirm the official OpenCode mark and Go label are inside the model picker.",
+      "Load Go models and choose a model with catalog effort levels.",
+      "Click the brain control, move the short horizontal effort slider, send a short fixture prompt, and inspect the mock request.",
+      "Choose a model with no catalog effort levels and confirm the brain control and slider remain available with the slider disabled at Default.",
+      "Open Settings and confirm only the Go connection is offered."
     ],
     "expected": [
-      "Each model request reaches only its selected mock endpoint with the selected model.",
-      "A busy thread cannot silently switch provider.",
-      "Diagnostics reports errors and configuration status without revealing synthetic or real secret values."
+      "The official Go branding renders inside the model picker with readable dark and light theme variants and no remote image request.",
+      "Model IDs come from the Go model endpoint; the compact effort control opens on click and its stops match the Go catalog.",
+      "The request uses the selected model and effort.",
+      "Only OpenCode Go is selectable in the composer and Settings."
     ],
     "latest": {
-      "status": "not-run"
+      "status": "passed",
+      "runAt": "2026-09-28",
+      "revision": "e77c621 (go-catalog-composer working tree)",
+      "environment": "@Computer on macOS; isolated Themis Go QA bundle with current worktree Vite UI, disposable app data, synthetic OPENCODE_KEY, local Go mock API, public models.dev metadata",
+      "notes": "Native composer showed official OpenCode dark and light wordmarks inside the model picker. Clicking the brain control opened the shorter slider. Muse showed Default through xhigh; switching to minimax-m2.5 kept the control and a disabled Default slider with no catalog levels. Switching back to Muse and selecting medium sent a synthetic prompt; local /responses received model muse-spark-1.3-contributor and reasoning.effort medium and returned a fixture reply. Settings offered only OpenCode Go. This verifies the isolated debug QA bundle, not a release package or authenticated live Go service."
     }
   },
   {
@@ -568,6 +576,168 @@
     ],
     "latest": {
       "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-013",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Match composer effort stops to live OpenCode Go models",
+    "target": "Native composer using the live Go catalog and existing OPENCODE_KEY launch environment",
+    "covers": ["providers", "composer", "model-effort", "conversation"],
+    "plannedEnvironment": "Isolated macOS QA app with current worktree Vite UI, disposable project and app data, and the existing OPENCODE_KEY environment variable; no key readback.",
+    "preconditions": ["Use a disposable project.", "Confirm OPENCODE_KEY is present without revealing its value."],
+    "steps": [
+      "Launch the QA app without a Go mock override and load the live Go models.",
+      "Inspect the default Muse model effort stops, then switch to a model with different stops and one with no catalog effort stops.",
+      "Switch back to Muse, select medium effort, and send a short synthetic prompt through the native composer."
+    ],
+    "expected": [
+      "The model picker lists account-available Go models and the slider follows each selected model's catalog levels.",
+      "Switching models resets effort to Default; the control remains present for models without catalog levels.",
+      "The live Go request completes from the native composer using the selected model and effort."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-28",
+      "revision": "e77c621 (go-catalog-composer working tree)",
+      "environment": "@Computer on macOS; isolated Themis Go QA debug bundle with current worktree Vite UI, disposable project, live Go catalog and response, inherited OPENCODE_KEY; key not displayed or stored",
+      "notes": "Native picker loaded 30 account-available Go model IDs. Muse Spark 1.3 showed Default through xhigh. Switching to GPT 5.6 Luna reset effort to Default, changed the last stop to max, and allowed the first explicit stop none. Switching to MiniMax M2.7 reset to Default and kept the effort control with a disabled slider and No catalog levels. Switching back to Muse reset to Default; choosing medium and sending a synthetic prompt through the native composer returned OK from live Go. This is an isolated debug QA bundle, not the release package; the Go /models response contains only id/object/created/owned_by, so levels come from models.dev."
+    }
+  },
+  {
+    "id": "COMPUTER-APP-014",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Choose Go models and effort for a skilled automation",
+    "target": "Native Settings, Skills, and Automations with the live OpenCode Go catalog",
+    "covers": ["settings", "providers", "automations", "skills", "model-effort", "review"],
+    "plannedEnvironment": "Isolated macOS QA app with current worktree Vite UI, disposable project and app data, and existing OPENCODE_KEY; no key readback.",
+    "preconditions": ["Use a disposable project and existing Go connection.", "Load the live Go catalog."],
+    "steps": [
+      "Open Models & connections; verify the default model is one catalog selector that loads automatically and choose another model.",
+      "Create a synthetic skill with a recognizable instruction, then create an automation for the disposable project; choose a catalog model and one of its catalog effort stops and attach the skill.",
+      "Save and reopen the automation to verify the model, effort, and skill; run it with a short synthetic prompt and inspect the resulting thread and review item.",
+      "Restore the Muse default model."
+    ],
+    "expected": [
+      "No free text model field appears in Settings or Automations; selections come from account-available Go models.",
+      "Automation effort choices follow its selected model and reset to Default when the model changes.",
+      "The saved automation carries model, effort, and skill through a live run; the response follows the skill and a review item appears."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-28",
+      "revision": "e77c621 (go-catalog-composer working tree)",
+      "environment": "@Computer on macOS; isolated Themis Go QA debug bundle with current worktree Vite UI, disposable project and app data, live OpenCode Go, inherited OPENCODE_KEY; key not displayed or stored",
+      "notes": "Settings auto-loaded 30 Go models in one Default model selector. Selected GPT 5.6 Luna and restored Muse. Created a synthetic skill, confirmed it survived native restart, attached it to a disabled automation, selected Muse medium from catalog, saved and reopened to confirm model, effort, and skill. Run now produced SKILL-QA-PASS in the resulting thread and a review item. After a completion-event refresh fix, a second live run incremented the visible run count from 1 to 2 without reopening the app. Switching the edit form to MiniMax M2.7 reset effort to Default and disabled its slider; cancelled edit preserved Muse medium. QA bundle is isolated debug build, not the release package."
+    }
+  },
+  {
+    "id": "COMPUTER-APP-015",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Show OpenCode provider branding beside model selectors",
+    "target": "Native Settings and Automations in dark and light themes",
+    "covers": ["settings", "providers", "automations", "appearance"],
+    "plannedEnvironment": "Isolated macOS Go QA app with current worktree Vite UI and disposable app data.",
+    "preconditions": ["Open the QA app with its existing Go connection and model catalog."],
+    "steps": [
+      "In dark theme, inspect the Settings default model selector and Connections row, then open an automation edit form and inspect its model selector.",
+      "Switch to light theme and inspect the same provider marks and model selectors; restore the previous theme."
+    ],
+    "expected": [
+      "The OpenCode logo is visible beside the Settings and Automation model selectors and in the Connections row in both themes.",
+      "Selectors still load Go catalog models and no other provider appears."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-28",
+      "revision": "e77c621 (go-catalog-composer working tree)",
+      "environment": "@Computer on macOS; isolated Themis Go QA debug app with current worktree Vite UI and disposable app data",
+      "notes": "Dark and light native screenshots showed the theme-aware OpenCode wordmark beside the Settings default model picker, in Connections, and beside the Automation model picker. The Go catalog loaded 30 models; the saved automation still showed Muse medium after reopening. Restored the original dark theme. This was the isolated debug QA app, not the release package."
+    }
+  },
+  {
+    "id": "COMPUTER-APP-016",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Choose or create an automation project for new threads",
+    "target": "Native Automations editor and project navigation",
+    "covers": ["automations", "projects", "conversation"],
+    "plannedEnvironment": "Isolated macOS Go QA app with current worktree Vite UI; temporary projects directory for project creation.",
+    "preconditions": ["Use disposable QA app data and set its projects folder to the temporary QA directory.", "Keep an existing project available to select."],
+    "steps": [
+      "Open New automation and inspect the required project selector and new-project action.",
+      "Select the existing QA project and confirm the selected project is shown; open New project, create a disposable project, and confirm it becomes selected without leaving the automation form.",
+      "Save a disabled disposable automation using the new project, run it manually, and confirm the spawned thread appears under that project.",
+      "Reopen the existing saved automation and confirm its destination project is selected."
+    ],
+    "expected": [
+      "The destination is explicitly chosen from registered projects; no free-text root or implicit project appears.",
+      "Creating a project selects it in the form without spawning an unrelated thread or navigating away; running its automation spawns the thread in that project.",
+      "An existing automation retains its destination project."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-28",
+      "revision": "e77c621 (go-catalog-composer working tree)",
+      "environment": "@Computer on macOS; isolated Themis Go QA debug app, current worktree Vite UI, temporary QA projects folder, existing Go connection",
+      "notes": "New automation required an explicit project; selected the existing QA project, then created Automation Project QA inline and saw it selected without a new thread. Saved disabled Destination QA run in that project and used Run now. The live response QA-DESTINATION-OK appeared in a review item; Open thread displayed it under Automation Project QA in sidebar and heading. Existing Go QA skilled run still selected its original project when reopened. Restored the original QA projects-folder preference. This was an isolated debug bundle, not the release package."
+    }
+  },
+  {
+    "id": "COMPUTER-APP-017",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Run heartbeats in an existing thread or a new project thread",
+    "target": "Native Automations, composer, Skills, Threads, and Review queue",
+    "covers": ["automations", "conversation", "model-effort", "skills", "review", "projects"],
+    "plannedEnvironment": "Isolated macOS Go QA app with current worktree Vite UI and rebuilt backend, disposable projects and app data, live OpenCode Go connection.",
+    "preconditions": ["Open the QA app with its existing Go connection and disposable threads.", "Keep automation disabled and use Run now to avoid background traffic."],
+    "steps": [
+      "Set a catalog effort in an existing thread, create a disabled automation that continues it, inspect the project-grouped thread selector, and run it manually; check the same thread and review item.",
+      "Change the thread's model or effort and run the automation again; confirm the current thread settings are used and no new thread appears.",
+      "Create a disabled automation in new-thread mode, choose a project, catalog model, effort, and skill, then run it manually and inspect the spawned thread and review item.",
+      "Reopen both automation forms and confirm their destination modes and selections persist."
+    ],
+    "expected": [
+      "Continue mode groups existing threads under project headings and inherits each run's current model, effort, and skills while preserving the thread history.",
+      "New-thread mode creates a thread in the selected project with its chosen model, effort, and skills; the spawned thread shows its chosen effort.",
+      "Both modes keep their interval schedule and produce review items."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-28",
+      "revision": "e77c621 (go-catalog-composer working tree)",
+      "environment": "@Computer on macOS; rebuilt isolated Themis Go QA debug app, current worktree Vite UI, disposable app data and projects, live OpenCode Go via inherited OPENCODE_KEY; key never displayed",
+      "notes": "Created disabled Heartbeat QA continue against an existing thread with Muse low. Run now returned HEARTBEAT-CONTINUE-OK in that same thread and made a review item. Changed its model to GPT 5.6 Luna, which reset effort to Default; a second Run now reused the same thread, preserved history, and raised run count to 2. The edit picker grouped thread titles under disabled project headings and persisted the target. Created disabled Heartbeat QA new thread in Automation Project QA with Muse medium and Go QA skill. Run now created a thread under that project and a review item with HEARTBEAT-NEW-OK. After rebuilding the backend to persist spawned-thread effort, another run created a second thread whose composer showed Medium. Reopening the new-thread form retained its project, model, medium effort, and skill. Both schedules remained at 60 minutes. This was the isolated debug QA app, not the release package."
+    }
+  },
+  {
+    "id": "COMPUTER-APP-018",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Show completed automation threads and pending reviews without opening them",
+    "target": "Native Automations, sidebar, and Review queue",
+    "covers": ["automations", "conversation", "review"],
+    "plannedEnvironment": "Isolated macOS Go QA app with current worktree Vite UI and disposable app data, using an existing disabled new-thread automation.",
+    "preconditions": ["Open the QA app with its existing Go connection and disposable project.", "Use Run now on a disabled new-thread automation."],
+    "steps": [
+      "Run the automation and remain on Automations until it finishes; do not open its review item or thread.",
+      "Check that the new thread appears under its project with Done status and the Review queue badge increases.",
+      "Open Review queue and confirm the item is Pending and the second tab is labeled Reviewed."
+    ],
+    "expected": [
+      "Completion updates the sidebar and pending review in place without requiring Open thread.",
+      "Only an explicit review action moves the item out of Pending."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-28",
+      "revision": "e77c621 (go-catalog-composer working tree)",
+      "environment": "@Computer on macOS; isolated Themis Go QA debug app, current worktree Vite UI, disposable projects and app data, live OpenCode Go connection",
+      "notes": "Ran disabled Heartbeat QA new thread manually and remained on Automations. A newly spawned thread appeared under Automation Project QA with Done status, the Review queue badge increased to 1, and a review toast appeared without opening the thread. Review queue showed Pending (1), Reviewed (7), and the new item pending with HEARTBEAT-NEW-OK. Did not click Open thread. This was the isolated debug QA app, not the release package."
     }
   }
 ]

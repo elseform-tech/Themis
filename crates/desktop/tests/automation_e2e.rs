@@ -43,8 +43,10 @@ fn automation_input(project_root: &str, task: &str) -> AutomationInput {
     AutomationInput {
         name: "Nightly".to_owned(),
         project_root: project_root.to_owned(),
-        provider: ProviderKind::Custom,
+        provider: ProviderKind::Go,
         model: "test-model".to_owned(),
+        reasoning_effort: None,
+        target_thread_id: None,
         skill_ids: Vec::new(),
         interval_mins: 60,
         task: task.to_owned(),
@@ -144,7 +146,7 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
     let thread = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".to_owned()),
         )
         .await
@@ -222,7 +224,7 @@ async fn set_thread_skills_rejects_busy_threads() {
     let thread = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".to_owned()),
         )
         .await
@@ -370,6 +372,78 @@ async fn automation_tick_creates_thread_run_and_review() {
 }
 
 #[tokio::test]
+async fn continuing_automation_reuses_thread_and_current_settings() {
+    if !git_available() {
+        eprintln!("skipping: git binary not found");
+        return;
+    }
+    let (_repo_temp, root) = init_repo();
+    let (state, _settings_temp) = test_state();
+    let server = mount_final_text_llm("heartbeat complete").await;
+    use_mock_llm(&state, &server).await;
+    let thread = state
+        .create_thread(
+            root.to_string_lossy().into_owned(),
+            ProviderKind::Go,
+            Some("first-model".to_owned()),
+        )
+        .await
+        .expect("thread");
+    let mut input = automation_input(&root.to_string_lossy(), "Check this thread.");
+    input.target_thread_id = Some(thread.id.clone());
+    let automation = state.create_automation(input).await.expect("automation");
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    let first = state
+        .run_automation_now(Arc::clone(&sink), automation.id.clone())
+        .await
+        .expect("first heartbeat");
+    assert_eq!(first.thread_id, thread.id);
+    drive_one_run(&state, &mut rx).await;
+
+    let skill = state
+        .create_skill(skill_input("Current skill"))
+        .await
+        .expect("skill");
+    state
+        .set_thread_skills(thread.id.clone(), vec![skill.id.clone()])
+        .await
+        .expect("attach skill");
+    state
+        .set_provider(
+            thread.id.clone(),
+            ProviderKind::Go,
+            Some("second-model".to_owned()),
+        )
+        .await
+        .expect("change model");
+    state
+        .set_automation_next_run_for_test(&automation.id, "2001-01-01T00:00:00Z".to_owned())
+        .await
+        .expect("due");
+    state.tick_automations_once(&sink).await;
+    let second = drive_one_run(&state, &mut rx).await;
+    assert_eq!(second.thread_id, thread.id);
+    let threads = state
+        .list_threads(root.to_string_lossy().into_owned())
+        .await
+        .expect("threads");
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].model, "second-model");
+    assert_eq!(threads[0].skill_ids, vec![skill.id]);
+    let requests = server.received_requests().await.expect("requests");
+    assert_eq!(requests.len(), 2);
+    let first: Value = serde_json::from_slice(&requests[0].body).expect("first body");
+    let second: Value = serde_json::from_slice(&requests[1].body).expect("second body");
+    assert_eq!(first["model"], "first-model");
+    assert_eq!(second["model"], "second-model");
+    assert!(second.to_string().contains("## Skill: Current skill"));
+    assert!(second.to_string().contains("heartbeat complete"));
+    assert_eq!(state.list_review_items(None).await.len(), 2);
+    assert_eq!(state.list_automations().await[0].run_count, 2);
+}
+
+#[tokio::test]
 async fn automation_runs_use_shared_checkout() {
     if !git_available() {
         eprintln!("skipping: git binary not found");
@@ -441,7 +515,7 @@ async fn saturated_gate_skips_without_advancing() {
     let thread_a = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".to_owned()),
         )
         .await

@@ -117,11 +117,26 @@
   gap: 0.25rem;
 }
 
-.themis-automations-root-row {
+.themis-automations-field select {
+  border: 1px solid var(--themis-border);
+  border-radius: 6px;
+  background: var(--themis-surface);
+  color: var(--themis-text);
+  padding: 8px;
+  font: inherit;
+}
+
+.themis-automations-model-picker { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.themis-automations-model-picker select { flex: 1; min-width: 0; }
+
+.themis-automations-project-row, .themis-automations-project-actions {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 0.5rem;
 }
+.themis-automations-project-row select { flex: 1; min-width: 0; }
+.themis-automations-project-create { display: grid; gap: 0.5rem; padding: 0.75rem; border: 1px solid var(--themis-border); border-radius: 6px; }
+.themis-automations-project-actions { justify-content: flex-end; }
 
 .themis-automations-row {
   display: flex;

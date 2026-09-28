@@ -1,13 +1,13 @@
 use super::*;
 
 impl AppState {
-    /// Overrides the custom provider base URL for tests.
-    pub fn set_custom_base_url_override(&self, url: Option<String>) {
+    /// Test-only Go endpoint override for synthetic provider responses.
+    pub fn set_go_base_url_override(&self, url: Option<String>) {
         *self
             .inner
-            .custom_base_url_override
+            .go_base_url_override
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = url;
+            .unwrap_or_else(|error| error.into_inner()) = url;
     }
 
     /// Returns the current settings.
@@ -30,12 +30,10 @@ impl AppState {
         self.inner.settings.update(patch).await
     }
 
-    /// Reports which providers have a key stored (values never leave the store).
+    /// Reports whether the Go key is available (the value never leaves the store).
     pub async fn get_secret_status(&self) -> SecretStatus {
         SecretStatus {
             go: self.inner.secrets.has("go"),
-            openai: self.inner.secrets.has("openai"),
-            anthropic: self.inner.secrets.has("anthropic"),
         }
     }
 
@@ -54,11 +52,8 @@ impl AppState {
         self.inner.secrets.clear(key)
     }
 
-    /// Looks up the API key for `provider` (Ollama needs none).
+    /// Looks up the Go API key.
     pub(super) fn api_key_for(&self, provider: ProviderKind) -> Result<String, String> {
-        if provider == ProviderKind::Ollama {
-            return Ok(String::new());
-        }
         let name = provider.as_str();
         self.inner
             .secrets
@@ -67,21 +62,5 @@ impl AppState {
             .ok_or_else(|| {
                 format!("no API key stored for provider '{name}': add one in Settings, then retry")
             })
-    }
-
-    /// Custom base URL: test override first, then the environment fallback.
-    pub(super) fn custom_base_url(&self) -> Option<String> {
-        if let Some(url) = self
-            .inner
-            .custom_base_url_override
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-        {
-            return Some(url);
-        }
-        std::env::var(CUSTOM_BASE_URL_ENV_VAR)
-            .ok()
-            .filter(|url| !url.trim().is_empty())
     }
 }

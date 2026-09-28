@@ -69,6 +69,7 @@ pub fn run() {
             commands::add_comment,
             commands::approve_action,
             commands::set_provider,
+            commands::set_thread_effort,
             commands::open_in_editor,
             commands::get_settings,
             commands::update_settings,

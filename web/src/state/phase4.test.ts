@@ -21,7 +21,7 @@ function makeThread(id: string, skillIds: string[] = []): ThreadInfo {
   return {
     id,
     title: `Thread ${id}`,
-    provider: "openai",
+    provider: "go",
     model: "",
     running: false,
     worktree_path: `/tmp/themis-wt/${id}`,
@@ -48,7 +48,7 @@ function makeAutomation(id: string, name: string): Automation {
     id,
     name,
     project_root: PROJECT.root,
-    provider: "openai",
+    provider: "go",
     model: "",
     skill_ids: [],
     interval_mins: 60,

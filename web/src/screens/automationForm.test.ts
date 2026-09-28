@@ -16,7 +16,7 @@ const AUTOMATION: Automation = {
   id: "a1",
   name: "nightly",
   project_root: "/repo",
-  provider: "openai",
+  provider: "go",
   model: "gpt",
   skill_ids: ["s1"],
   interval_mins: 30,
@@ -30,7 +30,7 @@ const AUTOMATION: Automation = {
 const INPUT: AutomationInput = {
   name: "nightly",
   project_root: "/repo",
-  provider: "openai",
+  provider: "go",
   model: "",
   skill_ids: [],
   interval_mins: 60,
@@ -44,19 +44,27 @@ beforeEach(() => {
 
 describe("validateAutomationForm", () => {
   it("requires name, project root, and task", () => {
-    expect(validateAutomationForm(emptyAutomationForm("openai"))).toBe(
+    expect(validateAutomationForm(emptyAutomationForm("go"))).toBe(
       "Name is required.",
     );
     expect(
       validateAutomationForm({
-        ...emptyAutomationForm("openai"),
+        ...emptyAutomationForm("go"),
         name: "x",
       }),
-    ).toBe("Project root is required.");
+    ).toBe("Choose a thread to continue.");
     expect(
       validateAutomationForm({
-        ...emptyAutomationForm("openai"),
+        ...emptyAutomationForm("go"),
         name: "x",
+        targetMode: "new",
+      }),
+    ).toBe("Choose a project for new threads.");
+    expect(
+      validateAutomationForm({
+        ...emptyAutomationForm("go"),
+        name: "x",
+        targetMode: "new",
         projectRoot: "/repo",
       }),
     ).toBe("Task is required.");
@@ -88,6 +96,17 @@ describe("toAutomationInput", () => {
     expect(input.name).toBe("nightly");
     expect(input.interval_mins).toBe(15);
     expect(input.skill_ids).toEqual(["s1"]);
+  });
+  it("round-trips the selected reasoning effort", () => {
+    const form = automationToForm({ ...AUTOMATION, reasoning_effort: "medium" });
+    expect(form.effort).toBe("medium");
+    expect(toAutomationInput(form).reasoning_effort).toBe("medium");
+    expect(toAutomationInput({ ...form, effort: "" }).reasoning_effort).toBeNull();
+  });
+  it("continues an existing thread without freezing its model or effort", () => {
+    const form = automationToForm({ ...AUTOMATION, target_thread_id: "thread-1", reasoning_effort: "high" });
+    expect(form.targetMode).toBe("continue");
+    expect(toAutomationInput(form)).toMatchObject({ target_thread_id: "thread-1", model: "", reasoning_effort: null, skill_ids: [] });
   });
 });
 

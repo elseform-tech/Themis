@@ -25,7 +25,7 @@ describe("ThreadComposer", () => {
         thread={thread}
         draft="hello"
         models={[]}
-        supportsEffort
+        effortLevels={["low", "medium", "high"]}
         effort=""
         composerDisabled={false}
         composerBusy={false}

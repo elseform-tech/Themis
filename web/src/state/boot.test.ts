@@ -32,7 +32,7 @@ const AUTOMATION: Automation = {
   id: "a1",
   name: "nightly",
   project_root: "/repo",
-  provider: "openai",
+  provider: "go",
   model: "",
   skill_ids: ["s1"],
   interval_mins: 60,
