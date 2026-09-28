@@ -10,7 +10,6 @@
 //! Go routes GPT, Grok, and Muse through Responses; Qwen and MiniMax use
 //! Messages; other catalog models use Chat Completions. All three protocols
 //! use [`CompatibleProvider`] with Go session headers.
-//! Custom endpoints remain Chat Completions; direct providers use named SDK backends.
 //!
 //! # Session-header spike (verdict)
 //!
@@ -24,8 +23,7 @@
 //!   instance or per conversation.
 //! - Worse, in autoagents-llm 0.4.0 the whole `OpenAICompatibleProvider` seam is
 //!   `pub(crate)` (`providers::openai_compatible`), so external crates cannot use
-//!   it at all. The named `OpenAI`/`Ollama` builders expose no header options and
-//!   no injectable HTTP client. There is no per-request header mechanism in the
+//!   it at all. There is no per-request header mechanism in the
 //!   0.4 public API.
 //!
 //! Verdict: **no SDK mechanism exists; themis-core implements its own provider.**
@@ -47,6 +45,7 @@ mod wire;
 
 use wire::*;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -55,15 +54,9 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use autoagents::llm::{
-    backends::{
-        anthropic::Anthropic,
-        ollama::Ollama,
-        openai::{OpenAI, OpenAIApiMode},
-    },
-    builder::LLMBuilder,
     chat::{
-        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, ReasoningEffort,
-        StreamChunk, StructuredOutputFormat, Tool, Usage,
+        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, StreamChunk,
+        StructuredOutputFormat, Tool, Usage,
     },
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
@@ -87,13 +80,8 @@ pub const GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
 /// Chat-completions endpoint path appended to the base URL.
 pub const CHAT_COMPLETIONS_PATH: &str = "chat/completions";
 
-/// Documented last-resort Go model.
-///
-/// [`resolve`] prefers, in order: the explicit [`ProviderConfig::model`], the
-/// `THEMIS_GO_MODEL` environment variable, and only then this fallback, which
-/// exists so resolution is total. Prefer real IDs from settings or
-/// [`refresh_go_models`]; never treat this constant as authoritative.
-pub const GO_DEFAULT_MODEL: &str = "go-default";
+/// Default Go model when no explicit model or environment override is set.
+pub const GO_DEFAULT_MODEL: &str = "muse-spark-1.3-contributor";
 
 /// Environment variable overriding the Go model when [`ProviderConfig::model`] is `None`.
 pub const GO_MODEL_ENV_VAR: &str = "THEMIS_GO_MODEL";
@@ -116,30 +104,18 @@ pub fn themis_user_agent() -> String {
     format!("themis/{}", env!("CARGO_PKG_VERSION"))
 }
 
-/// Supported LLM backends, in product-priority order (Go first).
+/// Supported LLM backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProviderKind {
     /// OpenCode Go (OpenAI-compatible chat-completions endpoint).
     Go,
-    /// Direct OpenAI API.
-    OpenAI,
-    /// Anthropic API via the SDK's named backend.
-    Anthropic,
-    /// Local Ollama server.
-    Ollama,
-    /// Any OpenAI-compatible chat-completions endpoint.
-    Custom,
 }
 
 impl ProviderKind {
-    /// Canonical lowercase name (`go`, `openai`, `anthropic`, `ollama`, `custom`).
+    /// Canonical lowercase name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Go => "go",
-            Self::OpenAI => "openai",
-            Self::Anthropic => "anthropic",
-            Self::Ollama => "ollama",
-            Self::Custom => "custom",
         }
     }
 
@@ -147,10 +123,6 @@ impl ProviderKind {
     const fn model_env_var(self) -> &'static str {
         match self {
             Self::Go => GO_MODEL_ENV_VAR,
-            Self::OpenAI => "THEMIS_OPENAI_MODEL",
-            Self::Anthropic => "THEMIS_ANTHROPIC_MODEL",
-            Self::Ollama => "THEMIS_OLLAMA_MODEL",
-            Self::Custom => "THEMIS_CUSTOM_MODEL",
         }
     }
 }
@@ -165,10 +137,6 @@ impl FromStr for ProviderKind {
     fn from_str(s: &str) -> Result<Self> {
         match s.trim().to_lowercase().as_str() {
             "go" | "opencode-go" => Ok(Self::Go),
-            "openai" => Ok(Self::OpenAI),
-            "anthropic" => Ok(Self::Anthropic),
-            "ollama" => Ok(Self::Ollama),
-            "custom" => Ok(Self::Custom),
             other => Err(anyhow!("unknown provider kind: {other}")),
         }
     }
@@ -183,17 +151,17 @@ impl fmt::Display for ProviderKind {
 /// Credentials and endpoint selection for one provider.
 ///
 /// `base_url` overrides the kind's default endpoint; it is required for
-/// [`ProviderKind::Custom`] and primarily a test hook otherwise. `model`
+/// a test hook. `model`
 /// overrides the kind's model default (see [`GO_DEFAULT_MODEL`]).
 #[derive(Debug, Clone)]
 pub struct ProviderConfig {
     /// Which backend to resolve.
     pub kind: ProviderKind,
-    /// API key (BYOK). May be empty only for [`ProviderKind::Ollama`].
+    /// OpenCode Go API key.
     pub api_key: String,
     /// Explicit model ID; wins over the `THEMIS_*_MODEL` environment fallback.
     pub model: Option<String>,
-    /// Base-URL override (required for [`ProviderKind::Custom`]).
+    /// Base-URL override for tests.
     pub base_url: Option<String>,
     /// Optional reasoning effort for supported reasoning models.
     pub reasoning_effort: Option<String>,
@@ -274,7 +242,7 @@ fn go_session_id() -> String {
 /// `OpenAICompatibleProvider` seam: a minimal `LLMProvider` speaking
 /// `{base}/chat/completions`, `{base}/embeddings`, and `{base}/models` with
 /// per-instance headers. [`CompatibleProvider::go`] preconfigures it for OpenCode
-/// Go; [`CompatibleProvider::custom`] targets any compatible endpoint.
+/// Go.
 ///
 /// Per-conversation Go session IDs (see the module-level spike note) are supported
 /// by passing an explicit `session_id`; `None` falls back to `THEMIS_GO_SESSION`
@@ -481,19 +449,6 @@ impl CompatibleProvider {
             base_url: normalize_base(base_url.as_deref().unwrap_or(GO_BASE_URL)),
             model,
             extra_headers: vec![(GO_SESSION_HEADER.to_owned(), session)],
-            client: http_client(),
-            reasoning_effort: None,
-        }
-    }
-
-    /// Builds the provider for a custom OpenAI-compatible endpoint.
-    pub fn custom(api_key: String, model: String, base_url: String) -> Self {
-        Self {
-            provider_name: "Custom",
-            api_key,
-            base_url: normalize_base(&base_url),
-            model,
-            extra_headers: Vec::new(),
             client: http_client(),
             reasoning_effort: None,
         }
@@ -869,125 +824,18 @@ fn require_api_key(config: &ProviderConfig) -> Result<()> {
     Ok(())
 }
 
-fn configure_model_and_base_url<P: LLMProvider + autoagents::llm::HasConfig>(
-    mut builder: LLMBuilder<P>,
-    config: &ProviderConfig,
-) -> LLMBuilder<P> {
-    if let Some(model) = effective_model(config) {
-        builder = builder.model(model);
-    }
-    if let Some(base_url) = effective_base_url(config) {
-        builder = builder.base_url(base_url);
-    }
-    builder
-}
-
-/// Resolves a [`ProviderConfig`] into the uniform agent-consumable LLM handle.
-///
-/// The returned `Arc<dyn LLMProvider>` is exactly the type `AgentBuilder::llm`
-/// accepts, so every backend below plugs into ReAct/CodeAct agents unchanged —
-/// no per-provider enum is needed because all SDK supertraits (`ChatProvider`,
-/// `CompletionProvider`, `EmbeddingProvider`, `ModelsProvider`) are object-safe.
-///
-/// Backend mapping:
-///
-/// - [`ProviderKind::Go`] → [`CompatibleProvider::go`] (Go base URL by default).
-/// - [`ProviderKind::OpenAI`] → the SDK's named `OpenAI` backend in
-///   chat-completions mode (same wire shape as Go, so mocks are interchangeable).
-/// - [`ProviderKind::Anthropic`] → the SDK's named `Anthropic` backend
-///   (requires the `anthropic` autoagents feature, enabled in this build).
-///   exist in this build (see the report's dependency needs).
-/// - [`ProviderKind::Ollama`] → the SDK's named `Ollama` backend (local default
-///   URL; API key optional).
-/// - [`ProviderKind::Custom`] → [`CompatibleProvider::custom`] (base URL and
-///   model required).
-///
-/// Model precedence is explicit config, then the kind's `THEMIS_*_MODEL`
-/// environment variable, then the kind default. Resolution is pure construction
-/// and performs no network I/O.
-#[allow(clippy::unused_async)]
+/// Resolves the OpenCode Go backend for the agent runtime.
 pub async fn resolve(config: &ProviderConfig) -> Result<Arc<dyn LLMProvider>> {
-    let effort = match config.reasoning_effort.as_deref() {
-        None => None,
-        Some(value) => {
-            let model = effective_model(config).unwrap_or_default();
-            if !matches!(config.kind, ProviderKind::Go | ProviderKind::OpenAI)
-                || !(model.starts_with("gpt-5")
-                    || model.starts_with("gpt-6")
-                    || model.starts_with("o3")
-                    || model.starts_with("o4"))
-            {
-                bail!("This model manages its own reasoning; choose default effort");
-            }
-            Some(match value {
-                "low" => ReasoningEffort::Low,
-                "medium" => ReasoningEffort::Medium,
-                "high" => ReasoningEffort::High,
-                _ => bail!("Invalid reasoning effort"),
-            })
-        }
-    };
-    match config.kind {
-        ProviderKind::Go => {
-            require_api_key(config)?;
-            let model = effective_model(config).unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned());
-            let mut provider = CompatibleProvider::go(
-                config.api_key.clone(),
-                model,
-                effective_base_url(config),
-                config.session_id.clone(),
-            );
-            provider.reasoning_effort = config.reasoning_effort.clone();
-            Ok(Arc::new(provider) as Arc<dyn LLMProvider>)
-        }
-        ProviderKind::OpenAI => {
-            require_api_key(config)?;
-            let mut builder = LLMBuilder::<OpenAI>::new()
-                .api_key(config.api_key.clone())
-                .api_mode(OpenAIApiMode::ChatCompletions);
-            if let Some(effort) = effort {
-                builder = builder.reasoning_effort(effort);
-            }
-            let builder = configure_model_and_base_url(builder, config);
-            let backend = builder
-                .build()
-                .map_err(|err| anyhow!("failed to build OpenAI backend: {err}"))?;
-            Ok(backend as Arc<dyn LLMProvider>)
-        }
-        ProviderKind::Anthropic => {
-            require_api_key(config)?;
-            let builder = configure_model_and_base_url(
-                LLMBuilder::<Anthropic>::new().api_key(config.api_key.clone()),
-                config,
-            );
-            let backend = builder
-                .build()
-                .map_err(|err| anyhow!("failed to build Anthropic backend: {err}"))?;
-            Ok(backend as Arc<dyn LLMProvider>)
-        }
-        ProviderKind::Ollama => {
-            let mut builder = LLMBuilder::<Ollama>::new();
-            if !config.api_key.trim().is_empty() {
-                builder = builder.api_key(config.api_key.clone());
-            }
-            let builder = configure_model_and_base_url(builder, config);
-            let backend = builder
-                .build()
-                .map_err(|err| anyhow!("failed to build Ollama backend: {err}"))?;
-            Ok(backend as Arc<dyn LLMProvider>)
-        }
-        ProviderKind::Custom => {
-            require_api_key(config)?;
-            let Some(base_url) = effective_base_url(config) else {
-                bail!("Custom provider requires an explicit base_url");
-            };
-            let Some(model) = effective_model(config) else {
-                bail!("Custom provider requires an explicit model or THEMIS_CUSTOM_MODEL");
-            };
-            let provider = CompatibleProvider::custom(config.api_key.clone(), model, base_url);
-            Ok(Arc::new(provider) as Arc<dyn LLMProvider>)
-        }
-    }
+    require_api_key(config)?;
+    let model = effective_model(config).unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned());
+    let mut provider = CompatibleProvider::go(
+        config.api_key.clone(),
+        model,
+        effective_base_url(config),
+        config.session_id.clone(),
+    );
+    provider.reasoning_effort = config.reasoning_effort.clone();
+    Ok(Arc::new(provider))
 }
 
 /// Single entry of an OpenAI-shaped `/models` response.
@@ -1000,6 +848,81 @@ struct WireModelEntry {
 #[derive(Deserialize)]
 struct WireModelList {
     data: Vec<WireModelEntry>,
+}
+
+/// Live Go model with effort choices from the OpenCode Go catalog.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GoModel {
+    pub id: String,
+    pub effort_levels: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CatalogRoot {
+    #[serde(rename = "opencode-go")]
+    go: CatalogProvider,
+}
+
+#[derive(Deserialize)]
+struct CatalogProvider {
+    models: HashMap<String, CatalogModel>,
+}
+
+#[derive(Deserialize)]
+struct CatalogModel {
+    #[serde(default)]
+    reasoning_options: Vec<CatalogReasoningOption>,
+}
+
+#[derive(Deserialize)]
+struct CatalogReasoningOption {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    values: Vec<String>,
+}
+
+fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoModel> {
+    ids.into_iter()
+        .map(|id| {
+            let effort_levels = catalog
+                .go
+                .models
+                .get(&id)
+                .into_iter()
+                .flat_map(|model| &model.reasoning_options)
+                .filter(|option| option.kind == "effort")
+                .flat_map(|option| option.values.iter().cloned())
+                .collect();
+            GoModel { id, effort_levels }
+        })
+        .collect()
+}
+
+/// Joins account-available Go IDs with OpenCode's public Go capability catalog.
+pub async fn refresh_go_catalog(base_url: &str, api_key: &str) -> Result<Vec<GoModel>> {
+    let ids = refresh_go_models(base_url, api_key).await?;
+    let catalog = async {
+        http_client()
+            .get("https://models.dev/api.json")
+            .header("User-Agent", themis_user_agent())
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<CatalogRoot>()
+            .await
+    }
+    .await;
+    Ok(match catalog {
+        Ok(catalog) => join_go_catalog(ids, catalog),
+        Err(_) => ids
+            .into_iter()
+            .map(|id| GoModel {
+                id,
+                effort_levels: Vec::new(),
+            })
+            .collect(),
+    })
 }
 
 /// Refreshes the Go model table: `GET {base_url}/models`, parsed as OpenAI-shaped
@@ -1494,12 +1417,6 @@ mod tests {
             ("Go", ProviderKind::Go),
             ("GO", ProviderKind::Go),
             ("opencode-go", ProviderKind::Go),
-            ("OpenAI", ProviderKind::OpenAI),
-            ("OPENAI", ProviderKind::OpenAI),
-            ("Anthropic", ProviderKind::Anthropic),
-            ("OLLAMA", ProviderKind::Ollama),
-            ("Custom", ProviderKind::Custom),
-            ("  custom  ", ProviderKind::Custom),
         ] {
             assert_eq!(input.parse::<ProviderKind>().unwrap(), expected, "{input}");
         }
@@ -1514,17 +1431,7 @@ mod tests {
 
     #[test]
     fn kind_display_roundtrips() {
-        for kind in [
-            ProviderKind::Go,
-            ProviderKind::OpenAI,
-            ProviderKind::Anthropic,
-            ProviderKind::Ollama,
-            ProviderKind::Custom,
-        ] {
-            assert_eq!(kind.to_string().parse::<ProviderKind>().unwrap(), kind);
-        }
         assert_eq!(ProviderKind::Go.to_string(), "go");
-        assert_eq!(ProviderKind::OpenAI.to_string(), "openai");
     }
 
     #[tokio::test]
@@ -1573,7 +1480,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reasoning_effort_reaches_wire_and_rejects_unsupported_models() {
+    async fn reasoning_effort_reaches_wire() {
         let server = MockServer::start().await;
         Mock::given(method("POST")).and(path("/responses"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output": [{"type": "message", "content": [{"type": "output_text", "text": "done"}]}]})))
@@ -1591,11 +1498,6 @@ mod tests {
         let requests = server.received_requests().await.unwrap();
         let body: Value = requests[0].body_json().unwrap();
         assert_eq!(body["reasoning"]["effort"], "high");
-        config.model = Some("minimax-m2.5".to_owned());
-        assert!(resolve(&config).await.is_err());
-        config.model = Some("gpt-5.6-luna".to_owned());
-        config.reasoning_effort = Some("invalid".to_owned());
-        assert!(resolve(&config).await.is_err());
     }
 
     #[tokio::test]
@@ -1623,6 +1525,13 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let server = MockServer::start().await;
         mount_chat(&server, chat_ok_body("hi")).await;
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}]
+            })))
+            .mount(&server)
+            .await;
 
         std::env::set_var(GO_MODEL_ENV_VAR, "env-model");
         let config = ProviderConfig::new(ProviderKind::Go, "key").with_base_url(server.uri());
@@ -1814,65 +1723,29 @@ mod tests {
         assert_eq!(sent[2]["content"], "file contents");
     }
 
-    /// Same scripted assertion against every OpenAI-shaped backend: Go
-    /// (in-tree provider), direct OpenAI (named SDK backend), and Custom URL.
+    /// Scripted assertion against the Go chat-completions route.
     #[tokio::test]
     async fn provider_matrix_openai_shaped() {
         let _guard = ENV_LOCK.lock().unwrap();
-        for var in [
-            GO_MODEL_ENV_VAR,
-            "THEMIS_OPENAI_MODEL",
-            "THEMIS_CUSTOM_MODEL",
-            GO_SESSION_ENV_VAR,
-        ] {
+        for var in [GO_MODEL_ENV_VAR, GO_SESSION_ENV_VAR] {
             std::env::remove_var(var);
         }
-        for kind in [ProviderKind::Go, ProviderKind::OpenAI, ProviderKind::Custom] {
-            let server = MockServer::start().await;
-            mount_chat(&server, chat_ok_body("matrix-hi")).await;
-
-            let config = ProviderConfig::new(kind, "key")
-                .with_model("matrix-model")
-                .with_base_url(server.uri());
-            let handle: Arc<dyn LLMProvider> = resolve(&config).await.unwrap();
-            let response = handle.chat(&[user_message("ping")], None).await.unwrap();
-            assert_eq!(response.text().as_deref(), Some("matrix-hi"), "{kind}");
-
-            let requests = server.received_requests().await.unwrap();
-            assert_eq!(requests.len(), 1, "{kind}");
-            let body: Value = requests[0].body_json().unwrap();
-            assert_eq!(body["model"], "matrix-model", "{kind}");
-            assert_eq!(body["messages"][0]["content"], "ping", "{kind}");
-        }
-    }
-
-    /// Ollama leg of the matrix: different wire shape (`/api/chat`), same
-    /// scripted assertion through the same `resolve()` entry point.
-    #[tokio::test]
-    async fn provider_matrix_ollama_shaped() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("THEMIS_OLLAMA_MODEL");
+        let kind = ProviderKind::Go;
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/api/chat"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "model": "llama-test",
-                "created_at": "2024-08-04T08:52:19.385406455-07:00",
-                "message": {"role": "assistant", "content": "matrix-hi"},
-                "done": true
-            })))
-            .mount(&server)
-            .await;
+        mount_chat(&server, chat_ok_body("matrix-hi")).await;
 
-        let config = ProviderConfig::new(ProviderKind::Ollama, "")
-            .with_model("llama-test")
+        let config = ProviderConfig::new(kind, "key")
+            .with_model("matrix-model")
             .with_base_url(server.uri());
         let handle: Arc<dyn LLMProvider> = resolve(&config).await.unwrap();
         let response = handle.chat(&[user_message("ping")], None).await.unwrap();
-        assert_eq!(response.text().as_deref(), Some("matrix-hi"));
+        assert_eq!(response.text().as_deref(), Some("matrix-hi"), "{kind}");
 
         let requests = server.received_requests().await.unwrap();
-        assert_eq!(requests.len(), 1);
+        assert_eq!(requests.len(), 1, "{kind}");
+        let body: Value = requests[0].body_json().unwrap();
+        assert_eq!(body["model"], "matrix-model", "{kind}");
+        assert_eq!(body["messages"][0]["content"], "ping", "{kind}");
     }
 
     #[tokio::test]
@@ -1973,45 +1846,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn anthropic_resolves_without_network() {
-        let config = ProviderConfig::new(ProviderKind::Anthropic, "key").with_model("m");
-        let handle = resolve(&config).await.expect("resolve must succeed");
-        assert_eq!(handle.model(), "m");
+    async fn empty_go_key_rejected() {
+        let config = ProviderConfig::new(ProviderKind::Go, "").with_model("m");
+        assert!(resolve(&config).await.is_err());
     }
 
-    #[tokio::test]
-    async fn custom_requires_base_url_and_model() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("THEMIS_CUSTOM_MODEL");
-
-        let missing_url = ProviderConfig::new(ProviderKind::Custom, "key").with_model("m");
-        assert!(resolve(&missing_url).await.is_err());
-
-        let missing_model =
-            ProviderConfig::new(ProviderKind::Custom, "key").with_base_url("http://x");
-        assert!(resolve(&missing_model).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn empty_key_rejected_except_ollama() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        for var in [
-            GO_MODEL_ENV_VAR,
-            "THEMIS_OPENAI_MODEL",
-            "THEMIS_OLLAMA_MODEL",
-            "THEMIS_CUSTOM_MODEL",
-        ] {
-            std::env::remove_var(var);
-        }
-        for kind in [ProviderKind::Go, ProviderKind::OpenAI, ProviderKind::Custom] {
-            let config = ProviderConfig::new(kind, "")
-                .with_model("m")
-                .with_base_url("http://localhost:9");
-            assert!(resolve(&config).await.is_err(), "{kind}");
-        }
-        // Ollama is local-first: no key required.
-        let ollama =
-            ProviderConfig::new(ProviderKind::Ollama, "").with_base_url("http://localhost:9");
-        assert!(resolve(&ollama).await.is_ok());
+    #[test]
+    fn catalog_effort_levels_follow_go_metadata_and_live_ids() {
+        let catalog: CatalogRoot = serde_json::from_value(json!({
+            "opencode-go": {"models": {
+                "model-a": {"reasoning_options": [{"type":"toggle"}, {"type":"effort", "values":["low","high","max"]}]},
+                "model-b": {"reasoning_options": []},
+                "not-available": {"reasoning_options": [{"type":"effort", "values":["low"]}]}
+            }}
+        })).unwrap();
+        assert_eq!(
+            join_go_catalog(vec!["model-a".into(), "model-b".into()], catalog),
+            vec![
+                GoModel {
+                    id: "model-a".into(),
+                    effort_levels: vec!["low".into(), "high".into(), "max".into()]
+                },
+                GoModel {
+                    id: "model-b".into(),
+                    effort_levels: vec![]
+                },
+            ]
+        );
     }
 }

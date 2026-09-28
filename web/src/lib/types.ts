@@ -2,7 +2,12 @@
 // The desktop agent implements EXACTLY these command names, payloads, and
 // event shapes. UI agents consume them via ./tauri.ts only.
 
-export type ProviderKind = 'go' | 'openai' | 'anthropic' | 'ollama' | 'custom';
+export type ProviderKind = 'go' | 'legacy';
+
+export interface GoModel {
+  id: string;
+  effort_levels: string[];
+}
 export type RiskLevel = 'read' | 'write' | 'execute' | 'network' | 'destructive';
 export type ApprovalDecision = 'once' | 'always' | 'deny';
 export type ThemeMode = 'dark' | 'light' | 'system';
@@ -18,6 +23,7 @@ export interface ThreadInfo {
   title: string;
   provider: ProviderKind;
   model: string;
+  reasoning_effort?: string | null;
   running: boolean;
   /** Worktree backing this thread (null for non-git read-only threads). */
   worktree_path: string | null;
@@ -62,8 +68,10 @@ export interface Automation {
   id: string;
   name: string;
   project_root: string;
+  target_thread_id?: string | null;
   provider: ProviderKind;
   model: string;
+  reasoning_effort?: string | null;
   skill_ids: string[];
   /** Fixed interval in minutes, >= 1. */
   interval_mins: number;
@@ -77,8 +85,10 @@ export interface Automation {
 export interface AutomationInput {
   name: string;
   project_root: string;
+  target_thread_id?: string | null;
   provider: ProviderKind;
   model: string;
+  reasoning_effort?: string | null;
   skill_ids: string[];
   interval_mins: number;
   task: string;
@@ -223,8 +233,6 @@ export interface Settings {
 /** Which providers have a key stored. Values are NEVER exposed. */
 export interface SecretStatus {
   go: boolean;
-  openai: boolean;
-  anthropic: boolean;
 }
 
 export const THREAD_EVENT_NAME = 'thread-event';

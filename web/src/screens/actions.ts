@@ -108,7 +108,7 @@ export function useNewThread(): (projectRoot?: string | null) => Promise<void> {
         const thread = await createThread(
           root,
           state.settings.default_provider,
-          state.settings.default_model || (state.settings.default_provider === "go" ? "minimax-m2.5" : undefined),
+          state.settings.default_model || "muse-spark-1.3-contributor",
         );
         dispatch({ type: "thread/created", projectRoot: root, thread });
       } catch (error: unknown) {

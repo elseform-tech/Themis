@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-use themis_core::providers::{GO_DEFAULT_MODEL, GO_MODEL_ENV_VAR};
+use themis_core::providers::GO_DEFAULT_MODEL;
 use themis_core::runtime::{ConversationTurn, RunEvent, RunPolicy};
 
 use crate::approvals::PendingMap;
@@ -35,10 +35,6 @@ use crate::types::{
     ProviderKind, ReviewItem, ReviewStatus, RunAutomationNow, RunHandle, SecretStatus, Settings,
     SettingsPatch, Skill, SkillInput, ThreadComment, ThreadEvent, ThreadEventEnvelope, ThreadInfo,
 };
-
-/// Environment fallback for the Custom provider's base URL (the desktop UI
-/// exposes no base-URL field yet).
-pub const CUSTOM_BASE_URL_ENV_VAR: &str = "THEMIS_CUSTOM_BASE_URL";
 
 /// Title assigned to threads before their first message.
 pub const UNTITLED_THREAD: &str = "New thread";
@@ -68,6 +64,7 @@ struct ThreadRecord {
     is_git: bool,
     provider: ProviderKind,
     model: String,
+    reasoning_effort: Option<String>,
     running: bool,
     titled: bool,
     preexisting: HashSet<String>,
@@ -134,6 +131,8 @@ struct RegistryEntry {
     #[serde(default)]
     model: String,
     #[serde(default)]
+    reasoning_effort: Option<String>,
+    #[serde(default)]
     was_running: bool,
     #[serde(default)]
     skill_ids: Vec<String>,
@@ -153,6 +152,7 @@ impl RegistryEntry {
             base_branch: record.base_branch.clone(),
             provider: record.provider,
             model: record.model.clone(),
+            reasoning_effort: record.reasoning_effort.clone(),
             was_running: record.running,
             skill_ids: record.skill_ids.clone(),
         }
@@ -167,7 +167,8 @@ struct AppStateInner {
     settings: SettingsStore,
     transcript: TranscriptStore,
     secrets: Arc<dyn SecretStore>,
-    custom_base_url_override: std::sync::Mutex<Option<String>>,
+    go_base_url_override: std::sync::Mutex<Option<String>>,
+    go_catalog: tokio::sync::RwLock<Vec<themis_core::providers::GoModel>>,
     worktrees_root: PathBuf,
     registry_path: PathBuf,
     /// Live run count for the global concurrency gate.
@@ -282,7 +283,8 @@ impl AppState {
                 settings: SettingsStore::load(settings_path),
                 transcript,
                 secrets,
-                custom_base_url_override: std::sync::Mutex::new(None),
+                go_base_url_override: std::sync::Mutex::new(None),
+                go_catalog: tokio::sync::RwLock::new(Vec::new()),
                 worktrees_root,
                 registry_path,
                 running_count: AtomicUsize::new(0),
@@ -434,11 +436,20 @@ impl AppState {
 
     /// Creates a thread on `project_root`.
     /// Checks the Go connection and returns the current provider model catalog.
-    pub async fn list_go_models(&self) -> Result<Vec<String>, String> {
+    pub async fn list_go_models(&self) -> Result<Vec<themis_core::providers::GoModel>, String> {
         let key = self.api_key_for(ProviderKind::Go)?;
-        themis_core::providers::refresh_go_models(themis_core::providers::GO_BASE_URL, &key)
+        let base_url = self
+            .inner
+            .go_base_url_override
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+            .unwrap_or_else(|| themis_core::providers::GO_BASE_URL.to_owned());
+        let models = themis_core::providers::refresh_go_catalog(&base_url, &key)
             .await
-            .map_err(|error| format!("Could not load OpenCode Go models: {error}"))
+            .map_err(|error| format!("Could not load OpenCode Go models: {error}"))?;
+        *self.inner.go_catalog.write().await = models.clone();
+        Ok(models)
     }
 
     /// Stores a comment pinned to `path` and returns it.
@@ -518,6 +529,7 @@ fn thread_info(record: &ThreadRecord) -> ThreadInfo {
         title: record.title.clone(),
         provider: record.provider,
         model: record.model.clone(),
+        reasoning_effort: record.reasoning_effort.clone(),
         running: record.running,
         worktree_path: None,
         branch: None,
@@ -619,7 +631,12 @@ fn load_automations_file(path: &Path, report: &mut Vec<String>) -> HashMap<Strin
     }
     let now = Utc::now();
     let mut deferred = 0;
+    let mut retired = 0;
     for automation in automations.values_mut() {
+        if automation.provider != ProviderKind::Go && automation.enabled {
+            automation.enabled = false;
+            retired += 1;
+        }
         if next_run_due(&automation.next_run_at, now) {
             automation.next_run_at = (now + chrono::Duration::seconds(BOOT_DEFERRAL_SECS))
                 .to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -630,6 +647,13 @@ fn load_automations_file(path: &Path, report: &mut Vec<String>) -> HashMap<Strin
         report.push(format!(
             "deferred {deferred} missed automation(s) by {BOOT_DEFERRAL_SECS}s"
         ));
+    }
+    if retired > 0 {
+        report.push(format!(
+            "disabled {retired} automation(s) using retired providers"
+        ));
+    }
+    if deferred > 0 || retired > 0 {
         let entries: Vec<Automation> = automations.values().cloned().collect();
         if let Err(err) = write_json_file(path, &entries) {
             report.push(format!("failed to persist deferred automations: {err}"));
@@ -691,6 +715,7 @@ fn load_and_reconcile(
                 project_root: project_root.clone(),
                 provider: entry.provider,
                 model: entry.model.clone(),
+                reasoning_effort: entry.reasoning_effort.clone(),
                 running: false,
                 // The persisted title stands; never retitle a restored thread.
                 titled: true,
@@ -747,16 +772,11 @@ fn title_from_message(text: &str) -> String {
     first.chars().take(MAX_TITLE_CHARS).collect()
 }
 
-/// Rejects everything but `go|openai|anthropic|custom` secret slots.
+/// Only the OpenCode Go credential is accepted.
 fn secret_key(provider: &str) -> Result<&'static str, String> {
     match provider.trim().to_lowercase().as_str() {
         "go" => Ok("go"),
-        "openai" => Ok("openai"),
-        "anthropic" => Ok("anthropic"),
-        "custom" => Ok("custom"),
-        other => Err(format!(
-            "unknown secret provider '{other}': expected go, openai, anthropic, or custom"
-        )),
+        other => Err(format!("unknown secret provider '{other}': expected go")),
     }
 }
 
@@ -779,27 +799,6 @@ fn next_run_due(next_run_at: &str, now: chrono::DateTime<Utc>) -> bool {
     match DateTime::parse_from_rfc3339(next_run_at) {
         Ok(stamp) => stamp <= now,
         Err(_) => true,
-    }
-}
-
-/// Mirrors the CLI rule: Go never runs on a missing or placeholder model.
-fn check_go_model(model: &str) -> Result<(), String> {
-    let effective = if model.trim().is_empty() {
-        std::env::var(GO_MODEL_ENV_VAR)
-            .ok()
-            .filter(|name| !name.trim().is_empty())
-    } else {
-        Some(model.to_owned())
-    };
-    match effective {
-        None => Err(format!(
-            "provider 'go' requires an explicit model: set one for the thread \
-             or set {GO_MODEL_ENV_VAR}"
-        )),
-        Some(name) if name == GO_DEFAULT_MODEL => Err(format!(
-            "refusing to use the '{GO_DEFAULT_MODEL}' placeholder model: set a real model ID"
-        )),
-        Some(_) => Ok(()),
     }
 }
 
@@ -1004,7 +1003,7 @@ mod tests {
         let thread = state
             .create_thread(
                 dir.path().to_string_lossy().into_owned(),
-                ProviderKind::OpenAI,
+                ProviderKind::Go,
                 Some("gpt-x".to_owned()),
             )
             .await
@@ -1025,12 +1024,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn thread_effort_follows_catalog_and_survives_restart() {
+        let (state, dir) = test_state();
+        let thread = state
+            .create_thread(
+                dir.path().to_string_lossy().into_owned(),
+                ProviderKind::Go,
+                Some("model-a".to_owned()),
+            )
+            .await
+            .expect("create");
+        *state.inner.go_catalog.write().await = vec![themis_core::providers::GoModel {
+            id: "model-a".to_owned(),
+            effort_levels: vec!["low".to_owned(), "high".to_owned()],
+        }];
+        assert!(state
+            .set_thread_effort(thread.id.clone(), Some("max".to_owned()))
+            .await
+            .is_err());
+        let updated = state
+            .set_thread_effort(thread.id.clone(), Some("high".to_owned()))
+            .await
+            .expect("catalog effort");
+        assert_eq!(updated.reasoning_effort.as_deref(), Some("high"));
+        drop(state);
+        let rebooted = AppState::new_for_test(dir.path().join("settings.json"));
+        let restored = rebooted.get_thread(&thread.id).await.expect("restored");
+        assert_eq!(restored.reasoning_effort.as_deref(), Some("high"));
+        let cleared = rebooted
+            .set_thread_effort(thread.id.clone(), Some(String::new()))
+            .await
+            .expect("default effort");
+        assert_eq!(cleared.reasoning_effort, None);
+    }
+
+    #[tokio::test]
     async fn send_message_requires_a_stored_key_and_resets_running() {
         let (state, dir) = test_state();
         let thread = state
             .create_thread(
                 dir.path().to_string_lossy().into_owned(),
-                ProviderKind::OpenAI,
+                ProviderKind::Go,
                 Some("gpt-x".to_owned()),
             )
             .await
@@ -1052,12 +1086,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn go_requires_an_explicit_model() {
+    async fn go_uses_default_model() {
         let (state, dir) = test_state();
-        state
-            .set_secret("go".to_owned(), "key".to_owned())
-            .await
-            .expect("store key");
         let thread = state
             .create_thread(
                 dir.path().to_string_lossy().into_owned(),
@@ -1066,28 +1096,26 @@ mod tests {
             )
             .await
             .expect("create");
-        let (sink, _rx) = crate::sink::ChannelSink::channel();
-        let err = state
-            .send_message(Arc::new(sink), thread.id.clone(), "hi".to_owned())
-            .await
-            .expect_err("model required");
-        assert!(err.contains("explicit model"), "{err}");
+        assert_eq!(thread.model, GO_DEFAULT_MODEL);
     }
 
     #[tokio::test]
     async fn first_message_sets_a_truncated_title() {
         let (state, dir) = test_state();
+        state
+            .set_secret("go".to_owned(), "synthetic-test-key".to_owned())
+            .await
+            .unwrap();
         let thread = state
             .create_thread(
                 dir.path().to_string_lossy().into_owned(),
-                ProviderKind::Ollama,
-                None,
+                ProviderKind::Go,
+                Some("test-model".to_owned()),
             )
             .await
             .expect("create");
         assert_eq!(thread.title, UNTITLED_THREAD);
-        // Ollama needs no key, so the run spawns (and fails fast with no
-        // server); the title is set synchronously before that.
+        // The run may fail without a mock endpoint; title assignment is synchronous.
         let (sink, _rx) = crate::sink::ChannelSink::channel();
         let long = format!("{} and more words after the limit", "w".repeat(80));
         let handle = state
@@ -1184,16 +1212,9 @@ mod tests {
     async fn secrets_never_surface_values() {
         let (state, _dir) = test_state();
         let status = state.get_secret_status().await;
-        assert_eq!(
-            status,
-            SecretStatus {
-                go: false,
-                openai: false,
-                anthropic: false,
-            }
-        );
+        assert_eq!(status, SecretStatus { go: false });
         assert!(state
-            .set_secret("openai".to_owned(), String::new())
+            .set_secret("go".to_owned(), String::new())
             .await
             .is_err());
         assert!(state
@@ -1201,19 +1222,16 @@ mod tests {
             .await
             .is_err());
         state
-            .set_secret("openai".to_owned(), "sk-test".to_owned())
+            .set_secret("go".to_owned(), "sk-test".to_owned())
             .await
             .expect("set");
         let status = state.get_secret_status().await;
-        assert!(status.openai && !status.go);
+        assert!(status.go);
         // The status JSON carries presence only.
         let json = serde_json::to_string(&status).expect("json");
         assert!(!json.contains("sk-test"));
-        state
-            .clear_secret("openai".to_owned())
-            .await
-            .expect("clear");
-        assert!(!state.get_secret_status().await.openai);
+        state.clear_secret("go".to_owned()).await.expect("clear");
+        assert!(!state.get_secret_status().await.go);
     }
 
     #[tokio::test]
@@ -1280,8 +1298,10 @@ mod tests {
         AutomationInput {
             name: "Nightly".to_owned(),
             project_root: project_root.to_owned(),
-            provider: ProviderKind::Custom,
+            provider: ProviderKind::Go,
             model: "test-model".to_owned(),
+            reasoning_effort: None,
+            target_thread_id: None,
             skill_ids: Vec::new(),
             interval_mins: 60,
             task: "Check health.".to_owned(),
@@ -1515,11 +1535,7 @@ mod tests {
         let mut go_no_model = automation_input(&project);
         go_no_model.provider = ProviderKind::Go;
         go_no_model.model = String::new();
-        let err = state
-            .create_automation(go_no_model)
-            .await
-            .expect_err("go model required");
-        assert!(err.contains("explicit model"), "{err}");
+        assert!(state.create_automation(go_no_model).await.is_ok());
 
         let mut bad_skill = automation_input(&project);
         bad_skill.skill_ids = vec!["ghost".to_owned()];
@@ -1569,7 +1585,7 @@ mod tests {
             .delete_automation(created.id.clone())
             .await
             .expect("delete");
-        assert!(state.list_automations().await.is_empty());
+        assert_eq!(state.list_automations().await.len(), 1);
     }
 
     #[tokio::test]
@@ -1778,7 +1794,7 @@ mod tests {
         let (state, dir) = test_state();
         let project = dir.path().to_string_lossy().into_owned();
         let thread = state
-            .create_thread(project, ProviderKind::Custom, Some("m".to_owned()))
+            .create_thread(project, ProviderKind::Go, Some("m".to_owned()))
             .await
             .expect("create");
         // Seed one pending review through the store file, then reboot.
@@ -1916,7 +1932,7 @@ mod tests {
             .await
             .expect("automation");
         let thread = state
-            .create_thread(project, ProviderKind::Custom, Some("m".to_owned()))
+            .create_thread(project, ProviderKind::Go, Some("m".to_owned()))
             .await
             .expect("thread");
         let item = ReviewItem {
@@ -1952,8 +1968,10 @@ mod tests {
             id: "missed".to_owned(),
             name: "Missed".to_owned(),
             project_root: project.clone(),
-            provider: ProviderKind::Custom,
+            provider: ProviderKind::Go,
             model: "m".to_owned(),
+            reasoning_effort: None,
+            target_thread_id: None,
             skill_ids: Vec::new(),
             interval_mins: 30,
             task: "t".to_owned(),

@@ -1,11 +1,14 @@
 import { Button } from "../components/primitives/Button";
-import type { ThreadInfo } from "../lib/types";
+import type { GoModel, ThreadInfo } from "../lib/types";
+// Official OpenCode theme assets: https://github.com/anomalyco/opencode/tree/dev/packages/console/app/src/asset
+import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
+import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 
 interface ThreadComposerProps {
   thread: ThreadInfo;
   draft: string;
-  models: string[];
-  supportsEffort: boolean;
+  models: GoModel[];
+  effortLevels: string[];
   effort: string;
   composerDisabled: boolean;
   composerBusy: boolean;
@@ -28,7 +31,7 @@ export function ThreadComposer({
   thread,
   draft,
   models,
-  supportsEffort,
+  effortLevels,
   effort,
   composerDisabled,
   composerBusy,
@@ -46,13 +49,15 @@ export function ThreadComposer({
   onEffortChange,
   onOpenSettings,
 }: ThreadComposerProps) {
+  const choices = ["", ...effortLevels];
+  const effortIndex = Math.max(0, choices.indexOf(effort));
   return (
     <>
       {sendError && <p className="themis-thread-senderror" role="alert">{sendError}</p>}
       <div className="themis-thread-composer">
-        {thread.provider !== "ollama" && thread.provider !== "custom" && !secretConfigured && (
+        {!secretConfigured && (
           <p className="themis-thread-hint">
-            Connect {thread.provider === "go" ? "OpenCode Go" : thread.provider} to send your first message. {" "}
+            Connect OpenCode Go to send your first message. {" "}
             <Button variant="ghost" size="small" onClick={onOpenSettings}>Open settings</Button>
           </p>
         )}
@@ -82,29 +87,41 @@ export function ThreadComposer({
           >+
           </Button>
           <div className="themis-composer-selectors">
-            <select
-              aria-label="Model"
-              title="Model"
-              value={thread.model}
-              disabled={composerBusy || switching}
-              onChange={event => onProviderChange(event.target.value)}
-            >
-              {[...new Set([thread.model, ...models])].map(model => (
-                <option key={model} value={model}>{model || "Default model"}</option>
-              ))}
-            </select>
-            <select
-              aria-label="Reasoning effort"
-              title={supportsEffort ? "Reasoning effort" : "This model manages its own reasoning"}
-              value={effort}
-              disabled={composerBusy || !supportsEffort}
-              onChange={event => onEffortChange(event.target.value)}
-            >
-              <option value="">Default effort</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+            <div className="themis-composer-model-picker">
+              <span className="themis-composer-model-provider" aria-label="OpenCode Go">
+                <img className="themis-composer-logo-dark" src={opencodeLogoDark} alt="" />
+                <img className="themis-composer-logo-light" src={opencodeLogoLight} alt="" />
+                <span>Go</span>
+              </span>
+              <select
+                aria-label="Model"
+                title="Model"
+                value={thread.model}
+                disabled={composerBusy || switching}
+                onChange={event => onProviderChange(event.target.value)}
+              >
+                {[...new Set([thread.model, ...models.map(model => model.id)])].map(model => (
+                  <option key={model} value={model}>{model || "Choose a Go model"}</option>
+                ))}
+              </select>
+            </div>
+            <details className="themis-composer-effort">
+              <summary className="themis-composer-effort-trigger" aria-label={`Reasoning effort: ${effort || "Default"}`} title="Reasoning effort">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 5a3 3 0 0 0-5.6-1.5A4 4 0 0 0 3 10a4 4 0 0 0 1 7 3 3 0 0 0 5 3l3-2V5ZM12 5a3 3 0 0 1 5.6-1.5A4 4 0 0 1 21 10a4 4 0 0 1-1 7 3 3 0 0 1-5 3l-3-2V5Z" />
+                  <path d="M8 8c0 2-2 2-2 4m2 3c2 0 3 1 3 3m5-10c0 2 2 2 2 4m-2 3c-2 0-3 1-3 3" />
+                </svg>
+                <span>{effort || "Default"}</span>
+              </summary>
+              <div className="themis-composer-effort-panel">
+                <label htmlFor="themis-effort">Effort <strong>{effort || "Default"}</strong></label>
+                <input id="themis-effort" aria-label="Reasoning effort" type="range" min="0" max={Math.max(1, effortLevels.length)} step="1"
+                  value={effortIndex} disabled={composerBusy || effortLevels.length === 0}
+                  aria-valuetext={effort || "Default"}
+                  onChange={event => onEffortChange(choices[Number(event.target.value)] ?? "")} />
+                <div className="themis-composer-effort-ends"><span>Default</span><span>{effortLevels[effortLevels.length - 1] || "No catalog levels"}</span></div>
+              </div>
+            </details>
           </div>
           {running ? (
             <Button

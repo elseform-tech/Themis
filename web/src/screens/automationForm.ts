@@ -11,9 +11,12 @@ import { newId, type AppAction } from "../state/reducer";
 
 export interface AutomationFormState {
   name: string;
+  targetMode: "continue" | "new";
+  targetThreadId: string;
   projectRoot: string;
   provider: ProviderKind;
   model: string;
+  effort: string;
   skillIds: string[];
   /** Raw interval input; parsed to minutes on save. */
   intervalMinsRaw: string;
@@ -36,9 +39,12 @@ export function emptyAutomationForm(
 ): AutomationFormState {
   return {
     name: "",
+    targetMode: "continue",
+    targetThreadId: "",
     projectRoot: "",
     provider: defaultProvider,
     model: "",
+    effort: "",
     skillIds: [],
     intervalMinsRaw: "60",
     task: "",
@@ -51,9 +57,12 @@ export function automationToForm(
 ): AutomationFormState {
   return {
     name: automation.name,
+    targetMode: automation.target_thread_id ? "continue" : "new",
+    targetThreadId: automation.target_thread_id ?? "",
     projectRoot: automation.project_root,
-    provider: automation.provider,
+    provider: "go",
     model: automation.model,
+    effort: automation.reasoning_effort ?? "",
     skillIds: [...automation.skill_ids],
     intervalMinsRaw: String(automation.interval_mins),
     task: automation.task,
@@ -66,7 +75,8 @@ export function validateAutomationForm(
   form: AutomationFormState,
 ): string | null {
   if (form.name.trim() === "") return "Name is required.";
-  if (form.projectRoot.trim() === "") return "Project root is required.";
+  if (form.targetMode === "continue" && !form.targetThreadId) return "Choose a thread to continue.";
+  if (form.targetMode === "new" && form.projectRoot.trim() === "") return "Choose a project for new threads.";
   const mins = Number.parseInt(form.intervalMinsRaw, 10);
   if (!Number.isFinite(mins) || mins < 1) {
     return "Interval must be at least 1 minute.";
@@ -81,9 +91,11 @@ export function toAutomationInput(
   return {
     name: form.name.trim(),
     project_root: form.projectRoot.trim(),
+    target_thread_id: form.targetMode === "continue" ? form.targetThreadId : null,
     provider: form.provider,
-    model: form.model.trim(),
-    skill_ids: [...form.skillIds],
+    model: form.targetMode === "new" ? form.model.trim() : "",
+    reasoning_effort: form.targetMode === "new" ? form.effort || null : null,
+    skill_ids: form.targetMode === "new" ? [...form.skillIds] : [],
     interval_mins: Math.max(1, Math.floor(Number(form.intervalMinsRaw))),
     task: form.task,
     enabled: form.enabled,

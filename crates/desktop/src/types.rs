@@ -13,34 +13,17 @@ use themis_core::runtime::RunEvent;
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Go,
-    OpenAI,
-    Anthropic,
-    Ollama,
-    Custom,
+    #[serde(other)]
+    Legacy,
 }
 
 impl ProviderKind {
-    /// Canonical lowercase name (`go`, `openai`, ...).
+    /// Canonical lowercase name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Go => "go",
-            Self::OpenAI => "openai",
-            Self::Anthropic => "anthropic",
-            Self::Ollama => "ollama",
-            Self::Custom => "custom",
-        }
-    }
-
-    /// Maps to the `themis-core` provider kind.
-    #[must_use]
-    pub const fn core_kind(self) -> themis_core::providers::ProviderKind {
-        match self {
-            Self::Go => themis_core::providers::ProviderKind::Go,
-            Self::OpenAI => themis_core::providers::ProviderKind::OpenAI,
-            Self::Anthropic => themis_core::providers::ProviderKind::Anthropic,
-            Self::Ollama => themis_core::providers::ProviderKind::Ollama,
-            Self::Custom => themis_core::providers::ProviderKind::Custom,
+            Self::Legacy => "legacy",
         }
     }
 }
@@ -124,6 +107,8 @@ pub struct ThreadInfo {
     pub title: String,
     pub provider: ProviderKind,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub running: bool,
     /// Worktree backing this thread (`None` for non-git read-only threads).
     pub worktree_path: Option<String>,
@@ -365,8 +350,12 @@ pub struct Automation {
     pub id: String,
     pub name: String,
     pub project_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_thread_id: Option<String>,
     pub provider: ProviderKind,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub skill_ids: Vec<String>,
     pub interval_mins: u32,
     pub task: String,
@@ -384,8 +373,12 @@ pub struct Automation {
 pub struct AutomationInput {
     pub name: String,
     pub project_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_thread_id: Option<String>,
     pub provider: ProviderKind,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub skill_ids: Vec<String>,
     pub interval_mins: i64,
     pub task: String,
@@ -513,7 +506,7 @@ impl Default for Settings {
             sidebar_hover: true,
             theme: ThemeMode::System,
             default_provider: ProviderKind::Go,
-            default_model: String::new(),
+            default_model: themis_core::providers::GO_DEFAULT_MODEL.to_owned(),
             max_turns: 20,
             max_total_turns: default_max_total_turns(),
             context_token_budget: default_context_token_budget(),
@@ -566,8 +559,6 @@ pub struct SettingsPatch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretStatus {
     pub go: bool,
-    pub openai: bool,
-    pub anthropic: bool,
 }
 
 /// One recorded command failure (`DiagnosticsError` in types.ts).
@@ -901,20 +892,15 @@ mod tests {
 
     #[test]
     fn provider_serialization_roundtrips() {
-        for (wire, name) in [
-            (ProviderKind::Go, "go"),
-            (ProviderKind::OpenAI, "openai"),
-            (ProviderKind::Anthropic, "anthropic"),
-            (ProviderKind::Ollama, "ollama"),
-            (ProviderKind::Custom, "custom"),
-        ] {
-            assert_eq!(to_value(&wire), json!(name));
-            assert_eq!(wire.as_str(), name);
-            assert_eq!(
-                serde_json::from_value::<ProviderKind>(json!(name)).unwrap(),
-                wire
-            );
-        }
+        assert_eq!(to_value(&ProviderKind::Go), json!("go"));
+        assert_eq!(
+            serde_json::from_value::<ProviderKind>(json!("go")).unwrap(),
+            ProviderKind::Go
+        );
+        assert_eq!(
+            serde_json::from_value::<ProviderKind>(json!("retired-provider")).unwrap(),
+            ProviderKind::Legacy
+        );
     }
 
     #[test]
@@ -924,6 +910,7 @@ mod tests {
             title: "hi".to_owned(),
             provider: ProviderKind::Go,
             model: "m".to_owned(),
+            reasoning_effort: None,
             running: false,
             worktree_path: Some("/tmp/wt".to_owned()),
             branch: Some("themis/abc".to_owned()),
@@ -985,7 +972,7 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.theme, ThemeMode::System);
         assert_eq!(settings.default_provider, ProviderKind::Go);
-        assert_eq!(settings.default_model, "");
+        assert_eq!(settings.default_model, "muse-spark-1.3-contributor");
         assert_eq!(settings.max_turns, 20);
         assert!(settings.recent_roots.is_empty());
         assert_eq!(settings.concurrency_limit, 3);
@@ -999,7 +986,7 @@ mod tests {
                 "sidebar_hover": true,
                 "theme": "system",
                 "default_provider": "go",
-                "default_model": "",
+                "default_model": "muse-spark-1.3-contributor",
                 "max_turns": 20,
                 "max_total_turns": 200,
                 "context_token_budget": 16000,
@@ -1042,15 +1029,8 @@ mod tests {
         assert_eq!(legacy.concurrency_limit, 3);
         assert!(legacy.automations_enabled);
         assert!(!legacy.onboarded);
-        let status = SecretStatus {
-            go: true,
-            openai: false,
-            anthropic: true,
-        };
-        assert_eq!(
-            to_value(&status),
-            json!({"go": true, "openai": false, "anthropic": true})
-        );
+        let status = SecretStatus { go: true };
+        assert_eq!(to_value(&status), json!({"go": true}));
     }
 
     #[test]
@@ -1104,8 +1084,10 @@ mod tests {
             id: "a".to_owned(),
             name: "Nightly".to_owned(),
             project_root: "/tmp/repo".to_owned(),
-            provider: ProviderKind::Custom,
+            provider: ProviderKind::Go,
             model: "m".to_owned(),
+            reasoning_effort: None,
+            target_thread_id: None,
             skill_ids: vec!["s".to_owned()],
             interval_mins: 60,
             task: "check health".to_owned(),
@@ -1120,7 +1102,7 @@ mod tests {
                 "id": "a",
                 "name": "Nightly",
                 "project_root": "/tmp/repo",
-                "provider": "custom",
+                "provider": "go",
                 "model": "m",
                 "skill_ids": ["s"],
                 "interval_mins": 60,
@@ -1131,6 +1113,11 @@ mod tests {
                 "run_count": 0,
             })
         );
+        let with_effort = Automation {
+            reasoning_effort: Some("medium".to_owned()),
+            ..automation
+        };
+        assert_eq!(to_value(&with_effort)["reasoning_effort"], "medium");
         let item = ReviewItem {
             id: "r".to_owned(),
             automation_id: "a".to_owned(),

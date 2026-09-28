@@ -91,7 +91,9 @@ pub async fn stop_thread(state: State<'_, AppState>, thread_id: String) -> Resul
 
 /// Loads the OpenCode Go model catalog using the native credential.
 #[tauri::command]
-pub async fn list_go_models(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+pub async fn list_go_models(
+    state: State<'_, AppState>,
+) -> Result<Vec<themis_core::providers::GoModel>, String> {
     record_cmd!(state, "list_go_models", state.list_go_models().await)
 }
 
@@ -271,6 +273,19 @@ pub async fn set_provider(
         state,
         "set_provider",
         state.set_provider(thread_id, provider, model).await
+    )
+}
+
+#[tauri::command]
+pub async fn set_thread_effort(
+    state: State<'_, AppState>,
+    thread_id: String,
+    effort: Option<String>,
+) -> Result<ThreadInfo, String> {
+    record_cmd!(
+        state,
+        "set_thread_effort",
+        state.set_thread_effort(thread_id, effort).await
     )
 }
 

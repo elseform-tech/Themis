@@ -87,8 +87,8 @@ pub(super) async fn mount_scripted_llm() -> MockServer {
 #[allow(dead_code)]
 pub(super) async fn use_mock_llm(state: &AppState, server: &MockServer) {
     state
-        .set_secret("custom".to_owned(), "test-key".to_owned())
+        .set_secret("go".to_owned(), "test-key".to_owned())
         .await
         .expect("store key");
-    state.set_custom_base_url_override(Some(server.uri()));
+    state.set_go_base_url_override(Some(server.uri()));
 }

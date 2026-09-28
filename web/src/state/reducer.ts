@@ -109,9 +109,10 @@ export interface AppState {
 }
 
 export type AppAction =
-  | { type: "project/opened"; project: ProjectInfo }
+  | { type: "project/opened"; project: ProjectInfo; select?: boolean }
   | { type: "project/selected"; root: string }
   | { type: "thread/created"; projectRoot: string; thread: ThreadInfo }
+  | { type: "thread/synced"; projectRoot: string; thread: ThreadInfo }
   | { type: "thread/selected"; projectRoot: string; threadId: string }
   | { type: "thread/updated"; projectRoot: string; thread: ThreadInfo }
   | { type: "thread/listed"; projectRoot: string; threads: ThreadInfo[] }
@@ -159,7 +160,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebar_hover: true,
   theme: "system",
   default_provider: "go",
-  default_model: "",
+  default_model: "muse-spark-1.3-contributor",
   max_turns: 20,
   max_total_turns: 200,
   context_token_budget: 16000,
@@ -174,8 +175,6 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export const DEFAULT_SECRET_STATUS: SecretStatus = {
   go: false,
-  openai: false,
-  anthropic: false,
 };
 
 export const initialState: AppState = {
@@ -437,8 +436,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
           state.threadsByProject[action.project.root] === undefined
             ? { ...state.threadsByProject, [action.project.root]: [] }
             : state.threadsByProject,
-        activeProjectRoot: action.project.root,
-        mainView: "thread",
+        activeProjectRoot: action.select === false ? state.activeProjectRoot : action.project.root,
+        mainView: action.select === false ? state.mainView : "thread",
       };
     }
     case "project/selected": {
@@ -465,6 +464,18 @@ export function reducer(state: AppState, action: AppAction): AppState {
         activeProjectRoot: action.projectRoot,
         activeThreadId: action.thread.id,
         mainView: "thread",
+      };
+    }
+    case "thread/synced": {
+      const threads = state.threadsByProject[action.projectRoot] ?? [];
+      return {
+        ...state,
+        threadsByProject: {
+          ...state.threadsByProject,
+          [action.projectRoot]: threads.some(thread => thread.id === action.thread.id)
+            ? threads.map(thread => thread.id === action.thread.id ? action.thread : thread)
+            : [...threads, action.thread],
+        },
       };
     }
     case "thread/selected": {

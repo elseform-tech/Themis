@@ -68,3 +68,8 @@ body {
   background-color: var(--themis-canvas);
   color: var(--themis-text);
 }
+
+.themis-provider-logo { display: inline-flex; flex: none; align-items: center; }
+.themis-provider-logo img { width: 84px; height: 20px; object-fit: contain; }
+.themis-provider-logo-light, [data-theme="light"] .themis-provider-logo-dark { display: none; }
+[data-theme="light"] .themis-provider-logo-light { display: block; }

@@ -153,6 +153,8 @@
 .themis-settings-subtitle { text-transform: none; letter-spacing: 0; color: var(--themis-text); font-size: .875rem; }
 .themis-settings-control { display: flex; align-items: center; justify-content: space-between; gap: 24px; font-size: .875rem; }
 .themis-settings-control select { min-width: 160px; border: 1px solid var(--themis-border); border-radius: 6px; background: var(--themis-surface); color: var(--themis-text); padding: 8px; font: inherit; }
+.themis-settings-model-picker { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.themis-settings-model-picker select { min-width: 0; max-width: 100%; }
 .themis-settings summary { cursor: pointer; font-size: .8125rem; margin-bottom: 12px; }
 .themis-settings-key { padding-top: 14px; }
 .themis-permissions { display: grid; gap: 8px; font-size: .875rem; }

@@ -59,7 +59,7 @@ export function ReviewQueue() {
         <Tabs
           tabs={[
             { id: "pending", label: `Pending (${pending.length})` },
-            { id: "done", label: `Done (${done.length})` },
+            { id: "done", label: `Reviewed (${done.length})` },
           ]}
           value={tab}
           onChange={(id) => setTab(id as "pending" | "done")}

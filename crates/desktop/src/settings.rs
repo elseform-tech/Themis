@@ -34,10 +34,14 @@ impl SettingsStore {
     /// Loads settings from `path`, falling back to defaults.
     #[must_use]
     pub fn load(path: PathBuf) -> Self {
-        let settings = std::fs::read_to_string(&path)
+        let mut settings: Settings = std::fs::read_to_string(&path)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
+        if settings.default_provider == crate::types::ProviderKind::Legacy {
+            settings.default_provider = crate::types::ProviderKind::Go;
+            settings.default_model.clear();
+        }
         Self {
             path,
             current: tokio::sync::Mutex::new(settings),
@@ -200,7 +204,7 @@ mod tests {
         let updated = store
             .update(SettingsPatch {
                 theme: Some(ThemeMode::Dark),
-                default_provider: Some(ProviderKind::OpenAI),
+                default_provider: Some(ProviderKind::Go),
                 default_model: Some("gpt-x".to_owned()),
                 max_turns: Some(42),
                 recent_roots: Some(vec!["/tmp/a".to_owned()]),
@@ -212,7 +216,7 @@ mod tests {
             .await
             .expect("update");
         assert_eq!(updated.theme, ThemeMode::Dark);
-        assert_eq!(updated.default_provider, ProviderKind::OpenAI);
+        assert_eq!(updated.default_provider, ProviderKind::Go);
         assert_eq!(updated.default_model, "gpt-x");
         assert_eq!(updated.max_turns, 42);
         assert_eq!(updated.recent_roots, vec!["/tmp/a".to_owned()]);
@@ -279,7 +283,8 @@ mod tests {
         let store = SettingsStore::load(path);
         let settings = store.get().await;
         assert_eq!(settings.theme, ThemeMode::Dark);
-        assert_eq!(settings.default_provider, ProviderKind::OpenAI);
+        assert_eq!(settings.default_provider, ProviderKind::Go);
+        assert!(settings.default_model.is_empty());
         assert!(settings.recent_roots.is_empty());
         assert_eq!(settings.concurrency_limit, 3);
         assert!(settings.automations_enabled);

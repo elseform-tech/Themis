@@ -14,7 +14,7 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use themis_core::providers::{ProviderConfig, ProviderKind, GO_DEFAULT_MODEL, GO_MODEL_ENV_VAR};
+use themis_core::providers::{ProviderConfig, ProviderKind};
 use themis_core::runtime::{run_task_skilled, CachingApprovals, RunEvent};
 use themis_core::skills::{materialize_scripts, validate_skill_input, Skill};
 use themis_core::tools::{boxed_tools, AllowAllHook, Approval, ApprovalHook, ToolAction};
@@ -34,12 +34,11 @@ usage:
 
 run options:
   --project DIR      project root that tools are scoped to (required)
-  --provider KIND    go|openai|anthropic|ollama|custom (default: go)
+  --provider KIND    go (default: go)
   --model MODEL      model ID (for go: required, or set THEMIS_GO_MODEL;
                      list valid IDs with refresh_go_models)
-  --base-url URL     endpoint override (required for custom; test hook otherwise)
-  --api-key KEY      API key (else THEMIS_GO_API_KEY, OPENAI_API_KEY,
-                     ANTHROPIC_API_KEY, or THEMIS_CUSTOM_API_KEY; ollama needs none)
+  --base-url URL     Go endpoint override (test hook)
+  --api-key KEY      API key (else THEMIS_GO_API_KEY)
   --yes              approve all tool actions without prompting
   --max-turns N      max agent turns (default: 20)
   --skills-file PATH JSON array of Skill bundles (instructions + tool
@@ -270,55 +269,17 @@ fn parse_run(args: &[String]) -> Result<Command, String> {
     options.finish()
 }
 
-/// Resolves the API key: explicit flag, else provider env var, else an error.
-///
-/// Ollama needs no key and resolves to the empty string.
-fn resolve_api_key(provider: ProviderKind, explicit: Option<String>) -> Result<String, String> {
+/// Resolves the Go API key: explicit flag, then environment.
+fn resolve_api_key(_provider: ProviderKind, explicit: Option<String>) -> Result<String, String> {
     if let Some(key) = explicit.filter(|key| !key.trim().is_empty()) {
         return Ok(key);
     }
-    let env_var = match provider {
-        ProviderKind::Go => Some("THEMIS_GO_API_KEY"),
-        ProviderKind::OpenAI => Some("OPENAI_API_KEY"),
-        ProviderKind::Anthropic => Some("ANTHROPIC_API_KEY"),
-        ProviderKind::Custom => Some("THEMIS_CUSTOM_API_KEY"),
-        ProviderKind::Ollama => None,
-    };
-    match env_var {
-        None => Ok(String::new()),
-        Some(var) => match std::env::var(var).ok().filter(|key| !key.trim().is_empty()) {
-            Some(key) => Ok(key),
-            None => Err(format!(
-                "missing API key for provider '{provider}': pass --api-key or set {var}."
-            )),
-        },
-    }
-}
-
-/// Validates the Go model requirement: never send the placeholder to the API.
-fn check_go_model(provider: ProviderKind, model: Option<&str>) -> Result<(), String> {
-    if provider != ProviderKind::Go {
-        return Ok(());
-    }
-    let effective = model
-        .map(str::to_owned)
-        .filter(|model| !model.trim().is_empty())
-        .or_else(|| {
-            std::env::var(GO_MODEL_ENV_VAR)
-                .ok()
-                .filter(|model| !model.trim().is_empty())
-        });
-    match effective {
-        None => Err(format!(
-            "provider 'go' requires an explicit model: pass --model or set {GO_MODEL_ENV_VAR} \
-             (list valid IDs with refresh_go_models against the Go /models endpoint)."
-        )),
-        Some(model) if model == GO_DEFAULT_MODEL => Err(format!(
-            "refusing to use the '{GO_DEFAULT_MODEL}' placeholder model against the live Go API: \
-             pass a real --model (list IDs with refresh_go_models)."
-        )),
-        Some(_) => Ok(()),
-    }
+    std::env::var("THEMIS_GO_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| {
+            "missing OpenCode Go API key: pass --api-key or set THEMIS_GO_API_KEY".to_owned()
+        })
 }
 
 /// Loads and validates the `--skills-file` JSON array (empty when no flag).
@@ -369,11 +330,6 @@ async fn run_task_command(options: RunOptions) -> i32 {
             return 2;
         }
     };
-    if let Err(error) = check_go_model(options.provider, options.model.as_deref()) {
-        eprintln!("error: {error}");
-        return 2;
-    }
-
     let mut config = ProviderConfig::new(options.provider, api_key);
     if let Some(model) = options.model {
         config = config.with_model(model);
@@ -509,7 +465,7 @@ mod tests {
             "--project",
             "/tmp/proj",
             "--provider",
-            "openai",
+            "go",
             "--model=gpt-x",
             "--base-url",
             "http://localhost:1",
@@ -523,7 +479,7 @@ mod tests {
         let options = run_options(command);
         assert_eq!(options.task, "do the thing");
         assert_eq!(options.project, PathBuf::from("/tmp/proj"));
-        assert_eq!(options.provider, ProviderKind::OpenAI);
+        assert_eq!(options.provider, ProviderKind::Go);
         assert_eq!(options.model.as_deref(), Some("gpt-x"));
         assert_eq!(options.base_url.as_deref(), Some("http://localhost:1"));
         assert_eq!(options.api_key.as_deref(), Some("secret"));
@@ -612,21 +568,10 @@ mod tests {
     }
 
     #[test]
-    fn explicit_key_wins_and_ollama_needs_none() {
+    fn explicit_key_wins() {
         assert_eq!(
             resolve_api_key(ProviderKind::Go, Some("flag-key".to_string())).unwrap(),
             "flag-key"
         );
-        assert_eq!(resolve_api_key(ProviderKind::Ollama, None).unwrap(), "");
-    }
-
-    #[test]
-    fn go_model_check_rejects_missing_and_placeholder() {
-        // Non-Go providers are unaffected.
-        assert!(check_go_model(ProviderKind::OpenAI, None).is_ok());
-        // Placeholder is always rejected, even when explicit.
-        assert!(check_go_model(ProviderKind::Go, Some(GO_DEFAULT_MODEL)).is_err());
-        // An explicit real model always passes (env-independent).
-        assert!(check_go_model(ProviderKind::Go, Some("go-model-1")).is_ok());
     }
 }

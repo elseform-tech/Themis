@@ -119,15 +119,15 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
     assert!(project.is_git);
 
     state
-        .set_secret("custom".to_owned(), "test-key".to_owned())
+        .set_secret("go".to_owned(), "test-key".to_owned())
         .await
         .expect("store key");
-    state.set_custom_base_url_override(Some(server.uri()));
+    state.set_go_base_url_override(Some(server.uri()));
 
     let thread = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".to_owned()),
         )
         .await
@@ -219,14 +219,14 @@ async fn busy_thread_rejects_second_send_and_provider_switch() {
     let (state, _settings_temp) = test_state();
     let server = mount_scripted_llm().await;
     state
-        .set_secret("custom".to_owned(), "test-key".to_owned())
+        .set_secret("go".to_owned(), "test-key".to_owned())
         .await
         .expect("store key");
-    state.set_custom_base_url_override(Some(server.uri()));
+    state.set_go_base_url_override(Some(server.uri()));
     let thread = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".to_owned()),
         )
         .await
@@ -371,11 +371,7 @@ async fn non_git_project_has_no_diff_and_read_only_runs() {
         .expect("open");
     assert!(!project.is_git);
     let thread = state
-        .create_thread(
-            root.to_string_lossy().into_owned(),
-            ProviderKind::Ollama,
-            None,
-        )
+        .create_thread(root.to_string_lossy().into_owned(), ProviderKind::Go, None)
         .await
         .expect("create");
     assert!(thread.worktree_path.is_none());
@@ -395,12 +391,12 @@ async fn non_git_project_has_no_diff_and_read_only_runs() {
     let info = state
         .set_provider(
             thread.id.clone(),
-            ProviderKind::OpenAI,
+            ProviderKind::Go,
             Some("gpt-x".to_owned()),
         )
         .await
         .expect("switch");
-    assert_eq!(info.provider, ProviderKind::OpenAI);
+    assert_eq!(info.provider, ProviderKind::Go);
     assert_eq!(info.model, "gpt-x");
 }
 
@@ -458,14 +454,14 @@ async fn stop_at_approval_prevents_the_write_and_releases_the_thread() {
     let (state, _settings) = test_state();
     let server = mount_scripted_llm().await;
     state
-        .set_secret("custom".to_owned(), "test-key".to_owned())
+        .set_secret("go".to_owned(), "test-key".to_owned())
         .await
         .unwrap();
-    state.set_custom_base_url_override(Some(server.uri()));
+    state.set_go_base_url_override(Some(server.uri()));
     let thread = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test-model".to_owned()),
         )
         .await
@@ -511,7 +507,7 @@ async fn shared_workspace_threads_need_no_merge() {
     let thread = state
         .create_thread(
             root.to_string_lossy().into_owned(),
-            ProviderKind::Custom,
+            ProviderKind::Go,
             Some("test".into()),
         )
         .await

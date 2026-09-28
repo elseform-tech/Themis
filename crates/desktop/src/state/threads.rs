@@ -8,6 +8,9 @@ impl AppState {
         provider: ProviderKind,
         model: Option<String>,
     ) -> Result<ThreadInfo, String> {
+        if provider != ProviderKind::Go {
+            return Err("Only OpenCode Go is supported".to_owned());
+        }
         let root = canonical_project_dir(&project_root)?;
         let is_git = is_git_repo(&root);
         let id = uuid::Uuid::new_v4().to_string();
@@ -19,7 +22,10 @@ impl AppState {
             project_root: root.clone(),
             is_git,
             provider,
-            model: model.unwrap_or_default(),
+            model: model
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned()),
+            reasoning_effort: None,
             running: false,
             titled: false,
             preexisting,
@@ -139,7 +145,7 @@ impl AppState {
         .await
     }
 
-    async fn send_message_with_options(
+    pub(super) async fn send_message_with_options(
         &self,
         sink: Arc<dyn EventSink>,
         thread_id: String,
@@ -191,7 +197,7 @@ impl AppState {
                 .map(Skill::core_skill)
                 .collect();
             RunSnapshot {
-                reasoning_effort,
+                reasoning_effort: reasoning_effort.or_else(|| record.reasoning_effort.clone()),
                 history,
                 approval_timeout_seconds: settings.approval_timeout_seconds.clamp(30, 600),
                 confirm_reads: settings.confirm_reads,
@@ -316,6 +322,9 @@ impl AppState {
         provider: ProviderKind,
         model: Option<String>,
     ) -> Result<ThreadInfo, String> {
+        if provider != ProviderKind::Go {
+            return Err("Only OpenCode Go is supported".to_owned());
+        }
         let info = {
             let mut threads = self.inner.threads.write().await;
             let record = threads
@@ -328,6 +337,43 @@ impl AppState {
             }
             record.provider = provider;
             record.model = model.unwrap_or_default();
+            record.reasoning_effort = None;
+            thread_info(record)
+        };
+        self.persist_registry().await;
+        Ok(info)
+    }
+
+    /// Persists the thread's selected effort for manual and scheduled runs.
+    pub async fn set_thread_effort(
+        &self,
+        thread_id: String,
+        effort: Option<String>,
+    ) -> Result<ThreadInfo, String> {
+        let effort = effort.filter(|value| !value.is_empty());
+        let info = {
+            let mut threads = self.inner.threads.write().await;
+            let record = threads
+                .get_mut(&thread_id)
+                .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
+            if record.running {
+                return Err(format!(
+                    "thread '{thread_id}' is busy: cannot change effort mid-run"
+                ));
+            }
+            if let Some(value) = effort.as_deref() {
+                let catalog = self.inner.go_catalog.read().await;
+                if !catalog.iter().any(|model| {
+                    model.id == record.model
+                        && model.effort_levels.iter().any(|level| level == value)
+                }) {
+                    return Err(format!(
+                        "Effort '{value}' is unavailable for model '{}'",
+                        record.model
+                    ));
+                }
+            }
+            record.reasoning_effort = effort;
             thread_info(record)
         };
         self.persist_registry().await;

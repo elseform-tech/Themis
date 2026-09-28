@@ -9,6 +9,7 @@ import type {
   AutomationInput,
   Diagnostics,
   DiffState,
+  GoModel,
   HistoryItem,
   PersistedMessage,
   UpdateStatus,
@@ -39,7 +40,7 @@ export function ping(): Promise<string> {
 export function renameThread(threadId: string, title: string): Promise<ThreadInfo> { return invoke("rename_thread", { threadId, title }); }
 
 export function stopThread(threadId: string): Promise<void> { return invoke("stop_thread", { threadId }); }
-export function listGoModels(): Promise<string[]> { return invoke("list_go_models"); }
+export function listGoModels(): Promise<GoModel[]> { return invoke("list_go_models"); }
 
 export function createProject(name: string, directory?: string): Promise<ProjectInfo> {
   return invoke("create_project", { name, directory: directory ?? null });
@@ -107,6 +108,10 @@ export function setProvider(
   model?: string,
 ): Promise<ThreadInfo> {
   return invoke('set_provider', { threadId, provider, model: model ?? null });
+}
+
+export function setThreadEffort(threadId: string, effort: string): Promise<ThreadInfo> {
+  return invoke('set_thread_effort', { threadId, effort: effort || null });
 }
 
 export function openInEditor(path: string, line?: number): Promise<void> {
@@ -217,14 +222,14 @@ export function getSecretStatus(): Promise<SecretStatus> {
 }
 
 export function setSecret(
-  provider: Exclude<ProviderKind, 'ollama' | 'custom'>,
+  provider: 'go',
   value: string,
 ): Promise<void> {
   return invoke('set_secret', { provider, value });
 }
 
 export function clearSecret(
-  provider: Exclude<ProviderKind, 'ollama' | 'custom'>,
+  provider: 'go',
 ): Promise<void> {
   return invoke('clear_secret', { provider });
 }

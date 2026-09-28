@@ -26,7 +26,7 @@ const PROJECT: ProjectInfo = { root: "/repo", name: "repo", is_git: true };
 const THREAD: ThreadInfo = {
   id: "t9",
   title: "Nightly run",
-  provider: "openai",
+  provider: "go",
   model: "",
   running: false,
   worktree_path: "/tmp/themis-wt/t9",
@@ -40,7 +40,7 @@ const AUTOMATION: Automation = {
   id: "a1",
   name: "nightly",
   project_root: PROJECT.root,
-  provider: "openai",
+  provider: "go",
   model: "",
   skill_ids: [],
   interval_mins: 60,

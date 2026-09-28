@@ -23,7 +23,7 @@ const PROJECT: ProjectInfo = { root: "/repo", name: "repo", is_git: true };
 const THREAD: ThreadInfo = {
   id: "t1",
   title: "Thread 1",
-  provider: "openai",
+  provider: "go",
   model: "gpt",
   running: false,
   worktree_path: "/tmp/themis-wt/t1",
@@ -37,7 +37,7 @@ function makeThread(id: string, title: string): ThreadInfo {
   return {
     id,
     title,
-    provider: "openai",
+    provider: "go",
     model: "",
     running: false,
     worktree_path: `/tmp/themis-wt/${id}`,
@@ -281,7 +281,7 @@ describe("settings", () => {
       settings: {
         projects_directory: "/tmp/projects", text_size: 14, sidebar_hover: true,
         theme: "light",
-        default_provider: "anthropic",
+        default_provider: "go",
         default_model: "claude",
       max_turns: 20,
       max_total_turns: 200,
@@ -311,6 +311,17 @@ describe("projects and threads", () => {
     });
     expect(s.projects).toHaveLength(1);
     expect(s.projects[0]?.is_git).toBe(false);
+  });
+
+  it("registers a project from Automations without leaving the form", () => {
+    const s = reducer({ ...initialState, mainView: "automations" }, {
+      type: "project/opened",
+      project: PROJECT,
+      select: false,
+    });
+    expect(s.projects).toContainEqual(PROJECT);
+    expect(s.activeProjectRoot).toBeNull();
+    expect(s.mainView).toBe("automations");
   });
 
   it("selecting a project falls back to its first thread", () => {
@@ -383,6 +394,15 @@ describe("relaunch restore", () => {
       threads: [t2],
     });
     expect(s.activeThreadId).toBe("t2");
+  });
+
+  it("syncs a background thread without changing selection or duplicating it", () => {
+    let s = withThread();
+    const background = makeThread("scheduled", "Scheduled check");
+    s = reducer(s, { type: "thread/synced", projectRoot: PROJECT.root, thread: background });
+    s = reducer(s, { type: "thread/synced", projectRoot: PROJECT.root, thread: { ...background, title: "Updated" } });
+    expect(s.threadsByProject[PROJECT.root]?.filter(thread => thread.id === background.id)).toEqual([{ ...background, title: "Updated" }]);
+    expect(s.activeThreadId).toBe(THREAD.id);
   });
 });
 

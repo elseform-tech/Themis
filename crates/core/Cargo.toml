@@ -7,7 +7,7 @@ rust-version = "1.91"
 [dependencies]
 anyhow = "1"
 futures-util = "0.3"
-autoagents = { version = "0.4", features = ["openai", "ollama", "anthropic"] }
+autoagents = "0.4"
 autoagents-derive = "0.4"
 autoagents-toolkit = { version = "0.4", features = ["filesystem"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

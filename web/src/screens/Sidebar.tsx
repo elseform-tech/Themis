@@ -3,7 +3,7 @@ import { Badge, Button, Dialog, Input } from "../components";
 import { createProject, getSettings, renameThread, setProvider, setThreadSkills } from "../lib/tauri";
 import { describeError, toast, useApp, type MainView } from "../state/store";
 import { useNewThread, useOpenProject, useDiscardThread } from "./actions";
-import type { ThreadInfo, ProviderKind } from "../lib/types";
+import type { ThreadInfo } from "../lib/types";
 import { readSession, writeSession } from "../state/session";
 import "./Sidebar.css";
 
@@ -79,7 +79,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     setEditBusy(true); setEditError("");
     try {
       let updated = await renameThread(editing.id, editing.title);
-      updated = await setProvider(editing.id, editing.provider, editing.model);
+      updated = await setProvider(editing.id, "go", editing.model);
       updated = await setThreadSkills(editing.id, editing.skill_ids);
       dispatch({ type: "thread/updated", projectRoot: editing.projectRoot, thread: updated });
       setEditing(null);
@@ -126,7 +126,6 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     <Dialog open={editing !== null} title="Edit thread" onClose={() => { if (!editBusy) setEditing(null); }}>
       {editing && <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void saveThread(); }}>
         <Input id="sidebar-thread-title" label="Name" value={editing.title} maxLength={120} onChange={event => setEditing({ ...editing, title: event.target.value })} />
-        <label>Provider<select aria-label="Provider" value={editing.provider} onChange={event => setEditing({ ...editing, provider: event.target.value as ProviderKind })}>{["go", "openai", "anthropic", "ollama", "custom"].map(provider => <option key={provider}>{provider}</option>)}</select></label>
         <Input id="sidebar-thread-model" label="Model" value={editing.model} onChange={event => setEditing({ ...editing, model: event.target.value })} />
         {state.skills.length > 0 && <fieldset><legend>Skills</legend>{state.skills.map(skill => <label key={skill.id}><input type="checkbox" checked={editing.skill_ids.includes(skill.id)} onChange={event => setEditing({ ...editing, skill_ids: event.target.checked ? [...editing.skill_ids, skill.id] : editing.skill_ids.filter(id => id !== skill.id) })}/>{skill.name}</label>)}</fieldset>}
         {editError && <p role="alert" className="themis-form-error">{editError}</p>}

@@ -81,7 +81,7 @@ impl SecretStore for KeychainStore {
     }
 }
 
-/// Stores one API key per provider name (`go`, `openai`, `anthropic`, `custom`).
+/// Stores the OpenCode Go API key.
 pub trait SecretStore: Send + Sync {
     /// Returns true when a non-empty secret is stored for `provider`.
     fn has(&self, provider: &str) -> bool;
