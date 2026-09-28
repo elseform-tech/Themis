@@ -97,7 +97,8 @@ h1 { margin: 7px 0 0; font-size: clamp(23px, 2vw, 28px); font-weight: 650; lette
 .card-kicker { font-size: 8px; letter-spacing: 1px; }
 h2 { margin: 5px 0 0; color: #2a3649; font-size: 14px; font-weight: 630; letter-spacing: -.2px; }
 .info-mark { display: grid; width: 17px; height: 17px; place-items: center; border: 1px solid #d7deea; border-radius: 50%; color: #7c8da8; font: italic 10px Georgia, serif; }
-.coverage-content { display: flex; align-items: center; min-height: 96px; gap: 15px; }
+.coverage-content { display: grid; align-content: center; min-height: 96px; gap: 10px; }
+.coverage-report { display: flex; align-items: center; gap: 15px; }
 .coverage-ring { display: grid; flex: 0 0 70px; width: 70px; height: 70px; place-items: center; border-radius: 50%; background: conic-gradient(var(--green) var(--coverage, 0%), #edf0f4 0); }
 .coverage-ring::before { position: absolute; width: 56px; height: 56px; border-radius: 50%; background: #fff; content: ""; }
 .coverage-ring strong { z-index: 1; color: #34445a; font-size: 14px; }
@@ -107,6 +108,7 @@ h2 { margin: 5px 0 0; color: #2a3649; font-size: 14px; font-weight: 630; letter-
 .status-pill { flex: 0 0 auto; padding: 4px 7px; border-radius: 20px; font-size: 9px; font-weight: 650; }
 .status-pill.passed { background: var(--green-wash); color: var(--green); }
 .status-pill.failed { background: var(--red-wash); color: var(--red); }
+.status-pill.blocked { background: var(--amber-wash); color: var(--amber); }
 .status-pill.running { background: var(--blue-wash); color: #456ac6; }
 .status-pill.neutral { background: #f0f2f5; color: #7d8797; }
 .latest-run-content { min-height: 95px; padding: 13px 0 8px; }
@@ -167,7 +169,9 @@ td.path-cell { color: #37465e; font-family: ui-monospace, SFMono-Regular, Menlo,
 #toast { position: fixed; z-index: 6; right: 24px; bottom: 23px; max-width: min(420px, calc(100vw - 32px)); padding: 11px 14px; border: 1px solid #dbe2ee; border-radius: 7px; background: #fff; box-shadow: 0 8px 28px rgb(22 35 56 / 12%); color: #4b5970; font-size: 11px; opacity: 0; pointer-events: none; transform: translateY(7px); transition: .2s ease; }
 #toast.visible { opacity: 1; transform: translateY(0); }
 .test-case-details { margin-top: 8px; min-width: 210px; }
-.test-case-details summary { color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 600; }
+.test-case-details summary { color: var(--blue); cursor: pointer; font-size: 12px; font-weight: 600; }
+.test-case-details summary .status-pill { margin-left: 5px; }
+.test-case-details p { overflow-wrap: anywhere; }
 .test-case-list { display: grid; gap: 5px; list-style: none; margin: 8px 0 0; max-height: 280px; min-width: 310px; overflow: auto; padding: 8px 10px; background: var(--surface-muted); border-radius: 7px; }
 .test-case-list li { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
 .test-case-list code { font-size: 11px; overflow-wrap: anywhere; }
@@ -217,7 +221,7 @@ td.path-cell { color: #37465e; font-family: ui-monospace, SFMono-Regular, Menlo,
   .metric-grid, .metric-grid.compact-grid { grid-template-columns: 1fr 1fr; }
   .metric-value { font-size: 19px; }
   .run-actions .button { padding: 0 8px; font-size: 9px; }
-  .coverage-content { gap: 10px; }
+  .coverage-report { gap: 10px; }
   .coverage-ring { flex-basis: 60px; width: 60px; height: 60px; }
 }
 @media (prefers-reduced-motion: reduce) {

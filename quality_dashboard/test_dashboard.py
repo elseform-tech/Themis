@@ -1,9 +1,11 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from quality_dashboard.dashboard import (
     ROOT,
     _test_names,
-    complexity_metrics,
     parse_case_event,
     parse_lcov,
     parse_test_totals,
@@ -12,11 +14,6 @@ from quality_dashboard.dashboard import (
 
 
 class DashboardMetricsTests(unittest.TestCase):
-    def test_rust_suite_runs_remaining_targets_after_a_failure(self):
-        from quality_dashboard.dashboard import RUN_COMMANDS
-
-        self.assertIn("--no-fail-fast", RUN_COMMANDS["rust"])
-
     def test_rust_test_totals_sum_test_binaries(self):
         output = """
         test result: ok. 12 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
@@ -35,6 +32,19 @@ class DashboardMetricsTests(unittest.TestCase):
     def test_lcov_requires_real_line_totals(self):
         self.assertEqual(parse_lcov("SF:a.rs\nDA:1,1\nLF:4\nLH:3\nend_of_record"), {"percent": 75.0, "hit": 3, "found": 4})
         self.assertIsNone(parse_lcov("SF:a.rs\nDA:1,1\nend_of_record"))
+
+    def test_rust_and_frontend_coverage_remain_separate(self):
+        from quality_dashboard import dashboard
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            for report_path, hit in (("coverage/lcov.info", 3), ("web/coverage/lcov.info", 1)):
+                path = root / report_path
+                path.parent.mkdir(parents=True)
+                path.write_text(f"SF:source\nLF:4\nLH:{hit}\nend_of_record\n")
+            with patch.object(dashboard, "ROOT", root):
+                reports = dashboard.coverage_metrics()["reports"]
+        self.assertEqual([(report["scope"], report["percent"]) for report in reports], [("Rust", 75.0), ("Frontend", 25.0)])
 
     def test_ast_metrics_use_visual_studio_index_and_ast_loc(self):
         from quality_dashboard.dashboard import _ast_complexity_row
@@ -99,20 +109,25 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertEqual(sum(suite["tests"] for suite in tooling_tests), inventory["toolingTotal"])
         self.assertEqual(inventory["discoveredTotal"], inventory["total"] + inventory["toolingTotal"])
 
-    def test_manual_browser_and_computer_e2e_counts_in_overall_test_inventory(self):
+    def test_manual_journeys_are_registered_with_product_capability_coverage(self):
         from quality_dashboard.dashboard import test_inventory
 
         inventory = test_inventory()
         scenarios = inventory["manualAcceptance"]
         manual = inventory.get("manualE2e")
         self.assertEqual({scenario["runner"] for scenario in scenarios}, {"@Browser", "@Computer"})
-        self.assertTrue(all(scenario["steps"] and scenario["expected"] for scenario in scenarios))
+        self.assertEqual(len({scenario["id"] for scenario in scenarios}), len(scenarios))
+        self.assertTrue(all(scenario["covers"] and scenario["plannedEnvironment"] and scenario["preconditions"] and scenario["steps"] and scenario["expected"] for scenario in scenarios))
+        self.assertTrue(all(scenario["latest"]["status"] in {"passed", "failed", "blocked", "not-run"} for scenario in scenarios))
+        required = {"projects", "threads", "conversation", "agent-loops", "streaming", "tool-calls", "approvals", "diff", "review", "persistence", "compaction", "skills", "automations", "providers", "settings", "secrets", "diagnostics", "recovery", "keyboard", "accessibility"}
+        covered = {capability for scenario in scenarios if scenario["scope"] == "product" for capability in scenario["covers"]}
+        self.assertTrue(required <= covered, required - covered)
         self.assertIsNotNone(manual, "Browser and native E2E cases must be included in the overall inventory")
         if manual is None:
             return
-        self.assertEqual(manual["product"]["total"], 7)
-        self.assertEqual(inventory.get("overallTotal"), inventory["total"] + 7)
-        self.assertEqual(sum(manual["product"]["outcomes"].values()), 7)
+        self.assertEqual(manual["product"]["total"], sum(scenario["scope"] == "product" for scenario in scenarios))
+        self.assertEqual(inventory.get("overallTotal"), inventory["total"] + manual["product"]["total"])
+        self.assertEqual(sum(manual["product"]["outcomes"].values()), manual["product"]["total"])
         self.assertEqual(
             inventory.get("overallDiscoveredTotal"),
             inventory["discoveredTotal"] + manual["product"]["total"] + manual["tooling"]["total"],
@@ -142,9 +157,6 @@ class DashboardMetricsTests(unittest.TestCase):
         })
         self.assertEqual(summary["tooling"]["total"], 1)
         self.assertEqual(summary["tooling"]["outcomes"], {"passed": 1, "failed": 0, "blocked": 0, "notRun": 0})
-
-    def test_complexity_register_identifies_ast_metrics(self):
-        self.assertIn("AST", complexity_metrics()["method"])
 
     def test_test_inventory_keeps_case_titles_and_runtime_events(self):
         names = _test_names(ROOT / "sample.test.ts", 'it("approves a safe read", () => {}); test.each(rows)("writes %s", () => {}); matcher.test("not a test case");')

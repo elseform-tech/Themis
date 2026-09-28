@@ -4,6 +4,7 @@ web/dist/
 web/node_modules/
 node_modules/
 /.quality-dashboard/
+/coverage/
 
 # Secrets (never commit keys)
 .env

@@ -38,10 +38,10 @@ fn tracked_diff_files(root: &Path) -> Result<Vec<crate::types::DiffFile>, String
 /// Rejects absolute paths and `..` escapes (diff paths must stay in-root).
 fn ensure_root_relative(path: &str) -> Result<(), String> {
     let candidate = Path::new(path);
-    if candidate.is_absolute()
+    if candidate.has_root()
         || candidate
             .components()
-            .any(|component| matches!(component, Component::ParentDir))
+            .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
     {
         return Err(format!(
             "invalid path '{path}': must be relative to the project root"

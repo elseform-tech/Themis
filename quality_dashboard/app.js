@@ -8,8 +8,8 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&":
 const number = (value) => value == null ? "—" : new Intl.NumberFormat().format(value);
 const shortDate = (value) => value ? new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const percent = (value) => value == null ? "—" : `${Number(value).toFixed(1)}%`;
-const statusText = (value) => value === "passed" ? "Passed" : value === "failed" ? "Failed" : value === "running" ? "Running" : value === "unknown" ? "Unverified" : value === "skipped" ? "Skipped" : "Not run";
-const statusClass = (value) => value === "passed" || value === "failed" || value === "running" ? value : "neutral";
+const statusText = (value) => value === "passed" ? "Passed" : value === "failed" ? "Failed" : value === "blocked" ? "Blocked" : value === "running" ? "Running" : value === "unknown" ? "Unverified" : value === "skipped" ? "Skipped" : "Not run";
+const statusClass = (value) => value === "passed" || value === "failed" || value === "blocked" || value === "running" ? value : "neutral";
 const outcomeSummary = (outcomes) => `${number(outcomes.passed)} passed · ${number(outcomes.failed)} failed · ${number(outcomes.blocked)} blocked · ${number(outcomes.notRun)} not run`;
 
 function metricCard(label, value, caption, icon, unit = "") {
@@ -64,9 +64,9 @@ function renderOverview(data) {
 
   const coverageContent = $("#coverageContent");
   if (coverage.available) {
-    coverageContent.innerHTML = `<div class="coverage-ring" style="--coverage:${Number(coverage.percent)}%"><strong>${esc(percent(coverage.percent))}</strong></div><div class="coverage-copy"><strong>${number(coverage.hit)} of ${number(coverage.found)} lines covered</strong><span>LCOV report: <code>${esc(coverage.path)}</code></span></div>`;
+    coverageContent.innerHTML = coverage.reports.map((report) => `<div class="coverage-report"><div class="coverage-ring" style="--coverage:${Number(report.percent)}%"><strong>${esc(percent(report.percent))}</strong></div><div class="coverage-copy"><strong>${esc(report.scope)} · ${number(report.hit)} of ${number(report.found)} lines covered</strong><span>LCOV report: <code>${esc(report.path)}</code></span></div></div>`).join("");
   } else {
-    coverageContent.innerHTML = `<div class="coverage-ring"><strong>—</strong></div><div class="coverage-copy"><strong>No coverage report found</strong><span>Test totals do not measure coverage. Add an LCOV report at <code>coverage/lcov.info</code> or <code>web/coverage/lcov.info</code>.</span></div>`;
+    coverageContent.innerHTML = `<div class="coverage-report"><div class="coverage-ring"><strong>—</strong></div><div class="coverage-copy"><strong>No coverage report found</strong><span>Test totals do not measure coverage. Add an LCOV report at <code>coverage/lcov.info</code> or <code>web/coverage/lcov.info</code>.</span></div></div>`;
   }
 
   const latestRun = $("#latestRunContent");
@@ -177,6 +177,7 @@ function renderTests(data) {
 }
 
 function renderManualAcceptance(scenarios, manualE2e) {
+  const openJourneys = new Set($$("#manualAcceptanceTable details[open], #manualToolingTable details[open]").map((detail) => detail.dataset.scenario));
   const outcomeRows = ["product", "tooling"].flatMap((scope) => {
     const summary = manualE2e[scope];
     if (!summary) return [];
@@ -186,15 +187,34 @@ function renderManualAcceptance(scenarios, manualE2e) {
     });
   });
   $("#manualE2eSummary").innerHTML = outcomeRows.join("") || `<div class="suite-line"><span class="suite-label">No Browser/native E2E cases registered</span></div>`;
-  const rows = scenarios.map((scenario) => {
+  const scenarioDetail = (scenario) => {
     const latest = scenario.latest || {};
     const outcome = { passed: "Passed", failed: "Failed", blocked: "Blocked" }[latest.status] || "Not run";
     const list = (items) => items.map((item) => `<li>${esc(item)}</li>`).join("");
-    const details = `<details class="test-case-details"><summary><code>${esc(scenario.id)}</code> · ${esc(scenario.title)}</summary><div><strong>Target:</strong> ${esc(scenario.target)}</div><strong>Preconditions</strong><ul>${list(scenario.preconditions)}</ul><strong>Steps</strong><ol>${list(scenario.steps)}</ol><strong>Expected</strong><ul>${list(scenario.expected)}</ul></details>`;
     const run = [latest.runAt && `Run ${latest.runAt}`, latest.revision && `Revision ${latest.revision}`, latest.environment, latest.notes].filter(Boolean).map(esc).join(" · ");
-    return `<tr><td>${esc(scenario.scope === "tooling" ? "Tooling" : "Product")}</td><td>${esc(scenario.runner)}</td><td class="path-cell">${details}</td><td><span class="status-pill ${statusClass(latest.status)}">${outcome}</span>${run ? `<small class="suite-result-count">${run}</small>` : ""}</td></tr>`;
+    return `<details class="test-case-details" data-scenario="${esc(scenario.id)}" ${openJourneys.has(scenario.id) ? "open" : ""}><summary><code>${esc(scenario.id)}</code> · ${esc(scenario.title)} <span class="status-pill ${statusClass(latest.status)}">${outcome}</span></summary><div><strong>Target:</strong> ${esc(scenario.target)}</div><div><strong>Runner:</strong> ${esc(scenario.runner)}</div><div><strong>Planned environment:</strong> ${esc(scenario.plannedEnvironment || "Unspecified")}</div><strong>Preconditions</strong><ul>${list(scenario.preconditions)}</ul><strong>Steps</strong><ol>${list(scenario.steps)}</ol><strong>Expected</strong><ul>${list(scenario.expected)}</ul>${run ? `<strong>Latest evidence</strong><p>${run}</p>` : ""}</details>`;
+  };
+  const features = new Map();
+  for (const scenario of scenarios.filter((item) => item.scope === "product")) {
+    for (const feature of scenario.covers || []) {
+      if (!features.has(feature)) features.set(feature, []);
+      features.get(feature).push(scenario);
+    }
+  }
+  const featureRows = [...features].sort(([a], [b]) => a.localeCompare(b)).map(([feature, journeys]) => {
+    const counts = { passed: 0, failed: 0, blocked: 0, notRun: 0 };
+    for (const journey of journeys) counts[journey.latest?.status === "passed" ? "passed" : journey.latest?.status === "failed" ? "failed" : journey.latest?.status === "blocked" ? "blocked" : "notRun"]++;
+    const state = counts.failed ? "failed" : counts.blocked ? "blocked" : counts.notRun ? "neutral" : "passed";
+    const label = feature.replace(/-/g, " ").replace(/^./, (letter) => letter.toUpperCase());
+    const runners = [...new Set(journeys.map((journey) => journey.runner))].join(" · ");
+    const evidence = journeys.map(scenarioDetail).join("");
+    return `<tr><td><strong>${esc(label)}</strong></td><td>${number(journeys.length)} ${journeys.length === 1 ? "journey" : "journeys"}<div class="feature-journeys">${evidence}</div></td><td>${esc(runners)}</td><td><span class="status-pill ${statusClass(state)}">${state === "neutral" ? "Needs run" : state === "passed" ? "Passed" : state === "failed" ? "Failed" : "Blocked"}</span><small class="suite-result-count">${outcomeSummary(counts)}</small></td></tr>`;
   });
-  $("#manualAcceptanceTable").innerHTML = table(["Scope", "Runner", "Repeatable scenario", "Latest outcome"], rows, "No manual acceptance scenarios registered");
+  $("#manualAcceptanceTable").innerHTML = table(["Product feature", "Registered journeys", "Runners", "Latest outcomes"], featureRows, "No product feature journeys registered");
+  const toolingRows = scenarios.filter((scenario) => scenario.scope === "tooling").map((scenario) => {
+    return `<tr><td>${esc(scenario.runner)}</td><td>${scenarioDetail(scenario)}</td><td><span class="status-pill ${statusClass(scenario.latest?.status)}">${esc(statusText(scenario.latest?.status))}</span></td></tr>`;
+  });
+  $("#manualToolingTable").innerHTML = table(["Runner", "Tooling journey", "Latest evidence"], toolingRows, "No dashboard journeys registered");
 }
 
 function renderComplexity(data) {
@@ -216,7 +236,7 @@ function renderComplexity(data) {
   $("#complexityGrid").innerHTML = [
     metricCard("Cyclomatic complexity", complexity.averageCyclomatic.toFixed(2), "AST average per source file", "⌁"),
     metricCard("Cognitive complexity", complexity.averageCognitive.toFixed(2), "AST average per source file", "⋔"),
-    metricCard("Maintainability index", `${complexity.averageMaintainability.toFixed(1)}`, "Product target 90+ · mean function AST index", "◒", "/ 100"),
+    metricCard("Maintainability index", `${complexity.averageMaintainability.toFixed(1)}`, "Mean function AST index · review signal", "◒", "/ 100"),
     metricCard("Files analyzed", number(complexity.filesAnalyzed), "App source files; standalone tests/tooling excluded", "▤"),
   ].join("");
   const query = $("#complexityFilter").value.trim().toLowerCase();

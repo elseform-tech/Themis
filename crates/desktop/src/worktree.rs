@@ -519,6 +519,7 @@ mod tests {
         git(&root, &["init", "-q"]);
         git(&root, &["config", "user.email", "themis@test"]);
         git(&root, &["config", "user.name", "themis"]);
+        git(&root, &["config", "core.autocrlf", "false"]);
         std::fs::write(root.join("file.txt"), "line1\nline2\nline3\n").expect("write");
         git(&root, &["add", "."]);
         git(&root, &["commit", "-qm", "init"]);

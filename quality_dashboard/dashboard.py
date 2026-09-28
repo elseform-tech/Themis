@@ -366,14 +366,18 @@ def parse_lcov(text: str) -> dict | None:
 
 
 def coverage_metrics() -> dict:
-    candidates = [ROOT / "coverage/lcov.info", ROOT / "web/coverage/lcov.info", STATE_DIR / "coverage/lcov.info"]
-    for path in candidates:
+    candidates = [
+        ("Rust", ROOT / "coverage/lcov.info"),
+        ("Frontend", ROOT / "web/coverage/lcov.info"),
+    ]
+    reports = []
+    for scope, path in candidates:
         if not path.is_file():
             continue
         report = parse_lcov(read_text(path))
         if report:
-            return {"available": True, **report, "path": path.relative_to(ROOT).as_posix()}
-    return {"available": False, "percent": None, "hit": 0, "found": 0, "path": None}
+            reports.append({"scope": scope, **report, "path": path.relative_to(ROOT).as_posix()})
+    return {"available": bool(reports), "reports": reports}
 
 
 def git_metrics() -> dict:
