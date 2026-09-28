@@ -28,6 +28,7 @@ pub(super) fn init_repo() -> (tempfile::TempDir, PathBuf) {
     git(&root, &["init", "-q"]);
     git(&root, &["config", "user.email", "themis@test"]);
     git(&root, &["config", "user.name", "themis"]);
+    git(&root, &["config", "core.autocrlf", "false"]);
     std::fs::write(root.join("README.md"), "# repo\n").expect("write");
     git(&root, &["add", "."]);
     git(&root, &["commit", "-qm", "init"]);
