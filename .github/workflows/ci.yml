@@ -48,6 +48,30 @@ jobs:
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       - run: cargo test --workspace -- --skip entered_keys_survive_new_store_and_can_be_forgotten
 
+  rust-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install Linux Tauri dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Generate Rust LCOV
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info -- --skip entered_keys_survive_new_store_and_can_be_forgotten
+      - name: Verify dashboard reads Rust coverage
+        run: python3 -c 'from quality_dashboard.dashboard import coverage_metrics; reports = coverage_metrics()["reports"]; assert any(report["scope"] == "Rust" for report in reports); print(reports)'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage-lcov
+          path: coverage/lcov.info
+
   web:
     runs-on: ubuntu-latest
     defaults:

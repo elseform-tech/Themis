@@ -38,7 +38,9 @@ python3 -m quality_dashboard.dashboard # local quality dashboard
 
 The dashboard refreshes repository and test data every five seconds. Repeatable
 `@Browser` and `@Computer` acceptance journeys, kept outside automated product
-test totals, are listed in `quality_dashboard/manual_acceptance.json`.
+test totals, are registered before execution in `quality_dashboard/manual_acceptance.json`.
+Generate Rust line coverage with `cargo-llvm-cov` as documented in
+`quality_dashboard/README.md`; the dashboard reads the resulting LCOV report.
 
 Keys entered in Settings are stored in macOS Keychain and remain available after
 restart. OpenCode Go can also use `OPENCODE_KEY` in the app launch environment.

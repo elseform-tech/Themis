@@ -97,7 +97,8 @@ h1 { margin: 7px 0 0; font-size: clamp(23px, 2vw, 28px); font-weight: 650; lette
 .card-kicker { font-size: 8px; letter-spacing: 1px; }
 h2 { margin: 5px 0 0; color: #2a3649; font-size: 14px; font-weight: 630; letter-spacing: -.2px; }
 .info-mark { display: grid; width: 17px; height: 17px; place-items: center; border: 1px solid #d7deea; border-radius: 50%; color: #7c8da8; font: italic 10px Georgia, serif; }
-.coverage-content { display: flex; align-items: center; min-height: 96px; gap: 15px; }
+.coverage-content { display: grid; align-content: center; min-height: 96px; gap: 10px; }
+.coverage-report { display: flex; align-items: center; gap: 15px; }
 .coverage-ring { display: grid; flex: 0 0 70px; width: 70px; height: 70px; place-items: center; border-radius: 50%; background: conic-gradient(var(--green) var(--coverage, 0%), #edf0f4 0); }
 .coverage-ring::before { position: absolute; width: 56px; height: 56px; border-radius: 50%; background: #fff; content: ""; }
 .coverage-ring strong { z-index: 1; color: #34445a; font-size: 14px; }
@@ -217,7 +218,7 @@ td.path-cell { color: #37465e; font-family: ui-monospace, SFMono-Regular, Menlo,
   .metric-grid, .metric-grid.compact-grid { grid-template-columns: 1fr 1fr; }
   .metric-value { font-size: 19px; }
   .run-actions .button { padding: 0 8px; font-size: 9px; }
-  .coverage-content { gap: 10px; }
+  .coverage-report { gap: 10px; }
   .coverage-ring { flex-basis: 60px; width: 60px; height: 60px; }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -64,9 +64,9 @@ function renderOverview(data) {
 
   const coverageContent = $("#coverageContent");
   if (coverage.available) {
-    coverageContent.innerHTML = `<div class="coverage-ring" style="--coverage:${Number(coverage.percent)}%"><strong>${esc(percent(coverage.percent))}</strong></div><div class="coverage-copy"><strong>${number(coverage.hit)} of ${number(coverage.found)} lines covered</strong><span>LCOV report: <code>${esc(coverage.path)}</code></span></div>`;
+    coverageContent.innerHTML = coverage.reports.map((report) => `<div class="coverage-report"><div class="coverage-ring" style="--coverage:${Number(report.percent)}%"><strong>${esc(percent(report.percent))}</strong></div><div class="coverage-copy"><strong>${esc(report.scope)} · ${number(report.hit)} of ${number(report.found)} lines covered</strong><span>LCOV report: <code>${esc(report.path)}</code></span></div></div>`).join("");
   } else {
-    coverageContent.innerHTML = `<div class="coverage-ring"><strong>—</strong></div><div class="coverage-copy"><strong>No coverage report found</strong><span>Test totals do not measure coverage. Add an LCOV report at <code>coverage/lcov.info</code> or <code>web/coverage/lcov.info</code>.</span></div>`;
+    coverageContent.innerHTML = `<div class="coverage-report"><div class="coverage-ring"><strong>—</strong></div><div class="coverage-copy"><strong>No coverage report found</strong><span>Test totals do not measure coverage. Add an LCOV report at <code>coverage/lcov.info</code> or <code>web/coverage/lcov.info</code>.</span></div></div>`;
   }
 
   const latestRun = $("#latestRunContent");
@@ -190,7 +190,7 @@ function renderManualAcceptance(scenarios, manualE2e) {
     const latest = scenario.latest || {};
     const outcome = { passed: "Passed", failed: "Failed", blocked: "Blocked" }[latest.status] || "Not run";
     const list = (items) => items.map((item) => `<li>${esc(item)}</li>`).join("");
-    const details = `<details class="test-case-details"><summary><code>${esc(scenario.id)}</code> · ${esc(scenario.title)}</summary><div><strong>Target:</strong> ${esc(scenario.target)}</div><strong>Preconditions</strong><ul>${list(scenario.preconditions)}</ul><strong>Steps</strong><ol>${list(scenario.steps)}</ol><strong>Expected</strong><ul>${list(scenario.expected)}</ul></details>`;
+    const details = `<details class="test-case-details"><summary><code>${esc(scenario.id)}</code> · ${esc(scenario.title)}</summary><div><strong>Target:</strong> ${esc(scenario.target)}</div><div><strong>Covers:</strong> ${esc((scenario.covers || []).join(", "))}</div><div><strong>Planned environment:</strong> ${esc(scenario.plannedEnvironment || "Unspecified")}</div><strong>Preconditions</strong><ul>${list(scenario.preconditions)}</ul><strong>Steps</strong><ol>${list(scenario.steps)}</ol><strong>Expected</strong><ul>${list(scenario.expected)}</ul></details>`;
     const run = [latest.runAt && `Run ${latest.runAt}`, latest.revision && `Revision ${latest.revision}`, latest.environment, latest.notes].filter(Boolean).map(esc).join(" · ");
     return `<tr><td>${esc(scenario.scope === "tooling" ? "Tooling" : "Product")}</td><td>${esc(scenario.runner)}</td><td class="path-cell">${details}</td><td><span class="status-pill ${statusClass(latest.status)}">${outcome}</span>${run ? `<small class="suite-result-count">${run}</small>` : ""}</td></tr>`;
   });
@@ -216,7 +216,7 @@ function renderComplexity(data) {
   $("#complexityGrid").innerHTML = [
     metricCard("Cyclomatic complexity", complexity.averageCyclomatic.toFixed(2), "AST average per source file", "⌁"),
     metricCard("Cognitive complexity", complexity.averageCognitive.toFixed(2), "AST average per source file", "⋔"),
-    metricCard("Maintainability index", `${complexity.averageMaintainability.toFixed(1)}`, "Product target 90+ · mean function AST index", "◒", "/ 100"),
+    metricCard("Maintainability index", `${complexity.averageMaintainability.toFixed(1)}`, "Mean function AST index · review signal", "◒", "/ 100"),
     metricCard("Files analyzed", number(complexity.filesAnalyzed), "App source files; standalone tests/tooling excluded", "▤"),
   ].join("");
   const query = $("#complexityFilter").value.trim().toLowerCase();
