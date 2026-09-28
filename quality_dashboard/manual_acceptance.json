@@ -132,32 +132,32 @@
     "id": "BROWSER-DASH-003",
     "scope": "tooling",
     "runner": "@Browser",
-    "title": "Include Browser and native E2E in overall test totals",
+    "title": "Group manual E2E journeys by product feature",
     "target": "Local Repository Quality dashboard",
     "preconditions": [
       "Start the local quality dashboard and wait for metrics to refresh."
     ],
     "steps": [
-      "Inspect the overview's overall test definition count and test mix.",
-      "Open the Test register and compare product E2E definitions with the automated E2E and Browser/native counts.",
-      "Inspect the Browser and native runner outcome summary, including any Not run cases.",
-      "Confirm the run button is labeled for automated suites and does not claim to execute manual journeys."
+      "Open Test register and inspect Product feature health.",
+      "Confirm settings, automations, skills, agent loops, and conversation each show linked Browser or Computer journeys and honest outcome counts.",
+      "Expand one feature journey to inspect its target, runner, preconditions, steps, expected results, and latest evidence.",
+      "Confirm dashboard tooling journeys remain separate and automated test buttons do not claim to run manual journeys."
     ],
     "expected": [
-      "Overall definitions include automated suites and registered Browser/native E2E scenarios.",
-      "The register reports manual outcomes by scope and runner, without treating Not run as Passed.",
-      "Automated run totals and manual journey outcomes remain clearly identified."
+      "Product feature rows are derived from covers tags, including newly added tags without a dashboard code change.",
+      "A feature is passed only when all of its linked journeys passed; blocked and not-run journeys remain visible.",
+      "Tooling, automated definitions, and manual product outcomes remain distinct."
     ],
     "latest": {
       "status": "passed",
       "runAt": "2026-09-28",
-      "revision": "108fed6 (working tree)",
+      "revision": "58ad85e (working tree)",
       "environment": "Codex in-app Browser; local dashboard on 127.0.0.1:4178",
-      "notes": "Overview showed 398 overall definitions: 380 product and 18 tooling, including 14 product Browser/native E2E scenarios. Test register showed 42 product E2E definitions (28 automated, 14 manual), 18 tooling checks (14 automated, 4 manual), and per-runner outcomes. Automated buttons and latest automated run card remained separately labeled; the latest run card still referred to Sep 27 and was not treated as a fresh test run."
+      "notes": "Opened Product feature health after the journey was registered. Verified Agent loops (5 native journeys, all not run), Automations (2 native, not run), Conversation (1 blocked and 6 not run), Settings (3 native, not run), and Skills (1 Browser passed and 2 native not run). The feature rows are derived from covers tags, show runners and outcome counts, and keep tooling journeys in a separate table. Expanded COMPUTER-APP-002 by keyboard and saw its target, runner, planned environment, preconditions, steps, and expected results. Automated test controls remained labeled separately."
     },
     "covers": [
-      "test-register",
-      "manual-e2e"
+      "test-inventory",
+      "feature-health"
     ],
     "plannedEnvironment": "Local dashboard with registered manual journeys."
   },
@@ -221,7 +221,8 @@
       "projects",
       "threads",
       "conversation",
-      "persistence"
+      "persistence",
+      "agent-loops"
     ],
     "plannedEnvironment": "Current packaged macOS app with a disposable project and deterministic local provider."
   },
@@ -344,9 +345,9 @@
     "latest": {
       "status": "passed",
       "runAt": "2026-09-28",
-      "revision": "108fed6 (working tree)",
+      "revision": "58ad85e (working tree)",
       "environment": "Codex in-app Browser; local dashboard on 127.0.0.1:4178; cargo-llvm-cov 0.9.1; rust-code-analysis-cli 0.0.25",
-      "notes": "Opened Overview and Code health after generating coverage/lcov.info. Rust line coverage was 85.4% (9,240/10,816 lines), labeled Rust with its LCOV path. AST averages were 2.03 cyclomatic and 1.45 cognitive across 78 app files; mean function maintainability index was 71.8/100 as a review signal. Reviewed web/src/screens/actions.ts: 190 LOC, cyclomatic 2.50, cognitive 3.27, MI 50.1. The register excludes dashboard tooling and standalone test files; no fixed score threshold appeared."
+      "notes": "Rechecked Overview after the provider client fix: Rust line coverage was 85.4% (9,235/10,811 lines), labeled Rust with coverage/lcov.info. Code health showed AST averages of 2.03 cyclomatic and 1.45 cognitive across 78 product source files and mean function MI 71.8/100 as a review signal. Filtered the register to the touched crates/core/src/providers.rs module: 2,017 LOC, cyclomatic 2.35, cognitive 1.10, MI 68.2. Standalone test files and dashboard tooling remain outside AST scope; no fixed MI target appears."
     }
   },
   {
@@ -359,7 +360,8 @@
       "conversation",
       "persistence",
       "compaction",
-      "threads"
+      "threads",
+      "agent-loops"
     ],
     "plannedEnvironment": "Current packaged macOS app, disposable project, deterministic local provider that records requests.",
     "preconditions": [
@@ -390,7 +392,8 @@
       "tool-calls",
       "approvals",
       "diff",
-      "review"
+      "review",
+      "agent-loops"
     ],
     "plannedEnvironment": "Current packaged macOS app with a disposable Git fixture and scripted local tool request.",
     "preconditions": [
@@ -420,7 +423,8 @@
     "covers": [
       "skills",
       "tool-calls",
-      "conversation"
+      "conversation",
+      "agent-loops"
     ],
     "plannedEnvironment": "Current packaged macOS app with a disposable skill and deterministic local provider.",
     "preconditions": [
@@ -513,7 +517,8 @@
       "conversation",
       "recovery",
       "diagnostics",
-      "streaming"
+      "streaming",
+      "agent-loops"
     ],
     "plannedEnvironment": "Current packaged macOS app with deterministic slow and failing local provider fixtures.",
     "preconditions": [

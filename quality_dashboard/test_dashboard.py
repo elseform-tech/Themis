@@ -119,7 +119,7 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertEqual(len({scenario["id"] for scenario in scenarios}), len(scenarios))
         self.assertTrue(all(scenario["covers"] and scenario["plannedEnvironment"] and scenario["preconditions"] and scenario["steps"] and scenario["expected"] for scenario in scenarios))
         self.assertTrue(all(scenario["latest"]["status"] in {"passed", "failed", "blocked", "not-run"} for scenario in scenarios))
-        required = {"projects", "threads", "conversation", "streaming", "tool-calls", "approvals", "diff", "review", "persistence", "compaction", "skills", "automations", "providers", "settings", "secrets", "diagnostics", "recovery", "keyboard", "accessibility"}
+        required = {"projects", "threads", "conversation", "agent-loops", "streaming", "tool-calls", "approvals", "diff", "review", "persistence", "compaction", "skills", "automations", "providers", "settings", "secrets", "diagnostics", "recovery", "keyboard", "accessibility"}
         covered = {capability for scenario in scenarios if scenario["scope"] == "product" for capability in scenario["covers"]}
         self.assertTrue(required <= covered, required - covered)
         self.assertIsNotNone(manual, "Browser and native E2E cases must be included in the overall inventory")
