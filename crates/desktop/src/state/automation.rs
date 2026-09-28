@@ -1,0 +1,398 @@
+use super::*;
+
+impl AppState {
+    pub async fn list_automations(&self) -> Vec<Automation> {
+        let automations = self.inner.automations.read().await;
+        let mut out: Vec<Automation> = automations.values().cloned().collect();
+        out.sort_by(|left, right| left.id.cmp(&right.id));
+        out
+    }
+
+    /// Creates an automation after validating the input. The project root
+    /// must exist (stored canonicalized) and `next_run_at` starts at
+    /// now + `interval_mins`.
+    pub async fn create_automation(&self, input: AutomationInput) -> Result<Automation, String> {
+        self.check_automation_input(&input).await?;
+        let root = canonical_project_dir(&input.project_root)?;
+        let now = Utc::now();
+        let interval_mins = u32::try_from(input.interval_mins).map_err(|_| {
+            format!(
+                "interval_mins is out of range (got {})",
+                input.interval_mins
+            )
+        })?;
+        let automation = Automation {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: input.name,
+            project_root: root.to_string_lossy().into_owned(),
+            provider: input.provider,
+            model: input.model,
+            skill_ids: dedup_ids(input.skill_ids),
+            interval_mins,
+            task: input.task,
+            enabled: input.enabled,
+            last_run_at: None,
+            next_run_at: rfc3339_plus_minutes(now, i64::from(interval_mins)),
+            run_count: 0,
+        };
+        self.inner
+            .automations
+            .write()
+            .await
+            .insert(automation.id.clone(), automation.clone());
+        self.persist_automations().await;
+        Ok(automation)
+    }
+
+    /// Replaces the automation `automation_id` with `input`, keeping its id,
+    /// history (`last_run_at`, `run_count`), and rescheduling `next_run_at`
+    /// to now + the new interval.
+    pub async fn update_automation(
+        &self,
+        automation_id: String,
+        input: AutomationInput,
+    ) -> Result<Automation, String> {
+        self.check_automation_input(&input).await?;
+        let root = canonical_project_dir(&input.project_root)?;
+        let interval_mins = u32::try_from(input.interval_mins).map_err(|_| {
+            format!(
+                "interval_mins is out of range (got {})",
+                input.interval_mins
+            )
+        })?;
+        let now = Utc::now();
+        let mut automations = self.inner.automations.write().await;
+        let automation = automations
+            .get_mut(&automation_id)
+            .ok_or_else(|| format!("unknown automation '{automation_id}'"))?;
+        automation.name = input.name;
+        automation.project_root = root.to_string_lossy().into_owned();
+        automation.provider = input.provider;
+        automation.model = input.model;
+        automation.skill_ids = dedup_ids(input.skill_ids);
+        automation.interval_mins = interval_mins;
+        automation.task = input.task;
+        automation.enabled = input.enabled;
+        automation.next_run_at = rfc3339_plus_minutes(now, i64::from(interval_mins));
+        let updated = automation.clone();
+        drop(automations);
+        self.persist_automations().await;
+        Ok(updated)
+    }
+
+    /// Deletes an automation. Threads it created stay as ordinary threads
+    /// and its review items stay as history.
+    pub async fn delete_automation(&self, automation_id: String) -> Result<(), String> {
+        let mut automations = self.inner.automations.write().await;
+        if automations.remove(&automation_id).is_none() {
+            return Err(format!("unknown automation '{automation_id}'"));
+        }
+        drop(automations);
+        self.persist_automations().await;
+        Ok(())
+    }
+
+    /// Flips an automation's `enabled` flag. Enabling reschedules
+    /// `next_run_at` to now + the interval.
+    pub async fn set_automation_enabled(
+        &self,
+        automation_id: String,
+        enabled: bool,
+    ) -> Result<Automation, String> {
+        let now = Utc::now();
+        let mut automations = self.inner.automations.write().await;
+        let automation = automations
+            .get_mut(&automation_id)
+            .ok_or_else(|| format!("unknown automation '{automation_id}'"))?;
+        automation.enabled = enabled;
+        if enabled {
+            automation.next_run_at = rfc3339_plus_minutes(now, i64::from(automation.interval_mins));
+        }
+        let updated = automation.clone();
+        drop(automations);
+        self.persist_automations().await;
+        Ok(updated)
+    }
+
+    /// Validates automation input: non-empty name and task, an existing
+    /// project dir, a usable Go model, existing skill ids, and
+    /// `interval_mins >= 1`.
+    async fn check_automation_input(&self, input: &AutomationInput) -> Result<(), String> {
+        if input.name.trim().is_empty() {
+            return Err("automation name must not be empty".to_owned());
+        }
+        if input.task.trim().is_empty() {
+            return Err("automation task must not be empty".to_owned());
+        }
+        if input.interval_mins < 1 {
+            return Err(format!(
+                "interval_mins must be at least 1 (got {})",
+                input.interval_mins
+            ));
+        }
+        canonical_project_dir(&input.project_root)?;
+        if input.provider.core_kind() == themis_core::providers::ProviderKind::Go {
+            check_go_model(&input.model)?;
+        }
+        self.check_skill_ids(&input.skill_ids).await?;
+        Ok(())
+    }
+
+    /// Test hook: forcibly reschedules an automation (lets tick tests make
+    /// one due without waiting out its interval).
+    pub async fn set_automation_next_run_for_test(
+        &self,
+        automation_id: &str,
+        next_run_at: String,
+    ) -> Result<Automation, String> {
+        let mut automations = self.inner.automations.write().await;
+        let automation = automations
+            .get_mut(automation_id)
+            .ok_or_else(|| format!("unknown automation '{automation_id}'"))?;
+        automation.next_run_at = next_run_at;
+        let updated = automation.clone();
+        drop(automations);
+        self.persist_automations().await;
+        Ok(updated)
+    }
+
+    /// Manually triggers one automation run. Unlike the scheduler tick, this
+    /// works even when the automation is disabled or the global
+    /// `automations_enabled` kill-switch is off — but the concurrency gate
+    /// still applies.
+    pub async fn run_automation_now(
+        &self,
+        sink: Arc<dyn EventSink>,
+        automation_id: String,
+    ) -> Result<RunAutomationNow, String> {
+        let automation = {
+            let automations = self.inner.automations.read().await;
+            automations
+                .get(&automation_id)
+                .cloned()
+                .ok_or_else(|| format!("unknown automation '{automation_id}'"))?
+        };
+        if !Path::new(&automation.project_root).is_dir() {
+            return Err(format!(
+                "automation '{}' cannot run: project_root '{}' no longer exists",
+                automation.id, automation.project_root
+            ));
+        }
+        let (thread_id, run_id) = self.fire_automation(&sink, &automation).await?;
+        Ok(RunAutomationNow {
+            automation_id: automation.id,
+            thread_id,
+            run_id,
+        })
+    }
+
+    /// Runs one scheduler pass: fires every due automation (enabled, with
+    /// `next_run_at <= now`). A saturated concurrency gate or a vanished
+    /// project dir skips the automation WITHOUT advancing its schedule, so
+    /// it is retried on the next tick. No-op while the global
+    /// `automations_enabled` kill-switch is off.
+    ///
+    /// Firing only ever creates a thread plus a run; there is deliberately
+    /// no code path from the scheduler to [`AppState::merge_thread`] —
+    /// automation output always waits for human review.
+    pub async fn tick_automations_once(&self, sink: &Arc<dyn EventSink>) {
+        if !self.inner.settings.get().await.automations_enabled {
+            return;
+        }
+        let now = Utc::now();
+        let due: Vec<Automation> = {
+            let automations = self.inner.automations.read().await;
+            let mut due: Vec<Automation> = automations
+                .values()
+                .filter(|automation| {
+                    automation.enabled && next_run_due(&automation.next_run_at, now)
+                })
+                .cloned()
+                .collect();
+            due.sort_by(|left, right| left.id.cmp(&right.id));
+            due
+        };
+        for automation in due {
+            if !Path::new(&automation.project_root).is_dir() {
+                eprintln!(
+                    "themis: automation '{}' skipped: project_root '{}' no longer exists",
+                    automation.id, automation.project_root
+                );
+                continue;
+            }
+            if let Err(err) = self.fire_automation(sink, &automation).await {
+                eprintln!("themis: automation '{}' did not fire: {err}", automation.id);
+            }
+        }
+    }
+
+    /// Fires one automation: creates its thread (provider/model/skills from
+    /// the automation, titled `Automation <name> — <timestamp>`) and sends
+    /// the automation task as the run.
+    async fn fire_automation(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        automation: &Automation,
+    ) -> Result<(String, String), String> {
+        // Gate pre-check (the send path re-checks atomically under the state
+        // lock; this avoids minting a stray empty thread in the common
+        // saturated case).
+        let limit = usize::try_from(self.inner.settings.get().await.concurrency_limit)
+            .unwrap_or(usize::MAX);
+        if self.inner.running_count.load(Ordering::SeqCst) >= limit {
+            return Err(format!(
+                "concurrency limit reached: automation '{}' stays due for the next tick",
+                automation.id
+            ));
+        }
+        let now = Utc::now();
+        let info = self
+            .create_thread(
+                automation.project_root.clone(),
+                automation.provider,
+                Some(automation.model.clone()),
+            )
+            .await?;
+        let title = format!(
+            "Automation {} — {}",
+            automation.name,
+            now.to_rfc3339_opts(SecondsFormat::Secs, true)
+        );
+        {
+            let mut threads = self.inner.threads.write().await;
+            let record = threads
+                .get_mut(&info.id)
+                .ok_or_else(|| format!("automation thread '{}' vanished", info.id))?;
+            record.title = title.clone();
+            record.titled = true;
+            record.skill_ids = automation.skill_ids.clone();
+        }
+        self.persist_registry().await;
+        let run_id = uuid::Uuid::new_v4().to_string();
+        // Register BEFORE spawning: the pump attributes terminal events via
+        // this map, and registering after the spawn could miss a fast failure.
+        self.inner
+            .automation_runs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                run_id.clone(),
+                AutomationRunContext {
+                    automation_id: automation.id.clone(),
+                    thread_id: info.id.clone(),
+                    title,
+                },
+            );
+        match self
+            .send_message_with_id(
+                Arc::clone(sink),
+                info.id.clone(),
+                automation.task.clone(),
+                run_id.clone(),
+            )
+            .await
+        {
+            Ok(_) => Ok((info.id, run_id)),
+            Err(err) => {
+                self.inner
+                    .automation_runs
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&run_id);
+                if err.contains(GATE_SATURATED_MARKER) {
+                    // Lost a gate race with another run: skip WITHOUT
+                    // advancing; the automation stays due for the next tick.
+                    return Err(err);
+                }
+                // No run exists, so no review item is owed — but advance the
+                // schedule so a persistently broken automation (missing key,
+                // bad model) doesn't error-loop every tick.
+                self.record_automation_spawn_failure(&automation.id).await;
+                Err(err)
+            }
+        }
+    }
+
+    /// Advances an automation's schedule after a spawn failure (no run, so no
+    /// review item and no `last_run_at` run record beyond the timestamp).
+    async fn record_automation_spawn_failure(&self, automation_id: &str) {
+        let now = Utc::now();
+        {
+            let mut automations = self.inner.automations.write().await;
+            if let Some(automation) = automations.get_mut(automation_id) {
+                automation.last_run_at = Some(now.to_rfc3339_opts(SecondsFormat::Secs, true));
+                automation.next_run_at =
+                    rfc3339_plus_minutes(now, i64::from(automation.interval_mins));
+                automation.run_count += 1;
+            }
+        }
+        self.persist_automations().await;
+    }
+
+    /// Attributes a terminal run event to its automation (a no-op for
+    /// ordinary runs). Called from the run-event pump while the thread is
+    /// already idle but before the terminal event is emitted.
+    pub(super) async fn complete_automation_run(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        run_id: &str,
+        event: &RunEvent,
+    ) {
+        let summary = match event {
+            RunEvent::Finished { result } => result.clone(),
+            RunEvent::Incomplete { result } => result.clone(),
+            RunEvent::Failed { error } => format!("failed: {error}"),
+            _ => return,
+        };
+        self.finish_automation_run(sink, run_id, summary).await;
+    }
+
+    /// Records one finished automation run: creates the pending review item,
+    /// emits `review-item-added`, and advances the automation's schedule
+    /// (`last_run_at`/`next_run_at`/`run_count`) on success and failure
+    /// alike. The take-once registry makes double counting impossible; an
+    /// automation deleted mid-run keeps its review item as history with no
+    /// schedule to advance.
+    pub(super) async fn finish_automation_run(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        run_id: &str,
+        summary: String,
+    ) {
+        let context = self
+            .inner
+            .automation_runs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(run_id);
+        let Some(context) = context else {
+            return;
+        };
+        let now = Utc::now();
+        let item = ReviewItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            automation_id: context.automation_id.clone(),
+            thread_id: context.thread_id,
+            created_at: now.to_rfc3339_opts(SecondsFormat::Secs, true),
+            title: context.title,
+            summary,
+            status: ReviewStatus::Pending,
+        };
+        {
+            let mut reviews = self.inner.reviews.write().await;
+            reviews.insert(item.id.clone(), item.clone());
+        }
+        self.persist_reviews().await;
+        sink.emit_review_item(&item);
+        {
+            let mut automations = self.inner.automations.write().await;
+            if let Some(automation) = automations.get_mut(&context.automation_id) {
+                automation.last_run_at = Some(now.to_rfc3339_opts(SecondsFormat::Secs, true));
+                automation.next_run_at =
+                    rfc3339_plus_minutes(now, i64::from(automation.interval_mins));
+                automation.run_count += 1;
+            }
+        }
+        self.persist_automations().await;
+    }
+}
