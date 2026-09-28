@@ -1,0 +1,263 @@
+[
+  {
+    "id": "BROWSER-DASH-001",
+    "scope": "tooling",
+    "runner": "@Browser",
+    "title": "Sort app modules by LOC in both directions",
+    "target": "Local Repository Quality dashboard",
+    "preconditions": [
+      "Start the dashboard with rust-code-analysis-cli available.",
+      "Open the Code health view with no file filter."
+    ],
+    "steps": [
+      "Select LOC ascending and inspect the first and last LOC values.",
+      "Confirm all analyzed app files remain in the register.",
+      "Select LOC descending and inspect the first and last LOC values.",
+      "Confirm tooling files are excluded from the app source register."
+    ],
+    "expected": [
+      "Ascending values never decrease; descending values never increase.",
+      "Both sorts cover every analyzed app source file.",
+      "The register contains crates/ and web/src/ files, not quality_dashboard/ files."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-28",
+      "revision": "74fdb5f (working tree)",
+      "environment": "Codex in-app Browser; local dashboard on 127.0.0.1:4178",
+      "notes": "Verified live Code health after the latest refactor. LOC ascending and descending are both monotonic across all 78 analyzed app files. Ascending: web/src/vite-env.d.ts (1), crates/desktop/build.rs (3), crates/desktop/src/main.rs (5); descending: crates/desktop/src/state.rs (2,088), crates/core/src/providers.rs (2,022), crates/core/src/tools.rs (1,606). Dashboard reports 2.03 cyclomatic average, 1.45 cognitive average, and 71.8 mean function maintainability index. AST scope is crates/ and web/src/; dashboard tooling is excluded."
+    }
+  },
+  {
+    "id": "BROWSER-APP-001",
+    "scope": "product",
+    "runner": "@Browser",
+    "title": "Open Skills and cancel an unsaved skill",
+    "target": "Themis web UI in local Vite",
+    "preconditions": [
+      "Run npm --prefix web run dev.",
+      "No Tauri backend is required; do not save the form."
+    ],
+    "steps": [
+      "Open the local app and select Skills in the workspace navigation.",
+      "Select New skill and inspect the Name, Description, Instructions, Allowed tools, and Scripts controls.",
+      "Select Cancel without entering or saving data."
+    ],
+    "expected": [
+      "The Skills view and its empty state render.",
+      "The new-skill form exposes all expected controls.",
+      "Cancel closes the form and returns to Skills without creating data."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-27",
+      "revision": "74fdb5f (working tree)",
+      "environment": "Codex in-app Browser; local Vite on 127.0.0.1:5173",
+      "notes": "Opened Skills, observed the empty state, opened New skill, verified Name, Description, Instructions, Allowed tools, and Scripts fields, then canceled and confirmed the empty state returned without saving. Browser-only execution showed expected missing Tauri bridge warnings; native persistence was outside this scenario."
+    }
+  },
+  {
+    "id": "BROWSER-APP-002",
+    "scope": "product",
+    "runner": "@Browser",
+    "title": "Open Threads when no project is selected",
+    "target": "Themis web UI in local Vite",
+    "preconditions": [
+      "Run npm --prefix web run dev.",
+      "Use the browser-only app without a Tauri backend or project data."
+    ],
+    "steps": [
+      "Open the local app and select Threads in workspace navigation.",
+      "Inspect the empty workspace welcome prompt and its Create project action."
+    ],
+    "expected": [
+      "The Threads workspace renders its welcome state instead of a blank view.",
+      "The Create project action is available; project creation is outside this scenario."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-27",
+      "revision": "74fdb5f (working tree)",
+      "environment": "Codex in-app Browser; local Vite on 127.0.0.1:5173",
+      "notes": "Opened the local app in browser-only mode. The Threads welcome state and Create project action were present as expected. Accessibility output also showed the expected missing-Tauri-bridge errors for transformCallback and invoke; project creation was not attempted."
+    }
+  },
+  {
+    "id": "BROWSER-DASH-002",
+    "scope": "tooling",
+    "runner": "@Browser",
+    "title": "Keep suite failures separate from unverified file results",
+    "target": "Local Repository Quality dashboard",
+    "preconditions": [
+      "Open a recorded Rust run with at least one failed test and inspect the Test register.",
+      "Use the current run history; do not alter or rerun product tests during this check."
+    ],
+    "steps": [
+      "Inspect the failing file and verify its file-level passed and failed counts.",
+      "Inspect a test file with no file-level result in the same failed suite.",
+      "Expand its test cases and compare their labels with the recorded run evidence."
+    ],
+    "expected": [
+      "A file with an observed failure is labeled Failed with its own counts.",
+      "Files without file-level evidence and uncorrelated cases are labeled Unverified, not Failed or Not run.",
+      "Suite-level failure totals remain visible without being copied into each file row."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-27",
+      "revision": "74fdb5f (working tree)",
+      "environment": "Codex in-app Browser; local dashboard on 127.0.0.1:4178",
+      "notes": "Inspected latest all-tests run 17b98226c285 (Sep 27, 09:55 PM). Product totals: 372 passed, 1 failed, 2 skipped; dashboard tooling: 14 self-tests passed separately. Register reports 365 product definitions across 45 suites and 28 end-to-end declarations; counts are not coverage. Rust: 211 passed, 1 failed, 2 skipped; frontend: 161 passed; dashboard: 14 passed. The only failure is crates/desktop/src/secrets.rs::secrets::keychain_tests::entered_keys_survive_new_store_and_can_be_forgotten, blocked by host Keychain access. E2E runtime tests: 5 passed/1 skipped; skilled E2E: 2 passed; desktop automation: 6 passed; bridge: 7 passed; worktree: 7 passed/1 skipped. transcript_store integration: 4 passed. Manual Browser/Computer checks remain separate from automated totals."
+    }
+  },
+  {
+    "id": "BROWSER-DASH-003",
+    "scope": "tooling",
+    "runner": "@Browser",
+    "title": "Include Browser and native E2E in overall test totals",
+    "target": "Local Repository Quality dashboard",
+    "preconditions": [
+      "Start the local quality dashboard and wait for metrics to refresh."
+    ],
+    "steps": [
+      "Inspect the overview's overall test definition count and test mix.",
+      "Open the Test register and compare product E2E definitions with the automated E2E and Browser/native counts.",
+      "Inspect the Browser and native runner outcome summary, including any Not run cases.",
+      "Confirm the run button is labeled for automated suites and does not claim to execute manual journeys."
+    ],
+    "expected": [
+      "Overall definitions include automated suites and registered Browser/native E2E scenarios.",
+      "The register reports manual outcomes by scope and runner, without treating Not run as Passed.",
+      "Automated run totals and manual journey outcomes remain clearly identified."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-27",
+      "revision": "74fdb5f (working tree)",
+      "environment": "Codex in-app Browser; fresh local dashboard on 127.0.0.1:4178",
+      "notes": "Refreshed the local dashboard on 127.0.0.1:4178. Overview shows 391 overall definitions (373 product, 18 tooling), including 7 registered product Browser/native E2E scenarios. The Test register reports 35 product E2E definitions (28 automated, 7 Browser/native) and per-runner outcomes: Product Browser 2 passed; Product Computer 1 passed and 4 not run; Tooling Browser 3 passed. The action is labeled Run all automated tests, and the register explains manual journeys are not executed by automated test buttons. The overview's latest recorded test card remains an earlier Sep 27 11:01 PM run, separate from the fresh CLI results reported for this task."
+    }
+  },
+  {
+    "id": "COMPUTER-APP-001",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Open the packaged app and navigate core views",
+    "target": "Packaged ThemisOS desktop app",
+    "preconditions": [
+      "Build and launch the current packaged app.",
+      "Use an isolated test project and synthetic data only."
+    ],
+    "steps": [
+      "Confirm the workspace opens without a blank screen or blocking error.",
+      "Navigate Threads, Skills, Automations, Review queue, and Settings.",
+      "Use keyboard focus and the command palette to reach a view, then close the palette."
+    ],
+    "expected": [
+      "Each view renders its loading, empty, or populated state without layout failure.",
+      "Keyboard navigation and command-palette actions reach the requested view."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-002",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Create a project, send a thread request, and restore history",
+    "target": "Packaged app with an isolated local test project",
+    "preconditions": [
+      "Use a disposable fixture directory and a deterministic local test provider.",
+      "Do not use production repositories, real credentials, or external provider calls."
+    ],
+    "steps": [
+      "Create a project from the fixture and start a thread.",
+      "Send a fixed prompt and wait for the complete response.",
+      "Navigate away, return to the thread, then restart the app and reopen it."
+    ],
+    "expected": [
+      "The project and thread appear in their lists.",
+      "The response is complete and remains associated with the correct thread.",
+      "Project selection and transcript history restore after restart."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-003",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Verify approval and review decisions",
+    "target": "Packaged app with a synthetic approval request",
+    "preconditions": [
+      "Use a deterministic fixture that produces one safe approval request.",
+      "Keep any operation that would modify external data out of the fixture."
+    ],
+    "steps": [
+      "Open the request and inspect its action, target, and explanation.",
+      "Reject one fixture request and confirm no operation runs.",
+      "Approve a separate safe fixture request and inspect the resulting transcript/review item."
+    ],
+    "expected": [
+      "The dialog presents enough context to decide.",
+      "Reject blocks the operation; approve runs only the declared safe action.",
+      "The outcome is recorded once and the review queue reflects it."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-004",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Round-trip a synthetic secret through OS storage",
+    "target": "Packaged macOS app and Keychain",
+    "preconditions": [
+      "Use a new synthetic test key and an isolated provider name.",
+      "Never inspect or reuse a real credential."
+    ],
+    "steps": [
+      "Save the synthetic value through Settings.",
+      "Restart the app and verify only the expected configured status is shown.",
+      "Forget the synthetic value and confirm the status clears."
+    ],
+    "expected": [
+      "The secret remains in OS-backed storage across restart.",
+      "The UI does not reveal the stored value.",
+      "Forget removes the synthetic item and the UI reports it absent."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-005",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Keep no-tool response headers static while streaming",
+    "target": "Themis app with a text-only game-planning request",
+    "preconditions": [
+      "Open a Themis thread and use a prompt that explicitly prohibits tool calls and file changes.",
+      "Observe the conversation while the assistant response is still streaming."
+    ],
+    "steps": [
+      "Send a detailed text-only game-plan prompt that prohibits tool calls and file changes.",
+      "Confirm the request has no Activities/tool-call trace.",
+      "Inspect bold section headers in the live assistant response while it streams."
+    ],
+    "expected": [
+      "No tool activity is recorded for the request.",
+      "Bold section headers in the live response stay static when no tool is pending."
+    ],
+    "latest": {
+      "status": "blocked",
+      "runAt": "2026-09-28",
+      "revision": "74fdb5f (working tree)",
+      "environment": "Codex @Computer; Themis dev app at localhost:1420",
+      "notes": "Native @Computer first reproduced the issue with a general-knowledge game-plan prompt that prohibited tools: no Activities row appeared, but bold section-label paragraphs shimmered while streaming. The cause was the stale Vite transformed CSS still serving the old .themis-thread-msg--live .themis-response > p shimmer rule after the source rule had been removed. Restarted Vite on port 1420; its served stylesheet now omits that selector and retains the separate action-waiting selector. A fresh no-tool plan produced no Activities row, and completed headings rendered static. During the post-restart run, the capture showed Thinking before answer tokens, then the full answer after generation had completed, so the brief in-progress heading state was not visually captured; marked blocked pending that specific capture."
+    }
+  }
+]
