@@ -13,7 +13,6 @@ import {
 } from "react";
 import type { ToastTone } from "../components";
 import type { PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
-import type { Settings } from "../lib/types";
 import {
   getSecretStatus,
   getSettings,
@@ -28,8 +27,9 @@ import {
   onThreadEvent,
   openProject,
 } from "../lib/tauri";
+import { failureMessage as describeError } from "../lib/errors";
 import { readSession, writeSession } from "./session";
-import { loadPhase4Lists } from "./boot";
+import { loadPhase4Lists, restoreRecentProjects } from "./boot";
 import {
   initialState,
   newId,
@@ -90,16 +90,6 @@ export function useThreadRunning(threadId: string | null): boolean {
   return state.running[threadId] ?? false;
 }
 
-function describeError(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
-}
-
 export { describeError };
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -157,69 +147,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // projects and their threads.
   useEffect(() => {
     let cancelled = false;
-    async function restore(settings: Settings): Promise<void> {
-      const restored: string[] = [];
-      for (const root of settings.recent_roots) {
-        if (cancelled) return;
-        try {
-          const project = await openProject(root);
-          if (cancelled) return;
-          dispatch({ type: "project/opened", project });
-          restored.push(project.root);
-        } catch (error: unknown) {
-          if (!cancelled) {
-            toast(
-              dispatch,
-              `Could not reopen ${root}: ${describeError(error)}`,
-              "warning",
-            );
-          }
-          continue;
-        }
-        try {
-          const threads = await listThreads(root);
-          if (!cancelled) {
-            dispatch({ type: "thread/listed", projectRoot: root, threads });
-            await Promise.all(threads.map(async (thread) => {
-              try {
-                let history = await getThreadHistory(thread.id);
-                const legacy = legacyMessages.current[thread.id];
-                if (history.length === 0 && legacy?.length) {
-                  await importLegacyHistory(thread.id, legacy);
-                  history = await getThreadHistory(thread.id);
-                }
-                if (!cancelled) dispatch({ type: "thread/history-loaded", threadId: thread.id, history });
-              } catch (error: unknown) {
-                if (!cancelled) toast(dispatch, `Could not restore ${thread.title}: ${describeError(error)}`, "warning");
-              }
-            }));
-          }
-        } catch (error: unknown) {
-          if (!cancelled) {
-            toast(
-              dispatch,
-              `Could not list threads for ${root}: ${describeError(error)}`,
-              "warning",
-            );
-          }
-        }
-      }
-      if (!cancelled && restored.length > 0 && restored[0] !== undefined) {
-        const selected = savedSelection.current;
-        const root = selected && restored.includes(selected.root) ? selected.root : restored[0];
-        dispatch({ type: "project/selected", root });
-        if (selected?.root === root) {
-          const threads = await listThreads(root);
-          if (!cancelled && threads.some(thread => thread.id === selected.threadId)) dispatch({ type: "thread/selected", projectRoot: root, threadId: selected.threadId });
-        }
-      }
-      restoredSession.current = true;
-    }
     getSettings()
       .then((settings) => {
         if (cancelled) return;
         dispatch({ type: "settings/loaded", settings });
-        void restore(settings);
+        void restoreRecentProjects(settings.recent_roots, {
+          api: { openProject, listThreads, getThreadHistory, importLegacyHistory },
+          dispatch,
+          isCancelled: () => cancelled,
+          legacyMessages: legacyMessages.current,
+          savedSelection: savedSelection.current,
+          warn: (message) => toast(dispatch, message, "warning"),
+        }).then((completed) => {
+          if (completed) restoredSession.current = true;
+        });
       })
       .catch((error: unknown) => {
         if (!cancelled) {

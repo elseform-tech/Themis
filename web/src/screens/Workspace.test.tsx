@@ -61,6 +61,7 @@ describe("Workspace journey", () => {
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => receive({ thread_id: "thread1", run_id: "r", event: { kind: "started", task: "read", max_turns: 3 } }));
     expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    expect(screen.getByText("Thinking…")).toHaveClass("themis-shimmer");
     expect(screen.getByLabelText("Elapsed time")).toHaveTextContent("0:00");
     await act(async () => { vi.advanceTimersByTime(12_000); });
     await act(async () => {
@@ -69,6 +70,7 @@ describe("Workspace journey", () => {
     });
     const actionText = screen.getByText("I will read the file.");
     expect(actionText.closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
+    expect(screen.getByText("Using read file…")).toHaveClass("themis-shimmer");
     expect(screen.getByText("read file").closest("summary")).toHaveClass("themis-shimmer");
     await act(async () => {
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_finished", tool: "read_file", ok: true, output: "ORBIT-17" } });

@@ -17,6 +17,8 @@ import type {
   ThreadInfo,
 } from "../lib/types";
 import type { ToastItem, ToastTone } from "../components";
+import { reduceCollectionActions } from "./reducer/collections";
+import { reduceUiActions } from "./reducer/ui";
 
 export type MessageRole = PersistedMessage["role"];
 export type ChatMessage = PersistedMessage;
@@ -417,6 +419,10 @@ export function applyThreadEvent(
 }
 
 export function reducer(state: AppState, action: AppAction): AppState {
+  const collectionState = reduceCollectionActions(state, action);
+  if (collectionState !== null) return collectionState;
+  const uiState = reduceUiActions(state, action);
+  if (uiState !== null) return uiState;
   switch (action.type) {
     case "project/opened": {
       const exists = state.projects.some((p) => p.root === action.project.root);
@@ -630,129 +636,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
       }
       return { ...state, threadsByProject };
     }
-    case "skill/loaded": {
-      return { ...state, skills: action.skills };
-    }
-    case "skill/added": {
-      if (state.skills.some((s) => s.id === action.skill.id)) {
-        return {
-          ...state,
-          skills: state.skills.map((s) =>
-            s.id === action.skill.id ? action.skill : s,
-          ),
-        };
-      }
-      return { ...state, skills: [...state.skills, action.skill] };
-    }
-    case "skill/updated": {
-      return {
-        ...state,
-        skills: state.skills.map((s) =>
-          s.id === action.skill.id ? action.skill : s,
-        ),
-      };
-    }
-    case "skill/removed": {
-      return {
-        ...state,
-        skills: state.skills.filter((s) => s.id !== action.skillId),
-      };
-    }
-    case "automation/loaded": {
-      return { ...state, automations: action.automations };
-    }
-    case "automation/added": {
-      if (state.automations.some((a) => a.id === action.automation.id)) {
-        return {
-          ...state,
-          automations: state.automations.map((a) =>
-            a.id === action.automation.id ? action.automation : a,
-          ),
-        };
-      }
-      return { ...state, automations: [...state.automations, action.automation] };
-    }
-    case "automation/updated": {
-      return {
-        ...state,
-        automations: state.automations.map((a) =>
-          a.id === action.automation.id ? action.automation : a,
-        ),
-      };
-    }
-    case "automation/removed": {
-      return {
-        ...state,
-        automations: state.automations.filter(
-          (a) => a.id !== action.automationId,
-        ),
-      };
-    }
-    case "review/loaded": {
-      return { ...state, reviews: action.reviews };
-    }
-    case "review/added": {
-      if (state.reviews.some((r) => r.id === action.review.id)) {
-        return {
-          ...state,
-          reviews: state.reviews.map((r) =>
-            r.id === action.review.id ? action.review : r,
-          ),
-        };
-      }
-      return { ...state, reviews: [...state.reviews, action.review] };
-    }
-    case "review/updated": {
-      return {
-        ...state,
-        reviews: state.reviews.map((r) =>
-          r.id === action.review.id ? action.review : r,
-        ),
-      };
-    }
-    case "approval/enqueued": {
-      if (
-        state.approvals.some((a) => a.approval_id === action.request.approval_id)
-      ) {
-        return state;
-      }
-      return { ...state, approvals: [...state.approvals, action.request] };
-    }
-    case "approval/dequeued": {
-      return {
-        ...state,
-        approvals: state.approvals.filter(
-          (a) => a.approval_id !== action.approvalId,
-        ),
-      };
-    }
-    case "settings/loaded":
-    case "settings/patched": {
-      return { ...state, settings: action.settings, settingsLoaded: true };
-    }
-    case "secrets/loaded": {
-      return { ...state, secretStatus: action.status };
-    }
-    case "toast/push": {
-      return { ...state, toasts: [...state.toasts, action.toast] };
-    }
-    case "toast/dismiss": {
-      return {
-        ...state,
-        toasts: state.toasts.filter((t) => t.id !== action.id),
-      };
-    }
-    case "ui/view": {
-      return { ...state, mainView: action.view, diffPanelOpen: action.view === "thread" && state.diffPanelOpen };
-    }
-    case "ui/diff-panel": {
-      return { ...state, diffPanelOpen: action.open };
-    }
-    case "ui/palette": {
-      return { ...state, paletteOpen: action.open };
-    }
-    case "ui/project-dialog": {
-      return { ...state, projectDialogOpen: action.open };
-    }
+    default:
+      return state;
+
   }
 }

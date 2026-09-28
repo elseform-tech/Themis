@@ -3,6 +3,7 @@
 // inject mocks. Secret values never appear in diagnostics — the backend only
 // sends a settings snapshot and recent errors (see docs/user-guide.md).
 import type { Diagnostics } from "../lib/types";
+import { failureMessage } from "../lib/errors";
 
 export function formatDiagnosticsJson(diagnostics: Diagnostics): string {
   return JSON.stringify(diagnostics, null, 2);
@@ -14,16 +15,6 @@ export interface CopyDiagnosticsDeps {
   load: () => Promise<Diagnostics>;
   writeClipboard: (text: string) => Promise<void>;
   notify: (message: string, tone: DiagnosticsTone) => void;
-}
-
-function failureMessage(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
 }
 
 /**
