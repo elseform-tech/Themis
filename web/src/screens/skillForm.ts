@@ -2,6 +2,7 @@
 // The backend API is injected so unit tests can pass mocks; this module
 // never imports ../lib/tauri.
 import type { Skill, SkillInput, SkillScript } from "../lib/types";
+import { failureMessage } from "../lib/errors";
 import { newId, type AppAction } from "../state/reducer";
 
 export interface SkillFormState {
@@ -71,16 +72,6 @@ export function toSkillInput(form: SkillFormState): SkillInput {
       .filter((s) => s.name.trim() !== "" || s.content.trim() !== "")
       .map((s) => ({ name: s.name.trim(), content: s.content })),
   };
-}
-
-function failureMessage(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
 }
 
 function pushToast(

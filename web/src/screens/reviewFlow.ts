@@ -2,6 +2,7 @@
 // The backend API and the state snapshot are injected so unit tests can
 // pass mocks; this module never imports ../lib/tauri.
 import type { Automation, ReviewItem, ThreadInfo } from "../lib/types";
+import { failureMessage } from "../lib/errors";
 import { newId, type AppAction } from "../state/reducer";
 
 export type ReviewFlowDispatch = (action: AppAction) => void;
@@ -38,16 +39,6 @@ export function automationName(
   return (
     automations.find((a) => a.id === automationId)?.name ?? "Unknown automation"
   );
-}
-
-function failureMessage(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
 }
 
 function pushToast(

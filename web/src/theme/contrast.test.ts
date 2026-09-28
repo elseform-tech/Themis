@@ -97,7 +97,6 @@ describe("themis theme token contrast", () => {
 
     it(`${name}: text-3 on surface reported (>= ${SECONDARY_MIN})`, () => {
       const value = ratio("--themis-text-3", "--themis-surface");
-      // eslint-disable-next-line no-console
       console.log(`[${name}] text-3/surface contrast: ${value.toFixed(2)}`);
       expect(value).toBeGreaterThanOrEqual(SECONDARY_MIN);
     });

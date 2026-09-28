@@ -85,16 +85,22 @@ impl ApprovalHook for StdinHook {
             std::io::stderr().flush().ok();
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
-                Ok(0) => return Approval::Deny,
-                Ok(_) => match line.trim().to_lowercase().as_str() {
-                    "y" | "yes" | "once" => return Approval::AllowOnce,
-                    "a" | "always" => return Approval::AllowAlways,
-                    "n" | "no" | "deny" | "" => return Approval::Deny,
-                    _ => continue,
+                Ok(0) | Err(_) => return Approval::Deny,
+                Ok(_) => match parse_approval_response(&line) {
+                    Some(decision) => return decision,
+                    None => continue,
                 },
-                Err(_) => return Approval::Deny,
             }
         }
+    }
+}
+
+fn parse_approval_response(line: &str) -> Option<Approval> {
+    match line.trim().to_lowercase().as_str() {
+        "y" | "yes" | "once" => Some(Approval::AllowOnce),
+        "a" | "always" => Some(Approval::AllowAlways),
+        "n" | "no" | "deny" | "" => Some(Approval::Deny),
+        _ => None,
     }
 }
 
@@ -136,98 +142,132 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
 }
 
 /// Parses `run` options; supports `--flag value` and `--flag=value`.
-fn parse_run(args: &[String]) -> Result<Command, String> {
-    let mut task: Option<String> = None;
-    let mut project: Option<PathBuf> = None;
-    let mut provider = ProviderKind::Go;
-    let mut model: Option<String> = None;
-    let mut base_url: Option<String> = None;
-    let mut api_key: Option<String> = None;
-    let mut yes = false;
-    let mut max_turns = DEFAULT_MAX_TURNS;
-    let mut skills_file: Option<PathBuf> = None;
+struct PendingRunOptions {
+    task: Option<String>,
+    project: Option<PathBuf>,
+    provider: ProviderKind,
+    model: Option<String>,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    yes: bool,
+    max_turns: usize,
+    skills_file: Option<PathBuf>,
+}
 
+impl PendingRunOptions {
+    fn new() -> Self {
+        Self {
+            task: None,
+            project: None,
+            provider: ProviderKind::Go,
+            model: None,
+            base_url: None,
+            api_key: None,
+            yes: false,
+            max_turns: DEFAULT_MAX_TURNS,
+            skills_file: None,
+        }
+    }
+
+    fn set_flag(&mut self, flag: &str, value: String) -> Result<(), String> {
+        match flag {
+            "--project" => self.project = Some(PathBuf::from(value)),
+            "--provider" => {
+                self.provider = value
+                    .parse::<ProviderKind>()
+                    .map_err(|err| format!("invalid --provider '{value}': {err:#}"))?;
+            }
+            "--model" => self.model = Some(value),
+            "--base-url" => self.base_url = Some(value),
+            "--api-key" => self.api_key = Some(value),
+            "--max-turns" => {
+                self.max_turns = value.parse().map_err(|_| {
+                    format!("invalid --max-turns '{value}': expected a positive integer.")
+                })?;
+                if self.max_turns == 0 {
+                    return Err("invalid --max-turns '0': expected at least 1.".to_string());
+                }
+            }
+            "--skills-file" => self.skills_file = Some(PathBuf::from(value)),
+            _ => unreachable!("value flag matched above"),
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<Command, String> {
+        let Some(task) = self.task.filter(|task| !task.trim().is_empty()) else {
+            return Err("missing task: usage: themis run \"task\" --project DIR.".to_string());
+        };
+        let Some(project) = self.project else {
+            return Err("missing --project DIR.".to_string());
+        };
+        Ok(Command::Run(RunOptions {
+            task,
+            project,
+            provider: self.provider,
+            model: self.model,
+            base_url: self.base_url,
+            api_key: self.api_key,
+            yes: self.yes,
+            max_turns: self.max_turns,
+            skills_file: self.skills_file,
+        }))
+    }
+}
+
+fn run_flag_value(
+    args: &[String],
+    index: &mut usize,
+    flag: &str,
+    inline: Option<&str>,
+) -> Result<String, String> {
+    let value = match inline {
+        Some(value) => value.to_owned(),
+        None => {
+            *index += 1;
+            args.get(*index)
+                .cloned()
+                .ok_or_else(|| format!("flag '{flag}' needs a value."))?
+        }
+    };
+    if value.trim().is_empty() {
+        return Err(format!("flag '{flag}' needs a non-empty value."));
+    }
+    Ok(value)
+}
+
+fn parse_run(args: &[String]) -> Result<Command, String> {
+    let mut options = PendingRunOptions::new();
     let mut index = 0;
     while index < args.len() {
         let arg = &args[index];
-        let (flag, inline) = match arg.split_once('=') {
-            Some((flag, value)) => (flag, Some(value)),
-            None => (arg.as_str(), None),
-        };
+        let (flag, inline) = arg
+            .split_once('=')
+            .map_or((arg.as_str(), None), |(flag, value)| (flag, Some(value)));
         match flag {
             "-h" | "--help" => return Ok(Command::Help),
             "--project" | "--provider" | "--model" | "--base-url" | "--api-key" | "--max-turns"
             | "--skills-file" => {
-                let value = match inline {
-                    Some(value) => value.to_owned(),
-                    None => {
-                        index += 1;
-                        if index >= args.len() {
-                            return Err(format!("flag '{flag}' needs a value."));
-                        }
-                        args[index].clone()
-                    }
-                };
-                if value.trim().is_empty() {
-                    return Err(format!("flag '{flag}' needs a non-empty value."));
-                }
-                match flag {
-                    "--project" => project = Some(PathBuf::from(value)),
-                    "--provider" => {
-                        provider = value
-                            .parse::<ProviderKind>()
-                            .map_err(|err| format!("invalid --provider '{value}': {err:#}"))?;
-                    }
-                    "--model" => model = Some(value),
-                    "--base-url" => base_url = Some(value),
-                    "--api-key" => api_key = Some(value),
-                    "--max-turns" => {
-                        let parsed: usize = value.parse().map_err(|_| {
-                            format!("invalid --max-turns '{value}': expected a positive integer.")
-                        })?;
-                        if parsed == 0 {
-                            return Err("invalid --max-turns '0': expected at least 1.".to_string());
-                        }
-                        max_turns = parsed;
-                    }
-                    "--skills-file" => skills_file = Some(PathBuf::from(value)),
-                    _ => unreachable!("flag matched above"),
-                }
+                let value = run_flag_value(args, &mut index, flag, inline)?;
+                options.set_flag(flag, value)?;
             }
             "--yes" => {
                 if inline.is_some() {
                     return Err("flag '--yes' takes no value.".to_string());
                 }
-                yes = true;
+                options.yes = true;
             }
             other if other.starts_with('-') => return Err(format!("unknown flag '{other}'.")),
             positional => {
-                if task.is_some() {
+                if options.task.is_some() {
                     return Err(format!("unexpected argument '{positional}'."));
                 }
-                task = Some(positional.to_owned());
+                options.task = Some(positional.to_owned());
             }
         }
         index += 1;
     }
-
-    let Some(task) = task.filter(|task| !task.trim().is_empty()) else {
-        return Err("missing task: usage: themis run \"task\" --project DIR.".to_string());
-    };
-    let Some(project) = project else {
-        return Err("missing --project DIR.".to_string());
-    };
-    Ok(Command::Run(RunOptions {
-        task,
-        project,
-        provider,
-        model,
-        base_url,
-        api_key,
-        yes,
-        max_turns,
-        skills_file,
-    }))
+    options.finish()
 }
 
 /// Resolves the API key: explicit flag, else provider env var, else an error.
@@ -426,6 +466,27 @@ mod tests {
             Command::Run(options) => options,
             Command::Help => panic!("expected run command"),
         }
+    }
+
+    #[test]
+    fn approval_responses_are_case_insensitive_and_deny_by_default() {
+        assert!(matches!(
+            parse_approval_response("YES\n"),
+            Some(Approval::AllowOnce)
+        ));
+        assert!(matches!(
+            parse_approval_response("Always"),
+            Some(Approval::AllowAlways)
+        ));
+        assert!(matches!(
+            parse_approval_response("no"),
+            Some(Approval::Deny)
+        ));
+        assert!(matches!(
+            parse_approval_response("  "),
+            Some(Approval::Deny)
+        ));
+        assert!(parse_approval_response("later").is_none());
     }
 
     #[test]

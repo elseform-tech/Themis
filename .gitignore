@@ -3,6 +3,7 @@
 web/dist/
 web/node_modules/
 node_modules/
+/.quality-dashboard/
 
 # Secrets (never commit keys)
 .env
@@ -11,6 +12,8 @@ node_modules/
 # OS / editor
 .DS_Store
 *.log
+__pycache__/
+*.py[cod]
 .idea/
 .vscode/*
 !.vscode/extensions.json

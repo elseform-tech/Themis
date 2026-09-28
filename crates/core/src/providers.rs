@@ -43,6 +43,10 @@
 //! `From` conversion (both versions coexist in the dependency tree).
 
 use futures_util::{stream, Stream};
+mod wire;
+
+use wire::*;
+
 use std::fmt;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -290,6 +294,177 @@ pub struct CompatibleProvider {
     client: Client,
 }
 
+struct ChatEventStream {
+    response: reqwest::Response,
+    buffer: Vec<u8>,
+    ready: std::collections::VecDeque<Result<StreamChunk, LLMError>>,
+    calls: std::collections::BTreeMap<usize, ToolCall>,
+    messages_api: bool,
+    responses_api: bool,
+    done: bool,
+}
+
+impl ChatEventStream {
+    fn new(response: reqwest::Response, messages_api: bool, responses_api: bool) -> Self {
+        Self {
+            response,
+            buffer: Vec::new(),
+            ready: std::collections::VecDeque::new(),
+            calls: std::collections::BTreeMap::new(),
+            messages_api,
+            responses_api,
+            done: false,
+        }
+    }
+
+    async fn next_chunk(&mut self) -> Option<Result<StreamChunk, LLMError>> {
+        loop {
+            if let Some(item) = self.ready.pop_front() {
+                return Some(item);
+            }
+            if self.done {
+                return None;
+            }
+            if let Some(end) = self.buffer.iter().position(|byte| *byte == b'\n') {
+                let line = self.buffer.drain(..=end).collect();
+                if let Err(error) = self.process_line(line) {
+                    self.fail(error);
+                }
+                continue;
+            }
+            match self.response.chunk().await {
+                Ok(Some(bytes)) => {
+                    self.buffer.extend_from_slice(&bytes);
+                    if self.buffer.len() > 4 * 1024 * 1024 {
+                        self.fail(LLMError::Generic(
+                            "Provider stream event exceeded size limit".to_owned(),
+                        ));
+                    }
+                }
+                Ok(None) => self.fail(LLMError::Generic(
+                    "Provider stream ended before completion".to_owned(),
+                )),
+                Err(error) => self.fail(transport_error("stream interrupted", error)),
+            }
+        }
+    }
+
+    fn process_line(&mut self, line: Vec<u8>) -> Result<(), LLMError> {
+        let line = std::str::from_utf8(&line)
+            .map_err(|error| LLMError::Generic(format!("Invalid UTF-8 stream: {error}")))?
+            .trim();
+        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
+            return Ok(());
+        };
+        if data == "[DONE]" {
+            self.done = true;
+            return Ok(());
+        }
+        self.process_payload(data)
+    }
+
+    fn process_payload(&mut self, data: &str) -> Result<(), LLMError> {
+        let value: serde_json::Value = serde_json::from_str(data)
+            .map_err(|error| LLMError::Generic(format!("Invalid stream event: {error}")))?;
+        if let Some(error) = value.get("error") {
+            return Err(LLMError::Generic(format!("Provider stream error: {error}")));
+        }
+        if self.responses_api
+            && matches!(
+                value["type"].as_str(),
+                Some("response.failed" | "response.incomplete")
+            )
+        {
+            return Err(LLMError::Generic(
+                "Provider response failed or was incomplete".to_owned(),
+            ));
+        }
+        if self.responses_api && value["type"] == "response.function_call_arguments.done" {
+            let index = value["output_index"].as_u64().unwrap_or(0) as usize;
+            if let Some(call) = self.calls.get_mut(&index) {
+                if let Some(args) = value["arguments"]
+                    .as_str()
+                    .or_else(|| value["item"]["arguments"].as_str())
+                {
+                    call.function.arguments = args.to_owned();
+                }
+            }
+            return Ok(());
+        }
+        let value = if self.responses_api {
+            responses_stream_event(value)
+        } else if self.messages_api {
+            messages_stream_event(value)
+        } else {
+            value
+        };
+        for choice in value["choices"].as_array().into_iter().flatten() {
+            self.process_choice(choice)?;
+        }
+        Ok(())
+    }
+
+    fn process_choice(&mut self, choice: &serde_json::Value) -> Result<(), LLMError> {
+        let delta = &choice["delta"];
+        if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
+            self.ready.push_back(Ok(StreamChunk::Text(text.to_owned())));
+        }
+        for call in delta["tool_calls"].as_array().into_iter().flatten() {
+            self.merge_tool_call(call);
+        }
+        if let Some(reason) = choice["finish_reason"].as_str() {
+            self.finish_choice(reason)?;
+        }
+        Ok(())
+    }
+
+    fn merge_tool_call(&mut self, call: &serde_json::Value) {
+        let index = call["index"].as_u64().unwrap_or(0) as usize;
+        let entry = self.calls.entry(index).or_insert_with(|| ToolCall {
+            id: String::new(),
+            call_type: "function".to_owned(),
+            function: autoagents::llm::FunctionCall {
+                name: String::new(),
+                arguments: String::new(),
+            },
+        });
+        if let Some(id) = call["id"].as_str() {
+            entry.id.push_str(id);
+        }
+        if let Some(name) = call["function"]["name"].as_str() {
+            entry.function.name.push_str(name);
+        }
+        if let Some(args) = call["function"]["arguments"].as_str() {
+            entry.function.arguments.push_str(args);
+        }
+    }
+
+    fn finish_choice(&mut self, reason: &str) -> Result<(), LLMError> {
+        if reason == "length" {
+            return Err(LLMError::Generic(
+                "Provider response was truncated".to_owned(),
+            ));
+        }
+        for (index, mut tool_call) in std::mem::take(&mut self.calls) {
+            if self.messages_api && tool_call.function.arguments.is_empty() {
+                tool_call.function.arguments = "{}".to_owned();
+            }
+            self.ready
+                .push_back(Ok(StreamChunk::ToolUseComplete { index, tool_call }));
+        }
+        self.ready.push_back(Ok(StreamChunk::Done {
+            stop_reason: reason.to_owned(),
+        }));
+        self.done = true;
+        Ok(())
+    }
+
+    fn fail(&mut self, error: LLMError) {
+        self.ready.push_back(Err(error));
+        self.done = true;
+    }
+}
+
 impl CompatibleProvider {
     /// Builds the provider preconfigured for OpenCode Go.
     ///
@@ -457,317 +632,6 @@ async fn ensure_success(
     }
 }
 
-/// OpenAI chat-completions message (owned subset sufficient for text + tools).
-#[derive(Serialize)]
-struct WireMessage {
-    role: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<ToolCall>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<String>,
-}
-
-/// OpenAI chat-completions request body.
-#[derive(Serialize)]
-struct WireChatRequest<'a> {
-    model: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning_effort: Option<&'a str>,
-    messages: Vec<WireMessage>,
-    stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<&'a [Tool]>,
-}
-
-/// OpenAI chat-completions response body (subset).
-#[derive(Deserialize)]
-struct WireChatResponse {
-    #[serde(default)]
-    choices: Vec<WireChoice>,
-    #[serde(default)]
-    usage: Option<Usage>,
-}
-
-/// Single chat choice of [`WireChatResponse`].
-#[derive(Deserialize)]
-struct WireChoice {
-    message: WireChoiceMessage,
-}
-
-/// Assistant message of [`WireChoice`].
-#[derive(Deserialize)]
-struct WireChoiceMessage {
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    tool_calls: Option<Vec<ToolCall>>,
-}
-
-/// Converts SDK messages to the OpenAI wire shape.
-///
-/// Text becomes a plain message; `ToolUse` becomes an assistant message carrying
-/// tool calls; each `ToolResult` entry becomes a `tool`-role message. Image and
-/// PDF inputs are rejected: this provider is text-first for the coding agent.
-fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessage>, LLMError> {
-    let mut wire = Vec::with_capacity(messages.len());
-    for message in messages {
-        match &message.message_type {
-            MessageType::Text => {
-                let role = match &message.role {
-                    ChatRole::System => "system",
-                    ChatRole::Assistant => "assistant",
-                    ChatRole::Tool => "user",
-                    ChatRole::User => "user",
-                };
-                wire.push(WireMessage {
-                    role,
-                    content: Some(message.content.clone()),
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-            }
-            MessageType::ToolUse(calls) => wire.push(WireMessage {
-                role: "assistant",
-                content: if message.content.is_empty() {
-                    None
-                } else {
-                    Some(message.content.clone())
-                },
-                tool_calls: Some(calls.clone()),
-                tool_call_id: None,
-            }),
-            MessageType::ToolResult(results) => {
-                for result in results {
-                    wire.push(WireMessage {
-                        role: "tool",
-                        content: Some(result.function.arguments.clone()),
-                        tool_calls: None,
-                        tool_call_id: Some(result.id.clone()),
-                    });
-                }
-            }
-            MessageType::Image(_) | MessageType::Pdf(_) | MessageType::ImageURL(_) => {
-                return Err(LLMError::invalid_request(
-                    "CompatibleProvider supports text and tool messages only".to_string(),
-                ));
-            }
-        }
-    }
-    Ok(wire)
-}
-
-fn responses_response(value: serde_json::Value) -> Result<WireChatResponse, LLMError> {
-    if matches!(value["status"].as_str(), Some("failed" | "incomplete")) {
-        return Err(LLMError::Generic(
-            "Provider response failed or was incomplete".to_owned(),
-        ));
-    }
-    let output = value["output"]
-        .as_array()
-        .ok_or_else(|| LLMError::Generic("Missing Responses output".to_owned()))?;
-    let mut text = String::new();
-    let mut calls = Vec::new();
-    for item in output {
-        if item["type"] == "function_call" {
-            calls.push(serde_json::json!({"id":item["call_id"],"type":"function","function":{"name":item["name"],"arguments":item["arguments"]}}));
-        }
-        for content in item["content"].as_array().into_iter().flatten() {
-            if let Some(part) = content["text"].as_str() {
-                text.push_str(part);
-            }
-        }
-    }
-    if text.is_empty() && calls.is_empty() {
-        return Err(LLMError::Generic(
-            "Provider returned no text or tools".to_owned(),
-        ));
-    }
-    Ok(serde_json::from_value(
-        serde_json::json!({"choices":[{"message":{"content":text,"tool_calls":calls}}],"usage":value["usage"]}),
-    )?)
-}
-
-fn responses_stream_event(value: serde_json::Value) -> serde_json::Value {
-    use serde_json::json;
-    let index = &value["output_index"];
-    match value["type"].as_str().unwrap_or_default() {
-        "response.output_text.delta" => json!({"choices":[{"delta":{"content":value["delta"]}}]}),
-        "response.output_item.added" if value["item"]["type"] == "function_call" => {
-            json!({"choices":[{"delta":{"tool_calls":[{"index":index,"id":value["item"]["call_id"],"function":{"name":value["item"]["name"],"arguments":value["item"]["arguments"]}}]}}]})
-        }
-        "response.function_call_arguments.delta" => {
-            json!({"choices":[{"delta":{"tool_calls":[{"index":index,"function":{"arguments":value["delta"]}}]}}]})
-        }
-        "response.completed" => json!({"choices":[{"delta":{},"finish_reason":"stop"}]}),
-        _ => serde_json::Value::Null,
-    }
-}
-
-/// Go's model families use three distinct wire protocols (docs/go/#endpoints).
-fn go_chat_path(model: &str) -> &'static str {
-    if model.starts_with("muse-") || model.starts_with("gpt-") || model.starts_with("grok-") {
-        "responses"
-    } else if model.starts_with("qwen") || model.starts_with("minimax-") {
-        "messages"
-    } else {
-        CHAT_COMPLETIONS_PATH
-    }
-}
-
-fn messages_body(
-    model: &str,
-    messages: &[ChatMessage],
-    tools: Option<&[Tool]>,
-    streaming: bool,
-) -> Result<serde_json::Value, LLMError> {
-    use serde_json::json;
-    let mut system = Vec::new();
-    let mut input = Vec::new();
-    for message in to_wire_messages(messages)? {
-        if message.role == "system" {
-            system.push(message.content.unwrap_or_default());
-            continue;
-        }
-        let mut content = Vec::new();
-        if let Some(id) = message.tool_call_id {
-            content.push(json!({"type": "tool_result", "tool_use_id": id, "content": message.content.unwrap_or_default()}));
-        } else {
-            if let Some(text) = message.content.filter(|text| !text.is_empty()) {
-                content.push(json!({"type": "text", "text": text}));
-            }
-            for call in message.tool_calls.into_iter().flatten() {
-                let arguments: serde_json::Value = serde_json::from_str(&call.function.arguments)?;
-                if !arguments.is_object() {
-                    return Err(LLMError::invalid_request("Tool input must be an object"));
-                }
-                content.push(json!({"type": "tool_use", "id": call.id, "name": call.function.name, "input": arguments}));
-            }
-        }
-        input.push(json!({"role": if message.role == "assistant" { "assistant" } else { "user" }, "content": content}));
-    }
-    let mut body =
-        json!({"model": model, "messages": input, "max_tokens": 16384, "stream": streaming});
-    if !system.is_empty() {
-        body["system"] = json!(system.join("\n\n"));
-    }
-    if let Some(tools) = tools.filter(|tools| !tools.is_empty()) {
-        body["tools"] = json!(tools.iter().map(|tool| json!({"name": tool.function.name, "description": tool.function.description, "input_schema": tool.function.parameters})).collect::<Vec<_>>());
-    }
-    Ok(body)
-}
-
-fn messages_response(value: serde_json::Value) -> Result<WireChatResponse, LLMError> {
-    use serde_json::json;
-    if let Some(error) = value.get("error") {
-        return Err(LLMError::Generic(format!("Provider error: {error}")));
-    }
-    if value["stop_reason"] == "max_tokens" {
-        return Err(LLMError::Generic("Provider response was truncated".into()));
-    }
-    let content = value["content"]
-        .as_array()
-        .ok_or_else(|| LLMError::Generic("Messages response missing content".into()))?;
-    let mut text = String::new();
-    let mut calls = Vec::new();
-    for block in content {
-        match block["type"].as_str() {
-            Some("text") => text.push_str(
-                block["text"]
-                    .as_str()
-                    .ok_or_else(|| LLMError::Generic("Invalid text block".into()))?,
-            ),
-            Some("tool_use") => {
-                if !block["input"].is_object() {
-                    return Err(LLMError::Generic("Invalid tool input".into()));
-                }
-                calls.push(serde_json::from_value(json!({"id": block["id"], "type": "function", "function": {"name": block["name"], "arguments": block["input"].to_string()}}))?);
-            }
-            _ => {}
-        }
-    }
-    if text.is_empty() && calls.is_empty() {
-        return Err(LLMError::Generic(
-            "Provider returned no text or tools".into(),
-        ));
-    }
-    Ok(WireChatResponse {
-        choices: vec![WireChoice {
-            message: WireChoiceMessage {
-                content: Some(text),
-                tool_calls: Some(calls),
-            },
-        }],
-        usage: None,
-    })
-}
-
-/// Normalize Messages events into the existing text/tool stream accumulator.
-fn messages_stream_event(value: serde_json::Value) -> serde_json::Value {
-    use serde_json::json;
-    let index = &value["index"];
-    match value["type"].as_str() {
-        Some("content_block_start") if value["content_block"]["type"] == "tool_use" => {
-            let block = &value["content_block"];
-            json!({"choices": [{"delta": {"tool_calls": [{"index": index, "id": block["id"], "function": {"name": block["name"], "arguments": if block["input"].as_object().is_some_and(|input| !input.is_empty()) { block["input"].to_string() } else { String::new() }}}]}}]})
-        }
-        Some("content_block_start") if value["content_block"]["type"] == "text" => {
-            json!({"choices": [{"delta": {"content": value["content_block"]["text"]}}]})
-        }
-        Some("content_block_delta") if value["delta"]["type"] == "text_delta" => {
-            json!({"choices": [{"delta": {"content": value["delta"]["text"]}}]})
-        }
-        Some("content_block_delta") if value["delta"]["type"] == "input_json_delta" => {
-            json!({"choices": [{"delta": {"tool_calls": [{"index": index, "function": {"arguments": value["delta"]["partial_json"]}}]}}]})
-        }
-        Some("message_delta") if value["delta"]["stop_reason"].is_string() => {
-            json!({"choices": [{"finish_reason": if value["delta"]["stop_reason"] == "max_tokens" { json!("length") } else { value["delta"]["stop_reason"].clone() }}]})
-        }
-        _ => value,
-    }
-}
-
-/// `ChatResponse` implementation returned by [`CompatibleProvider`].
-#[derive(Debug)]
-struct CompatibleChatResponse {
-    text: Option<String>,
-    tool_calls: Option<Vec<ToolCall>>,
-    usage: Option<Usage>,
-}
-
-impl ChatResponse for CompatibleChatResponse {
-    fn text(&self) -> Option<String> {
-        self.text.clone()
-    }
-
-    fn tool_calls(&self) -> Option<Vec<ToolCall>> {
-        self.tool_calls.clone()
-    }
-
-    fn usage(&self) -> Option<Usage> {
-        self.usage.clone()
-    }
-}
-
-impl fmt::Display for CompatibleChatResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(text) = &self.text {
-            write!(f, "{text}")?;
-        }
-        if let Some(calls) = &self.tool_calls {
-            for call in calls {
-                write!(f, "{call}")?;
-            }
-        }
-        Ok(())
-    }
-}
-
 #[autoagents::async_trait]
 impl ChatProvider for CompatibleProvider {
     async fn chat_with_tools(
@@ -874,166 +738,11 @@ impl ChatProvider for CompatibleProvider {
             }
             return Ok(Box::pin(stream::iter(chunks)));
         }
-        let state = (
-            response,
-            Vec::<u8>::new(),
-            std::collections::VecDeque::new(),
-            std::collections::BTreeMap::<usize, ToolCall>::new(),
-            false,
-        );
-        Ok(Box::pin(stream::unfold(
-            state,
-            move |(mut response, mut buffer, mut ready, mut calls, mut done)| async move {
-                loop {
-                    if let Some(item) = ready.pop_front() {
-                        return Some((item, (response, buffer, ready, calls, done)));
-                    }
-                    if done {
-                        return None;
-                    }
-                    if let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
-                        let line: Vec<u8> = buffer.drain(..=end).collect();
-                        let line = match std::str::from_utf8(&line) {
-                            Ok(line) => line.trim(),
-                            Err(error) => {
-                                ready.push_back(Err(LLMError::Generic(format!(
-                                    "Invalid UTF-8 stream: {error}"
-                                ))));
-                                done = true;
-                                continue;
-                            }
-                        };
-                        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
-                            continue;
-                        };
-                        if data == "[DONE]" {
-                            done = true;
-                            continue;
-                        }
-                        let value: serde_json::Value = match serde_json::from_str(data) {
-                            Ok(value) => value,
-                            Err(error) => {
-                                ready.push_back(Err(LLMError::Generic(format!(
-                                    "Invalid stream event: {error}"
-                                ))));
-                                done = true;
-                                continue;
-                            }
-                        };
-                        if let Some(error) = value.get("error") {
-                            ready.push_back(Err(LLMError::Generic(format!(
-                                "Provider stream error: {error}"
-                            ))));
-                            done = true;
-                            continue;
-                        }
-                        if responses_api
-                            && matches!(
-                                value["type"].as_str(),
-                                Some("response.failed" | "response.incomplete")
-                            )
-                        {
-                            ready.push_back(Err(LLMError::Generic(
-                                "Provider response failed or was incomplete".to_owned(),
-                            )));
-                            done = true;
-                            continue;
-                        }
-                        if responses_api && value["type"] == "response.function_call_arguments.done"
-                        {
-                            let index = value["output_index"].as_u64().unwrap_or(0) as usize;
-                            if let Some(call) = calls.get_mut(&index) {
-                                if let Some(args) = value["arguments"]
-                                    .as_str()
-                                    .or_else(|| value["item"]["arguments"].as_str())
-                                {
-                                    call.function.arguments = args.to_owned();
-                                }
-                            }
-                            continue;
-                        }
-                        let value = if responses_api {
-                            responses_stream_event(value)
-                        } else if messages_api {
-                            messages_stream_event(value)
-                        } else {
-                            value
-                        };
-                        for choice in value["choices"].as_array().into_iter().flatten() {
-                            let delta = &choice["delta"];
-                            if let Some(text) =
-                                delta["content"].as_str().filter(|text| !text.is_empty())
-                            {
-                                ready.push_back(Ok(StreamChunk::Text(text.to_owned())));
-                            }
-                            for call in delta["tool_calls"].as_array().into_iter().flatten() {
-                                let index = call["index"].as_u64().unwrap_or(0) as usize;
-                                let entry = calls.entry(index).or_insert_with(|| ToolCall {
-                                    id: String::new(),
-                                    call_type: "function".to_owned(),
-                                    function: autoagents::llm::FunctionCall {
-                                        name: String::new(),
-                                        arguments: String::new(),
-                                    },
-                                });
-                                if let Some(id) = call["id"].as_str() {
-                                    entry.id.push_str(id);
-                                }
-                                if let Some(name) = call["function"]["name"].as_str() {
-                                    entry.function.name.push_str(name);
-                                }
-                                if let Some(args) = call["function"]["arguments"].as_str() {
-                                    entry.function.arguments.push_str(args);
-                                }
-                            }
-                            if let Some(reason) = choice["finish_reason"].as_str() {
-                                if reason == "length" {
-                                    ready.push_back(Err(LLMError::Generic(
-                                        "Provider response was truncated".to_owned(),
-                                    )));
-                                } else {
-                                    for (index, mut tool_call) in std::mem::take(&mut calls) {
-                                        if messages_api && tool_call.function.arguments.is_empty() {
-                                            tool_call.function.arguments = "{}".to_owned();
-                                        }
-                                        ready.push_back(Ok(StreamChunk::ToolUseComplete {
-                                            index,
-                                            tool_call,
-                                        }));
-                                    }
-                                    ready.push_back(Ok(StreamChunk::Done {
-                                        stop_reason: reason.to_owned(),
-                                    }));
-                                }
-                                done = true;
-                            }
-                        }
-                        continue;
-                    }
-                    match response.chunk().await {
-                        Ok(Some(bytes)) => {
-                            buffer.extend_from_slice(&bytes);
-                            if buffer.len() > 4 * 1024 * 1024 {
-                                ready.push_back(Err(LLMError::Generic(
-                                    "Provider stream event exceeded size limit".to_owned(),
-                                )));
-                                done = true;
-                            }
-                        }
-                        Ok(None) => {
-                            ready.push_back(Err(LLMError::Generic(
-                                "Provider stream ended before completion".to_owned(),
-                            )));
-                            done = true;
-                        }
-                        Err(error) => {
-                            ready.push_back(Err(transport_error("stream interrupted", error)));
-                            done = true;
-                        }
-                    }
-                }
-            },
-        )))
+        let state = ChatEventStream::new(response, messages_api, responses_api);
+        Ok(Box::pin(stream::unfold(state, |mut state| async move {
+            let item = state.next_chunk().await?;
+            Some((item, state))
+        })))
     }
 
     fn model(&self) -> &str {
@@ -1165,6 +874,19 @@ fn require_api_key(config: &ProviderConfig) -> Result<()> {
     Ok(())
 }
 
+fn configure_model_and_base_url<P: LLMProvider + autoagents::llm::HasConfig>(
+    mut builder: LLMBuilder<P>,
+    config: &ProviderConfig,
+) -> LLMBuilder<P> {
+    if let Some(model) = effective_model(config) {
+        builder = builder.model(model);
+    }
+    if let Some(base_url) = effective_base_url(config) {
+        builder = builder.base_url(base_url);
+    }
+    builder
+}
+
 /// Resolves a [`ProviderConfig`] into the uniform agent-consumable LLM handle.
 ///
 /// The returned `Arc<dyn LLMProvider>` is exactly the type `AgentBuilder::llm`
@@ -1231,12 +953,7 @@ pub async fn resolve(config: &ProviderConfig) -> Result<Arc<dyn LLMProvider>> {
             if let Some(effort) = effort {
                 builder = builder.reasoning_effort(effort);
             }
-            if let Some(model) = effective_model(config) {
-                builder = builder.model(model);
-            }
-            if let Some(base_url) = effective_base_url(config) {
-                builder = builder.base_url(base_url);
-            }
+            let builder = configure_model_and_base_url(builder, config);
             let backend = builder
                 .build()
                 .map_err(|err| anyhow!("failed to build OpenAI backend: {err}"))?;
@@ -1244,13 +961,10 @@ pub async fn resolve(config: &ProviderConfig) -> Result<Arc<dyn LLMProvider>> {
         }
         ProviderKind::Anthropic => {
             require_api_key(config)?;
-            let mut builder = LLMBuilder::<Anthropic>::new().api_key(config.api_key.clone());
-            if let Some(model) = effective_model(config) {
-                builder = builder.model(model);
-            }
-            if let Some(base_url) = effective_base_url(config) {
-                builder = builder.base_url(base_url);
-            }
+            let builder = configure_model_and_base_url(
+                LLMBuilder::<Anthropic>::new().api_key(config.api_key.clone()),
+                config,
+            );
             let backend = builder
                 .build()
                 .map_err(|err| anyhow!("failed to build Anthropic backend: {err}"))?;
@@ -1261,12 +975,7 @@ pub async fn resolve(config: &ProviderConfig) -> Result<Arc<dyn LLMProvider>> {
             if !config.api_key.trim().is_empty() {
                 builder = builder.api_key(config.api_key.clone());
             }
-            if let Some(model) = effective_model(config) {
-                builder = builder.model(model);
-            }
-            if let Some(base_url) = effective_base_url(config) {
-                builder = builder.base_url(base_url);
-            }
+            let builder = configure_model_and_base_url(builder, config);
             let backend = builder
                 .build()
                 .map_err(|err| anyhow!("failed to build Ollama backend: {err}"))?;

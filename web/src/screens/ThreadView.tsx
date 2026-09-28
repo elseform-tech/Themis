@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../components";
 import type { ProviderKind } from "../lib/types";
 import { getThread, listGoModels, sendMessage, setProvider, stopThread } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
-import { ResponseBody } from "../components/ResponseBody";
-import { groupConversation, type ConversationRow } from "./conversation";
-import type { ChatMessage } from "../state/reducer";
+import { ThreadComposer } from "./ThreadComposer";
+import { ThreadConversation } from "./ThreadConversation";
 import "./ThreadView.css";
 
+
+const EMPTY_MESSAGES: never[] = [];
 
 export function ThreadView() {
   const { state, dispatch } = useApp();
@@ -22,8 +23,6 @@ export function ThreadView() {
     setDrafts(previous => { const next = { ...previous, [thread.id]: value }; writeSession("drafts", next); return next; });
   }
   const newThread = useNewThread();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const followOutput = useRef(true);
   const [models, setModels] = useState<string[]>([]);
   const [efforts, setEfforts] = useState<Record<string, string>>(() => readSession("efforts", {}));
   const [savedRunDurations, setSavedRunDurations] = useState<Record<string, number>>(() => readSession("runDurations", {}));
@@ -33,10 +32,8 @@ export function ThreadView() {
   const [stopping, setStopping] = useState(false);
   const [sending, setSending] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const [now, setNow] = useState(Date.now());
-  const endRef = useRef<HTMLDivElement>(null);
   const running = thread === null ? false : (state.running[thread.id] ?? false);
-  const messages = thread === null ? [] : (state.messages[thread.id] ?? []);
+  const messages = thread === null ? EMPTY_MESSAGES : (state.messages[thread.id] ?? EMPTY_MESSAGES);
   const stream = thread === null ? "" : (state.streams[thread.id] ?? "");
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
@@ -44,15 +41,6 @@ export function ThreadView() {
   const composerDisabled = thread === null || running || sending || readOnly || project === null;
   const composerBusy = running || sending;
   const trace = thread ? state.traces[thread.id] ?? [] : [];
-  const toolPending = trace.find(entry => entry.ok === undefined && !entry.summary.startsWith("approval "));
-  const activeRunId = thread ? state.activeRunIds[thread.id] : undefined;
-  const elapsed = thread ? Math.max(0, Math.floor((now - (state.runStartedAt[thread.id] ?? now)) / 1000)) : 0;
-  useEffect(() => {
-    if (!running) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [running, thread?.id]);
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "o") {
@@ -77,14 +65,6 @@ export function ThreadView() {
       return next;
     });
   }, [state.runDurations]);
-
-  useEffect(() => {
-    if (followOutput.current) endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, stream]);
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (element && thread) element.scrollTop = readSession(`scroll:${thread.id}`, element.scrollHeight);
-  }, [thread?.id]);
 
   useEffect(() => { if (!running) setStopping(false); }, [running, thread?.id]);
   async function stop() {
@@ -173,97 +153,50 @@ export function ThreadView() {
 
   return (
     <div className="themis-thread">
-      <div ref={scrollRef} className="themis-thread-stream" aria-live="polite" onScroll={event => { const element = event.currentTarget; followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 64; writeSession(`scroll:${thread.id}`, element.scrollTop); }}>
-        {messages.length === 0 && stream === "" ? (
-          <p className="themis-thread-start">Describe what you’d like to build or change.</p>
-        ) : (
-          groupConversation(messages, running, runDurations, state.activeRunIds[thread.id]).map(row => {
-            if (row.kind === "message") return <Message key={row.message.id} message={row.message} />;
-            if (row.kind === "milestone") return <Milestone key={row.id} row={row} activeRunId={activeRunId} />;
-            const durationMs = row.active ? elapsed * 1000 : row.durationMs;
-            const durationSeconds = durationMs === undefined ? undefined : Math.floor(durationMs / 1000);
-            const durationLabel = durationSeconds === undefined ? "" : durationSeconds < 60
-              ? `${durationSeconds}s elapsed`
-              : `${Math.floor(durationSeconds / 60)}m${durationSeconds % 60 === 0 ? "" : ` ${durationSeconds % 60}s`} elapsed`;
-            return <details key={row.id} className="themis-run-bucket" open={row.active || undefined}>
-              <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span>Activities</span><span className="themis-run-meta">{row.toolCount} tool call{row.toolCount === 1 ? "" : "s"}{durationLabel && ` · ${durationLabel}`}</span></summary>
-              <div className="themis-run-bucket-body">{row.items.flatMap(item => item.items.map(message => <Message key={message.id} message={message} activeRunId={item.active ? activeRunId : undefined} />))}</div>
-            </details>;
-          })
-        )}
-        {stream !== "" && (
-          <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--live">
-            <ResponseBody text={stream} streaming />
-          </div>
-        )}
-        {(running || sending) && <div className="themis-run-progress" role="status">
-          <div className="themis-run-status"><span className={stopping ? "" : "themis-shimmer"}>{stopping ? "Stopping…" : state.compacting[thread.id] ? "Compacting context…" : toolPending ? `Using ${toolPending.tool.replace(/_/g, " ")}…` : "Thinking…"}</span><time aria-label="Elapsed time">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</time></div>
-
-        </div>}
-        <div ref={endRef} />
-      </div>
-
-      {sendError && <p className="themis-thread-senderror" role="alert">{sendError}</p>}
-      <div className="themis-thread-composer">
-        {thread.provider !== "ollama" && thread.provider !== "custom" && !state.secretStatus[thread.provider] && <p className="themis-thread-hint">Connect {thread.provider === "go" ? "OpenCode Go" : thread.provider} to send your first message. <Button variant="ghost" size="small" onClick={() => dispatch({ type: "ui/view", view: "settings" })}>Open settings</Button></p>}
-        <label className="themis-sr-only" htmlFor="themis-composer">
-          Message
-        </label>
-        <textarea
-          id="themis-composer"
-          className="themis-thread-input"
-          placeholder={
-            running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Message Themis…"
-          }
-          value={draft}
-          disabled={composerDisabled}
-          rows={2}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <div className="themis-thread-composer-actions">
-          <Button variant="ghost" size="small" aria-label="New thread" title="New thread (⌘/Ctrl+Shift+O)" onClick={() => void newThread()}>+</Button>
-          <div className="themis-composer-selectors">
-            <select aria-label="Model" title="Model" value={thread.model} disabled={composerBusy || switching} onChange={event => void applyProvider(thread.provider, event.target.value)}>
-              {[...new Set([thread.model, ...models])].map(model => <option key={model} value={model}>{model || "Default model"}</option>)}
-            </select>
-            <select aria-label="Reasoning effort" title={supportsEffort ? "Reasoning effort" : "This model manages its own reasoning"} value={effort} disabled={composerBusy || !supportsEffort} onChange={event => { const next = { ...efforts, [thread.id]: event.target.value }; setEfforts(next); writeSession("efforts", next); }}>
-              <option value="">Default effort</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
-            </select>
-          </div>
-          {running ? <Button className="themis-send" variant="ghost" aria-label={stopping ? "Stopping" : "Stop"} title={stopping ? "Stopping after current action" : "Stop"} disabled={stopping} onClick={() => void stop()}><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" /></svg></Button> : <Button
-            className="themis-send" variant="primary" aria-label="Send" title="Send (Enter)"
-            disabled={composerDisabled || draft.trim() === ""} onClick={() => void send()}
-          ><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M8 13V3M3 8l5-5 5 5" /></svg></Button>}
-        </div>
-        <div className="themis-composer-shortcuts"><span>↵ Send · ⇧↵ New line</span><span>⌘/Ctrl ⇧ O New thread</span></div>
-      </div>
+      <ThreadConversation
+        threadId={thread.id}
+        messages={messages}
+        stream={stream}
+        running={running}
+        sending={sending}
+        stopping={stopping}
+        runDurations={runDurations}
+        activeRunId={state.activeRunIds[thread.id]}
+        runStartedAt={state.runStartedAt[thread.id]}
+        compacting={state.compacting[thread.id] ?? false}
+        traces={trace}
+      />
+      <ThreadComposer
+        thread={thread}
+        draft={draft}
+        models={models}
+        supportsEffort={supportsEffort}
+        effort={effort}
+        composerDisabled={composerDisabled}
+        composerBusy={composerBusy}
+        readOnly={readOnly}
+        running={running}
+        stopping={stopping}
+        switching={switching}
+        sendError={sendError}
+        secretConfigured={
+          thread.provider === "ollama" || thread.provider === "custom"
+            ? true
+            : Boolean(state.secretStatus[thread.provider])
+        }
+        onDraftChange={setDraft}
+        onSend={() => void send()}
+        onStop={() => void stop()}
+        onNewThread={() => void newThread()}
+        onProviderChange={model => void applyProvider(thread.provider, model)}
+        onEffortChange={value => {
+          const next = { ...efforts, [thread.id]: value };
+          setEfforts(next);
+          writeSession("efforts", next);
+        }}
+        onOpenSettings={() => dispatch({ type: "ui/view", view: "settings" })}
+      />
 
     </div>
   );
-}
-
-function Milestone({ row, activeRunId }: { row: Extract<ConversationRow, { kind: "milestone" }>; activeRunId?: string }) {
-  const body = <div className="themis-milestone-body">{row.items.map(message => <Message key={message.id} message={message} activeRunId={row.active ? activeRunId : undefined} />)}</div>;
-  return <details className="themis-milestone" open={row.active || undefined}>
-    <summary><span className="themis-tool-chevron" aria-hidden="true">›</span><span className={row.active ? "themis-shimmer" : ""}>{row.title}</span></summary>
-    {body}
-  </details>;
-}
-
-function Message({ message, activeRunId }: { message: ChatMessage; activeRunId?: string }) {
-  const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
-  const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;
-  const completed = message.role === "assistant" && !isActiveRun;
-  return <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}${completed ? " themis-thread-msg--completed" : ""}`}>
-    {message.tool ? <details className="themis-tool-message">
-      <summary className={message.tool.ok === undefined && isActiveRun ? "themis-shimmer" : ""}><span className="themis-tool-chevron" aria-hidden="true">›</span><span aria-hidden="true">{message.tool.ok === undefined ? "◌" : message.tool.ok ? "✓" : "!"}</span> {message.tool.name.replace(/_/g, " ")}<span className="themis-tool-status">{message.tool.ok === undefined ? isActiveRun ? "Running" : "Interrupted" : message.tool.ok ? "Done" : "Failed"}</span></summary>
-      <div className="themis-tool-detail"><strong>Input</strong><pre>{message.text}</pre><strong>Output</strong><pre>{message.tool.output ?? (message.tool.ok === undefined && isActiveRun ? "Waiting for output…" : "Output was not recorded for this older call.")}</pre></div>
-    </details> : message.text.startsWith("Run failed:") ? <details className="themis-request-error"><summary>Request failed · Details</summary><p className="themis-thread-text">{message.text}</p></details> : message.role === "assistant" ? <ResponseBody text={message.text} /> : <p className="themis-thread-text">{message.text}</p>}
-  </div>;
 }

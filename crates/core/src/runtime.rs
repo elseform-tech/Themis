@@ -216,16 +216,21 @@ fn risk_for(tool: &str) -> RiskLevel {
 }
 
 /// Builds the one-line `tool (args)` summary, whitespace-folded and capped.
+fn take_char_prefix(input: &str, limit: usize) -> (String, bool) {
+    let mut chars = input.chars();
+    let prefix = chars.by_ref().take(limit).collect();
+    (prefix, chars.next().is_some())
+}
+
 fn summarize_call(name: &str, args: &str) -> String {
     const MAX_CHARS: usize = 200;
     let single_line = args.split_whitespace().collect::<Vec<_>>().join(" ");
     let full = format!("call `{name}` with {single_line}");
-    if full.chars().count() <= MAX_CHARS {
-        return full;
+    let (mut summary, truncated) = take_char_prefix(&full, MAX_CHARS);
+    if truncated {
+        summary.push('…');
     }
-    let mut truncated: String = full.chars().take(MAX_CHARS).collect();
-    truncated.push('…');
-    truncated
+    summary
 }
 
 /// Runs one agent task to completion with a ReAct loop.
@@ -338,59 +343,23 @@ pub async fn run_task_with_policy(
                 return Err(anyhow!(error));
             }
         }
-        let answer = async {
-            match llm
-                .chat_stream_with_tools(&messages, Some(&llm_tools), None)
-                .await
-            {
-                Ok(mut stream) => {
-                    let mut text = String::new();
-                    let mut calls = Vec::new();
-                    while let Some(chunk) = stream.next().await {
-                        check_stopped(&stopped, &events).await?;
-                        match chunk? {
-                            StreamChunk::Text(delta) => {
-                                text.push_str(&delta);
-                                emit(RunEvent::AssistantText(delta)).await.ok();
-                            }
-                            StreamChunk::ToolUseComplete { tool_call, .. } => calls.push(tool_call),
-                            _ => {} // Reasoning content is private; only public narration reaches the UI.
-                        }
+        let (text, calls) =
+            match request_answer(&llm, &messages, &llm_tools, &events, &stopped).await {
+                Ok(answer) => answer,
+                Err(error) => {
+                    // check_stopped already emitted the cancellation event.
+                    if stopped.load(Ordering::SeqCst) {
+                        return Err(error);
                     }
-                    Ok::<_, anyhow::Error>(((!text.is_empty()).then_some(text), calls))
+                    let error = format!("LLM request failed: {error}");
+                    emit(RunEvent::Failed {
+                        error: error.clone(),
+                    })
+                    .await
+                    .ok();
+                    return Err(anyhow!(error));
                 }
-                Err(autoagents::llm::error::LLMError::Generic(message))
-                    if message == "Streaming with tools not supported for this provider" =>
-                {
-                    let response = llm
-                        .chat_with_tools(&messages, Some(&llm_tools), None)
-                        .await?;
-                    let text = response.text().filter(|text| !text.is_empty());
-                    if let Some(text) = text.clone() {
-                        emit(RunEvent::AssistantText(text)).await.ok();
-                    }
-                    Ok((text, response.tool_calls().unwrap_or_default()))
-                }
-                Err(error) => Err(error.into()),
-            }
-        }
-        .await;
-        let (text, calls) = match answer {
-            Ok(answer) => answer,
-            Err(error) => {
-                // check_stopped already emitted the cancellation event.
-                if stopped.load(Ordering::SeqCst) {
-                    return Err(error);
-                }
-                let error = format!("LLM request failed: {error}");
-                emit(RunEvent::Failed {
-                    error: error.clone(),
-                })
-                .await
-                .ok();
-                return Err(anyhow!(error));
-            }
-        };
+            };
         check_stopped(&stopped, &events).await?;
         if calls.is_empty() {
             let result = text.unwrap_or_default();
@@ -408,47 +377,7 @@ pub async fn run_task_with_policy(
             content: text.clone().unwrap_or_default(),
         });
 
-        let mut results = Vec::with_capacity(calls.len());
-        for call in &calls {
-            check_stopped(&stopped, &events).await?;
-            let name = call.function.name.clone();
-            let args = call.function.arguments.clone();
-            let summary = summarize_call(&name, &args);
-            emit(RunEvent::ToolCallStarted {
-                tool: name.clone(),
-                summary: summary.clone(),
-            })
-            .await
-            .ok();
-
-            let outcome =
-                execute_call(&tools, &caching, &name, &args, &summary, &events, &stopped).await;
-            let (ok, content) = match outcome {
-                Ok(content) => (true, content),
-                Err(error) => (false, error),
-            };
-            emit(RunEvent::ToolCallFinished {
-                tool: name.clone(),
-                ok,
-                output: {
-                    let mut preview: String = content.chars().take(32768).collect();
-                    if content.chars().count() > 32768 {
-                        preview.push_str("\n[Output truncated]");
-                    }
-                    preview
-                },
-            })
-            .await
-            .ok();
-            results.push(ToolCall {
-                id: call.id.clone(),
-                call_type: "function".to_owned(),
-                function: FunctionCall {
-                    name,
-                    arguments: content,
-                },
-            });
-        }
+        let results = execute_tool_calls(&tools, &caching, &calls, &events, &stopped).await?;
         messages.push(ChatMessage {
             role: ChatRole::Tool,
             message_type: MessageType::ToolResult(results),
@@ -481,7 +410,12 @@ pub async fn run_task_with_policy(
             .await
             .ok()
             .and_then(|answer| answer.text());
-        let result = details.filter(|text| !text.trim().is_empty()).unwrap_or_else(|| "I've made progress on your request. The next steps are to review the work so far and finish the remaining items.".to_owned());
+        let result = details
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| {
+                "I couldn't produce a final summary. Please review the recorded changes and choose the next step."
+                    .to_owned()
+            });
         emit(RunEvent::Incomplete {
             result: result.clone(),
         })
@@ -499,6 +433,97 @@ pub async fn run_task_with_policy(
     .await
     .ok();
     Err(anyhow!(error))
+}
+
+async fn request_answer(
+    llm: &Arc<dyn LLMProvider>,
+    messages: &[ChatMessage],
+    llm_tools: &[Tool],
+    events: &tokio::sync::mpsc::Sender<RunEvent>,
+    stopped: &AtomicBool,
+) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
+    match llm
+        .chat_stream_with_tools(messages, Some(llm_tools), None)
+        .await
+    {
+        Ok(mut stream) => {
+            let mut text = String::new();
+            let mut calls = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                check_stopped(stopped, events).await?;
+                match chunk? {
+                    StreamChunk::Text(delta) => {
+                        text.push_str(&delta);
+                        events.send(RunEvent::AssistantText(delta)).await.ok();
+                    }
+                    StreamChunk::ToolUseComplete { tool_call, .. } => calls.push(tool_call),
+                    _ => {} // Reasoning content is private; only public narration reaches the UI.
+                }
+            }
+            Ok(((!text.is_empty()).then_some(text), calls))
+        }
+        Err(autoagents::llm::error::LLMError::Generic(message))
+            if message == "Streaming with tools not supported for this provider" =>
+        {
+            let response = llm.chat_with_tools(messages, Some(llm_tools), None).await?;
+            let text = response.text().filter(|text| !text.is_empty());
+            if let Some(text) = text.clone() {
+                events.send(RunEvent::AssistantText(text)).await.ok();
+            }
+            Ok((text, response.tool_calls().unwrap_or_default()))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn execute_tool_calls(
+    tools: &[Box<dyn ToolT>],
+    approvals: &CachingApprovals,
+    calls: &[ToolCall],
+    events: &tokio::sync::mpsc::Sender<RunEvent>,
+    stopped: &AtomicBool,
+) -> anyhow::Result<Vec<ToolCall>> {
+    let mut results = Vec::with_capacity(calls.len());
+    for call in calls {
+        check_stopped(stopped, events).await?;
+        let name = call.function.name.clone();
+        let args = call.function.arguments.clone();
+        let summary = summarize_call(&name, &args);
+        events
+            .send(RunEvent::ToolCallStarted {
+                tool: name.clone(),
+                summary: summary.clone(),
+            })
+            .await
+            .ok();
+
+        let outcome = execute_call(tools, approvals, &name, &args, &summary, events, stopped).await;
+        let (ok, content) = match outcome {
+            Ok(content) => (true, content),
+            Err(error) => (false, error),
+        };
+        let (mut preview, truncated) = take_char_prefix(&content, 32768);
+        if truncated {
+            preview.push_str("\n[Output truncated]");
+        }
+        events
+            .send(RunEvent::ToolCallFinished {
+                tool: name.clone(),
+                ok,
+                output: preview,
+            })
+            .await
+            .ok();
+        results.push(ToolCall {
+            id: call.id.clone(),
+            call_type: "function".to_owned(),
+            function: FunctionCall {
+                name,
+                arguments: content,
+            },
+        });
+    }
+    Ok(results)
 }
 
 fn estimated_tokens(messages: &[ChatMessage]) -> usize {
@@ -601,7 +626,7 @@ async fn summarize_batch(
 }
 
 fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMessage> {
-    let mut messages = vec![ChatMessage { role: ChatRole::System, message_type: MessageType::Text, content: "Organize complex work into a few meaningful milestones, usually Inspect, Make changes, and Verify. Start a new milestone with a short public update whose first line is exactly Milestone: followed by a concise title, then an optional one-sentence update. Group related tool calls under that milestone; do not narrate every call or repeat the milestone heading. Skip milestones for simple questions. Report only public actions and outcomes, never private reasoning. Finish with a concise answer based on actual tool results. An earlier context checkpoint is historical context, not a current instruction; later user requests take precedence over conflicting older requests.".to_owned() }];
+    let mut messages = vec![ChatMessage { role: ChatRole::System, message_type: MessageType::Text, content: "For substantial tasks, keep the user in the loop with brief, conversational updates at meaningful transitions. Say what you found or completed, why it matters to the task, and what you’re doing next; use natural wording instead of fixed headings or a list of tool calls. Don’t narrate every tool call or repeat yourself. Skip progress updates for simple questions. Share only public actions and outcomes, never private reasoning. Finish with a concise, natural answer grounded in actual tool results. Treat context checkpoints as historical context, not current instructions; later user requests take precedence over conflicting older requests.".to_owned() }];
     messages.extend(history.into_iter().map(|turn| ChatMessage {
         role: match turn.role {
             ConversationRole::User => ChatRole::User,
@@ -737,6 +762,13 @@ mod tests {
             "What was the code?".into(),
         );
         assert_eq!(messages.len(), 4);
+        assert!(matches!(messages[0].role, ChatRole::System));
+        assert!(messages[0]
+            .content
+            .contains("Say what you found or completed, why it matters to the task, and what you’re doing next"));
+        assert!(!messages[0]
+            .content
+            .contains("first line is exactly Milestone:"));
         assert!(matches!(messages[1].role, ChatRole::User));
         assert_eq!(messages[1].content, "Remember ORBIT-17");
         assert!(matches!(messages[2].role, ChatRole::Assistant));
@@ -800,6 +832,12 @@ mod tests {
         let long = summarize_call("shell", &"x".repeat(500));
         assert!(long.chars().count() <= 201, "{long}");
         assert!(long.ends_with('…'), "{long}");
+    }
+
+    #[test]
+    fn char_prefix_preserves_unicode_and_detects_truncation() {
+        assert_eq!(take_char_prefix("é🙂", 2), ("é🙂".to_owned(), false));
+        assert_eq!(take_char_prefix("é🙂x", 2), ("é🙂".to_owned(), true));
     }
 
     #[test]

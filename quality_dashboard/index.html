@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Repository Quality</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Dashboard navigation">
+        <a class="brand" href="/" aria-label="Repository Quality home">
+          <span class="brand-mark">Q</span>
+          <span><strong>Quality</strong><small>Repository companion</small></span>
+        </a>
+        <div class="nav-label">WORKSPACE</div>
+        <nav class="nav-list">
+          <button class="nav-item active" data-view="overview"><span class="nav-icon">◫</span>Overview</button>
+          <button class="nav-item" data-view="changes"><span class="nav-icon">↗</span>Change register<span id="changeBadge" class="nav-count">0</span></button>
+          <button class="nav-item" data-view="tests"><span class="nav-icon">✓</span>Test register</button>
+          <button class="nav-item" data-view="complexity"><span class="nav-icon">⌁</span>Code health</button>
+          <button class="nav-item" data-view="runs"><span class="nav-icon">◷</span>Run history</button>
+        </nav>
+        <div class="sidebar-note">
+          <span class="note-dot"></span>
+          <div><strong>Local repository</strong><small>Read-only metrics · localhost</small></div>
+        </div>
+        <div class="sidebar-foot">THEMISOS · QUALITY CONSOLE</div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div class="crumb"><span>Repository</span><b>/</b><strong id="crumbTitle">Overview</strong></div>
+          <div class="topbar-actions">
+            <span class="live-state"><i></i>LIVE</span>
+            <span id="lastUpdated" class="updated">Connecting…</span>
+            <button id="refreshButton" class="icon-button" aria-label="Refresh metrics" title="Refresh now">↻</button>
+          </div>
+        </header>
+
+        <div class="content-wrap">
+          <section class="view active" id="view-overview" aria-labelledby="page-title">
+            <div class="page-heading">
+              <div><div class="eyebrow">ENGINEERING HEALTH</div><h1 id="page-title">Application quality overview</h1><p class="lede">Live health of ThemisOS app code and the overall test register, including Browser and native E2E scenarios.</p></div>
+              <div class="run-actions"><button class="button secondary" data-run="rust">Run Rust tests</button><button class="button secondary" data-run="frontend">Run frontend</button><button class="button primary" data-run="all">Run all automated tests <span>↗</span></button></div>
+            </div>
+
+            <div class="repo-strip">
+              <span class="repo-icon">◈</span><span class="repo-name">ThemisOS</span><span class="divider"></span>
+              <span class="branch-tag">⌥ <b id="branchName">—</b></span><span class="commit-tag" id="commitHash">—</span>
+              <span id="workingState" class="working-state">Checking worktree</span>
+            </div>
+
+            <div class="metric-grid" id="metricGrid" aria-live="polite"></div>
+
+            <div class="dashboard-grid">
+              <article class="card coverage-card">
+                <div class="card-head"><div><div class="card-kicker">TEST COVERAGE</div><h2>Line coverage</h2></div><span class="info-mark" title="Coverage comes from an LCOV report. Test counts alone are not coverage.">i</span></div>
+                <div id="coverageContent" class="coverage-content"></div>
+              </article>
+              <article class="card run-card">
+                <div class="card-head"><div><div class="card-kicker">LATEST TEST RUN</div><h2 id="runCardTitle">No recorded run</h2></div><span id="runStatus" class="status-pill neutral">Not run</span></div>
+                <div id="latestRunContent" class="latest-run-content"></div>
+                <div class="run-card-foot"><span id="activeRunLabel">No checks are running</span><span class="pulse-dot"></span></div>
+              </article>
+            </div>
+
+            <div class="dashboard-grid lower-grid">
+              <article class="card changes-card">
+                <div class="card-head"><div><div class="card-kicker">WORKING TREE</div><h2>Change register</h2></div><button class="text-button" data-open="changes">View all <span>→</span></button></div>
+                <div id="overviewChanges" class="table-wrap"></div>
+              </article>
+              <article class="card suites-card">
+                <div class="card-head"><div><div class="card-kicker">OVERALL TEST SET</div><h2>Test register</h2></div><button class="text-button" data-open="tests">View register <span>→</span></button></div>
+                <div id="overviewTests" class="suite-summary"></div>
+              </article>
+            </div>
+        <p class="method-note">App LOC and complexity cover <code>crates/</code> and <code>web/src/</code>. Dashboard tests appear in the tooling scope. Coverage appears only when an LCOV report is present.</p>
+          </section>
+
+          <section class="view" id="view-changes" aria-labelledby="changes-title">
+            <div class="page-heading"><div><div class="eyebrow">CHANGE REGISTER</div><h1 id="changes-title">Current change set</h1><p class="lede">Uncommitted file changes and recent repository churn.</p></div><div class="inline-stat" id="changeSummary"></div></div>
+            <div class="metric-grid compact-grid" id="churnGrid"></div>
+            <article class="card table-card"><div class="card-head"><div><div class="card-kicker">WORKING TREE</div><h2>Changed files</h2></div><label class="filter-label">Filter <input id="changeFilter" type="search" placeholder="Path or status" /></label></div><div id="changesTable" class="table-wrap"></div></article>
+            <article class="card table-card"><div class="card-head"><div><div class="card-kicker">LAST 30 COMMITS</div><h2>Recent history</h2></div></div><div id="commitTable" class="table-wrap"></div></article>
+          </section>
+
+          <section class="view" id="view-tests" aria-labelledby="tests-title">
+            <div class="page-heading"><div><div class="eyebrow">TEST REGISTER</div><h1 id="tests-title">Overall test inventory</h1><p class="lede">Automated definitions and latest run results, plus registered Browser/native E2E scenarios and their outcomes.</p></div><div class="run-actions"><button class="button secondary" data-run="rust">Run Rust tests</button><button class="button primary" data-run="all">Run all automated tests <span>↗</span></button></div></div>
+            <div class="metric-grid compact-grid" id="testGrid"></div>
+            <article class="card table-card"><div class="card-head"><div><div class="card-kicker">AUTOMATED SUITES</div><h2>Suite register</h2></div><div class="filter-row"><label class="filter-label">Scope <select id="testScopeFilter"><option value="product">Product</option><option value="tooling">Tooling</option><option value="all">All scopes</option></select></label><label class="filter-label">Type <select id="testTypeFilter"><option value="all">All types</option><option value="e2e">End-to-end</option><option value="integration">Integration</option><option value="unit">Unit / component</option></select></label><label class="filter-label">Find <input id="testFilter" type="search" placeholder="Suite or file" /></label></div></div><div id="testsTable" class="table-wrap"></div><p class="table-footnote">Definitions count source-level test functions or calls. For completed runs, Inspect lists reported runtime test names, including parameterized cases; a suite result without file-level events stays marked unavailable. Browser/native E2E definitions are included in the overall totals below.</p></article>
+            <article class="card table-card"><div class="card-head"><div><div class="card-kicker">BROWSER AND NATIVE E2E</div><h2>Manual E2E register</h2><p class="card-description">These scenarios are included in overall test definitions; their outcomes remain labeled by runner and scope.</p></div></div><div id="manualE2eSummary" class="suite-summary"></div><div id="manualAcceptanceTable" class="table-wrap"></div></article>
+            <div class="note-box"><strong>Keep results current</strong><span>Expand a scenario for preconditions, steps, and expected outcomes. After each manual run, update its latest outcome, environment, revision, and evidence in quality_dashboard/manual_acceptance.json. The automated test buttons do not execute Browser or native journeys; run applicable scenarios when available and leave unrun or blocked journeys labeled accurately.</span></div>
+          </section>
+
+          <section class="view" id="view-complexity" aria-labelledby="complexity-title">
+            <div class="page-heading"><div><div class="eyebrow">APP CODE HEALTH</div><h1 id="complexity-title">Complexity and maintainability</h1><p class="lede">Use AST-derived hotspots to reach the 90+ product maintainability target without metric drift.</p></div><span class="estimate-label">TREE-SITTER AST</span></div>
+            <div class="metric-grid compact-grid" id="complexityGrid"></div>
+            <article class="card table-card"><div class="card-head"><div><div class="card-kicker">PRODUCT SOURCE</div><h2>Application module health</h2></div><div class="filter-row"><label class="filter-label">Sort <select id="complexitySort"><option value="maintainability">Lowest maintainability</option><option value="loc-asc">LOC ascending</option><option value="loc-desc">LOC descending</option></select></label><label class="filter-label">Find <input id="complexityFilter" type="search" placeholder="App file path" /></label></div></div><div id="complexityTable" class="table-wrap"></div><p class="table-footnote">AST scope is source files in <code>crates/</code> and <code>web/src/</code>; standalone test files and dashboard tooling are excluded. Rust <code>#[cfg(test)]</code> modules remain in their source-file LOC and AST metrics. Cyclomatic and cognitive complexity are AST averages per file. Maintainability is the mean Visual Studio index across callable AST nodes per file; files without functions use the module index. The maintainability view shows the 25 lowest scores. LOC sorting includes every analyzed app file.</p></article>
+          </section>
+
+          <section class="view" id="view-runs" aria-labelledby="runs-title">
+            <div class="page-heading"><div><div class="eyebrow">EXECUTION REGISTER</div><h1 id="runs-title">Automated test run history</h1><p class="lede">Automated pass/fail results are saved locally and include the checked commit.</p></div><button class="button primary" data-run="all">Run all automated tests <span>↗</span></button></div>
+            <div class="metric-grid compact-grid" id="runHistoryGrid"></div>
+            <article class="card table-card"><div class="card-head"><div><div class="card-kicker">LOCAL HISTORY</div><h2>Recorded runs</h2></div></div><div id="runsTable" class="table-wrap"></div></article>
+            <p class="method-note">Run history is kept in the ignored `.quality-dashboard/` folder on this machine. Test output is not stored.</p>
+          </section>
+        </div>
+        <footer class="main-footer"><span>Repository metrics refresh every 5 seconds.</span><span>Local only <i class="footer-lock">◈</i></span></footer>
+      </main>
+    </div>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

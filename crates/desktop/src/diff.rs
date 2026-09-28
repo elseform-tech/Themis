@@ -372,30 +372,56 @@ fn strip_ab_prefix(path: &str) -> String {
 /// Removes surrounding quotes and unescapes git's C-style quoting.
 fn dequote(path: &str) -> String {
     let path = path.trim();
-    if !(path.len() >= 2 && path.starts_with('"') && path.ends_with('"')) {
+    let Some(inner) = path
+        .strip_prefix('"')
+        .and_then(|path| path.strip_suffix('"'))
+    else {
         return path.to_owned();
-    }
-    let inner = &path[1..path.len() - 1];
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(char) = chars.next() {
-        if char != '\\' {
-            out.push(char);
+    };
+    decode_git_quoted_path(inner)
+}
+
+fn decode_git_quoted_path(path: &str) -> String {
+    let mut decoded = Vec::with_capacity(path.len());
+    let mut bytes = path.bytes().peekable();
+    while let Some(byte) = bytes.next() {
+        if byte != b'\\' {
+            decoded.push(byte);
             continue;
         }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('\\') => out.push('\\'),
-            Some('"') => out.push('"'),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
+        let Some(escaped) = bytes.next() else {
+            decoded.push(b'\\');
+            break;
+        };
+        match escaped {
+            b'0'..=b'7' => decoded.push(decode_octal_escape(escaped, &mut bytes)),
+            b'a' => decoded.push(0x07),
+            b'b' => decoded.push(0x08),
+            b'f' => decoded.push(0x0c),
+            b'n' => decoded.push(b'\n'),
+            b'r' => decoded.push(b'\r'),
+            b't' => decoded.push(b'\t'),
+            b'v' => decoded.push(0x0b),
+            b'\\' | b'"' => decoded.push(escaped),
+            other => {
+                decoded.push(b'\\');
+                decoded.push(other);
             }
-            None => out.push('\\'),
         }
     }
-    out
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn decode_octal_escape(first: u8, bytes: &mut std::iter::Peekable<std::str::Bytes<'_>>) -> u8 {
+    let mut value = u16::from(first - b'0');
+    for _ in 0..2 {
+        let Some(next @ b'0'..=b'7') = bytes.peek().copied() else {
+            break;
+        };
+        bytes.next();
+        value = value * 8 + u16::from(next - b'0');
+    }
+    value as u8
 }
 
 #[cfg(test)]
@@ -537,6 +563,18 @@ index 5555555..6666666 100644
         );
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "sp ace.txt");
+    }
+
+    #[test]
+    fn quoted_octal_paths_decode_utf8_bytes() {
+        let files = parse_diff(
+            "diff --git \"a/caf\\303\\251.txt\" \"b/caf\\303\\251.txt\"\n\
+             new file mode 100644\n--- /dev/null\n+++ \"b/caf\\303\\251.txt\"\n\
+             @@ -0,0 +1 @@\n+x\n",
+        );
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "café.txt");
     }
 
     #[test]

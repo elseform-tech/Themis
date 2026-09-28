@@ -3,36 +3,21 @@
 //! temp git repos and a scripted mock LLM (wiremock); no network beyond
 //! localhost. Git-dependent tests skip gracefully without the binary.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+
+mod common;
+use common::{git, git_available, init_repo, mount_scripted_llm, use_mock_llm};
 
 use serde_json::{json, Value};
 use themis_desktop::sink::{ChannelSink, TestEvent};
 use themis_desktop::state::AppState;
 use themis_desktop::types::{ApprovalDecision, ProviderKind, ThreadEvent};
 use tokio::sync::mpsc::UnboundedReceiver;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 /// Overall deadline per wait (fail fast instead of hanging on dialogs).
 const RUN_TIMEOUT: Duration = Duration::from_secs(60);
-
-fn git_available() -> bool {
-    std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .is_ok_and(|out| out.status.success())
-}
-
-fn git(repo: &Path, args: &[&str]) {
-    let status = std::process::Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .status()
-        .expect("run git");
-    assert!(status.success(), "git {args:?} failed");
-}
 
 fn git_stdout(repo: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
@@ -44,20 +29,6 @@ fn git_stdout(repo: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
-/// Creates a repo with one commit and returns its root. Caller keeps `_temp` alive.
-fn init_repo() -> (tempfile::TempDir, PathBuf) {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let root = temp.path().join("repo");
-    std::fs::create_dir(&root).expect("mkdir");
-    git(&root, &["init", "-q"]);
-    git(&root, &["config", "user.email", "themis@test"]);
-    git(&root, &["config", "user.name", "themis"]);
-    std::fs::write(root.join("README.md"), "# repo\n").expect("write");
-    git(&root, &["add", "."]);
-    git(&root, &["commit", "-qm", "init"]);
-    (temp, root)
-}
-
 /// App state with an explicit worktrees root under `app`. Caller keeps `_app` alive.
 fn test_state() -> (AppState, tempfile::TempDir) {
     let app = tempfile::tempdir().expect("tempdir");
@@ -66,63 +37,6 @@ fn test_state() -> (AppState, tempfile::TempDir) {
         app.path().join("worktrees"),
     );
     (state, app)
-}
-
-fn tool_call_body() -> Value {
-    json!({
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "content": null,
-                "tool_calls": [{
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {
-                        "name": "write_file",
-                        "arguments": "{\"file_path\": \"hello.txt\", \"content\": \"hi from agent\\n\", \"append\": false}"
-                    }
-                }]
-            }
-        }]
-    })
-}
-
-fn final_text_body() -> Value {
-    json!({
-        "choices": [{
-            "message": {"role": "assistant", "content": "done writing the file"},
-            "finish_reason": "stop"
-        }]
-    })
-}
-
-async fn mount_scripted_llm() -> MockServer {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(|request: &Request| {
-            let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
-            let has_tool_result = body["messages"]
-                .as_array()
-                .is_some_and(|messages| messages.iter().any(|message| message["role"] == "tool"));
-            let payload = if has_tool_result {
-                final_text_body()
-            } else {
-                tool_call_body()
-            };
-            ResponseTemplate::new(200).set_body_json(payload)
-        })
-        .mount(&server)
-        .await;
-    server
-}
-
-async fn use_mock_llm(state: &AppState, server: &MockServer) {
-    state
-        .set_secret("custom".to_owned(), "test-key".to_owned())
-        .await
-        .expect("store key");
-    state.set_custom_base_url_override(Some(server.uri()));
 }
 
 /// Waits for the run's approval dialog, dropping earlier thread events.

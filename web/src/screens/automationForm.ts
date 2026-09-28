@@ -6,6 +6,7 @@ import type {
   AutomationInput,
   ProviderKind,
 } from "../lib/types";
+import { failureMessage } from "../lib/errors";
 import { newId, type AppAction } from "../state/reducer";
 
 export interface AutomationFormState {
@@ -87,16 +88,6 @@ export function toAutomationInput(
     task: form.task,
     enabled: form.enabled,
   };
-}
-
-function failureMessage(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
 }
 
 function pushToast(
