@@ -18,6 +18,8 @@ python3 -m pip install -r requirements-dev.txt
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+mkdir -p coverage
+cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info -- --skip entered_keys_survive_new_store_and_can_be_forgotten
 npm --prefix web run lint
 npm --prefix web test
 npm --prefix web run build
@@ -34,15 +36,15 @@ Run checks and start local apps with these root-level commands.
 
 Use `rustfmt`, Rust `snake_case`, and `PascalCase` types/components. Frontend uses two spaces and `camelCase`. Required linters are Clippy, ESLint (React Hooks), and Ruff. Rust tests use the built-in harness, web uses Vitest, and dashboard uses `unittest`; no coverage threshold is configured. Keep `*.test.tsx` beside frontend modules and Rust integration tests in crate `tests/`. Add focused regression cases.
 
-Use `@Browser` for local web journeys and `@Computer` for packaged Tauri/OS journeys when available. Record repeatable scenarios and latest evidence in `quality_dashboard/manual_acceptance.json` with scope, preconditions, steps, expected results, environment, revision, and latest outcome. Include registered Browser/native E2E definitions in the overall test inventory and completion report, while keeping automated run results and manual outcomes clearly labeled by runner. After each manual run, update that scenario's latest evidence; never count an unrun or blocked case as passed. Report Browser and native E2E outcomes alongside the automated unit, integration, and E2E suites.
+Use `@Browser` for local web journeys and `@Computer` for packaged Tauri/OS journeys when available. Before running either kind of manual test, register or update its scenario in `quality_dashboard/manual_acceptance.json`: ID, scope, runner, target, covered capabilities, planned environment, preconditions, steps, and expected results. Set new or materially revised scenarios to `not-run` before execution. After the run, record its actual outcome, date, revision, environment, and evidence notes. Never carry a previous pass over to a changed journey or count an unrun or blocked case as passed. Include registered Browser/native E2E definitions in the overall test inventory and completion report, while keeping automated run results and manual outcomes clearly labeled by runner.
 
 Before considering any task done, run fresh, relevant verification and read the complete output. For UI changes, verify the affected journey in `@Browser` or `@Computer` when available; for system-prompt changes, verify the constructed system message and the LLM request path. Report exact commands and results, and label any remaining evidence as unverified.
 
 ## Quality Dashboard
 
-Maintain `quality_dashboard/` as the always-on product-health companion. Keep it easy to launch and aligned with source and tests. Product metrics cover `crates/` and `web/src/`, excluding dashboard/tooling. Sort all analyzed app files by LOC both ascending and descending. Inline Rust `#[cfg(test)]` code stays in source LOC/AST; label that scope. Separate dashboard self-tests. Use `rust-code-analysis-cli` 0.0.25; show unavailable analysis instead of estimates. Preserve metric definitions and the 90+ maintainability target. Test counts are not coverage.
+Maintain `quality_dashboard/` as the always-on product-health companion. Keep it easy to launch and aligned with source and tests. Product metrics cover `crates/` and `web/src/`, excluding dashboard/tooling. Sort all analyzed app files by LOC both ascending and descending. Inline Rust `#[cfg(test)]` code stays in source LOC/AST; label that scope. Separate dashboard self-tests. Use `rust-code-analysis-cli` 0.0.25; show unavailable analysis instead of estimates. Preserve metric definitions without imposing a fixed maintainability threshold. Generate Rust line coverage with open-source `cargo-llvm-cov`; test counts are not coverage.
 
-Before marking work done, run dashboard metric tests and relevant checks, refresh it, and verify its registers. Run applicable `@Browser` and `@Computer` E2E scenarios when available, then update `quality_dashboard/manual_acceptance.json` with the outcomes and evidence. Include those scenarios in the overall test inventory and final test summary, but report their manual results separately from automated run totals. Record Browser/Computer outcomes only after running the scenario. Report failures, skips, missing coverage, and estimates accurately.
+Before marking work done, run dashboard metric tests and relevant checks, refresh it, and inspect code health and complexity for the touched modules and overall product. Review cyclomatic and cognitive complexity, maintainability, and available line coverage; make only reasonable changes that improve clarity or address a concrete risk, and call out regressions or missing metrics rather than inventing values. Do not trim working code merely to raise a score. Run applicable pre-registered `@Browser` and `@Computer` E2E scenarios when available, then update `quality_dashboard/manual_acceptance.json` with the outcomes and evidence. Include those scenarios in the overall test inventory and final test summary, but report their manual results separately from automated run totals. Report failures, skips, missing coverage, and estimates accurately.
 
 ## Commits, Pull Requests, and Security
 

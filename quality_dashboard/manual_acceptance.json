@@ -26,7 +26,11 @@
       "revision": "74fdb5f (working tree)",
       "environment": "Codex in-app Browser; local dashboard on 127.0.0.1:4178",
       "notes": "Verified live Code health after the latest refactor. LOC ascending and descending are both monotonic across all 78 analyzed app files. Ascending: web/src/vite-env.d.ts (1), crates/desktop/build.rs (3), crates/desktop/src/main.rs (5); descending: crates/desktop/src/state.rs (2,088), crates/core/src/providers.rs (2,022), crates/core/src/tools.rs (1,606). Dashboard reports 2.03 cyclomatic average, 1.45 cognitive average, and 71.8 mean function maintainability index. AST scope is crates/ and web/src/; dashboard tooling is excluded."
-    }
+    },
+    "covers": [
+      "code-health"
+    ],
+    "plannedEnvironment": "Local dashboard with rust-code-analysis-cli 0.0.25."
   },
   {
     "id": "BROWSER-APP-001",
@@ -54,7 +58,12 @@
       "revision": "74fdb5f (working tree)",
       "environment": "Codex in-app Browser; local Vite on 127.0.0.1:5173",
       "notes": "Opened Skills, observed the empty state, opened New skill, verified Name, Description, Instructions, Allowed tools, and Scripts fields, then canceled and confirmed the empty state returned without saving. Browser-only execution showed expected missing Tauri bridge warnings; native persistence was outside this scenario."
-    }
+    },
+    "covers": [
+      "navigation",
+      "skills"
+    ],
+    "plannedEnvironment": "Local Vite browser UI without a Tauri backend."
   },
   {
     "id": "BROWSER-APP-002",
@@ -80,7 +89,12 @@
       "revision": "74fdb5f (working tree)",
       "environment": "Codex in-app Browser; local Vite on 127.0.0.1:5173",
       "notes": "Opened the local app in browser-only mode. The Threads welcome state and Create project action were present as expected. Accessibility output also showed the expected missing-Tauri-bridge errors for transformCallback and invoke; project creation was not attempted."
-    }
+    },
+    "covers": [
+      "navigation",
+      "projects"
+    ],
+    "plannedEnvironment": "Local Vite browser UI without a Tauri backend."
   },
   {
     "id": "BROWSER-DASH-002",
@@ -108,7 +122,11 @@
       "revision": "74fdb5f (working tree)",
       "environment": "Codex in-app Browser; local dashboard on 127.0.0.1:4178",
       "notes": "Inspected latest all-tests run 17b98226c285 (Sep 27, 09:55 PM). Product totals: 372 passed, 1 failed, 2 skipped; dashboard tooling: 14 self-tests passed separately. Register reports 365 product definitions across 45 suites and 28 end-to-end declarations; counts are not coverage. Rust: 211 passed, 1 failed, 2 skipped; frontend: 161 passed; dashboard: 14 passed. The only failure is crates/desktop/src/secrets.rs::secrets::keychain_tests::entered_keys_survive_new_store_and_can_be_forgotten, blocked by host Keychain access. E2E runtime tests: 5 passed/1 skipped; skilled E2E: 2 passed; desktop automation: 6 passed; bridge: 7 passed; worktree: 7 passed/1 skipped. transcript_store integration: 4 passed. Manual Browser/Computer checks remain separate from automated totals."
-    }
+    },
+    "covers": [
+      "test-register"
+    ],
+    "plannedEnvironment": "Local dashboard with a recorded failed Rust run."
   },
   {
     "id": "BROWSER-DASH-003",
@@ -132,11 +150,16 @@
     ],
     "latest": {
       "status": "passed",
-      "runAt": "2026-09-27",
-      "revision": "74fdb5f (working tree)",
-      "environment": "Codex in-app Browser; fresh local dashboard on 127.0.0.1:4178",
-      "notes": "Refreshed the local dashboard on 127.0.0.1:4178. Overview shows 391 overall definitions (373 product, 18 tooling), including 7 registered product Browser/native E2E scenarios. The Test register reports 35 product E2E definitions (28 automated, 7 Browser/native) and per-runner outcomes: Product Browser 2 passed; Product Computer 1 passed and 4 not run; Tooling Browser 3 passed. The action is labeled Run all automated tests, and the register explains manual journeys are not executed by automated test buttons. The overview's latest recorded test card remains an earlier Sep 27 11:01 PM run, separate from the fresh CLI results reported for this task."
-    }
+      "runAt": "2026-09-28",
+      "revision": "108fed6 (working tree)",
+      "environment": "Codex in-app Browser; local dashboard on 127.0.0.1:4178",
+      "notes": "Overview showed 398 overall definitions: 380 product and 18 tooling, including 14 product Browser/native E2E scenarios. Test register showed 42 product E2E definitions (28 automated, 14 manual), 18 tooling checks (14 automated, 4 manual), and per-runner outcomes. Automated buttons and latest automated run card remained separately labeled; the latest run card still referred to Sep 27 and was not treated as a fresh test run."
+    },
+    "covers": [
+      "test-register",
+      "manual-e2e"
+    ],
+    "plannedEnvironment": "Local dashboard with registered manual journeys."
   },
   {
     "id": "COMPUTER-APP-001",
@@ -159,7 +182,17 @@
     ],
     "latest": {
       "status": "not-run"
-    }
+    },
+    "covers": [
+      "navigation",
+      "keyboard",
+      "accessibility",
+      "settings",
+      "skills",
+      "automations",
+      "review"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with an isolated synthetic project."
   },
   {
     "id": "COMPUTER-APP-002",
@@ -183,7 +216,14 @@
     ],
     "latest": {
       "status": "not-run"
-    }
+    },
+    "covers": [
+      "projects",
+      "threads",
+      "conversation",
+      "persistence"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with a disposable project and deterministic local provider."
   },
   {
     "id": "COMPUTER-APP-003",
@@ -207,7 +247,13 @@
     ],
     "latest": {
       "status": "not-run"
-    }
+    },
+    "covers": [
+      "approvals",
+      "review",
+      "tool-calls"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with safe scripted tool requests."
   },
   {
     "id": "COMPUTER-APP-004",
@@ -231,7 +277,12 @@
     ],
     "latest": {
       "status": "not-run"
-    }
+    },
+    "covers": [
+      "secrets",
+      "settings"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with a synthetic Keychain item."
   },
   {
     "id": "COMPUTER-APP-005",
@@ -258,6 +309,260 @@
       "revision": "74fdb5f (working tree)",
       "environment": "Codex @Computer; Themis dev app at localhost:1420",
       "notes": "Native @Computer first reproduced the issue with a general-knowledge game-plan prompt that prohibited tools: no Activities row appeared, but bold section-label paragraphs shimmered while streaming. The cause was the stale Vite transformed CSS still serving the old .themis-thread-msg--live .themis-response > p shimmer rule after the source rule had been removed. Restarted Vite on port 1420; its served stylesheet now omits that selector and retains the separate action-waiting selector. A fresh no-tool plan produced no Activities row, and completed headings rendered static. During the post-restart run, the capture showed Thinking before answer tokens, then the full answer after generation had completed, so the brief in-progress heading state was not visually captured; marked blocked pending that specific capture."
+    },
+    "covers": [
+      "conversation",
+      "streaming"
+    ],
+    "plannedEnvironment": "Current Tauri app with a text-only local response fixture."
+  },
+  {
+    "id": "BROWSER-DASH-004",
+    "scope": "tooling",
+    "runner": "@Browser",
+    "title": "Show measured Rust coverage and code-health hotspots",
+    "target": "Local Repository Quality dashboard",
+    "covers": [
+      "coverage",
+      "code-health"
+    ],
+    "plannedEnvironment": "Local dashboard with a current cargo-llvm-cov LCOV file and rust-code-analysis-cli 0.0.25.",
+    "preconditions": [
+      "Generate coverage/lcov.info from the current revision.",
+      "Start the dashboard and confirm the AST analyzer is available."
+    ],
+    "steps": [
+      "Open Overview and inspect the Rust line-coverage percentage, hit/found counts, and LCOV path.",
+      "Open Code health and inspect overall cyclomatic, cognitive, and maintainability metrics.",
+      "Find a representative product source module in the register and review its maintainability alongside the overall metrics."
+    ],
+    "expected": [
+      "Coverage is labeled Rust and matches the generated LCOV totals.",
+      "Code health uses AST metrics and reports every analyzed app file without tooling files.",
+      "Metrics remain visible without a fixed score threshold; coverage and complexity are not inferred from test counts."
+    ],
+    "latest": {
+      "status": "passed",
+      "runAt": "2026-09-28",
+      "revision": "108fed6 (working tree)",
+      "environment": "Codex in-app Browser; local dashboard on 127.0.0.1:4178; cargo-llvm-cov 0.9.1; rust-code-analysis-cli 0.0.25",
+      "notes": "Opened Overview and Code health after generating coverage/lcov.info. Rust line coverage was 85.4% (9,240/10,816 lines), labeled Rust with its LCOV path. AST averages were 2.03 cyclomatic and 1.45 cognitive across 78 app files; mean function maintainability index was 71.8/100 as a review signal. Reviewed web/src/screens/actions.ts: 190 LOC, cyclomatic 2.50, cognitive 3.27, MI 50.1. The register excludes dashboard tooling and standalone test files; no fixed score threshold appeared."
+    }
+  },
+  {
+    "id": "COMPUTER-APP-006",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Keep multi-turn intent through context checkpoint and restart",
+    "target": "Packaged app conversation and persisted transcript",
+    "covers": [
+      "conversation",
+      "persistence",
+      "compaction",
+      "threads"
+    ],
+    "plannedEnvironment": "Current packaged macOS app, disposable project, deterministic local provider that records requests.",
+    "preconditions": [
+      "Use synthetic prompts and no external provider credentials.",
+      "Set a small context limit so a checkpoint can be observed."
+    ],
+    "steps": [
+      "Send a two-turn task with a fact from the first turn needed in the second.",
+      "Continue until context checkpoint or compaction occurs and inspect the visible handoff.",
+      "Restart the app, reopen the same thread, and send a follow-up requiring the original fact."
+    ],
+    "expected": [
+      "The follow-up request retains the earlier user intent and correct thread identity.",
+      "The full transcript remains visible after restart while the model request uses the checkpointed context.",
+      "Progress and handoff text do not claim completion before the task is complete."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-007",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Review a safe file edit and restore the shared checkout",
+    "target": "Packaged app tool activity, diff, and review queue",
+    "covers": [
+      "tool-calls",
+      "approvals",
+      "diff",
+      "review"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with a disposable Git fixture and scripted local tool request.",
+    "preconditions": [
+      "Fixture contains one committed file and one safe proposed edit.",
+      "Do not use a production repository."
+    ],
+    "steps": [
+      "Approve the declared edit and watch its tool activity complete.",
+      "Open the diff and inspect the changed file, hunk, and path.",
+      "Discard the fixture edit through the app and inspect the review queue and checkout."
+    ],
+    "expected": [
+      "The approved action edits only the declared fixture file and appears once in activity.",
+      "Diff content and path match the actual checkout.",
+      "Discard restores the fixture baseline without deleting unrelated files or changing another thread."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-008",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Apply a skill's instructions and tool restrictions",
+    "target": "Packaged app Skills and thread run",
+    "covers": [
+      "skills",
+      "tool-calls",
+      "conversation"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with a disposable skill and deterministic local provider.",
+    "preconditions": [
+      "Create a synthetic skill granting only read_file.",
+      "Use an isolated fixture project."
+    ],
+    "steps": [
+      "Create the skill and attach it to a thread.",
+      "Send a prompt that makes the provider request both a permitted read and a forbidden write.",
+      "Inspect the transcript, activity, and fixture files, then remove the synthetic skill."
+    ],
+    "expected": [
+      "The model request contains the skill instructions and only allowed tool schema.",
+      "The permitted read can run; no forbidden write changes the fixture.",
+      "Removing the skill clears its thread reference without affecting past transcript history."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-009",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Run an automation and review its resulting thread",
+    "target": "Packaged app Automations, Threads, and Review queue",
+    "covers": [
+      "automations",
+      "threads",
+      "conversation",
+      "review"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with an isolated project and deterministic local provider.",
+    "preconditions": [
+      "Create a disabled synthetic automation to avoid background provider traffic.",
+      "Use Run now with a fixed response fixture."
+    ],
+    "steps": [
+      "Create the automation and inspect its schedule and enabled state.",
+      "Run it now, open its new thread, and inspect the response.",
+      "Open the generated review item, dismiss it, and verify the automation's run count."
+    ],
+    "expected": [
+      "Run now works while disabled without changing the schedule unexpectedly.",
+      "Exactly one thread, response, and review item correspond to the run.",
+      "The review status and automation counters persist after reopening the view."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-010",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Switch provider settings and inspect safe diagnostics",
+    "target": "Packaged app Settings, provider picker, and Diagnostics",
+    "covers": [
+      "providers",
+      "settings",
+      "diagnostics",
+      "conversation"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with synthetic local provider endpoints and no real credentials.",
+    "preconditions": [
+      "Use disposable provider settings and mock HTTP endpoints.",
+      "Do not call a live provider."
+    ],
+    "steps": [
+      "Choose a provider and model, save settings, and send a short fixture prompt.",
+      "Switch to a second mock provider and repeat in a new thread.",
+      "Open Diagnostics and inspect provider errors and environment details."
+    ],
+    "expected": [
+      "Each model request reaches only its selected mock endpoint with the selected model.",
+      "A busy thread cannot silently switch provider.",
+      "Diagnostics reports errors and configuration status without revealing synthetic or real secret values."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-011",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Stop a run and recover from a provider failure",
+    "target": "Packaged app conversation controls and diagnostics",
+    "covers": [
+      "conversation",
+      "recovery",
+      "diagnostics",
+      "streaming"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with deterministic slow and failing local provider fixtures.",
+    "preconditions": [
+      "Use an isolated thread and synthetic responses.",
+      "Ensure the fixture makes cancellation observable."
+    ],
+    "steps": [
+      "Start the slow response, inspect partial progress, and stop it.",
+      "Send a request that returns a controlled provider error and inspect the message and diagnostics.",
+      "Retry with a successful fixture and inspect the final transcript after reopening the thread."
+    ],
+    "expected": [
+      "Stop cancels the active run and prevents late tool actions.",
+      "Failure is visible once without falsely marking the task complete.",
+      "A later successful request remains in the same thread with the earlier stop and failure visible."
+    ],
+    "latest": {
+      "status": "not-run"
+    }
+  },
+  {
+    "id": "COMPUTER-APP-012",
+    "scope": "product",
+    "runner": "@Computer",
+    "title": "Keep projects, threads, and file access isolated",
+    "target": "Packaged app project and thread workspaces",
+    "covers": [
+      "projects",
+      "threads",
+      "tool-calls",
+      "persistence"
+    ],
+    "plannedEnvironment": "Current packaged macOS app with two disposable Git projects and scripted local tool calls.",
+    "preconditions": [
+      "Seed each project with a different committed marker file.",
+      "Use no production paths."
+    ],
+    "steps": [
+      "Open both projects and create two threads in each.",
+      "Run a read in one project and attempt an out-of-root read or write.",
+      "Switch threads and projects, then restart and inspect selection and files."
+    ],
+    "expected": [
+      "Each thread retains its own transcript and project association.",
+      "Out-of-root access is denied and neither project is modified by it.",
+      "Project selection and files remain correct after restart."
+    ],
+    "latest": {
+      "status": "not-run"
     }
   }
 ]
