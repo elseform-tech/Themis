@@ -144,6 +144,54 @@ async fn hard_cap_returns_natural_handoff_without_failing() {
 }
 
 #[tokio::test]
+async fn empty_handoff_does_not_claim_the_task_was_completed() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body(
+                "call_1",
+                "write_file",
+                json!({"file_path":"progress.txt","content":"step 1\n","append":true}),
+            ),
+            common::final_text_body("The first step was written."),
+            common::final_text_body(""),
+        ],
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let tools = boxed_tools(dir.path(), Arc::clone(&approvals)).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(1024);
+    let answer = run_task_with_policy(
+        llm,
+        tools,
+        "Write ordered steps".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            segment_turns: 1,
+            total_turns: 1,
+            context_token_budget: 2000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(answer, "I couldn't produce a final summary. Please review the recorded changes and choose the next step.");
+}
+
+#[tokio::test]
 async fn mock_multi_turn_edit_writes_file_and_finishes() {
     let server = MockServer::start().await;
     let tmp = tempfile::tempdir().unwrap();
