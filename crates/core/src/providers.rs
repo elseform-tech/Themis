@@ -50,7 +50,7 @@ use wire::*;
 use std::fmt;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -227,17 +227,12 @@ impl ProviderConfig {
     }
 }
 
-/// Shared HTTP client (120s default timeout, matching the SDK default).
+/// HTTP client for one provider (120s default timeout, matching the SDK default).
 fn http_client() -> Client {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    CLIENT
-        .get_or_init(|| {
-            Client::builder()
-                .timeout(Duration::from_secs(120))
-                .build()
-                .unwrap_or_else(|_| Client::new())
-        })
-        .clone()
+    Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| Client::new())
 }
 
 /// Strips trailing slashes so endpoint paths can be joined with `/`.
