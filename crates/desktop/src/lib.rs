@@ -6,6 +6,7 @@
 //! seam so headless tests can drive the real code paths.
 
 pub mod approvals;
+pub mod cli;
 pub mod commands;
 pub mod diff;
 pub mod doctor;

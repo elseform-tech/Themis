@@ -46,10 +46,9 @@ impl AppState {
 
     /// Stores the API key for `provider`.
     pub async fn set_secret(&self, provider: String, value: String) -> Result<(), String> {
+        let value = zeroize::Zeroizing::new(value);
         let key = secret_key(&provider)?;
-        if value.trim().is_empty() {
-            return Err("secret value must not be empty".to_owned());
-        }
+        crate::secrets::validate_provider_key(&value)?;
         self.inner.secrets.set(key, &value)
     }
 
@@ -67,7 +66,7 @@ impl AppState {
             .get(name)
             .filter(|key| !key.trim().is_empty())
             .ok_or_else(|| {
-                format!("no API key stored for provider '{name}': add one in Settings, then retry")
+                format!("no API key stored for provider '{name}': run themis providers or add one in Settings, then retry")
             })
     }
 }

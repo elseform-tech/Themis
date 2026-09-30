@@ -54,7 +54,7 @@ cargo run -p themis-desktop --bin themis -- server stop
 Pass `--data-dir DIR` before the command to use an isolated server and data
 store. `call METHOD JSON_ARGS` exposes backend commands with the same camelCase
 arguments as the desktop bridge; it rejects `set_secret` so real keys are never
-passed as command-line arguments. Enter keys in desktop Settings.
+passed as command-line arguments. Enter keys with `themis providers` or desktop Settings.
 
 `thread send` streams the run and prompts for tool approvals in a terminal.
 `--json` emits newline-delimited run events; `--detach` returns a run handle.
@@ -82,3 +82,23 @@ With a running server it uses the live SQLite connection. `--deep` selects the f
 SQLite integrity check. Failures exit nonzero; missing unused stores are warnings.
 Reports contain counts and status, not transcript contents or keys. Readability
 checks do not prove successful writes or crash durability.
+
+`themis providers` offers OpenCode Go and reads its API key with terminal echo
+disabled. It saves to the same OS credential store as Settings, including when
+the desktop/server is closed. Redirected input is rejected; keys are never accepted
+as command arguments. Ctrl-C cancels key entry and restores terminal echo.
+`OPENCODE_KEY` remains an alternative in the **server launch** environment;
+changing the shell environment does not change an already-running server.
+
+The macOS app bundle also hosts the CLI. After moving Themis into Applications,
+install the optional command without a second download:
+
+```sh
+/Applications/Themis.app/Contents/MacOS/themis-desktop --themis-cli cli install
+# If ~/.local/bin is not already on PATH, add it in your shell configuration.
+```
+
+The installer creates a `themis` symlink in `~/.local/bin` (or an explicit absolute
+directory), refuses to overwrite existing commands, and leaves shell configuration
+unchanged. Moving or deleting the app breaks that link. On Windows, build the
+console CLI with `cargo install --path crates/desktop --bin themis`.

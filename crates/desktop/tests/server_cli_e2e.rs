@@ -305,3 +305,212 @@ fn doctor_reports_corruption_without_initializing_or_repairing_stores() {
     assert!(!dir.path().join("sessions.sqlite3").exists());
     assert!(!dir.path().join("server.lock").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn packaged_executable_installs_cli_and_starts_shared_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let destination = dir.path().join("bin");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis-desktop"))
+        .args(["--themis-cli", "cli", "install"])
+        .arg(&destination)
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let link = destination.join("themis");
+    let invoke = |words: &[&str]| {
+        std::process::Command::new(&link)
+            .arg("--data-dir")
+            .arg(dir.path())
+            .args(words)
+            .env_remove("OPENCODE_KEY")
+            .output()
+            .unwrap()
+    };
+    assert!(invoke(&["--help"]).status.success());
+    assert!(invoke(&["cli", "install", destination.to_str().unwrap()])
+        .status
+        .success());
+    assert!(!dir.path().join("sessions.sqlite3").exists());
+    let created = invoke(&["thread", "create", project.path().to_str().unwrap()]);
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let thread: Value = serde_json::from_slice(&created.stdout).unwrap();
+    assert!(thread["id"].is_string());
+    assert!(invoke(&["server", "stop"]).status.success());
+    let conflict = dir.path().join("conflict");
+    std::fs::create_dir(&conflict).unwrap();
+    std::fs::write(conflict.join("themis"), "preserve existing command").unwrap();
+    assert!(!invoke(&["cli", "install", conflict.to_str().unwrap()])
+        .status
+        .success());
+    assert_eq!(
+        std::fs::read_to_string(conflict.join("themis")).unwrap(),
+        "preserve existing command"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn terminal_send_approves_tool_and_unattended_send_denies_it() {
+    let (_project_dir, project) = common::init_repo();
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    let provider = common::mount_scripted_llm().await;
+    common::use_mock_llm(&state, &provider).await;
+    let server = Server::bind(state, dir.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let thread = cli(
+        dir.path(),
+        &[
+            "thread",
+            "create",
+            project.as_path().to_str().unwrap(),
+            "test-model",
+        ],
+    );
+    let id = thread["id"].as_str().unwrap();
+    let denied = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(dir.path())
+        .args(["thread", "send", id, "write hello.txt"])
+        .stdin(std::process::Stdio::null())
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        denied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("Tool approval denied"));
+    assert!(!project.as_path().join("hello.txt").exists());
+    let script = r#"
+import os, pty, select, sys, time
+binary, directory, thread = sys.argv[1:]
+pid, fd = pty.fork()
+if pid == 0:
+    env = dict(os.environ)
+    env.pop('OPENCODE_KEY', None)
+    os.execve(binary, [binary, '--data-dir', directory, 'thread', 'send', thread, 'write hello.txt'], env)
+output = b''
+deadline = time.monotonic() + 15
+approved = False
+try:
+    while True:
+        assert time.monotonic() < deadline, 'terminal send timed out'
+        exited, status = os.waitpid(pid, os.WNOHANG)
+        if exited: break
+        if select.select([fd], [], [], .1)[0]:
+            try: output += os.read(fd, 8192)
+            except OSError: pass
+        if b'Allow once?' in output and not approved:
+            os.write(fd, b'y\n')
+            approved = True
+    assert approved and os.waitstatus_to_exitcode(status) == 0, output
+finally:
+    try: os.kill(pid, 9)
+    except ProcessLookupError: pass
+    try: os.waitpid(pid, 0)
+    except ChildProcessError: pass
+    os.close(fd)
+"#;
+    let output = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(script)
+        .arg(env!("CARGO_BIN_EXE_themis"))
+        .arg(dir.path())
+        .arg(id)
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.as_path().join("hello.txt")).unwrap(),
+        "hi from agent\n"
+    );
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_preserves_incomplete_handoff_and_exits_nonzero() {
+    let project = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    state
+        .update_settings(themis_desktop::types::SettingsPatch {
+            max_total_turns: Some(1),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let provider = MockServer::start().await;
+    let calls = AtomicUsize::new(0);
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(move |_: &wiremock::Request| {
+            ResponseTemplate::new(200).set_body_json(if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                common::tool_call_body()
+            } else {
+                common::final_text_body()
+            })
+        })
+        .mount(&provider)
+        .await;
+    common::use_mock_llm(&state, &provider).await;
+    let server = Server::bind(state, dir.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let thread = cli(
+        dir.path(),
+        &[
+            "thread",
+            "create",
+            project.path().to_str().unwrap(),
+            "test-model",
+        ],
+    );
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(dir.path())
+        .args([
+            "thread",
+            "send",
+            thread["id"].as_str().unwrap(),
+            "write hello.txt",
+        ])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let history = cli(
+        dir.path(),
+        &["thread", "history", thread["id"].as_str().unwrap()],
+    );
+    let handoff = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["envelope"]["event"]["kind"] == "incomplete")
+        .expect("recorded incomplete handoff");
+    let result = handoff["envelope"]["event"]["result"].as_str().unwrap();
+    assert!(!result.is_empty());
+    assert!(String::from_utf8_lossy(&output.stdout).contains(result));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unfinished work"));
+    task.abort();
+}
