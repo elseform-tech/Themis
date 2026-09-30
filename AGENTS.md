@@ -48,4 +48,8 @@ Before marking work done, run dashboard metric tests and relevant checks, refres
 
 ## Commits, Pull Requests, and Security
 
+Before making changes for a new task, create a dedicated `codex/<task-name>` branch from up-to-date `main`. When continuing an existing task, use its branch. Check the working tree first and preserve unrelated local changes; never implement directly on `main`.
+
+Commit regularly as each focused task or logical subtask is completed and relevant checks pass. Keep commits small and reviewable, include the corresponding tests and documentation, inspect the staged diff before committing, and stage only changes belonging to that task. Do not defer all work to one large final commit.
+
 Use short imperative commit subjects such as `feat:` and `fix:`. PRs summarize changes, list checks, include relevant UI screenshots, and link issues when available. Never commit credentials or test with real ones. Secrets use macOS Keychain; OpenCode Go may read `OPENCODE_KEY` from the app environment.
