@@ -150,52 +150,16 @@ def test_inventory() -> dict:
         target_counts[kind] += len(names)
     total = sum(counts.values())
     tooling_total = sum(tooling_counts.values())
-    manual_acceptance = json.loads(
-        (ROOT / "quality_dashboard/manual_acceptance.json").read_text(encoding="utf-8")
-    )
-    manual_e2e = manual_e2e_summary(manual_acceptance)
-    overall_total = total + manual_e2e["product"]["total"]
-    overall_discovered_total = total + tooling_total + manual_e2e["product"]["total"] + manual_e2e["tooling"]["total"]
     return {
         "counts": counts,
         "total": total,
-        "overallTotal": overall_total,
+        "overallTotal": total,
         "toolingCounts": tooling_counts,
         "toolingTotal": tooling_total,
         "discoveredTotal": total + tooling_total,
-        "overallDiscoveredTotal": overall_discovered_total,
+        "overallDiscoveredTotal": total + tooling_total,
         "suites": suites,
-        "manualAcceptance": manual_acceptance,
-        "manualE2e": manual_e2e,
     }
-
-
-def manual_e2e_summary(scenarios: list[dict]) -> dict:
-    summary = {
-        scope: {
-            "total": 0,
-            "outcomes": {"passed": 0, "failed": 0, "blocked": 0, "notRun": 0},
-            "byRunner": {"@Browser": 0, "@Computer": 0},
-            "outcomesByRunner": {
-                runner: {"passed": 0, "failed": 0, "blocked": 0, "notRun": 0}
-                for runner in ("@Browser", "@Computer")
-            },
-        }
-        for scope in ("product", "tooling")
-    }
-    outcome_names = {"passed": "passed", "failed": "failed", "blocked": "blocked", "not-run": "notRun", "not_run": "notRun"}
-    for scenario in scenarios:
-        scope = scenario.get("scope")
-        runner = scenario.get("runner")
-        if scope not in summary or runner not in {"@Browser", "@Computer"}:
-            continue
-        outcome = outcome_names.get((scenario.get("latest") or {}).get("status"), "notRun")
-        result = summary[scope]
-        result["total"] += 1
-        result["outcomes"][outcome] += 1
-        result["byRunner"][runner] += 1
-        result["outcomesByRunner"][runner][outcome] += 1
-    return summary
 
 
 def _complexity_source_files() -> list[Path]:
