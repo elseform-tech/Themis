@@ -210,10 +210,10 @@ impl std::fmt::Debug for AppState {
 
 impl AppState {
     /// Creates state with `settings_path` and `secrets` (production uses the
-    /// app data dir plus session credentials). The thread registry, the skill /
+    /// app data dir plus the OS credential store). The thread registry, the skill /
     /// automation / review stores, and the worktrees root live beside the
     /// settings file; the registry is reconciled synchronously during
-    /// construction, and the automation scheduler is spawned on the Tauri
+    /// construction, and the automation scheduler is spawned on the server
     /// async runtime (ticking every [`SCHEDULER_TICK_SECS`]; it stays quiet
     /// until [`AppState::set_scheduler_sink`] registers a sink).
     #[must_use]

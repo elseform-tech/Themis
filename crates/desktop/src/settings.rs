@@ -154,6 +154,12 @@ impl SettingsStore {
             if let Some(enabled) = patch.automations_enabled {
                 current.automations_enabled = enabled;
             }
+            if let Some(enabled) = patch.completion_sound {
+                current.completion_sound = enabled;
+            }
+            if let Some(enabled) = patch.completion_haptic {
+                current.completion_haptic = enabled;
+            }
             if let Some(onboarded) = patch.onboarded {
                 current.onboarded = onboarded;
             }
@@ -210,6 +216,8 @@ mod tests {
                 recent_roots: Some(vec!["/tmp/a".to_owned()]),
                 concurrency_limit: Some(5),
                 automations_enabled: Some(false),
+                completion_sound: Some(false),
+                completion_haptic: Some(true),
                 onboarded: Some(true),
                 ..SettingsPatch::default()
             })
@@ -222,6 +230,8 @@ mod tests {
         assert_eq!(updated.recent_roots, vec!["/tmp/a".to_owned()]);
         assert_eq!(updated.concurrency_limit, 5);
         assert!(!updated.automations_enabled);
+        assert!(!updated.completion_sound);
+        assert!(updated.completion_haptic);
         assert!(updated.onboarded);
         assert!(path.exists(), "settings file was written");
 
@@ -288,6 +298,8 @@ mod tests {
         assert!(settings.recent_roots.is_empty());
         assert_eq!(settings.concurrency_limit, 3);
         assert!(settings.automations_enabled);
+        assert!(settings.completion_sound);
+        assert!(!settings.completion_haptic);
         assert!(!settings.onboarded);
     }
 

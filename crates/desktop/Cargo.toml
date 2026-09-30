@@ -13,7 +13,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 themis-core = { path = "../core" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
@@ -24,5 +24,14 @@ tempfile = "3"
 wiremock = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.2"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSHapticFeedback", "NSImage"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData"] }
 security-framework = "3.7"
 security-framework-sys = "2.17"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["sync-secret-service"] }
