@@ -1,6 +1,7 @@
 //! API-key storage behind a trait.
 //!
-//! On macOS credentials live in Keychain; Go also accepts its launch environment.
+//! Production credentials live in the current user's OS credential store;
+//! Go also accepts its launch environment.
 //! Values never cross the bridge back to the frontend.
 
 use std::collections::HashMap;
@@ -9,10 +10,68 @@ use std::sync::Mutex;
 #[cfg(target_os = "macos")]
 pub type ProductionSecretStore = KeychainStore;
 #[cfg(not(target_os = "macos"))]
-pub type ProductionSecretStore = SessionStore;
+pub type ProductionSecretStore = NativeStore;
 
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "ai.themis.desktop";
+
+#[cfg(not(target_os = "macos"))]
+const CREDENTIAL_SERVICE: &str = "ai.themis.desktop";
+
+/// Windows Credential Manager or the Linux Secret Service for the current user.
+#[cfg(not(target_os = "macos"))]
+pub struct NativeStore;
+
+#[cfg(not(target_os = "macos"))]
+impl NativeStore {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn entry(provider: &str) -> Result<keyring::Entry, String> {
+        keyring::Entry::new(CREDENTIAL_SERVICE, provider).map_err(|err| err.to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl Default for NativeStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl SecretStore for NativeStore {
+    fn has(&self, provider: &str) -> bool {
+        self.get(provider).is_some()
+    }
+
+    fn get(&self, provider: &str) -> Option<String> {
+        Self::entry(provider)
+            .ok()
+            .and_then(|entry| entry.get_password().ok())
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                (provider == "go")
+                    .then(|| std::env::var("OPENCODE_KEY").ok())
+                    .flatten()
+                    .filter(|value| !value.trim().is_empty())
+            })
+    }
+
+    fn set(&self, provider: &str, value: &str) -> Result<(), String> {
+        Self::entry(provider)?.set_password(value).map_err(|err| {
+            format!("could not save {provider} key in the OS credential store: {err}")
+        })
+    }
+
+    fn clear(&self, provider: &str) -> Result<(), String> {
+        match Self::entry(provider)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) => Err(format!("could not forget {provider} key: {err}")),
+        }
+    }
+}
 
 #[cfg(target_os = "macos")]
 pub struct KeychainStore;

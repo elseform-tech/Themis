@@ -12,6 +12,8 @@ import {
   type ReactNode,
 } from "react";
 import type { ToastTone } from "../components";
+import { invoke } from "@tauri-apps/api/core";
+import { playCompletionSound, prepareCompletionSound } from "../lib/completionSound";
 import type { PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
 import {
   getSecretStatus,
@@ -43,6 +45,8 @@ export * from "./reducer";
 interface AppContextValue {
   state: AppState;
   dispatch: Dispatch<import("./reducer").AppAction>;
+  armManualRun: (threadId: string) => void;
+  cancelManualRun: (threadId: string) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -98,6 +102,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const legacyMessages = useRef(readSession<Record<string, PersistedMessage[]>>("messages", {}));
   const restoredSession = useRef(false);
   const savedSelection = useRef(readSession<{ root: string; threadId: string } | null>("selection", null));
+  const manualRuns = useRef(new Set<string>());
+  const settings = useRef(state.settings);
+  settings.current = state.settings;
+  const armManualRun = (threadId: string) => {
+    manualRuns.current.add(threadId);
+    if (settings.current.completion_sound) prepareCompletionSound();
+  };
+  const cancelManualRun = (threadId: string) => { manualRuns.current.delete(threadId); };
   useEffect(() => {
     if (restoredSession.current && state.activeProjectRoot && state.activeThreadId) writeSession("selection", { root: state.activeProjectRoot, threadId: state.activeThreadId });
   }, [state.activeProjectRoot, state.activeThreadId]);
@@ -111,6 +123,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const offThread = await onThreadEvent((envelope) => {
           if (cancelled) return;
           dispatch({ type: "thread/event", envelope });
+          const { kind } = envelope.event;
+          if (kind === "finished" || kind === "incomplete" || kind === "failed") {
+            const manual = manualRuns.current.delete(envelope.thread_id);
+            if (manual && kind === "finished") {
+              if (settings.current.completion_sound) playCompletionSound();
+              if (settings.current.completion_haptic) void invoke("completion_haptic").catch(() => {});
+            }
+          }
         });
         const offApproval = await onApprovalRequest((request) => {
           if (cancelled) return;
@@ -208,6 +228,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const value = useMemo(() => ({ state, dispatch }), [state]);
+  const value = useMemo(() => ({ state, dispatch, armManualRun, cancelManualRun }), [state]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

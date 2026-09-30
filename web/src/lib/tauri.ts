@@ -1,6 +1,6 @@
 // Typed Tauri bridge client. All frontend code reaches the backend through
 // these functions — never raw invoke() with stringly-typed payloads elsewhere.
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   ApprovalDecision,
@@ -32,6 +32,11 @@ import {
   REVIEW_ITEM_NAME,
   THREAD_EVENT_NAME,
 } from './types';
+
+function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  if (command === 'check_for_updates') return tauriInvoke<T>(command, args);
+  return tauriInvoke<T>('backend_command', { command, args });
+}
 
 export function ping(): Promise<string> {
   return invoke('ping');

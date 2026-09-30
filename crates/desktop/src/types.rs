@@ -461,6 +461,10 @@ pub struct Settings {
     /// Global automation kill-switch (the scheduler no-ops when false).
     #[serde(default = "default_automations_enabled")]
     pub automations_enabled: bool,
+    #[serde(default = "default_completion_sound")]
+    pub completion_sound: bool,
+    #[serde(default)]
+    pub completion_haptic: bool,
     /// True once the user completed onboarding (defaults to false so settings
     /// files written before the field existed load as not onboarded).
     #[serde(default)]
@@ -485,6 +489,10 @@ const fn default_text_size() -> u32 {
 
 pub const fn default_context_messages() -> u32 {
     20
+}
+
+const fn default_completion_sound() -> bool {
+    true
 }
 
 pub const fn default_max_total_turns() -> u32 {
@@ -516,6 +524,8 @@ impl Default for Settings {
             recent_roots: Vec::new(),
             concurrency_limit: default_concurrency_limit(),
             automations_enabled: default_automations_enabled(),
+            completion_sound: default_completion_sound(),
+            completion_haptic: false,
             onboarded: false,
         }
     }
@@ -551,6 +561,10 @@ pub struct SettingsPatch {
     pub concurrency_limit: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automations_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_sound: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_haptic: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub onboarded: Option<bool>,
 }
@@ -977,6 +991,8 @@ mod tests {
         assert!(settings.recent_roots.is_empty());
         assert_eq!(settings.concurrency_limit, 3);
         assert!(settings.automations_enabled);
+        assert!(settings.completion_sound);
+        assert!(!settings.completion_haptic);
         assert!(!settings.onboarded);
         assert_eq!(
             to_value(&settings),
@@ -996,6 +1012,8 @@ mod tests {
                 "recent_roots": [],
                 "concurrency_limit": 3,
                 "automations_enabled": true,
+                "completion_sound": true,
+                "completion_haptic": false,
                 "onboarded": false,
             })
         );
@@ -1028,6 +1046,8 @@ mod tests {
         assert!(legacy.recent_roots.is_empty());
         assert_eq!(legacy.concurrency_limit, 3);
         assert!(legacy.automations_enabled);
+        assert!(legacy.completion_sound);
+        assert!(!legacy.completion_haptic);
         assert!(!legacy.onboarded);
         let status = SecretStatus { go: true };
         assert_eq!(to_value(&status), json!({"go": true}));

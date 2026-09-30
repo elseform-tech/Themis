@@ -109,54 +109,15 @@ class DashboardMetricsTests(unittest.TestCase):
         self.assertEqual(sum(suite["tests"] for suite in tooling_tests), inventory["toolingTotal"])
         self.assertEqual(inventory["discoveredTotal"], inventory["total"] + inventory["toolingTotal"])
 
-    def test_manual_journeys_are_registered_with_product_capability_coverage(self):
+    def test_inventory_contains_only_automated_suites(self):
         from quality_dashboard.dashboard import test_inventory
 
         inventory = test_inventory()
-        scenarios = inventory["manualAcceptance"]
-        manual = inventory.get("manualE2e")
-        self.assertEqual({scenario["runner"] for scenario in scenarios}, {"@Browser", "@Computer"})
-        self.assertEqual(len({scenario["id"] for scenario in scenarios}), len(scenarios))
-        self.assertTrue(all(scenario["covers"] and scenario["plannedEnvironment"] and scenario["preconditions"] and scenario["steps"] and scenario["expected"] for scenario in scenarios))
-        self.assertTrue(all(scenario["latest"]["status"] in {"passed", "failed", "blocked", "not-run"} for scenario in scenarios))
-        required = {"projects", "threads", "conversation", "agent-loops", "streaming", "tool-calls", "approvals", "diff", "review", "persistence", "compaction", "skills", "automations", "providers", "settings", "secrets", "diagnostics", "recovery", "keyboard", "accessibility"}
-        covered = {capability for scenario in scenarios if scenario["scope"] == "product" for capability in scenario["covers"]}
-        self.assertTrue(required <= covered, required - covered)
-        self.assertIsNotNone(manual, "Browser and native E2E cases must be included in the overall inventory")
-        if manual is None:
-            return
-        self.assertEqual(manual["product"]["total"], sum(scenario["scope"] == "product" for scenario in scenarios))
-        self.assertEqual(inventory.get("overallTotal"), inventory["total"] + manual["product"]["total"])
-        self.assertEqual(sum(manual["product"]["outcomes"].values()), manual["product"]["total"])
-        self.assertEqual(
-            inventory.get("overallDiscoveredTotal"),
-            inventory["discoveredTotal"] + manual["product"]["total"] + manual["tooling"]["total"],
-        )
-
-    def test_manual_e2e_summary_counts_runner_and_latest_outcomes(self):
-        import quality_dashboard.dashboard as dashboard
-
-        summarize = getattr(dashboard, "manual_e2e_summary", None)
-        self.assertIsNotNone(summarize, "Manual E2E outcomes need a summary for the overall test register")
-        if summarize is None:
-            return
-        summary = summarize([
-            {"scope": "product", "runner": "@Browser", "latest": {"status": "passed"}},
-            {"scope": "product", "runner": "@Browser", "latest": {"status": "failed"}},
-            {"scope": "product", "runner": "@Computer", "latest": {"status": "blocked"}},
-            {"scope": "product", "runner": "@Computer", "latest": {"status": "not-run"}},
-            {"scope": "tooling", "runner": "@Browser", "latest": {"status": "passed"}},
-            {"scope": "other", "runner": "@Browser", "latest": {"status": "passed"}},
-        ])
-        self.assertEqual(summary["product"]["total"], 4)
-        self.assertEqual(summary["product"]["outcomes"], {"passed": 1, "failed": 1, "blocked": 1, "notRun": 1})
-        self.assertEqual(summary["product"]["byRunner"], {"@Browser": 2, "@Computer": 2})
-        self.assertEqual(summary["product"]["outcomesByRunner"], {
-            "@Browser": {"passed": 1, "failed": 1, "blocked": 0, "notRun": 0},
-            "@Computer": {"passed": 0, "failed": 0, "blocked": 1, "notRun": 1},
-        })
-        self.assertEqual(summary["tooling"]["total"], 1)
-        self.assertEqual(summary["tooling"]["outcomes"], {"passed": 1, "failed": 0, "blocked": 0, "notRun": 0})
+        self.assertNotIn("manualAcceptance", inventory)
+        self.assertNotIn("manualE2e", inventory)
+        self.assertEqual(inventory["overallTotal"], inventory["total"])
+        self.assertEqual(inventory["overallDiscoveredTotal"], inventory["discoveredTotal"])
+        self.assertTrue(any(suite["kind"] == "e2e" and "server_cli" in suite["path"] for suite in inventory["suites"]))
 
     def test_test_inventory_keeps_case_titles_and_runtime_events(self):
         names = _test_names(ROOT / "sample.test.ts", 'it("approves a safe read", () => {}); test.each(rows)("writes %s", () => {}); matcher.test("not a test case");')

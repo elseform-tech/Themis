@@ -10,7 +10,6 @@ const shortDate = (value) => value ? new Date(value).toLocaleString([], { month:
 const percent = (value) => value == null ? "—" : `${Number(value).toFixed(1)}%`;
 const statusText = (value) => value === "passed" ? "Passed" : value === "failed" ? "Failed" : value === "blocked" ? "Blocked" : value === "running" ? "Running" : value === "unknown" ? "Unverified" : value === "skipped" ? "Skipped" : "Not run";
 const statusClass = (value) => value === "passed" || value === "failed" || value === "blocked" || value === "running" ? value : "neutral";
-const outcomeSummary = (outcomes) => `${number(outcomes.passed)} passed · ${number(outcomes.failed)} failed · ${number(outcomes.blocked)} blocked · ${number(outcomes.notRun)} not run`;
 
 function metricCard(label, value, caption, icon, unit = "") {
   return `<article class="metric-card"><div class="metric-top"><span>${esc(label)}</span><span class="metric-icon" aria-hidden="true">${esc(icon)}</span></div><div class="metric-value">${esc(value)}${unit ? `<span class="metric-unit">${esc(unit)}</span>` : ""}</div><div class="metric-caption">${esc(caption)}</div></article>`;
@@ -35,13 +34,11 @@ function testTotals(run, productOnly = false) {
 
 function renderOverview(data) {
   const { repo, source, tests, complexity, coverage, runs, activeRun } = data;
-  const manualProduct = tests.manualE2e?.product || { total: 0, outcomes: { passed: 0, failed: 0, blocked: 0, notRun: 0 } };
-  const manualTooling = tests.manualE2e?.tooling || { total: 0 };
   const productTotal = tests.overallTotal ?? tests.total;
   const overallTotal = tests.overallDiscoveredTotal ?? tests.discoveredTotal;
   const currentChanges = repo.changes.length;
   const latest = activeRun || runs.at(-1);
-  const testCaption = `${number(productTotal)} product · ${number(tests.toolingTotal + manualTooling.total)} tooling · ${number(manualProduct.total)} Browser/native E2E`;
+  const testCaption = `${number(productTotal)} product · ${number(tests.toolingTotal)} tooling`;
   $("#metricGrid").innerHTML = [
     metricCard("Repository changes", number(currentChanges), `${number(repo.workingChurn.added)} additions · ${number(repo.workingChurn.removed)} deletions`, "↗"),
     metricCard("Overall test definitions", number(overallTotal), testCaption, "✓"),
@@ -96,8 +93,8 @@ function renderOverview(data) {
   $("#overviewChanges").innerHTML = table(["Path", "Status", "+", "−"], changeRows, "No uncommitted changes");
   $("#overviewTests").innerHTML = [
     ["Unit / component · automated", tests.counts.unit], ["Integration · automated", tests.counts.integration],
-    ["E2E · automated", tests.counts.e2e], ["E2E · @Browser / @Computer", manualProduct.total],
-    ["Dashboard tooling", tests.toolingTotal + manualTooling.total],
+    ["E2E · automated", tests.counts.e2e],
+    ["Dashboard tooling", tests.toolingTotal],
   ].map(([label, count]) => `<div class="suite-line"><span class="suite-label"><i class="suite-bullet"></i>${esc(label)}</span><span class="suite-value">${number(count)}</span></div>`).join("");
 }
 
@@ -119,8 +116,6 @@ function renderChanges(data) {
 
 function renderTests(data) {
   const { tests, runs, activeRun } = data;
-  const manualProduct = tests.manualE2e?.product || { total: 0, outcomes: { passed: 0, failed: 0, blocked: 0, notRun: 0 } };
-  const manualTooling = tests.manualE2e?.tooling || { total: 0 };
   const productTotal = tests.overallTotal ?? tests.total;
   const overallTotal = tests.overallDiscoveredTotal ?? tests.discoveredTotal;
   const openSuites = new Set($$("#testsTable .test-case-details[open]").map((item) => item.dataset.suite));
@@ -128,9 +123,9 @@ function renderTests(data) {
   const totals = testTotals(last, true);
   const productSuites = tests.suites.filter((suite) => suite.scope === "product").length;
   $("#testGrid").innerHTML = [
-    metricCard("Overall test definitions", number(overallTotal), `${number(productTotal)} product · ${number(tests.toolingTotal + manualTooling.total)} tooling`, "✓"),
-    metricCard("Product end-to-end definitions", number(tests.counts.e2e + manualProduct.total), `${number(tests.counts.e2e)} automated · ${number(manualProduct.total)} Browser/native`, "↗"),
-    metricCard("Dashboard tooling checks", number(tests.toolingTotal + manualTooling.total), `${number(tests.toolingTotal)} automated · ${number(manualTooling.total)} manual Browser E2E`, "⚙"),
+    metricCard("Overall test definitions", number(overallTotal), `${number(productTotal)} product · ${number(tests.toolingTotal)} tooling`, "✓"),
+    metricCard("Product end-to-end definitions", number(tests.counts.e2e), "Automated Rust and frontend tests", "↗"),
+    metricCard("Dashboard tooling checks", number(tests.toolingTotal), "Automated dashboard tests", "⚙"),
     metricCard("Latest automated tests passed", totals.known ? number(totals.passed) : "—", last ? activeRun ? "Run in progress" : shortDate(last.finishedAt) : "Run suites to record results", "+"),
     metricCard("Latest automated tests failed", totals.known ? number(totals.failed) : "—", totals.known ? "Product suites only" : "No recorded product results", "!"),
     metricCard("Latest automated tests skipped", totals.known ? number(totals.skipped) : "—", totals.known ? "Product suites only" : "No recorded product results", "↷"),
@@ -173,48 +168,6 @@ function renderTests(data) {
     return `<tr><td>${esc(suite.scope === "tooling" ? "Tooling" : "Product")}</td><td class="path-cell">${esc(suite.path)}</td><td>${esc(suite.framework)}</td><td>${esc(suite.kind === "e2e" ? "End-to-end" : suite.kind === "integration" ? "Integration" : suite.framework === "Vitest" ? "Unit / component" : "Unit")}</td><td>${number(suite.tests)}</td><td>${summary}${details}</td></tr>`;
   });
   $("#testsTable").innerHTML = table(["Scope", "Suite file", "Harness", "Type", "Definitions", "Latest result and test names"], rows, "No matching test suites");
-  renderManualAcceptance(tests.manualAcceptance || [], tests.manualE2e || {});
-}
-
-function renderManualAcceptance(scenarios, manualE2e) {
-  const openJourneys = new Set($$("#manualAcceptanceTable details[open], #manualToolingTable details[open]").map((detail) => detail.dataset.scenario));
-  const outcomeRows = ["product", "tooling"].flatMap((scope) => {
-    const summary = manualE2e[scope];
-    if (!summary) return [];
-    return Object.entries(summary.outcomesByRunner || {}).filter(([, outcomes]) => Object.values(outcomes).some(Boolean)).map(([runner, outcomes]) => {
-      const label = scope === "tooling" ? "Tooling" : "Product";
-      return `<div class="suite-line"><span class="suite-label"><i class="suite-bullet"></i>${label} · ${esc(runner)}</span><span class="suite-value">${outcomeSummary(outcomes)}</span></div>`;
-    });
-  });
-  $("#manualE2eSummary").innerHTML = outcomeRows.join("") || `<div class="suite-line"><span class="suite-label">No Browser/native E2E cases registered</span></div>`;
-  const scenarioDetail = (scenario) => {
-    const latest = scenario.latest || {};
-    const outcome = { passed: "Passed", failed: "Failed", blocked: "Blocked" }[latest.status] || "Not run";
-    const list = (items) => items.map((item) => `<li>${esc(item)}</li>`).join("");
-    const run = [latest.runAt && `Run ${latest.runAt}`, latest.revision && `Revision ${latest.revision}`, latest.environment, latest.notes].filter(Boolean).map(esc).join(" · ");
-    return `<details class="test-case-details" data-scenario="${esc(scenario.id)}" ${openJourneys.has(scenario.id) ? "open" : ""}><summary><code>${esc(scenario.id)}</code> · ${esc(scenario.title)} <span class="status-pill ${statusClass(latest.status)}">${outcome}</span></summary><div><strong>Target:</strong> ${esc(scenario.target)}</div><div><strong>Runner:</strong> ${esc(scenario.runner)}</div><div><strong>Planned environment:</strong> ${esc(scenario.plannedEnvironment || "Unspecified")}</div><strong>Preconditions</strong><ul>${list(scenario.preconditions)}</ul><strong>Steps</strong><ol>${list(scenario.steps)}</ol><strong>Expected</strong><ul>${list(scenario.expected)}</ul>${run ? `<strong>Latest evidence</strong><p>${run}</p>` : ""}</details>`;
-  };
-  const features = new Map();
-  for (const scenario of scenarios.filter((item) => item.scope === "product")) {
-    for (const feature of scenario.covers || []) {
-      if (!features.has(feature)) features.set(feature, []);
-      features.get(feature).push(scenario);
-    }
-  }
-  const featureRows = [...features].sort(([a], [b]) => a.localeCompare(b)).map(([feature, journeys]) => {
-    const counts = { passed: 0, failed: 0, blocked: 0, notRun: 0 };
-    for (const journey of journeys) counts[journey.latest?.status === "passed" ? "passed" : journey.latest?.status === "failed" ? "failed" : journey.latest?.status === "blocked" ? "blocked" : "notRun"]++;
-    const state = counts.failed ? "failed" : counts.blocked ? "blocked" : counts.notRun ? "neutral" : "passed";
-    const label = feature.replace(/-/g, " ").replace(/^./, (letter) => letter.toUpperCase());
-    const runners = [...new Set(journeys.map((journey) => journey.runner))].join(" · ");
-    const evidence = journeys.map(scenarioDetail).join("");
-    return `<tr><td><strong>${esc(label)}</strong></td><td>${number(journeys.length)} ${journeys.length === 1 ? "journey" : "journeys"}<div class="feature-journeys">${evidence}</div></td><td>${esc(runners)}</td><td><span class="status-pill ${statusClass(state)}">${state === "neutral" ? "Needs run" : state === "passed" ? "Passed" : state === "failed" ? "Failed" : "Blocked"}</span><small class="suite-result-count">${outcomeSummary(counts)}</small></td></tr>`;
-  });
-  $("#manualAcceptanceTable").innerHTML = table(["Product feature", "Registered journeys", "Runners", "Latest outcomes"], featureRows, "No product feature journeys registered");
-  const toolingRows = scenarios.filter((scenario) => scenario.scope === "tooling").map((scenario) => {
-    return `<tr><td>${esc(scenario.runner)}</td><td>${scenarioDetail(scenario)}</td><td><span class="status-pill ${statusClass(scenario.latest?.status)}">${esc(statusText(scenario.latest?.status))}</span></td></tr>`;
-  });
-  $("#manualToolingTable").innerHTML = table(["Runner", "Tooling journey", "Latest evidence"], toolingRows, "No dashboard journeys registered");
 }
 
 function renderComplexity(data) {

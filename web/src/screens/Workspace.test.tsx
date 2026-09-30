@@ -24,10 +24,43 @@ beforeEach(() => {
   window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() });
   HTMLElement.prototype.scrollIntoView = vi.fn();
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("plays one desktop completion sound for a manually sent response", async () => {
+    const root = "/tmp/sound-project";
+    const thread = { id: "sound-thread", title: "Sound", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    const start = vi.fn();
+    const buffer = { duration: 0.5 };
+    const source = { buffer: null as object | null, connect: vi.fn(), start };
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })));
+    vi.stubGlobal("AudioContext", vi.fn().mockImplementation(() => ({
+      state: "running", destination: {}, resume: vi.fn(),
+      decodeAudioData: vi.fn(async () => buffer), createBufferSource: () => source,
+    })));
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
+    vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Sound project", is_git: true });
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    await mount();
+    const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => receive({ thread_id: thread.id, run_id: "automation", event: { kind: "finished", result: "Scheduled" } }));
+    expect(start).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Hello" } });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
+    expect(AudioContext).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith("/sounds/completion-woodblock-double.mp3");
+    await act(async () => {
+      receive({ thread_id: thread.id, run_id: "test-run", event: { kind: "started", task: "Hello", max_turns: 2 } });
+      receive({ thread_id: thread.id, run_id: "test-run", event: { kind: "finished", result: "Done" } });
+      receive({ thread_id: thread.id, run_id: "test-run", event: { kind: "finished", result: "Done" } });
+    });
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(source.buffer).toBe(buffer);
+  });
+
   it("shows a finished automation thread and pending review without opening it", async () => {
     const root = "/tmp/automation-project";
     const thread = { id: "scheduled-thread", title: "Scheduled check", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
@@ -213,6 +246,10 @@ describe("Workspace journey", () => {
   it("saves appearance independently and reports save failure", async () => {
     await mount(); fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    const sound = screen.getByRole("checkbox", { name: "Play a click when my response finishes" });
+    expect(sound).toBeChecked();
+    await act(async () => fireEvent.click(sound));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ completion_sound: false });
     await act(async () => fireEvent.change(screen.getByLabelText("Text size"), { target: { value: "16" } }));
     expect(bridge.updateSettings).toHaveBeenCalledWith({ text_size: 16 });
     expect(screen.getByText("Saved")).toBeInTheDocument();
