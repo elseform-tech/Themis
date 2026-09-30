@@ -64,6 +64,16 @@ export interface SkillInput {
   scripts: SkillScript[];
 }
 
+export interface PluginSpec {
+  name: string; description: string; version: string;
+  skills: Array<{ id: string; name: string; description: string; instructions: string; allowedTools: string[]; scripts: SkillScript[] }>;
+  mcp: Record<string, { command?: string | null; args: string[]; url?: string | null; env: Record<string,string>; bearer_env?: string | null; enabled: boolean }>;
+  hooks: Array<{name:string;event:string;command:string;enabled:boolean;timeout_seconds:number;blocking:boolean}>;
+  files: Record<string,string>; unsupported: string[];
+}
+export interface Plugin { scope: "local"|"global"; revision: string; enabled: boolean; source: string|null; spec: PluginSpec }
+export interface Marketplace { name: string; source: string }
+
 export interface Automation {
   id: string;
   name: string;

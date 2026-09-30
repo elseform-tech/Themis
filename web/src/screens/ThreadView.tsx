@@ -1,3 +1,4 @@
+import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useState } from "react";
 import { Button } from "../components";
 import type { GoModel } from "../lib/types";
@@ -22,7 +23,13 @@ export function ThreadView() {
     if (!thread) return;
     setDrafts(previous => { const next = { ...previous, [thread.id]: value }; writeSession("drafts", next); return next; });
   }
+  useEffect(() => {
+    const reload = () => setDrafts(readSession("drafts", {}));
+    window.addEventListener("themis-drafts-changed", reload);
+    return () => window.removeEventListener("themis-drafts-changed", reload);
+  }, []);
   const newThread = useNewThread();
+  const { skills: promptSkills, error: skillsError } = usePromptSkills(project?.root, state.running[thread?.id ?? ""]);
   const [models, setModels] = useState<GoModel[]>([]);
   const threadId = thread?.id;
   const [savedRunDurations, setSavedRunDurations] = useState<Record<string, number>>(() => readSession("runDurations", {}));
@@ -171,7 +178,10 @@ export function ThreadView() {
       />
       <ThreadComposer
         thread={thread}
+        key={thread.id}
         draft={draft}
+        skills={promptSkills}
+        history={messages.filter(m => m.role === "user" && !messages.some(error => m.runId !== undefined && error.runId === m.runId && error.text.startsWith("Send failed:"))).map(m => m.text)}
         models={models}
         effortLevels={effortLevels}
         effort={effort}
@@ -181,7 +191,7 @@ export function ThreadView() {
         running={running}
         stopping={stopping}
         switching={switching}
-        sendError={sendError}
+        sendError={sendError ?? (skillsError ? `Skills unavailable: ${skillsError}` : undefined)}
         secretConfigured={state.secretStatus.go}
         onDraftChange={setDraft}
         onSend={() => void send()}

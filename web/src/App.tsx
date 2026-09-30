@@ -89,7 +89,7 @@ function Shell() {
         <header className="themis-nav">
           <div className="themis-nav-context">
             <Button id="sidebar-toggle" variant="ghost" size="small" aria-label={collapsed ? "Show sidebar" : "Hide sidebar"} aria-controls="themis-sidebar" aria-expanded={!collapsed} onClick={toggleSidebar}>☰</Button>
-            <span>{state.mainView === "thread" ? (state.projects.find(p => p.root === state.activeProjectRoot)?.name ?? "Workspace") : ({ skills: "Skills", automations: "Automations", settings: "Settings", queue: "Review queue" }[state.mainView])}</span>
+            <span>{state.mainView === "thread" ? (state.projects.find(p => p.root === state.activeProjectRoot)?.name ?? "Workspace") : ({ skills: "Plugins", automations: "Automations", settings: "Settings", queue: "Review queue" }[state.mainView])}</span>
           </div>
           {state.reviews.some(r => r.status === "pending") && <Button variant="ghost" size="small" onClick={() => dispatch({ type: "ui/view", view: "queue" })}>Review queue · {state.reviews.filter(r => r.status === "pending").length}</Button>}
         </header>

@@ -1,0 +1,11 @@
+.themis-plugins-toolbar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.themis-plugin-row { display: flex; align-items: start; justify-content: space-between; gap: 1rem; padding: .875rem 0; border-bottom: 1px solid var(--themis-border-subtle); }
+.themis-plugin-row p { margin: .25rem 0; overflow-wrap: anywhere; }
+.themis-plugin-row small { color: var(--themis-text-2); }
+.themis-plugins-form { display: flex; flex-direction: column; gap: .75rem; }
+.themis-plugins-form label { display: flex; flex-direction: column; gap: .25rem; }
+.themis-plugins-form textarea { min-height: 8rem; width: 100%; background: var(--themis-surface); color: var(--themis-text); border: 1px solid var(--themis-border); border-radius: .375rem; padding: .5rem; font: inherit; }
+.themis-plugins select { color: var(--themis-text); background: var(--themis-surface); padding: .375rem; border: 1px solid var(--themis-border); border-radius: .375rem; }
+.themis-plugins fieldset { display: grid; gap: .75rem; border: 0; padding: 0; margin: 0; min-width: 0; }
+.themis-plugins pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 16rem; overflow-y: auto; }
+@media (max-width: 700px) { .themis-plugin-row { flex-direction: column; } }

@@ -1,3 +1,7 @@
+import type { PromptSkill } from "../lib/prompt";
+import { PromptText } from "../components/PromptInput";
+import { usePromptSkills } from "../lib/usePromptSkills";
+import { useActiveProject } from "../state/store";
 import { useEffect, useRef, useState } from "react";
 import { ResponseBody } from "../components/ResponseBody";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
@@ -31,6 +35,8 @@ export function ThreadConversation({
   compacting,
   traces,
 }: ThreadConversationProps) {
+  const project = useActiveProject();
+  const { skills } = usePromptSkills(project?.root, running);
   const scrollRef = useRef<HTMLDivElement>(null);
   const followOutput = useRef(true);
   const endRef = useRef<HTMLDivElement>(null);
@@ -72,6 +78,7 @@ export function ThreadConversation({
           <ConversationRow
             key={row.kind === "message" ? row.message.id : row.id}
             row={row}
+            skills={skills}
             activeRunId={activeRunId}
             elapsed={elapsed}
           />
@@ -107,13 +114,15 @@ function ConversationRow({
   row,
   activeRunId,
   elapsed,
+  skills,
 }: {
   row: ConversationRow;
   activeRunId: string | undefined;
   elapsed: number;
+  skills: PromptSkill[];
 }) {
-  if (row.kind === "message") return <Message message={row.message} activeRunId={activeRunId} />;
-  if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} />;
+  if (row.kind === "message") return <Message message={row.message} activeRunId={activeRunId} skills={skills} />;
+  if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} />;
 
   const durationMs = row.active ? elapsed * 1000 : row.durationMs;
   const durationSeconds = durationMs === undefined ? undefined : Math.floor(durationMs / 1000);
@@ -132,7 +141,7 @@ function ConversationRow({
       </summary>
       <div className="themis-run-bucket-body">
         {row.items.flatMap(item => item.items.map(message => (
-          <Message key={message.id} message={message} activeRunId={item.active ? activeRunId : undefined} />
+          <Message key={message.id} message={message} activeRunId={item.active ? activeRunId : undefined} skills={skills} />
         )))}
       </div>
     </details>
@@ -142,8 +151,10 @@ function ConversationRow({
 function Milestone({
   row,
   activeRunId,
+  skills,
 }: {
   row: Extract<ConversationRow, { kind: "milestone" }>;
+  skills: PromptSkill[];
   activeRunId: string | undefined;
 }) {
   return (
@@ -154,14 +165,14 @@ function Milestone({
       </summary>
       <div className="themis-milestone-body">
         {row.items.map(message => (
-          <Message key={message.id} message={message} activeRunId={row.active ? activeRunId : undefined} />
+          <Message key={message.id} message={message} activeRunId={row.active ? activeRunId : undefined} skills={skills} />
         ))}
       </div>
     </details>
   );
 }
 
-function Message({ message, activeRunId }: { message: ChatMessage; activeRunId: string | undefined }) {
+function Message({ message, activeRunId, skills }: { message: ChatMessage; activeRunId: string | undefined; skills: PromptSkill[] }) {
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
   const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;
   const completed = message.role === "assistant" && !isActiveRun;
@@ -188,12 +199,12 @@ function Message({ message, activeRunId }: { message: ChatMessage; activeRunId: 
       ) : message.text.startsWith("Run failed:") ? (
         <details className="themis-request-error">
           <summary>Request failed · Details</summary>
-          <p className="themis-thread-text">{message.text}</p>
+          <p className="themis-thread-text"><PromptText value={message.text} skills={skills} /></p>
         </details>
       ) : message.role === "assistant" ? (
         <ResponseBody text={message.text} />
       ) : (
-        <p className="themis-thread-text">{message.text}</p>
+        <p className="themis-thread-text"><PromptText value={message.text} skills={skills} /></p>
       )}
     </div>
   );
