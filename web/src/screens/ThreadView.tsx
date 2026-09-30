@@ -13,7 +13,7 @@ import "./ThreadView.css";
 const EMPTY_MESSAGES: never[] = [];
 
 export function ThreadView() {
-  const { state, dispatch } = useApp();
+  const { state, dispatch, armManualRun, cancelManualRun } = useApp();
   const project = useActiveProject();
   const thread = useActiveThread();
   const [drafts, setDrafts] = useState<Record<string, string>>(() => readSession("drafts", {}));
@@ -86,11 +86,13 @@ export function ThreadView() {
       threadId: thread.id,
       message: { id: newId("msg"), role: "user", text },
     });
+    armManualRun(thread.id);
     try {
       await sendMessage(thread.id, text, effort);
       dispatch({ type: "thread/send-cleared", threadId: thread.id });
       getThread(thread.id).then(updated => dispatch({ type: "thread/updated", projectRoot: project!.root, thread: updated })).catch(() => {});
     } catch (error: unknown) {
+      cancelManualRun(thread.id);
       setDraft(text);
       const detail = describeError(error);
       // Records the error + pushes a toast (concurrency-aware) via reducer.

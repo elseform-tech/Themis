@@ -227,6 +227,8 @@ export interface Settings {
   /** Max parallel agent runs across all threads (1..=16). */
   concurrency_limit: number;
   automations_enabled: boolean;
+  completion_sound: boolean;
+  completion_haptic: boolean;
   onboarded: boolean;
 }
 

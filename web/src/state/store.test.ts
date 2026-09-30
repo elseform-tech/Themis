@@ -292,6 +292,8 @@ describe("settings", () => {
         recent_roots: ["/repo"],
         concurrency_limit: 4,
         automations_enabled: true,
+        completion_sound: true,
+        completion_haptic: false,
         onboarded: true,
       },
     });
