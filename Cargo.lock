@@ -4546,6 +4546,7 @@ dependencies = [
  "autoagents-derive",
  "autoagents-toolkit",
  "futures-util",
+ "libc",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -4558,6 +4559,7 @@ dependencies = [
 name = "themis-desktop"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "keyring",
  "objc2",

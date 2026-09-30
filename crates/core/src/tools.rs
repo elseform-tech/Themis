@@ -174,7 +174,7 @@ fn take_dispatch_permit() -> bool {
 /// All in-`execute` approval checks must use this (never `check_approval`
 /// directly) so agent-driven calls prompt exactly once while direct
 /// `execute` calls stay fully gated.
-fn check_approval_permitted(
+pub(crate) fn check_approval_permitted(
     hook: &dyn ApprovalHook,
     action: &ToolAction,
 ) -> Result<(), ToolCallError> {
