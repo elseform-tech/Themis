@@ -596,6 +596,10 @@ pub struct Diagnostics {
     pub os: String,
     pub settings: Settings,
     pub recent_errors: Vec<DiagnosticsError>,
+    #[serde(default)]
+    pub persistence: Vec<crate::doctor::Check>,
+    #[serde(default)]
+    pub recovery_notes: usize,
 }
 
 /// Updater outcome (`UpdateState` in types.ts).
@@ -1216,6 +1220,8 @@ mod tests {
             json!({"state": "available", "version": "0.2.0", "notes": "fixes"})
         );
         let diagnostics = Diagnostics {
+            persistence: Vec::new(),
+            recovery_notes: 0,
             app_version: "0.1.0".to_owned(),
             os: "macos".to_owned(),
             settings: Settings::default(),

@@ -18,6 +18,17 @@ const KEYCHAIN_SERVICE: &str = "ai.themis.desktop";
 #[cfg(not(target_os = "macos"))]
 const CREDENTIAL_SERVICE: &str = "ai.themis.desktop";
 
+/// Shared validation for desktop and terminal credential entry; errors omit values.
+pub fn validate_provider_key(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 4096 || !value.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return Err(
+            "API key must contain 1–4096 printable ASCII characters without whitespace".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 /// Windows Credential Manager or the Linux Secret Service for the current user.
 #[cfg(not(target_os = "macos"))]
 pub struct NativeStore;
@@ -272,5 +283,26 @@ mod keychain_tests {
         );
         first.clear(&provider).unwrap();
         assert!(KeychainStore::new().get(&provider).is_none());
+    }
+}
+
+#[cfg(test)]
+mod key_validation_tests {
+    use super::*;
+    #[test]
+    fn provider_key_validation_rejects_invalid_values_without_echoing_them() {
+        for value in [
+            "",
+            "synthetic with spaces",
+            "synthetic\nkey",
+            "µ-key",
+            &"x".repeat(4097),
+        ] {
+            let error = validate_provider_key(value).unwrap_err();
+            if !value.is_empty() {
+                assert!(!error.contains(value));
+            }
+        }
+        assert!(validate_provider_key("synthetic-key_123").is_ok());
     }
 }

@@ -6,8 +6,10 @@
 //! seam so headless tests can drive the real code paths.
 
 pub mod approvals;
+pub mod cli;
 pub mod commands;
 pub mod diff;
+pub mod doctor;
 pub mod secrets;
 pub mod server;
 pub mod settings;
@@ -97,7 +99,7 @@ pub fn run_headless_server(data_dir: PathBuf) -> Result<(), String> {
     tauri::async_runtime::block_on(run_headless_server_async(data_dir))
 }
 
-/// Hosts the backend on an existing async runtime (used by `themisctl serve`).
+/// Hosts the backend on an existing async runtime (used by `themis serve`).
 pub async fn run_headless_server_async(data_dir: PathBuf) -> Result<(), String> {
     std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
     let lock = std::fs::OpenOptions::new()

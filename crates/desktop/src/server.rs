@@ -519,7 +519,13 @@ pub async fn dispatch(
         "continue_review_item" => {
             output!(state.continue_review_item(arg(&args, "reviewId")?).await?)
         }
-        "get_diagnostics" => output!(state.get_diagnostics().await),
+        "get_diagnostics" => output!(
+            state
+                .get_diagnostics_with_depth(
+                    args.get("deep").and_then(Value::as_bool).unwrap_or(false)
+                )
+                .await
+        ),
         _ => Err(format!("unknown server method '{method}'")),
     }
 }
