@@ -158,7 +158,18 @@ impl AppState {
                 input.interval_mins
             ));
         }
-        canonical_project_dir(&input.project_root)?;
+        let root = canonical_project_dir(&input.project_root)?;
+        let legacy: Vec<_> = self
+            .inner
+            .skills
+            .read()
+            .await
+            .values()
+            .map(Skill::core_skill)
+            .collect();
+        self.plugin_store(Some(root))
+            .resolve_prompt(&input.task, &legacy)
+            .map_err(|e| e.to_string())?;
         if input.provider != ProviderKind::Go {
             return Err("Only OpenCode Go is supported".to_owned());
         }
@@ -361,7 +372,15 @@ impl AppState {
             .send_message_with_options(
                 Arc::clone(sink),
                 thread_id.clone(),
-                automation.task.clone(),
+                format!(
+                    "{}{}",
+                    automation.task,
+                    automation
+                        .skill_ids
+                        .iter()
+                        .map(|id| format!(" [[skill:{id}]]"))
+                        .collect::<String>()
+                ),
                 run_id.clone(),
                 effort,
             )

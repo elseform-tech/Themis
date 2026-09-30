@@ -153,8 +153,48 @@ impl AppState {
         run_id: String,
         reasoning_effort: Option<String>,
     ) -> Result<RunHandle, String> {
+        let automation_run = self
+            .inner
+            .automation_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&run_id);
         let settings = self.inner.settings.get().await;
         let history = self.inner.transcript.context(&thread_id, usize::MAX)?;
+        let project_root = {
+            let threads = self.inner.threads.read().await;
+            threads
+                .get(&thread_id)
+                .ok_or_else(|| format!("unknown thread '{thread_id}'"))?
+                .project_root
+                .clone()
+        };
+        let legacy: Vec<_> = self
+            .inner
+            .skills
+            .read()
+            .await
+            .values()
+            .map(Skill::core_skill)
+            .collect();
+        let store = self.plugin_store(Some(project_root));
+        let (resolved_text, inline_skills, plugins) = store
+            .resolve_prompt(&text, &legacy)
+            .map_err(|e| e.to_string())?;
+        {
+            let threads = self.inner.threads.read().await;
+            for id in threads
+                .get(&thread_id)
+                .ok_or("Unknown thread")?
+                .skill_ids
+                .iter()
+                .filter(|_| !automation_run)
+            {
+                if !legacy.iter().any(|s| s.id == *id) {
+                    return Err(format!("Unavailable legacy skill '{id}'"));
+                }
+            }
+        }
         let snapshot = {
             let mut threads = self.inner.threads.write().await;
             let record = threads
@@ -185,17 +225,18 @@ impl AppState {
                 record.title = title_from_message(&text);
                 record.titled = true;
             }
-            // Resolve the thread's skills to core skills for the run. This
-            // nests the skills read lock under the threads write lock — the
-            // only such nesting, and no path nests the reverse, so lock order
-            // stays acyclic.
-            let skills = self.inner.skills.read().await;
-            let resolved: Vec<themis_core::skills::Skill> = record
+            // Use the validated snapshot; deletion during preparation cannot leak a run slot.
+            let mut resolved: Vec<themis_core::skills::Skill> = record
                 .skill_ids
                 .iter()
-                .filter_map(|id| skills.get(id))
-                .map(Skill::core_skill)
+                .filter(|_| !automation_run)
+                .filter_map(|id| legacy.iter().find(|s| s.id == *id).cloned())
                 .collect();
+            for skill in inline_skills {
+                if !resolved.iter().any(|s| s.id == skill.id) {
+                    resolved.push(skill);
+                }
+            }
             RunSnapshot {
                 reasoning_effort: reasoning_effort.or_else(|| record.reasoning_effort.clone()),
                 history,
@@ -206,6 +247,7 @@ impl AppState {
                 provider: record.provider,
                 model: record.model.clone(),
                 skills: resolved,
+                plugins,
             }
         };
         if let Err(error) = self
@@ -228,7 +270,7 @@ impl AppState {
             recent_messages: settings.context_messages.clamp(1, 100) as usize,
         };
         if let Err(error) = self
-            .spawn_run(&sink, &thread_id, &run_id, snapshot, text, policy)
+            .spawn_run(&sink, &thread_id, &run_id, snapshot, resolved_text, policy)
             .await
         {
             if let Err(save_error) = self.inner.transcript.append_event(&ThreadEventEnvelope {
