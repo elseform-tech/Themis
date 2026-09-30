@@ -31,15 +31,32 @@ fn data_dir() -> Result<PathBuf, String> {
 }
 
 fn usage() -> &'static str {
-    "usage: themisctl [--data-dir DIR] serve|server stop|status|watch|models|auth status|thread create PROJECT [MODEL]|thread list PROJECT|thread get ID|thread history ID|thread send ID TEXT|thread stop ID|call METHOD [JSON_ARGS]|app launch|app quit\n\
-     call exposes the desktop backend methods with camelCase JSON arguments.\n\
-     Credentials must be entered through the desktop settings; never pass a real key on the command line."
+    "usage: themis [--data-dir DIR] COMMAND
+Commands:
+  serve                         Run the shared app server in the foreground
+  server start|stop              Start or stop the background server
+  status                        Report server version
+  watch                         Stream all backend events as JSON
+  models                        List OpenCode Go models
+  auth status                   Report key availability only
+  thread create PROJECT [MODEL]  Create a shared desktop conversation
+  thread list PROJECT           List conversations
+  thread get ID                 Show conversation metadata
+  thread history ID             Show persisted history
+  thread send ID TEXT [--json|--detach]  Send and stream, or return a run handle
+  thread stop ID                Stop a run
+  chat ID                       Converse until /quit (TTY required)
+  call METHOD [JSON_ARGS]       Call a backend method with camelCase arguments
+  app launch|quit               Open or close the desktop window
+  --help | --version
+Tool approvals require a terminal; unattended sends deny approval requests.
+Never put keys in command arguments. Use providers or desktop Settings."
 }
 
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("themisctl: {error}");
+        eprintln!("themis: {error}");
         std::process::exit(1);
     }
 }
@@ -57,12 +74,32 @@ async fn run() -> Result<(), String> {
         data_dir()?
     };
     let client = Client::new(directory.clone());
+    if words.is_empty() || words == ["--help"] || words == ["-h"] {
+        println!("{}", usage());
+        return Ok(());
+    }
+    if words == ["--version"] {
+        println!("themis {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if words.first().is_some_and(|word| {
+        matches!(
+            word.as_str(),
+            "thread" | "chat" | "models" | "call" | "auth"
+        )
+    }) {
+        ensure_server(&client, &directory).await?;
+    }
     let result = match words.as_slice() {
         [command] if command == "serve" => {
             themis_desktop::run_headless_server_async(directory).await?;
             return Ok(());
         }
         [command] if command == "status" => client.call("ping", Value::Null).await?,
+        [server, start] if server == "server" && start == "start" => {
+            ensure_server(&client, &directory).await?;
+            client.call("ping", Value::Null).await?
+        }
         [server, stop] if server == "server" && stop == "stop" => {
             client.call("shutdown", Value::Null).await?
         }
@@ -110,6 +147,18 @@ async fn run() -> Result<(), String> {
                 .await?
         }
         [thread, send, id, text] if thread == "thread" && send == "send" => {
+            send_message(&client, id, text, false).await?;
+            return Ok(());
+        }
+        [thread, send, id, text, option]
+            if thread == "thread" && send == "send" && option == "--json" =>
+        {
+            send_message(&client, id, text, true).await?;
+            return Ok(());
+        }
+        [thread, send, id, text, option]
+            if thread == "thread" && send == "send" && option == "--detach" =>
+        {
             client
                 .call(
                     "send_message",
@@ -117,18 +166,48 @@ async fn run() -> Result<(), String> {
                 )
                 .await?
         }
+        [command, id] if command == "chat" => {
+            use std::io::{IsTerminal, Write};
+            if !std::io::stdin().is_terminal() {
+                return Err(
+                    "chat requires a terminal; use thread send ID TEXT for scripts".to_owned(),
+                );
+            }
+            loop {
+                print!("> ");
+                std::io::stdout()
+                    .flush()
+                    .map_err(|error| error.to_string())?;
+                let mut text = String::new();
+                if std::io::stdin()
+                    .read_line(&mut text)
+                    .map_err(|error| error.to_string())?
+                    == 0
+                    || text.trim() == "/quit"
+                {
+                    return Ok(());
+                }
+                if !text.trim().is_empty() {
+                    send_message(&client, id, text.trim_end(), false).await?;
+                }
+            }
+        }
         [thread, stop, id] if thread == "thread" && stop == "stop" => {
             client.call("stop_thread", json!({"threadId": id})).await?
         }
         [command, method] if command == "call" => {
             if method == "set_secret" {
-                return Err("set_secret is available only through the desktop settings".to_owned());
+                return Err(
+                    "use themis providers or desktop Settings to enter a key securely".to_owned(),
+                );
             }
             client.call(method, json!({})).await?
         }
         [command, method, args] if command == "call" => {
             if method == "set_secret" {
-                return Err("set_secret is available only through the desktop settings".to_owned());
+                return Err(
+                    "use themis providers or desktop Settings to enter a key securely".to_owned(),
+                );
             }
             let args =
                 serde_json::from_str(args).map_err(|err| format!("invalid JSON_ARGS: {err}"))?;
@@ -149,6 +228,132 @@ async fn run() -> Result<(), String> {
         serde_json::to_string(&result).map_err(|err| err.to_string())?
     );
     Ok(())
+}
+
+async fn ensure_server(client: &Client, directory: &std::path::Path) -> Result<(), String> {
+    let ping = || {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            client.call("ping", Value::Null),
+        )
+    };
+    if ping().await.is_ok_and(|result| result.is_ok()) {
+        return Ok(());
+    }
+    let mut child =
+        std::process::Command::new(std::env::current_exe().map_err(|error| error.to_string())?)
+            .arg("--data-dir")
+            .arg(directory)
+            .arg("serve")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|error| format!("could not start app server: {error}"))?;
+    for _ in 0..50 {
+        if ping().await.is_ok_and(|result| result.is_ok()) {
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            // Another launcher can win the ownership lock during concurrent startup.
+            if ping().await.is_ok_and(|result| result.is_ok()) {
+                return Ok(());
+            }
+            return Err(format!(
+                "app server exited during startup: {status}; run themis doctor"
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    Err("app server did not become ready; run themis doctor".to_owned())
+}
+
+async fn send_message(
+    client: &Client,
+    id: &str,
+    text: &str,
+    json_output: bool,
+) -> Result<(), String> {
+    use std::io::{IsTerminal, Write};
+    // Subscribe before starting the run, including runs that finish immediately.
+    let mut stream = client.subscribe().await?;
+    let handle = client
+        .call(
+            "send_message",
+            json!({"threadId": id, "text": text, "reasoningEffort": null}),
+        )
+        .await?;
+    let run_id = handle["run_id"].as_str().ok_or("missing run ID")?;
+    let mut printed_text = false;
+    loop {
+        let event = Client::next_event(&mut stream).await.map_err(|error| {
+            format!("event stream interrupted ({error}); check thread history before retrying")
+        })?;
+        if event["name"] == "lagged" {
+            return Err(
+                "event stream lost messages; check thread history before retrying".to_owned(),
+            );
+        }
+        let payload = &event["payload"];
+        if payload["thread_id"] != id {
+            continue;
+        }
+        if event["name"] == "approval-request" {
+            let mut decision = "deny";
+            if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+                eprint!(
+                    "\n{}: {}\nAllow once? [y/N] ",
+                    payload["tool"], payload["summary"]
+                );
+                std::io::stderr()
+                    .flush()
+                    .map_err(|error| error.to_string())?;
+                let mut answer = String::new();
+                std::io::stdin()
+                    .read_line(&mut answer)
+                    .map_err(|error| error.to_string())?;
+                if matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+                    decision = "once";
+                }
+            } else {
+                eprintln!("Tool approval denied: terminal input unavailable. Use chat or a terminal send to approve.");
+            }
+            client.call("approve_action", json!({"threadId": id, "approvalId": payload["approval_id"], "decision": decision})).await?;
+        }
+        if event["name"] != "thread-event" || payload["run_id"] != run_id {
+            continue;
+        }
+        if json_output {
+            println!("{event}");
+        }
+        let item = &payload["event"];
+        match item["kind"].as_str().unwrap_or_default() {
+            "assistant_text" if !json_output => {
+                print!("{}", item["text"].as_str().unwrap_or_default());
+                std::io::stdout()
+                    .flush()
+                    .map_err(|error| error.to_string())?;
+                printed_text = true;
+            }
+            "finished" => {
+                if !json_output {
+                    if !printed_text {
+                        print!("{}", item["result"].as_str().unwrap_or_default());
+                    }
+                    println!();
+                }
+                return Ok(());
+            }
+            "failed" => return Err(item["error"].as_str().unwrap_or("run failed").to_owned()),
+            "incomplete" => {
+                return Err(item["reason"]
+                    .as_str()
+                    .unwrap_or("run incomplete")
+                    .to_owned())
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]

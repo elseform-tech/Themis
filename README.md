@@ -38,15 +38,17 @@ python3 -m quality_dashboard.dashboard # local quality dashboard
 
 The desktop starts a separate local app server process and connects to it. The
 server owns thread state and keeps scheduled automations available after the
-window closes. The CLI connects to that same server:
+window closes. The optional `themis` CLI connects to that same server and starts it when a
+conversation needs one:
 
 ```sh
-cargo run -p themis-desktop --bin themisctl -- serve
-cargo run -p themis-desktop --bin themisctl -- status
-cargo run -p themis-desktop --bin themisctl -- thread create /path/to/project
-cargo run -p themis-desktop --bin themisctl -- thread send THREAD_ID "task"
-cargo run -p themis-desktop --bin themisctl -- call get_settings
-cargo run -p themis-desktop --bin themisctl -- server stop
+cargo run -p themis-desktop --bin themis -- serve
+cargo run -p themis-desktop --bin themis -- status
+cargo run -p themis-desktop --bin themis -- thread create /path/to/project
+cargo run -p themis-desktop --bin themis -- thread send THREAD_ID "task"
+cargo run -p themis-desktop --bin themis -- chat THREAD_ID
+cargo run -p themis-desktop --bin themis -- call get_settings
+cargo run -p themis-desktop --bin themis -- server stop
 ```
 
 Pass `--data-dir DIR` before the command to use an isolated server and data
@@ -54,9 +56,15 @@ store. `call METHOD JSON_ARGS` exposes backend commands with the same camelCase
 arguments as the desktop bridge; it rejects `set_secret` so real keys are never
 passed as command-line arguments. Enter keys in desktop Settings.
 
+`thread send` streams the run and prompts for tool approvals in a terminal.
+`--json` emits newline-delimited run events; `--detach` returns a run handle.
+Unattended sends deny tool approvals. `chat THREAD_ID` accepts repeated prompts
+until `/quit`; followups reuse the same persisted history, model, effort and skills.
+The old standalone `themis run` and `themisctl` commands are retired.
+
 The dashboard refreshes repository and test data every five seconds and counts
 automated Rust, frontend, dashboard, and CLI end-to-end tests.
-Use an isolated `themisctl` server for backend journeys; verify UI behavior
+Use an isolated `themis` server for backend journeys; verify UI behavior
 separately in the browser or native app.
 Generate Rust line coverage with `cargo-llvm-cov` as documented in
 `quality_dashboard/README.md`; the dashboard reads the resulting LCOV report.

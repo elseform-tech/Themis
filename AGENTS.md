@@ -36,7 +36,7 @@ Run checks and start local apps with these root-level commands.
 
 Use `rustfmt`, Rust `snake_case`, and `PascalCase` types/components. Frontend uses two spaces and `camelCase`. Required linters are Clippy, ESLint (React Hooks), and Ruff. Rust tests use the built-in harness, web uses Vitest, and dashboard uses `unittest`; no coverage threshold is configured. Keep `*.test.tsx` beside frontend modules and Rust integration tests in crate `tests/`. Add focused regression cases.
 
-Exercise backend features through the local app server and `themisctl` in isolated automated tests. Keep UI and OS verification separate from the dashboard's automated test inventory. Add a focused CLI end-to-end case for a changed backend flow and report any unverified UI behavior explicitly.
+Exercise backend features through the local app server and `themis` in isolated automated tests. Keep UI and OS verification separate from the dashboard's automated test inventory. Add a focused CLI end-to-end case for a changed backend flow and report any unverified UI behavior explicitly.
 
 Before considering any task done, run fresh, relevant verification and read the complete output. For UI changes, verify the affected journey in a browser or native app when available; for system-prompt changes, verify the constructed system message and the LLM request path. Report exact commands and results, and label any remaining evidence as unverified.
 
