@@ -109,6 +109,8 @@ export interface Diagnostics {
   /** Settings snapshot. Never contains secret values. */
   settings: Settings;
   recent_errors: DiagnosticsError[];
+  persistence?: { name: string; status: 'pass' | 'warn' | 'fail' | 'unverified'; detail: string; action: string }[];
+  recovery_notes?: number;
 }
 
 export type UpdateState = 'disabled' | 'up-to-date' | 'available' | 'error';

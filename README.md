@@ -74,3 +74,11 @@ or the Linux Secret Service and remain available after restart when that store i
 available. OpenCode Go can also use `OPENCODE_KEY` in the server launch environment.
 Conversation history is stored in SQLite under the app-data directory; keys are
 never stored in SQLite, settings, or frontend storage.
+
+`themis doctor [--json] [--deep]` checks installation, authenticated server discovery,
+JSON stores, SQLite schema/integrity, and history/context/checkpoint consistency.
+It runs offline without starting the server, migrating stores, or repairing data.
+With a running server it uses the live SQLite connection. `--deep` selects the full
+SQLite integrity check. Failures exit nonzero; missing unused stores are warnings.
+Reports contain counts and status, not transcript contents or keys. Readability
+checks do not prove successful writes or crash durability.

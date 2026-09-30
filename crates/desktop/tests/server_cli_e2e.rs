@@ -277,3 +277,31 @@ async fn streamed_cli_followup_uses_persisted_context_and_skills() {
     );
     task.abort();
 }
+
+#[test]
+fn doctor_reports_corruption_without_initializing_or_repairing_stores() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("settings.json");
+    std::fs::write(&settings, "{broken secret-like-content").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(dir.path())
+        .args(["doctor", "--json", "--deep"])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|check| check["name"] == "settings.json" && check["status"] == "fail"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("secret-like-content"));
+    assert_eq!(
+        std::fs::read_to_string(&settings).unwrap(),
+        "{broken secret-like-content"
+    );
+    assert!(!dir.path().join("sessions.sqlite3").exists());
+    assert!(!dir.path().join("server.lock").exists());
+}

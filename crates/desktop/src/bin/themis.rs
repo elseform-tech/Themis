@@ -38,6 +38,7 @@ Commands:
   status                        Report server version
   watch                         Stream all backend events as JSON
   models                        List OpenCode Go models
+  doctor [--json] [--deep]       Read-only local diagnostics
   auth status                   Report key availability only
   thread create PROJECT [MODEL]  Create a shared desktop conversation
   thread list PROJECT           List conversations
@@ -89,6 +90,36 @@ async fn run() -> Result<(), String> {
         )
     }) {
         ensure_server(&client, &directory).await?;
+    }
+    if words.first().is_some_and(|word| word == "doctor") {
+        if words[1..]
+            .iter()
+            .any(|word| !matches!(word.as_str(), "--json" | "--deep"))
+        {
+            return Err(usage().to_owned());
+        }
+        let report =
+            themis_desktop::doctor::diagnose(&directory, words.iter().any(|word| word == "--deep"))
+                .await;
+        if words.iter().any(|word| word == "--json") {
+            println!(
+                "{}",
+                serde_json::to_string(&report).map_err(|error| error.to_string())?
+            );
+        } else {
+            println!("Themis {} — {}", report.version, report.data_dir);
+            for check in &report.checks {
+                println!("{:?} {}: {}", check.status, check.name, check.detail);
+                if !check.action.is_empty() {
+                    println!("  {}", check.action);
+                }
+            }
+        }
+        return if report.failed() {
+            Err("doctor found failures".to_owned())
+        } else {
+            Ok(())
+        };
     }
     let result = match words.as_slice() {
         [command] if command == "serve" => {

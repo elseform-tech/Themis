@@ -120,8 +120,8 @@ struct AutomationRunContext {
 
 /// One persisted thread (the `threads.json` registry in the app data dir).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct RegistryEntry {
-    id: String,
+pub(crate) struct RegistryEntry {
+    pub(crate) id: String,
     title: String,
     project_root: String,
     worktree_path: Option<String>,
@@ -135,7 +135,7 @@ struct RegistryEntry {
     #[serde(default)]
     was_running: bool,
     #[serde(default)]
-    skill_ids: Vec<String>,
+    pub(crate) skill_ids: Vec<String>,
 }
 
 impl RegistryEntry {

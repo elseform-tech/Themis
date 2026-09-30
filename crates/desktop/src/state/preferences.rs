@@ -17,7 +17,14 @@ impl AppState {
 
     /// Returns the diagnostics snapshot without exposing secret values.
     pub async fn get_diagnostics(&self) -> Diagnostics {
+        self.get_diagnostics_with_depth(false).await
+    }
+
+    pub async fn get_diagnostics_with_depth(&self, deep: bool) -> Diagnostics {
+        let threads = self.inner.threads.read().await.keys().cloned().collect();
         Diagnostics {
+            persistence: self.inner.transcript.diagnostics(deep, &threads),
+            recovery_notes: self.reconcile_report().len(),
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
             os: std::env::consts::OS.to_owned(),
             settings: self.inner.settings.get().await,

@@ -8,6 +8,7 @@
 pub mod approvals;
 pub mod commands;
 pub mod diff;
+pub mod doctor;
 pub mod secrets;
 pub mod server;
 pub mod settings;
