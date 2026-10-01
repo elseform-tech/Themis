@@ -319,6 +319,8 @@ impl AppState {
             .map(|record| std::mem::replace(&mut record.running, false))
             .unwrap_or(false);
         if was_running {
+            // Keep Rust 1.98 support; the try_update replacement requires Rust 1.99.
+            #[allow(deprecated)]
             let _ = self.inner.running_count.fetch_update(
                 Ordering::SeqCst,
                 Ordering::SeqCst,
