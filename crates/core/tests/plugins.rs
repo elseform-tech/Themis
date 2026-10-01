@@ -208,11 +208,16 @@ async fn hooks_require_approval_and_can_block_before_events() {
         .to_string()
         .contains("denied"));
     let allow: std::sync::Arc<dyn ApprovalHook> = std::sync::Arc::new(AllowAllHook);
-    assert!(hooks::run(&hook, root.path(), &json!({}), &allow)
-        .await
-        .unwrap_err()
-        .to_string()
-        .contains("blocked"));
+    let error = hooks::run(
+        &hook,
+        root.path(),
+        &json!({"input": "x".repeat(1024 * 1024)}),
+        &allow,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("blocked"), "{error}");
     let slow = Hook {
         command: if cfg!(windows) {
             "ping -n 4 127.0.0.1 >nul"

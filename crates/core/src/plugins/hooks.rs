@@ -74,7 +74,9 @@ pub async fn run(
     #[cfg(windows)]
     let mut command = {
         let mut c = tokio::process::Command::new("cmd");
-        c.args(["/C", &hook.command]);
+        // cmd parses shell text rather than C-runtime escaped argv.
+        c.args(["/D", "/S", "/C"])
+            .raw_arg(format!("\"{}\"", hook.command));
         c
     };
     command
