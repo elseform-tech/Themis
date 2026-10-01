@@ -239,7 +239,7 @@ describe("Workspace journey", () => {
     await act(async () => receive({ thread_id: "status", run_id: "r3", event: { kind: "failed", error: "Stopped by you." } }));
     expect(within(sidebar).getByRole("img", { name: "Stopped" })).toBeInTheDocument();
   });
-  it("keeps compact navigation while delaying the full sidebar hover reveal", async () => {
+  it("keeps compact navigation without expanding on hover", async () => {
     vi.useFakeTimers(); await mount();
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     const sidebar = document.getElementById("themis-sidebar")!;
@@ -248,17 +248,15 @@ describe("Workspace journey", () => {
     expect(within(rail).getByRole("img", { name: "ThemisCode" })).toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: "Settings" })).toBeEnabled();
     expect(document.getElementById("sidebar-toggle")?.closest("header")).toBeInTheDocument();
-    fireEvent.pointerEnter(screen.getByTestId("sidebar-edge"));
-    act(() => vi.advanceTimersByTime(299)); expect(sidebar).toHaveAttribute("inert");
-    act(() => vi.advanceTimersByTime(1)); expect(sidebar).not.toHaveAttribute("inert");
-    fireEvent.pointerLeave(screen.getByTestId("sidebar-edge"));
-    act(() => vi.advanceTimersByTime(699)); expect(sidebar).not.toHaveAttribute("inert");
-    act(() => vi.advanceTimersByTime(1)); expect(sidebar).toHaveAttribute("inert");
-    fireEvent.pointerEnter(screen.getByTestId("sidebar-edge"));
-    act(() => vi.advanceTimersByTime(300));
-    fireEvent.pointerEnter(sidebar); fireEvent.pointerLeave(sidebar);
-    act(() => vi.advanceTimersByTime(699)); expect(sidebar).not.toHaveAttribute("inert");
-    act(() => vi.advanceTimersByTime(1)); expect(sidebar).toHaveAttribute("inert");
+    expect(screen.queryByTestId("sidebar-edge")).not.toBeInTheDocument();
+    fireEvent.pointerEnter(rail);
+    fireEvent.pointerEnter(sidebar);
+    act(() => vi.advanceTimersByTime(2000));
+    expect(sidebar).toHaveAttribute("inert");
+    fireEvent.click(within(rail).getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    expect(screen.queryByLabelText("Reveal the collapsed sidebar on hover")).not.toBeInTheDocument();
+    expect(sidebar).toHaveAttribute("inert");
     fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
     expect(sidebar).not.toHaveAttribute("inert");
   });

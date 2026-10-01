@@ -239,12 +239,11 @@ export function SettingsScreen() {
         <label className="themis-settings-control">Font<select value={form.font_family ?? "system"} onChange={event => void save({ font_family: event.target.value as Settings["font_family"] })}>{[["system", "System"], ["sans", "Sans serif"], ["serif", "Serif"], ["mono", "Monospace"], ["rounded", "Rounded"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="themis-settings-control">Text size<select value={form.text_size} onChange={event => void save({ text_size: Number(event.target.value) })}>{[12, 13, 14, 15, 16, 17, 18, 20, 22].map(size => <option key={size} value={size}>{size}px{size === 13 ? " · Default" : ""}</option>)}</select></label>
         <p className="themis-settings-hint">System font · Compact, clear text. Code keeps its monospace font.</p>
-        <label className="themis-settings-check"><input type="checkbox" checked={form.sidebar_hover} onChange={event => void save({ sidebar_hover: event.target.checked })} />Reveal the collapsed sidebar on hover</label><p className="themis-settings-hint">Hover at the left edge to reveal it. Use the arrow to keep it open, or ⌘ / Ctrl + B to toggle it.</p>
         <h3 className="themis-settings-subtitle">Completion feedback</h3>
         <label className="themis-settings-check"><input type="checkbox" checked={form.completion_sound} onChange={event => void save({ completion_sound: event.target.checked })} />Play a click when my response finishes</label>
         {navigator.platform.startsWith("Mac") && <label className="themis-settings-check"><input type="checkbox" checked={form.completion_haptic} onChange={event => void save({ completion_haptic: event.target.checked })} />Use trackpad haptic feedback when available</label>}
         <p className="themis-settings-hint">Only for responses you start; scheduled runs stay quiet.</p>
-        <div><Button variant="ghost" size="small" onClick={() => void save({ theme: "system", theme_palette: "system", font_family: "system", text_size: 13, sidebar_hover: true })}>Reset appearance</Button></div>
+        <div><Button variant="ghost" size="small" onClick={() => void save({ theme: "system", theme_palette: "system", font_family: "system", text_size: 13 })}>Reset appearance</Button></div>
       </section>}
       {section === "Models & connections" && <>
         <section className="themis-settings-section" aria-label="Model defaults"><h3 className="themis-settings-subtitle">Model defaults</h3>

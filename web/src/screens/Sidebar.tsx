@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Badge, Button, Dialog, Input } from "../components";
 import { createProject, getSettings, renameThread, setProvider } from "../lib/tauri";
 import { describeError, toast, useApp, type MainView } from "../state/store";
@@ -16,7 +16,6 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   const { state, dispatch } = useApp();
   const openProject = useOpenProject();
   const newThread = useNewThread();
-  const [revealed, setRevealed] = useState(false);
   const [name, setName] = useState("");
   const [directory, setDirectory] = useState("");
   const [busy, setBusy] = useState(false);
@@ -27,39 +26,11 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   const [editError, setEditError] = useState("");
   const [editBusy, setEditBusy] = useState(false);
   const [help, setHelp] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const panel = useRef<HTMLElement>(null);
-  const inside = useRef(false);
-  const visible = !collapsed || revealed;
   const pending = state.reviews.filter(r => r.status === "pending").length;
   const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(() => readSession("collapsedProjects", {}));
   function setProjectCollapsed(root: string, value: boolean) {
     setCollapsedProjects(previous => { const next = { ...previous, [root]: value }; writeSession("collapsedProjects", next); return next; });
   }
-
-  function clearTimer() { clearTimeout(timer.current); }
-  function reveal() {
-    clearTimer();
-    if (collapsed && state.settings.sidebar_hover) timer.current = setTimeout(() => setRevealed(true), 300);
-  }
-  function hideLater() {
-    clearTimer();
-    timer.current = setTimeout(() => {
-      if (!inside.current && !panel.current?.contains(document.activeElement)) setRevealed(false);
-    }, 700);
-  }
-  useEffect(() => { clearTimer(); setRevealed(false); }, [collapsed, state.settings.sidebar_hover]);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  useEffect(() => {
-    function escape(event: KeyboardEvent) {
-      if (event.key === "Escape" && collapsed && !state.projectDialogOpen && !help && !state.paletteOpen) {
-        setRevealed(false);
-        document.getElementById("sidebar-toggle")?.focus();
-      }
-    }
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
-  }, [collapsed, help, state.projectDialogOpen, state.paletteOpen]);
 
   async function create() {
     if (busy || !name.trim()) return;
@@ -92,7 +63,6 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     </button>;
   }
   return <>
-    {collapsed && <div className="themis-sidebar-edge" data-testid="sidebar-edge" onPointerEnter={reveal} onPointerLeave={hideLater} />}
     <div className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""}`}>
       {collapsed && <nav className="themis-sidebar-rail" aria-label="Compact workspace navigation">
         <button type="button" className="themis-rail-brand" aria-label="Expand sidebar" onClick={onToggle}><KnightBrand /></button>
@@ -100,9 +70,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
         <button type="button" className="themis-sidebar-row" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}><SidebarIcon name="project" /></button>
         <div className="themis-rail-footer">{nav("settings", "Settings")}<button type="button" className="themis-sidebar-row" aria-label="Search commands" title="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></div>
       </nav>}
-      <aside id="themis-sidebar" ref={panel} className={`themis-sidebar ${collapsed ? "is-overlay" : ""} ${visible ? "is-visible" : ""}`} inert={!visible} aria-hidden={!visible} aria-label="Workspace navigation"
-        onPointerEnter={() => { inside.current = true; clearTimer(); }} onPointerLeave={() => { inside.current = false; hideLater(); }}
-        onFocusCapture={() => { clearTimer(); setRevealed(true); }} onBlurCapture={hideLater}>
+      <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
         <div className="themis-brand"><KnightBrand wordmark /></div>
         <nav className="themis-sidebar-nav" aria-label="Main views">{views.map(([view, label]) => nav(view, label))}</nav>
         <div className="themis-sidebar-projects">
