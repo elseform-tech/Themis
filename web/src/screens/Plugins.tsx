@@ -25,7 +25,7 @@ export function Plugins() {
   const [editing,setEditing]=useState<{original:Plugin|null;spec:PluginSpec;scope:"local"|"global"}|null>(null);
   const [section,setSection]=useState("Skills"),[result,setResult]=useState("");
   const [removing,setRemoving]=useState<Plugin|null>(null);
-  const load=useCallback(async()=>{const [items,sources]=await Promise.all([pluginAction<Plugin[]>({action:"list",projectRoot:root}),pluginAction<Marketplace[]>({action:"marketplaces"})]);setPlugins(items);setMarkets(sources);},[root]);
+  const load=useCallback(async()=>{const [items,sources]=await Promise.all([pluginAction<Plugin[]>({action:"list",projectRoot:root}),pluginAction<Marketplace[]>({action:"marketplaces"})]);setPlugins(items);setMarkets(sources);setError("");},[root]);
   useEffect(()=>{let active=true;void load().catch(e=>{if(active)setError(describeError(e));});return()=>{active=false;};},[load]);
   async function action(args:Record<string,unknown>) {
     setBusy(true);setError("");try{const value=await pluginAction<unknown>({projectRoot:root,...args});await load();window.dispatchEvent(new Event("themis-plugins-changed"));return value;}catch(e){setError(describeError(e));throw e;}finally{setBusy(false);}

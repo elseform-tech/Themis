@@ -7,6 +7,7 @@ import * as bridge from "../lib/tauri";
 
 vi.mock("../lib/tauri", async importOriginal => ({
   ...await importOriginal<typeof import("../lib/tauri")>(),
+  pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
   getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
@@ -28,6 +29,15 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("clears a transient plugin load error after refreshing", async () => {
+    vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
+    await mount();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Plugins" })));
+    expect(screen.getByRole("alert")).toHaveTextContent("Marketplace store is busy");
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("No plugins installed")).toBeInTheDocument();
+  });
   it("plays one desktop completion sound for a manually sent response", async () => {
     const root = "/tmp/sound-project";
     const thread = { id: "sound-thread", title: "Sound", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
