@@ -93,7 +93,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     </button>;
   }
   return <>
-    {collapsed && <div className="themis-sidebar-edge" data-testid="sidebar-edge" onPointerEnter={reveal} onPointerLeave={clearTimer} />}
+    {collapsed && <div className="themis-sidebar-edge" data-testid="sidebar-edge" onPointerEnter={reveal} onPointerLeave={hideLater} />}
     <div className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""}`}>
       {collapsed && <nav className="themis-sidebar-rail" aria-label="Compact workspace navigation">
         <button type="button" className="themis-rail-brand" aria-label="Expand sidebar" onClick={onToggle}><KnightBrand /></button>

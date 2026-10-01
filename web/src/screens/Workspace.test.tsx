@@ -241,6 +241,11 @@ describe("Workspace journey", () => {
     fireEvent.pointerEnter(screen.getByTestId("sidebar-edge"));
     act(() => vi.advanceTimersByTime(299)); expect(sidebar).toHaveAttribute("inert");
     act(() => vi.advanceTimersByTime(1)); expect(sidebar).not.toHaveAttribute("inert");
+    fireEvent.pointerLeave(screen.getByTestId("sidebar-edge"));
+    act(() => vi.advanceTimersByTime(699)); expect(sidebar).not.toHaveAttribute("inert");
+    act(() => vi.advanceTimersByTime(1)); expect(sidebar).toHaveAttribute("inert");
+    fireEvent.pointerEnter(screen.getByTestId("sidebar-edge"));
+    act(() => vi.advanceTimersByTime(300));
     fireEvent.pointerEnter(sidebar); fireEvent.pointerLeave(sidebar);
     act(() => vi.advanceTimersByTime(699)); expect(sidebar).not.toHaveAttribute("inert");
     act(() => vi.advanceTimersByTime(1)); expect(sidebar).toHaveAttribute("inert");
