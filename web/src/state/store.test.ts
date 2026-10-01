@@ -280,6 +280,7 @@ describe("settings", () => {
       type: "settings/patched",
       settings: {
         projects_directory: "/tmp/projects", text_size: 14, sidebar_hover: true,
+        theme_palette: "system", font_family: "system",
         theme: "light",
         default_provider: "go",
         default_model: "claude",

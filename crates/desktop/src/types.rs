@@ -436,6 +436,10 @@ pub struct Settings {
     pub projects_directory: String,
     #[serde(default = "default_text_size")]
     pub text_size: u32,
+    #[serde(default = "default_appearance_choice")]
+    pub theme_palette: String,
+    #[serde(default = "default_appearance_choice")]
+    pub font_family: String,
     #[serde(default = "default_automations_enabled")]
     pub sidebar_hover: bool,
     pub theme: ThemeMode,
@@ -483,6 +487,10 @@ pub fn default_projects_directory() -> String {
         .unwrap_or_default()
 }
 
+fn default_appearance_choice() -> String {
+    "system".to_owned()
+}
+
 const fn default_text_size() -> u32 {
     13
 }
@@ -511,6 +519,8 @@ impl Default for Settings {
         Self {
             projects_directory: default_projects_directory(),
             text_size: default_text_size(),
+            theme_palette: default_appearance_choice(),
+            font_family: default_appearance_choice(),
             sidebar_hover: true,
             theme: ThemeMode::System,
             default_provider: ProviderKind::Go,
@@ -536,6 +546,8 @@ impl Default for Settings {
 pub struct SettingsPatch {
     pub projects_directory: Option<String>,
     pub text_size: Option<u32>,
+    pub theme_palette: Option<String>,
+    pub font_family: Option<String>,
     pub sidebar_hover: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<ThemeMode>,
@@ -1003,6 +1015,8 @@ mod tests {
             json!({
                 "projects_directory": default_projects_directory(),
                 "text_size": 13,
+                "theme_palette": "system",
+                "font_family": "system",
                 "sidebar_hover": true,
                 "theme": "system",
                 "default_provider": "go",

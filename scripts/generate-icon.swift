@@ -8,20 +8,13 @@ let iconset = root.appendingPathComponent("Themis.iconset")
 try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
 func render(_ size: Int, _ url: URL) {
     let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    ctx.scaleBy(x: CGFloat(size) / 32, y: CGFloat(size) / 32)
-    ctx.setFillColor(CGColor(red: 0.055, green: 0.07, blue: 0.10, alpha: 1))
-    ctx.addPath(CGPath(roundedRect: CGRect(x: 1, y: 1, width: 30, height: 30), cornerWidth: 7, cornerHeight: 7, transform: nil)); ctx.fillPath()
-    ctx.setStrokeColor(CGColor(red: 0.88, green: 0.72, blue: 0.36, alpha: 1))
-    ctx.setLineWidth(1.25); ctx.setLineCap(.round); ctx.setLineJoin(.round)
-    func line(_ points: [CGPoint]) { ctx.beginPath(); ctx.addLines(between: points); ctx.strokePath() }
-    line([CGPoint(x: 16, y: 7), CGPoint(x: 16, y: 25)])
-    line([CGPoint(x: 11, y: 7), CGPoint(x: 21, y: 7)])
-    line([CGPoint(x: 7, y: 22), CGPoint(x: 25, y: 22)])
-    for x: CGFloat in [8, 24] {
-        line([CGPoint(x: x, y: 22), CGPoint(x: x - 4, y: 14), CGPoint(x: x + 4, y: 14), CGPoint(x: x, y: 22)])
-        ctx.beginPath(); ctx.move(to: CGPoint(x: x - 4, y: 14)); ctx.addCurve(to: CGPoint(x: x + 4, y: 14), control1: CGPoint(x: x - 3, y: 10), control2: CGPoint(x: x + 3, y: 10)); ctx.strokePath()
+    let sourceURL = root.appendingPathComponent("icon-source.png")
+    guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        fatalError("Missing icon-source.png; rasterize icons/icon.svg at 1024px first")
     }
-    ctx.setFillColor(CGColor(red: 0.88, green: 0.72, blue: 0.36, alpha: 1)); ctx.fillEllipse(in: CGRect(x: 14.5, y: 23.5, width: 3, height: 3))
+    ctx.interpolationQuality = .high
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: size, height: size))
     let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)!
     CGImageDestinationAddImage(destination, ctx.makeImage()!, nil)
     precondition(CGImageDestinationFinalize(destination))
@@ -42,3 +35,10 @@ for (kind, name) in [("ic07", "icon_128x128.png"), ("ic08", "icon_256x256.png"),
 }
 var icns = "icns".data(using: .ascii)!; icns.append(bigEndian(chunks.count + 8)); icns.append(chunks)
 try icns.write(to: root.appendingPathComponent("icon.icns"))
+
+// Windows accepts a PNG payload in the standard ICO container.
+let png = try Data(contentsOf: root.appendingPathComponent("128x128@2x.png"))
+func littleEndian(_ value: Int) -> Data { var n = UInt32(value).littleEndian; return Data(bytes: &n, count: 4) }
+var ico = Data([0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 32, 0])
+ico.append(littleEndian(png.count)); ico.append(littleEndian(22)); ico.append(png)
+try ico.write(to: root.appendingPathComponent("icon.ico"))

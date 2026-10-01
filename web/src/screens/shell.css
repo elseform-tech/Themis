@@ -1,10 +1,10 @@
 .themis-shell {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   height: 100vh;
-  background-color: var(--themis-canvas);
+  background-color: var(--themis-shell-bg);
   color: var(--themis-text);
-  font-family: system-ui, sans-serif;
+  font-family: inherit;
 }
 
 .themis-main {
@@ -76,3 +76,9 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 .themis-button { font-weight: 500; }
 .themis-button--ghost { font-weight: 400; }
 .themis-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+.themis-shell-body { display: flex; flex: 1; min-height: 0; padding: 0 8px 8px 0; }
+.themis-main { background: var(--themis-canvas); border: 1px solid var(--themis-border-subtle); border-radius: 10px; overflow: hidden; }
+.themis-nav { border: 0; background: var(--themis-shell-bg); min-height: 46px; padding: 6px 14px; }
+.themis-shell--mac .themis-nav { padding-left: 88px; }
+#sidebar-toggle svg { width: 17px; height: 17px; }

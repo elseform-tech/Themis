@@ -1,3 +1,5 @@
+import { PromptInput } from "../components/PromptInput";
+import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useState } from "react";
 import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
 import opencodeLogoLight from "../assets/opencode-logo-light.svg";
@@ -62,6 +64,7 @@ export function Automations() {
   const selectedThread = dialog.mode === "closed" ? undefined : threadChoices.find(choice => choice.thread.id === dialog.form.targetThreadId);
   const selectedModel = dialog.mode === "closed" ? undefined : models.find(model => model.id === dialog.form.model);
   const effortLevels = selectedModel?.effort_levels ?? [];
+  const { skills: promptSkills, error: promptSkillsError } = usePromptSkills(dialog.mode === "closed" ? state.activeProjectRoot : dialog.form.projectRoot);
 
   useEffect(() => {
     if (targetMode !== "new" || !state.secretStatus.go) return;
@@ -123,15 +126,6 @@ export function Automations() {
     }
   }
 
-  function toggleSkill(skillId: string) {
-    if (dialog.mode === "closed") return;
-    const has = dialog.form.skillIds.includes(skillId);
-    patchForm({
-      skillIds: has
-        ? dialog.form.skillIds.filter((id) => id !== skillId)
-        : [...dialog.form.skillIds, skillId],
-    });
-  }
 
   async function save() {
     if (dialog.mode === "closed" || saving) return;
@@ -245,10 +239,6 @@ export function Automations() {
         <ul className="themis-automations-list">
           {state.automations.map((automation) => {
             const target = threadChoices.find(choice => choice.thread.id === automation.target_thread_id);
-            const skillNames = automation.skill_ids.map(
-              (id) =>
-                state.skills.find((s) => s.id === id)?.name ?? id,
-            );
             const busy = rowBusy === automation.id;
             return (
               <li key={automation.id} className="themis-automations-card">
@@ -285,14 +275,7 @@ export function Automations() {
                     <dt>Every</dt>
                     <dd>{automation.interval_mins}m</dd>
                   </div>
-                  <div>
-                    <dt>Skills</dt>
-                    <dd title={automation.target_thread_id ? "Inherited from thread" : skillNames.join(", ")}>
-                      {automation.target_thread_id ? "From thread" : automation.skill_ids.length === 0
-                        ? "none"
-                        : `${automation.skill_ids.length}: ${skillNames.join(", ")}`}
-                    </dd>
-                  </div>
+
                   <div>
                     <dt>Last run</dt>
                     <dd>{formatTime(automation.last_run_at)}</dd>
@@ -387,7 +370,7 @@ export function Automations() {
                   })}
                 </select>
               </label>
-              <span className="themis-automations-hint">Each heartbeat continues this thread with its current model, effort, and skills.</span>
+              <span className="themis-automations-hint">Each heartbeat continues this thread with its current model and effort. Select skills inside the task prompt.</span>
               {selectedThread && <p className="themis-automations-hint">{selectedThread.project.name} · {selectedThread.thread.model} · {selectedThread.thread.reasoning_effort || "Default effort"}</p>}
             </> : <>
             <div className="themis-automations-field">
@@ -420,31 +403,7 @@ export function Automations() {
             </div>
             {modelsError && <p className="themis-automations-error" role="alert">{modelsError}</p>}
             <Button variant="ghost" size="small" disabled={saving || modelsLoading || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button>
-            <div className="themis-automations-field">
-              <span className="themis-automations-label">Skills</span>
-              {state.skills.length === 0 ? (
-                <p className="themis-automations-hint">
-                  No skills yet — the run will use no skills.
-                </p>
-              ) : (
-                <div className="themis-automations-skills">
-                  {state.skills.map((skill) => (
-                    <label
-                      key={skill.id}
-                      className="themis-automations-check"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={dialog.form.skillIds.includes(skill.id)}
-                        disabled={saving}
-                        onChange={() => toggleSkill(skill.id)}
-                      />
-                      {skill.name}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
+
             </>}
             <Input
               id="themis-automation-interval"
@@ -464,15 +423,8 @@ export function Automations() {
               >
                 Task
               </label>
-              <textarea
-                id="themis-automation-task"
-                className="themis-automations-textarea"
-                placeholder="What the scheduled run should do…"
-                rows={4}
-                value={dialog.form.task}
-                disabled={saving}
-                onChange={(event) => patchForm({ task: event.target.value })}
-              />
+              <PromptInput id="themis-automation-task" label="Task" value={dialog.form.task} skills={promptSkills} disabled={saving} placeholder="What the scheduled run should do… / for skills" onChange={task => patchForm({ task })} />
+              {promptSkillsError && <p role="alert">{promptSkillsError}</p>}
             </div>
             <label className="themis-automations-check">
               <input

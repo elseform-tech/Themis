@@ -357,6 +357,8 @@ pub async fn dispatch(
         }};
     }
     match method {
+        "plugin_action" => output!(state.plugin_action(args).await?),
+        "list_prompt_skills" => output!(state.prompt_skills(arg(&args, "projectRoot")?).await?),
         "ping" => output!(state.ping().await),
         "open_project" => output!(state.open_project(arg(&args, "path")?).await?),
         "create_project" => output!(

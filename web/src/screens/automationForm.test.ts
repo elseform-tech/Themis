@@ -95,7 +95,7 @@ describe("toAutomationInput", () => {
     });
     expect(input.name).toBe("nightly");
     expect(input.interval_mins).toBe(15);
-    expect(input.skill_ids).toEqual(["s1"]);
+    expect(input.skill_ids).toEqual([]);
   });
   it("round-trips the selected reasoning effort", () => {
     const form = automationToForm({ ...AUTOMATION, reasoning_effort: "medium" });

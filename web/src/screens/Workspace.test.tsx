@@ -7,6 +7,7 @@ import * as bridge from "../lib/tauri";
 
 vi.mock("../lib/tauri", async importOriginal => ({
   ...await importOriginal<typeof import("../lib/tauri")>(),
+  pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
   getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
@@ -28,6 +29,15 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("clears a transient plugin load error after refreshing", async () => {
+    vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
+    await mount();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Plugins" })));
+    expect(screen.getByRole("alert")).toHaveTextContent("Marketplace store is busy");
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("No plugins installed")).toBeInTheDocument();
+  });
   it("plays one desktop completion sound for a manually sent response", async () => {
     const root = "/tmp/sound-project";
     const thread = { id: "sound-thread", title: "Sound", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
@@ -48,7 +58,7 @@ describe("Workspace journey", () => {
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => receive({ thread_id: thread.id, run_id: "automation", event: { kind: "finished", result: "Scheduled" } }));
     expect(start).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Hello" } });
+    fireEvent.input(screen.getByLabelText("Message"), { target: { textContent: "Hello" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
     expect(AudioContext).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith("/sounds/completion-woodblock-double.mp3");
@@ -114,7 +124,7 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.setThreadEffort).mockResolvedValue({ ...updated, reasoning_effort: "low" });
     await act(async () => fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "1" } }));
     expect(bridge.setThreadEffort).toHaveBeenCalledWith("thread1", "low");
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Read the test file" } });
+    fireEvent.input(screen.getByLabelText("Message"), { target: { textContent: "Read the test file" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
     expect(bridge.sendMessage).toHaveBeenCalledWith("thread1", "Read the test file", "low");
     expect(screen.queryByText("Thread options")).toBeNull();
@@ -170,7 +180,7 @@ describe("Workspace journey", () => {
     await mount();
     expect(await screen.findByText("Restored final answer")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Follow up" } });
+    fireEvent.input(screen.getByLabelText("Message"), { target: { textContent: "Follow up" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => {
@@ -229,17 +239,24 @@ describe("Workspace journey", () => {
     await act(async () => receive({ thread_id: "status", run_id: "r3", event: { kind: "failed", error: "Stopped by you." } }));
     expect(within(sidebar).getByRole("img", { name: "Stopped" })).toBeInTheDocument();
   });
-  it("fully hides navigation and delays hover reveal and dismissal", async () => {
+  it("keeps compact navigation without expanding on hover", async () => {
     vi.useFakeTimers(); await mount();
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     const sidebar = document.getElementById("themis-sidebar")!;
     expect(sidebar).toHaveAttribute("inert");
-    fireEvent.pointerEnter(screen.getByTestId("sidebar-edge"));
-    act(() => vi.advanceTimersByTime(299)); expect(sidebar).toHaveAttribute("inert");
-    act(() => vi.advanceTimersByTime(1)); expect(sidebar).not.toHaveAttribute("inert");
-    fireEvent.pointerEnter(sidebar); fireEvent.pointerLeave(sidebar);
-    act(() => vi.advanceTimersByTime(699)); expect(sidebar).not.toHaveAttribute("inert");
-    act(() => vi.advanceTimersByTime(1)); expect(sidebar).toHaveAttribute("inert");
+    const rail = screen.getByRole("navigation", { name: "Compact workspace navigation" });
+    expect(within(rail).getByRole("img", { name: "ThemisCode" })).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: "Settings" })).toBeEnabled();
+    expect(document.getElementById("sidebar-toggle")?.closest("header")).toBeInTheDocument();
+    expect(screen.queryByTestId("sidebar-edge")).not.toBeInTheDocument();
+    fireEvent.pointerEnter(rail);
+    fireEvent.pointerEnter(sidebar);
+    act(() => vi.advanceTimersByTime(2000));
+    expect(sidebar).toHaveAttribute("inert");
+    fireEvent.click(within(rail).getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    expect(screen.queryByLabelText("Reveal the collapsed sidebar on hover")).not.toBeInTheDocument();
+    expect(sidebar).toHaveAttribute("inert");
     fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
     expect(sidebar).not.toHaveAttribute("inert");
   });
@@ -257,6 +274,19 @@ describe("Workspace journey", () => {
     await act(async () => fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "light" } }));
     expect(screen.getByRole("alert")).toHaveTextContent("Disk is full");
     expect(screen.getByLabelText("Theme")).toHaveValue("system");
+  });
+  it("saves and applies palette, font and larger text without replacing composer controls", async () => {
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    await act(async () => fireEvent.change(screen.getByLabelText("Color palette"), { target: { value: "ocean" } }));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ theme_palette: "ocean" });
+    expect(document.documentElement.dataset.palette).toBe("ocean");
+    await act(async () => fireEvent.change(screen.getByLabelText("Font"), { target: { value: "mono" } }));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ font_family: "mono" });
+    expect(document.documentElement.dataset.font).toBe("mono");
+    await act(async () => fireEvent.change(screen.getByLabelText("Text size"), { target: { value: "22" } }));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ text_size: 22 });
   });
   it("selects the default model from the Go catalog", async () => {
     await mount();

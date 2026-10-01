@@ -437,7 +437,10 @@ async fn continuing_automation_reuses_thread_and_current_settings() {
     let second: Value = serde_json::from_slice(&requests[1].body).expect("second body");
     assert_eq!(first["model"], "first-model");
     assert_eq!(second["model"], "second-model");
-    assert!(second.to_string().contains("## Skill: Current skill"));
+    assert!(
+        !second.to_string().contains("## Skill: Current skill"),
+        "Automation capabilities come only from its prompt"
+    );
     assert!(second.to_string().contains("heartbeat complete"));
     assert_eq!(state.list_review_items(None).await.len(), 2);
     assert_eq!(state.list_automations().await[0].run_count, 2);
@@ -647,4 +650,44 @@ async fn run_automation_now_works_while_disabled() {
         .find(|item| item.id == automation.id)
         .expect("automation");
     assert_eq!(advanced.run_count, 1);
+}
+
+#[tokio::test]
+async fn creator_prompt_reaches_llm_with_management_tools_and_verifier() {
+    let (_repo_temp, root) = init_repo();
+    let (state, _settings_temp) = test_state();
+    let server = mount_final_text_llm("creator ready").await;
+    use_mock_llm(&state, &server).await;
+    let thread = state
+        .create_thread(
+            root.to_string_lossy().into_owned(),
+            ProviderKind::Go,
+            Some("fixture".into()),
+        )
+        .await
+        .unwrap();
+    let (sink, mut rx) = ChannelSink::channel();
+    state
+        .send_message(
+            Arc::new(sink),
+            thread.id,
+            "[[skill:create-skill]] Design a local review skill".into(),
+        )
+        .await
+        .unwrap();
+    drive_one_run(&state, &mut rx).await;
+    let requests = server.received_requests().await.unwrap();
+    let request: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert!(request
+        .to_string()
+        .contains("python3 .themis/skills/create-skill/verify.py"));
+    let names: Vec<_> = request["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str())
+        .collect();
+    assert!(names.contains(&"save_skill"));
+    assert!(names.contains(&"list_plugins"));
+    assert!(root.join(".themis/skills/create-skill/verify.py").is_file());
 }

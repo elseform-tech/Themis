@@ -15,6 +15,7 @@ function parseThemeVars(css: string): { dark: ThemeVars; light: ThemeVars } {
   while ((match = rulePattern.exec(css)) !== null) {
     const selector = match[1].trim();
     const body = match[2];
+    if (selector.includes("data-palette")) continue;
     const target = selector.includes("light")
       ? lightOverrides
       : selector.includes(":root") || selector.includes("dark")
@@ -102,3 +103,18 @@ describe("themis theme token contrast", () => {
     });
   }
 });
+
+for (const palette of ["warm", "ocean", "forest", "violet"]) {
+  for (const mode of ["dark", "light"] as const) {
+    it(`${palette}/${mode}: readable text and secondary text on palette surfaces`, () => {
+      const vars = { ...parseThemeVars(tokensCss)[mode] };
+      const rule = tokensCss.match(new RegExp(`\\[data-palette="${palette}"\\]\\[data-theme="${mode}"\\]\\s*\\{([^}]+)`))?.[1];
+      expect(rule).toBeDefined();
+      for (const match of (rule ?? "").matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)) vars[match[1]] = match[2];
+      for (const surface of ["--themis-canvas", "--themis-surface"]) {
+        expect(contrastRatio(vars["--themis-text"], vars[surface])).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(vars["--themis-text-2"], vars[surface])).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+  }
+}

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Themis",
+  "productName": "ThemisCode",
   "version": "0.1.0",
   "identifier": "ai.themis.desktop",
   "build": {
@@ -13,11 +13,17 @@
     "windows": [
       {
         "label": "main",
-        "title": "Themis",
+        "title": "ThemisCode",
         "width": 1280,
         "height": 860,
         "minWidth": 960,
-        "minHeight": 640
+        "minHeight": 640,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 20
+        }
       }
     ]
   },

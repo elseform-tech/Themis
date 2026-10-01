@@ -1,3 +1,4 @@
+import { skillToken } from "../lib/prompt";
 // Pure automation-form helpers: parsing, validation, and the save flow.
 // The backend API is injected so unit tests can pass mocks; this module
 // never imports ../lib/tauri.
@@ -65,7 +66,7 @@ export function automationToForm(
     effort: automation.reasoning_effort ?? "",
     skillIds: [...automation.skill_ids],
     intervalMinsRaw: String(automation.interval_mins),
-    task: automation.task,
+    task: automation.task + automation.skill_ids.filter(id => !automation.task.includes(skillToken(id))).map(id => ` ${skillToken(id)}`).join(""),
     enabled: automation.enabled,
   };
 }
@@ -95,7 +96,7 @@ export function toAutomationInput(
     provider: form.provider,
     model: form.targetMode === "new" ? form.model.trim() : "",
     reasoning_effort: form.targetMode === "new" ? form.effort || null : null,
-    skill_ids: form.targetMode === "new" ? [...form.skillIds] : [],
+    skill_ids: [],
     interval_mins: Math.max(1, Math.floor(Number(form.intervalMinsRaw))),
     task: form.task,
     enabled: form.enabled,

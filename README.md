@@ -90,11 +90,11 @@ as command arguments. Ctrl-C cancels key entry and restores terminal echo.
 `OPENCODE_KEY` remains an alternative in the **server launch** environment;
 changing the shell environment does not change an already-running server.
 
-The macOS app bundle also hosts the CLI. After moving Themis into Applications,
+The macOS app bundle also hosts the CLI. After moving ThemisCode into Applications,
 install the optional command without a second download:
 
 ```sh
-/Applications/Themis.app/Contents/MacOS/themis-desktop --themis-cli cli install
+/Applications/ThemisCode.app/Contents/MacOS/themis-desktop --themis-cli cli install
 # If ~/.local/bin is not already on PATH, add it in your shell configuration.
 ```
 
