@@ -100,8 +100,17 @@ pub async fn run(
         std::time::Duration::from_secs(hook.timeout_seconds),
         async {
             let mut input = child.stdin.take().context("Missing hook stdin")?;
-            input.write_all(&serde_json::to_vec(payload)?).await?;
-            input.shutdown().await?;
+            // Hooks may finish without consuming stdin; still inspect their exit status and JSON.
+            for result in [
+                input.write_all(&serde_json::to_vec(payload)?).await,
+                input.shutdown().await,
+            ] {
+                if let Err(error) = result {
+                    if error.kind() != std::io::ErrorKind::BrokenPipe {
+                        return Err(error.into());
+                    }
+                }
+            }
             drop(input);
             let mut output = Vec::new();
             child

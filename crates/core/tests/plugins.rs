@@ -189,7 +189,12 @@ async fn hooks_require_approval_and_can_block_before_events() {
     let hook = Hook {
         name: "guard".into(),
         event: "BeforeToolCall".into(),
-        command: "printf '{\"block\":true}'".into(),
+        command: if cfg!(windows) {
+            "echo {\"block\":true}"
+        } else {
+            "printf '{\"block\":true}'"
+        }
+        .into(),
         enabled: true,
         timeout_seconds: 1,
         blocking: true,
@@ -209,7 +214,12 @@ async fn hooks_require_approval_and_can_block_before_events() {
         .to_string()
         .contains("blocked"));
     let slow = Hook {
-        command: "sleep 3".into(),
+        command: if cfg!(windows) {
+            "ping -n 4 127.0.0.1 >nul"
+        } else {
+            "sleep 3"
+        }
+        .into(),
         ..hook
     };
     assert!(hooks::run(&slow, root.path(), &json!({}), &allow)
@@ -245,6 +255,7 @@ async fn mcp_startup_denial_prevents_process_execution() {
     assert!(!dir.path().join("forbidden").exists());
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn hook_root_is_data_and_timeout_kills_descendants() {
     use themis_core::{
@@ -266,9 +277,14 @@ async fn hook_root_is_data_and_timeout_kills_descendants() {
     };
     let approvals: std::sync::Arc<dyn ApprovalHook> = std::sync::Arc::new(AllowAllHook);
     assert_eq!(
-        hooks::run(&hook, dir.path(), &json!({}), &approvals)
-            .await
-            .unwrap()["ok"],
+        hooks::run(
+            &hook,
+            dir.path(),
+            &json!({"input": "x".repeat(1024 * 1024)}),
+            &approvals
+        )
+        .await
+        .unwrap()["ok"],
         true
     );
     assert!(!dir.path().join("injected").exists());
