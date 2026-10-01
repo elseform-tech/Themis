@@ -1,6 +1,7 @@
 // Typed Tauri bridge client. All frontend code reaches the backend through
 // these functions — never raw invoke() with stringly-typed payloads elsewhere.
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import type { PromptSkill } from './prompt';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   ApprovalDecision,
@@ -37,6 +38,9 @@ function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise
   if (command === 'check_for_updates') return tauriInvoke<T>(command, args);
   return tauriInvoke<T>('backend_command', { command, args });
 }
+
+export function listPromptSkills(projectRoot?: string | null): Promise<PromptSkill[]> { return invoke("list_prompt_skills", { projectRoot: projectRoot ?? null }); }
+export function pluginAction<T>(args: Record<string, unknown>): Promise<T> { return invoke("plugin_action", args); }
 
 export function ping(): Promise<string> {
   return invoke('ping');

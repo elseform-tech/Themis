@@ -94,7 +94,8 @@ class DashboardMetricsTests(unittest.TestCase):
         from quality_dashboard.dashboard import source_metrics
 
         metrics = source_metrics()
-        self.assertNotIn("Python", metrics["byLanguage"])
+        # Built-in skill verification scripts are product code, unlike dashboard tooling.
+        self.assertEqual(metrics["byLanguage"].get("Python", {}).get("files"), len(list((ROOT / "crates").rglob("*.py"))))
         self.assertIn("Rust", metrics["byLanguage"])
         self.assertIn("TypeScript", metrics["byLanguage"])
 

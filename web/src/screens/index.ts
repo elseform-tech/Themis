@@ -4,5 +4,5 @@ export { DiffReview } from "./DiffReview";
 export { SettingsScreen } from "./Settings";
 export { Palette } from "./Palette";
 export { ReviewQueue } from "./ReviewQueue";
-export { Skills } from "./Skills";
+export { Plugins as Skills } from "./Plugins";
 export { Automations } from "./Automations";

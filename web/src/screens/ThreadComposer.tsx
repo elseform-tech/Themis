@@ -1,3 +1,5 @@
+import { PromptInput } from "../components/PromptInput";
+import type { PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
 import type { GoModel, ThreadInfo } from "../lib/types";
 // Official OpenCode theme assets: https://github.com/anomalyco/opencode/tree/dev/packages/console/app/src/asset
@@ -7,6 +9,8 @@ import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 interface ThreadComposerProps {
   thread: ThreadInfo;
   draft: string;
+  skills?: PromptSkill[];
+  history?: string[];
   models: GoModel[];
   effortLevels: string[];
   effort: string;
@@ -30,6 +34,8 @@ interface ThreadComposerProps {
 export function ThreadComposer({
   thread,
   draft,
+  skills = [],
+  history = [],
   models,
   effortLevels,
   effort,
@@ -61,22 +67,9 @@ export function ThreadComposer({
             <Button variant="ghost" size="small" onClick={onOpenSettings}>Open settings</Button>
           </p>
         )}
-        <label className="themis-sr-only" htmlFor="themis-composer">Message</label>
-        <textarea
-          id="themis-composer"
-          className="themis-thread-input"
-          placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Message Themis…"}
-          value={draft}
-          disabled={composerDisabled}
-          rows={2}
-          onChange={event => onDraftChange(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              onSend();
-            }
-          }}
-        />
+        <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} history={history} disabled={composerDisabled}
+          placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Message Themis… / for skills"}
+          onChange={onDraftChange} onSubmit={onSend} />
         <div className="themis-thread-composer-actions">
           <Button
             variant="ghost"

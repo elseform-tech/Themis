@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Dialog, Input } from "../components";
-import { createProject, getSettings, renameThread, setProvider, setThreadSkills } from "../lib/tauri";
+import { createProject, getSettings, renameThread, setProvider } from "../lib/tauri";
 import { describeError, toast, useApp, type MainView } from "../state/store";
 import { useNewThread, useOpenProject, useDiscardThread } from "./actions";
 import type { ThreadInfo } from "../lib/types";
@@ -8,7 +8,7 @@ import { readSession, writeSession } from "../state/session";
 import { KnightBrand } from "../components/KnightBrand";
 import "./Sidebar.css";
 
-const views: Array<[MainView, string]> = [["thread", "Threads"], ["skills", "Skills"], ["automations", "Automations"], ["queue", "Review queue"]];
+const views: Array<[MainView, string]> = [["thread", "Threads"], ["skills", "Plugins"], ["automations", "Automations"], ["queue", "Review queue"]];
 type SidebarIconName = "panel" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search";
 const viewIcons: Record<MainView, SidebarIconName> = { thread: "thread", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
@@ -81,7 +81,6 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     try {
       let updated = await renameThread(editing.id, editing.title);
       updated = await setProvider(editing.id, "go", editing.model);
-      updated = await setThreadSkills(editing.id, editing.skill_ids);
       dispatch({ type: "thread/updated", projectRoot: editing.projectRoot, thread: updated });
       setEditing(null);
     } catch (error) { setEditError(describeError(error)); }
@@ -130,7 +129,6 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
       {editing && <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void saveThread(); }}>
         <Input id="sidebar-thread-title" label="Name" value={editing.title} maxLength={120} onChange={event => setEditing({ ...editing, title: event.target.value })} />
         <Input id="sidebar-thread-model" label="Model" value={editing.model} onChange={event => setEditing({ ...editing, model: event.target.value })} />
-        {state.skills.length > 0 && <fieldset><legend>Skills</legend>{state.skills.map(skill => <label key={skill.id}><input type="checkbox" checked={editing.skill_ids.includes(skill.id)} onChange={event => setEditing({ ...editing, skill_ids: event.target.checked ? [...editing.skill_ids, skill.id] : editing.skill_ids.filter(id => id !== skill.id) })}/>{skill.name}</label>)}</fieldset>}
         {editError && <p role="alert" className="themis-form-error">{editError}</p>}
         <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={editBusy} onClick={() => setEditing(null)}>Cancel</Button><Button type="submit" disabled={editBusy || !editing.title.trim()}>{editBusy ? "Saving…" : "Save"}</Button></div>
       </form>}

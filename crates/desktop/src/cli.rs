@@ -3,6 +3,7 @@
 use crate::server::Client;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+mod plugins;
 
 fn data_dir() -> Result<PathBuf, String> {
     #[cfg(not(target_os = "windows"))]
@@ -38,6 +39,9 @@ Commands:
   status                        Report server version
   watch                         Stream all backend events as JSON
   models                        List OpenCode Go models
+  plugin                        Manage plugins and marketplaces (plugin list)
+  skill                         List, save, verify, delete, or ask agent to create skills
+  mcp | hook                    Manage plugin connections and lifecycle hooks
   doctor [--json] [--deep]       Read-only local diagnostics
   providers                     Select OpenCode Go and enter a hidden API key
   auth status                   Report key availability only
@@ -83,7 +87,7 @@ pub async fn run() -> Result<(), String> {
     if words.first().is_some_and(|word| {
         matches!(
             word.as_str(),
-            "thread" | "chat" | "models" | "call" | "auth"
+            "thread" | "chat" | "models" | "call" | "auth" | "plugin" | "skill" | "mcp" | "hook"
         )
     }) {
         ensure_server(&client, &directory).await?;
@@ -118,6 +122,18 @@ pub async fn run() -> Result<(), String> {
         };
     }
     let result = match words.as_slice() {
+        [kind, create, id, request] if kind == "skill" && create == "create" => {
+            return send_message(
+                &client,
+                id,
+                &format!("[[skill:create-skill]] {request}"),
+                false,
+            )
+            .await;
+        }
+        [kind, ..] if matches!(kind.as_str(), "plugin" | "skill" | "mcp" | "hook") => {
+            plugins::run(&client, &words, &directory).await?
+        }
         [cli, install] if cli == "cli" && install == "install" => {
             let directory = std::env::var_os("HOME")
                 .map(PathBuf::from)

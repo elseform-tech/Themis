@@ -4,6 +4,7 @@
 //! desktop coding-agent app. This is a stub: the public API will grow as
 //! agent features land.
 
+pub mod plugins;
 pub mod providers;
 pub mod runtime;
 pub mod skills;

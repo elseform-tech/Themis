@@ -48,7 +48,7 @@ describe("Workspace journey", () => {
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => receive({ thread_id: thread.id, run_id: "automation", event: { kind: "finished", result: "Scheduled" } }));
     expect(start).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Hello" } });
+    fireEvent.input(screen.getByLabelText("Message"), { target: { textContent: "Hello" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
     expect(AudioContext).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith("/sounds/completion-woodblock-double.mp3");
@@ -114,7 +114,7 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.setThreadEffort).mockResolvedValue({ ...updated, reasoning_effort: "low" });
     await act(async () => fireEvent.change(screen.getByRole("slider", { name: "Reasoning effort" }), { target: { value: "1" } }));
     expect(bridge.setThreadEffort).toHaveBeenCalledWith("thread1", "low");
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Read the test file" } });
+    fireEvent.input(screen.getByLabelText("Message"), { target: { textContent: "Read the test file" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
     expect(bridge.sendMessage).toHaveBeenCalledWith("thread1", "Read the test file", "low");
     expect(screen.queryByText("Thread options")).toBeNull();
@@ -170,7 +170,7 @@ describe("Workspace journey", () => {
     await mount();
     expect(await screen.findByText("Restored final answer")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Follow up" } });
+    fireEvent.input(screen.getByLabelText("Message"), { target: { textContent: "Follow up" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => {

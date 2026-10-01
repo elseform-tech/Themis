@@ -6,6 +6,7 @@ rust-version = "1.91"
 
 [dependencies]
 anyhow = "1"
+libc = "0.2"
 futures-util = "0.3"
 autoagents = "0.4"
 autoagents-derive = "0.4"
@@ -13,7 +14,7 @@ autoagents-toolkit = { version = "0.4", features = ["filesystem"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time"] }
 
 [dev-dependencies]
 tempfile = "3"

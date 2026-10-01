@@ -90,8 +90,64 @@ impl AppState {
         if let Err(err) = materialize_scripts(&snapshot.skills, &snapshot.work_root) {
             return Err(format!("failed to materialize skill scripts: {err:#}"));
         }
-        let tools = boxed_tools(&snapshot.work_root, Arc::clone(&approvals))
+        let mut tools = boxed_tools(&snapshot.work_root, Arc::clone(&approvals))
             .map_err(|err| format!("failed to build tools: {err:#}"))?;
+        let store = self.plugin_store(Some(snapshot.work_root.clone()));
+        store
+            .materialize(&snapshot.plugins, &snapshot.work_root)
+            .map_err(|e| e.to_string())?;
+        let mut hooks = Vec::new();
+        for plugin in &snapshot.plugins {
+            let resource_root = snapshot
+                .work_root
+                .join(".themis/plugin-files")
+                .join(plugin.skill_id("resources"));
+            for (name, server) in &plugin.spec.mcp {
+                if !server.enabled {
+                    continue;
+                }
+                let mut server = server.clone();
+                for arg in &mut server.args {
+                    *arg = arg.replace("${CLAUDE_PLUGIN_ROOT}", &resource_root.to_string_lossy());
+                }
+                tools.extend(
+                    themis_core::plugins::connections::tools(
+                        &plugin.skill_id(name),
+                        &server,
+                        &snapshot.work_root,
+                        approvals.clone(),
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?,
+                );
+            }
+            for hook in &plugin.spec.hooks {
+                let mut hook = hook.clone();
+                hook.runtime_identity = Some(plugin.skill_id(&hook.name));
+                hook.plugin_root = Some(resource_root.clone());
+                hooks.push(hook);
+            }
+        }
+        let mut hook_names = std::collections::HashSet::new();
+        for hook in &hooks {
+            if !hook_names.insert(&hook.runtime_identity) {
+                return Err("Duplicate plugin hook identity".into());
+            }
+        }
+        let mut names = std::collections::HashSet::new();
+        for tool in &tools {
+            if !names.insert(tool.name()) {
+                return Err("Duplicate plugin tool identity".into());
+            }
+        }
+        if snapshot.skills.iter().any(|s| s.id == "create-skill") {
+            tools.extend(store.management_tools(approvals.clone()));
+        }
+        let hook_runtime = themis_core::plugins::hooks::HookRuntime {
+            hooks,
+            root: snapshot.work_root.clone(),
+            approvals: approvals.clone(),
+        };
         let skills = snapshot.skills;
         let stopped = self
             .inner
@@ -192,15 +248,23 @@ impl AppState {
             // A panicking run must neither stick the thread busy nor leave the
             // UI waiting: join the run, then synthesize the terminal event.
             let run_outcome = tokio::spawn(async move {
-                run_task_with_policy(
-                    llm,
-                    themis_core::skills::filter_tools(tools, &skills),
-                    themis_core::skills::compose_task(&task, &skills),
-                    snapshot.history,
-                    approvals,
-                    policy,
+                let hook_task = task.clone();
+                themis_core::plugins::hooks::with_hooks(
+                    hook_runtime,
+                    &hook_task,
                     events_tx,
-                    stopped,
+                    |events_tx| {
+                        run_task_with_policy(
+                            llm,
+                            themis_core::skills::filter_tools(tools, &skills),
+                            themis_core::skills::compose_task(&task, &skills),
+                            snapshot.history,
+                            approvals,
+                            policy,
+                            events_tx,
+                            stopped,
+                        )
+                    },
                 )
                 .await
             })

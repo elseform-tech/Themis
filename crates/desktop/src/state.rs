@@ -7,6 +7,7 @@
 
 mod automation;
 mod changes;
+mod plugins;
 mod preferences;
 mod projects;
 mod reviews;
@@ -107,6 +108,7 @@ struct RunSnapshot {
     /// skipped: every mutation keeps references consistent, so a miss only
     /// follows a hand-edited store file).
     skills: Vec<themis_core::skills::Skill>,
+    plugins: Vec<themis_core::plugins::Plugin>,
 }
 
 /// One automation run in flight: the completion registry entry that lets the

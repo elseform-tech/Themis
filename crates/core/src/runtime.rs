@@ -208,6 +208,9 @@ impl ApprovalHook for CachingApprovals {
 
 /// Classifies a tool call for the approval checkpoint.
 fn risk_for(tool: &str) -> RiskLevel {
+    if tool.starts_with("mcp_") {
+        return RiskLevel::Network;
+    }
     match tool {
         "read_file" | "list_dir" | "search_file" => RiskLevel::Read,
         "shell" => RiskLevel::Execute,
@@ -333,6 +336,12 @@ pub async fn run_task_with_policy(
         if (turn > 0 && turn % policy.segment_turns.max(1) == 0)
             || estimated_tokens(&messages) > policy.context_token_budget
         {
+            crate::plugins::hooks::emit_current(
+                "BeforeCompaction",
+                serde_json::json!({"event":"BeforeCompaction"}),
+                &events,
+            )
+            .await?;
             if let Err(error) = compact_context(&llm, &mut messages, &policy, &events).await {
                 let error = format!("Context checkpoint failed: {error}");
                 emit(RunEvent::Failed {
@@ -722,14 +731,28 @@ async fn execute_call(
         Ok(parsed) => parsed,
         Err(err) => return Err(format!("tool '{name}' got invalid arguments: {err}")),
     };
+    crate::plugins::hooks::emit_current(
+        "BeforeToolCall",
+        serde_json::json!({"event":"BeforeToolCall","tool":name,"arguments":parsed}),
+        events,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     // Dispatch already consulted the hook above: arm the single-use permit so
     // the tool's own execution-time check passes without prompting twice.
     // (Direct `execute` calls outside `run_task` carry no permit and stay
     // fully gated.)
-    match crate::tools::with_dispatch_permit(tool.execute(parsed)).await {
+    let outcome = match crate::tools::with_dispatch_permit(tool.execute(parsed)).await {
         Ok(value) => Ok(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())),
         Err(err) => Err(format!("tool '{name}' failed: {err}")),
-    }
+    };
+    let event = if outcome.is_ok() {
+        "AfterToolCall"
+    } else {
+        "ToolCallFailed"
+    };
+    crate::plugins::hooks::emit_current(event,serde_json::json!({"event":event,"tool":name,"ok":outcome.is_ok(),"output":outcome.as_ref().ok(),"error":outcome.as_ref().err()}),events).await.map_err(|e|e.to_string())?;
+    outcome
 }
 
 #[cfg(test)]
