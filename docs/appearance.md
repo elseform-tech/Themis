@@ -4,6 +4,8 @@ ThemisCode uses a framed sidebar rail. Collapsing the sidebar keeps its app icon
 
 Appearance settings save through the shared desktop server: System/Light/Dark, five color palettes, five font families, and text sizes from 12 to 22px. Code retains its monospace font. Existing settings files default the new palette and font fields to System. The composer retains its layout and controls with fewer nested control borders and theme-aware colors.
 
+Sidebar icons use the same Lucide SVG paths as the approved visualization (square pen, sparkles, clock, pull request, folder, settings sliders and panel toggle), shared by the expanded sidebar and compact rail. License: `docs/lucide-icons-LICENSE`.
+
 The wordmark uses the pearl blob knight; the app icon groups honey, pearl, and ink knights in a triangle. Animated SVG artwork respects reduced motion. The native icon master is `crates/desktop/icons/icon.svg`, rasterized to `icon-source.png` at 1024px. Run `swift scripts/generate-icon.swift` from the repository root to regenerate PNG, ICNS, and ICO assets.
 
 ## Local verification (2026-10-01)
