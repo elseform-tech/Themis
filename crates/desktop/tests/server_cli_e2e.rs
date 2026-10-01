@@ -514,3 +514,36 @@ async fn cli_preserves_incomplete_handoff_and_exits_nonzero() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("unfinished work"));
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn appearance_preferences_roundtrip_through_server_and_cli() {
+    let data_dir = tempfile::tempdir().expect("data dir");
+    let settings_path = data_dir.path().join("settings.json");
+    let state = AppState::new_for_test(settings_path.clone());
+    let server = Server::bind(state, data_dir.path()).await.expect("bind");
+    let task = tokio::spawn(server.run());
+    let args = json!({"patch": {"theme_palette": "ocean", "font_family": "mono", "text_size": 22}})
+        .to_string();
+    let saved = cli(data_dir.path(), &["call", "update_settings", &args]);
+    assert_eq!(saved["theme_palette"], "ocean");
+    assert_eq!(saved["font_family"], "mono");
+    assert_eq!(saved["text_size"], 22);
+    let loaded = themis_desktop::settings::SettingsStore::load(settings_path)
+        .get()
+        .await;
+    assert_eq!(loaded.theme_palette, "ocean");
+    assert_eq!(loaded.font_family, "mono");
+    assert_eq!(loaded.text_size, 22);
+    let invalid = Client::new(data_dir.path().to_path_buf())
+        .call(
+            "update_settings",
+            json!({"patch": {"font_family": "unknown"}}),
+        )
+        .await;
+    assert!(invalid.is_err());
+    assert_eq!(
+        cli(data_dir.path(), &["call", "get_settings", "{}"])["font_family"],
+        "mono"
+    );
+    task.abort();
+}

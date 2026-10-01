@@ -18,6 +18,8 @@ import {
   Skills,
   ThreadView,
 } from "./screens";
+import { SidebarIcon } from "./screens/Sidebar";
+import { isTauri } from "@tauri-apps/api/core";
 import "./screens/shell.css";
 
 function Shell() {
@@ -25,6 +27,10 @@ function Shell() {
   const [collapsed, setCollapsed] = useState(() => readSession("sidebar-collapsed", false));
   function toggleSidebar() { setCollapsed(value => { writeSession("sidebar-collapsed", !value); return !value; }); }
   useEffect(() => { document.documentElement.style.fontSize = `${16 * state.settings.text_size / 14}px`; }, [state.settings.text_size]);
+  useEffect(() => {
+    document.documentElement.dataset.palette = state.settings.theme_palette ?? "system";
+    document.documentElement.dataset.font = state.settings.font_family ?? "system";
+  }, [state.settings.theme_palette, state.settings.font_family]);
   const headApproval = state.approvals[0];
 
   // Theme: settings value, resolving `system` via matchMedia.
@@ -83,16 +89,17 @@ function Shell() {
   }
 
   return (
-    <div className="themis-shell">
-      <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
-      <main className="themis-main">
-        <header className="themis-nav">
+    <div className={`themis-shell ${isTauri() && /Mac/.test(navigator.platform) ? "themis-shell--mac" : ""}`}>
+        <header className="themis-nav" data-tauri-drag-region>
           <div className="themis-nav-context">
-            <Button id="sidebar-toggle" variant="ghost" size="small" aria-label={collapsed ? "Show sidebar" : "Hide sidebar"} aria-controls="themis-sidebar" aria-expanded={!collapsed} onClick={toggleSidebar}>☰</Button>
+            <Button id="sidebar-toggle" variant="ghost" size="small" aria-label={collapsed ? "Show sidebar" : "Collapse sidebar"} aria-controls="themis-sidebar" aria-expanded={!collapsed} onClick={toggleSidebar}><SidebarIcon name="panel" /></Button>
             <span>{state.mainView === "thread" ? (state.projects.find(p => p.root === state.activeProjectRoot)?.name ?? "Workspace") : ({ skills: "Skills", automations: "Automations", settings: "Settings", queue: "Review queue" }[state.mainView])}</span>
           </div>
           {state.reviews.some(r => r.status === "pending") && <Button variant="ghost" size="small" onClick={() => dispatch({ type: "ui/view", view: "queue" })}>Review queue · {state.reviews.filter(r => r.status === "pending").length}</Button>}
         </header>
+        <div className="themis-shell-body">
+          <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
+          <main className="themis-main">
         <div className="themis-view">
           {state.mainView === "thread" && <ThreadView />}
           {state.mainView === "skills" && <Skills />}
@@ -101,6 +108,7 @@ function Shell() {
           {state.mainView === "queue" && <ReviewQueue />}
         </div>
       </main>
+      </div>
       {headApproval !== undefined && (
         <ApprovalDialog
           request={headApproval}

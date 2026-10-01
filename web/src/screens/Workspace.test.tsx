@@ -229,11 +229,15 @@ describe("Workspace journey", () => {
     await act(async () => receive({ thread_id: "status", run_id: "r3", event: { kind: "failed", error: "Stopped by you." } }));
     expect(within(sidebar).getByRole("img", { name: "Stopped" })).toBeInTheDocument();
   });
-  it("fully hides navigation and delays hover reveal and dismissal", async () => {
+  it("keeps compact navigation while delaying the full sidebar hover reveal", async () => {
     vi.useFakeTimers(); await mount();
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     const sidebar = document.getElementById("themis-sidebar")!;
     expect(sidebar).toHaveAttribute("inert");
+    const rail = screen.getByRole("navigation", { name: "Compact workspace navigation" });
+    expect(within(rail).getByRole("img", { name: "ThemisCode" })).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: "Settings" })).toBeEnabled();
+    expect(document.getElementById("sidebar-toggle")?.closest("header")).toBeInTheDocument();
     fireEvent.pointerEnter(screen.getByTestId("sidebar-edge"));
     act(() => vi.advanceTimersByTime(299)); expect(sidebar).toHaveAttribute("inert");
     act(() => vi.advanceTimersByTime(1)); expect(sidebar).not.toHaveAttribute("inert");
@@ -257,6 +261,19 @@ describe("Workspace journey", () => {
     await act(async () => fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "light" } }));
     expect(screen.getByRole("alert")).toHaveTextContent("Disk is full");
     expect(screen.getByLabelText("Theme")).toHaveValue("system");
+  });
+  it("saves and applies palette, font and larger text without replacing composer controls", async () => {
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    await act(async () => fireEvent.change(screen.getByLabelText("Color palette"), { target: { value: "ocean" } }));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ theme_palette: "ocean" });
+    expect(document.documentElement.dataset.palette).toBe("ocean");
+    await act(async () => fireEvent.change(screen.getByLabelText("Font"), { target: { value: "mono" } }));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ font_family: "mono" });
+    expect(document.documentElement.dataset.font).toBe("mono");
+    await act(async () => fireEvent.change(screen.getByLabelText("Text size"), { target: { value: "22" } }));
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ text_size: 22 });
   });
   it("selects the default model from the Go catalog", async () => {
     await mount();

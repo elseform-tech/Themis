@@ -5,10 +5,11 @@ import { describeError, toast, useApp, type MainView } from "../state/store";
 import { useNewThread, useOpenProject, useDiscardThread } from "./actions";
 import type { ThreadInfo } from "../lib/types";
 import { readSession, writeSession } from "../state/session";
+import { KnightBrand } from "../components/KnightBrand";
 import "./Sidebar.css";
 
 const views: Array<[MainView, string]> = [["thread", "Threads"], ["skills", "Skills"], ["automations", "Automations"], ["queue", "Review queue"]];
-type SidebarIconName = "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search";
+type SidebarIconName = "panel" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search";
 const viewIcons: Record<MainView, SidebarIconName> = { thread: "thread", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
@@ -87,21 +88,23 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     finally { setEditBusy(false); }
   }
   function nav(view: MainView, label: string) {
-    return <button key={view} type="button" className={`themis-sidebar-row ${state.mainView === view ? "themis-sidebar-row--active" : ""}`} aria-current={state.mainView === view ? "page" : undefined} onClick={() => dispatch({ type: "ui/view", view })}>
+    return <button key={view} type="button" className={`themis-sidebar-row ${state.mainView === view ? "themis-sidebar-row--active" : ""}`} aria-label={view === "queue" && pending > 0 ? `${label} ${pending}` : label} title={label} aria-current={state.mainView === view ? "page" : undefined} onClick={() => dispatch({ type: "ui/view", view })}>
       <SidebarIcon name={viewIcons[view]} /><span className="themis-sidebar-name">{label}</span>{view === "queue" && pending > 0 && <Badge tone="warning">{pending}</Badge>}
     </button>;
   }
   return <>
     {collapsed && <div className="themis-sidebar-edge" data-testid="sidebar-edge" onPointerEnter={reveal} onPointerLeave={clearTimer} />}
     <div className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""}`}>
+      {collapsed && <nav className="themis-sidebar-rail" aria-label="Compact workspace navigation">
+        <button type="button" className="themis-rail-brand" aria-label="Expand sidebar" onClick={onToggle}><KnightBrand /></button>
+        {views.map(([view, label]) => nav(view, label))}
+        <button type="button" className="themis-sidebar-row" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}><SidebarIcon name="project" /></button>
+        <div className="themis-rail-footer">{nav("settings", "Settings")}<button type="button" className="themis-sidebar-row" aria-label="Search commands" title="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></div>
+      </nav>}
       <aside id="themis-sidebar" ref={panel} className={`themis-sidebar ${collapsed ? "is-overlay" : ""} ${visible ? "is-visible" : ""}`} inert={!visible} aria-hidden={!visible} aria-label="Workspace navigation"
         onPointerEnter={() => { inside.current = true; clearTimer(); }} onPointerLeave={() => { inside.current = false; hideLater(); }}
         onFocusCapture={() => { clearTimer(); setRevealed(true); }} onBlurCapture={hideLater}>
-        <div className="themis-brand">
-          <svg aria-hidden="true" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M16 5v23M10 28h12"/><g className="themis-scale-beam"><path d="M5 10h22M7 10l-5 10h10L7 10Zm18 0-5 10h10l-5-10ZM2 20c1 5 9 5 10 0m8 0c1 5 9 5 10 0"/></g><circle cx="16" cy="7" r="2"/></svg>
-          <strong>Themis</strong>
-          <Button size="small" variant="ghost" aria-label={collapsed ? "Pin sidebar" : "Collapse sidebar"} title={collapsed ? "Pin sidebar" : "Collapse sidebar"} onClick={onToggle}>{collapsed ? "→" : "←"}</Button>
-        </div>
+        <div className="themis-brand"><KnightBrand wordmark /></div>
         <nav className="themis-sidebar-nav" aria-label="Main views">{views.map(([view, label]) => nav(view, label))}</nav>
         <div className="themis-sidebar-projects">
           <div className="themis-sidebar-head"><h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="project" /><span>Projects</span></h2><div className="themis-project-actions"><Button size="small" variant="ghost" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>+</Button><details><summary aria-label="Project actions" title="Project actions">···</summary><div className="themis-project-menu"><Button variant="ghost" size="small" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open existing folder…</Button></div></details></div></div>
@@ -140,8 +143,9 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   </>;
 }
 
-function SidebarIcon({ name }: { name: SidebarIconName }) {
+export function SidebarIcon({ name }: { name: SidebarIconName }) {
   return <svg className="themis-sidebar-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    {name === "panel" && <><rect x="2" y="3" width="16" height="14" rx="2" /><path d="M7 3v14" /></>}
     {name === "thread" && <><path d="M3 4.5A2.5 2.5 0 0 1 5.5 2h9A2.5 2.5 0 0 1 17 4.5v6a2.5 2.5 0 0 1-2.5 2.5H8l-4 3v-3.5A2.5 2.5 0 0 1 3 10z"/><path d="M6.5 6.5h7M6.5 9.5h5"/></>}
     {name === "skills" && <><path d="m8 2 1.7 4.8L14.5 8.5l-4.8 1.7L8 15l-1.7-4.8-4.8-1.7 4.8-1.7L8 2Z"/><path d="m15.5 12 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></>}
     {name === "automations" && <><path d="M15.7 6.2A6.5 6.5 0 0 0 4.3 4L3 5.3"/><path d="M3 2.5v2.8h2.8M4.3 13.8A6.5 6.5 0 0 0 15.7 16l1.3-1.3"/><path d="M17 17.5v-2.8h-2.8"/></>}

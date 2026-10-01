@@ -215,6 +215,8 @@ export interface ThreadComment {
 export interface Settings {
   projects_directory: string;
   text_size: number;
+  theme_palette: "system" | "warm" | "ocean" | "forest" | "violet";
+  font_family: "system" | "sans" | "serif" | "mono" | "rounded";
   sidebar_hover: boolean;
   theme: ThemeMode;
   default_provider: ProviderKind;

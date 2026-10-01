@@ -80,10 +80,22 @@ impl SettingsStore {
                 current.projects_directory = path.to_string_lossy().into_owned();
             }
             if let Some(size) = patch.text_size {
-                if !(12..=18).contains(&size) {
-                    return Err("Text size must be between 12 and 18".to_owned());
+                if !(12..=22).contains(&size) {
+                    return Err("Text size must be between 12 and 22".to_owned());
                 }
                 current.text_size = size;
+            }
+            if let Some(palette) = patch.theme_palette {
+                if !["system", "warm", "ocean", "forest", "violet"].contains(&palette.as_str()) {
+                    return Err("Unknown theme palette".to_owned());
+                }
+                current.theme_palette = palette;
+            }
+            if let Some(font) = patch.font_family {
+                if !["system", "sans", "serif", "mono", "rounded"].contains(&font.as_str()) {
+                    return Err("Unknown font family".to_owned());
+                }
+                current.font_family = font;
             }
             if let Some(hover) = patch.sidebar_hover {
                 current.sidebar_hover = hover;

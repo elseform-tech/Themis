@@ -4,14 +4,15 @@
 
 :root,
 [data-theme="dark"] {
-  --themis-canvas: #0b0e13;
-  --themis-surface: #12161d;
-  --themis-raised: #1a2029;
-  --themis-border: #262e3a;
-  --themis-border-subtle: #1c232e;
+  --themis-shell-bg: #181a20;
+  --themis-canvas: #22242b;
+  --themis-surface: #262830;
+  --themis-raised: #30323b;
+  --themis-border: #3b3d46;
+  --themis-border-subtle: #34363e;
   --themis-text: #e8eaf0;
   --themis-text-2: #9aa3b2;
-  --themis-text-3: #6b7484;
+  --themis-text-3: #878e9c;
   --themis-accent: #d9a73e;
   --themis-accent-hover: #e5b95c;
   --themis-accent-ink: #1a1405;
@@ -36,14 +37,15 @@
   --themis-link-light: #1755a3;
   --themis-code-string-light: #226b3a;
   --themis-code-number-light: #815917;
-  --themis-canvas: #f6f4ef;
+  --themis-shell-bg: #e8e9ec;
+  --themis-canvas: #fafafa;
   --themis-surface: #ffffff;
   --themis-raised: #dedede;
-  --themis-border: #e2dcd0;
-  --themis-border-subtle: #ece7db;
-  --themis-text: #1c1a15;
-  --themis-text-2: #5c574a;
-  --themis-text-3: #767163;
+  --themis-border: #d6d7dc;
+  --themis-border-subtle: #e2e3e7;
+  --themis-text: #282a30;
+  --themis-text-2: #62656f;
+  --themis-text-3: #747783;
   --themis-accent: #9a6b1f;
   --themis-accent-hover: #b07a24;
   --themis-accent-ink: #ffffff;
@@ -53,13 +55,13 @@
   --themis-info: #58a6ff;
   --themis-add-bg: rgba(63, 185, 80, 0.14);
   --themis-del-bg: rgba(248, 81, 73, 0.14);
-  --themis-composer-bg: #fbfaf7;
+  --themis-composer-bg: #ffffff;
   --themis-user-message-bg: var(--themis-raised);
   --themis-user-message-border: #cac7bf;
-  --themis-nav-hover-bg: #f1eee8;
+  --themis-nav-hover-bg: #dedfe4;
   --themis-nav-active-bg: var(--themis-raised);
-  --themis-nav-text: #38352f;
-  --themis-nav-icon: #6e685d;
+  --themis-nav-text: #42454f;
+  --themis-nav-icon: #62656f;
   --themis-shimmer-base: #5d5d5d;
   --themis-shimmer-highlight: var(--themis-raised);
 }
@@ -73,3 +75,17 @@ body {
 .themis-provider-logo img { width: 84px; height: 20px; object-fit: contain; }
 .themis-provider-logo-light, [data-theme="light"] .themis-provider-logo-dark { display: none; }
 [data-theme="light"] .themis-provider-logo-light { display: block; }
+
+/* Palette and appearance are independent: each palette supports both modes. */
+[data-palette="warm"][data-theme="dark"] { --themis-shell-bg: #201d19; --themis-canvas: #292621; --themis-surface: #302c25; --themis-raised: #3d372e; --themis-border: #494134; --themis-border-subtle: #3c372f; }
+[data-palette="warm"][data-theme="light"] { --themis-shell-bg: #e9e3d8; --themis-canvas: #fbf8f1; --themis-surface: #fffdf8; --themis-raised: #e4ddd0; --themis-border: #d5cbbb; --themis-border-subtle: #e1d9cb; --themis-composer-bg: #fffdf8; }
+[data-palette="ocean"][data-theme="dark"] { --themis-shell-bg: #17212a; --themis-canvas: #202d38; --themis-surface: #263542; --themis-raised: #304352; --themis-border: #3e5363; --themis-border-subtle: #344856; }
+[data-palette="ocean"][data-theme="light"] { --themis-shell-bg: #dfe8ee; --themis-canvas: #f5f9fc; --themis-surface: #ffffff; --themis-raised: #d9e5ed; --themis-border: #c6d6e0; --themis-border-subtle: #d6e2ea; }
+[data-palette="forest"][data-theme="dark"] { --themis-shell-bg: #19231f; --themis-canvas: #232e28; --themis-surface: #29362e; --themis-raised: #354438; --themis-border: #425448; --themis-border-subtle: #37483d; }
+[data-palette="forest"][data-theme="light"] { --themis-shell-bg: #e1e8df; --themis-canvas: #f6faf4; --themis-surface: #ffffff; --themis-raised: #dbe5d8; --themis-border: #cbd8c6; --themis-border-subtle: #dce6d8; }
+[data-palette="violet"][data-theme="dark"] { --themis-shell-bg: #201d29; --themis-canvas: #2a2635; --themis-surface: #302c3d; --themis-raised: #3c354c; --themis-border: #4d445f; --themis-border-subtle: #40384f; }
+[data-palette="violet"][data-theme="light"] { --themis-shell-bg: #e8e2ee; --themis-canvas: #faf7fd; --themis-surface: #ffffff; --themis-raised: #e4dced; --themis-border: #d5c9e1; --themis-border-subtle: #e2d8eb; }
+[data-font="sans"] body { font-family: Arial, Helvetica, sans-serif; }
+[data-font="serif"] body { font-family: Georgia, 'Times New Roman', serif; }
+[data-font="mono"] body { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; }
+[data-font="rounded"] body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
