@@ -74,7 +74,7 @@ export function PromptInput({value,onChange,skills,label,id,disabled,placeholder
     if (slash) {
       if (event.key==="Escape"){event.preventDefault();setSlash(null);return;}
       if (["ArrowUp","ArrowDown"].includes(event.key)){event.preventDefault();setActive(i=>choices.length?(i+(event.key==="ArrowDown"?1:-1)+choices.length)%choices.length:0);return;}
-      if (event.key==="Enter"||event.key==="Tab"){event.preventDefault();if(choices[active])select(choices[active]);return;}
+      if (!event.shiftKey && (event.key==="Enter"||event.key==="Tab") && choices[active]){event.preventDefault();select(choices[active]);return;}
     }
     const selection=window.getSelection(),position=caret(event.currentTarget);
     if (selection?.isCollapsed!==false && history.length && ((event.key==="ArrowUp"&&!value.slice(0,position).includes("\n"))||(event.key==="ArrowDown"&&recall.current.index>=0&&!value.slice(position).includes("\n")))) {

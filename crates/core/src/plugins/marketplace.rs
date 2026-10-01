@@ -128,7 +128,12 @@ impl PluginStore {
         if !safe_name(name) {
             bail!("Invalid plugin name");
         }
-        let root = self.marketplace_directory(marketplace, false).await?;
+        let refresh = self
+            .registry(scope)?
+            .current
+            .get(name)
+            .is_some_and(|p| p.source.as_deref() == Some(marketplace));
+        let root = self.marketplace_directory(marketplace, refresh).await?;
         let catalog: Value = serde_json::from_str(&fs::read_to_string(
             root.join(".claude-plugin/marketplace.json"),
         )?)?;
@@ -249,7 +254,13 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
         version: manifest["version"].as_str().unwrap_or_default().into(),
         ..Default::default()
     };
-    collect_files(root, root, &mut spec.files, &mut spec.unsupported)?;
+    collect_files(
+        root,
+        root,
+        &mut spec.files,
+        &mut spec.executable_files,
+        &mut spec.unsupported,
+    )?;
     for (path, content) in &spec.files {
         if path.ends_with("/SKILL.md") || path == "SKILL.md" {
             let (metadata, instructions) = parse_skill(content)?;
@@ -333,6 +344,7 @@ fn collect_files(
     root: &Path,
     directory: &Path,
     files: &mut BTreeMap<String, String>,
+    executable_files: &mut Vec<String>,
     unsupported: &mut Vec<String>,
 ) -> anyhow::Result<()> {
     for entry in fs::read_dir(directory)? {
@@ -349,7 +361,7 @@ fn collect_files(
             if path.strip_prefix(root)?.components().count() > 32 {
                 bail!("Plugin directory nesting exceeds 32 levels");
             }
-            collect_files(root, &path, files, unsupported)?;
+            collect_files(root, &path, files, executable_files, unsupported)?;
         } else if kind.is_file() {
             if entry.metadata()?.len() > 1024 * 1024 {
                 bail!("Plugin file exceeds 1 MiB");
@@ -362,12 +374,18 @@ fn collect_files(
                 ));
             }
             if let Ok(text) = String::from_utf8(bytes) {
-                files.insert(
-                    path.strip_prefix(root)?
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                    text,
-                );
+                let relative = path
+                    .strip_prefix(root)?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if entry.metadata()?.permissions().mode() & 0o111 != 0 {
+                        executable_files.push(relative.clone());
+                    }
+                }
+                files.insert(relative, text);
             }
             if files.len() > 1000
                 || files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024

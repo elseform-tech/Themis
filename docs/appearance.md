@@ -24,3 +24,9 @@ The refreshed dashboard reports mean cyclomatic complexity 2.11, cognitive compl
 Native QA screenshot (synthetic project and unsent draft):
 
 ![Framed rail and original composer](images/framed-rail-native.jpg)
+
+## Combined plugin integration verification
+
+The plugin branch is integrated with the Framed rail. The inline skill editor uses the existing composer surface and controls. Shift+Enter keeps its newline behavior; empty skill results do not trap Tab or Enter. Marketplace updates refresh an existing plugin's source, and imported Unix executable resources retain owner-only execution after materialization.
+
+Fresh combined checks: 225 Rust tests passed (2 ignored and the existing named Keychain exclusion), 182 web tests passed, web lint/build and workspace Clippy passed, and all 13 dashboard tests/Ruff passed. The shared-server CLI plugin CRUD and appearance persistence journeys both pass. AST averages after including plugin modules: cyclomatic 2.46, cognitive 2.19, maintainability 73.8 across 94 files; the broader plugin code increases complexity compared with the redesign-only scope. Remote marketplace refreshing is source-verified with local-fixture update coverage; no remote marketplace installation or live provider request was used as acceptance evidence.

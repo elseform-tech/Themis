@@ -29,6 +29,8 @@ pub struct PluginSpec {
     #[serde(default)]
     pub files: BTreeMap<String, String>,
     #[serde(default)]
+    pub executable_files: Vec<String>,
+    #[serde(default)]
     pub unsupported: Vec<String>,
 }
 
@@ -356,7 +358,12 @@ impl PluginStore {
                 {
                     bail!("Symlink resource target rejected");
                 }
-                fs::write(path, content)?;
+                fs::write(&path, content)?;
+                #[cfg(unix)]
+                if plugin.spec.executable_files.contains(relative) {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+                }
             }
         }
         Ok(())
@@ -399,6 +406,13 @@ fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
         || spec.files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024
     {
         bail!("Unsafe resource path or plugin resources exceed 8 MiB");
+    }
+    if spec
+        .executable_files
+        .iter()
+        .any(|p| !spec.files.contains_key(p))
+    {
+        bail!("Executable resource must refer to a plugin file");
     }
     for (name, server) in &spec.mcp {
         if !safe_name(name) {

@@ -373,3 +373,7 @@
 .themis-thread-msg--action-waiting .themis-response > p { background: linear-gradient(100deg, var(--themis-shimmer-base, var(--themis-text-2)) 30%, var(--themis-shimmer-highlight, var(--themis-text)) 50%, var(--themis-shimmer-base, var(--themis-text-2)) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .themis-thread-msg--action-waiting .themis-response > p { animation: none; background: none; color: var(--themis-text-2); } }
 .themis-thread-msg--completed .themis-response > p { animation: none; background: none; color: var(--themis-text); }
+
+/* Inline skills use the existing composer surface, without a nested input box. */
+.themis-thread-composer .themis-prompt-editor { min-height: 52px; max-height: 240px; overflow-y: auto; padding: 6px 4px; border: 0; border-radius: 0; background: transparent; line-height: 1.5; font-size: .875rem; }
+.themis-thread-composer .themis-prompt-editor:focus-visible { outline: none; }

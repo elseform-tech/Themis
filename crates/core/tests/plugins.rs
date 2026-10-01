@@ -66,6 +66,14 @@ async fn marketplace_import_keeps_resources_and_disables_executable_components()
         r#"{"mcpServers":{"docs":{"url":"https://example.com/mcp"}}}"#,
     )
     .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(repo.path().join("review/scripts")).unwrap();
+        let script = repo.path().join("review/scripts/check.sh");
+        std::fs::write(&script, "#!/bin/sh\nprintf plugin-script-ok").unwrap();
+        std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let store = PluginStore::new(global.path().into(), None);
     store
         .add_marketplace("fixture", repo.path().to_str().unwrap())
@@ -87,13 +95,35 @@ async fn marketplace_import_keeps_resources_and_disables_executable_components()
         .join(imported.skill_id("resources"))
         .join("skills/rust/SKILL.md")
         .exists());
+    #[cfg(unix)]
+    {
+        assert!(imported
+            .spec
+            .executable_files
+            .contains(&"scripts/check.sh".to_owned()));
+        let script = project
+            .path()
+            .join(".themis/plugin-files")
+            .join(imported.skill_id("resources"))
+            .join("scripts/check.sh");
+        let output = std::process::Command::new(script).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"plugin-script-ok");
+    }
+    std::fs::write(
+        repo.path().join("review/skills/rust/SKILL.md"),
+        "---\nname: rust\n---\nUpdated review.",
+    )
+    .unwrap();
+    let updated = store.install("global", "fixture", "review").await.unwrap();
+    assert_eq!(updated.spec.skills[0].instructions, "Updated review.");
     std::fs::write(
         repo.path().join("review/skills/rust/SKILL.md"),
         "---\nunclosed",
     )
     .unwrap();
     assert!(store.install("global", "fixture", "review").await.is_err());
-    assert_eq!(store.list().unwrap()[0].revision, imported.revision);
+    assert_eq!(store.list().unwrap()[0].revision, updated.revision);
 }
 
 #[tokio::test]

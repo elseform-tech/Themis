@@ -34,3 +34,21 @@ it("recalls prompts and restores the unfinished draft", () => {
   fireEvent.keyDown(editor, { key: "ArrowDown" });
   expect(changed).toHaveBeenLastCalledWith("draft");
 });
+
+it.each(["/", "/Users"])("preserves Shift+Enter and Tab navigation for %s", value => {
+  const changed = vi.fn(), send = vi.fn();
+  render(<PromptInput label="Task" value={value} onChange={changed} skills={[{ id: "review", name: "Review", description: "Review changes", plugin: "review" }]} onSubmit={send} />);
+  const input = screen.getByRole("textbox", { name: "Task" });
+  const range = document.createRange(); range.selectNodeContents(input); range.collapse(false);
+  window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+  fireEvent.focus(input);
+  expect(fireEvent.keyDown(input, { key: "Enter", shiftKey: true })).toBe(true);
+  expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(true);
+  expect(changed).not.toHaveBeenCalled();
+  expect(send).not.toHaveBeenCalled();
+  if (value === "/Users") {
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(true);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(send).toHaveBeenCalledTimes(1);
+  }
+});
