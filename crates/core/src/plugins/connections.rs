@@ -57,7 +57,7 @@ impl McpServer {
 }
 enum Transport {
     Stdio {
-        child: tokio::process::Child,
+        child: Box<tokio::process::Child>,
         _group: super::hooks::ProcessGroup,
         input: tokio::process::ChildStdin,
         output: BufReader<tokio::process::ChildStdout>,
@@ -110,7 +110,7 @@ impl Connection {
             let output = BufReader::new(child.stdout.take().context("Missing stdout")?);
             Transport::Stdio {
                 _group: super::hooks::ProcessGroup(child.id()),
-                child,
+                child: Box::new(child),
                 input,
                 output,
             }
