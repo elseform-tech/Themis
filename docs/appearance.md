@@ -20,3 +20,7 @@ The wordmark uses the pearl blob knight; the app icon groups honey, pearl, and i
 - Isolated native QA app (`ai.themis.designqa`, Vite frontend) verified expanded/collapsed navigation, saved Light/Dark appearance, palette changes, project creation and retained composer draft/model/effort/send controls. No provider request was sent. Native font/large-size and drag/window-control interaction remain unverified; production installation was not replaced.
 
 The refreshed dashboard reports mean cyclomatic complexity 2.11, cognitive complexity 1.55 and maintainability 73.2 across 83 app source files. Touched settings/sidebar/app modules were reviewed; no before/after baseline was captured. The existing LCOV report shows 83.1% Rust coverage, but was not regenerated for this change and is not fresh coverage evidence.
+
+Native QA screenshot (synthetic project and unsent draft):
+
+![Framed rail and original composer](images/framed-rail-native.jpg)
