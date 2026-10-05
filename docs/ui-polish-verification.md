@@ -1,5 +1,21 @@
 # UI polish verification — 2026-10-05
 
+## Continuous layers update (2026-10-06)
+
+The approved continuous layout uses a lighter icon/header frame, dark project sidebar and darker canvas. All 17 palettes preserve that luminance order with readable text/actions. Bright frame outlines and inter-panel gutters are removed. Appearance swatches and the live Frame / Sidebar / Canvas preview match the actual shell colors. Sidebar width transitions for 240ms with an eased curve; its contents fade while the canvas follows. Reduced motion disables both transitions.
+
+Fresh checks: `npm --prefix web test` passed 208 tests in 23 files; `npm --prefix web run lint` and `npm --prefix web run build` passed (existing chunk-size warning). `python3 -m unittest quality_dashboard.test_dashboard` passed 13 tooling tests; `ruff check quality_dashboard` passed. The Tauri bundle command below passed with the newly built frontend. No backend behavior changed in this follow-up; Rust test/coverage figures below belong to the preceding implementation pass, not a new Rust-suite run.
+
+Chromium checked all 17 presets against the actual rendered shell and Appearance preview, plus collapse, expand, Revert and reload. Animation samples included intermediate widths (collapse 292 → 226 → 168 → 56px; expansion 56 → 119 → 178 → 292px), confirming movement rather than an immediate jump. Reduced-motion transition duration was 0s. No page errors occurred. The test bridge read the local app server, omitted recent-project/thread content and blocked settings writes; saved preferences were unchanged.
+
+The final native build was launched after terminating the older UI process. Native accessibility confirmed the Frame · Sidebar · Canvas labels, all 17 themes and Surface preview. Further native collapse/preview actions were interrupted by app-state changes; the transition timing and final geometry were verified in Chromium, not measured in the native window. No appearance Apply action or inference request was sent.
+
+The refreshed dashboard still reports overall cyclomatic 2.44, cognitive 2.18 and maintainability 73.7. Appearance UI reports 1.24 / 0.25 / 82.9 and appearance tokens 1.00 / 0.00 / 71.5. Existing Rust coverage is 83.5%; frontend line coverage remains unavailable. No new complexity regression appeared.
+
+![Continuous layers and matching Appearance preview](images/continuous-layers-appearance.png)
+
+## Earlier UI polish verification (2026-10-05)
+
 Targeted changes preserve the workspace/composer structure: permanent utility rail, expandable chat/project dock, pinned managed Themis project, dark-only appearance, 17 presets, 12 local font choices, preview/Apply/Revert, unboxed action buttons and full moving titles. Knight artwork remains only in native icons/favicon.
 
 ## Automated checks
