@@ -562,6 +562,8 @@ async fn fixed_workspace_and_dark_presets_survive_settings_changes_and_restart()
     )
     .unwrap();
     let state = AppState::new_for_test(settings_path.clone());
+    let (first, second) = tokio::join!(state.get_default_project(), state.get_default_project());
+    assert_eq!(first.unwrap().root, second.unwrap().root);
     let server = Server::bind(state, data.path()).await.unwrap();
     let task = tokio::spawn(server.run());
     let project = cli(data.path(), &["call", "get_default_project", "{}"]);

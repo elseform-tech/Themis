@@ -164,6 +164,7 @@ impl RegistryEntry {
 struct AppStateInner {
     stop_flags: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
     projects: tokio::sync::RwLock<HashMap<String, ProjectInfo>>,
+    default_project_init: tokio::sync::Mutex<()>,
     threads: tokio::sync::RwLock<HashMap<String, ThreadRecord>>,
     pending: PendingMap,
     settings: SettingsStore,
@@ -280,6 +281,7 @@ impl AppState {
             inner: Arc::new(AppStateInner {
                 stop_flags: std::sync::Mutex::new(HashMap::new()),
                 projects: tokio::sync::RwLock::new(HashMap::new()),
+                default_project_init: tokio::sync::Mutex::new(()),
                 threads: tokio::sync::RwLock::new(threads),
                 pending: PendingMap::default(),
                 settings: SettingsStore::load(settings_path),

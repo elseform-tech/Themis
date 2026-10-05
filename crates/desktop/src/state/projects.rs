@@ -4,6 +4,7 @@ impl AppState {
     /// The managed project is rooted beside app data, independent of the
     /// configurable folder used for new user projects.
     pub async fn get_default_project(&self) -> Result<ProjectInfo, String> {
+        let _initialization = self.inner.default_project_init.lock().await;
         let directory = settings_app_dir(self.inner.settings.path());
         let root = directory.join("Themis");
         if !root.exists() {
