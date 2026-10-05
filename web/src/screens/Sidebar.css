@@ -61,7 +61,10 @@
 .themis-sidebar-rail .themis-badge { display: grid; place-items: center; position: absolute; top: 0; right: -3px; font-size: 10px; min-width: 12px; padding: 0; background: var(--themis-shell-bg); }
 .themis-wordmark { font-family: Georgia, serif; font-size: 1.65rem; background: linear-gradient(110deg, var(--themis-text) 25%, var(--themis-accent) 50%, var(--themis-text) 75%); background-size: 240% 100%; background-clip: text; color: transparent; animation: themis-wordmark-glint 3s ease 1; }
 @keyframes themis-wordmark-glint { from { background-position: 100% 0; } to { background-position: -100% 0; } }
-.themis-sidebar-thread .themis-sidebar-row--active { box-shadow: inset 2px 0 var(--themis-accent); }
+.themis-sidebar-row--active .themis-moving-text { background: linear-gradient(110deg, var(--themis-accent) 25%, var(--themis-text) 50%, var(--themis-accent) 75%); background-size: 240% 100%; background-clip: text; color: transparent; animation: themis-selected-glint 4s ease-in-out infinite; }
+.themis-sidebar-row--active:hover .is-overflowing .themis-moving-text,
+.themis-sidebar-row--active:focus-visible .is-overflowing .themis-moving-text { animation: themis-title-reveal var(--title-duration) linear .6s 1 both, themis-selected-glint 4s ease-in-out infinite; }
+@keyframes themis-selected-glint { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .themis-thread-row-actions button:hover { background: transparent; color: var(--themis-accent); }
 .themis-project-lock { flex-shrink: 0; color: var(--themis-text-2); }
 @media (max-width: 800px) { .themis-sidebar-slot { width: 276px; } }
