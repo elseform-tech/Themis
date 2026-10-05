@@ -547,3 +547,60 @@ async fn appearance_preferences_roundtrip_through_server_and_cli() {
     );
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fixed_workspace_and_dark_presets_survive_settings_changes_and_restart() {
+    let data = tempfile::tempdir().unwrap();
+    let settings_path = data.path().join("settings.json");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_vec(&json!({
+            "theme": "light", "default_provider": "go", "default_model": "test",
+            "max_turns": 20
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let state = AppState::new_for_test(settings_path.clone());
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let project = cli(data.path(), &["call", "get_default_project", "{}"]);
+    assert_eq!(project["name"], "Themis");
+    assert_eq!(project["is_default"], true);
+    assert_eq!(project["is_git"], true);
+    let root = project["root"].as_str().unwrap();
+    std::fs::write(Path::new(root).join("keep.txt"), "keep my work").unwrap();
+    let args = json!({"patch": {
+        "projects_directory": data.path().join("other"),
+        "theme": "system", "theme_palette": "github-dimmed",
+        "font_family": "mono", "text_size": 18
+    }})
+    .to_string();
+    let saved = cli(data.path(), &["call", "update_settings", &args]);
+    assert_eq!(saved["theme"], "dark");
+    assert_eq!(saved["theme_palette"], "github-dimmed");
+    assert_eq!(
+        cli(data.path(), &["call", "get_default_project", "{}"]),
+        project
+    );
+    let thread = cli(data.path(), &["thread", "create", root]);
+    assert!(thread["id"].is_string());
+    task.abort();
+    let reopened = AppState::new_for_test(settings_path);
+    assert_eq!(
+        reopened.get_settings().await.theme,
+        themis_desktop::types::ThemeMode::Dark
+    );
+    assert_eq!(reopened.get_settings().await.font_family, "mono");
+    assert_eq!(
+        std::fs::read_to_string(Path::new(root).join("keep.txt")).unwrap(),
+        "keep my work"
+    );
+    let server = Server::bind(reopened, data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    assert_eq!(
+        cli(data.path(), &["call", "get_default_project", "{}"]),
+        project
+    );
+    task.abort();
+}

@@ -58,6 +58,7 @@ impl AppState {
                 root: key,
                 name: project_name(&root),
                 is_git,
+                is_default: false,
             });
         self.persist_registry().await;
         Ok(info)

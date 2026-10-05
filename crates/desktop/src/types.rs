@@ -86,9 +86,9 @@ impl From<CoreApprovalDecision> for ApprovalDecision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
+    #[default]
     Dark,
     Light,
-    #[default]
     System,
 }
 
@@ -98,6 +98,8 @@ pub struct ProjectInfo {
     pub root: String,
     pub name: String,
     pub is_git: bool,
+    #[serde(default)]
+    pub is_default: bool,
 }
 
 /// A conversation thread (`ThreadInfo` in types.ts).
@@ -522,7 +524,7 @@ impl Default for Settings {
             theme_palette: default_appearance_choice(),
             font_family: default_appearance_choice(),
             sidebar_hover: true,
-            theme: ThemeMode::System,
+            theme: ThemeMode::Dark,
             default_provider: ProviderKind::Go,
             default_model: themis_core::providers::GO_DEFAULT_MODEL.to_owned(),
             max_turns: 20,
@@ -1000,7 +1002,7 @@ mod tests {
     #[test]
     fn settings_defaults_and_shapes_match_ts() {
         let settings = Settings::default();
-        assert_eq!(settings.theme, ThemeMode::System);
+        assert_eq!(settings.theme, ThemeMode::Dark);
         assert_eq!(settings.default_provider, ProviderKind::Go);
         assert_eq!(settings.default_model, "muse-spark-1.3-contributor");
         assert_eq!(settings.max_turns, 20);
@@ -1018,7 +1020,7 @@ mod tests {
                 "theme_palette": "system",
                 "font_family": "system",
                 "sidebar_hover": true,
-                "theme": "system",
+                "theme": "dark",
                 "default_provider": "go",
                 "default_model": "muse-spark-1.3-contributor",
                 "max_turns": 20,

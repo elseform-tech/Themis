@@ -1198,7 +1198,7 @@ mod tests {
             })
             .await
             .expect("update");
-        assert_eq!(updated.theme, ThemeMode::Light);
+        assert_eq!(updated.theme, ThemeMode::Dark);
         assert_eq!(updated.max_turns, 7);
         let bad = state
             .update_settings(SettingsPatch {

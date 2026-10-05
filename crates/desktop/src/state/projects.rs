@@ -1,6 +1,21 @@
 use super::*;
 
 impl AppState {
+    /// The managed project is rooted beside app data, independent of the
+    /// configurable folder used for new user projects.
+    pub async fn get_default_project(&self) -> Result<ProjectInfo, String> {
+        let directory = settings_app_dir(self.inner.settings.path());
+        let root = directory.join("Themis");
+        if !root.exists() {
+            self.create_project(
+                "Themis".to_owned(),
+                Some(directory.to_string_lossy().into_owned()),
+            )
+            .await?;
+        }
+        self.open_project(root.to_string_lossy().into_owned()).await
+    }
+
     /// Creates a new project without touching any existing directory.
     pub async fn create_project(
         &self,
@@ -94,6 +109,10 @@ impl AppState {
             root: root.to_string_lossy().into_owned(),
             name,
             is_git: is_git_repo(&root),
+            is_default: settings_app_dir(self.inner.settings.path())
+                .join("Themis")
+                .canonicalize()
+                .is_ok_and(|default| default == root),
         };
         self.inner
             .projects
