@@ -1,5 +1,15 @@
 # UI polish verification — 2026-10-05
 
+## Project settings simplification (2026-10-06)
+
+General settings now displays only the fixed shared projects root (`~/ThemisOS/Projects`). Themis remains in the sidebar with a normal folder tooltip and rename action, without a lock icon. Renaming changes its display name; its folder and thread history stay in place. The shared root remains fixed and project creation has no location override.
+
+Fresh verification: `cargo test -p themis-desktop --test server_cli_e2e` passed all 11 cases, including default-project rename and restart persistence. `cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info -- --skip entered_keys_survive_new_store_and_can_be_forgotten` passed 228 tests, with one live-provider test ignored and the named synthetic-Keychain test filtered; doctests are excluded by the coverage runner. Rust line coverage is 83.5% (11,274 / 13,509). `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` passed. `npm --prefix web test` passed 208 tests in 23 files; lint and build passed, with the existing chunk-size warning. Dashboard unittest passed 13 tooling tests and Ruff passed. The Tauri bundle command below passed with the fresh frontend.
+
+Chromium verified that Settings omits the default-project path, shows the shared root once, and exposes Rename Themis without a lock. Opening and cancelling its name dialog passed. All 17 appearance presets, continuous surface layers, collapse/expand and reduced motion passed again, with no page errors. The browser bridge blocked settings writes and omitted user history. The rebuilt native app independently confirmed the simplified Settings screen and sidebar rename action. No live inference or user-project rename was performed.
+
+The refreshed dashboard reports overall cyclomatic 2.44, cognitive 2.18 and maintainability 73.7. Project backend reports 2.29 / 0.93 / 73.1, Sidebar 2.52 / 2.53 / 81.7, and Settings 2.11 / 1.43 / 81.0. Removing the redundant Settings row slightly changes its per-function averages; no score-only refactor was made. Frontend line coverage remains unavailable. Earlier sections below record their respective builds and may describe behavior superseded by this update.
+
 ## Continuous layers update (2026-10-06)
 
 The approved continuous layout uses a lighter icon/header frame, dark project sidebar and darker canvas. All 17 palettes preserve that luminance order with readable text/actions. Bright frame outlines and inter-panel gutters are removed. Appearance swatches and the live Frame / Sidebar / Canvas preview match the actual shell colors. Sidebar width transitions for 240ms with an eased curve; its contents fade while the canvas follows. Reduced motion disables both transitions.
