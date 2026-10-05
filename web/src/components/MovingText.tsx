@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 import "./MovingText.css";
 
-/** One rightward pass on hover/focus; the accessible name stays complete. */
+/** One leftward pass on hover/focus; the accessible name stays complete. */
 export function MovingText({ children }: { children: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
@@ -10,7 +10,7 @@ export function MovingText({ children }: { children: string }) {
     const measure = () => {
       const distance = Math.max(0, (window.firstElementChild?.scrollWidth ?? 0) - window.clientWidth);
       window.classList.toggle("is-overflowing", distance > 0);
-      window.style.setProperty("--title-start", `${-distance}px`);
+      window.style.setProperty("--title-end", `${-distance}px`);
       window.style.setProperty("--title-duration", `${Math.max(6, distance / 24)}s`);
     };
     measure();

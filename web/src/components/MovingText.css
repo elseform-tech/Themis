@@ -2,7 +2,7 @@
 .themis-moving-text { display: block; width: max-content; white-space: nowrap; }
 button:hover .is-overflowing .themis-moving-text,
 button:focus-visible .is-overflowing .themis-moving-text { animation: themis-title-reveal var(--title-duration) linear .6s 1 both; }
-@keyframes themis-title-reveal { from { transform: translateX(var(--title-start)); } to { transform: translateX(0); } }
+@keyframes themis-title-reveal { from { transform: translateX(0); } to { transform: translateX(var(--title-end)); } }
 @media (prefers-reduced-motion: reduce) {
   .themis-moving-window { overflow: visible; }
   .themis-moving-text { white-space: normal; width: auto; overflow-wrap: anywhere; }

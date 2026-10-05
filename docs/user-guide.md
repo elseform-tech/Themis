@@ -238,7 +238,7 @@ gently and respects the system reduced-motion preference.
 The icon rail stays visible when the project dock is collapsed. Utilities open
 in the main view; New chat, projects, and threads stay in the project dock.
 Hover or focus a utility icon for its label. Long thread titles reveal their
-full text in one rightward pass on hover or keyboard focus. With reduced motion,
+full text in one leftward pass on hover or keyboard focus. With reduced motion,
 titles wrap instead.
 
 The pinned **Themis** project lives at `<app data directory>/Themis`. Its name and
