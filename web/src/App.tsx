@@ -21,33 +21,14 @@ import {
 import { SidebarIcon } from "./screens/Sidebar";
 import { isTauri } from "@tauri-apps/api/core";
 import "./screens/shell.css";
+import { applyAppearance } from "./theme/appearance";
 
 function Shell() {
   const { state, dispatch } = useApp();
   const [collapsed, setCollapsed] = useState(() => readSession("sidebar-collapsed", false));
   function toggleSidebar() { setCollapsed(value => { writeSession("sidebar-collapsed", !value); return !value; }); }
-  useEffect(() => { document.documentElement.style.fontSize = `${16 * state.settings.text_size / 14}px`; }, [state.settings.text_size]);
-  useEffect(() => {
-    document.documentElement.dataset.palette = state.settings.theme_palette ?? "system";
-    document.documentElement.dataset.font = state.settings.font_family ?? "system";
-  }, [state.settings.theme_palette, state.settings.font_family]);
+  useEffect(() => { applyAppearance(state.settings); }, [state.settings]);
   const headApproval = state.approvals[0];
-
-  // Theme: settings value, resolving `system` via matchMedia.
-  useEffect(() => {
-    const mode = state.settings.theme;
-    const query = window.matchMedia("(prefers-color-scheme: light)");
-    const apply = () => {
-      const resolved =
-        mode === "system" ? (query.matches ? "light" : "dark") : mode;
-      document.documentElement.dataset.theme = resolved;
-    };
-    apply();
-    query.addEventListener("change", apply);
-    return () => {
-      query.removeEventListener("change", apply);
-    };
-  }, [state.settings.theme]);
 
   // Global keys: Cmd/Ctrl+K toggles the palette, Esc closes the topmost layer.
   useEffect(() => {
@@ -98,7 +79,7 @@ function Shell() {
           {state.reviews.some(r => r.status === "pending") && <Button variant="ghost" size="small" onClick={() => dispatch({ type: "ui/view", view: "queue" })}>Review queue · {state.reviews.filter(r => r.status === "pending").length}</Button>}
         </header>
         <div className="themis-shell-body">
-          <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
+          <Sidebar collapsed={collapsed} />
           <main className="themis-main">
         <div className="themis-view">
           {state.mainView === "thread" && <ThreadView />}

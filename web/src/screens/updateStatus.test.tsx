@@ -38,7 +38,7 @@ describe("UpdateStatusView", () => {
   it("renders the never-checked prompt when status is null", () => {
     const html = render(null);
     expect(html).toContain("Not checked yet");
-    expect(html).toContain("Check for updates");
+    expect(html).toContain("Check updates");
   });
 
   it("renders disabled with its message and a docs hint", () => {

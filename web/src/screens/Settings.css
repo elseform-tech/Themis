@@ -162,3 +162,22 @@
 .themis-permissions dd { margin: 0 0 12px; color: var(--themis-text-2); }
 .themis-settings-key-form { flex-wrap: wrap; }
 .themis-settings-key-form .themis-input-wrap { flex: 1; min-width: 160px; }
+
+.themis-settings-tabs { flex-wrap: wrap; }
+.themis-settings-control select { border: 0; border-bottom: 1px solid var(--themis-border); border-radius: 0; background: transparent; }
+.themis-settings-control select option { background: var(--themis-surface); }
+.themis-theme-presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 12px 20px; }
+.themis-theme-preset { font: inherit; font-size: .75rem; text-align: left; color: var(--themis-text-2); background: transparent; border: 0; border-bottom: 1px solid transparent; padding: 6px 0; cursor: pointer; }
+.themis-theme-preset[aria-pressed="true"] { color: var(--themis-text); border-bottom-color: var(--themis-accent); }
+.themis-theme-swatches { display: flex; gap: 3px; height: 12px; width: 66px; margin-bottom: 6px; }
+.themis-theme-swatches span { flex: 1; border-radius: 2px; }
+.themis-text-size { display: flex; align-items: center; gap: 12px; }
+.themis-text-size input { accent-color: var(--themis-accent); max-width: 150px; }
+.themis-text-size output { min-width: 36px; font-size: .75rem; }
+.themis-appearance-preview { border-top: 1px solid var(--themis-border-subtle); padding-top: 16px; }
+.themis-appearance-preview p { margin: 0 0 6px; }
+.themis-appearance-preview code { font-family: ui-monospace, monospace; color: var(--themis-accent); }
+.themis-appearance-actions { display: flex; gap: 12px; align-items: center; }
+.themis-settings-root { overflow-wrap: anywhere; font-size: .75rem; color: var(--themis-text-2); margin: 0; }
+.themis-settings-key-form .themis-input-wrap { min-width: 0; }
+@media (pointer: coarse) { .themis-theme-preset { min-height: 44px; } }

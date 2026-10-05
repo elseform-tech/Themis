@@ -28,7 +28,7 @@ work in isolation. Open an existing folder through the project actions menu.
 ## Keys
 
 Use `OPENCODE_KEY` in the environment when launching Themis, or enter a key in
-Settings → Models & connections → Manage key → **Save key**.
+Settings → Models → Manage key → **Save key**.
 Entered keys remain in macOS Keychain across app restarts. They are not saved
 in the conversation database, settings files, or browser storage.
 Forgetting a saved key does not unset an environment key. A Finder launch
@@ -143,7 +143,7 @@ IDs. Their effort controls follow the selected model's catalog levels.
 
 ## Settings reference
 
-Settings has General, Appearance, Models & connections, Permissions, and Advanced sections.
+Settings has General, Appearance, Models, Permissions, and Advanced sections.
 Ordinary preferences save on change; text inputs save when focus leaves the field.
 Errors appear inline, and rejected changes leave the previous preferences intact.
 Permissions lets you require approval for read tools and set the approval
@@ -231,3 +231,26 @@ directives and image resources fall back to source for safety.
 
 The sidebar keeps its galaxy brand header in both themes. Its scale animates
 gently and respects the system reduced-motion preference.
+
+
+### Workspace and appearance
+
+The icon rail stays visible when the project dock is collapsed. Utilities open
+in the main view; New chat, projects, and threads stay in the project dock.
+Hover or focus a utility icon for its label. Long thread titles reveal their
+full text in one rightward pass on hover or keyboard focus. With reduced motion,
+titles wrap instead.
+
+The pinned **Themis** project lives at `<app data directory>/Themis`. Its name and
+root are managed by the app and cannot be changed through Settings. Changing
+**New projects** only affects newly created user projects. Existing folders and
+threads keep their locations. The managed project is created on first use,
+without modifying any other existing project.
+
+Appearance is dark only, including when old settings request light or system
+mode. **Appearance** offers 17 presets (the original Themis scheme plus 16
+alternatives), including GitHub-inspired Dark and Dimmed, and 12 local font
+choices with fallback families. Theme, font, and size preview across the app;
+**Apply** saves them, **Revert** restores saved choices, and leaving Appearance
+cancels an unapplied preview. Code always uses monospace typography. Other
+settings continue to save automatically.

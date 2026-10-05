@@ -59,6 +59,10 @@ export function openProject(path: string): Promise<ProjectInfo> {
   return invoke('open_project', { path });
 }
 
+export function getDefaultProject(): Promise<ProjectInfo> {
+  return invoke('get_default_project');
+}
+
 export function createThread(
   projectRoot: string,
   provider: ProviderKind,

@@ -160,7 +160,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme_palette: "system",
   font_family: "system",
   sidebar_hover: true,
-  theme: "system",
+  theme: "dark",
   default_provider: "go",
   default_model: "muse-spark-1.3-contributor",
   max_turns: 20,

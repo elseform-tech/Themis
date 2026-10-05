@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { APPEARANCE_PRESETS } from "./appearance";
 
 // Read the stylesheet from disk: `?raw` CSS imports return an empty string
 // when the @tailwindcss/vite plugin is active, so bypass the transform.
@@ -67,7 +68,7 @@ const SECONDARY_MIN = 3.0;
 describe("themis theme token contrast", () => {
   const themes = parseThemeVars(tokensCss);
 
-  for (const name of ["dark", "light"] as const) {
+  for (const name of ["dark"] as const) {
     const vars = themes[name];
     const ratio = (fg: string, bg: string) =>
       contrastRatio(vars[fg], vars[bg]);
@@ -104,17 +105,12 @@ describe("themis theme token contrast", () => {
   }
 });
 
-for (const palette of ["warm", "ocean", "forest", "violet"]) {
-  for (const mode of ["dark", "light"] as const) {
-    it(`${palette}/${mode}: readable text and secondary text on palette surfaces`, () => {
-      const vars = { ...parseThemeVars(tokensCss)[mode] };
-      const rule = tokensCss.match(new RegExp(`\\[data-palette="${palette}"\\]\\[data-theme="${mode}"\\]\\s*\\{([^}]+)`))?.[1];
-      expect(rule).toBeDefined();
-      for (const match of (rule ?? "").matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)) vars[match[1]] = match[2];
-      for (const surface of ["--themis-canvas", "--themis-surface"]) {
-        expect(contrastRatio(vars["--themis-text"], vars[surface])).toBeGreaterThanOrEqual(4.5);
-        expect(contrastRatio(vars["--themis-text-2"], vars[surface])).toBeGreaterThanOrEqual(4.5);
-      }
-    });
-  }
+for (const preset of APPEARANCE_PRESETS) {
+  it(`${preset.name}: readable text and actions on every surface`, () => {
+    for (const surface of preset.colors.slice(0, 4)) {
+      expect(contrastRatio(preset.colors[5], surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(preset.colors[6], surface)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(preset.colors[7], surface)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 }

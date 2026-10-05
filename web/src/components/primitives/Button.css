@@ -1,8 +1,8 @@
 .themis-button {
   font-family: inherit;
   font-weight: 600;
-  border-radius: 0.5rem;
-  border: 1px solid var(--themis-border);
+  border-radius: 0;
+  border: 0;
   cursor: pointer;
   transition: background-color 0.12s ease, color 0.12s ease;
 }
@@ -17,36 +17,10 @@
   font-size: 0.75rem;
 }
 
-.themis-button--primary {
-  background-color: var(--themis-accent);
-  color: var(--themis-accent-ink);
-  border-color: var(--themis-accent);
-}
-
-.themis-button--primary:hover:not(:disabled) {
-  background-color: var(--themis-accent-hover);
-  border-color: var(--themis-accent-hover);
-}
-
-.themis-button--ghost {
-  background-color: var(--themis-surface);
-  color: var(--themis-text);
-}
-
-.themis-button--ghost:hover:not(:disabled) {
-  background-color: var(--themis-raised);
-}
-
-.themis-button--danger {
-  background-color: var(--themis-danger);
-  color: var(--themis-surface);
-  border-color: var(--themis-danger);
-}
-
-.themis-button--danger:hover:not(:disabled) {
-  background-color: var(--themis-surface);
-  color: var(--themis-danger);
-}
+.themis-button--primary { background: transparent; color: var(--themis-accent); }
+.themis-button--ghost { background: transparent; color: var(--themis-text); }
+.themis-button--danger { background: transparent; color: var(--themis-danger); }
+.themis-button:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 4px; }
 
 .themis-button:disabled {
   opacity: 0.5;

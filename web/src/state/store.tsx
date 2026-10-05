@@ -18,6 +18,7 @@ import type { PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
 import {
   getSecretStatus,
   getSettings,
+  getDefaultProject,
   getThread,
   getThreadHistory,
   importLegacyHistory,
@@ -177,11 +178,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     getSettings()
-      .then((settings) => {
+      .then(async (settings) => {
         if (cancelled) return;
         dispatch({ type: "settings/loaded", settings });
-        void restoreRecentProjects(settings.recent_roots, {
-          api: { openProject, listThreads, getThreadHistory, importLegacyHistory },
+        const defaultProject = await getDefaultProject().catch(error => {
+          if (!cancelled) toast(dispatch, `Default workspace unavailable: ${describeError(error)}`, "danger");
+          return null;
+        });
+        const roots = [...settings.recent_roots];
+        if (defaultProject && !roots.includes(defaultProject.root)) roots.push(defaultProject.root);
+        void restoreRecentProjects(roots, {
+          api: { openProject: root => defaultProject?.root === root ? Promise.resolve(defaultProject) : openProject(root), listThreads, getThreadHistory, importLegacyHistory },
           dispatch,
           isCancelled: () => cancelled,
           legacyMessages: legacyMessages.current,

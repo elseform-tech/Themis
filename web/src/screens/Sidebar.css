@@ -1,20 +1,17 @@
-.themis-sidebar-slot { width: 236px; flex-shrink: 0; position: relative; }
+.themis-sidebar-slot { width: 292px; flex-shrink: 0; position: relative; display: flex; overflow: visible; }
 .themis-sidebar-slot.is-collapsed { width: 56px; }
-.themis-sidebar { position: absolute; inset: 0; width: 236px; height: 100%; display: flex; flex-direction: column; background: var(--themis-shell-bg); border-right: 0; visibility: hidden; transform: translateX(-100%); transition: transform 160ms ease, visibility 160ms; z-index: 20; }
-.themis-sidebar.is-visible { visibility: visible; transform: translateX(0); }
- .themis-brand { display: flex; align-items: center; min-height: 60px; padding: 8px 20px; color: var(--themis-text); }
+.themis-sidebar { position: absolute; inset: 0 0 0 56px; width: 236px; height: 100%; display: flex; flex-direction: column; background: var(--themis-shell-bg); border-right: 0; visibility: hidden; transition: visibility 160ms; z-index: 20; }
+.themis-sidebar.is-visible { visibility: visible; }
+.themis-brand { display: flex; align-items: center; min-height: 60px; padding: 8px 20px; color: var(--themis-text); }
 .themis-wordmark { display: inline-flex; align-items: center; font-size: 1.25rem; font-weight: 500; letter-spacing: -.6px; white-space: nowrap; }
-.themis-wordmark img { width: 30px; height: 36px; object-fit: contain; margin: 0 -2px; }
-.themis-app-mark { width: 40px; height: 44px; object-fit: contain; }
-.themis-sidebar-rail { width: 56px; height: 100%; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
-.themis-rail-brand { display: grid; place-items: center; border: 0; background: transparent; padding: 0; margin-bottom: 10px; cursor: pointer; border-radius: 6px; }
-.themis-sidebar-rail .themis-sidebar-row { justify-content: center; padding: 8px; min-height: 36px; }
+.themis-sidebar-rail { width: 56px; flex: 0 0 56px; height: 100%; display: flex; flex-direction: column; gap: 6px; border-right: 1px solid var(--themis-border-subtle); padding: 14px 8px; }
+.themis-sidebar-rail .themis-sidebar-row { justify-content: center; padding: 8px; position: relative; min-height: 40px; }
 .themis-sidebar-rail .themis-sidebar-name, .themis-sidebar-rail .themis-badge { display: none; }
 .themis-rail-footer { margin-top: auto; }
 .themis-sidebar-nav { display: grid; gap: 1px; padding: 8px 10px 20px; }
 .themis-sidebar-row { width: 100%; display: flex; align-items: center; gap: 8px; border-radius: 5px; background: transparent; color: var(--themis-nav-text, var(--themis-text-2)); border: 0; font: inherit; font-size: .8125rem; min-height: 31px; padding: 6px 10px; cursor: pointer; text-align: left; }
-.themis-sidebar-row:hover { background: var(--themis-nav-hover-bg, color-mix(in srgb, var(--themis-text) 4%, transparent)); color: var(--themis-text); }
-.themis-sidebar-row--active { background: var(--themis-nav-active-bg, color-mix(in srgb, var(--themis-text) 6%, transparent)); color: var(--themis-text); }
+.themis-sidebar-row:hover { background: transparent; color: var(--themis-text); }
+.themis-sidebar-row--active { background: transparent; color: var(--themis-text); }
 .themis-sidebar-icon { width: 16px; height: 16px; flex: 0 0 16px; color: var(--themis-nav-icon, var(--themis-text-2)); }
 .themis-sidebar-row:hover .themis-sidebar-icon, .themis-sidebar-row--active .themis-sidebar-icon { color: var(--themis-accent); }
 .themis-sidebar-name { flex: 1; min-width: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -38,8 +35,6 @@
 @keyframes themis-thread-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .themis-thread-status svg { animation: none; } }
 .themis-sidebar-note { font-size: .75rem; color: var(--themis-text-2); padding: 8px 10px; margin: 0; }
-.themis-sidebar-footer { padding: 12px 10px; }
-.themis-sidebar-footer kbd { margin-left: auto; font-size: 10px; white-space: nowrap; opacity: .75; }
 .themis-sidebar-dialog { display: grid; gap: 16px; min-width: min(340px, 80vw); }
 .themis-sidebar-dialog-hint, .themis-project-location { font-size: .8125rem; color: var(--themis-text-2); margin: 0; }
 .themis-project-location { font-size: .75rem; overflow-wrap: anywhere; }
@@ -54,13 +49,20 @@
 .themis-sidebar-thread > .themis-thread-row { min-width: 56px; flex: 1; padding-right: 48px; }
 .themis-thread-row-actions { position: absolute; right: 3px; display: flex; gap: 2px; opacity: 0; }
 .themis-sidebar-thread:hover .themis-thread-row-actions, .themis-sidebar-thread:focus-within .themis-thread-row-actions { opacity: 1; }
-.themis-thread-row-actions button { display: grid; place-items: center; width: 22px; height: 25px; border: 0; border-radius: 4px; background: var(--themis-surface); color: var(--themis-text-2); cursor: pointer; }
-.themis-thread-row-actions button:hover { color: var(--themis-text); background: var(--themis-raised); }
-.themis-scale-beam { transform-origin: 16px 10px; animation: themis-balance 7s ease-in-out infinite; }
-@keyframes themis-balance { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
-@media (prefers-reduced-motion: reduce) { .themis-scale-beam { animation: none; } }
+.themis-thread-row-actions button { display: grid; place-items: center; width: 22px; height: 25px; border: 0; border-radius: 0; background: transparent; color: var(--themis-text-2); cursor: pointer; }
 .themis-sidebar-dialog select { display: block; width: 100%; padding: 7px; color: var(--themis-text); background: var(--themis-surface); border: 1px solid var(--themis-border); border-radius: 5px; }
 
 .themis-sidebar-title-line { display: flex; align-items: center; gap: 8px; }
 .themis-project-row > .themis-sidebar-icon { width: 14px; height: 14px; flex-basis: 14px; }
 .themis-thread-row > .themis-sidebar-icon { width: 14px; height: 14px; flex-basis: 14px; opacity: .72; }
+
+.themis-sidebar-rail .themis-tooltip { display: block; }
+.themis-sidebar-rail .themis-tooltip::after { bottom: auto; top: 50%; left: calc(100% + 8px); transform: translateY(-50%); }
+.themis-sidebar-rail .themis-badge { display: grid; place-items: center; position: absolute; top: 0; right: -3px; font-size: 10px; min-width: 12px; padding: 0; background: var(--themis-shell-bg); }
+.themis-wordmark { font-family: Georgia, serif; font-size: 1.65rem; background: linear-gradient(110deg, var(--themis-text) 25%, var(--themis-accent) 50%, var(--themis-text) 75%); background-size: 240% 100%; background-clip: text; color: transparent; animation: themis-wordmark-glint 3s ease 1; }
+@keyframes themis-wordmark-glint { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.themis-sidebar-thread .themis-sidebar-row--active { box-shadow: inset 2px 0 var(--themis-accent); }
+.themis-thread-row-actions button:hover { background: transparent; color: var(--themis-accent); }
+.themis-project-lock { flex-shrink: 0; color: var(--themis-text-2); }
+@media (max-width: 800px) { .themis-sidebar-slot { width: 276px; } }
+@media (pointer: coarse) { .themis-sidebar-row, .themis-sidebar-rail .themis-sidebar-row { min-height: 44px; } .themis-thread-row-actions { position: static; opacity: 1; } .themis-thread-row-actions button { min-width: 32px; min-height: 44px; } .themis-sidebar-thread > .themis-thread-row { padding-right: 6px; } }

@@ -16,6 +16,7 @@ export interface ProjectInfo {
   root: string;
   name: string;
   is_git: boolean;
+  is_default?: boolean;
 }
 
 export interface ThreadInfo {
@@ -225,8 +226,8 @@ export interface ThreadComment {
 export interface Settings {
   projects_directory: string;
   text_size: number;
-  theme_palette: "system" | "warm" | "ocean" | "forest" | "violet";
-  font_family: "system" | "sans" | "serif" | "mono" | "rounded";
+  theme_palette: string;
+  font_family: "system" | "sans" | "serif" | "mono" | "rounded" | "avenir" | "helvetica" | "verdana" | "trebuchet" | "palatino" | "charter" | "menlo";
   sidebar_hover: boolean;
   theme: ThemeMode;
   default_provider: ProviderKind;
