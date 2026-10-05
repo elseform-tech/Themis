@@ -92,6 +92,7 @@ describe("Workspace journey", () => {
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
     expect(within(within(sidebar).getByRole("button", { name: /^Scheduled check/ })).getByRole("img", { name: "Done" })).toBeInTheDocument();
     const queueButton = within(screen.getByRole("navigation", { name: "Utilities" })).getByRole("button", { name: /Review queue\s*1/ });
+    expect(screen.getAllByRole("button", { name: /Review queue/ })).toHaveLength(1);
     fireEvent.click(queueButton);
     expect(screen.getByRole("tab", { name: "Pending (1)" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Reviewed (0)" })).toBeInTheDocument();

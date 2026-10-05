@@ -76,7 +76,6 @@ function Shell() {
             <Button id="sidebar-toggle" variant="ghost" size="small" aria-label={collapsed ? "Show sidebar" : "Collapse sidebar"} aria-controls="themis-sidebar" aria-expanded={!collapsed} onClick={toggleSidebar}><SidebarIcon name="panel" /></Button>
             <span>{state.mainView === "thread" ? (state.projects.find(p => p.root === state.activeProjectRoot)?.name ?? "Workspace") : ({ skills: "Plugins", automations: "Automations", settings: "Settings", queue: "Review queue" }[state.mainView])}</span>
           </div>
-          {state.reviews.some(r => r.status === "pending") && <Button variant="ghost" size="small" onClick={() => dispatch({ type: "ui/view", view: "queue" })}>Review queue · {state.reviews.filter(r => r.status === "pending").length}</Button>}
         </header>
         <div className="themis-shell-body">
           <Sidebar collapsed={collapsed} />
