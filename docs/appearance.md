@@ -2,7 +2,7 @@
 
 ThemisCode keeps its existing workspace and composer. A permanent icon rail contains Plugins, Automations, Review queue, Settings, Help and Search, each with a tooltip. The expandable dock contains the shimmering Themis wordmark, New chat, projects and their threads. The top toggle and Cmd/Ctrl+B collapse only that dock; hovering never expands it. Knight artwork is removed from the interface; native icons and the favicon remain.
 
-All new projects are created under the fixed `~/ThemisOS/Projects` root. The managed **Themis** project is pinned first at `~/ThemisOS/Projects/Themis` and cannot be renamed or relocated. Other project names can be changed without moving their folders or histories. Settings and creation dialogs offer no location override.
+All new projects are created under the fixed `~/ThemisOS/Projects` root. The default **Themis** project remains first in the sidebar at `~/ThemisOS/Projects/Themis`, without a lock icon. All project display names, including Themis, can be changed without moving their folders or histories. Settings shows only the shared projects root. Settings and creation dialogs offer no location override.
 
 Appearance is dark only. Older Light/System settings load as Dark. Settings offer 17 coordinated presets, including GitHub Dark and GitHub Dimmed, and 12 locally resolved font choices: System, Arial, Georgia, Mono, Rounded, Avenir, Helvetica, Verdana, Trebuchet, Palatino, Charter and Menlo. Font fallbacks apply where a family is unavailable. Code stays monospace. Size ranges from 12 to 22px.
 

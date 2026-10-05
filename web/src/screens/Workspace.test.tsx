@@ -35,17 +35,19 @@ describe("Workspace journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.queryByRole("button", { name: "Choose folder" })).toBeNull();
     expect(screen.queryByLabelText("New projects")).toBeNull();
+    expect(screen.queryByText("/tmp/fixed-themis")).toBeNull();
+    expect(screen.getByText(settings.projects_directory)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "New project" }));
     expect(screen.queryByText("Change location")).toBeNull();
     expect(screen.queryByLabelText("Parent folder")).toBeNull();
   });
-  it("renames a project without changing its root and protects Themis", async () => {
+  it("renames projects without changing their roots, including Themis", async () => {
     const root = "/tmp/Themis/Projects/Research";
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
     vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Research", is_git: true });
     vi.mocked(bridge.renameProject).mockResolvedValue({ root, name: "Research notes", is_git: true });
     await mount();
-    expect(screen.queryByRole("button", { name: "Rename Themis" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Rename Themis" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Rename Research" }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Research notes" } });
     await act(async () => fireEvent.submit(screen.getByLabelText("Name").closest("form")!));
@@ -335,7 +337,7 @@ describe("Workspace journey", () => {
     expect(within(sidebar).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole("button", { name: "Plugins" })).not.toBeInTheDocument();
     expect(within(sidebar).getByText("Themis", { selector: ".themis-wordmark" })).toBeInTheDocument();
-    expect(within(sidebar).getByRole("button", { name: "Themis" })).toHaveAttribute("title", expect.stringContaining("Fixed workspace"));
+    expect(within(sidebar).getByRole("button", { name: "Themis" })).toHaveAttribute("title", "/tmp/fixed-themis");
     fireEvent.focus(within(rail).getByRole("button", { name: "Plugins" }));
     expect(within(rail).getByRole("button", { name: "Plugins" }).parentElement).toHaveAttribute("data-tooltip", "Plugins");
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));

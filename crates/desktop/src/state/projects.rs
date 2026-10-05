@@ -98,11 +98,7 @@ impl AppState {
         let root = root.to_string_lossy().into_owned();
         let info = ProjectInfo {
             root: root.clone(),
-            name: if is_default {
-                "Themis".to_owned()
-            } else {
-                settings.project_names.get(&root).cloned().unwrap_or(name)
-            },
+            name: settings.project_names.get(&root).cloned().unwrap_or(name),
             is_git: is_git_repo(Path::new(&root)),
             is_default,
         };
@@ -130,9 +126,6 @@ impl AppState {
     pub async fn rename_project(&self, path: String, name: String) -> Result<ProjectInfo, String> {
         let name = validate_project_name(&name)?;
         let project = self.open_project(path).await?;
-        if project.is_default {
-            return Err("Themis workspace name is fixed".to_owned());
-        }
         self.inner
             .settings
             .rename_project(project.root.clone(), name)

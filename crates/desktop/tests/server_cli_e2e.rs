@@ -653,16 +653,20 @@ async fn projects_use_one_fixed_root_and_rename_preserves_threads_after_restart(
     assert_eq!(renamed["name"], "Research notes");
     assert_eq!(renamed["root"], root);
     let default = cli(data.path(), &["call", "get_default_project", "{}"]);
-    assert!(client
+    let renamed_default = client
         .call(
             "rename_project",
-            json!({"path":default["root"],"name":"Changed"})
+            json!({"path":default["root"],"name":"My workspace"}),
         )
         .await
-        .unwrap_err()
-        .contains("fixed"));
+        .unwrap();
+    assert_eq!(renamed_default["root"], default["root"]);
+    assert_eq!(renamed_default["name"], "My workspace");
     task.abort();
     let reopened = AppState::new_for_test(path);
+    let restored_default = reopened.get_default_project().await.unwrap();
+    assert_eq!(restored_default.name, "My workspace");
+    assert_eq!(restored_default.root, default["root"].as_str().unwrap());
     assert_eq!(
         reopened.open_project(root.to_owned()).await.unwrap().name,
         "Research notes"

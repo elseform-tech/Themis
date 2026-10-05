@@ -239,9 +239,10 @@ Hover or focus a utility icon for its label. Long thread titles reveal their
 full text in one leftward pass on hover or keyboard focus. With reduced motion,
 titles wrap instead.
 
-The pinned **Themis** project lives at `~/ThemisOS/Projects/Themis`. Its name and
-root are fixed. Every new project is created under `~/ThemisOS/Projects`, with no
-folder override. Other projects support display-name changes; renaming leaves
+The default **Themis** project lives at `~/ThemisOS/Projects/Themis` and remains
+in the sidebar without a lock. Every project, including Themis, supports
+display-name changes. Settings shows only the shared projects root. Every new
+project is created under `~/ThemisOS/Projects`, with no folder override. Renaming leaves
 folders and conversation history in place. Existing projects are not moved.
 
 Appearance is dark only, including when old settings request light or system

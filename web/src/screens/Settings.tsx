@@ -218,8 +218,7 @@ export function SettingsScreen() {
       {error && <p role="alert" className="themis-form-error">{error}</p>}
       <fieldset disabled={saving} className="themis-settings-fields">
       {section === "General" && <>
-        <section className="themis-settings-section" aria-label="Workspace"><h3 className="themis-settings-subtitle">Workspace</h3>
-          <div className="themis-settings-control"><span>Themis</span><span className="themis-settings-hint">Fixed</span></div><p className="themis-settings-root">{state.projects.find(project => project.is_default)?.root ?? "Loading workspace…"}</p>
+        <section className="themis-settings-section" aria-label="Projects"><h3 className="themis-settings-subtitle">Projects</h3>
           <div className="themis-settings-control"><span>Projects root</span><span className="themis-settings-hint">Fixed</span></div><p className="themis-settings-root">{state.settings.projects_directory}</p>
 
         </section>
