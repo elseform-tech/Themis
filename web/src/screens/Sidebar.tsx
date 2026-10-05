@@ -12,7 +12,7 @@ const views: Array<[MainView, string]> = [["skills", "Plugins"], ["automations",
 type SidebarIconName = "panel" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search";
 const viewIcons: Record<MainView, SidebarIconName> = { thread: "thread", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
-export function Sidebar({ collapsed }: { collapsed: boolean }) {
+export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
   const { state, dispatch } = useApp();
   const openProject = useOpenProject();
   const newThread = useNewThread();
@@ -65,7 +65,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     <div className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""}`}>
       <nav className="themis-sidebar-rail" aria-label="Utilities">
         {views.map(([view, label]) => nav(view, label))}
-        <div className="themis-rail-footer">{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={() => setHelp(true)}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
+        <div className="themis-rail-footer">{companionControl}{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={() => setHelp(true)}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
       </nav>
       <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
         <div className="themis-brand"><span className="themis-wordmark">Themis</span></div>

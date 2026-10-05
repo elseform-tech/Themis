@@ -1,5 +1,21 @@
 # UI polish verification — 2026-10-05
 
+## Knight companion (2026-10-06)
+
+The permanent rail now has a knight control. Its anchored popover selects Honey, Pearl or Ink and enables/hides the floating companion. It uses the original bundled transparent SVG artwork, with isolated gradient IDs, rather than the simplified preview drawing. Variant, visibility and normalized canvas position persist locally. Dragging snaps to the nearest side; arrow keys reposition within the canvas. The composer area is excluded and dialogs remain above the companion. Click/gaze interactions and work/completion/attention reactions respect reduced motion.
+
+Startup uses the selected knight while preferences, workspace and conversation restoration actually run. No minimum loading delay or invented percentage was added. A failed initialization exits to the existing app/error notice rather than leaving a permanent loading screen.
+
+Fresh commands: `npm --prefix web test` passed 211 tests across 23 files; `npm --prefix web run lint` and `npm --prefix web run build` passed. New regression cases cover rail selection, hide/show, reload, collapse, startup pending/failure and keyboard bounds. They failed before implementation (three missing-feature failures). Existing Vitest configuration-deprecation and build chunk-size warnings remain. `cargo test -p themis-desktop --test server_cli_e2e` passed all 11 cases. `python3 -m unittest quality_dashboard.test_dashboard` passed 13 tooling tests and `ruff check quality_dashboard` passed. The Tauri bundle command below passed with the fresh frontend. No Rust behavior changed, so the Rust-suite/coverage figures in earlier sections are prior evidence, not a fresh full-suite run.
+
+Chromium exercised actual server reads through a bridge that omitted user history and blocked writes. All three variants selected, the popover closed with Escape and restored focus, dragging snapped and persisted, reload retained position/visibility, the control worked with the dock collapsed, arrow keys remained bounded, and reduced motion disabled SVG animation. Bounds/popover checks passed at 1280, 736 and 420px with no page errors. The bridge delayed only the default-project response for 1.2 seconds to inspect the real pending startup state; the production loader has no delay.
+
+The rebuilt native app was relaunched after checking existing accessible projects had no active runs. Native accessibility and screenshot inspection confirmed the original Honey artwork and rail icon, the Honey/Pearl/Ink picker, Ink selection, hide/show and restoration to Honey/enabled. Native startup was too brief to inspect; startup stages and drag geometry were verified in Chromium, not measured in the native window. No inference request was sent. The pre-existing missing historical QA folder still produces its normal restoration warning; no user projects, credentials or saved appearance settings were changed.
+
+Dashboard refresh reports overall cyclomatic 2.44, cognitive 2.17 and maintainability 73.8. The new companion module reports 1.79 / 1.47 / 79.2; Shell reports 3.06 / 3.62 / 76.8, store 1.97 / 3.03 / 71.4 and Sidebar 2.52 / 2.53 / 81.7. Shell adds local reaction branches; no score-only refactor or dependency was introduced. Prior Rust coverage remains 83.5%; frontend line coverage is unavailable.
+
+![Original knights and rail controls](images/knight-companion-controls.png)
+
 ## Project settings simplification (2026-10-06)
 
 General settings now displays only the fixed shared projects root (`~/ThemisOS/Projects`). Themis remains in the sidebar with a normal folder tooltip and rename action, without a lock icon. Renaming changes its display name; its folder and thread history stay in place. The shared root remains fixed and project creation has no location override.

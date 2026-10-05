@@ -30,6 +30,51 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("selects and hides the companion from the permanent rail and restores that choice", async () => {
+    const app = render(<App />);
+    await screen.findByRole("button", { name: "Knight companion" });
+    const utilities = screen.getByRole("navigation", { name: "Utilities" });
+    fireEvent.click(within(utilities).getByRole("button", { name: "Knight companion" }));
+    const options = screen.getByRole("dialog", { name: "Knight companion" });
+    fireEvent.click(within(options).getByRole("button", { name: "Ink" }));
+    expect(screen.getByRole("button", { name: "Move Ink companion" })).toBeInTheDocument();
+    fireEvent.click(within(options).getByRole("checkbox", { name: "Companion" }));
+    expect(screen.queryByRole("button", { name: "Move Ink companion" })).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(within(utilities).getByRole("button", { name: "Knight companion" })).toBeInTheDocument();
+    app.unmount();
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Knight companion" }));
+    const restored = screen.getByRole("dialog", { name: "Knight companion" });
+    expect(within(restored).getByRole("button", { name: "Ink" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(restored).getByRole("checkbox", { name: "Companion" })).not.toBeChecked();
+    fireEvent.click(within(restored).getByRole("checkbox", { name: "Companion" }));
+    expect(screen.getByRole("button", { name: "Move Ink companion" })).toBeInTheDocument();
+  });
+  it("keeps the actual startup loader until workspace restoration finishes", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof bridge.getDefaultProject>>) => void;
+    vi.mocked(bridge.getDefaultProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<App />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading preferences");
+    await act(async () => {});
+    expect(screen.getByRole("status")).toHaveTextContent("Opening workspace");
+    expect(screen.queryByRole("navigation", { name: "Utilities" })).toBeNull();
+    await act(async () => finish({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true }));
+    expect(screen.queryByText("Opening workspace")).toBeNull();
+    expect(screen.getByRole("navigation", { name: "Utilities" })).toBeInTheDocument();
+  });
+  it("exits startup on failure and keeps companion position within bounds using the keyboard", async () => {
+    vi.mocked(bridge.getSettings).mockRejectedValueOnce(new Error("offline"));
+    await mount();
+    expect(screen.getByRole("button", { name: "Knight companion" })).toBeInTheDocument();
+    const pet = screen.getByRole("button", { name: "Move Honey companion" });
+    for (let i = 0; i < 20; i++) fireEvent.keyDown(pet, { key: "ArrowLeft" });
+    expect(pet.style.left).toBe("0%");
+    for (let i = 0; i < 20; i++) fireEvent.keyDown(pet, { key: "ArrowRight" });
+    expect(pet.style.left).toBe("100%");
+    expect(JSON.parse(localStorage.getItem("themis:companion")!).position.x).toBe(1);
+  });
   it("shows a fixed root without location controls", async () => {
     await mount();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));

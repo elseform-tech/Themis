@@ -50,3 +50,9 @@ Combined native QA also verified local plugin creation, /create autocomplete, in
 Hover expansion and its Appearance control are removed. The compact rail remains visible until explicitly expanded; a regression checks pointer entry with old hover-enabled settings, navigation from the rail, and reopening with the top toggle. All 183 web tests, lint/build and 13 dashboard tests/Ruff passed after this correction.
 
 ![Compact rail stays visible](images/framed-rail-compact-native.jpg)
+
+## Knight companion
+
+The permanent rail's knight icon opens character selection (Honey, Pearl, Ink) and the Companion checkbox. These use the original transparent SVG characters. The rail icon stays available while hidden and reflects the selected character. Variant, visibility and normalized canvas position are small local UI preferences, independent of project roots or appearance templates.
+
+The floating knight has no container. Dragging snaps it to the nearest canvas edge; arrow keys move it in either direction. Its area excludes the composer. It follows the selected conversation's work/completion/attention state and briefly reacts to a click. Reduced motion disables SVG animation and gaze movement. The startup screen uses the same selected knight and reports actual initialization stages rather than a simulated timer.

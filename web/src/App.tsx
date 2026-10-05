@@ -22,9 +22,12 @@ import { SidebarIcon } from "./screens/Sidebar";
 import { isTauri } from "@tauri-apps/api/core";
 import "./screens/shell.css";
 import { applyAppearance } from "./theme/appearance";
+import { KnightCompanion, KnightControl, KnightLoading, readCompanionPreferences, type CompanionPreferences, type KnightMood } from "./components/KnightCompanion";
 
 function Shell() {
-  const { state, dispatch } = useApp();
+  const { state, startup, dispatch } = useApp();
+  const [companion, setCompanion] = useState(readCompanionPreferences);
+  function updateCompanion(next: CompanionPreferences) { setCompanion(next); writeSession("companion", next); }
   const [collapsed, setCollapsed] = useState(() => readSession("sidebar-collapsed", false));
   function toggleSidebar() { setCollapsed(value => { writeSession("sidebar-collapsed", !value); return !value; }); }
   useEffect(() => { applyAppearance(state.settings); }, [state.settings]);
@@ -69,6 +72,14 @@ function Shell() {
 
   }
 
+  if (startup !== null) return <KnightLoading variant={companion.variant} status={startup} />;
+  const threadId = state.activeThreadId;
+  const messages = threadId ? state.messages[threadId] ?? [] : [];
+  const last = messages[messages.length - 1];
+  const selectedThread = state.activeProjectRoot ? state.threadsByProject[state.activeProjectRoot]?.find(thread => thread.id === threadId) : undefined;
+  const working = threadId ? state.running[threadId] ?? selectedThread?.running : false;
+  const mood: KnightMood = (threadId && (state.sendErrors[threadId] || state.approvals.some(approval => approval.thread_id === threadId))) || (last?.role === "system" && /^(Run failed:|Send failed:|Send rejected:)/.test(last.text)) ? "attention"
+    : working ? "working" : last?.role === "assistant" && !last.incomplete ? "complete" : "idle";
   return (
     <div className={`themis-shell ${isTauri() && /Mac/.test(navigator.platform) ? "themis-shell--mac" : ""}`}>
         <header className="themis-nav" data-tauri-drag-region>
@@ -78,7 +89,7 @@ function Shell() {
           </div>
         </header>
         <div className="themis-shell-body">
-          <Sidebar collapsed={collapsed} />
+          <Sidebar collapsed={collapsed} companionControl={<KnightControl preferences={companion} onChange={updateCompanion} />} />
           <main className="themis-main">
         <div className="themis-view">
           {state.mainView === "thread" && <ThreadView />}
@@ -87,6 +98,7 @@ function Shell() {
           {state.mainView === "settings" && <SettingsScreen />}
           {state.mainView === "queue" && <ReviewQueue />}
         </div>
+        {companion.enabled && <KnightCompanion preferences={companion} onChange={updateCompanion} mood={mood} />}
       </main>
       </div>
       {headApproval !== undefined && (
