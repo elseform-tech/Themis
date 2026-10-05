@@ -202,7 +202,10 @@ function Message({ message, activeRunId, skills }: { message: ChatMessage; activ
           <p className="themis-thread-text"><PromptText value={message.text} skills={skills} /></p>
         </details>
       ) : message.role === "assistant" ? (
-        <ResponseBody text={message.text} />
+        <>
+          <ResponseBody text={message.text} />
+          {(message.final || !message.runId) && <small className="themis-response-model">{message.model ?? "Model not recorded"}</small>}
+        </>
       ) : (
         <p className="themis-thread-text"><PromptText value={message.text} skills={skills} /></p>
       )}

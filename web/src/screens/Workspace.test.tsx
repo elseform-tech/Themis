@@ -11,8 +11,8 @@ vi.mock("../lib/tauri", async importOriginal => ({
   getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
-  setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
-  openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", effort_levels: [] }, { id: "gpt-5.6-luna", effort_levels: ["low", "medium", "high"] }]),
+  renameThread: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
+  openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), renameProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", effort_levels: [] }, { id: "gpt-5.6-luna", effort_levels: ["low", "medium", "high"] }]),
 }));
 const settings = { ...DEFAULT_SETTINGS, projects_directory: "/tmp/Themis/Projects" };
 beforeEach(() => {
@@ -30,6 +30,47 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("shows a fixed root without location controls", async () => {
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.queryByRole("button", { name: "Choose folder" })).toBeNull();
+    expect(screen.queryByLabelText("New projects")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "New project" }));
+    expect(screen.queryByText("Change location")).toBeNull();
+    expect(screen.queryByLabelText("Parent folder")).toBeNull();
+  });
+  it("renames a project without changing its root and protects Themis", async () => {
+    const root = "/tmp/Themis/Projects/Research";
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
+    vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Research", is_git: true });
+    vi.mocked(bridge.renameProject).mockResolvedValue({ root, name: "Research notes", is_git: true });
+    await mount();
+    expect(screen.queryByRole("button", { name: "Rename Themis" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Rename Research" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Research notes" } });
+    await act(async () => fireEvent.submit(screen.getByLabelText("Name").closest("form")!));
+    expect(bridge.renameProject).toHaveBeenCalledWith(root, "Research notes");
+    expect(screen.getByRole("button", { name: "New thread in Research notes" })).toBeInTheDocument();
+  });
+  it("edits only a thread name and retains response model labels", async () => {
+    const thread = { id: "caption-thread", title: "Caption", provider: "go" as const, model: "current-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.renameThread).mockResolvedValue({ ...thread, title: "Renamed" });
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Caption" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Caption" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit thread" });
+    expect(within(dialog).queryByLabelText("Model")).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Renamed" } });
+    await act(async () => fireEvent.submit(within(dialog).getByLabelText("Name").closest("form")!));
+    expect(bridge.renameThread).toHaveBeenCalledWith(thread.id, "Renamed");
+    expect(bridge.setProvider).not.toHaveBeenCalled();
+    const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => receive({ thread_id: thread.id, run_id: "first", event: { kind: "finished", result: "First response", model: "original-model" } }));
+    await act(async () => receive({ thread_id: thread.id, run_id: "second", event: { kind: "finished", result: "Second response", model: "another-model" } }));
+    expect(screen.getByText("original-model")).toBeInTheDocument();
+    expect(screen.getByText("another-model")).toBeInTheDocument();
+  });
   it("clears a transient plugin load error after refreshing", async () => {
     vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
     await mount();
@@ -107,7 +148,7 @@ describe("Workspace journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "New project" }));
     fireEvent.change(screen.getByLabelText("Project name"), { target: { value: "My project" } });
     await act(async () => fireEvent.submit(screen.getByLabelText("Project name").closest("form")!));
-    expect(bridge.createProject).toHaveBeenCalledWith("My project", undefined);
+    expect(bridge.createProject).toHaveBeenCalledWith("My project");
     expect(bridge.createThread).toHaveBeenCalledWith("/tmp/Themis/Projects/My project", "go", "muse-spark-1.3-contributor");
     expect(screen.getByLabelText("Message")).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("muse-spark-1.3-contributor");

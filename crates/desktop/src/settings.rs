@@ -63,6 +63,7 @@ pub const MAX_RECENT_ROOTS: usize = 10;
 /// update is written back immediately.
 pub struct SettingsStore {
     path: PathBuf,
+    projects_root: PathBuf,
     current: tokio::sync::Mutex<Settings>,
 }
 
@@ -70,17 +71,26 @@ impl SettingsStore {
     /// Loads settings from `path`, falling back to defaults.
     #[must_use]
     pub fn load(path: PathBuf) -> Self {
+        Self::load_with_projects_root(
+            path,
+            PathBuf::from(crate::types::default_projects_directory()),
+        )
+    }
+
+    pub(crate) fn load_with_projects_root(path: PathBuf, projects_root: PathBuf) -> Self {
         let mut settings: Settings = std::fs::read_to_string(&path)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
         settings.theme = ThemeMode::Dark;
+        settings.projects_directory = projects_root.to_string_lossy().into_owned();
         if settings.default_provider == crate::types::ProviderKind::Legacy {
             settings.default_provider = crate::types::ProviderKind::Go;
             settings.default_model.clear();
         }
         Self {
             path,
+            projects_root,
             current: tokio::sync::Mutex::new(settings),
         }
     }
@@ -102,19 +112,9 @@ impl SettingsStore {
         let mut current = guard.clone();
         let snapshot = {
             if let Some(directory) = patch.projects_directory {
-                let path = Path::new(directory.trim());
-                if !path.is_absolute()
-                    || path
-                        .components()
-                        .any(|c| matches!(c, std::path::Component::ParentDir))
-                    || (path.exists() && !path.is_dir())
-                {
-                    return Err(
-                        "Projects folder must be an absolute directory path without '..'"
-                            .to_owned(),
-                    );
+                if Path::new(&directory) != self.projects_root {
+                    return Err("Projects root is fixed".to_owned());
                 }
-                current.projects_directory = path.to_string_lossy().into_owned();
             }
             if let Some(size) = patch.text_size {
                 if !(12..=22).contains(&size) {
@@ -216,6 +216,15 @@ impl SettingsStore {
         self.save(&snapshot)?;
         *guard = snapshot.clone();
         Ok(snapshot)
+    }
+
+    pub(crate) async fn rename_project(&self, root: String, name: String) -> Result<(), String> {
+        let mut guard = self.current.lock().await;
+        let mut next = guard.clone();
+        next.project_names.insert(root, name);
+        self.save(&next)?;
+        *guard = next;
+        Ok(())
     }
 
     fn save(&self, settings: &Settings) -> Result<(), String> {

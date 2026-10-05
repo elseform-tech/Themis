@@ -19,7 +19,6 @@ import {
   listGoModels,
 } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
-import { pickProjectDirectory } from "./projectPick";
 import { copyDiagnostics } from "./diagnostics";
 import "./Settings.css";
 import { AppearanceSettings } from "./Appearance";
@@ -138,11 +137,6 @@ export function SettingsScreen() {
       return false;
     } finally { setSaving(false); }
   }
-  async function chooseFolder() {
-    const picked = await pickProjectDirectory();
-    if (picked.kind === "path") await save({ projects_directory: picked.path });
-  }
-
   async function refreshSecrets() {
     try {
       const status = await getSecretStatus();
@@ -226,9 +220,7 @@ export function SettingsScreen() {
       {section === "General" && <>
         <section className="themis-settings-section" aria-label="Workspace"><h3 className="themis-settings-subtitle">Workspace</h3>
           <div className="themis-settings-control"><span>Themis</span><span className="themis-settings-hint">Fixed</span></div><p className="themis-settings-root">{state.projects.find(project => project.is_default)?.root ?? "Loading workspace…"}</p>
-          <Input id="projects-directory" label="New projects" value={form.projects_directory} onChange={event => setForm(f => ({ ...f, projects_directory: event.target.value }))} onBlur={() => { if (form.projects_directory !== state.settings.projects_directory) void save({ projects_directory: form.projects_directory }); }} />
-          <div><Button variant="ghost" size="small" onClick={() => void chooseFolder()}>Choose folder</Button></div>
-          <p className="themis-settings-hint">Existing projects keep their location.</p>
+          <div className="themis-settings-control"><span>Projects root</span><span className="themis-settings-hint">Fixed</span></div><p className="themis-settings-root">{state.settings.projects_directory}</p>
 
         </section>
         <section className="themis-settings-section" aria-label="Automations"><h3 className="themis-settings-subtitle">Automations</h3><label className="themis-settings-check"><input type="checkbox" checked={form.automations_enabled} onChange={event => void save({ automations_enabled: event.target.checked })} />Scheduled runs</label><p className="themis-settings-hint">Manage in Automations.</p></section>

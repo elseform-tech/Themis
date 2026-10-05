@@ -174,9 +174,13 @@ pub enum ThreadEvent {
         summary: String,
     },
     Incomplete {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
         result: String,
     },
     Finished {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
         result: String,
     },
     Failed {
@@ -199,8 +203,14 @@ impl From<RunEvent> for ThreadEvent {
             },
             RunEvent::ContextCompacting => Self::ContextCompacting,
             RunEvent::ContextCheckpoint { summary } => Self::ContextCheckpoint { summary },
-            RunEvent::Incomplete { result } => Self::Incomplete { result },
-            RunEvent::Finished { result } => Self::Finished { result },
+            RunEvent::Incomplete { result } => Self::Incomplete {
+                result,
+                model: None,
+            },
+            RunEvent::Finished { result } => Self::Finished {
+                result,
+                model: None,
+            },
             RunEvent::Failed { error } => Self::Failed { error },
         }
     }
@@ -436,6 +446,8 @@ pub const fn default_automations_enabled() -> bool {
 pub struct Settings {
     #[serde(default = "default_projects_directory")]
     pub projects_directory: String,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub project_names: std::collections::HashMap<String, String>,
     #[serde(default = "default_text_size")]
     pub text_size: u32,
     #[serde(default = "default_appearance_choice")]
@@ -520,6 +532,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             projects_directory: default_projects_directory(),
+            project_names: std::collections::HashMap::new(),
             text_size: default_text_size(),
             theme_palette: default_appearance_choice(),
             font_family: default_appearance_choice(),
@@ -713,6 +726,7 @@ mod tests {
             ),
             (
                 ThreadEvent::Finished {
+                    model: None,
                     result: "done".to_owned(),
                 },
                 json!({"kind": "finished", "result": "done"}),
@@ -801,6 +815,7 @@ mod tests {
                 result: "r".to_owned()
             }),
             ThreadEvent::Finished {
+                model: None,
                 result: "r".to_owned()
             }
         );
@@ -820,6 +835,7 @@ mod tests {
             thread_id: "t".to_owned(),
             run_id: "r".to_owned(),
             event: ThreadEvent::Finished {
+                model: None,
                 result: "ok".to_owned(),
             },
         };

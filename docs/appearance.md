@@ -1,12 +1,26 @@
 # Desktop appearance
 
-ThemisCode uses a framed sidebar rail. Collapsing the sidebar keeps its app icon and navigation buttons visible; the top chrome toggle and Cmd/Ctrl+B reopen it. Hover does not expand it. The obsolete hover control is removed; old saved settings remain readable.
+ThemisCode keeps its existing workspace and composer. A permanent icon rail contains Plugins, Automations, Review queue, Settings, Help and Search, each with a tooltip. The expandable dock contains the shimmering Themis wordmark, New chat, projects and their threads. The top toggle and Cmd/Ctrl+B collapse only that dock; hovering never expands it. Knight artwork is removed from the interface; native icons and the favicon remain.
 
-Appearance settings save through the shared desktop server: System/Light/Dark, five color palettes, five font families, and text sizes from 12 to 22px. Code retains its monospace font. Existing settings files default the new palette and font fields to System. The composer retains its layout and controls with fewer nested control borders and theme-aware colors.
+All new projects are created under the fixed `~/ThemisOS/Projects` root. The managed **Themis** project is pinned first at `~/ThemisOS/Projects/Themis` and cannot be renamed or relocated. Other project names can be changed without moving their folders or histories. Settings and creation dialogs offer no location override.
 
-Sidebar icons use the same Lucide SVG paths as the approved visualization (square pen, sparkles, clock, pull request, folder, settings sliders and panel toggle), shared by the expanded sidebar and compact rail. License: `docs/lucide-icons-LICENSE`.
+Appearance is dark only. Older Light/System settings load as Dark. Settings offer 17 coordinated presets, including GitHub Dark and GitHub Dimmed, and 12 locally resolved font choices: System, Arial, Georgia, Mono, Rounded, Avenir, Helvetica, Verdana, Trebuchet, Palatino, Charter and Menlo. Font fallbacks apply where a family is unavailable. Code stays monospace. Size ranges from 12 to 22px.
 
-The wordmark uses the pearl blob knight; the app icon groups honey, pearl, and ink knights in a triangle. Animated SVG artwork respects reduced motion. The native icon master is `crates/desktop/icons/icon.svg`, rasterized to `icon-source.png` at 1024px. Run `swift scripts/generate-icon.swift` from the repository root to regenerate PNG, ICNS, and ICO assets.
+Themes, fonts and sizes preview throughout the interface before saving. **Apply** persists the draft through the shared server; **Revert**, leaving Settings or a failed write restores the saved appearance. Shared action buttons use unboxed text or icons, and settings labels stay compact.
+
+Overflowing project and thread titles make one leftward pass on hover or keyboard focus, retaining the full accessible title. Reduced-motion mode wraps titles and disables shimmer/motion.
+
+Sidebar SVG paths use Lucide icons; see `docs/lucide-icons-LICENSE`. Native icon generation remains `swift scripts/generate-icon.swift`.
+
+Selected threads shimmer without a colored side stripe. The shell and main frame use a visible boundary in every palette. Thread editing changes only its name; the composer controls the next model. Completed responses retain the model captured for their run. Older responses without metadata say “Model not recorded.”
+
+Product rules: [UI rules](ui-rules.md).
+
+Current verification: [UI polish checks](ui-polish-verification.md).
+
+## Historical verification
+
+The dated checks below describe earlier builds, including appearance modes and artwork that have since been removed.
 
 ## Local verification (2026-10-01)
 

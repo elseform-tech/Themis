@@ -375,6 +375,7 @@ export function applyThreadEvent(
         id: newId("msg"),
         role: "assistant",
         text: event.result,
+        model: event.model,
         runId,
         final: true,
         incomplete: event.kind === "incomplete",

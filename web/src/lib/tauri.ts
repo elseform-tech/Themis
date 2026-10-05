@@ -51,8 +51,12 @@ export function renameThread(threadId: string, title: string): Promise<ThreadInf
 export function stopThread(threadId: string): Promise<void> { return invoke("stop_thread", { threadId }); }
 export function listGoModels(): Promise<GoModel[]> { return invoke("list_go_models"); }
 
-export function createProject(name: string, directory?: string): Promise<ProjectInfo> {
-  return invoke("create_project", { name, directory: directory ?? null });
+export function createProject(name: string): Promise<ProjectInfo> {
+  return invoke("create_project", { name });
+}
+
+export function renameProject(path: string, name: string): Promise<ProjectInfo> {
+  return invoke("rename_project", { path, name });
 }
 
 export function openProject(path: string): Promise<ProjectInfo> {

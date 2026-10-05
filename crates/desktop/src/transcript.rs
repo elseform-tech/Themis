@@ -358,7 +358,7 @@ fn context_turn(item: &HistoryItem) -> Option<ConversationTurn> {
         HistoryItem::Event {
             envelope:
                 ThreadEventEnvelope {
-                    event: ThreadEvent::Finished { result },
+                    event: ThreadEvent::Finished { result, .. },
                     ..
                 },
         } => Some(ConversationTurn {

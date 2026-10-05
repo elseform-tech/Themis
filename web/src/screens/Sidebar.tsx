@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Badge, Button, Dialog, Input, Tooltip } from "../components";
-import { createProject, getSettings, renameThread, setProvider } from "../lib/tauri";
+import { createProject, getSettings, renameProject, renameThread } from "../lib/tauri";
 import { describeError, toast, useApp, type MainView } from "../state/store";
 import { useNewThread, useOpenProject, useDiscardThread } from "./actions";
 import type { ThreadInfo } from "../lib/types";
@@ -17,7 +17,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const openProject = useOpenProject();
   const newThread = useNewThread();
   const [name, setName] = useState("");
-  const [directory, setDirectory] = useState("");
+  const [renaming, setRenaming] = useState<{ root: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { discard } = useDiscardThread();
@@ -36,10 +36,10 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     if (busy || !name.trim()) return;
     setBusy(true); setError("");
     try {
-      const project = await createProject(name.trim(), directory.trim() || undefined);
+      const project = await createProject(name.trim());
       dispatch({ type: "project/opened", project });
       dispatch({ type: "ui/project-dialog", open: false });
-      setName(""); setDirectory("");
+      setName("");
       await newThread(project.root);
       dispatch({ type: "settings/patched", settings: await getSettings() });
       toast(dispatch, `Created ${project.name}`, "success");
@@ -50,8 +50,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     if (!editing || editBusy) return;
     setEditBusy(true); setEditError("");
     try {
-      let updated = await renameThread(editing.id, editing.title);
-      updated = await setProvider(editing.id, "go", editing.model);
+      const updated = await renameThread(editing.id, editing.title);
       dispatch({ type: "thread/updated", projectRoot: editing.projectRoot, thread: updated });
       setEditing(null);
     } catch (error) { setEditError(describeError(error)); }
@@ -74,7 +73,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         <div className="themis-sidebar-projects">
           <div className="themis-sidebar-head"><h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="project" /><span>Projects</span></h2><div className="themis-project-actions"><Button size="small" variant="ghost" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>+</Button><details><summary aria-label="Project actions" title="Project actions">···</summary><div className="themis-project-menu"><Button variant="ghost" size="small" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open folder</Button></div></details></div></div>
           {state.projects.length === 0 ? <p className="themis-sidebar-note">No projects</p> : <ul className="themis-sidebar-list">{[...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default)).map(project => <li className="themis-project" key={project.root}>
-            <div className="themis-project-heading"><button type="button" className="themis-sidebar-row themis-project-row" title={project.is_default ? `Fixed workspace · ${project.root}` : project.root} aria-expanded={!collapsedProjects[project.root]} onClick={() => setProjectCollapsed(project.root, !collapsedProjects[project.root])}><span aria-hidden="true">{collapsedProjects[project.root] ? "›" : "⌄"}</span><SidebarIcon name="project" /><MovingText>{project.name}</MovingText>{project.is_default && <svg className="themis-project-lock" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V4a3 3 0 0 1 6 0v3"/></svg>}</button><Button variant="ghost" size="small" aria-label={`New thread in ${project.name}`} title="New thread" onClick={() => { setProjectCollapsed(project.root, false); void newThread(project.root); }}>+</Button></div>
+            <div className="themis-project-heading"><button type="button" className="themis-sidebar-row themis-project-row" title={project.is_default ? `Fixed workspace · ${project.root}` : project.root} aria-expanded={!collapsedProjects[project.root]} onClick={() => setProjectCollapsed(project.root, !collapsedProjects[project.root])}><span aria-hidden="true">{collapsedProjects[project.root] ? "›" : "⌄"}</span><SidebarIcon name="project" /><MovingText>{project.name}</MovingText>{project.is_default && <svg className="themis-project-lock" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V4a3 3 0 0 1 6 0v3"/></svg>}</button>{!project.is_default && <Button variant="ghost" size="small" aria-label={`Rename ${project.name}`} title="Rename project" onClick={() => { setError(""); setRenaming({ root: project.root, name: project.name }); }}>✎</Button>}<Button variant="ghost" size="small" aria-label={`New thread in ${project.name}`} title="New thread" onClick={() => { setProjectCollapsed(project.root, false); void newThread(project.root); }}>+</Button></div>
             {!collapsedProjects[project.root] && <ul className="themis-sidebar-list themis-thread-list">{(state.threadsByProject[project.root] ?? []).map(thread => <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={thread.title} aria-label={thread.title} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}><SidebarIcon name="thread" /><MovingText>{thread.title}</MovingText><ThreadStatus thread={thread} /></button><div className="themis-thread-row-actions"><button aria-label={`Edit ${thread.title}`} title="Edit thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => { setEditError(""); setEditing({ ...thread, projectRoot: project.root }); }}>✎</button><button aria-label={`Remove ${thread.title}`} title="Remove thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => setRemoving({ ...thread, projectRoot: project.root })}><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 6v5M9 6v5"/></svg></button></div></li>)}</ul>}
           </li>)}</ul>}
         </div>
@@ -85,16 +84,25 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void create(); }}>
         <Input id="project-name" label="Project name" placeholder="My project" value={name} maxLength={80} disabled={busy} onChange={e => { setName(e.target.value); setError(""); }} />
         <p className="themis-sidebar-dialog-hint">A new folder and Git repository will be created for your project.</p>
-        <details><summary>Change location</summary><Input id="project-location" label="Parent folder" value={directory} placeholder={state.settings.projects_directory} onChange={e => setDirectory(e.target.value)} disabled={busy} /></details>
-        <p className="themis-project-location">{directory || state.settings.projects_directory}/{name.trim() || "project-name"}</p>
+        <p className="themis-project-location">{state.settings.projects_directory}/{name.trim() || "project-name"}</p>
         {error && <p role="alert" className="themis-form-error">{error}</p>}
         <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => dispatch({ type: "ui/project-dialog", open: false })}>Cancel</Button><Button type="submit" variant="primary" disabled={busy || !name.trim()}>{busy ? "Creating…" : "Create project"}</Button></div>
       </form>
     </Dialog>
+    <Dialog open={renaming !== null} title="Rename project" onClose={() => { if (!busy) setRenaming(null); }}>
+      {renaming && <form className="themis-sidebar-dialog" onSubmit={async event => {
+        event.preventDefault(); if (busy) return; setBusy(true); setError("");
+        try { const project = await renameProject(renaming.root, renaming.name); dispatch({ type: "project/opened", project, select: false }); setRenaming(null); }
+        catch (error) { setError(describeError(error)); } finally { setBusy(false); }
+      }}>
+        <Input id="rename-project" label="Name" value={renaming.name} maxLength={80} disabled={busy} onChange={event => setRenaming({ ...renaming, name: event.target.value })} />
+        {error && <p role="alert" className="themis-form-error">{error}</p>}
+        <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setRenaming(null)}>Cancel</Button><Button type="submit" disabled={busy || !renaming.name.trim()}>Save</Button></div>
+      </form>}
+    </Dialog>
     <Dialog open={editing !== null} title="Edit thread" onClose={() => { if (!editBusy) setEditing(null); }}>
       {editing && <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void saveThread(); }}>
         <Input id="sidebar-thread-title" label="Name" value={editing.title} maxLength={120} onChange={event => setEditing({ ...editing, title: event.target.value })} />
-        <Input id="sidebar-thread-model" label="Model" value={editing.model} onChange={event => setEditing({ ...editing, model: event.target.value })} />
         {editError && <p role="alert" className="themis-form-error">{editError}</p>}
         <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={editBusy} onClick={() => setEditing(null)}>Cancel</Button><Button type="submit" disabled={editBusy || !editing.title.trim()}>{editBusy ? "Saving…" : "Save"}</Button></div>
       </form>}

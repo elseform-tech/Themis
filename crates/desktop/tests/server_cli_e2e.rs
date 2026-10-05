@@ -573,7 +573,6 @@ async fn fixed_workspace_and_dark_presets_survive_settings_changes_and_restart()
     let root = project["root"].as_str().unwrap();
     std::fs::write(Path::new(root).join("keep.txt"), "keep my work").unwrap();
     let args = json!({"patch": {
-        "projects_directory": data.path().join("other"),
         "theme": "system", "theme_palette": "github-dimmed",
         "font_family": "mono", "text_size": 18
     }})
@@ -605,4 +604,79 @@ async fn fixed_workspace_and_dark_presets_survive_settings_changes_and_restart()
         project
     );
     task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn projects_use_one_fixed_root_and_rename_preserves_threads_after_restart() {
+    let data = tempfile::tempdir().unwrap();
+    let path = data.path().join("settings.json");
+    let state = AppState::new_for_test(path.clone());
+    let fixed = state.get_settings().await.projects_directory;
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let client = Client::new(data.path().to_path_buf());
+    assert!(client
+        .call(
+            "update_settings",
+            json!({"patch":{"projects_directory":data.path().join("escape")}})
+        )
+        .await
+        .unwrap_err()
+        .contains("fixed"));
+    assert!(client
+        .call(
+            "create_project",
+            json!({"name":"Escaped","directory":data.path().join("escape")})
+        )
+        .await
+        .unwrap_err()
+        .contains("fixed"));
+    let project = cli(
+        data.path(),
+        &["call", "create_project", "{\"name\":\"Research\"}"],
+    );
+    let root = project["root"].as_str().unwrap();
+    assert_eq!(
+        Path::new(root).parent().unwrap(),
+        Path::new(&fixed).canonicalize().unwrap()
+    );
+    let thread = cli(data.path(), &["thread", "create", root]);
+    std::fs::write(Path::new(root).join("keep.txt"), "preserve").unwrap();
+    let renamed = cli(
+        data.path(),
+        &[
+            "call",
+            "rename_project",
+            &json!({"path":root,"name":"Research notes"}).to_string(),
+        ],
+    );
+    assert_eq!(renamed["name"], "Research notes");
+    assert_eq!(renamed["root"], root);
+    let default = cli(data.path(), &["call", "get_default_project", "{}"]);
+    assert!(client
+        .call(
+            "rename_project",
+            json!({"path":default["root"],"name":"Changed"})
+        )
+        .await
+        .unwrap_err()
+        .contains("fixed"));
+    task.abort();
+    let reopened = AppState::new_for_test(path);
+    assert_eq!(
+        reopened.open_project(root.to_owned()).await.unwrap().name,
+        "Research notes"
+    );
+    assert_eq!(
+        reopened
+            .get_thread(thread["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .id,
+        thread["id"]
+    );
+    assert_eq!(
+        std::fs::read_to_string(Path::new(root).join("keep.txt")).unwrap(),
+        "preserve"
+    );
 }

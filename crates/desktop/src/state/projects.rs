@@ -1,11 +1,10 @@
 use super::*;
 
 impl AppState {
-    /// The managed project is rooted beside app data, independent of the
-    /// configurable folder used for new user projects.
+    /// The managed project shares the fixed projects root.
     pub async fn get_default_project(&self) -> Result<ProjectInfo, String> {
         let _initialization = self.inner.default_project_init.lock().await;
-        let directory = settings_app_dir(self.inner.settings.path());
+        let directory = PathBuf::from(self.inner.settings.get().await.projects_directory);
         let root = directory.join("Themis");
         if !root.exists() {
             self.create_project(
@@ -23,35 +22,20 @@ impl AppState {
         name: String,
         directory: Option<String>,
     ) -> Result<ProjectInfo, String> {
-        let name = name.trim();
-        if name.is_empty()
-            || name.len() > 80
-            || name.starts_with('.')
-            || name.ends_with('.')
-            || !name
-                .chars()
-                .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+        let name = validate_project_name(&name)?;
+        let base = PathBuf::from(self.inner.settings.get().await.projects_directory);
+        if directory
+            .as_deref()
+            .is_some_and(|directory| Path::new(directory) != base)
         {
-            return Err(
-                "Use 1–80 letters, numbers, spaces, hyphens or underscores for the project name"
-                    .to_owned(),
-            );
-        }
-        let base = directory.unwrap_or(self.inner.settings.get().await.projects_directory);
-        let base = PathBuf::from(base.trim());
-        if !base.is_absolute()
-            || base
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Err("Choose an absolute projects folder in Settings".to_owned());
+            return Err("Projects root is fixed".to_owned());
         }
         std::fs::create_dir_all(&base)
             .map_err(|err| format!("Could not create projects folder: {err}"))?;
         let root = base
             .canonicalize()
             .map_err(|err| err.to_string())?
-            .join(name);
+            .join(&name);
         std::fs::create_dir(&root).map_err(|err| {
             if err.kind() == std::io::ErrorKind::AlreadyExists {
                 "A project with this name already exists. Choose another name or open the existing folder.".to_owned()
@@ -106,14 +90,21 @@ impl AppState {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let settings = self.inner.settings.get().await;
+        let is_default = PathBuf::from(&settings.projects_directory)
+            .join("Themis")
+            .canonicalize()
+            .is_ok_and(|default| default == root);
+        let root = root.to_string_lossy().into_owned();
         let info = ProjectInfo {
-            root: root.to_string_lossy().into_owned(),
-            name,
-            is_git: is_git_repo(&root),
-            is_default: settings_app_dir(self.inner.settings.path())
-                .join("Themis")
-                .canonicalize()
-                .is_ok_and(|default| default == root),
+            root: root.clone(),
+            name: if is_default {
+                "Themis".to_owned()
+            } else {
+                settings.project_names.get(&root).cloned().unwrap_or(name)
+            },
+            is_git: is_git_repo(Path::new(&root)),
+            is_default,
         };
         self.inner
             .projects
@@ -135,4 +126,35 @@ impl AppState {
             .await;
         Ok(info)
     }
+    /// Rename the display label without moving files or invalidating thread roots.
+    pub async fn rename_project(&self, path: String, name: String) -> Result<ProjectInfo, String> {
+        let name = validate_project_name(&name)?;
+        let project = self.open_project(path).await?;
+        if project.is_default {
+            return Err("Themis workspace name is fixed".to_owned());
+        }
+        self.inner
+            .settings
+            .rename_project(project.root.clone(), name)
+            .await?;
+        self.open_project(project.root).await
+    }
+}
+
+fn validate_project_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty()
+        || name.len() > 80
+        || name.starts_with('.')
+        || name.ends_with('.')
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+    {
+        return Err(
+            "Use 1–80 letters, numbers, spaces, hyphens or underscores for the project name"
+                .to_owned(),
+        );
+    }
+    Ok(name.to_owned())
 }

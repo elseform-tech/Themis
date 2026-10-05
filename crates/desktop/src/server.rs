@@ -361,6 +361,11 @@ pub async fn dispatch(
         "list_prompt_skills" => output!(state.prompt_skills(arg(&args, "projectRoot")?).await?),
         "ping" => output!(state.ping().await),
         "open_project" => output!(state.open_project(arg(&args, "path")?).await?),
+        "rename_project" => output!(
+            state
+                .rename_project(arg(&args, "path")?, arg(&args, "name")?)
+                .await?
+        ),
         "get_default_project" => output!(state.get_default_project().await?),
         "create_project" => output!(
             state
