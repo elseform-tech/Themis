@@ -12,7 +12,7 @@ Overflowing project and thread titles make one leftward pass on hover or keyboar
 
 Sidebar SVG paths use Lucide icons; see `docs/lucide-icons-LICENSE`. Native icon generation remains `swift scripts/generate-icon.swift`.
 
-Selected threads shimmer without a colored side stripe. The shell and main frame use a visible boundary in every palette. Thread editing changes only its name; the composer controls the next model. Completed responses retain the model captured for their run. Older responses without metadata say “Model not recorded.”
+Selected threads shimmer without a colored side stripe. Internal boundaries use continuous layers: a lighter utility/header frame, dark project sidebar and darker canvas. Every palette preserves this brightness order without bright outlines or frame gaps. Appearance shows Frame · Sidebar · Canvas swatches and a live surface preview. Thread editing changes only its name; the composer controls the next model. Completed responses retain the model captured for their run. Older responses without metadata say “Model not recorded.”
 
 Product rules: [UI rules](ui-rules.md).
 

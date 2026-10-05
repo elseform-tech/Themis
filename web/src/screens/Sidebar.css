@@ -1,14 +1,14 @@
-.themis-sidebar-slot { width: 292px; flex-shrink: 0; position: relative; display: flex; overflow: visible; }
+.themis-sidebar-slot { width: 292px; flex-shrink: 0; position: relative; display: flex; overflow: visible; transition: width 240ms cubic-bezier(.2, .8, .2, 1); }
 .themis-sidebar-slot.is-collapsed { width: 56px; }
-.themis-sidebar { position: absolute; inset: 0 0 0 56px; width: 236px; height: 100%; display: flex; flex-direction: column; background: var(--themis-shell-bg); border-right: 0; visibility: hidden; transition: visibility 160ms; z-index: 20; }
-.themis-sidebar.is-visible { visibility: visible; }
+.themis-sidebar { position: absolute; inset: 0 0 0 56px; width: auto; height: 100%; overflow: hidden; display: flex; flex-direction: column; background: var(--themis-sidebar-bg); border-right: 0; visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 180ms ease, visibility 240ms; z-index: 20; }
+.themis-sidebar.is-visible { visibility: visible; opacity: 1; pointer-events: auto; }
 .themis-brand { display: flex; align-items: center; min-height: 60px; padding: 8px 20px; color: var(--themis-text); }
 .themis-wordmark { display: inline-flex; align-items: center; font-size: 1.25rem; font-weight: 500; letter-spacing: -.6px; white-space: nowrap; }
-.themis-sidebar-rail { width: 56px; flex: 0 0 56px; height: 100%; display: flex; flex-direction: column; gap: 6px; border-right: 1px solid var(--themis-border-subtle); padding: 14px 8px; }
+.themis-sidebar-rail { width: 56px; flex: 0 0 56px; height: 100%; display: flex; flex-direction: column; gap: 6px; border-right: 0; padding: 14px 8px; }
 .themis-sidebar-rail .themis-sidebar-row { justify-content: center; padding: 8px; position: relative; min-height: 40px; }
 .themis-sidebar-rail .themis-sidebar-name, .themis-sidebar-rail .themis-badge { display: none; }
 .themis-rail-footer { margin-top: auto; }
-.themis-sidebar-nav { display: grid; gap: 1px; padding: 8px 10px 20px; }
+.themis-sidebar-nav { display: grid; gap: 1px; padding: 8px 10px 20px; white-space: nowrap; }
 .themis-sidebar-row { width: 100%; display: flex; align-items: center; gap: 8px; border-radius: 5px; background: transparent; color: var(--themis-nav-text, var(--themis-text-2)); border: 0; font: inherit; font-size: .8125rem; min-height: 31px; padding: 6px 10px; cursor: pointer; text-align: left; }
 .themis-sidebar-row:hover { background: transparent; color: var(--themis-text); }
 .themis-sidebar-row--active { background: transparent; color: var(--themis-text); }

@@ -181,3 +181,6 @@
 .themis-settings-root { overflow-wrap: anywhere; font-size: .75rem; color: var(--themis-text-2); margin: 0; }
 .themis-settings-key-form .themis-input-wrap { min-width: 0; }
 @media (pointer: coarse) { .themis-theme-preset { min-height: 44px; } }
+
+.themis-surface-preview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border-radius: 6px; }
+.themis-surface-preview span { padding: 18px 8px; text-align: center; font-size: .75rem; color: var(--themis-text); }

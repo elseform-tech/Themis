@@ -5,12 +5,12 @@
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
-  --themis-shell-bg: #181a20;
-  --themis-canvas: #22242b;
+  --themis-shell-bg: #343840;
+  --themis-sidebar-bg: #22262c;
+  --themis-canvas: #14171c;
   --themis-surface: #262830;
   --themis-raised: #30323b;
   --themis-border: #3b3d46;
-  --themis-frame-border: var(--themis-text-2);
   --themis-border-subtle: #34363e;
   --themis-text: #e8eaf0;
   --themis-text-2: #9aa3b2;

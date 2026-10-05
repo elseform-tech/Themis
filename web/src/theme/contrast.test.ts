@@ -114,3 +114,13 @@ for (const preset of APPEARANCE_PRESETS) {
     }
   });
 }
+
+for (const preset of APPEARANCE_PRESETS) {
+  it(`${preset.name}: frame, sidebar and canvas have descending brightness`, () => {
+    expect(luminance(preset.colors[0])).toBeGreaterThan(luminance(preset.sidebar));
+    expect(luminance(preset.sidebar)).toBeGreaterThan(luminance(preset.colors[1]));
+    for (const text of [preset.colors[5], preset.colors[6], preset.colors[7]]) {
+      expect(contrastRatio(text, preset.sidebar)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+}
