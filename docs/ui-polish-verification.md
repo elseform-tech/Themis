@@ -1,4 +1,14 @@
-# UI polish verification — 2026-10-05
+# UI polish verification
+
+## Desktop companion follow-up (2026-10-06)
+
+The knight popover now offers 56–192px sizing. Tauri uses a separate transparent, undecorated, always-on-top companion window across workspaces. A visible grip starts native desktop dragging; arrow keys move its physical position. Its gaze reads the global cursor, including outside the app, and respects reduced motion. Visibility, variant and size synchronize between windows; saved desktop positions restore only on a connected monitor. Closing the main window closes the companion.
+
+Fresh checks: `npm --prefix web test` passed 212 tests across 23 files; `npm --prefix web run lint`, `npm --prefix web run build`, `cargo check -p themis-desktop`, `cargo fmt --all -- --check`, and `cargo clippy --workspace --all-targets -- -D warnings` passed. `cargo test --workspace -- --skip entered_keys_survive_new_store_and_can_be_forgotten` passed 228 tests, including 11 shared-server CLI E2E cases; 2 tests remain ignored and the named Keychain test is filtered. Dashboard unittest passed 13 tests and Ruff passed. The Tauri app bundle command documented below passed with the freshly built frontend. Existing Vitest deprecation and bundle-size warnings remain.
+
+A two-window Chromium journey used real local-server reads with native window commands doubled: size 144 produced a 164×188 window, visibility and Ink selection synchronized, cursor coordinates outside the window changed gaze direction, arrow movement changed physical position, and reduced motion disabled transforms. No page errors occurred. This checks command flow, not macOS stacking. The rebuilt native app opened its separate Themis Knight window with the original Pearl artwork and visible grip; changing the slider to 172px visibly resized the window to 384×432 physical pixels at 2× scale. Native drag actions were exercised, but the available window-isolated captures did not establish final desktop coordinates, cross-app stacking or global gaze; those OS-level acceptance checks remain unverified.
+
+The refreshed dashboard reports overall cyclomatic 2.44, cognitive 2.18 and maintainability 73.8. DesktopCompanion reports 2.14 / 2.55 / 72.8; KnightCompanion 1.80 / 1.39 / 79.3; App 3.00 / 3.47 / 77.5; desktop lib 2.19 / 1.20 / 71.5. No score-only refactoring was needed. Available Rust line coverage is 83.5% from the previous report, not regenerated for this follow-up; frontend line coverage is unavailable.
 
 ## Knight companion (2026-10-06)
 

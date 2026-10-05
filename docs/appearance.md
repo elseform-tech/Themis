@@ -1,6 +1,6 @@
 # Desktop appearance
 
-ThemisCode keeps its existing workspace and composer. A permanent icon rail contains Plugins, Automations, Review queue, Settings, Help and Search, each with a tooltip. The expandable dock contains the shimmering Themis wordmark, New chat, projects and their threads. The top toggle and Cmd/Ctrl+B collapse only that dock; hovering never expands it. Knight artwork is removed from the interface; native icons and the favicon remain.
+ThemisCode keeps its existing workspace and composer. A permanent icon rail contains Plugins, Automations, Review queue, Settings, Help and Search, each with a tooltip. The expandable dock contains the shimmering Themis wordmark, New chat, projects and their threads. The top toggle and Cmd/Ctrl+B collapse only that dock; hovering never expands it. Knight artwork is limited to startup and the optional companion; native icons and the favicon remain.
 
 All new projects are created under the fixed `~/ThemisOS/Projects` root. The default **Themis** project remains first in the sidebar at `~/ThemisOS/Projects/Themis`, without a lock icon. All project display names, including Themis, can be changed without moving their folders or histories. Settings shows only the shared projects root. Settings and creation dialogs offer no location override.
 
@@ -53,6 +53,6 @@ Hover expansion and its Appearance control are removed. The compact rail remains
 
 ## Knight companion
 
-The permanent rail's knight icon opens character selection (Honey, Pearl, Ink) and the Companion checkbox. These use the original transparent SVG characters. The rail icon stays available while hidden and reflects the selected character. Variant, visibility and normalized canvas position are small local UI preferences, independent of project roots or appearance templates.
+The permanent rail's knight icon opens character selection (Honey, Pearl, Ink), the Companion checkbox and a 56–192px Size slider. These use the original transparent SVG characters. The rail icon stays available while hidden and reflects the selected character. Variant, visibility, size and position are local UI preferences, independent of project roots or appearance templates.
 
-The floating knight has no container. Dragging snaps it to the nearest canvas edge; arrow keys move it in either direction. Its area excludes the composer. It follows the selected conversation's work/completion/attention state and briefly reacts to a click. Reduced motion disables SVG animation and gaze movement. The startup screen uses the same selected knight and reports actual initialization stages rather than a simulated timer.
+The desktop knight lives in a transparent, always-on-top window, including over other apps and across workspaces. Its visible dot grip allows free desktop dragging; arrow keys on the grip move it by 20 physical pixels. Position is restored on a connected monitor. In browser previews it stays within the canvas, with free positioning above the composer. Neither version snaps to an edge. Its gaze follows the global mouse position in the desktop app. It follows the selected conversation's work/completion/attention state and briefly reacts to a click. Reduced motion disables SVG animation and gaze movement. The startup screen uses the same selected knight and reports actual initialization stages rather than a simulated timer.

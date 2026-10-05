@@ -64,6 +64,15 @@ describe("Workspace journey", () => {
     expect(screen.queryByText("Opening workspace")).toBeNull();
     expect(screen.getByRole("navigation", { name: "Utilities" })).toBeInTheDocument();
   });
+  it("adjusts and restores companion size from the rail", async () => {
+    const app = render(<App />);
+    await screen.findByRole("button", { name: "Knight companion" });
+    fireEvent.click(screen.getByRole("button", { name: "Knight companion" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Size" }), { target: { value: "144" } });
+    expect(screen.getByRole("button", { name: "Move Honey companion" }).style.width).toBe("144px");
+    app.unmount(); await mount();
+    expect(screen.getByRole("button", { name: "Move Honey companion" }).style.width).toBe("144px");
+  });
   it("exits startup on failure and keeps companion position within bounds using the keyboard", async () => {
     vi.mocked(bridge.getSettings).mockRejectedValueOnce(new Error("offline"));
     await mount();

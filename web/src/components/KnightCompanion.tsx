@@ -12,6 +12,7 @@ export type KnightMood = "idle" | "working" | "complete" | "attention";
 export interface CompanionPreferences {
   variant: KnightVariant;
   enabled: boolean;
+  size: number;
   position: { x: number; y: number };
 }
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
@@ -20,6 +21,7 @@ export function readCompanionPreferences(): CompanionPreferences {
   return {
     variant: saved?.variant && Object.prototype.hasOwnProperty.call(knights, saved.variant) ? saved.variant : "honey",
     enabled: typeof saved?.enabled === "boolean" ? saved.enabled : true,
+    size: typeof saved?.size === "number" && Number.isFinite(saved.size) ? Math.max(56, Math.min(192, saved.size)) : 88,
     position: {
       x: typeof saved?.position?.x === "number" && Number.isFinite(saved.position.x) ? clamp(saved.position.x) : 1,
       y: typeof saved?.position?.y === "number" && Number.isFinite(saved.position.y) ? clamp(saved.position.y) : .65,
@@ -45,6 +47,7 @@ export function KnightControl({ preferences, onChange }: { preferences: Companio
     <Dialog open={open} title="Knight companion" onClose={() => setOpen(false)}>
       <div className="themis-knight-choices" aria-label="Knight variants">{(Object.keys(knights) as KnightVariant[]).map(variant => <button type="button" key={variant} aria-label={knights[variant].name} aria-pressed={preferences.variant === variant} onClick={() => onChange({ ...preferences, variant })}><KnightArtwork variant={variant} icon /><span>{knights[variant].name}</span></button>)}</div>
       <label className="themis-knight-toggle"><span>Companion</span><input type="checkbox" checked={preferences.enabled} onChange={event => onChange({ ...preferences, enabled: event.target.checked })} /></label>
+      <label className="themis-knight-size"><span>Size <output>{preferences.size}px</output></span><input type="range" min="56" max="192" step="4" aria-label="Size" value={preferences.size} onChange={event => onChange({ ...preferences, size: Number(event.target.value) })} /></label>
     </Dialog>
   </div>;
 }
@@ -71,13 +74,13 @@ export function KnightCompanion({ preferences, onChange, mood }: { preferences: 
     const active = drag.current;
     if (!active || active.pointer !== event.pointerId) return;
     if (active.moved) {
-      const next = { x: position.x < .5 ? 0 : 1, y: position.y };
+      const next = position;
       setPosition(next); onChange({ ...preferences, position: next });
     }
     drag.current = null;
   }
   return <div className="themis-companion-area" ref={area}>
-    <button type="button" className="themis-knight-companion" aria-label={`Move ${knights[preferences.variant].name} companion`} title="Drag to move · Arrow keys to reposition" style={{ left: `${position.x * 100}%`, top: `${position.y * 100}%`, transform: `translate(${-position.x * 100}%, ${-position.y * 100}%)`, "--knight-gaze": `${look}px` } as CSSProperties}
+    <button type="button" className="themis-knight-companion" aria-label={`Move ${knights[preferences.variant].name} companion`} title="Drag to move · Arrow keys to reposition" style={{ width: preferences.size, height: preferences.size + 22, left: `${position.x * 100}%`, top: `${position.y * 100}%`, transform: `translate(${-position.x * 100}%, ${-position.y * 100}%)`, "--knight-gaze": `${look}px` } as CSSProperties}
       onPointerDown={event => {
         if (event.button !== 0 || !area.current) return;
         const bounds = area.current.getBoundingClientRect(), pet = event.currentTarget.getBoundingClientRect();
@@ -108,7 +111,7 @@ export function KnightCompanion({ preferences, onChange, mood }: { preferences: 
         setPosition(next); onChange({ ...preferences, position: next });
       }}
       onClick={event => { if (event.detail === 0) { setPoked(true); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => setPoked(false), 1600); } }}>
-      <KnightArtwork variant={preferences.variant} mood={displayedMood} /><span className="themis-sr-only">{({ idle: "Idle", working: "Working", complete: "Complete", attention: "Needs attention" })[mood]}</span>
+      <KnightArtwork variant={preferences.variant} mood={displayedMood} /><span className="themis-knight-grip" aria-hidden="true">⠿</span><span className="themis-sr-only">{({ idle: "Idle", working: "Working", complete: "Complete", attention: "Needs attention" })[mood]}</span>
     </button>
   </div>;
 }

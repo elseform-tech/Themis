@@ -23,6 +23,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import "./screens/shell.css";
 import { applyAppearance } from "./theme/appearance";
 import { KnightCompanion, KnightControl, KnightLoading, readCompanionPreferences, type CompanionPreferences, type KnightMood } from "./components/KnightCompanion";
+import { useDesktopCompanion } from "./components/DesktopCompanion";
 
 function Shell() {
   const { state, startup, dispatch } = useApp();
@@ -72,7 +73,6 @@ function Shell() {
 
   }
 
-  if (startup !== null) return <KnightLoading variant={companion.variant} status={startup} />;
   const threadId = state.activeThreadId;
   const messages = threadId ? state.messages[threadId] ?? [] : [];
   const last = messages[messages.length - 1];
@@ -80,6 +80,8 @@ function Shell() {
   const working = threadId ? state.running[threadId] ?? selectedThread?.running : false;
   const mood: KnightMood = (threadId && (state.sendErrors[threadId] || state.approvals.some(approval => approval.thread_id === threadId))) || (last?.role === "system" && /^(Run failed:|Send failed:|Send rejected:)/.test(last.text)) ? "attention"
     : working ? "working" : last?.role === "assistant" && !last.incomplete ? "complete" : "idle";
+  const desktopCompanion = useDesktopCompanion(companion, mood, startup === null, error => toast(dispatch, `Companion unavailable: ${describeError(error)}`, "warning"));
+  if (startup !== null) return <KnightLoading variant={companion.variant} status={startup} />;
   return (
     <div className={`themis-shell ${isTauri() && /Mac/.test(navigator.platform) ? "themis-shell--mac" : ""}`}>
         <header className="themis-nav" data-tauri-drag-region>
@@ -98,7 +100,7 @@ function Shell() {
           {state.mainView === "settings" && <SettingsScreen />}
           {state.mainView === "queue" && <ReviewQueue />}
         </div>
-        {companion.enabled && <KnightCompanion preferences={companion} onChange={updateCompanion} mood={mood} />}
+        {companion.enabled && !desktopCompanion && <KnightCompanion preferences={companion} onChange={updateCompanion} mood={mood} />}
       </main>
       </div>
       {headApproval !== undefined && (

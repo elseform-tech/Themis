@@ -8,6 +8,10 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
-    "dialog:default"
+    "dialog:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position"
   ]
 }

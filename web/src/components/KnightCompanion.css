@@ -2,7 +2,7 @@
 .themis-knight-art svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .themis-knight-art .blob { transform-origin: 92px 150px; animation: themis-knight-breathe 5s ease-in-out infinite; }
 .themis-knight-art .eyes { transform-origin: 92px 94px; animation: themis-knight-blink 6.7s infinite; }
-.themis-knight-art .gaze { transform: translateX(var(--knight-gaze, 0px)); transition: transform 180ms ease-out; }
+.themis-knight-art .gaze { transform: translate(var(--knight-gaze, 0px), var(--knight-gaze-y, 0px)); transition: transform 180ms ease-out; }
 .themis-knight-art[data-mood="working"] .head { transform-origin: 92px 108px; animation: themis-knight-look 2.8s ease-in-out infinite; }
 .themis-knight-art[data-mood="complete"] .blob { animation: themis-knight-nod 1.6s ease-in-out 1; }
 .themis-knight-art[data-mood="attention"] .head { transform-origin: 92px 108px; transform: rotate(-8deg); }
@@ -29,3 +29,14 @@
 .themis-knight-loading p { color: var(--themis-text-2); font-size: .875rem; }
 .themis-knight-wake { width: 148px; height: 148px; padding: 0; background: transparent; border: 0; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .themis-knight-art *, .themis-knight-art .gaze { animation: none !important; transition: none !important; transform: none !important; } }
+.themis-knight-size { display: grid; gap: 8px; margin-top: 16px; }
+.themis-knight-size > span { display: flex; justify-content: space-between; }
+.themis-knight-size output { color: var(--themis-text-2); font-size: .75rem; }
+.themis-knight-size input { width: 100%; accent-color: var(--themis-accent); }
+.themis-knight-grip { display: block; text-align: center; height: 22px; font: 400 18px/22px system-ui; color: var(--themis-text-2); cursor: grab; }
+.themis-knight-companion > .themis-knight-art { height: calc(100% - 22px); }
+html.themis-desktop-companion, .themis-desktop-companion body, .themis-desktop-companion #root { background: transparent !important; overflow: hidden; margin: 0; width: 100%; height: 100%; }
+.themis-desktop-pet { height: 100%; padding: 10px; display: flex; flex-direction: column; }
+.themis-desktop-character { flex: 1; min-height: 0; width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.themis-desktop-pet .themis-knight-grip { border: 0; background: transparent; width: 100%; padding: 0; flex: 0 0 22px; touch-action: none; color: var(--themis-text); text-shadow: 0 1px 3px var(--themis-canvas); }
+.themis-desktop-pet .themis-knight-grip:active { cursor: grabbing; }
