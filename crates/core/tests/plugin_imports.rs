@@ -12,6 +12,32 @@ fn skill(directory: &Path, instructions: &str) {
 }
 
 #[test]
+fn plugin_mentions_resolve_current_bundle_without_eager_skill_bodies() {
+    let global = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    skill(source.path(), "Never eagerly inject this body.");
+    let store = PluginStore::new(global.path().into(), None);
+    store
+        .import_path("global", source.path(), Some("reviewer"))
+        .unwrap();
+    let (text, skills, plugins) = store
+        .resolve_prompt(
+            "Use [[plugin:g--reviewer]] and [[skill:manage-plugins]]",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(text, "Use @reviewer and Manage plugins");
+    assert_eq!(skills.len(), 1);
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].spec.name, "reviewer");
+    store.set_enabled("global", "reviewer", false).unwrap();
+    assert!(store.resolve_prompt("[[plugin:g--reviewer]]", &[]).is_err());
+    assert!(store.resolve_prompt("[[plugin:g--missing]]", &[]).is_err());
+    assert!(store.resolve_prompt("[[plugin:invalid]]", &[]).is_err());
+    assert!(store.resolve_prompt("[[plugin:g--reviewer", &[]).is_err());
+}
+
+#[test]
 fn local_skill_import_stable_reference_and_component_control() {
     let global = tempfile::tempdir().unwrap();
     let source = tempfile::tempdir().unwrap();

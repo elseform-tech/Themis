@@ -125,14 +125,16 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
     );
     let id = created["id"].as_str().unwrap().to_owned();
     let mut events = Client::new(data.path().into()).subscribe().await.unwrap();
-    for (description, pinned) in [
-        ("Initial description", false),
-        ("Updated description", false),
-        ("Initial description", true),
+    for (description, pinned, mentioned) in [
+        ("Initial description", false, false),
+        ("Updated description", false, false),
+        ("Initial description", true, false),
+        ("Updated description", false, true),
     ] {
-        if description.starts_with("Updated") {
+        if description.starts_with("Updated") && !mentioned {
             let mut spec = plugin(description);
             spec["skills"].as_array_mut().unwrap().push(json!({"id":"new-sibling","name":"New sibling","description":"Newly installed sibling","instructions":"New workflow","allowedTools":[],"scripts":[]}));
+            spec["manual_skills"] = json!(["new-sibling"]);
             state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":spec,"expectedRevision":first["revision"]})).await.unwrap();
         }
         let dir = data.path().to_path_buf();
@@ -142,6 +144,8 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
                 "[[skill:l--docs--{}--review]] Inspect documents",
                 first["revision"].as_str().unwrap()
             )
+        } else if mentioned {
+            "[[plugin:l--docs]] Inspect documents".into()
         } else {
             "Inspect documents".into()
         };
@@ -165,6 +169,18 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
         assert!(!system.contains("PRIVATE_SKILL_BODY"));
         assert!(system.contains("GLOBAL_LEGACY_DESCRIPTION"));
         assert!(!system.contains("LEGACY_BODY_STAYS_LAZY"));
+        assert_eq!(system.contains("Newly installed sibling"), mentioned);
+        if mentioned {
+            assert!(!system.contains("New workflow"));
+            assert!(request["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|message| message["role"] == "user"
+                    && message["content"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("@docs Inspect documents"))));
+        }
         assert!(request["tools"]
             .as_array()
             .unwrap()

@@ -208,6 +208,11 @@ impl AppState {
                     plugin.scope == available.scope
                         && plugin.spec.name == available.plugin
                         && plugin.spec.manual_skills.iter().any(|manual| manual == id)
+                        && !text.contains(&format!(
+                            "[[plugin:{}--{}]]",
+                            if plugin.scope == "local" { "l" } else { "g" },
+                            plugin.spec.name
+                        ))
                 })
             }) {
                 continue;

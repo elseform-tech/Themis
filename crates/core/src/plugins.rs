@@ -424,11 +424,52 @@ impl PluginStore {
         let mut skills = Vec::new();
         let mut plugins = Vec::new();
         let mut rest = prompt;
-        while let Some(start) = rest.find("[[skill:") {
+        while let Some((start, plugin_reference)) = [
+            rest.find("[[skill:").map(|start| (start, false)),
+            rest.find("[[plugin:").map(|start| (start, true)),
+        ]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(start, _)| *start)
+        {
             text.push_str(&rest[..start]);
-            let tail = &rest[start + 8..];
-            let end = tail.find("]]").context("Unfinished skill reference")?;
+            let tail = &rest[start + if plugin_reference { 9 } else { 8 }..];
+            let end = tail.find("]]").context("Unfinished capability reference")?;
             let id = &tail[..end];
+            if plugin_reference {
+                let (scope, name) = id.split_once("--").context("Invalid plugin reference")?;
+                let scope = match scope {
+                    "g" => "global",
+                    "l" => "local",
+                    _ => bail!("Invalid plugin scope"),
+                };
+                let plugin = self
+                    .list()?
+                    .into_iter()
+                    .find(|plugin| {
+                        plugin.scope == scope && plugin.spec.name == name && plugin.enabled
+                    })
+                    .context("Plugin is missing or disabled")?;
+                text.push('@');
+                text.push_str(if plugin.source.as_deref() == Some("discovered") {
+                    plugin
+                        .spec
+                        .skills
+                        .first()
+                        .map(|skill| skill.name.as_str())
+                        .unwrap_or(name)
+                } else {
+                    name
+                });
+                if !plugins
+                    .iter()
+                    .any(|known: &Plugin| known.scope == scope && known.spec.name == name)
+                {
+                    plugins.push(plugin);
+                }
+                rest = &tail[end + 2..];
+                continue;
+            }
             let (skill, plugin) =
                 if let Some(skill) = self.builtin_skills().into_iter().find(|s| s.id == id) {
                     (skill, None)
