@@ -294,7 +294,7 @@ export function Automations() {
                   </span>
                   {!automation.enabled && <span className="themis-automations-hint">Paused</span>}
                 </div>
-                <p className="themis-automations-instructions">{promptParts(automation.task).map((part, index) => "text" in part ? part.text : <span className="themis-automations-skill" key={index}>{promptSkills.find(skill => skill.id === part.skill)?.name ?? "Skill"}</span>)}</p>
+                <p className="themis-automations-instructions">{promptParts(automation.task).map((part, index) => "text" in part ? part.text : <span className="themis-automations-skill" key={index}>{"skill" in part ? promptSkills.find(skill => skill.id === part.skill)?.name ?? "Skill" : "Plugin"}</span>)}</p>
                 <p className="themis-automations-hint">{scheduleLabel(automation)}{automation.enabled ? ` · Next ${formatTime(automation.next_run_at)}` : ""}</p>
                 <div className="themis-automations-card-actions">
                   <label className="themis-automations-toggle">

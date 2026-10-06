@@ -29,7 +29,7 @@ export function ThreadView() {
     return () => window.removeEventListener("themis-drafts-changed", reload);
   }, []);
   const newThread = useNewThread();
-  const { skills: promptSkills, error: skillsError } = usePromptSkills(project?.root, state.running[thread?.id ?? ""]);
+  const { skills: promptSkills, plugins: promptPlugins, error: skillsError } = usePromptSkills(project?.root, state.running[thread?.id ?? ""]);
   const [models, setModels] = useState<GoModel[]>([]);
   const threadId = thread?.id;
   const [savedRunDurations, setSavedRunDurations] = useState<Record<string, number>>(() => readSession("runDurations", {}));
@@ -181,6 +181,7 @@ export function ThreadView() {
         key={thread.id}
         draft={draft}
         skills={promptSkills}
+        plugins={promptPlugins}
         history={messages.filter(m => m.role === "user" && !messages.some(error => m.runId !== undefined && error.runId === m.runId && error.text.startsWith("Send failed:"))).map(m => m.text)}
         models={models}
         effortLevels={effortLevels}

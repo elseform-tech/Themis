@@ -1,4 +1,4 @@
-import type { PromptSkill } from "../lib/prompt";
+import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { useActiveProject } from "../state/store";
@@ -36,7 +36,7 @@ export function ThreadConversation({
   traces,
 }: ThreadConversationProps) {
   const project = useActiveProject();
-  const { skills } = usePromptSkills(project?.root, running);
+  const { skills, plugins } = usePromptSkills(project?.root, running);
   const scrollRef = useRef<HTMLDivElement>(null);
   const followOutput = useRef(true);
   const endRef = useRef<HTMLDivElement>(null);
@@ -78,7 +78,7 @@ export function ThreadConversation({
           <ConversationRow
             key={row.kind === "message" ? row.message.id : row.id}
             row={row}
-            skills={skills}
+            skills={skills} plugins={plugins}
             activeRunId={activeRunId}
             elapsed={elapsed}
           />
@@ -115,14 +115,16 @@ function ConversationRow({
   activeRunId,
   elapsed,
   skills,
+  plugins,
 }: {
   row: ConversationRow;
   activeRunId: string | undefined;
   elapsed: number;
   skills: PromptSkill[];
+  plugins: PromptPlugin[];
 }) {
-  if (row.kind === "message") return <Message message={row.message} activeRunId={activeRunId} skills={skills} />;
-  if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} />;
+  if (row.kind === "message") return <Message message={row.message} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
+  if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
 
   const durationMs = row.active ? elapsed * 1000 : row.durationMs;
   const durationSeconds = durationMs === undefined ? undefined : Math.floor(durationMs / 1000);
@@ -141,7 +143,7 @@ function ConversationRow({
       </summary>
       <div className="themis-run-bucket-body">
         {row.items.flatMap(item => item.items.map(message => (
-          <Message key={message.id} message={message} activeRunId={item.active ? activeRunId : undefined} skills={skills} />
+          <Message key={message.id} message={message} activeRunId={item.active ? activeRunId : undefined} skills={skills} plugins={plugins} />
         )))}
       </div>
     </details>
@@ -152,9 +154,11 @@ function Milestone({
   row,
   activeRunId,
   skills,
+  plugins,
 }: {
   row: Extract<ConversationRow, { kind: "milestone" }>;
   skills: PromptSkill[];
+  plugins: PromptPlugin[];
   activeRunId: string | undefined;
 }) {
   return (
@@ -165,14 +169,14 @@ function Milestone({
       </summary>
       <div className="themis-milestone-body">
         {row.items.map(message => (
-          <Message key={message.id} message={message} activeRunId={row.active ? activeRunId : undefined} skills={skills} />
+          <Message key={message.id} message={message} activeRunId={row.active ? activeRunId : undefined} skills={skills} plugins={plugins} />
         ))}
       </div>
     </details>
   );
 }
 
-function Message({ message, activeRunId, skills }: { message: ChatMessage; activeRunId: string | undefined; skills: PromptSkill[] }) {
+function Message({ message, activeRunId, skills, plugins }: { message: ChatMessage; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
   const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;
   const completed = message.role === "assistant" && !isActiveRun;
@@ -199,7 +203,7 @@ function Message({ message, activeRunId, skills }: { message: ChatMessage; activ
       ) : message.text.startsWith("Run failed:") ? (
         <details className="themis-request-error">
           <summary>Request failed · Details</summary>
-          <p className="themis-thread-text"><PromptText value={message.text} skills={skills} /></p>
+          <p className="themis-thread-text"><PromptText value={message.text} skills={skills} plugins={plugins} /></p>
         </details>
       ) : message.role === "assistant" ? (
         <>
@@ -207,7 +211,7 @@ function Message({ message, activeRunId, skills }: { message: ChatMessage; activ
           {(message.final || !message.runId) && <small className="themis-response-model">{message.model ?? "Model not recorded"}</small>}
         </>
       ) : (
-        <p className="themis-thread-text"><PromptText value={message.text} skills={skills} /></p>
+        <p className="themis-thread-text"><PromptText value={message.text} skills={skills} plugins={plugins} /></p>
       )}
     </div>
   );

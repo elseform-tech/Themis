@@ -128,8 +128,9 @@ describe("Workspace journey", () => {
     expect(screen.getByText("another-model")).toBeInTheDocument();
   });
   it("clears a transient plugin load error after refreshing", async () => {
-    vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
     await mount();
+    // Fail the Integrations visit after the chat's metadata discovery has finished.
+    vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Integrations" })));
     expect(screen.getByRole("alert")).toHaveTextContent("Marketplace store is busy");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));

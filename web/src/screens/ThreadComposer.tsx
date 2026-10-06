@@ -1,5 +1,5 @@
 import { PromptInput } from "../components/PromptInput";
-import type { PromptSkill } from "../lib/prompt";
+import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
 import type { GoModel, ThreadInfo } from "../lib/types";
 // Official OpenCode theme assets: https://github.com/anomalyco/opencode/tree/dev/packages/console/app/src/asset
@@ -10,6 +10,7 @@ interface ThreadComposerProps {
   thread: ThreadInfo;
   draft: string;
   skills?: PromptSkill[];
+  plugins?: PromptPlugin[];
   history?: string[];
   models: GoModel[];
   effortLevels: string[];
@@ -35,6 +36,7 @@ export function ThreadComposer({
   thread,
   draft,
   skills = [],
+  plugins = [],
   history = [],
   models,
   effortLevels,
@@ -67,8 +69,8 @@ export function ThreadComposer({
             <Button variant="ghost" size="small" onClick={onOpenSettings}>Open settings</Button>
           </p>
         )}
-        <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} history={history} disabled={composerDisabled}
-          placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Message Themis… / for skills"}
+        <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} history={history} disabled={composerDisabled}
+          placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Message Themis… @ for plugins, / for skills"}
           onChange={onDraftChange} onSubmit={onSend} />
         <div className="themis-thread-composer-actions">
           <Button

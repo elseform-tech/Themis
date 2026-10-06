@@ -1,10 +1,38 @@
 import { useEffect, useState } from "react";
-import { listPromptSkills } from "./tauri";
-import type { PromptSkill } from "./prompt";
+import { listPromptSkills, pluginAction } from "./tauri";
+import type { PromptPlugin, PromptSkill } from "./prompt";
+import type { Plugin } from "./types";
+
+function promptPlugin(bundle:Plugin):PromptPlugin {
+  const spec=bundle.spec;
+  let icon:string|undefined;
+  if (spec.icon?.startsWith("https://")) icon=spec.icon;
+  else if (spec.icon && spec.files[spec.icon]?.trim().startsWith("<svg")) icon=`data:image/svg+xml,${encodeURIComponent(spec.files[spec.icon])}`;
+  let name=spec.name;
+  if (spec.origin?.kind==="discovered") name=spec.skills[0]?.name ?? spec.origin.location.replace(/[\\/]+$/,"").split(/[\\/]/).pop() ?? "Unavailable skill";
+  return {id:`${bundle.scope==="local"?"l":"g"}--${spec.name}`,name,description:spec.description,origin:`${bundle.scope==="local"?"Project":"Global"} · ${spec.origin?.kind ?? "personal"}`,icon,enabled:bundle.enabled};
+}
 
 export function usePromptSkills(projectRoot?:string|null, refresh?:unknown) {
   const [skills,setSkills]=useState<PromptSkill[]>([{id:"create-skill",name:"Create skill",description:"Ask the agent to create a local or global skill",plugin:"Themis"}]);
   const [error,setError]=useState("");
-  useEffect(()=>{let active=true;const load=()=>listPromptSkills(projectRoot).then(items=>{if(active){setSkills(items);setError("");}}).catch(error=>{if(active)setError(String(error));});void load();window.addEventListener("themis-plugins-changed",load);return()=>{active=false;window.removeEventListener("themis-plugins-changed",load);};},[projectRoot,refresh]);
-  return {skills,error};
+  const [plugins,setPlugins]=useState<PromptPlugin[]>([]);
+  useEffect(()=>{
+    let active=true, generation=0;
+    setPlugins([]);
+    setSkills([]);
+    const load=async()=>{
+      const request=++generation;
+      try {
+        const [items,bundles]=await Promise.all([listPromptSkills(projectRoot),pluginAction<Plugin[]>({action:"list",projectRoot:projectRoot ?? null})]);
+        if (!active || request!==generation) return;
+        setSkills(items);
+        setPlugins(bundles.map(promptPlugin));
+        setError("");
+      } catch(error) {if(active && request===generation)setError(String(error));}
+    };
+    void load();window.addEventListener("themis-plugins-changed",load);
+    return()=>{active=false;window.removeEventListener("themis-plugins-changed",load);};
+  },[projectRoot,refresh]);
+  return {skills,plugins,error};
 }
