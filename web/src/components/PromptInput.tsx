@@ -42,9 +42,14 @@ export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,
   const editor=useRef<HTMLDivElement>(null),pendingCaret=useRef<number|null>(null),recall=useRef({index:-1,draft:""}),undo=useRef<string[]>([]),redo=useRef<string[]>([]);
   const [slash,setSlash]=useState<{start:number;end:number;query:string;kind:"skill"|"plugin"}|null>(null);
   const [active,setActive]=useState(0);
+  const activeOption=useRef<HTMLButtonElement>(null);
   const labels = skills.map(s=>`${s.id}:${s.name}`).join("|")+plugins.map(p=>`${p.id}:${p.name}:${p.icon ?? ""}:${p.enabled}`).join("|");
   const previousLabels = useRef(labels);
   const choices:Array<PromptSkill|PromptPlugin>=slash?.kind==="plugin" ? plugins.filter(p=>p.enabled && `${p.name} ${p.origin}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12) : skills.filter(s=>!s.retired).filter(s=>!slash?.query || slash.query==="skill" || `${s.name} ${s.plugin} ${s.id}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12);
+  const activeChoiceId=choices[active]?.id;
+  useLayoutEffect(()=>{
+    activeOption.current?.scrollIntoView?.({block:"nearest",inline:"nearest"});
+  },[active,slash,activeChoiceId]);
   const listId=(id ?? "prompt")+"-skills";
   function update(next:string) {undo.current.push(value);redo.current=[];onChange(next);}
   function detectSlash() {
@@ -113,7 +118,7 @@ export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,
   return <div className="themis-prompt-input">
     <div ref={editor} id={id} role="textbox" aria-label={label} aria-multiline="true" aria-disabled={disabled} aria-autocomplete="list" aria-controls={slash?listId:undefined} aria-activedescendant={slash&&choices[active]?`${listId}-${active}`:undefined} contentEditable={!disabled} suppressContentEditableWarning className="themis-prompt-editor" data-placeholder={placeholder} onFocus={detectSlash} onKeyUp={event=>{if(!["ArrowUp","ArrowDown","Enter","Tab","Escape"].includes(event.key))detectSlash();}} onKeyDown={keyDown} onInput={()=>{if(editor.current){update(serialize(editor.current));recall.current.index=-1;detectSlash();}}} onPaste={event=>{event.preventDefault();const text=event.clipboardData.getData("text/plain");document.execCommand("insertText",false,text);if(editor.current){update(serialize(editor.current));detectSlash();}}} onCopy={event=>{const selection=window.getSelection();if(selection?.rangeCount){event.clipboardData.setData("text/plain",serialize(selection.getRangeAt(0).cloneContents()));event.preventDefault();}}} />
     {slash&&<div className="themis-prompt-menu" id={listId} role="listbox" aria-label={slash.kind==="plugin"?"Plugins":"Skills"}>
-      {choices.length===0?<p>No matching {slash.kind==="plugin"?"plugins":"skills"}</p>:choices.map((choice,index)=><button key={choice.id} type="button" id={`${listId}-${index}`} role="option" aria-selected={index===active} onMouseDown={event=>event.preventDefault()} onClick={()=>select(choice)}>{"origin" in choice?<PluginIcon plugin={choice} />:<SkillIcon />}<span>{choice.name}<small>{"origin" in choice?choice.origin:choice.plugin} · {choice.description}</small></span></button>)}
+      {choices.length===0?<p>No matching {slash.kind==="plugin"?"plugins":"skills"}</p>:choices.map((choice,index)=><button key={choice.id} ref={index===active?activeOption:undefined} type="button" id={`${listId}-${index}`} role="option" aria-selected={index===active} onMouseDown={event=>event.preventDefault()} onClick={()=>select(choice)}>{"origin" in choice?<PluginIcon plugin={choice} />:<SkillIcon />}<span>{choice.name}<small>{"origin" in choice?choice.origin:choice.plugin} · {choice.description}</small></span></button>)}
     </div>}
   </div>;
 }

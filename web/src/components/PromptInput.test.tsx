@@ -11,6 +11,37 @@ const plugins = [
   { id: "l--disabled", name: "Disabled", description: "Hidden", origin: "Project", enabled: false },
 ];
 
+it.each(["/","@"])("scrolls the selected %s option into view for ArrowDown, ArrowUp and wraparound",trigger=>{
+  const previous=HTMLElement.prototype.scrollIntoView;
+  const targets:HTMLElement[]=[];
+  const scroll=vi.fn(function(this:HTMLElement){targets.push(this);});
+  HTMLElement.prototype.scrollIntoView=scroll;
+  try {
+    const skills=Array.from({length:14},(_,index)=>({id:`skill-${index}`,name:`Skill ${index}`,description:"A longer description",plugin:"Tools"}));
+    const choices=Array.from({length:14},(_,index)=>({id:`g--plugin-${index}`,name:`Plugin ${index}`,description:"A longer description",origin:"Global",enabled:true}));
+    render(<PromptInput label="Long suggestions" value={trigger} onChange={vi.fn()} skills={skills} plugins={choices} />);
+    const input=screen.getByRole("textbox",{name:"Long suggestions"});
+    const range=document.createRange();range.selectNodeContents(input);range.collapse(false);
+    window.getSelection()!.removeAllRanges();window.getSelection()!.addRange(range);
+    fireEvent.focus(input);
+    const options=screen.getAllByRole("option");
+    expect(options).toHaveLength(12);
+    for(let index=1;index<options.length;index++) {
+      fireEvent.keyDown(input,{key:"ArrowDown"});
+      expect(options[index]).toHaveAttribute("aria-selected","true");
+      expect(targets[targets.length-1]).toBe(options[index]);
+    }
+    fireEvent.keyDown(input,{key:"ArrowUp"});
+    expect(targets[targets.length-1]).toBe(options[10]);
+    fireEvent.keyDown(input,{key:"ArrowDown"});
+    fireEvent.keyDown(input,{key:"ArrowDown"});
+    expect(targets[targets.length-1]).toBe(options[0]);
+    fireEvent.keyDown(input,{key:"ArrowUp"});
+    expect(targets[targets.length-1]).toBe(options[11]);
+    expect(scroll).toHaveBeenLastCalledWith({block:"nearest",inline:"nearest"});
+  } finally {HTMLElement.prototype.scrollIntoView=previous;}
+});
+
 const builtinSkills=[
   ["create-skill","Create skill"],
   ["manage-plugins","Manage plugins"],
