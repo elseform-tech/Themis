@@ -691,3 +691,79 @@ fn agent_created_personal_skills_do_not_become_plugin_packages() {
         Some("plugin")
     );
 }
+
+#[test]
+fn skill_edits_refresh_captured_markdown_and_preserve_explicit_file_edits() {
+    let global = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let original = "---\nname: review\ndescription: Original description\nlicense: Apache-2.0\ndisable-model-invocation: true\nmetadata:\n  owner: personal\n---\n\nOriginal instructions.\n";
+    fs::write(source.path().join("SKILL.md"), original).unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    let imported = store
+        .import_path("global", source.path(), Some("personal-review"))
+        .unwrap();
+    // Older imports captured the root file before skill_paths metadata existed.
+    let mut legacy = imported.spec.clone();
+    legacy.name = "legacy-review".into();
+    legacy.skill_paths.clear();
+    let legacy = store.save("global", legacy, None).unwrap();
+    let mut legacy_skill = legacy.spec.skills[0].clone();
+    legacy_skill.instructions = "Legacy updated instructions.".into();
+    let legacy = store
+        .save_skill(
+            "global",
+            "legacy-review",
+            legacy_skill,
+            Some(&legacy.revision),
+        )
+        .unwrap();
+    assert!(legacy.spec.files["SKILL.md"].contains("Legacy updated instructions."));
+    let unchanged = store
+        .save_skill(
+            "global",
+            "personal-review",
+            imported.spec.skills[0].clone(),
+            Some(&imported.revision),
+        )
+        .unwrap();
+    assert_eq!(unchanged.spec.files["SKILL.md"], original);
+    let mut skill = unchanged.spec.skills[0].clone();
+    skill.instructions = "Updated instructions.".into();
+    skill.name = "Review: # safely".into();
+    skill.description = "Updated: # description".into();
+    let updated = store
+        .save_skill(
+            "global",
+            "personal-review",
+            skill,
+            Some(&unchanged.revision),
+        )
+        .unwrap();
+    let markdown = &updated.spec.files["SKILL.md"];
+    assert!(markdown.contains("Updated instructions."), "{markdown}");
+    assert!(!markdown.contains("Original instructions."));
+    assert!(markdown.contains("Review: # safely"));
+    assert!(markdown.contains("Updated: # description"));
+    assert!(markdown.contains(
+        "license: Apache-2.0\ndisable-model-invocation: true\nmetadata:\n  owner: personal\n"
+    ));
+    let exported = source.path().join("review-export");
+    fs::create_dir(&exported).unwrap();
+    fs::write(exported.join("SKILL.md"), markdown).unwrap();
+    let parsed = store
+        .import_path("global", &exported, Some("reimported-review"))
+        .unwrap();
+    assert_eq!(parsed.spec.skills[0].name, "Review: # safely");
+    assert_eq!(parsed.spec.skills[0].description, "Updated: # description");
+    assert_eq!(parsed.spec.manual_skills, vec!["review-export"]);
+    let mut spec = updated.spec.clone();
+    spec.skills[0].instructions = "Updated from whole-spec editor.".into();
+    let edited = store.save("global", spec, Some(&updated.revision)).unwrap();
+    assert!(edited.spec.files["SKILL.md"].contains("Updated from whole-spec editor."));
+    let mut spec = edited.spec.clone();
+    let explicit_file = "---\nname: review\n---\nUser-edited raw Markdown wins.\n";
+    spec.files.insert("SKILL.md".into(), explicit_file.into());
+    spec.skills[0].instructions = "Do not overwrite the explicit source edit.".into();
+    let explicit = store.save("global", spec, Some(&edited.revision)).unwrap();
+    assert_eq!(explicit.spec.files["SKILL.md"], explicit_file);
+}

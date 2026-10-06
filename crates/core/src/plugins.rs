@@ -216,7 +216,7 @@ impl PluginStore {
     pub fn save(
         &self,
         scope: &str,
-        spec: PluginSpec,
+        mut spec: PluginSpec,
         expected: Option<&str>,
     ) -> anyhow::Result<Plugin> {
         validate(&spec)?;
@@ -229,6 +229,42 @@ impl PluginStore {
             }
             if previous.map(|p| p.revision.as_str()) != expected {
                 bail!("Plugin changed since it was opened; reload before saving");
+            }
+            if let Some(previous) = previous {
+                for skill in &spec.skills {
+                    let Some(old) = previous.spec.skills.iter().find(|old| old.id == skill.id)
+                    else {
+                        continue;
+                    };
+                    if old.name == skill.name
+                        && old.description == skill.description
+                        && old.instructions == skill.instructions
+                    {
+                        continue;
+                    }
+                    let Some(path) = spec
+                        .skill_paths
+                        .get(&skill.id)
+                        .or_else(|| previous.spec.skill_paths.get(&skill.id))
+                        .cloned()
+                        .or_else(|| {
+                            (previous.spec.skills.len() == 1
+                                && previous.spec.files.contains_key("SKILL.md"))
+                            .then(|| "SKILL.md".to_owned())
+                        })
+                    else {
+                        continue;
+                    };
+                    let Some(original) = previous.spec.files.get(&path) else {
+                        continue;
+                    };
+                    // Explicit source edits take precedence over editing parsed fields.
+                    if spec.files.get(&path) == Some(original) {
+                        spec.files
+                            .insert(path.clone(), edited_skill_source(original, old, skill));
+                    }
+                }
+                validate(&spec)?;
             }
             let plugin = Plugin {
                 scope: scope.into(),
@@ -712,6 +748,75 @@ pub fn safe_relative(path: &str) -> bool {
             .all(|c| matches!(c, std::path::Component::Normal(_)))
         && !path.contains('\\')
 }
+// Retain unrelated frontmatter verbatim; literal blocks safely quote edited metadata.
+fn edited_skill_source(original: &str, old: &Skill, skill: &Skill) -> String {
+    let lines: Vec<_> = original.split_inclusive('\n').collect();
+    let has_header = lines
+        .first()
+        .is_some_and(|line| line.trim_end_matches(['\r', '\n']) == "---");
+    let closing = has_header
+        .then(|| {
+            lines
+                .iter()
+                .skip(1)
+                .position(|line| line.trim_end_matches(['\r', '\n']) == "---")
+        })
+        .flatten()
+        .map(|index| index + 1);
+    let body = closing
+        .map(|end| lines[end + 1..].concat())
+        .unwrap_or_else(|| original.into());
+    let metadata_changed = old.name != skill.name || old.description != skill.description;
+    let header = if !metadata_changed {
+        closing
+            .map(|end| lines[..=end].concat())
+            .unwrap_or_default()
+    } else {
+        let newline = if original.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        let mut header = format!("---{newline}");
+        let mut skip = false;
+        if let Some(end) = closing {
+            for line in &lines[1..end] {
+                if !line.starts_with([' ', '\t']) && !line.trim().is_empty() {
+                    skip = line.split_once(':').is_some_and(|(key, _)| {
+                        (key == "name" && old.name != skill.name)
+                            || (key == "description" && old.description != skill.description)
+                    });
+                }
+                if !skip {
+                    header.push_str(line);
+                }
+            }
+        }
+        for (key, value, changed) in [
+            ("name", &skill.name, old.name != skill.name),
+            (
+                "description",
+                &skill.description,
+                old.description != skill.description,
+            ),
+        ] {
+            if changed || closing.is_none() {
+                header.push_str(&format!("{key}: |-{newline}"));
+                for line in value.lines() {
+                    header.push_str(&format!("  {line}{newline}"));
+                }
+            }
+        }
+        header.push_str(&format!("---{newline}"));
+        header
+    };
+    if old.instructions == skill.instructions {
+        format!("{header}{body}")
+    } else {
+        format!("{header}{}\n", skill.instructions)
+    }
+}
+
 fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
     if spec
         .package_kind

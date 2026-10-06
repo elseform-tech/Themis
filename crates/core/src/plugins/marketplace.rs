@@ -742,7 +742,9 @@ pub(super) fn parse_skill(content: &str) -> anyhow::Result<(BTreeMap<String, Str
         if line.starts_with(' ') {
             if let Some(key) = &multiline {
                 metadata.entry(key.clone()).and_modify(|v: &mut String| {
-                    v.push(' ');
+                    if !v.is_empty() {
+                        v.push(' ');
+                    }
                     v.push_str(line.trim());
                 });
             }
