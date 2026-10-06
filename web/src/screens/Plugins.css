@@ -13,22 +13,10 @@
 .themis-integrations-list > li { display: flex; align-items: center; gap: .5rem; min-height: 3.5rem; border-bottom: 1px solid var(--themis-border-subtle); }
 .themis-integration-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .themis-integrations button.themis-integration-open { text-align: left; padding: .5rem 0; }
-.themis-integration-source, .themis-integration-status, .themis-integration-footnote { font-size: .75rem; color: var(--themis-text-2); }
-.themis-integration-more { position: relative; }
-.themis-integration-more summary { list-style: none; display: flex; align-items: center; }
-.themis-integration-more summary::-webkit-details-marker { display: none; }
-.themis-integration-menu { position: absolute; right: 0; top: 100%; z-index: 10; min-width: 10rem; background: var(--themis-surface); border: 1px solid var(--themis-border); border-radius: .5rem; padding: .25rem; }
-.themis-integration-menu button { display: block; width: 100%; text-align: left; }
-.themis-integrations-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.themis-integration-source, .themis-integration-status { font-size: .75rem; color: var(--themis-text-2); }
 .themis-integrations .themis-dialog-panel:has(.themis-skill-viewer) { display: flex; flex-direction: column; width: min(90vw, 58rem); max-width: none; max-height: min(85vh, 48rem); overflow: hidden; }
 .themis-skill-viewer { flex: 1; min-height: 0; overflow: auto; }
 .themis-integration-skill-count { color: var(--themis-text-2); margin: 0 0 .25rem; }
-.themis-integration-markdown { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8125rem; line-height: 1.7; }
-.themis-integrations-form, .themis-integrations label { display: flex; flex-direction: column; gap: .5rem; }
-.themis-integrations-form { gap: .875rem; }
-.themis-integrations textarea, .themis-integrations input, .themis-integrations select { font: inherit; color: var(--themis-text); background: var(--themis-surface); border: 1px solid var(--themis-border); border-radius: .375rem; padding: .5rem; width: 100%; }
-.themis-integrations textarea { min-height: 12rem; resize: vertical; }
-.themis-integrations-actions { justify-content: flex-end; margin-top: 1rem; }
 @media (max-width: 650px) { .themis-integrations { padding: .75rem; } .themis-integration-source { display: none; } .themis-integrations-tabs { gap: .5rem; flex-wrap: wrap; } }
 
 .themis-origin-icon { width: 1.25rem; height: 1.25rem; object-fit: contain; }
@@ -36,3 +24,8 @@
 .themis-bundled-skills { list-style: none; padding: 0; margin: 0 0 .5rem; }
 .themis-bundled-skills button { display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: 100%; text-align: left; }
 .themis-bundled-skills button[aria-pressed="true"] { background: var(--themis-surface); }
+
+.themis-integrations input, .themis-integrations select { font: inherit; color: var(--themis-text); background: var(--themis-surface); border: 1px solid var(--themis-border); border-radius: .375rem; padding: .5rem; width: 100%; }
+.themis-integration-summary { display: grid; grid-template-columns: auto 1fr; gap: .5rem 1rem; }
+.themis-integration-summary dt { color: var(--themis-text-2); }
+.themis-integration-summary dd { margin: 0; overflow-wrap: anywhere; }
