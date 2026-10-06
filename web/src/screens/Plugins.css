@@ -1,4 +1,5 @@
-.themis-integrations { padding: 1.5rem; }
+.themis-integrations { padding: 1.5rem; display: flex; flex-direction: column; overflow: hidden; }
+.themis-integrations > :not(.themis-integrations-list) { flex-shrink: 0; }
 .themis-integrations h2 { font-size: 1.25rem; font-weight: 500; margin: 0 0 1rem; }
 .themis-integrations button, .themis-integrations summary { color: var(--themis-text); background: transparent; border: 0; padding: .5rem; min-height: 2.5rem; font: inherit; cursor: pointer; }
 .themis-integrations button:hover, .themis-integrations summary:hover { background: var(--themis-surface); }
@@ -13,9 +14,10 @@
 .themis-integrations-agent { display: flex; align-items: end; gap: .75rem; margin-bottom: 1rem; }
 .themis-integrations-agent label { flex: 1; }
 .themis-integrations-agent button { flex-shrink: 0; }
-.themis-integrations-list { padding: 0; margin: 0; list-style: none; }
+.themis-integrations-list { padding: 0; margin: 0; list-style: none; flex: 1; min-height: 0; overflow-y: auto; }
 .themis-integrations-list > li { display: flex; align-items: center; gap: .5rem; min-height: 3.5rem; border-bottom: 1px solid var(--themis-border-subtle); }
 .themis-integration-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.themis-integrations button.themis-integration-open { text-align: left; padding: .5rem 0; }
 .themis-integration-source, .themis-integration-status, .themis-integration-footnote { font-size: .75rem; color: var(--themis-text-2); }
 .themis-integration-more { position: relative; }
 .themis-integration-more summary { list-style: none; display: flex; align-items: center; }

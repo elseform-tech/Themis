@@ -111,6 +111,33 @@ describe("Integrations management", () => {
     expect(screen.queryByText("discovered-1234")).toBeNull();
   });
 
+  it("uses a source folder name for an unavailable discovered package", async () => {
+    installed[0] = { ...installed[0], source: "discovered", spec: { ...installed[0].spec, name: "discovered-1234", skills: [], origin: { kind: "discovered", location: "/project/.agents/skills/broken-skill/" } } };
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View broken-skill" });
+    expect(screen.queryByText("discovered-1234")).toBeNull();
+  });
+
+  it("previews public bundled skills without installing and retains the associated icon", async () => {
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "list") return installed as never;
+      if (args.action === "marketplaces") return [{ name: "official", source: "official-source" }] as never;
+      if (args.action === "catalog") return { plugins: [{ name: "public-docs", icon: "https://example.com/icon.svg" }] } as never;
+      if (args.action === "preview") return { ...installed[0].spec, name: "public-docs" } as never;
+      return null as never;
+    });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Public" })));
+    expect(screen.getByAltText("")).toHaveAttribute("src", "https://example.com/icon.svg");
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "View public-docs" })));
+    const dialog = screen.getByRole("dialog", { name: "public-docs" });
+    expect(within(dialog).getByText("Read the sources before drafting.", { exact: false })).toBeVisible();
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "preview", marketplace: "official", name: "public-docs" }));
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "save" }));
+  });
+
   it("passes the selected import source into an editable agent draft", async () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
