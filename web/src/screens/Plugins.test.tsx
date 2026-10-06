@@ -2,16 +2,19 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Plugins } from "./Plugins";
+import { readSession } from "../state/session";
 import { initialState } from "../state/reducer";
 import type { Plugin } from "../lib/types";
 import { pluginAction } from "../lib/tauri";
 
-vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), useApp: () => ({ state: { ...initialState, activeProjectRoot: "/project" }, dispatch: vi.fn() }) }));
+vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), useApp: () => ({ state: { ...initialState, activeProjectRoot: "/project", activeThreadId: "test-chat" }, dispatch: vi.fn() }) }));
 vi.mock("../lib/tauri", () => ({ pluginAction: vi.fn() }));
 let installed: Plugin[];
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => {
   vi.clearAllMocks();
+  const storage = new Map<string, string>();
+  vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) });
   installed = [{ scope: "global", revision: "v1", enabled: true, source: null, spec: { name: "docs", description: "Documents", version: "1", skills: [{ id: "draft", name: "Draft", description: "Draft a document", instructions: "Read the sources before drafting.", allowedTools: [], scripts: [] }], mcp: {}, hooks: [], files: {}, unsupported: [] } }];
   vi.mocked(pluginAction).mockImplementation(async args => {
     if (args.action === "list") return structuredClone(installed) as never;
@@ -22,6 +25,17 @@ beforeEach(() => {
   });
 });
 describe("Integrations management", () => {
+  it("passes the selected import source into an editable agent draft", async () => {
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Add plugins" }));
+    fireEvent.change(screen.getByLabelText("Import from"), { target: { value: "repository" } });
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "https://github.com/example/skills.git" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
+    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("https://github.com/example/skills.git");
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "import_repository" }));
+  });
+
   it("keeps marketplace entries associated with the source used to install them", async () => {
     let finish: (value: unknown) => void = () => {};
     vi.mocked(pluginAction).mockImplementation(async args => {

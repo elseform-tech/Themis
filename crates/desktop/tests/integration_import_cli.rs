@@ -94,6 +94,35 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
         .unwrap()
         .iter()
         .any(|s| s.name == "review"));
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "SKILL.md"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@local",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    ] {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&folder)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let repository = cli(
+        data.path(),
+        &["skill", "import", folder.to_str().unwrap(), "--ref", "HEAD"],
+    );
+    assert_eq!(repository["spec"]["name"], "review");
     Client::new(data.path().into())
         .call("shutdown", json!({}))
         .await

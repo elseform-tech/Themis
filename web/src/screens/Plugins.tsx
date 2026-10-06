@@ -106,7 +106,9 @@ export function Plugins() {
     if (!state.activeThreadId) { setError("Open a chat to ask Themis."); return; }
     const drafts = readSession<Record<string, string>>("drafts", {});
     const skill = { Plugins: "manage-plugins", Skills: "manage-skills", MCP: "manage-mcp", Hooks: "manage-hooks" }[category];
-    drafts[state.activeThreadId] = `[[skill:${skill}]] Help me create or install ${category.toLowerCase()} in ${scope} scope. `;
+    const request = panel?.item ? `Help me configure ${panel.item.name} in plugin ${panel.item.plugin.spec.name}.` : `Help me ${source.trim() ? "install" : "create or install"} ${category.toLowerCase()} in ${scope} scope.`;
+    const details = source.trim() ? `\nSource (${sourceType}):\n${source}\n${name ? `Name: ${name}\n` : ""}${reference ? `Git reference: ${reference}\n` : ""}${subdirectory ? `Subdirectory: ${subdirectory}\n` : ""}` : "";
+    drafts[state.activeThreadId] = `[[skill:${skill}]] ${request}${details} `;
     writeSession("drafts", drafts); window.dispatchEvent(new Event("themis-drafts-changed")); setPanel(null); dispatch({ type: "ui/view", view: "thread" });
   }
   function exportPlugin(plugin: Plugin) {
@@ -124,7 +126,7 @@ export function Plugins() {
     catch (error) { setError(describeError(error)); }
   }
   async function importSource() {
-    const args = sourceType === "paste" ? { action: "import_json", content: source, name: name || null } : sourceType === "repository" ? { action: "import_repository", url: source, name: name || "imported", reference: reference || null, subdirectory: subdirectory || null } : { action: "import_path", path: source, name: name || null };
+    const args = sourceType === "paste" ? { action: "import_json", content: source, name: name || null } : sourceType === "repository" ? { action: "import_repository", url: source, name: name || "", reference: reference || null, subdirectory: subdirectory || null } : { action: "import_path", path: source, name: name || null };
     await action({ ...args, scope }); setPanel(null);
   }
   async function browse(selected: string) {

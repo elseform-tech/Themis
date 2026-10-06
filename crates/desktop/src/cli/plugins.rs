@@ -45,7 +45,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         [component,"import",source] | [component,"import",source,_] if matches!(*component,"plugin"|"skill"|"mcp"|"hook")=>{
             if source.starts_with("https://") || source.starts_with("http://") || reference.is_some() || subdirectory.is_some() {
                 request["action"]=json!("import_repository"); request["url"]=json!(source);
-                request["name"]=json!(positional.get(3).copied().unwrap_or("imported"));
+                request["name"]=json!(positional.get(3).copied().unwrap_or(""));
                 request["reference"]=json!(reference);request["subdirectory"]=json!(subdirectory);
             } else { request["action"]=json!("import_path");request["path"]=json!(source);request["name"]=json!(positional.get(3)); }
         },
