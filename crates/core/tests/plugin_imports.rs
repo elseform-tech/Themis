@@ -251,6 +251,71 @@ fn legacy_registry_without_new_metadata_still_loads() {
 }
 
 #[tokio::test]
+async fn repository_import_infers_name_without_override() {
+    let global = tempfile::tempdir().unwrap();
+    let sources = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    for (folder, expected) in [
+        ("manifest-repo", "named-bundle"),
+        ("standalone-repo", "review"),
+        ("skill-bundle", "skill-bundle"),
+    ] {
+        let source = sources.path().join(folder);
+        let skill_path = if folder == "skill-bundle" {
+            source.join("skills/review")
+        } else {
+            source.clone()
+        };
+        skill(&skill_path, "Review imported Git source.");
+        if folder == "manifest-repo" {
+            fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+            fs::write(
+                source.join(".claude-plugin/plugin.json"),
+                r#"{"name":"named-bundle"}"#,
+            )
+            .unwrap();
+        }
+        for args in [
+            vec!["init", "-q"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(["-c", "core.hooksPath=/dev/null"])
+                .args(args)
+                .current_dir(&source)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let imported = store
+            .import_repository("global", "", source.to_str().unwrap(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(imported.spec.name, expected);
+        let overridden = store
+            .import_repository(
+                "global",
+                &format!("override-{folder}"),
+                source.to_str().unwrap(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(overridden.spec.name, format!("override-{folder}"));
+    }
+}
+
+#[tokio::test]
 #[ignore = "Downloads real pinned public repositories; run explicitly for release acceptance"]
 async fn real_public_plugin_and_skill_import_acceptance() {
     let global = tempfile::tempdir().unwrap();

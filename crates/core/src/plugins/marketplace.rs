@@ -76,7 +76,7 @@ impl PluginStore {
         reference: Option<&str>,
         subdirectory: Option<&str>,
     ) -> anyhow::Result<Plugin> {
-        if !safe_name(name) {
+        if !name.is_empty() && !safe_name(name) {
             bail!("Invalid plugin name");
         }
         validate_source(source)?;
@@ -97,7 +97,24 @@ impl PluginStore {
                 bail!("Plugin directory escapes repository");
             }
             let mut spec = import_directory(&directory)?;
-            spec.name = name.into();
+            if !name.is_empty() {
+                spec.name = name.into();
+            } else if directory == staging.canonicalize()?
+                && spec.name == staging.file_name().unwrap_or_default().to_string_lossy()
+            {
+                // A manifest or nested skill folder supplies its own name; never expose staging IDs.
+                spec.name = if spec.files.contains_key("SKILL.md") && spec.skills.len() == 1 {
+                    spec.skills[0].id.clone()
+                } else {
+                    source
+                        .trim_end_matches('/')
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or_default()
+                        .trim_end_matches(".git")
+                        .into()
+                };
+            }
             spec.origin = Some(PluginOrigin {
                 kind: "repository".into(),
                 location: source.into(),
