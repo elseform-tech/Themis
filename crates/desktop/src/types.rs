@@ -545,7 +545,7 @@ pub const fn default_max_total_turns() -> u32 {
     200
 }
 pub const fn default_context_token_budget() -> u32 {
-    16_000
+    200_000
 }
 
 pub const fn default_approval_timeout_seconds() -> u32 {
@@ -1065,7 +1065,7 @@ mod tests {
                 "default_model": "muse-spark-1.3-contributor",
                 "max_turns": 20,
                 "max_total_turns": 200,
-                "context_token_budget": 16000,
+                "context_token_budget": 200000,
                 "context_messages": 20,
                 "approval_timeout_seconds": 300,
                 "confirm_reads": false,

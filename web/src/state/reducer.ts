@@ -165,7 +165,7 @@ export const DEFAULT_SETTINGS: Settings = {
   default_model: "muse-spark-1.3-contributor",
   max_turns: 20,
   max_total_turns: 200,
-  context_token_budget: 16000,
+  context_token_budget: 200000,
   context_messages: 20,
   approval_timeout_seconds: 300,
   confirm_reads: false,
