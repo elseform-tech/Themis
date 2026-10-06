@@ -36,7 +36,7 @@ ruff check quality_dashboard
 python3 -m unittest quality_dashboard.test_dashboard
 ```
 
-Workspace Rust: 266 passed, 0 failed. Two filtered tests are the known host-specific synthetic Keychain write test and the live Go-provider test. The default suite ignores the separately executed public-source acceptance test and one existing documentation example. Web: 275 passed across 26 files (20 integration-browser cases). Dashboard self-tests: 13 passed. Format, Clippy, ESLint, Ruff and builds pass; Vite retains its existing warning about chunks exceeding 500 kB.
+Workspace Rust: 271 passed, 0 failed. Two filtered tests are the known host-specific synthetic Keychain write test and the live Go-provider test. The default suite ignores the separately executed public-source acceptance test and one existing documentation example. Web: 279 passed across 26 files (24 integration-browser cases). Dashboard self-tests: 13 passed. Format, Clippy, ESLint, Ruff and builds pass; Vite retains its existing warning about chunks exceeding 500 kB.
 
 Actual shared-server/CLI checks cover local skill/MCP imports, pasted bundle wrappers, rejected malformed imports preserving state, enable/disable, component removal preserving siblings, nested-hook CLI rejection, next-turn catalog refresh, old pinned references after added siblings, and calendar persistence across restart. Provider-request tests inspect the constructed system message: metadata and readable Markdown paths are present, full bodies are loaded lazily. Agent tools exercise denied mutations, successful persisted changes, current-chat automation creation, and partial updates preserving fields.
 
@@ -44,7 +44,7 @@ UI component tests exercise accessible enable/disable switches, full pretty Mark
 
 ## Code health and native verification
 
-The dashboard was refreshed through `/api/metrics` using rust-code-analysis 0.0.25. Mean callable metrics across 101 product files: cyclomatic 2.50, cognitive 2.23, maintainability 73.5. Inline Rust tests are included. Compared with `3c2b58a`, core plugin/import/hook maintainability improved; integrations UI maintainability fell from 85.6 to 81.2; the current 202-line module has mean cyclomatic 2.58 and cognitive 2.82. Lifecycle and preview branches remain covered by focused tests. These averages do not establish correctness or a fixed maintainability threshold. Fresh Rust line coverage is 85.5% (13,307/15,568 lines); it does not measure browser/native interaction or live-model selection.
+The dashboard was refreshed through `/api/metrics` using rust-code-analysis 0.0.25. Mean callable metrics across 101 product files: cyclomatic 2.50, cognitive 2.24, maintainability 73.6. Inline Rust tests are included. Compared with `3c2b58a`, core plugin/import/hook maintainability improved; integrations UI maintainability fell from 85.6 to 81.9; the current 218-line module has mean cyclomatic 2.57 and cognitive 2.63. Lifecycle and preview branches remain covered by focused tests. These averages do not establish correctness or a fixed maintainability threshold. Fresh Rust line coverage is 86.0% (13,428/15,622 lines); it does not measure browser/native interaction or live-model selection.
 
 The macOS app bundle is rebuilt with:
 
@@ -53,7 +53,7 @@ cd crates/desktop
 npx --yes @tauri-apps/cli build --bundles app --config '{"build":{"beforeBuildCommand":"","frontendDist":"../../web/dist"}}'
 ```
 
-The rebuilt `target/release/bundle/macos/ThemisCode.app` embeds the current frontend asset (`index-CSLvuBGd.js`). Its packaged CLI passed skill import, disable, and package uninstall against a disposable shared-server store.
+The rebuilt `target/release/bundle/macos/ThemisCode.app` embeds the current frontend asset (`index-CLNNu6Gs.js`). Its packaged CLI passed skill import, disable, and package uninstall against a disposable shared-server store.
 
 Initial native verification was blocked: computer-use controls reported that the Mac was locked, and it could not be automatically unlocked. The existing running app/server was not replaced during that blocked check. At that stage native acceptance remained unverified. Skill/configuration changes take effect on the next run without an application restart; upgrading the running application binary still requires quitting the old UI, stopping its shared server, and launching the rebuilt app.
 
@@ -104,7 +104,7 @@ Composer keyboard navigation now scrolls the selected suggestion into view with 
 
 ## Final integration browser and lifecycle controls
 
-The latest user corrections supersede earlier configuration checks. Integrations browses and previews packages, skills, MCP and hooks, with basic Install, clear enable/disable switches and confirmed Uninstall controls. Creation, arbitrary-source imports, configuration, tests and advanced management run through chat management skills/shared APIs or the CLI. There are no Configure, Add, More or Ask Themis controls in this browser. Earlier native import and configuration screenshots document intermediate implementation checks. Automations remains separate. Row hover uses a subtle background; keyboard selections keep a clear indicator.
+The latest user corrections supersede earlier configuration checks. Integrations browses and previews packages, skills, MCP and hooks, with basic Install, clear enable/disable switches and confirmed Uninstall controls. Creation, arbitrary-source imports, configuration, tests and advanced management run through chat management skills/shared APIs or the CLI. There are no Configure, More or Ask Themis controls in this browser. A compact plus beside the public marketplace selector adds a marketplace by name and URL or local path. Earlier native import and configuration screenshots document intermediate implementation checks. Automations remains separate. Row hover uses a subtle background; keyboard selections keep a clear indicator.
 
 
 The final native pass verifies a switch turning off/on with both its visible label and accessible checked state, discovered skill switching, confirmed PDF removal returning it to Not installed, public Word Markdown preview, seven-skill plugin-dev preview, complete Markdown reaching its final marker, and scrolling to the last skills row while search/navigation remain fixed. `/manage-sk` selects Manage skills with Tab without sending. Downward/upward navigation and wraparound keep the selected suggestion visible. Automations exposes Instructions, Repeat and Time with Advanced collapsed. No provider message was sent.
@@ -114,3 +114,23 @@ Evidence: [lifecycle switches](verification/native-lifecycle.png), [bundled skil
 Composer descriptions are limited to two visible lines while their full text remains available in the tooltip. Discovered skill origins show User/Project · Discovered skills instead of internal hashes; canonical identifiers still match and persist. The final PromptInput module is 129 lines, mean cyclomatic 3.85, cognitive 5.88 and maintainability 74.8 (down from 75.1 before this display correction). No frontend line-coverage report is available.
 
 Final native build confirmed the two-line composer descriptions and readable discovery origins, downward navigation to the last offered skill, both wrap directions and `@browser` selection with Tab without sending. The final disposable chat was empty and removed; reopening the app refreshed its sidebar. MCP details expose saved transport/command/status only, with no editor or Test action. [Final clean browser](verification/native-final-ui.png).
+
+
+## MCP-only package correction
+
+Removed the importer-generated `connect` placeholder that made MCP/hook-only plugins look as though they bundled an authored skill. Registry reads normalize that exact legacy placeholder in current and historical snapshots, only with imported/captured configuration provenance and no authored Markdown. They preserve revision identities, configuration and original files; ordinary later mutations persist the cleanup. Authored or customized connect skills remain preserved.
+
+MCP initialization instructions are now retained and forwarded to the actual provider system request as labelled external tool documentation after approved startup. The optional field is specified by [MCP InitializeResult](https://modelcontextprotocol.io/specification/2025-06-18/schema#initializeresult). Missing instructions are supported; non-string instructions and UTF-8 bodies larger than 32,768 bytes are rejected before tool discovery. Guidance does not grant tool permissions. Tests verify absent/empty/boundary/invalid guidance, denied startup without requests, denied tool calls, zero-skill import and pinned-reference migration. The existing real shared-server/CLI provider test now includes an enabled zero-skill plugin and asserts its exact server guidance reaches the constructed system message while no invented skill enters the catalog. Provider responses are mocked; no real browser task was run.
+
+Fresh full workspace coverage run: 271 passed, no failures; known synthetic-Keychain and live-provider tests filtered, public-network acceptance ignored here (separately verified earlier). Rust line coverage 86.0% (13,428/15,622). Format, workspace all-target Clippy, dashboard13 tests and Ruff pass. MCP transport maintainability changed 67.9→67.7 (cyclomatic4.14, cognitive4.67); shared plugin registry75.0 and importer73.9. Overall callable metrics: cyclomatic2.50, cognitive2.24, maintainability73.6. Inline Rust tests are included.
+
+
+## Marketplace shortcut and preview position
+
+Restored the plus icon beside the public Plugins marketplace selector. Its dialog requests only Name and URL or local path. A native check added the disposable `native-marketplace-check` local source and immediately displayed its package in the selected marketplace without installing it. The source was removed afterward; the original official source remains.
+
+The uninstalled `idmp-plugin` preview showed all 23 skill names. Selecting `idmp-ai` replaced the list with pretty Markdown starting at its heading; after scrolling, returning to the list and selecting `idmp-analysis` again started at its heading. The standalone uninstalled Word skill also opened at the first heading after the long bundle preview. Viewer remounting resets the existing scroll container rather than adding another scrolling mechanism.
+
+The rebuilt native browser-use View now truthfully shows zero bundled skills. Its revision `18dc04b4fe912420`, enabled state, MCP configuration and captured files match the pre-patch snapshot. No browser/provider task was executed. The bundle embeds `index-CLNNu6Gs.js`; its release build passed. Existing history was preserved. A startup notification about an already missing temporary project remains unrelated to these changes.
+
+Evidence: [marketplace dialog](verification/native-marketplace-add.png), [Markdown beginning](verification/native-skill-preview-top.png), [zero-skill browser-use](verification/native-browser-no-skills.png). Fresh web tests: 279/26 files, including 24 integrations cases; lint/build and 13 dashboard tests pass. Final dashboard mean cyclomatic2.50, cognitive2.24, maintainability73.6; Plugins is 218 lines, cyclomatic2.57, cognitive2.63, maintainability81.9.
