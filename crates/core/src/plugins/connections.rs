@@ -9,6 +9,7 @@ use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct McpServer {
     #[serde(default)]
     pub command: Option<String>,
@@ -40,13 +41,15 @@ impl McpServer {
                 || !u.username().is_empty()
                 || u.password().is_some()
                 || u.query().is_some()
+                || u.fragment().is_some()
             {
                 bail!("Use HTTPS (or localhost HTTP) without embedded credentials");
             }
         }
         if self
             .env
-            .values()
+            .keys()
+            .chain(self.env.values())
             .chain(self.bearer_env.iter())
             .any(|v| !v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') || v.is_empty())
         {

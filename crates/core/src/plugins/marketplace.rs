@@ -12,6 +12,106 @@ struct Catalogs {
 }
 
 impl PluginStore {
+    /// Import a local skill/plugin folder, SKILL.md, native JSON bundle, or MCP JSON file.
+    pub fn import_path(
+        &self,
+        scope: &str,
+        path: &Path,
+        name: Option<&str>,
+    ) -> anyhow::Result<Plugin> {
+        let path = path.canonicalize().context("Import path is unavailable")?;
+        let mut spec = if path.is_dir() || path.file_name().is_some_and(|s| s == "SKILL.md") {
+            import_directory(if path.is_dir() {
+                &path
+            } else {
+                path.parent().context("Missing skill directory")?
+            })?
+        } else {
+            let bytes = fs::read(&path)?;
+            if bytes.len() > 8 * 1024 * 1024 {
+                bail!("Import file exceeds 8 MiB");
+            }
+            let value: Value = serde_json::from_slice(&bytes).context(
+                "Import expects a skill/plugin folder or JSON file; archives are unsupported",
+            )?;
+            if let Some(spec) = value.get("spec") {
+                serde_json::from_value(spec.clone())?
+            } else if value.get("name").is_some_and(Value::is_string) {
+                serde_json::from_value(value)?
+            } else {
+                let name = name.unwrap_or("imported-mcp");
+                mcp_spec(name, &value)?
+            }
+        };
+        if let Some(name) = name {
+            spec.name = name.into();
+        }
+        spec.origin = Some(PluginOrigin {
+            kind: "local".into(),
+            location: path.to_string_lossy().into(),
+            reference: None,
+            subdirectory: None,
+        });
+        self.save(scope, spec, None)
+    }
+    pub fn import_mcp_json(&self, scope: &str, name: &str, input: &str) -> anyhow::Result<Plugin> {
+        if input.len() > 1024 * 1024 {
+            bail!("MCP configuration exceeds 1 MiB");
+        }
+        let value: Value = serde_json::from_str(input).context("Invalid MCP JSON")?;
+        let mut spec = mcp_spec(name, &value)?;
+        spec.origin = Some(PluginOrigin {
+            kind: "mcp-json".into(),
+            location: "pasted configuration".into(),
+            reference: None,
+            subdirectory: None,
+        });
+        self.save(scope, spec, None)
+    }
+    pub async fn import_repository(
+        &self,
+        scope: &str,
+        name: &str,
+        source: &str,
+        reference: Option<&str>,
+        subdirectory: Option<&str>,
+    ) -> anyhow::Result<Plugin> {
+        if !safe_name(name) {
+            bail!("Invalid plugin name");
+        }
+        validate_source(source)?;
+        if subdirectory.is_some_and(|path| !safe_relative(path)) {
+            bail!("Unsafe repository subdirectory");
+        }
+        let staging = self
+            .global
+            .join("marketplace-cache")
+            .join(format!("import-{}", revision()));
+        let result = async {
+            clone_repository(source, &staging, reference).await?;
+            let directory = subdirectory
+                .map(|path| staging.join(path))
+                .unwrap_or_else(|| staging.clone())
+                .canonicalize()?;
+            if !directory.starts_with(staging.canonicalize()?) {
+                bail!("Plugin directory escapes repository");
+            }
+            let mut spec = import_directory(&directory)?;
+            spec.name = name.into();
+            spec.origin = Some(PluginOrigin {
+                kind: "repository".into(),
+                location: source.into(),
+                reference: reference.map(str::to_owned),
+                subdirectory: subdirectory.map(str::to_owned),
+            });
+            self.save(scope, spec, None)
+        }
+        .await;
+        if staging.exists() {
+            let _ = fs::remove_dir_all(&staging);
+        }
+        result
+    }
     pub fn marketplaces(&self) -> anyhow::Result<Vec<Marketplace>> {
         let lock = self.marketplace_lock()?;
         let result = self.read_marketplaces();
@@ -144,9 +244,6 @@ impl PluginStore {
             .find(|e| e["name"] == name)
             .context("Plugin not listed")?;
         let source = &entry["source"];
-        if source.get("ref").is_some() || source.get("path").is_some() {
-            bail!("Marketplace source ref/path overrides are unsupported; add a local checkout instead");
-        }
         let directory = if let Some(path) = source.as_str() {
             let path = path.strip_prefix("./").unwrap_or(path);
             if !safe_relative(path) {
@@ -163,7 +260,7 @@ impl PluginStore {
                     "https://github.com/{}.git",
                     source["repo"].as_str().context("Missing repo")?
                 ),
-                Some("url") => source["url"].as_str().context("Missing URL")?.into(),
+                Some("url" | "git-subdir") => source["url"].as_str().context("Missing URL")?.into(),
                 _ => bail!("Unsupported marketplace source type"),
             };
             validate_source(&url)?;
@@ -171,16 +268,99 @@ impl PluginStore {
                 .global
                 .join("marketplace-cache")
                 .join(format!("plugin-{}", revision()));
-            clone_repo(&url, &staging).await?;
-            staging
+            clone_repository(
+                &url,
+                &staging,
+                source
+                    .get("sha")
+                    .or_else(|| source.get("ref"))
+                    .map(|value| value.as_str().context("Invalid repository reference"))
+                    .transpose()?,
+            )
+            .await?;
+            if let Some(path) = source.get("path") {
+                let path = path.as_str().context("Invalid repository subdirectory")?;
+                if !safe_relative(path) {
+                    bail!("Unsafe repository subdirectory");
+                }
+                let directory = staging.join(path).canonicalize()?;
+                if !directory.starts_with(staging.canonicalize()?) {
+                    bail!("Plugin directory escapes repository");
+                }
+                directory
+            } else {
+                staging
+            }
         };
         let mut spec = import_directory(&directory)?;
         spec.name = name.into();
+        for field in [
+            "skills",
+            "commands",
+            "agents",
+            "hooks",
+            "mcpServers",
+            "lspServers",
+            "dependencies",
+            "settings",
+            "userConfig",
+            "channels",
+        ] {
+            if entry.get(field).is_some() {
+                spec.unsupported.push(format!(
+                    "Marketplace entry {field}: component declarations require plugin manifest"
+                ));
+            }
+        }
+        if let Some(icon) = entry.get("icon").and_then(Value::as_str) {
+            let icon = icon.strip_prefix("./").unwrap_or(icon);
+            if icon.starts_with("https://")
+                || (icon.ends_with(".svg") && spec.files.contains_key(icon))
+            {
+                spec.icon = Some(icon.into());
+            } else {
+                spec.unsupported
+                    .push("Marketplace icon resource is unavailable or unsupported".into());
+            }
+        }
+        spec.origin = Some(PluginOrigin {
+            kind: "marketplace".into(),
+            location: marketplace.into(),
+            reference: source
+                .get("sha")
+                .or_else(|| source.get("ref"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            subdirectory: source
+                .get("path")
+                .and_then(Value::as_str)
+                .or_else(|| source.as_str())
+                .map(str::to_owned),
+        });
         validate(&spec)?;
         self.mutate(scope, |registry| {
             let previous = registry.current.get(name);
             if previous.is_some_and(|p| p.source.as_deref() != Some(marketplace)) {
                 bail!("A different plugin already uses this name; rename it first");
+            }
+            if let Some(previous) = previous {
+                for (name, server) in &mut spec.mcp {
+                    server.enabled = previous.spec.mcp.get(name).is_some_and(|s| s.enabled);
+                }
+                for hook in &mut spec.hooks {
+                    hook.enabled = previous
+                        .spec
+                        .hooks
+                        .iter()
+                        .find(|h| h.name == hook.name)
+                        .is_some_and(|h| h.enabled);
+                }
+                for id in &previous.spec.disabled_skills {
+                    if spec.skills.iter().any(|s| &s.id == id) && !spec.disabled_skills.contains(id)
+                    {
+                        spec.disabled_skills.push(id.clone());
+                    }
+                }
             }
             let plugin = Plugin {
                 scope: scope.into(),
@@ -215,13 +395,45 @@ fn validate_source(source: &str) -> anyhow::Result<()> {
     Ok(())
 }
 async fn clone_repo(source: &str, path: &Path) -> anyhow::Result<()> {
+    clone_repository(source, path, None).await
+}
+async fn clone_repository(
+    source: &str,
+    path: &Path,
+    reference: Option<&str>,
+) -> anyhow::Result<()> {
+    if reference.is_some_and(|value| {
+        value.is_empty() || value.starts_with('-') || value.chars().any(char::is_control)
+    }) {
+        bail!("Invalid repository reference");
+    }
     fs::create_dir_all(path.parent().context("Missing cache parent")?)?;
+    run_git(
+        &[
+            "clone",
+            "--depth=1",
+            "--",
+            source,
+            path.to_str().context("Invalid cache path")?,
+        ],
+        None,
+    )
+    .await?;
+    if let Some(reference) = reference {
+        run_git(&["fetch", "--depth=1", "origin", reference], Some(path)).await?;
+        run_git(&["checkout", "--detach", "FETCH_HEAD"], Some(path)).await?;
+    }
+    Ok(())
+}
+async fn run_git(args: &[&str], directory: Option<&Path>) -> anyhow::Result<()> {
     let mut command = tokio::process::Command::new("git");
     command
-        .args(["-c", "core.hooksPath=/dev/null", "clone", "--depth=1", "--"])
-        .arg(source)
-        .arg(path)
+        .args(["-c", "core.hooksPath=/dev/null"])
+        .args(args)
         .env_clear();
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+    }
     for name in ["PATH", "HOME", "SYSTEMROOT"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
@@ -234,9 +446,9 @@ async fn clone_repo(source: &str, path: &Path) -> anyhow::Result<()> {
         .stderr(std::process::Stdio::null());
     let status = tokio::time::timeout(std::time::Duration::from_secs(60), command.status())
         .await
-        .context("Marketplace download timed out")??;
+        .context("Repository download timed out")??;
     if !status.success() {
-        bail!("Marketplace download failed; check the repository URL and network");
+        bail!("Repository download failed; check repository access, reference, and network");
     }
     Ok(())
 }
@@ -249,7 +461,15 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
         serde_json::json!({})
     };
     let mut spec = PluginSpec {
-        name: manifest["name"].as_str().unwrap_or("imported").into(),
+        name: manifest["name"]
+            .as_str()
+            .unwrap_or_else(|| {
+                root.file_name()
+                    .and_then(|s| s.to_str())
+                    .filter(|s| safe_name(s))
+                    .unwrap_or("imported")
+            })
+            .into(),
         description: manifest["description"].as_str().unwrap_or_default().into(),
         version: manifest["version"].as_str().unwrap_or_default().into(),
         ..Default::default()
@@ -261,14 +481,28 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
         &mut spec.executable_files,
         &mut spec.unsupported,
     )?;
+    if let Some(icon) = manifest.get("icon").and_then(Value::as_str) {
+        let icon = icon.strip_prefix("./").unwrap_or(icon);
+        if icon.starts_with("https://") || (icon.ends_with(".svg") && spec.files.contains_key(icon))
+        {
+            spec.icon = Some(icon.into());
+        } else {
+            spec.unsupported
+                .push("Plugin icon resource is unavailable or unsupported".into());
+        }
+    }
     for (path, content) in &spec.files {
         if path.ends_with("/SKILL.md") || path == "SKILL.md" {
             let (metadata, instructions) = parse_skill(content)?;
-            let fallback = Path::new(path)
-                .parent()
-                .and_then(Path::file_name)
-                .and_then(|s| s.to_str())
-                .unwrap_or("skill");
+            let fallback = if path == "SKILL.md" {
+                root.file_name().and_then(|s| s.to_str()).unwrap_or("skill")
+            } else {
+                Path::new(path)
+                    .parent()
+                    .and_then(Path::file_name)
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("skill")
+            };
             let name = metadata.get("name").map(String::as_str).unwrap_or(fallback);
             let id = if safe_name(name) { name } else { fallback };
             spec.skills.push(Skill {
@@ -279,6 +513,26 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
                 allowed_tools: vec![],
                 scripts: vec![],
             });
+            for key in metadata.keys().filter(|key| {
+                ![
+                    "name",
+                    "description",
+                    "license",
+                    "compatibility",
+                    "allowed-tools",
+                    "disable-model-invocation",
+                ]
+                .contains(&key.as_str())
+            }) {
+                spec.unsupported
+                    .push(format!("{path}: skill frontmatter {key}"));
+            }
+            if metadata
+                .get("disable-model-invocation")
+                .is_some_and(|value| value == "true")
+            {
+                spec.manual_skills.push(id.into());
+            }
             if metadata.contains_key("allowed-tools") {
                 spec.unsupported.push(format!(
                     "{path}: Claude tool names are not permission grants in Themis"
@@ -289,11 +543,11 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
     if let Some(raw) = spec.files.get(".mcp.json") {
         let config: Value = serde_json::from_str(raw)?;
         let servers = config.get("mcpServers").unwrap_or(&config);
-        import_mcp(servers, &mut spec.mcp)?;
+        import_mcp(servers, false, &mut spec.mcp)?;
     }
     if let Some(servers) = manifest.get("mcpServers") {
         if servers.is_object() {
-            import_mcp(servers, &mut spec.mcp)?;
+            import_mcp(servers, false, &mut spec.mcp)?;
         } else {
             spec.unsupported
                 .push("External MCP configuration paths".into());
@@ -311,7 +565,11 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
         }
     }
     for field in [
+        "skills",
+        "commands",
         "agents",
+        "channels",
+        "defaultEnabled",
         "lspServers",
         "outputStyles",
         "settings",
@@ -321,6 +579,15 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
     ] {
         if manifest.get(field).is_some() {
             spec.unsupported.push(field.into());
+        }
+    }
+    for (directory, label) in [
+        ("agents/", "Claude subagents"),
+        ("bin/", "Plugin PATH executables"),
+        ("output-styles/", "Output styles"),
+    ] {
+        if spec.files.keys().any(|path| path.starts_with(directory)) {
+            spec.unsupported.push(label.into());
         }
     }
     if spec.files.keys().any(|p| p.starts_with("commands/")) {
@@ -340,7 +607,7 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
     }
     Ok(spec)
 }
-fn collect_files(
+pub(super) fn collect_files(
     root: &Path,
     directory: &Path,
     files: &mut BTreeMap<String, String>,
@@ -396,11 +663,15 @@ fn collect_files(
     }
     Ok(())
 }
-fn parse_skill(content: &str) -> anyhow::Result<(BTreeMap<String, String>, String)> {
-    let Some(tail) = content.strip_prefix("---\n") else {
+pub(super) fn parse_skill(content: &str) -> anyhow::Result<(BTreeMap<String, String>, String)> {
+    let normalized = content.replace("\r\n", "\n");
+    let Some(tail) = normalized.strip_prefix("---\n") else {
         return Ok((BTreeMap::new(), content.into()));
     };
-    let end = tail.find("\n---").context("Unclosed skill frontmatter")?;
+    let end = tail
+        .find("\n---\n")
+        .or_else(|| tail.strip_suffix("\n---").map(str::len))
+        .context("Unclosed skill frontmatter")?;
     let mut metadata = BTreeMap::new();
     let mut multiline: Option<String> = None;
     for line in tail[..end].lines() {
@@ -432,33 +703,198 @@ fn parse_skill(content: &str) -> anyhow::Result<(BTreeMap<String, String>, Strin
     }
     Ok((metadata, tail[end + 4..].trim().into()))
 }
-fn import_mcp(value: &Value, servers: &mut BTreeMap<String, McpServer>) -> anyhow::Result<()> {
+fn mcp_spec(name: &str, value: &Value) -> anyhow::Result<PluginSpec> {
+    let (servers, opencode) = if let Some(servers) = value.get("mcpServers") {
+        if value
+            .as_object()
+            .is_some_and(|v| v.keys().any(|key| key != "mcpServers"))
+        {
+            bail!("Only MCP configuration is imported; remove unrelated root settings");
+        }
+        (servers, false)
+    } else if let Some(servers) = value.get("mcp") {
+        if value.as_object().is_some_and(|v| {
+            v.keys()
+                .any(|key| !["mcp", "$schema"].contains(&key.as_str()))
+        }) {
+            bail!("Only OpenCode MCP configuration is imported; remove unrelated root settings");
+        }
+        (servers, true)
+    } else {
+        (value, false)
+    };
+    let mut spec = PluginSpec {
+        name: name.into(),
+        ..Default::default()
+    };
+    import_mcp(servers, opencode, &mut spec.mcp)?;
+    if spec.mcp.is_empty() {
+        bail!("MCP configuration has no connections");
+    }
+    Ok(spec)
+}
+fn environment_reference(value: &str) -> anyhow::Result<String> {
+    let name = value.strip_prefix("${").and_then(|v| v.strip_suffix('}'))
+        .or_else(|| value.strip_prefix("{env:").and_then(|v| v.strip_suffix('}')))
+        .context("Imported credentials/environment values must use ${VARIABLE} or {env:VARIABLE}; literal values are unsupported")?;
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        bail!("Unsupported environment reference");
+    }
+    Ok(name.into())
+}
+fn import_mcp(
+    value: &Value,
+    opencode: bool,
+    servers: &mut BTreeMap<String, McpServer>,
+) -> anyhow::Result<()> {
     for (name, raw) in value.as_object().context("Invalid MCP configuration")? {
-        let mut server: McpServer = serde_json::from_value(raw.clone())?;
-        for reference in server.env.values_mut() {
-            if let Some(variable) = reference
-                .strip_prefix("${")
-                .and_then(|s| s.strip_suffix('}'))
-            {
-                *reference = variable.into();
+        if !safe_name(name) {
+            bail!("Invalid MCP connection name");
+        }
+        let fields = raw
+            .as_object()
+            .context("MCP connection must be an object")?;
+        let allowed: &[&str] = if opencode {
+            &[
+                "type",
+                "command",
+                "environment",
+                "url",
+                "headers",
+                "enabled",
+                "oauth",
+            ]
+        } else {
+            &[
+                "type",
+                "command",
+                "args",
+                "env",
+                "url",
+                "headers",
+                "enabled",
+                "bearer_env",
+            ]
+        };
+        if let Some(field) = fields.keys().find(|key| !allowed.contains(&key.as_str())) {
+            bail!("MCP connection '{name}' uses unsupported field '{field}'");
+        }
+        if let Some(kind) = raw.get("type") {
+            let supported = if opencode {
+                ["local", "remote"].contains(&kind.as_str().unwrap_or_default())
+            } else {
+                ["stdio", "http", "streamable-http"].contains(&kind.as_str().unwrap_or_default())
+            };
+            if !supported {
+                bail!("MCP connection '{name}' uses an unsupported transport");
             }
         }
-        server.enabled = false;
-        servers.insert(name.clone(), server);
+        if raw.get("oauth").is_some_and(|v| v != &Value::Bool(false)) {
+            bail!("MCP connection '{name}' requires unsupported browser OAuth; use an environment bearer reference");
+        }
+        let mut server = McpServer::default();
+        if let Some(command) = raw.get("command") {
+            if opencode {
+                let command = command
+                    .as_array()
+                    .context("OpenCode command must be an array")?;
+                server.command = Some(
+                    command
+                        .first()
+                        .and_then(Value::as_str)
+                        .context("Empty MCP command")?
+                        .into(),
+                );
+                server.args = command[1..]
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_owned)
+                            .context("MCP command arguments must be strings")
+                    })
+                    .collect::<anyhow::Result<_>>()?;
+            } else {
+                server.command = Some(
+                    command
+                        .as_str()
+                        .context("MCP command must be a string")?
+                        .into(),
+                );
+            }
+        }
+        if let Some(args) = raw.get("args") {
+            server.args = serde_json::from_value(args.clone()).context("Invalid MCP arguments")?;
+        }
+        if let Some(url) = raw.get("url") {
+            server.url = Some(url.as_str().context("MCP URL must be a string")?.into());
+        }
+        if let Some(env) = raw.get(if opencode { "environment" } else { "env" }) {
+            for (key, value) in env
+                .as_object()
+                .context("MCP environment must be an object")?
+            {
+                server.env.insert(
+                    key.clone(),
+                    environment_reference(
+                        value
+                            .as_str()
+                            .context("MCP environment must contain strings")?,
+                    )?,
+                );
+            }
+        }
+        if let Some(bearer) = raw.get("bearer_env") {
+            server.bearer_env = Some(
+                bearer
+                    .as_str()
+                    .context("Invalid bearer environment reference")?
+                    .into(),
+            );
+        }
+        if let Some(headers) = raw.get("headers") {
+            for (key, value) in headers
+                .as_object()
+                .context("MCP headers must be an object")?
+            {
+                if !key.eq_ignore_ascii_case("authorization") || server.bearer_env.is_some() {
+                    bail!("MCP connection '{name}' uses unsupported or duplicate authentication headers");
+                }
+                let token = value
+                    .as_str()
+                    .and_then(|s| s.strip_prefix("Bearer "))
+                    .context("Only Bearer environment reference headers are supported")?;
+                server.bearer_env = Some(environment_reference(token)?);
+            }
+        }
+        if let Some(kind) = raw.get("type").and_then(Value::as_str) {
+            if (["local", "stdio"].contains(&kind) && server.command.is_none())
+                || (["remote", "http", "streamable-http"].contains(&kind) && server.url.is_none())
+            {
+                bail!("MCP transport conflicts with connection configuration");
+            }
+        }
+        if server.command.is_some() && server.bearer_env.is_some() {
+            bail!("Stdio authentication must use environment references");
+        }
+        server.validate()?;
+        if servers.insert(name.clone(), server).is_some() {
+            bail!("Duplicate MCP connection '{name}'");
+        }
     }
     Ok(())
 }
 fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
-    let Some(events) = value["hooks"].as_object() else {
-        return Ok(());
-    };
+    let events = value
+        .get("hooks")
+        .unwrap_or(value)
+        .as_object()
+        .context("Invalid hook configuration")?;
     for (event, groups) in events {
         let mapped = match event.as_str() {
             "SessionStart" => "RunStart",
-            "PreToolUse" => "BeforeToolCall",
-            "PostToolUse" => "AfterToolCall",
-            "PostToolUseFailure" => "ToolCallFailed",
-            "Stop" => "RunFinished",
+            "PreToolUse" => "BeforeTool",
+            "PostToolUse" => "AfterTool",
+            "Stop" => "RunEnd",
             "PreCompact" => "BeforeCompaction",
             _ => {
                 spec.unsupported.push(format!("Hook event {event}"));
@@ -471,12 +907,23 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                     spec.unsupported.push(format!("{event}: non-command hook"));
                     continue;
                 }
-                if group["matcher"]
-                    .as_str()
-                    .is_some_and(|s| !s.is_empty() && s != "*")
+                if !matches!(event.as_str(), "PreToolUse" | "PostToolUse")
+                    && group["matcher"]
+                        .as_str()
+                        .is_some_and(|matcher| !matcher.is_empty() && matcher != "*")
                 {
+                    spec.unsupported.push(format!(
+                        "{event}: lifecycle matcher requires manual mapping"
+                    ));
+                    continue;
+                }
+                if raw.as_object().is_some_and(|value| {
+                    value
+                        .keys()
+                        .any(|key| !["type", "command", "timeout"].contains(&key.as_str()))
+                }) {
                     spec.unsupported
-                        .push(format!("{event}: tool matcher requires manual mapping"));
+                        .push(format!("{event}: hook options require manual mapping"));
                     continue;
                 }
                 spec.hooks.push(Hook {
@@ -487,6 +934,11 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         .context("Missing hook command")?
                         .into(),
                     enabled: false,
+                    matcher: group["matcher"]
+                        .as_str()
+                        .filter(|value| !value.is_empty() && *value != "*")
+                        .map(str::to_owned),
+                    failure_policy: None,
                     timeout_seconds: raw["timeout"].as_u64().unwrap_or(10).clamp(1, 60),
                     blocking: event == "PreToolUse" || event == "SessionStart",
                     plugin_root: None,
