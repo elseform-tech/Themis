@@ -25,6 +25,18 @@ beforeEach(() => {
   });
 });
 describe("Integrations management", () => {
+  it("shows discovered skill names while retaining internal identities for actions", async () => {
+    installed[0] = { ...installed[0], source: "discovered", spec: { ...installed[0].spec, name: "discovered-1234", origin: { kind: "discovered", location: "/project/.agents/skills/draft" } } };
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View Draft" });
+    expect(screen.queryByText("discovered-1234")).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Disable Draft" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "disable", name: "discovered-1234" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByText("Draft · User")).toBeInTheDocument();
+    expect(screen.queryByText("discovered-1234")).toBeNull();
+  });
+
   it("passes the selected import source into an editable agent draft", async () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });

@@ -12,10 +12,13 @@ type Panel = { mode: "view" | "edit" | "uninstall" | "import" | "create" | "mark
 const categories: Category[] = ["Plugins", "Skills", "MCP", "Hooks"];
 const hookEvents = ["RunStart", "BeforeTool", "AfterTool", "BeforeCompaction", "RunEnd"];
 const emptySpec = (): PluginSpec => ({ name: "personal", description: "", version: "", skills: [], mcp: {}, hooks: [], files: {}, unsupported: [] });
+function pluginDisplayName(plugin: Plugin) {
+  return plugin.source === "discovered" || plugin.spec.origin?.kind === "discovered" ? plugin.spec.skills[0]?.name ?? plugin.spec.name : plugin.spec.name;
+}
 function items(plugins: Plugin[], category: Category): Item[] {
   return plugins.flatMap<Item>(plugin => {
     const base = { plugin, key: `${plugin.scope}:${plugin.spec.name}` };
-    if (category === "Plugins") return [{ ...base, name: plugin.spec.name, kind: "plugin" as const, id: plugin.spec.name, enabled: plugin.enabled }];
+    if (category === "Plugins") return [{ ...base, name: pluginDisplayName(plugin), kind: "plugin" as const, id: plugin.spec.name, enabled: plugin.enabled }];
     if (category === "Skills") return plugin.spec.skills.map(skill => ({ ...base, key: `${base.key}:skill:${skill.id}`, name: skill.name, id: skill.id, kind: "skill" as const, enabled: plugin.enabled && !(plugin.spec.disabled_skills ?? []).includes(skill.id) }));
     if (category === "MCP") return Object.entries(plugin.spec.mcp).map(([id, server]) => ({ ...base, key: `${base.key}:mcp:${id}`, name: id, id, kind: "mcp" as const, enabled: plugin.enabled && server.enabled }));
     return plugin.spec.hooks.map(hook => ({ ...base, key: `${base.key}:hook:${hook.name}`, name: hook.name, id: hook.name, kind: "hook" as const, enabled: plugin.enabled && hook.enabled }));
@@ -148,7 +151,7 @@ export function Plugins() {
     </> : <>
       {!rows.length && <EmptyState title={`No ${category.toLowerCase()} installed`} />}
       <ul className="themis-integrations-list">{rows.map(row => <li key={row.key}>
-        {row.kind === "plugin" ? <PluginIcon plugin={row.plugin.spec} /> : <Icon name={row.kind === "mcp" ? "plug" : row.kind === "hook" ? "hook" : "file"} />}<span className="themis-integration-name">{row.name}</span><span className="themis-integration-source">{row.kind === "plugin" ? row.plugin.spec.origin?.kind === "discovered" ? "Discovered" : row.plugin.source ?? row.plugin.spec.origin?.kind ?? "Personal" : row.plugin.spec.name} · {row.plugin.scope === "global" ? "User" : "Project"}</span>
+        {row.kind === "plugin" ? <PluginIcon plugin={row.plugin.spec} /> : <Icon name={row.kind === "mcp" ? "plug" : row.kind === "hook" ? "hook" : "file"} />}<span className="themis-integration-name">{row.name}</span><span className="themis-integration-source">{row.kind === "plugin" ? row.plugin.spec.origin?.kind === "discovered" ? "Discovered" : row.plugin.source ?? row.plugin.spec.origin?.kind ?? "Personal" : pluginDisplayName(row.plugin)} · {row.plugin.scope === "global" ? "User" : "Project"}</span>
         <button className="themis-integration-status" aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.name}`} disabled={busy || row.kind !== "plugin" && !row.plugin.enabled} onClick={() => void toggle(row).catch(() => {})}>{row.kind !== "plugin" && !row.plugin.enabled ? "Plugin disabled" : row.enabled ? "Enabled" : "Disabled"}</button>
         <button aria-label={`View ${row.name}`} onClick={() => open("view", row)}><Icon name="view" /></button>
         <details className="themis-integration-more" open={menu === row.key}><summary role="button" aria-label={`More actions for ${row.name}`} onClick={event => { event.preventDefault(); setMenu(menu === row.key ? null : row.key); }}><Icon name="more" /></summary>{menu === row.key && <div className="themis-integration-menu"><button onClick={() => open("view", row)}>View{row.kind === "plugin" ? " skills" : ""}</button><button disabled={busy || row.kind !== "plugin" && !row.plugin.enabled} onClick={() => { setMenu(null); void toggle(row).catch(() => {}); }}>{row.enabled ? "Disable" : "Enable"}</button><button onClick={() => open("edit", row)}>Configure</button>{(row.kind === "mcp" || row.kind === "hook") && <button onClick={() => open("test", row)}>Test</button>}{row.plugin.source && row.plugin.source !== "discovered" && <button disabled={busy} onClick={() => { setMenu(null); void action({ action: "update", name: row.plugin.spec.name, scope: row.plugin.scope, marketplace: row.plugin.source }).catch(() => {}); }}>Update</button>}<button onClick={() => exportPlugin(row.plugin)}>Export plugin</button>{row.plugin.source && <button onClick={() => personalCopy(row.plugin)}>Create personal copy</button>}<button onClick={() => open("uninstall", row)}>Uninstall</button></div>}</details>
