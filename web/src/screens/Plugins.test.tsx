@@ -143,7 +143,7 @@ describe("Integrations management", () => {
     });
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Public" })));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Not installed" })));
     expect(screen.getByAltText("")).toHaveAttribute("src", "https://example.com/icon.svg");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "View public-docs" })));
     const dialog = screen.getByRole("dialog", { name: "public-docs" });
@@ -174,7 +174,7 @@ describe("Integrations management", () => {
     });
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
-    fireEvent.click(screen.getByRole("button", { name: "Public" }));
+    fireEvent.click(screen.getByRole("button", { name: "Not installed" }));
     expect(screen.getByRole("combobox", { name: "Marketplace" })).toBeDisabled();
     await act(async () => finish({ plugins: [{ name: "review", description: "Review pull requests" }] }));
     expect(screen.getByRole("combobox", { name: "Marketplace" })).toBeEnabled();
@@ -185,6 +185,46 @@ describe("Integrations management", () => {
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Install" })));
     expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "install", name: "review", marketplace: "official" }));
+  });
+
+  it("keeps disabled installed packages out of Not installed", async () => {
+    installed[0].source = "official";
+    installed[0].enabled = false;
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "list") return installed as never;
+      if (args.action === "marketplaces") return [{ name: "official", source: "official-source" }] as never;
+      if (args.action === "catalog") return { plugins: [{ name: "docs" }, { name: "other", icon: "https://example.com/other.svg" }] } as never;
+      return null as never;
+    });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "Enable docs" });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Not installed" })));
+    expect(screen.queryByRole("button", { name: "View docs" })).toBeNull();
+    expect(screen.getByRole("button", { name: "View other" })).toBeInTheDocument();
+    expect(screen.getByAltText("")).toHaveAttribute("src", "https://example.com/other.svg");
+  });
+
+  it("offers actual standalone skills with pinned sources and removes installed entries", async () => {
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "list") return structuredClone(installed) as never;
+      if (args.action === "marketplaces") return [] as never;
+      if (args.action === "import_repository") installed.push({ ...installed[0], enabled: false, spec: { ...installed[0].spec, name: "pdf", package_kind: "skill", origin: { kind: "repository", location: String(args.url), subdirectory: String(args.subdirectory) } } });
+      return null as never;
+    });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "Not installed" }));
+    expect(screen.getByRole("button", { name: "View Word documents" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Spreadsheets" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View PDF" }));
+    expect(screen.getByRole("link", { name: "Read SKILL.md" })).toHaveAttribute("href", "https://github.com/anthropics/skills/blob/683bc88e56f3e09ba94f7055977f3d3aa499f202/skills/pdf/SKILL.md");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    const row = screen.getByRole("button", { name: "View PDF" }).closest("li")!;
+    expect(row.querySelector("svg")).toBeInTheDocument();
+    await act(async () => fireEvent.click(within(row).getByRole("button", { name: "Install" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "import_repository", name: "pdf", url: "https://github.com/anthropics/skills.git", subdirectory: "skills/pdf", reference: "683bc88e56f3e09ba94f7055977f3d3aa499f202" }));
+    expect(screen.queryByRole("button", { name: "View PDF" })).toBeNull();
   });
 
   it("opens plugin skills and Markdown in a dialog without inline configuration", async () => {
