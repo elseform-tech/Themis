@@ -366,6 +366,7 @@ impl PluginStore {
             };
             let mut spec = import_directory(&directory)?;
             spec.name = name.into();
+            spec.package_kind = Some("plugin".into());
             for field in [
                 "skills",
                 "commands",
@@ -502,6 +503,14 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
         serde_json::json!({})
     };
     let mut spec = PluginSpec {
+        package_kind: Some(
+            if !manifest_path.exists() && root.join("SKILL.md").is_file() {
+                "skill"
+            } else {
+                "plugin"
+            }
+            .into(),
+        ),
         name: manifest["name"]
             .as_str()
             .unwrap_or_else(|| {
@@ -765,6 +774,7 @@ fn mcp_spec(name: &str, value: &Value) -> anyhow::Result<PluginSpec> {
         (value, false)
     };
     let mut spec = PluginSpec {
+        package_kind: Some("mcp".into()),
         name: name.into(),
         ..Default::default()
     };

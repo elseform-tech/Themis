@@ -35,6 +35,7 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
         data.path(),
         &["skill", "import", folder.to_str().unwrap(), "reviews"],
     );
+    assert_eq!(imported["spec"]["package_kind"], "skill");
     assert_eq!(imported["spec"]["skills"][0]["id"], "review");
     assert!(imported["spec"]["skills"][0]["instructions"]
         .as_str()
@@ -64,6 +65,7 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
         data.path(),
         &["mcp", "import", config.to_str().unwrap(), "connections"],
     );
+    assert_eq!(connection["spec"]["package_kind"], "mcp");
     assert_eq!(connection["spec"]["mcp"]["fixture"]["command"], "printf");
     assert!(connection["spec"]["skills"].as_array().unwrap().is_empty());
     cli(data.path(), &["mcp", "disable", "connections", "fixture"]);
@@ -91,6 +93,7 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
             r#"{"action":"preview","marketplace":"preview-fixture","name":"preview-only"}"#,
         ],
     );
+    assert_eq!(preview["package_kind"], "plugin");
     assert_eq!(preview["skills"][0]["id"], "review");
     assert!(preview["files"]["SKILL.md"]
         .as_str()

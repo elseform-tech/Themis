@@ -39,6 +39,7 @@ fn discover_scope(
                     .filter(|s| safe_name(s))
                     .unwrap_or("skill");
                 let mut spec = PluginSpec {
+                    package_kind: Some("skill".into()),
                     name: plugin_name.clone(),
                     origin: Some(PluginOrigin {
                         kind: "discovered".into(),

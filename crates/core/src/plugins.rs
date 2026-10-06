@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 #[serde(deny_unknown_fields)]
 pub struct PluginSpec {
     #[serde(default)]
+    pub package_kind: Option<String>,
+    #[serde(default)]
     pub disabled_skills: Vec<String>,
     #[serde(default)]
     pub manual_skills: Vec<String>,
@@ -183,6 +185,32 @@ impl PluginStore {
                 })
                 .collect::<Vec<_>>(),
         );
+        for plugin in &mut result {
+            if plugin.spec.package_kind.is_none() {
+                plugin.spec.package_kind = Some(
+                    if plugin.source.is_some() {
+                        "plugin"
+                    } else if plugin.spec.files.contains_key("SKILL.md")
+                        && !plugin.spec.files.contains_key(".claude-plugin/plugin.json")
+                    {
+                        "skill"
+                    } else if plugin.spec.skills.is_empty()
+                        && plugin.spec.hooks.is_empty()
+                        && !plugin.spec.mcp.is_empty()
+                    {
+                        "mcp"
+                    } else if plugin.spec.skills.is_empty()
+                        && plugin.spec.mcp.is_empty()
+                        && !plugin.spec.hooks.is_empty()
+                    {
+                        "hook"
+                    } else {
+                        "plugin"
+                    }
+                    .into(),
+                );
+            }
+        }
         Ok(result)
     }
     pub fn save(
@@ -684,6 +712,13 @@ pub fn safe_relative(path: &str) -> bool {
         && !path.contains('\\')
 }
 fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
+    if spec
+        .package_kind
+        .as_deref()
+        .is_some_and(|kind| !matches!(kind, "plugin" | "skill" | "mcp" | "hook"))
+    {
+        bail!("Package kind must be plugin, skill, mcp, or hook");
+    }
     if !safe_name(&spec.name) {
         bail!("Plugin name must be a safe single path segment without '--'");
     }

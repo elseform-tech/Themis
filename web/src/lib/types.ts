@@ -66,6 +66,7 @@ export interface SkillInput {
 }
 
 export interface PluginSpec {
+  package_kind?: "plugin" | "skill" | "mcp" | "hook" | null;
   icon?: string | null;
   disabled_skills?: string[];
   manual_skills?: string[];

@@ -12,6 +12,64 @@ fn skill(directory: &Path, instructions: &str) {
 }
 
 #[test]
+fn standalone_imports_are_distinct_from_real_plugin_packages() {
+    let global = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    skill(source.path(), "Review this file.");
+    let store = PluginStore::new(global.path().into(), None);
+    let standalone = store
+        .import_path("global", source.path(), Some("standalone"))
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&standalone.spec).unwrap()["package_kind"],
+        "skill"
+    );
+    let mut legacy = standalone.spec.clone();
+    legacy.name = "legacy-skill".into();
+    legacy.package_kind = None;
+    store.save("global", legacy, None).unwrap();
+    assert_eq!(
+        store
+            .list()
+            .unwrap()
+            .iter()
+            .find(|p| p.spec.name == "legacy-skill")
+            .unwrap()
+            .spec
+            .package_kind
+            .as_deref(),
+        Some("skill")
+    );
+    let mut invalid = standalone.spec.clone();
+    invalid.name = "invalid-kind".into();
+    invalid.package_kind = Some("unknown".into());
+    assert!(store.save("global", invalid, None).is_err());
+    fs::create_dir_all(source.path().join(".claude-plugin")).unwrap();
+    fs::write(
+        source.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"bundle"}"#,
+    )
+    .unwrap();
+    let bundle = store.import_path("global", source.path(), None).unwrap();
+    assert_eq!(
+        serde_json::to_value(&bundle.spec).unwrap()["package_kind"],
+        "plugin"
+    );
+    assert_eq!(bundle.spec.skills.len(), 1);
+    let mcp = store
+        .import_mcp_json(
+            "global",
+            "filesystem",
+            r#"{"mcpServers":{"files":{"command":"test-server"}}}"#,
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&mcp.spec).unwrap()["package_kind"],
+        "mcp"
+    );
+}
+
+#[test]
 fn plugin_mentions_resolve_current_bundle_without_eager_skill_bodies() {
     let global = tempfile::tempdir().unwrap();
     let source = tempfile::tempdir().unwrap();
