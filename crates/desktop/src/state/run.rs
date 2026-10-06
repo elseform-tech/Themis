@@ -89,7 +89,7 @@ impl AppState {
         // Materialize skill scripts into the run workroot BEFORE building
         // tools: a failure aborts the spawn (the caller resets `running`),
         // so a run never starts half-skilled.
-        let skill_catalog = themis_core::skills::materialize_catalog(
+        let mut skill_catalog = themis_core::skills::materialize_catalog(
             &snapshot.skill_catalog,
             &snapshot.work_root,
             run_id,
@@ -103,6 +103,7 @@ impl AppState {
             .materialize(&snapshot.plugins, &snapshot.work_root)
             .map_err(|e| e.to_string())?;
         let mut hooks = Vec::new();
+        let mut setup_events = Vec::new();
         for plugin in &snapshot.plugins {
             let resource_root = snapshot
                 .work_root
@@ -116,16 +117,41 @@ impl AppState {
                 for arg in &mut server.args {
                     *arg = arg.replace("${CLAUDE_PLUGIN_ROOT}", &resource_root.to_string_lossy());
                 }
-                tools.extend(
-                    themis_core::plugins::connections::tools(
-                        &plugin.skill_id(name),
-                        &server,
-                        &snapshot.work_root,
-                        approvals.clone(),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?,
-                );
+                match themis_core::plugins::connections::tools(
+                    &plugin.skill_id(name),
+                    &server,
+                    &snapshot.work_root,
+                    approvals.clone(),
+                )
+                .await
+                {
+                    Ok(connection_tools) => tools.extend(connection_tools),
+                    Err(error) => {
+                        // Transport errors may contain remote URLs, arguments or server
+                        // responses. Only expose fixed, actionable failure categories.
+                        let reason = match error.to_string().as_str() {
+                            "Could not start MCP server" => "server process could not start",
+                            "Required MCP environment variable is unset"
+                            | "MCP authentication variable is unset" => {
+                                "required authentication or environment variable is unavailable"
+                            }
+                            "MCP startup denied" => "startup approval was denied",
+                            "Unsupported MCP protocol version" => "server protocol is unsupported",
+                            _ => "connection or tool discovery failed",
+                        };
+                        let warning = format!(
+                            "MCP {}/{name} is unavailable: {reason}. No tools from this connection are available for this run. Use manage_integrations list to inspect its configuration, test_mcp to troubleshoot, or set_component_enabled with kind=mcp to disable it. Management tools remain available; configuration changes apply on the next run.",
+                            plugin.spec.name
+                        );
+                        skill_catalog.push_str("\nIntegration status: ");
+                        skill_catalog.push_str(&warning);
+                        setup_events.push(RunEvent::ToolCallFinished {
+                            tool: format!("mcp_start_{}", plugin.skill_id(name)),
+                            ok: false,
+                            output: warning,
+                        });
+                    }
+                }
             }
             for hook in &plugin.spec.hooks {
                 let mut hook = hook.clone();
@@ -265,6 +291,9 @@ impl AppState {
             // A panicking run must neither stick the thread busy nor leave the
             // UI waiting: join the run, then synthesize the terminal event.
             let run_outcome = tokio::spawn(async move {
+                for event in setup_events {
+                    let _ = events_tx.send(event).await;
+                }
                 let hook_task = task.clone();
                 themis_core::plugins::hooks::with_hooks(
                     hook_runtime,

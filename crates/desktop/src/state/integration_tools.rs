@@ -144,12 +144,12 @@ impl ToolT for ManagementTool {
         match self.name {
             "list_plugins" => "Inspect installed plugins, bundled skills, MCP connections and hooks in the current project and user scope.",
             "save_skill" => "Create or update a personal skill through the shared registry. Supply skill, plugin, scope and expectedRevision when updating.",
-            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list, save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, catalog, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, test_mcp, test_hook. Imports accept path or JSON/config or source repository with ref and subdirectory; component actions take component type and id. Defaults to current project/local scope. Executable operations require approval.",
+            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list, save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, catalog, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository takes url with optional reference and subdirectory. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. test_mcp takes server configuration; test_hook takes hook configuration. Defaults to current project/local scope. Executable operations require approval.",
             _ => "Manage recurring tasks. Actions: list, create, update, enable, disable, delete. Supply id for existing tasks; input contains name/task and optional calendar schedule {repeat,time,timezone,weekday}. Creation defaults to current project/chat. Updates merge input with saved fields. Calendar timezone is IANA; time HH:MM; weekday 0=Monday. Uses normal runtime approvals.",
         }
     }
     fn args_schema(&self) -> Value {
-        json!({"type":"object","properties":{"action":{"type":"string"},"scope":{"type":"string","enum":["local","global"]},"projectRoot":{"type":"string"},"name":{"type":"string"},"plugin":{"type":"string"},"expectedRevision":{"type":"string"},"skill":{"type":"object"},"spec":{"type":"object"},"id":{"type":"string"},"path":{"type":"string"},"source":{"type":"string"},"ref":{"type":"string"},"subdirectory":{"type":"string"},"json":{"type":["object","string"]},"component":{"type":"string"},"enabled":{"type":"boolean"},"input":{"type":"object"}},"additionalProperties":true})
+        json!({"type":"object","properties":{"action":{"type":"string"},"scope":{"type":"string","enum":["local","global"]},"projectRoot":{"type":"string"},"name":{"type":"string"},"plugin":{"type":"string"},"expectedRevision":{"type":"string"},"skill":{"type":"object"},"spec":{"type":"object"},"id":{"type":"string"},"path":{"type":"string"},"source":{"type":"string"},"url":{"type":"string"},"reference":{"type":"string"},"subdirectory":{"type":"string"},"content":{"type":"string"},"kind":{"type":"string","enum":["skill","mcp","hook"]},"marketplace":{"type":"string"},"refresh":{"type":"boolean"},"server":{"type":"object"},"hook":{"type":"object"},"enabled":{"type":"boolean"},"input":{"type":"object"}},"additionalProperties":true})
     }
     fn output_schema(&self) -> Option<Value> {
         None
@@ -160,6 +160,47 @@ impl ToolT for ManagementTool {
 mod tests {
     use super::*;
     use themis_core::tools::{AllowAllHook, DenyAllHook};
+
+    #[tokio::test]
+    async fn advertised_import_and_component_arguments_use_shared_api() {
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let tools = state.integration_management_tools(
+            Arc::new(AllowAllHook),
+            project.path().into(),
+            "chat".into(),
+        );
+        let manager = tools
+            .iter()
+            .find(|tool| tool.name() == "manage_integrations")
+            .unwrap();
+        for field in [
+            "content",
+            "url",
+            "reference",
+            "subdirectory",
+            "kind",
+            "server",
+            "hook",
+        ] {
+            assert!(manager.args_schema()["properties"].get(field).is_some());
+        }
+        let content = json!({"name":"imported","mcp":{"example":{"command":"missing-server","enabled":false}}}).to_string();
+        manager
+            .execute(json!({"action":"import_json","content":content}))
+            .await
+            .unwrap();
+        manager.execute(json!({"action":"set_component_enabled","name":"imported","kind":"mcp","id":"example","enabled":true})).await.unwrap();
+        let listed = manager.execute(json!({"action":"list"})).await.unwrap();
+        let imported = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|plugin| plugin["spec"]["name"] == "imported")
+            .unwrap();
+        assert_eq!(imported["spec"]["mcp"]["example"]["enabled"], true);
+    }
 
     #[tokio::test]
     async fn agent_automation_creation_uses_current_chat_and_update_preserves_fields() {

@@ -182,3 +182,107 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
         .unwrap();
     task.await.unwrap().unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
+    use std::time::Duration;
+    use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let provider = MockServer::start().await;
+    Mock::given(method("POST")).respond_with(|request: &Request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let handled = body["messages"].as_array().unwrap().iter().any(|message| message["role"] == "tool");
+        let message = if handled { json!({"role":"assistant","content":"Disabled the broken connection"}) }
+            else { json!({"role":"assistant","tool_calls":[{"id":"disable","type":"function","function":{"name":"manage_integrations","arguments":json!({"action":"set_component_enabled","name":"broken","kind":"mcp","id":"missing","enabled":false}).to_string()}}]}) };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if handled {"stop"} else {"tool_calls"}}]}))
+    }).mount(&provider).await;
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":{"name":"broken","mcp":{"missing":{"command":project.path().join("nonexistent-mcp"),"args":["SENSITIVE_TEST_ARGUMENT"],"enabled":true}}}})).await.unwrap();
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let created = cli(
+        data.path(),
+        &[
+            "thread",
+            "create",
+            project.path().to_str().unwrap(),
+            "test-model",
+        ],
+    );
+    let id = created["id"].as_str().unwrap().to_owned();
+    let mut events = Client::new(data.path().into()).subscribe().await.unwrap();
+    let directory = data.path().to_path_buf();
+    let thread_id = id.clone();
+    let send = tokio::task::spawn_blocking(move || {
+        cli(
+            &directory,
+            &[
+                "thread",
+                "send",
+                &thread_id,
+                "Disable the broken connection",
+                "--detach",
+            ],
+        )
+    });
+    let mut startup_warning = None;
+    let terminal = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            if event["name"] == "approval-request" {
+                Client::new(data.path().into()).call("approve_action",json!({"threadId":id,"approvalId":event["payload"]["approval_id"],"decision":"once"})).await.unwrap();
+            }
+            if event["name"] == "thread-event" && event["payload"]["event"]["kind"] == "tool_finished"
+                && event["payload"]["event"]["tool"].as_str().is_some_and(|name| name.starts_with("mcp_start_")) {
+                assert_eq!(event["payload"]["event"]["ok"], false);
+                startup_warning = Some(event["payload"]["event"]["output"].as_str().unwrap().to_owned());
+            }
+            if event["name"] == "thread-event" && matches!(event["payload"]["event"]["kind"].as_str(),Some("finished" | "failed")) { break event; }
+        }
+    }).await.unwrap();
+    assert_eq!(
+        terminal["payload"]["event"]["kind"], "finished",
+        "{terminal}"
+    );
+    send.await.unwrap();
+    let saved = state
+        .plugin_action(json!({"action":"list","projectRoot":project.path()}))
+        .await
+        .unwrap();
+    assert_eq!(
+        saved
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|plugin| plugin["spec"]["name"] == "broken")
+            .unwrap()["spec"]["mcp"]["missing"]["enabled"],
+        false
+    );
+    let requests = provider.received_requests().await.unwrap();
+    let first: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let system = first["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("broken/missing"));
+    assert!(system.contains("unavailable"));
+    assert!(!system.contains("SENSITIVE_TEST_ARGUMENT"));
+    let warning = startup_warning.expect("MCP startup failure is surfaced in run events");
+    assert!(warning.contains("broken/missing"));
+    assert!(warning.contains("server process could not start"));
+    assert!(!warning.contains("SENSITIVE_TEST_ARGUMENT"));
+    assert!(warning.len() < 1024);
+    assert!(first["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["function"]["name"] == "manage_integrations"));
+    Client::new(data.path().into())
+        .call("shutdown", json!({}))
+        .await
+        .unwrap();
+    serving.await.unwrap().unwrap();
+}
