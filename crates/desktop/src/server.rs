@@ -405,6 +405,11 @@ pub async fn dispatch(
         "list_threads" => output!(state.list_threads(arg(&args, "projectRoot")?).await?),
         "merge_thread" => output!(state.merge_thread(arg(&args, "threadId")?).await?),
         "discard_thread" => done!(state.discard_thread(arg(&args, "threadId")?).await),
+        "attachment_path" => output!(
+            state
+                .attachment_path(arg(&args, "threadId")?, arg(&args, "path")?)
+                .await?
+        ),
         "attach_files" => output!(
             state
                 .attach_files(arg(&args, "threadId")?, arg(&args, "paths")?)

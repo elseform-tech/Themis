@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 fn server_exposes_all_frontend_backend_commands() {
     let frontend = include_str!("../../../web/src/lib/tauri.ts");
     let server = include_str!("../src/server.rs");
+    let native = include_str!("../src/lib.rs");
     let called: BTreeSet<_> = frontend
         .lines()
         .filter_map(|line| {
@@ -14,6 +15,11 @@ fn server_exposes_all_frontend_backend_commands() {
             (quote == '\'' || quote == '"').then(|| tail[1..].split(quote).next().unwrap())
         })
         .filter(|name| *name != "check_for_updates")
+        .chain(native.split(".call(").skip(1).filter_map(|part| {
+            part.trim_start()
+                .strip_prefix('"')
+                .and_then(|tail| tail.split('"').next())
+        }))
         .collect();
     let handled: BTreeSet<_> = server
         .lines()

@@ -34,6 +34,7 @@ describe("ThreadComposer", () => {
       onAttach={onAttach} onRemoveAttachment={onRemoveAttachment} />);
     fireEvent.click(screen.getByRole("button", {name:"Attach files"}));
     expect(onAttach).toHaveBeenCalledOnce();
+    expect(screen.getByRole("list", {name:"Attached files"}).compareDocumentPosition(screen.getByRole("textbox", {name:"Message"})) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("button", {name:"Send"})).toBeEnabled();
     fireEvent.click(screen.getByRole("button", {name:"Remove music.mp3"}));
     expect(onRemoveAttachment).toHaveBeenCalledWith("/project/.themis/attachments/music.mp3");

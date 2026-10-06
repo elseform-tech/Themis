@@ -122,6 +122,14 @@ async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
         assert_eq!(std::fs::read(file).unwrap(), binary);
     }
     let client = Client::new(data.path().into());
+    assert_eq!(
+        cli(
+            data.path(),
+            "attachment_path",
+            json!({"threadId":id,"path":stored[1]})
+        ),
+        stored[1]
+    );
     let mut events = client.subscribe().await.unwrap();
     cli(
         data.path(),
@@ -157,6 +165,10 @@ async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
     assert_eq!(requests.len(), 2);
     assert!(requests[1].body.len() < 50_000);
     let history = state.get_thread_history(id).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&history[0]).unwrap()["attachments"],
+        json!(stored)
+    );
     assert!(serde_json::to_string(&history)
         .unwrap()
         .contains("control.txt"));
@@ -199,6 +211,7 @@ async fn attachment_paths_and_symlinked_storage_cannot_escape_project() {
         let client = Client::new(data.path().into());
         let error = client.call("send_message", json!({"threadId":thread.id,"text":"Inspect", "attachments":[project.path().join(".themis/attachments/escape.txt")],"reasoningEffort":null})).await.unwrap_err();
         assert!(error.contains("does not belong"), "{error}");
+        assert!(client.call("attachment_path", json!({"threadId":thread.id,"path":project.path().join(".themis/attachments/escape.txt")})).await.unwrap_err().contains("does not belong"));
         assert!(!state.get_thread(&thread.id).await.unwrap().running);
         assert!(state
             .get_thread_history(&thread.id)

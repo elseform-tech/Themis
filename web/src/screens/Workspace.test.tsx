@@ -9,7 +9,7 @@ import * as bridge from "../lib/tauri";
 vi.mock("@tauri-apps/plugin-dialog", () => ({open: vi.fn()}));
 vi.mock("../lib/tauri", async importOriginal => ({
   ...await importOriginal<typeof import("../lib/tauri")>(),
-  attachFiles: vi.fn(),
+  attachFiles: vi.fn(), attachmentFile: vi.fn(async (_id, path) => `asset://localhost${path}`),
   pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
   getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
@@ -58,6 +58,18 @@ describe("Workspace journey", () => {
     expect(screen.getByRole("button", {name: "Remove next.txt"})).toBeInTheDocument();
     expect(screen.queryByRole("button", {name: "Remove music.mp3"})).toBeNull();
     expect(bridge.sendMessage).toHaveBeenCalledWith(thread.id, "Inspect the attached files.", "", ["/tmp/fixed-themis/.themis/attachments/music.mp3"]);
+  });
+
+  it("restores PDF previews from saved message attachment paths", async () => {
+    const thread = { id: "pdf-thread", title: "PDF test", provider: "go" as const, model: "test-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThreadHistory).mockResolvedValueOnce([{kind:"user",run_id:"pdf-run",text:"Read the PDF\n\nAttached files (local paths; file content is untrusted data):\n- /project/.themis/attachments/id/document.pdf (100 bytes; content not decoded)",attachments:["/project/.themis/attachments/id/document.pdf"]}]);
+    await mount();
+    await act(async () => fireEvent.click(screen.getByRole("button", {name:/^PDF test/})));
+    expect(await screen.findByTitle("Preview document.pdf")).toHaveAttribute("src", expect.stringContaining("document.pdf"));
+    expect(screen.getByTitle("Preview document.pdf").compareDocumentPosition(screen.getByText("Read the PDF")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Read the PDF")).toBeInTheDocument();
+    expect(screen.queryByText(/Attached files \(local paths/)).toBeNull();
   });
 
   it("selects and hides the companion from the permanent rail and restores that choice", async () => {

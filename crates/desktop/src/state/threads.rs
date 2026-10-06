@@ -341,11 +341,12 @@ impl AppState {
                 skill_catalog,
             }
         };
-        if let Err(error) = self
-            .inner
-            .transcript
-            .append_user(&thread_id, &run_id, &display_text)
-        {
+        if let Err(error) = self.inner.transcript.append_user_with_attachments(
+            &thread_id,
+            &run_id,
+            &display_text,
+            attachments,
+        ) {
             self.finish_run(&thread_id).await;
             return Err(error);
         }

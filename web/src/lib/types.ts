@@ -187,6 +187,7 @@ export interface PersistedMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
+  attachments?: string[];
   runId?: string;
   final?: boolean;
   model?: string;
@@ -196,7 +197,7 @@ export interface PersistedMessage {
 }
 
 export type HistoryItem =
-  | { kind: "user"; run_id: string; text: string }
+  | { kind: "user"; run_id: string; text: string; attachments?: string[] }
   | { kind: "event"; envelope: ThreadEventEnvelope }
   | { kind: "legacy"; message: PersistedMessage };
 

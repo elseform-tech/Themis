@@ -1,6 +1,6 @@
 // Typed Tauri bridge client. All frontend code reaches the backend through
 // these functions — never raw invoke() with stringly-typed payloads elsewhere.
-import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type { PromptSkill } from './prompt';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
@@ -272,4 +272,9 @@ export function onReviewItemAdded(
   cb: (item: ReviewItem) => void,
 ): Promise<UnlistenFn> {
   return listen<ReviewItem>(REVIEW_ITEM_NAME, (event) => cb(event.payload));
+}
+
+export async function attachmentFile(threadId: string, path: string): Promise<string> {
+  const validated = await tauriInvoke<string>("attachment_file", { threadId, path });
+  return convertFileSrc(validated);
 }

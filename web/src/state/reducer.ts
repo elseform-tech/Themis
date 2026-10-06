@@ -613,7 +613,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         traces: { ...state.traces, [action.threadId]: [] },
       };
       for (const item of action.history) {
-        if (item.kind === "user") next = appendMessage(next, action.threadId, { id: newId("msg"), role: "user", text: item.text, runId: item.run_id });
+        if (item.kind === "user") next = appendMessage(next, action.threadId, { id: newId("msg"), role: "user", text: item.text, attachments: item.attachments, runId: item.run_id });
         else if (item.kind === "legacy") next = appendMessage(next, action.threadId, item.message);
         else next = applyThreadEvent(next, item.envelope, false);
       }

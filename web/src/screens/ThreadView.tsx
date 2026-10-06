@@ -121,7 +121,7 @@ export function ThreadView() {
     dispatch({
       type: "message/append",
       threadId: thread.id,
-      message: { id: newId("msg"), role: "user", text: text + (attachments.length ? `\n\nAttached: ${attachments.map(file => file.name).join(", ")}` : "") },
+      message: { id: newId("msg"), role: "user", text, attachments: attachments.map(file => file.path) },
     });
     armManualRun(thread.id);
     try {

@@ -1,3 +1,4 @@
+import { AttachmentPreview } from "./AttachmentPreview";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
@@ -78,6 +79,7 @@ export function ThreadConversation({
           <ConversationRow
             key={row.kind === "message" ? row.message.id : row.id}
             row={row}
+            threadId={threadId}
             skills={skills} plugins={plugins}
             activeRunId={activeRunId}
             elapsed={elapsed}
@@ -112,18 +114,20 @@ export function ThreadConversation({
 
 function ConversationRow({
   row,
+  threadId,
   activeRunId,
   elapsed,
   skills,
   plugins,
 }: {
   row: ConversationRow;
+  threadId: string;
   activeRunId: string | undefined;
   elapsed: number;
   skills: PromptSkill[];
   plugins: PromptPlugin[];
 }) {
-  if (row.kind === "message") return <Message message={row.message} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
+  if (row.kind === "message") return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
   if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
 
   const durationMs = row.active ? elapsed * 1000 : row.durationMs;
@@ -176,13 +180,15 @@ function Milestone({
   );
 }
 
-function Message({ message, activeRunId, skills, plugins }: { message: ChatMessage; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
+function Message({ message, threadId, activeRunId, skills, plugins }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
+  const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
   const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;
   const completed = message.role === "assistant" && !isActiveRun;
 
   return (
     <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}${completed ? " themis-thread-msg--completed" : ""}`}>
+      {threadId && !!message.attachments?.length && <div className="themis-message-attachments" aria-label="Attached files">{message.attachments.map(path => <AttachmentPreview key={path} threadId={threadId} path={path} />)}</div>}
       {message.tool ? (
         <details className="themis-tool-message">
           <summary className={message.tool.ok === undefined && isActiveRun ? "themis-shimmer" : ""}>
@@ -211,7 +217,7 @@ function Message({ message, activeRunId, skills, plugins }: { message: ChatMessa
           {(message.final || !message.runId) && <small className="themis-response-model">{message.model ?? "Model not recorded"}</small>}
         </>
       ) : (
-        <p className="themis-thread-text"><PromptText value={message.text} skills={skills} plugins={plugins} /></p>
+        <p className="themis-thread-text"><PromptText value={text} skills={skills} plugins={plugins} /></p>
       )}
     </div>
   );

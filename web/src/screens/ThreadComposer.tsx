@@ -1,3 +1,4 @@
+import { AttachmentPreview } from "./AttachmentPreview";
 import { PromptInput } from "../components/PromptInput";
 import { useEffect, useRef } from "react";
 import type { Attachment } from "../lib/tauri";
@@ -96,15 +97,15 @@ export function ThreadComposer({
             <Button variant="ghost" size="small" onClick={onOpenSettings}>Open settings</Button>
           </p>
         )}
-        <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} history={history} disabled={composerDisabled}
-          placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Message Themis… @ for plugins, / for skills"}
-          onChange={onDraftChange} onSubmit={onSend} />
         {attachments.length > 0 && <ul className="themis-composer-attachments" aria-label="Attached files">
           {attachments.map(file => <li key={file.path} title={`${file.name} · ${file.size.toLocaleString()} bytes`}>
-            <span>{file.name}</span>
+            <AttachmentPreview threadId={thread.id} path={file.path} />
             <button type="button" aria-label={`Remove ${file.name}`} disabled={composerDisabled} onClick={() => onRemoveAttachment?.(file.path)}>×</button>
           </li>)}
         </ul>}
+        <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} history={history} disabled={composerDisabled}
+          placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Message Themis… @ for plugins, / for skills"}
+          onChange={onDraftChange} onSubmit={onSend} />
         <div className="themis-thread-composer-actions">
           <Button variant="ghost" size="small" aria-label="Attach files" title="Attach files" disabled={composerDisabled} onClick={onAttach}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2" /></svg>

@@ -12,9 +12,18 @@ use crate::types::{ThreadEvent, ThreadEventEnvelope};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryItem {
-    User { run_id: String, text: String },
-    Event { envelope: ThreadEventEnvelope },
-    Legacy { message: serde_json::Value },
+    User {
+        run_id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<String>,
+    },
+    Event {
+        envelope: ThreadEventEnvelope,
+    },
+    Legacy {
+        message: serde_json::Value,
+    },
 }
 
 pub struct TranscriptStore {
@@ -157,11 +166,22 @@ impl TranscriptStore {
     }
 
     pub fn append_user(&self, thread_id: &str, run_id: &str, text: &str) -> Result<(), String> {
+        self.append_user_with_attachments(thread_id, run_id, text, Vec::new())
+    }
+
+    pub fn append_user_with_attachments(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+        text: &str,
+        attachments: Vec<String>,
+    ) -> Result<(), String> {
         self.append(
             thread_id,
             &HistoryItem::User {
                 run_id: run_id.to_owned(),
                 text: text.to_owned(),
+                attachments,
             },
         )
     }
