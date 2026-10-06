@@ -111,9 +111,15 @@ fn discover_scope(
                         false
                     }
                 };
+                // Snapshot resource paths change with content while capability identity stays stable.
+                let snapshot_hash = serde_json::to_vec(&spec)?
+                    .into_iter()
+                    .fold(0xcbf29ce484222325u64, |hash, byte| {
+                        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+                    });
                 plugins.push(Plugin {
                     scope: scope.into(),
-                    revision: "discovered".into(),
+                    revision: format!("discovered-{snapshot_hash:016x}"),
                     enabled: valid && !registry.discovery_disabled.contains(&plugin_name),
                     source: Some("discovered".into()),
                     spec,

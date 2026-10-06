@@ -143,6 +143,25 @@ fn discovers_project_skills_read_only_and_persists_activation_override() {
             &[]
         )
         .is_ok());
+    fs::write(
+        Path::new(&selected.spec.skill_paths["review"])
+            .parent()
+            .unwrap()
+            .join("reference.md"),
+        "New supporting resource",
+    )
+    .unwrap();
+    let changed = store
+        .discovered_plugins()
+        .unwrap()
+        .into_iter()
+        .find(|plugin| plugin.scope == "local" && plugin.spec.name == selected.spec.name)
+        .unwrap();
+    assert_eq!(
+        changed.capability_id("review"),
+        selected.capability_id("review")
+    );
+    assert_ne!(changed.revision, selected.revision);
     store
         .set_component_enabled("local", &selected.spec.name, "skill", "review", false)
         .unwrap();
