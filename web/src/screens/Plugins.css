@@ -20,7 +20,7 @@
 .themis-integration-menu { position: absolute; right: 0; top: 100%; z-index: 10; min-width: 10rem; background: var(--themis-surface); border: 1px solid var(--themis-border); border-radius: .5rem; padding: .25rem; }
 .themis-integration-menu button { display: block; width: 100%; text-align: left; }
 .themis-integrations-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-.themis-integrations .themis-dialog-panel:has(.themis-skill-viewer) { display: flex; flex-direction: column; width: min(90vw, 58rem); max-width: none; height: min(85vh, 48rem); overflow: hidden; }
+.themis-integrations .themis-dialog-panel:has(.themis-skill-viewer) { display: flex; flex-direction: column; width: min(90vw, 58rem); max-width: none; max-height: min(85vh, 48rem); overflow: hidden; }
 .themis-skill-viewer { flex: 1; min-height: 0; overflow: auto; }
 .themis-integration-skill-count { color: var(--themis-text-2); margin: 0 0 .25rem; }
 .themis-integration-markdown { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8125rem; line-height: 1.7; }
