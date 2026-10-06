@@ -469,6 +469,26 @@ async fn real_public_plugin_and_skill_import_acceptance() {
         .unwrap();
     assert!(pdf.spec.skills.iter().any(|s| s.id == "pdf"));
     assert!(pdf.spec.files.contains_key("SKILL.md"));
+    for name in ["docx", "xlsx"] {
+        let imported = store
+            .import_repository(
+                "global",
+                &format!("upstream-{name}"),
+                "https://github.com/anthropics/skills.git",
+                Some("683bc88e56f3e09ba94f7055977f3d3aa499f202"),
+                Some(&format!("skills/{name}")),
+            )
+            .await
+            .unwrap();
+        assert_eq!(imported.spec.package_kind.as_deref(), Some("skill"));
+        assert_eq!(imported.spec.skills.len(), 1);
+        assert_eq!(imported.spec.skills[0].id, name);
+        println!(
+            "anthropics/skills {name}: imported standalone skill and {} resources",
+            imported.spec.files.len()
+        );
+    }
+
     println!("anthropics/skills @ 683bc88e56f3e09ba94f7055977f3d3aa499f202 pdf: {} skills, {} text resources, {} compatibility notices", pdf.spec.skills.len(), pdf.spec.files.len(), pdf.spec.unsupported.len());
     let official = tempfile::tempdir().unwrap();
     let checkout = official.path().join("catalog");
