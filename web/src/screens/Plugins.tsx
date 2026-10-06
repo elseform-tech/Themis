@@ -20,7 +20,7 @@ const publicSkills = [
   { id: "docx", name: "Word documents", description: "Create and edit Word documents." },
   { id: "xlsx", name: "Spreadsheets", description: "Create, edit, and analyze spreadsheets." },
 ];
-type Glyph = "more" | "add" | "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx";
+type Glyph = "more" | "add" | "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye";
 const skillGlyph = (id: string): Glyph => ["pdf", "docx", "xlsx"].includes(id) ? id as Glyph : "file";
 const emptySpec = (): PluginSpec => ({ name: "personal", description: "", version: "", skills: [], mcp: {}, hooks: [], files: {}, unsupported: [] });
 function pluginDisplayName(plugin: Plugin) {
@@ -46,6 +46,7 @@ function markdown(plugin: Plugin, id: string) {
 }
 function Icon({ name }: { name: Glyph }) {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+    {name === "eye" && <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>}
     {name === "more" && <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>}
     {name === "add" && <path d="M12 5v14M5 12h14" />}
     {name === "folder" && <path d="M3 7h7l2 2h9v11H3ZM3 7V4h7l2 3" />}
@@ -77,7 +78,6 @@ export function Plugins() {
   const [sourceType, setSourceType] = useState("paste"), [source, setSource] = useState(""), [name, setName] = useState("");
   const [testResult, setTestResult] = useState<unknown>(null);
   const [search, setSearch] = useState("");
-  const [readerMode, setReaderMode] = useState<"source" | "rendered">("source");
   const [catalog, setCatalog] = useState<Array<{ name: string; description?: string; icon?: string; source?: unknown }>>([]), [market, setMarket] = useState("");
   const load = useCallback(async () => {
     if (root !== activeRoot.current) return;
@@ -108,8 +108,8 @@ export function Plugins() {
     catch (error) { setError(describeError(error)); throw error; } finally { setBusy(false); }
   }
   function open(mode: Panel["mode"], item?: Item) {
-    setMenu(null); setError(""); setTestResult(null); setReaderMode("source"); setPanel({ mode, item });
-    setFile(item?.kind === "plugin" ? item.plugin.spec.skills[0]?.id ?? "" : item?.id ?? "");
+    setMenu(null); setError(""); setTestResult(null); setPanel({ mode, item });
+    setFile(item?.kind === "plugin" ? "" : item?.id ?? "");
     const template = emptySpec();
     let number = 1;
     while (plugins.some(plugin => plugin.spec.name === `personal-${number}`)) number++;
@@ -158,7 +158,7 @@ export function Plugins() {
     try {
       const value = await pluginAction<PluginSpec>({ action: "preview", marketplace, name, projectRoot: root });
       setPanel(current => current?.marketplace === marketplace && current.item?.id === name ? { ...current, item: { ...previewItem, plugin: { ...plugin, spec: { ...value, icon: value.icon ?? icon } } } } : current);
-      setFile(value.skills[0]?.id ?? "");
+      setFile("");
     } catch (error) { setError(describeError(error)); } finally { setBusy(false); }
   }
   async function previewSkill(skill: typeof publicSkills[number]) {
@@ -210,9 +210,9 @@ export function Plugins() {
     <Dialog open={panel !== null} title={panel?.mode === "view" ? item?.name : panel?.mode === "uninstall" ? `Uninstall ${item?.name}?` : panel?.mode === "edit" ? `Configure ${item?.name}` : panel?.mode === "market" ? "Add marketplace" : "Add integration"} onClose={() => { if (!busy || panel?.marketplace || panel?.skillSource) setPanel(null); }}>
       {panel?.mode === "view" && <div className="themis-skill-viewer">
         {(panel.marketplace || panel.skillSource) && busy ? <p role="status">Loading skills…</p> : <>
-          {item?.kind === "plugin" && <><p className="themis-integration-skill-count">{item.plugin.spec.skills.length} {item.plugin.spec.skills.length === 1 ? "skill" : "skills"}</p><div className="themis-integration-files">{item.plugin.spec.skills.map(skill => <button key={skill.id} aria-pressed={file === skill.id} onClick={() => setFile(skill.id)}>{skill.name}</button>)}</div></>}
+          {item?.kind === "plugin" && <><p className="themis-integration-skill-count">{item.plugin.spec.skills.length} {item.plugin.spec.skills.length === 1 ? "skill" : "skills"}</p><ul className="themis-bundled-skills">{item.plugin.spec.skills.map(skill => <li key={skill.id}><button aria-label={`View ${skill.name}`} aria-pressed={file === skill.id} onClick={() => setFile(skill.id)}><span>{skill.name}</span><Icon name="eye" /></button></li>)}</ul></>}
           {panel.skillSource && <a href={panel.skillSource} target="_blank" rel="noreferrer">Read SKILL.md</a>}
-          {item?.kind === "mcp" || item?.kind === "hook" ? <details><summary>Advanced configuration</summary><CodeBlock code={text} language="json" /></details> : text ? <><div className="themis-integration-files" aria-label="Skill view"><button aria-pressed={readerMode === "source"} onClick={() => setReaderMode("source")}>Source</button><button aria-pressed={readerMode === "rendered"} onClick={() => setReaderMode("rendered")}>Rendered</button></div>{readerMode === "source" ? <CodeBlock code={text} language="markdown" /> : <ResponseBody text={text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")} />}</> : <p>No bundled skills.</p>}
+          {item?.kind === "mcp" || item?.kind === "hook" ? <details><summary>Advanced configuration</summary><CodeBlock code={text} language="json" /></details> : text ? <ResponseBody text={text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")} /> : !item?.plugin.spec.skills.length ? <p>No bundled skills.</p> : null}
           {!!item?.plugin.spec.unsupported.length && <details><summary>Compatibility notes</summary><ul>{item.plugin.spec.unsupported.map((warning, i) => <li key={i}>{warning}</li>)}</ul></details>}
         </>}
       </div>}

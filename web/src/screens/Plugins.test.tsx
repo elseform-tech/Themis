@@ -26,7 +26,7 @@ beforeEach(() => {
   });
 });
 describe("Integrations management", () => {
-  it("shows complete captured skill source with frontmatter, bundle count, and rendered Markdown", async () => {
+  it("shows complete captured skill Markdown after selecting it from the bundle", async () => {
     const source = `---\nname: draft\nlicense: Original-License\n---\n# Full skill\n\n${"Complete source text. ".repeat(100)}\n\n## Final section\nUNTRUNCATED_TAIL`.replace(/\n/g, "\r\n");
     installed[0].spec.files = { "custom/notes/SKILL.md": source };
     installed[0].spec.skill_paths = { draft: "custom/notes/SKILL.md" };
@@ -34,15 +34,15 @@ describe("Integrations management", () => {
     fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
     const dialog = screen.getByRole("dialog", { name: "docs" });
     expect(dialog).toHaveTextContent("1 skill");
-    expect(dialog).toHaveTextContent("Original-License");
-    expect(dialog).toHaveTextContent("UNTRUNCATED_TAIL");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Rendered" }));
+    expect(dialog).not.toHaveTextContent("UNTRUNCATED_TAIL");
+    expect(within(dialog).queryByRole("button", { name: "View source" })).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "View Draft" }));
     expect(within(dialog).getByRole("heading", { name: "Full skill" })).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Final section" })).toBeInTheDocument();
     expect(dialog).not.toHaveTextContent("Original-License");
     expect(dialog).toHaveTextContent("UNTRUNCATED_TAIL");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Source" }));
-    expect(dialog).toHaveTextContent("Original-License");
+    expect(within(dialog).queryByRole("button", { name: "Source" })).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "Rendered" })).toBeNull();
   });
   it("lists every bundled skill and selects its original nested source", async () => {
     installed[0].spec.skills.push({ ...installed[0].spec.skills[0], id: "review", name: "Review" });
@@ -51,8 +51,8 @@ describe("Integrations management", () => {
     fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
     const dialog = screen.getByRole("dialog", { name: "docs" });
     expect(dialog).toHaveTextContent("2 skills");
-    expect(within(dialog).getByRole("button", { name: "Draft" })).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Review" }));
+    expect(within(dialog).getByRole("button", { name: "View Draft" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "View Review" }));
     expect(dialog).toHaveTextContent("Review-License");
     expect(dialog).not.toHaveTextContent("Draft source");
   });
@@ -89,7 +89,7 @@ describe("Integrations management", () => {
     fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
     expect(screen.queryByRole("button", { name: "Ask Themis" })).toBeNull();
     expect(screen.queryByLabelText("What would you like Themis to do?")).toBeNull();
-    expect(screen.getByRole("button", { name: "Source" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Draft" })).toBeInTheDocument();
   });
 
   it("keeps disabled plugin children gated and replaces failed icons with a glyph", async () => {
@@ -266,6 +266,7 @@ describe("Integrations management", () => {
     expect(screen.getByAltText("")).toHaveAttribute("src", "https://example.com/icon.svg");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "View public-docs" })));
     const dialog = screen.getByRole("dialog", { name: "public-docs" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "View Draft" }));
     expect(dialog).toHaveTextContent("Read the sources before drafting.");
     expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "preview", marketplace: "official", name: "public-docs" }));
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
@@ -343,6 +344,7 @@ describe("Integrations management", () => {
     render(<Plugins />);
     fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
     const dialog = screen.getByRole("dialog", { name: "docs" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "View Draft" }));
     expect(dialog).toHaveTextContent("Read the sources before drafting.");
     expect(screen.getByRole("button", { name: "MCP" })).toBeInTheDocument();
   });
