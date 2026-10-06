@@ -76,6 +76,7 @@ pub struct Connection {
     transport: Transport,
     next_id: u64,
     protocol: Option<String>,
+    instructions: Option<String>,
 }
 impl std::fmt::Debug for Connection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -139,6 +140,7 @@ impl Connection {
             transport,
             next_id: 1,
             protocol: None,
+            instructions: None,
         };
         let init=result.request("initialize",json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"Themis","version":env!("CARGO_PKG_VERSION")}})).await?;
         if !matches!(
@@ -148,6 +150,15 @@ impl Connection {
             bail!("Unsupported MCP protocol version");
         }
         result.protocol = init["protocolVersion"].as_str().map(str::to_owned);
+        if let Some(instructions) = init.get("instructions") {
+            let instructions = instructions
+                .as_str()
+                .context("MCP instructions must be a string")?;
+            if instructions.len() > 32768 {
+                bail!("MCP instructions exceed 32768 bytes");
+            }
+            result.instructions = Some(instructions.to_owned());
+        }
         result
             .send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
             .await?;
@@ -363,7 +374,7 @@ pub async fn tools(
     server: &McpServer,
     root: &Path,
     approvals: Arc<dyn ApprovalHook>,
-) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
+) -> anyhow::Result<(Vec<Box<dyn ToolT>>, Option<String>)> {
     let action = ToolAction {
         tool: format!("mcp_start_{name}"),
         summary: format!(
@@ -385,6 +396,7 @@ pub async fn tools(
         bail!("MCP startup denied");
     }
     let mut connection = Connection::connect(server, root).await?;
+    let instructions = connection.instructions.clone();
     let metadata = connection.tools().await?;
     let connection = Arc::new(tokio::sync::Mutex::new(connection));
     let mut result: Vec<Box<dyn ToolT>> = vec![];
@@ -402,7 +414,7 @@ pub async fn tools(
             approvals: approvals.clone(),
         }));
     }
-    Ok(result)
+    Ok((result, instructions))
 }
 
 pub fn tool_identity(namespace: &str, component: &str) -> String {

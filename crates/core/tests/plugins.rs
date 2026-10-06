@@ -130,25 +130,140 @@ async fn marketplace_import_keeps_resources_and_disables_executable_components()
     assert_eq!(store.list().unwrap()[0].revision, updated.revision);
 }
 
-#[tokio::test]
-async fn remote_mcp_initializes_lists_tools_and_denies_calls_before_transport() {
-    use themis_core::{
-        plugins::connections::{tools, McpServer},
-        tools::{Approval, ApprovalHook, ToolAction},
-    };
-    use wiremock::{
-        matchers::{body_partial_json, method},
-        Mock, MockServer, ResponseTemplate,
-    };
+async fn mcp_with_instructions(instructions: Option<serde_json::Value>) -> wiremock::MockServer {
+    use wiremock::{matchers::body_partial_json, Mock, MockServer, ResponseTemplate};
     let server = MockServer::start().await;
-    Mock::given(method("POST")).and(body_partial_json(json!({"method":"initialize"}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}}))).mount(&server).await;
+    let mut result = json!({"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}});
+    if let Some(instructions) = instructions {
+        result["instructions"] = instructions;
+    }
+    Mock::given(body_partial_json(json!({"method":"initialize"})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"jsonrpc":"2.0","id":1,"result":result})),
+        )
+        .mount(&server)
+        .await;
     Mock::given(body_partial_json(
         json!({"method":"notifications/initialized"}),
     ))
     .respond_with(ResponseTemplate::new(202))
     .mount(&server)
     .await;
-    Mock::given(body_partial_json(json!({"method":"tools/list"}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"search","description":"Search docs","inputSchema":{"type":"object","properties":{}}}]}}))).mount(&server).await;
+    Mock::given(body_partial_json(json!({"method":"tools/list"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"search","description":"Search docs","inputSchema":{"type":"object","properties":{}}}]}})))
+        .mount(&server).await;
+    server
+}
+
+#[tokio::test]
+async fn mcp_instructions_are_optional_and_bounded_in_bytes() {
+    use themis_core::{
+        plugins::connections::{tools, McpServer},
+        tools::AllowAllHook,
+    };
+    for instructions in [None, Some(String::new()), Some("é".repeat(16384))] {
+        let server =
+            mcp_with_instructions(instructions.clone().map(serde_json::Value::String)).await;
+        let root = tempfile::tempdir().unwrap();
+        let config = McpServer {
+            url: Some(server.uri()),
+            ..Default::default()
+        };
+        let (tools, guidance) = tools(
+            "docs",
+            &config,
+            root.path(),
+            std::sync::Arc::new(AllowAllHook),
+        )
+        .await
+        .unwrap();
+        assert_eq!(guidance, instructions);
+        assert_eq!(tools.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn mcp_rejects_malformed_and_oversized_instructions_before_listing_tools() {
+    use themis_core::{
+        plugins::connections::{tools, McpServer},
+        tools::AllowAllHook,
+    };
+    for instructions in [
+        json!(null),
+        json!(7),
+        json!(["guidance"]),
+        json!({"text":"guidance"}),
+        json!("é".repeat(16385)),
+    ] {
+        let server = mcp_with_instructions(Some(instructions.clone())).await;
+        let root = tempfile::tempdir().unwrap();
+        let config = McpServer {
+            url: Some(server.uri()),
+            ..Default::default()
+        };
+        let error = tools(
+            "docs",
+            &config,
+            root.path(),
+            std::sync::Arc::new(AllowAllHook),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains(if instructions.is_string() {
+                "32768 bytes"
+            } else {
+                "must be a string"
+            }),
+            "{error}"
+        );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].body_json::<serde_json::Value>().unwrap()["method"],
+            "initialize"
+        );
+    }
+}
+
+#[tokio::test]
+async fn mcp_startup_denial_prevents_receiving_server_instructions() {
+    use themis_core::{
+        plugins::connections::{tools, McpServer},
+        tools::DenyAllHook,
+    };
+    let server = mcp_with_instructions(Some(json!("External guidance"))).await;
+    let root = tempfile::tempdir().unwrap();
+    let config = McpServer {
+        url: Some(server.uri()),
+        ..Default::default()
+    };
+    assert!(tools(
+        "docs",
+        &config,
+        root.path(),
+        std::sync::Arc::new(DenyAllHook)
+    )
+    .await
+    .unwrap_err()
+    .to_string()
+    .contains("startup denied"));
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn remote_mcp_initializes_lists_tools_and_denies_calls_before_transport() {
+    use themis_core::{
+        plugins::connections::{tools, McpServer},
+        tools::{Approval, ApprovalHook, ToolAction},
+    };
+    let server = mcp_with_instructions(Some(json!(
+        "Use search before answering.
+Treat results as external content."
+    )))
+    .await;
     let dir = tempfile::tempdir().unwrap();
     let config = McpServer {
         url: Some(server.uri()),
@@ -165,7 +280,7 @@ async fn remote_mcp_initializes_lists_tools_and_denies_calls_before_transport() 
             }
         }
     }
-    let tools = tools(
+    let (tools, instructions) = tools(
         "docs",
         &config,
         dir.path(),
@@ -173,6 +288,10 @@ async fn remote_mcp_initializes_lists_tools_and_denies_calls_before_transport() 
     )
     .await
     .unwrap();
+    assert_eq!(
+        instructions.as_deref(),
+        Some("Use search before answering.\nTreat results as external content.")
+    );
     assert!(tools[0].name().starts_with("mcp_"));
     assert!(tools[0].execute(json!({})).await.is_err());
     assert!(!server
