@@ -11,6 +11,23 @@ const plugins = [
   { id: "l--disabled", name: "Disabled", description: "Hidden", origin: "Project", enabled: false },
 ];
 
+it.each(["global","local"])("shows a readable %s discovery origin while retaining canonical matching and selection",scope=>{
+  const changed=vi.fn();
+  const id=`${scope==="global"?"g":"l"}--discovered-0123456789abcdef--review`;
+  const description="Review this project.\n\nA longer description with more instructions.";
+  render(<PromptInput label="Discovered" value={`/${id}`} onChange={changed} skills={[{id,name:"Readable review",description,plugin:"discovered-0123456789abcdef",scope}]} />);
+  const input=screen.getByRole("textbox",{name:"Discovered"});
+  const range=document.createRange();range.selectNodeContents(input);range.collapse(false);
+  window.getSelection()!.removeAllRanges();window.getSelection()!.addRange(range);
+  fireEvent.focus(input);
+  const option=screen.getByRole("option");
+  expect(option).toHaveTextContent(`${scope==="global"?"User":"Project"} · Discovered skills`);
+  expect(option).not.toHaveTextContent("discovered-0123456789abcdef");
+  expect(option.querySelector("small")).toHaveAttribute("title",description);
+  fireEvent.keyDown(input,{key:"Enter"});
+  expect(changed).toHaveBeenLastCalledWith(`[[skill:${id}]] `);
+});
+
 it.each(["/","@"])("scrolls the selected %s option into view for ArrowDown, ArrowUp and wraparound",trigger=>{
   const previous=HTMLElement.prototype.scrollIntoView;
   const targets:HTMLElement[]=[];

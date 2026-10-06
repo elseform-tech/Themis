@@ -23,6 +23,11 @@ function referenceLabel(name:string) {
   label.textContent=name;
   return label;
 }
+function skillOrigin(skill:PromptSkill) {
+  const scope=skill.scope==="local"?"Project":skill.scope==="global"?"User":"";
+  const origin=skill.plugin.startsWith("discovered-")?"Discovered skills":skill.plugin;
+  return scope?`${scope} · ${origin}`:origin;
+}
 export function SkillIcon() { return <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="m8 2 1.6 4.4L14 8l-4.4 1.6L8 14l-1.6-4.4L2 8l4.4-1.6L8 2Zm7 10 .8 2.2L18 15l-2.2.8L15 18l-.8-2.2L12 15l2.2-.8L15 12Z"/></svg>; }
 export function PluginIcon({plugin}:{plugin?:PromptPlugin}) {
   return plugin?.icon ? <img className="themis-prompt-plugin-icon" src={plugin.icon} alt="" referrerPolicy="no-referrer" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0ZM12 18v4"/></svg>;
@@ -118,7 +123,7 @@ export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,
   return <div className="themis-prompt-input">
     <div ref={editor} id={id} role="textbox" aria-label={label} aria-multiline="true" aria-disabled={disabled} aria-autocomplete="list" aria-controls={slash?listId:undefined} aria-activedescendant={slash&&choices[active]?`${listId}-${active}`:undefined} contentEditable={!disabled} suppressContentEditableWarning className="themis-prompt-editor" data-placeholder={placeholder} onFocus={detectSlash} onKeyUp={event=>{if(!["ArrowUp","ArrowDown","Enter","Tab","Escape"].includes(event.key))detectSlash();}} onKeyDown={keyDown} onInput={()=>{if(editor.current){update(serialize(editor.current));recall.current.index=-1;detectSlash();}}} onPaste={event=>{event.preventDefault();const text=event.clipboardData.getData("text/plain");document.execCommand("insertText",false,text);if(editor.current){update(serialize(editor.current));detectSlash();}}} onCopy={event=>{const selection=window.getSelection();if(selection?.rangeCount){event.clipboardData.setData("text/plain",serialize(selection.getRangeAt(0).cloneContents()));event.preventDefault();}}} />
     {slash&&<div className="themis-prompt-menu" id={listId} role="listbox" aria-label={slash.kind==="plugin"?"Plugins":"Skills"}>
-      {choices.length===0?<p>No matching {slash.kind==="plugin"?"plugins":"skills"}</p>:choices.map((choice,index)=><button key={choice.id} ref={index===active?activeOption:undefined} type="button" id={`${listId}-${index}`} role="option" aria-selected={index===active} onMouseDown={event=>event.preventDefault()} onClick={()=>select(choice)}>{"origin" in choice?<PluginIcon plugin={choice} />:<SkillIcon />}<span>{choice.name}<small>{"origin" in choice?choice.origin:choice.plugin} · {choice.description}</small></span></button>)}
+      {choices.length===0?<p>No matching {slash.kind==="plugin"?"plugins":"skills"}</p>:choices.map((choice,index)=><button key={choice.id} ref={index===active?activeOption:undefined} type="button" id={`${listId}-${index}`} role="option" aria-selected={index===active} onMouseDown={event=>event.preventDefault()} onClick={()=>select(choice)}>{"origin" in choice?<PluginIcon plugin={choice} />:<SkillIcon />}<span>{choice.name}<small title={choice.description}>{"origin" in choice?choice.origin:skillOrigin(choice)} · {choice.description}</small></span></button>)}
     </div>}
   </div>;
 }
