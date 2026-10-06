@@ -2,15 +2,14 @@ import { useEffect, useState } from "react";
 import { listPromptSkills, pluginAction } from "./tauri";
 import type { PromptPlugin, PromptSkill } from "./prompt";
 import type { Plugin } from "./types";
+import { isPluginPackage } from "./integrations";
 
 function promptPlugin(bundle:Plugin):PromptPlugin {
   const spec=bundle.spec;
   let icon:string|undefined;
   if (spec.icon?.startsWith("https://")) icon=spec.icon;
   else if (spec.icon && spec.files[spec.icon]?.trim().startsWith("<svg")) icon=`data:image/svg+xml,${encodeURIComponent(spec.files[spec.icon])}`;
-  let name=spec.name;
-  if (spec.origin?.kind==="discovered") name=spec.skills[0]?.name ?? spec.origin.location.replace(/[\\/]+$/,"").split(/[\\/]/).pop() ?? "Unavailable skill";
-  return {id:`${bundle.scope==="local"?"l":"g"}--${spec.name}`,name,description:spec.description,origin:`${bundle.scope==="local"?"Project":"Global"} · ${spec.origin?.kind ?? "personal"}`,icon,enabled:bundle.enabled};
+  return {id:`${bundle.scope==="local"?"l":"g"}--${spec.name}`,name:spec.name,description:spec.description,origin:`${bundle.scope==="local"?"Project":"Global"} · ${spec.origin?.kind ?? "personal"}`,icon,enabled:bundle.enabled};
 }
 
 export function usePromptSkills(projectRoot?:string|null, refresh?:unknown) {
@@ -27,7 +26,7 @@ export function usePromptSkills(projectRoot?:string|null, refresh?:unknown) {
         const [items,bundles]=await Promise.all([listPromptSkills(projectRoot),pluginAction<Plugin[]>({action:"list",projectRoot:projectRoot ?? null})]);
         if (!active || request!==generation) return;
         setSkills(items);
-        setPlugins(bundles.map(promptPlugin));
+        setPlugins(bundles.filter(isPluginPackage).map(promptPlugin));
         setError("");
       } catch(error) {if(active && request===generation)setError(String(error));}
     };
