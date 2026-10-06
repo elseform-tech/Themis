@@ -1,0 +1,11 @@
+.themis-ask-button, .themis-integrations button.themis-ask-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.5rem; height: 2.5rem; padding: 0; flex-shrink: 0;
+  border: 0; border-radius: .375rem; background: transparent; color: var(--themis-text-2); cursor: pointer;
+}
+.themis-ask-button:hover, .themis-integrations button.themis-ask-button:hover { background: var(--themis-surface); }
+.themis-ask-button:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 2px; }
+.themis-ask-button:disabled { opacity: .5; cursor: default; }
+.themis-ask-button svg { animation: themis-ask-shimmer 3.8s ease-in-out infinite; }
+@keyframes themis-ask-shimmer { 0%, 70%, 100% { color: var(--themis-text-2); opacity: .8; } 35% { color: var(--themis-text); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .themis-ask-button svg { animation: none; } }

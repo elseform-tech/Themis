@@ -53,6 +53,8 @@ describe("Integrations management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Open a chat");
     expect(readSession("drafts", {})).toEqual({ "other-chat": "Preserve me" });
+    expect(screen.getByRole("button", { name: "Ask Themis" })).toHaveAttribute("title", "Ask Themis");
+    expect(screen.getByRole("button", { name: "Ask Themis" })).toHaveTextContent(/^$/);
   });
 
   it("keeps disabled plugin children gated and replaces failed icons with a glyph", async () => {

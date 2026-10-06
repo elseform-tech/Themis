@@ -266,7 +266,7 @@ export function Automations() {
         <h2 className="themis-automations-title">Automations</h2>
         <div className="themis-automations-head-actions">
           <Button variant="ghost" size="small" onClick={openCreate}>+ New automation</Button>
-          <Button variant="primary" size="small" disabled={!state.activeThreadId} title={!state.activeThreadId ? "Open a chat to ask Themis" : ""} onClick={askThemis}><AskThemisIcon />Ask Themis</Button>
+          <button className="themis-ask-button" aria-label="Ask Themis" title="Ask Themis" disabled={!state.activeThreadId} onClick={askThemis}><AskThemisIcon /></button>
         </div>
       </div>
       {!state.settings.automations_enabled && (
@@ -459,7 +459,7 @@ export function Automations() {
               >
                 Cancel
               </Button>
-              <Button variant="ghost" disabled={saving || creatingProject || !state.activeThreadId} title={!state.activeThreadId ? "Open a chat to ask Themis" : ""} onClick={askThemis}><AskThemisIcon />Ask Themis</Button>
+              <button className="themis-ask-button" aria-label="Ask Themis" title="Ask Themis" disabled={saving || creatingProject || !state.activeThreadId} onClick={askThemis}><AskThemisIcon /></button>
               <Button
                 variant="primary"
                 disabled={saving || creatingProject || newProjectName !== null}

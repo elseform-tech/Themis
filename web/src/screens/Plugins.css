@@ -8,8 +8,6 @@
 .themis-integrations-tabs button[aria-pressed="true"] { border-bottom: 2px solid var(--themis-text); }
 .themis-integrations-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem 0; }
 .themis-integrations-toolbar > div { display: flex; align-items: center; gap: .5rem; }
-.themis-integrations button.themis-integrations-primary { display: inline-flex; align-items: center; gap: .5rem; background: var(--themis-text); color: var(--themis-surface); border-radius: .375rem; padding: .5rem .875rem; }
-.themis-integrations button.themis-integrations-primary:hover { opacity: .85; }
 .themis-integrations-search { margin: .25rem 0 .75rem; }
 .themis-integrations-agent { display: flex; align-items: end; gap: .75rem; margin-bottom: 1rem; }
 .themis-integrations-agent label { flex: 1; }
