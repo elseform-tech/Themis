@@ -188,3 +188,38 @@ FINISH-81 | project Indigo | amount 305
 Scoped local evidence: `/tmp/themis-bounded-original-evidence.json` and `/tmp/themis-bounded-variant-evidence.json`; authoritative events/checkpoints remain in the production SQLite store. Direct probe logs and capture/replay artifacts are temporary investigation files and are not committed. The final native app remains open on the changed-fixture answer.
 
 An additional observation: reopening the UI during an active server run temporarily displayed “Run interrupted” while the server still reported the run as active; the final event corrected the view. Active-run hydration was not changed as part of this compaction fix. This and the stale-server compatibility issue recorded above are separate remaining UI/operational issues.
+
+
+## Three successive compactions in one conversation
+
+The bounded implementation at commit `3f7a9e5` passed a real-model repeated-compaction control on 2026-10-06. A single new production-server conversation received three distinct attachments sequentially. Each contained roughly 210,000 reference-tokenizer tokens and three unique records, separated by repeated ` apple` filler. The configured budget stayed 200000 and the model stayed `muse-spark-1.3-contributor`. Sends used the production `target/release/themis` CLI against the normal shared app server, without mocks or debug builds. This follow-up did not test native upload/rendering again.
+
+Each request said:
+
+> Retention control: Maintain every exact marker, project and amount record from every attachment in this conversation for the final report. Preserve all earlier batches as well as the new batch, and the original record order. Use only provided context; do not use tools or reread files.
+
+The first two requests additionally required only `ACK`, with no records repeated in the answer. The third required exactly nine lines containing all records in batch/record order, using `MISSING` for any absent record. Expected values were absent from these requests; only attachments supplied them. This avoids using earlier assistant answers as another copy of the tested records.
+
+**All three checkpoints retained every expected record; the final answer matched all nine records exactly.** There were exactly three `context_compacting` and three `context_checkpoint` events in the same conversation, followed by three successful terminal events. There were no model tool calls or file rereads. Unrelated browser-use MCP startup requests were denied through the native app on each send; those denied startup events were not recovery calls.
+
+Thread: `0ac2da56-3d68-4c79-8330-953c0d339680`.
+
+| Turn | Run | History sequences | Checkpoint bytes | Exact records retained | Approximate observed completion |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `722774f4-052f-4219-84f4-94dca85300db` | 412–418 | 41,543 | 3/3 | 90 seconds |
+| 2 | `277acd9c-ef54-42da-ac5f-daa631efc252` | 419–425 | 46,254 | 6/6, including batch A | 95 seconds |
+| 3 | `cc59141b-bd88-4944-a581-281523830c86` | 426–432 | 50,652 | 9/9, including batches A and B | 95 seconds |
+
+Completion times were measured after `send_message` returned, with five-second polling, and include the final answer; they are not exact summary latency measurements. All runs completed under the unchanged compaction timeout. Later compactions processed the prior checkpoint with new context; repeated compaction still entails further summarization of earlier summaries.
+
+Fixture integrity was verified against the staged copies:
+
+| File | Bytes | cl100k_base / o200k_base tokens | SHA-256 |
+| --- | --- | --- | --- |
+| `themis-triple-1.txt` | 1,260,131 | 210,041 / 210,041 | `f357ef6ab1bf83ae2444c65d02946e7698cef07b43319b3561871a9be871b195` |
+| `themis-triple-2.txt` | 1,260,134 | 210,042 / 210,042 | `65137dd64d0255b0cb465cd3b9e0ae96850b9eaf16df9949d5730343b360e144` |
+| `themis-triple-3.txt` | 1,260,134 | 210,043 / 210,041 | `cfa0941edc9b3ce53ee72149952837db423418b517fd2e509ed76e8765f33242` |
+
+Scoped persisted evidence is saved at `/tmp/themis-triple-evidence.json`, with the runnable orchestration script `/tmp/themis-triple-compaction.py` and observations `/tmp/themis-triple.log`. A final assertion check verified every checkpoint's expected records, exactly three checkpoints, two ACK answers, an exact final nine-line answer and absence of model tool-start events. Source files and staged hashes matched. The test completed successfully.
+
+This establishes retention over three successive compactions for a consistent explicit preservation task and sparse records in repetitive filler. It does not establish general losslessness, retention after arbitrary task changes, dense-document retention, or stability over many more compactions. The roughly 90–95-second runs also leave limited headroom under the 120-second global timeout. No product code was changed in this follow-up. Fresh documentation-task checks: `python3 -m unittest quality_dashboard.test_dashboard` passed 13 tests; `ruff check quality_dashboard` and `git diff --check` passed. Product metrics and coverage remain those of the unchanged implementation reported above.
