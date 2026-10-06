@@ -166,6 +166,26 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
         let request: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
         let system = request["messages"][0]["content"].as_str().unwrap();
         assert!(system.contains(description), "{system}");
+        let catalog: Value = serde_json::from_str(
+            system
+                .split("Available skills (metadata only): ")
+                .nth(1)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        let manager = catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|skill| skill["id"] == "manage-plugins")
+            .unwrap();
+        let guide = std::fs::read_to_string(manager["path"].as_str().unwrap()).unwrap();
+        assert!(guide.contains("configure and troubleshoot integrations in chat"));
+        assert!(guide.contains("basic install, enable, disable and uninstall controls"));
+        assert!(!system.contains("Do not direct users to configuration forms"));
         assert!(!system.contains("PRIVATE_SKILL_BODY"));
         assert!(system.contains("GLOBAL_LEGACY_DESCRIPTION"));
         assert!(!system.contains("LEGACY_BODY_STAYS_LAZY"));
