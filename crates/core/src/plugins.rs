@@ -128,7 +128,54 @@ impl PluginStore {
         }
     }
     fn registry(&self, scope: &str) -> anyhow::Result<Registry> {
-        read_json(&self.directory(scope)?.join("registry.json"))
+        let mut registry: Registry = read_json(&self.directory(scope)?.join("registry.json"))?;
+        // Normalize historical snapshots too, without changing revision identities
+        // or writing during reads. The next ordinary mutation persists cleanup.
+        for plugin in registry
+            .current
+            .values_mut()
+            .chain(registry.revisions.values_mut())
+        {
+            let imported = plugin
+                .source
+                .as_ref()
+                .is_some_and(|source| source != "discovered")
+                || plugin.spec.origin.as_ref().is_some_and(|origin| {
+                    matches!(origin.kind.as_str(), "local" | "repository" | "marketplace")
+                });
+            let spec = &mut plugin.spec;
+            if !imported
+                || spec.skill_paths.contains_key("connect")
+                || spec
+                    .files
+                    .keys()
+                    .any(|path| path == "SKILL.md" || path.ends_with("/SKILL.md"))
+                || ![
+                    ".mcp.json",
+                    ".claude-plugin/plugin.json",
+                    "hooks/hooks.json",
+                ]
+                .iter()
+                .any(|path| spec.files.contains_key(*path))
+            {
+                continue;
+            }
+            let before = spec.skills.len();
+            spec.skills.retain(|skill| {
+                !(skill.id == "connect"
+                    && skill.name.starts_with("Use ")
+                    && skill.description == "Use this plugin's connected tools and hooks"
+                    && skill.instructions
+                        == "Use the plugin tools to complete the task. Respect Themis approvals."
+                    && skill.allowed_tools.is_empty()
+                    && skill.scripts.is_empty())
+            });
+            if spec.skills.len() != before {
+                spec.disabled_skills.retain(|id| id != "connect");
+                spec.manual_skills.retain(|id| id != "connect");
+            }
+        }
+        Ok(registry)
     }
     fn mutate<T>(
         &self,

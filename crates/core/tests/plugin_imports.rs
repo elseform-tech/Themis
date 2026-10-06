@@ -610,7 +610,7 @@ async fn real_public_plugin_and_skill_import_acceptance() {
         .into_iter()
         .find(|p| p.spec.name == "real-filesystem")
         .unwrap();
-    let tools = themis_core::plugins::connections::tools(
+    let (tools, _instructions) = themis_core::plugins::connections::tools(
         "filesystem",
         &mcp.spec.mcp["filesystem"],
         work.path(),
@@ -766,4 +766,124 @@ fn skill_edits_refresh_captured_markdown_and_preserve_explicit_file_edits() {
     spec.skills[0].instructions = "Do not overwrite the explicit source edit.".into();
     let explicit = store.save("global", spec, Some(&edited.revision)).unwrap();
     assert_eq!(explicit.spec.files["SKILL.md"], explicit_file);
+}
+
+#[test]
+fn mcp_and_hook_only_imports_do_not_fabricate_skills() {
+    let global = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    fs::write(
+        source.path().join(".mcp.json"),
+        r#"{"mcpServers":{"docs":{"url":"https://example.com/mcp"}}}"#,
+    )
+    .unwrap();
+    let mcp = store
+        .import_path("global", source.path(), Some("mcp-only"))
+        .unwrap();
+    assert!(
+        mcp.spec.skills.is_empty(),
+        "Only upstream SKILL.md files may create skills"
+    );
+    assert_eq!(mcp.spec.mcp.len(), 1);
+    fs::remove_file(source.path().join(".mcp.json")).unwrap();
+    fs::create_dir(source.path().join("hooks")).unwrap();
+    fs::write(
+        source.path().join("hooks/hooks.json"),
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"printf fixture"}]}]}}"#,
+    )
+    .unwrap();
+    let hook = store
+        .import_path("global", source.path(), Some("hook-only"))
+        .unwrap();
+    assert!(hook.spec.skills.is_empty());
+    assert_eq!(hook.spec.hooks.len(), 1);
+}
+
+#[test]
+fn legacy_generated_connect_is_removed_from_all_loaded_revisions_only() {
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    let spec: PluginSpec = serde_json::from_value(json!({
+        "name":"legacy", "origin":{"kind":"repository","location":"https://example.com/legacy.git"},
+        "skills":[{"id":"connect","name":"Use legacy","description":"Use this plugin's connected tools and hooks","instructions":"Use the plugin tools to complete the task. Respect Themis approvals.","allowedTools":[],"scripts":[]}],
+        "mcp":{"docs":{"url":"https://example.com/mcp","enabled":true}},
+        "files":{".mcp.json":"{\"mcpServers\":{\"docs\":{\"url\":\"https://example.com/mcp\"}}}"},
+        "disabled_skills":["connect"],"manual_skills":["connect"]
+    })).unwrap();
+    let saved = store.save("global", spec.clone(), None).unwrap();
+    let path = global.path().join("plugins/registry.json");
+    let before = fs::read(&path).unwrap();
+    let loaded = store
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|plugin| plugin.spec.name == "legacy")
+        .unwrap();
+    assert!(loaded.spec.skills.is_empty());
+    assert!(loaded.spec.disabled_skills.is_empty());
+    assert!(loaded.spec.manual_skills.is_empty());
+    assert_eq!(loaded.revision, saved.revision);
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "Read-only load must not rewrite the store"
+    );
+    assert!(!store
+        .available_skills()
+        .unwrap()
+        .iter()
+        .any(|skill| skill.plugin == "legacy"));
+    assert!(store
+        .resolve_prompt(&format!("[[skill:{}]]", saved.skill_id("connect")), &[])
+        .is_err());
+    let (_, skills, plugins) = store.resolve_prompt("[[plugin:g--legacy]]", &[]).unwrap();
+    assert!(skills.is_empty());
+    assert_eq!(plugins[0].spec.mcp.len(), 1);
+    store.set_enabled("global", "legacy", false).unwrap();
+    let persisted: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(persisted["current"]["legacy"]["revision"], saved.revision);
+    assert!(persisted["revisions"]
+        .as_object()
+        .unwrap()
+        .values()
+        .all(|plugin| plugin["spec"]["skills"].as_array().unwrap().is_empty()));
+
+    for (name, mut genuine) in [
+        ("personal", spec.clone()),
+        ("authored", spec.clone()),
+        ("custom", spec),
+    ] {
+        genuine.name = name.into();
+        genuine.skills[0].name = format!("Use {name}");
+        if name == "personal" {
+            genuine.origin = None;
+        }
+        if name == "authored" {
+            genuine.files.insert("skills/connect/SKILL.md".into(),"---\nname: connect\n---\nUse the plugin tools to complete the task. Respect Themis approvals.\n".into());
+        }
+        if name == "custom" {
+            genuine.skills[0].instructions =
+                "Use the real connection with a concrete workflow.".into();
+        }
+        let expected_skill = serde_json::to_value(&genuine.skills[0]).unwrap();
+        let expected_files = genuine.files.clone();
+        store.save("global", genuine, None).unwrap();
+        let loaded = store
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|plugin| plugin.spec.name == name)
+            .unwrap();
+        assert_eq!(
+            loaded.spec.skills.len(),
+            1,
+            "Preserve genuine {name} connect skills"
+        );
+        assert_eq!(
+            serde_json::to_value(&loaded.spec.skills[0]).unwrap(),
+            expected_skill
+        );
+        assert_eq!(loaded.spec.files, expected_files);
+    }
 }

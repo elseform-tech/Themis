@@ -658,17 +658,6 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
         spec.unsupported
             .push("Legacy commands/ directory (use skills/)".into());
     }
-    if spec.skills.is_empty() && (!spec.mcp.is_empty() || !spec.hooks.is_empty()) {
-        spec.skills.push(Skill {
-            id: "connect".into(),
-            name: format!("Use {}", spec.name),
-            description: "Use this plugin's connected tools and hooks".into(),
-            instructions: "Use the plugin tools to complete the task. Respect Themis approvals."
-                .into(),
-            allowed_tools: vec![],
-            scripts: vec![],
-        });
-    }
     Ok(spec)
 }
 pub(super) fn collect_files(
