@@ -1327,6 +1327,7 @@ mod tests {
             target_thread_id: None,
             skill_ids: Vec::new(),
             interval_mins: 60,
+            schedule: None,
             task: "Check health.".to_owned(),
             enabled: true,
         }
@@ -1997,6 +1998,7 @@ mod tests {
             target_thread_id: None,
             skill_ids: Vec::new(),
             interval_mins: 30,
+            schedule: None,
             task: "t".to_owned(),
             enabled: true,
             last_run_at: None,

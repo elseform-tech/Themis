@@ -75,6 +75,14 @@ export interface PluginSpec {
 export interface Plugin { scope: "local"|"global"; revision: string; enabled: boolean; source: string|null; spec: PluginSpec }
 export interface Marketplace { name: string; source: string }
 
+export interface AutomationSchedule {
+  repeat: "daily" | "weekdays" | "weekly";
+  time: string;
+  timezone: string;
+  /** Monday = 0 through Sunday = 6. */
+  weekday: number;
+}
+
 export interface Automation {
   id: string;
   name: string;
@@ -86,6 +94,7 @@ export interface Automation {
   skill_ids: string[];
   /** Fixed interval in minutes, >= 1. */
   interval_mins: number;
+  schedule?: AutomationSchedule | null;
   task: string;
   enabled: boolean;
   last_run_at: string | null;
@@ -102,6 +111,7 @@ export interface AutomationInput {
   reasoning_effort?: string | null;
   skill_ids: string[];
   interval_mins: number;
+  schedule?: AutomationSchedule | null;
   task: string;
   enabled: boolean;
 }

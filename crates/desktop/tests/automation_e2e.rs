@@ -49,6 +49,7 @@ fn automation_input(project_root: &str, task: &str) -> AutomationInput {
         target_thread_id: None,
         skill_ids: Vec::new(),
         interval_mins: 60,
+        schedule: None,
         task: task.to_owned(),
         enabled: true,
     }

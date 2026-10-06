@@ -353,10 +353,30 @@ pub struct SkillInput {
     pub scripts: Vec<SkillScript>,
 }
 
+/// Calendar recurrence evaluated in an IANA time zone, including DST.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutomationRepeat {
+    Daily,
+    Weekdays,
+    Weekly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutomationSchedule {
+    pub repeat: AutomationRepeat,
+    /// Local wall-clock time, strictly HH:MM.
+    pub time: String,
+    pub timezone: String,
+    /// Monday = 0 through Sunday = 6; used only for weekly schedules.
+    #[serde(default)]
+    pub weekday: u8,
+}
+
 /// A scheduled automation (`Automation` in types.ts).
 ///
-/// Timestamps are RFC3339 strings; `interval_mins` is a fixed interval in
-/// minutes (`>= 1`).
+/// Timestamps are RFC3339 strings. `schedule` uses local calendar time;
+/// when absent, `interval_mins` retains the legacy fixed-minute recurrence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Automation {
     pub id: String,
@@ -370,6 +390,8 @@ pub struct Automation {
     pub reasoning_effort: Option<String>,
     pub skill_ids: Vec<String>,
     pub interval_mins: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<AutomationSchedule>,
     pub task: String,
     pub enabled: bool,
     pub last_run_at: Option<String>,
@@ -393,6 +415,8 @@ pub struct AutomationInput {
     pub reasoning_effort: Option<String>,
     pub skill_ids: Vec<String>,
     pub interval_mins: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<AutomationSchedule>,
     pub task: String,
     pub enabled: bool,
 }
@@ -1146,6 +1170,7 @@ mod tests {
             target_thread_id: None,
             skill_ids: vec!["s".to_owned()],
             interval_mins: 60,
+            schedule: None,
             task: "check health".to_owned(),
             enabled: true,
             last_run_at: None,
