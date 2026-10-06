@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Plugins } from "./Plugins";
-import { readSession } from "../state/session";
+import { readSession, writeSession } from "../state/session";
 import { initialState } from "../state/reducer";
 import type { Plugin } from "../lib/types";
 import { pluginAction } from "../lib/tauri";
@@ -26,6 +26,7 @@ beforeEach(() => {
 });
 describe("Integrations management", () => {
   it("searches descriptions across categories and prepares a targeted agent draft", async () => {
+    writeSession("drafts", { "test-chat": "Keep my existing request." });
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "document" } });
@@ -37,6 +38,7 @@ describe("Integrations management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
     expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("[[skill:manage-skills]]");
     expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("Current search: missing");
+    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toMatch(/^Keep my existing request\.\n\n/);
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "save" }));
   });
 
@@ -66,6 +68,35 @@ describe("Integrations management", () => {
     expect(screen.getByText("No matching integrations")).toBeInTheDocument();
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "startup" } });
     expect(screen.getByRole("button", { name: "View startup-check" })).toBeInTheDocument();
+  });
+
+  it("summarizes MCP test results with full details behind Advanced", async () => {
+    installed[0].spec.mcp = { filesystem: { command: "node", args: [], env: {}, enabled: true } };
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "list") return installed as never;
+      if (args.action === "marketplaces") return [] as never;
+      if (args.action === "test_mcp") return { connected: true, tools: [{ name: "read_file", inputSchema: { hugeSchemaMarker: true } }] } as never;
+      return null as never;
+    });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    fireEvent.click(screen.getByRole("button", { name: "More actions for filesystem" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run test" })));
+    expect(screen.getByRole("status")).toHaveTextContent("Connected · 1 tools");
+    expect(screen.getByText("read_file")).toBeVisible();
+    expect(screen.getByText("Advanced result").closest("details")).not.toHaveAttribute("open");
+  });
+
+  it("creates a manual hook template that outputs valid JSON", async () => {
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Hooks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add hooks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create with JSON", hidden: true }));
+    const spec = JSON.parse((screen.getByLabelText("Configuration") as HTMLTextAreaElement).value);
+    expect(spec.hooks[0].command).toBe("printf '{}'");
   });
 
   it("shows discovered skill names while retaining internal identities for actions", async () => {
