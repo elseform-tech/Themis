@@ -21,15 +21,27 @@ beforeEach(() => {
     if (args.action === "catalog") return { plugins: [{ name: "public-docs", description: "Review documents", icon: "https://example.com/icon.svg" }] } as never;
     if (args.action === "preview") return { ...installed[0].spec, name: String(args.name) } as never;
     if (args.action === "preview_repository") return { ...installed[0].spec, name: "pdf", package_kind: "skill", skills: [{ ...installed[0].spec.skills[0], id: "pdf" }], files: { "SKILL.md": "---\nname: pdf\nlicense: Original-License\n---\n# PDF workflow\nUPSTREAM_FULL_TAIL" } } as never;
+    if (args.action === "install") { installed.push({ ...installed[0], source: String(args.marketplace), spec: { ...installed[0].spec, name: String(args.name) } }); return null as never; }
+    if (args.action === "import_repository") { installed.push({ ...installed[0], spec: { ...installed[0].spec, package_kind: "skill", name: String(args.name), skills: [{ ...installed[0].spec.skills[0], id: String(args.name), name: "PDF" }], origin: { kind: "repository", location: String(args.url), subdirectory: String(args.subdirectory) } } }); return null as never; }
+    const plugin = installed.find(plugin => plugin.spec.name === args.name);
+    if (args.action === "delete") { installed = installed.filter(existing => existing !== plugin); return null as never; }
+    if (plugin && (args.action === "enable" || args.action === "disable")) { plugin.enabled = args.action === "enable"; return null as never; }
+    if (plugin && args.action === "set_component_enabled") {
+      if (args.kind === "skill") plugin.spec.disabled_skills = args.enabled ? [] : [String(args.id)];
+      if (args.kind === "mcp") plugin.spec.mcp[String(args.id)].enabled = Boolean(args.enabled);
+      if (args.kind === "hook") plugin.spec.hooks.find(hook => hook.name === args.id)!.enabled = Boolean(args.enabled);
+      return null as never;
+    }
+    if (plugin && args.action === "remove_component") { plugin.spec.skills = plugin.spec.skills.filter(skill => skill.id !== args.id); return null as never; }
     throw new Error(`Unexpected management action: ${args.action}`);
   });
 });
-function expectReadOnly() {
-  expect(screen.queryByRole("button", { name: /^(Add|Install|Import|Configure|Uninstall|Update|Enable|Disable|Test|Run test|Save|More actions|Ask Themis)( |$)/ })).toBeNull();
+function expectNoConfiguration() {
+  expect(screen.queryByRole("button", { name: /^(Add|Import|Configure|Update|Test|Run test|Save|More actions|Ask Themis)( |$)/ })).toBeNull();
   expect(screen.queryByRole("textbox", { name: "Configuration" })).toBeNull();
-  expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["list", "marketplaces", "catalog", "preview", "preview_repository"].includes(String(args.action)))).toBe(true);
+  expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["list", "marketplaces", "catalog", "preview", "preview_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
 }
-describe("Read-only integrations browser", () => {
+describe("Integration browsing and lifecycle", () => {
   it("shows complete captured Markdown after selecting a bundled skill", async () => {
     const source = `---\nname: draft\nlicense: Original-License\n---\n# Full skill\n\n${"Complete source text. ".repeat(100)}\n\n## Final section\nUNTRUNCATED_TAIL`.replace(/\n/g, "\r\n");
     installed[0].spec.files = { "custom/notes/SKILL.md": source };
@@ -47,7 +59,7 @@ describe("Read-only integrations browser", () => {
     expect(dialog).toHaveTextContent("UNTRUNCATED_TAIL");
     expect(dialog).not.toHaveTextContent("Original-License");
     expect(within(dialog).queryByRole("button", { name: /Source|Rendered/ })).toBeNull();
-    expectReadOnly();
+    expectNoConfiguration();
   });
   it("lists every bundled skill and selects its original nested source", async () => {
     installed[0].spec.skills.push({ ...installed[0].spec.skills[0], id: "review", name: "Review" });
@@ -79,7 +91,7 @@ describe("Read-only integrations browser", () => {
     const row = screen.getByRole("button", { name: "View Discovered draft" }).closest("li")!;
     expect(row).toHaveTextContent("Disabled");
     expect(row).not.toHaveTextContent("discovered-1234");
-    expectReadOnly();
+    expectNoConfiguration();
   });
   it("searches descriptions with recoverable empty results", async () => {
     render(<Plugins />);
@@ -93,7 +105,7 @@ describe("Read-only integrations browser", () => {
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "View Draft" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Read the sources before drafting.");
-    expectReadOnly();
+    expectNoConfiguration();
   });
   it("shows useful MCP and hook summaries without configuration or execution", async () => {
     installed[0].spec.mcp.remote = { url: "https://example.com/mcp", args: [], env: {}, enabled: false };
@@ -104,7 +116,7 @@ describe("Read-only integrations browser", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("Local process");
     expect(screen.getByRole("dialog")).toHaveTextContent("node");
     expect(screen.getByRole("dialog")).not.toHaveTextContent("hidden-secret");
-    expectReadOnly();
+    expectNoConfiguration();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "View remote" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("HTTP");
@@ -115,7 +127,7 @@ describe("Read-only integrations browser", () => {
     fireEvent.click(screen.getByRole("button", { name: "View startup-check" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("RunStart");
     expect(screen.getByRole("dialog")).toHaveTextContent("Disabled");
-    expectReadOnly();
+    expectNoConfiguration();
   });
   it("uses source icons and replaces failed images with a glyph", async () => {
     installed[0].spec.icon = "https://example.com/missing.svg";
@@ -134,7 +146,7 @@ describe("Read-only integrations browser", () => {
     const dialog = screen.getByRole("dialog", { name: "public-docs" });
     fireEvent.click(within(dialog).getByRole("button", { name: "View Draft" }));
     expect(dialog).toHaveTextContent("Read the sources before drafting.");
-    expectReadOnly();
+    expectNoConfiguration();
   });
   it("excludes disabled installed packages from the matching source catalog", async () => {
     installed[0].source = "official";
@@ -157,7 +169,7 @@ describe("Read-only integrations browser", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "View Word documents" })));
     expect(screen.getByRole("dialog")).toHaveTextContent("UPSTREAM_FULL_TAIL");
     expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "preview_repository", url: "https://github.com/anthropics/skills.git", reference: "683bc88e56f3e09ba94f7055977f3d3aa499f202", subdirectory: "skills/docx" }));
-    expectReadOnly();
+    expectNoConfiguration();
   });
   it("refreshes after chat management and leaves unrelated skill IDs available", async () => {
     installed[0].spec.skills[0].id = "pdf";
@@ -169,7 +181,7 @@ describe("Read-only integrations browser", () => {
     installed.push({ ...installed[0], spec: { ...installed[0].spec, name: "pdf", package_kind: "skill", origin: { kind: "repository", location: "https://github.com/anthropics/skills", subdirectory: "skills/pdf" } } });
     await act(async () => window.dispatchEvent(new Event("themis-plugins-changed")));
     expect(screen.queryByRole("button", { name: "View PDF" })).toBeNull();
-    expectReadOnly();
+    expectNoConfiguration();
   });
   it("ignores a closed preview's response when another skill is open", async () => {
     let finish: (value: unknown) => void = () => {};
@@ -192,4 +204,75 @@ describe("Read-only integrations browser", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("Read the sources before drafting.");
     expect(screen.queryByText("STALE_PREVIEW")).toBeNull();
   });
+  it.each(["Plugins", "Skills", "MCP", "Hooks"])("toggles %s with a switch and visible status", async category => {
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: category }));
+    const control = screen.getByRole("switch");
+    const wasEnabled = control.getAttribute("aria-checked") === "true";
+    expect(control.closest("li")).toHaveTextContent(wasEnabled ? "Enabled" : "Disabled");
+    await act(async () => fireEvent.click(control));
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", String(!wasEnabled));
+    expect(screen.getByRole("switch").closest("li")).toHaveTextContent(wasEnabled ? "Disabled" : "Enabled");
+    expectNoConfiguration();
+  });
+  it("keeps disabled bundle children gated but reenables disabled discovered standalone skills", async () => {
+    installed[0].enabled = false;
+    installed.push({ ...installed[0], source: "discovered", spec: { ...installed[0].spec, name: "discovered-draft", package_kind: "skill", skills: [{ ...installed[0].spec.skills[0], name: "Standalone" }], disabled_skills: ["draft"] } });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByRole("switch", { name: "Draft enabled" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Uninstall Standalone" })).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole("switch", { name: "Standalone enabled" })));
+    expect(screen.getByRole("switch", { name: "Standalone enabled" })).toHaveAttribute("aria-checked", "true");
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "enable", name: "discovered-draft" }));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "set_component_enabled", name: "discovered-draft", id: "draft", enabled: true }));
+  });
+  it("confirms component uninstall and preserves its siblings", async () => {
+    installed[0].spec.skills.push({ ...installed[0].spec.skills[0], id: "review", name: "Review" });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall Draft" }));
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "remove_component" }));
+    const dialog = screen.getByRole("dialog", { name: "Uninstall Draft?" });
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Uninstall" })));
+    expect(screen.queryByRole("button", { name: "View Draft" })).toBeNull();
+    expect(screen.getByRole("button", { name: "View Review" })).toBeInTheDocument();
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "remove_component", name: "docs", id: "draft", kind: "skill" }));
+  });
+  it("cancels package uninstall before deleting only after confirmation", async () => {
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall docs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall docs" }));
+    await act(async () => fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Uninstall" })));
+    expect(screen.getByText("No plugins installed")).toBeInTheDocument();
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "delete", name: "docs", scope: "global" }));
+  });
+  it("installs public packages and standalone skills and restores uninstalled skills to the catalog", async () => {
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Not installed" })));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Install" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "install", name: "public-docs", marketplace: "official" }));
+    expect(screen.queryByRole("button", { name: "View public-docs" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    fireEvent.click(screen.getByRole("button", { name: "Not installed" }));
+    const row = screen.getByRole("button", { name: "View PDF" }).closest("li")!;
+    await act(async () => fireEvent.click(within(row).getByRole("button", { name: "Install" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "import_repository", name: "pdf", url: "https://github.com/anthropics/skills.git", reference: "683bc88e56f3e09ba94f7055977f3d3aa499f202", subdirectory: "skills/pdf" }));
+    expect(screen.queryByRole("button", { name: "View PDF" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Installed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall PDF" }));
+    await act(async () => fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Uninstall" })));
+    expect(installed.find(plugin => plugin.spec.name === "pdf")!.spec.skills).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Not installed" }));
+    expect(screen.getByRole("button", { name: "View PDF" })).toBeInTheDocument();
+    expectNoConfiguration();
+  });
+
 });

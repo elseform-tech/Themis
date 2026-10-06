@@ -2,7 +2,8 @@
 .themis-integrations > :not(.themis-integrations-list) { flex-shrink: 0; }
 .themis-integrations h2 { font-size: 1.25rem; font-weight: 500; margin: 0 0 1rem; }
 .themis-integrations button, .themis-integrations summary { color: var(--themis-text); background: transparent; border: 0; padding: .5rem; min-height: 2.5rem; font: inherit; cursor: pointer; }
-.themis-integrations button:hover, .themis-integrations summary:hover { background: var(--themis-surface); }
+.themis-integrations button:hover { background: color-mix(in srgb, var(--themis-text) 4%, transparent); }
+.themis-integrations button:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 2px; }
 .themis-integrations button:disabled { opacity: .5; cursor: default; }
 .themis-integrations-tabs { display: flex; gap: 1rem; border-bottom: 1px solid var(--themis-border); }
 .themis-integrations-tabs button[aria-pressed="true"] { border-bottom: 2px solid var(--themis-text); }
@@ -29,3 +30,12 @@
 .themis-integration-summary { display: grid; grid-template-columns: auto 1fr; gap: .5rem 1rem; }
 .themis-integration-summary dt { color: var(--themis-text-2); }
 .themis-integration-summary dd { margin: 0; overflow-wrap: anywhere; }
+
+.themis-integrations-list > li:hover, .themis-bundled-skills li:hover { background: color-mix(in srgb, var(--themis-text) 3%, transparent); }
+.themis-integrations-list button:hover, .themis-bundled-skills button:hover { background: transparent; }
+.themis-integrations button.themis-integration-toggle { display: inline-flex; align-items: center; justify-content: center; min-width: 2.75rem; padding: .5rem; }
+.themis-toggle-track { display: block; width: 2rem; height: 1.125rem; border-radius: 1rem; background: var(--themis-border); padding: .125rem; }
+.themis-toggle-track > span { display: block; width: .875rem; height: .875rem; border-radius: 50%; background: var(--themis-text); transition: transform .15s ease; }
+.themis-integration-toggle[aria-checked="true"] .themis-toggle-track { background: var(--themis-text); }
+.themis-integration-toggle[aria-checked="true"] .themis-toggle-track > span { transform: translateX(.875rem); background: var(--themis-surface); }
+@media (prefers-reduced-motion: reduce) { .themis-toggle-track > span { transition: none; } }

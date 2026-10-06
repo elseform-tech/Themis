@@ -18,7 +18,7 @@ const publicSkills = [
   { id: "docx", name: "Word documents", description: "Create and edit Word documents." },
   { id: "xlsx", name: "Spreadsheets", description: "Create, edit, and analyze spreadsheets." },
 ];
-type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye";
+type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye" | "trash";
 const skillGlyph = (id: string): Glyph => ["pdf", "docx", "xlsx"].includes(id) ? id as Glyph : "file";
 const emptySpec = (): PluginSpec => ({ name: "personal", description: "", version: "", skills: [], mcp: {}, hooks: [], files: {}, unsupported: [] });
 function pluginDisplayName(plugin: Plugin) {
@@ -44,6 +44,7 @@ function markdown(plugin: Plugin, id: string) {
 }
 function Icon({ name }: { name: Glyph }) {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+    {name === "trash" && <path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7" />}
     {name === "eye" && <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>}
     {name === "folder" && <path d="M3 7h7l2 2h9v11H3ZM3 7V4h7l2 3" />}
     {name === "plug" && <path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0ZM12 18v4" />}
@@ -67,7 +68,7 @@ export function Plugins() {
   const loadRequest = useRef(0), catalogRequest = useRef(0);
   const [plugins, setPlugins] = useState<Plugin[]>([]), [markets, setMarkets] = useState<Marketplace[]>([]);
   const [category, setCategory] = useState<Category>("Plugins"), [publicView, setPublicView] = useState(false);
-  const [panel, setPanel] = useState<Panel | null>(null);
+  const [panel, setPanel] = useState<Panel | null>(null), [removing, setRemoving] = useState<Item | null>(null);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false);
   const [file, setFile] = useState("");
   const previewRequest = useRef(0);
@@ -81,7 +82,7 @@ export function Plugins() {
   }, [root]);
   useEffect(() => {
     let cancelled = false;
-    setPlugins([]); setPanel(null); setCatalog([]); setPublicView(false); catalogRequest.current++; previewRequest.current++; setBusy(false);
+    setPlugins([]); setPanel(null); setRemoving(null); setCatalog([]); setPublicView(false); catalogRequest.current++; previewRequest.current++; setBusy(false);
     void load().catch(error => { if (!cancelled) setError(describeError(error)); });
     return () => { cancelled = true; };
   }, [load]);
@@ -90,6 +91,20 @@ export function Plugins() {
     window.addEventListener("themis-plugins-changed", refresh);
     return () => window.removeEventListener("themis-plugins-changed", refresh);
   }, [load]);
+  async function action(args: Record<string, unknown>) {
+    setBusy(true); setError("");
+    try {
+      await pluginAction({ projectRoot: root, ...args });
+      await load();
+      window.dispatchEvent(new Event("themis-plugins-changed"));
+    } catch (error) { setError(describeError(error)); throw error; }
+    finally { setBusy(false); }
+  }
+  async function toggle(item: Item) {
+    const args = { scope: item.plugin.scope, name: item.plugin.spec.name };
+    if (item.kind !== "plugin" && !item.plugin.enabled && !isPluginPackage(item.plugin)) await action({ ...args, action: "enable" });
+    await action(item.kind === "plugin" ? { ...args, action: item.enabled ? "disable" : "enable" } : { ...args, action: "set_component_enabled", kind: item.kind, id: item.id, enabled: !item.enabled });
+  }
   function open(item: Item) {
     previewRequest.current++;
     setBusy(false); setError(""); setPanel({ item });
@@ -138,9 +153,9 @@ export function Plugins() {
   const matches = (values: unknown[]) => { const text = values.filter(Boolean).join(" ").toLowerCase(); return terms.every(term => text.includes(term)); };
   const rows = items(plugins, category).filter(row => matches([row.name, pluginDisplayName(row.plugin), row.plugin.source, row.plugin.spec.origin?.location, row.plugin.spec.description, ...row.plugin.spec.skills.map(skill => skill.description)]));
   const catalogRows = catalog.filter(entry => !plugins.some(plugin => plugin.source === market && plugin.spec.name === entry.name)).filter(entry => matches([entry.name, entry.description, JSON.stringify(entry.source), market, markets.find(source => source.name === market)?.source]));
-  const skillRows = publicSkills.filter(skill => !plugins.some(plugin => plugin.spec.origin
+  const skillRows = publicSkills.filter(skill => !plugins.some(plugin => plugin.spec.skills.length > 0 && (plugin.spec.origin
     ? plugin.spec.origin.location.replace(/\.git$/, "") === skillRepository.replace(/\.git$/, "") && plugin.spec.origin.subdirectory === `skills/${skill.id}`
-    : plugin.spec.package_kind === "skill" && plugin.spec.skills.some(existing => existing.id === skill.id)))
+    : plugin.spec.package_kind === "skill" && plugin.spec.skills.some(existing => existing.id === skill.id))))
     .filter(skill => matches([skill.id, skill.name, skill.description, "Anthropic", skillRepository]));
   const text = item ? markdown(item.plugin, file) : "";
   const server = item?.kind === "mcp" ? item.plugin.spec.mcp[item.id] : undefined;
@@ -153,28 +168,35 @@ export function Plugins() {
     {error && !panel && <p role="alert">{error}</p>}
     {publicView && category === "Skills" ? <>
       {!skillRows.length && <EmptyState title={search.trim() ? "No matching integrations" : "All available skills installed"} />}
-      <ul className="themis-integrations-list">{skillRows.map(skill => <li key={skill.id}><Icon name={skillGlyph(skill.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${skill.name}`} onClick={() => void previewSkill(skill)}>{skill.name}</button><span className="themis-integration-source">Anthropic</span></li>)}</ul>
+      <ul className="themis-integrations-list">{skillRows.map(skill => <li key={skill.id}><Icon name={skillGlyph(skill.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${skill.name}`} onClick={() => void previewSkill(skill)}>{skill.name}</button><span className="themis-integration-source">Anthropic</span><button disabled={busy} onClick={() => void action({ action: "import_repository", url: skillRepository, reference: skillReference, subdirectory: `skills/${skill.id}`, name: skill.id, scope: root ? "local" : "global" }).catch(() => {})}>Install</button></li>)}</ul>
     </> : publicView ? <>
       <div className="themis-integrations-toolbar"><select aria-label="Marketplace" disabled={busy} value={market} onChange={event => void browse(event.target.value)}>{markets.map(m => <option key={m.name}>{m.name}</option>)}</select></div>
       {!catalogRows.length && <EmptyState title={search.trim() ? "No matching integrations" : "No public plugins available"} />}
-      <ul className="themis-integrations-list">{catalogRows.map(entry => <li key={entry.name}><PluginIcon plugin={{ ...emptySpec(), icon: entry.icon }} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy} onClick={() => void preview(entry.name, entry.icon)}>{entry.name}</button></li>)}</ul>
+      <ul className="themis-integrations-list">{catalogRows.map(entry => <li key={entry.name}><PluginIcon plugin={{ ...emptySpec(), icon: entry.icon }} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy} onClick={() => void preview(entry.name, entry.icon)}>{entry.name}</button><button disabled={busy} onClick={() => void action({ action: "install", name: entry.name, marketplace: market, scope: root ? "local" : "global" }).catch(() => {})}>Install</button></li>)}</ul>
     </> : <>
       {!rows.length && <EmptyState title={search.trim() ? "No matching integrations" : `No ${category.toLowerCase()} installed`} />}
       <ul className="themis-integrations-list">{rows.map(row => <li key={row.key}>
         <PluginIcon plugin={row.plugin.spec} fallback={row.kind === "plugin" ? "folder" : row.kind === "mcp" ? "plug" : row.kind === "hook" ? "hook" : skillGlyph(row.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${row.name}`} onClick={() => open(row)}>{row.name}</button><span className="themis-integration-source">{row.kind === "plugin" ? row.plugin.spec.origin?.kind === "discovered" ? "Discovered" : row.plugin.source ?? row.plugin.spec.origin?.kind ?? "Personal" : pluginDisplayName(row.plugin)} · {row.plugin.scope === "global" ? "User" : "Project"}</span>
         <span className="themis-integration-status">{row.enabled ? "Enabled" : "Disabled"}</span>
+        <button className="themis-integration-toggle" role="switch" aria-label={`${row.name} enabled`} aria-checked={row.enabled} title={!row.plugin.enabled && row.kind !== "plugin" && isPluginPackage(row.plugin) ? "Enable the parent plugin first" : `Turn ${row.enabled ? "off" : "on"} ${row.name}`} disabled={busy || row.kind !== "plugin" && !row.plugin.enabled && isPluginPackage(row.plugin)} onClick={() => void toggle(row).catch(() => {})}><span className="themis-toggle-track"><span /></span></button>
+        {row.plugin.source !== "discovered" && row.plugin.spec.origin?.kind !== "discovered" && <button aria-label={`Uninstall ${row.name}`} title={`Uninstall ${row.name}`} disabled={busy} onClick={() => { setError(""); setRemoving(row); }}><Icon name="trash" /></button>}
       </li>)}</ul>
     </>}
     <Dialog open={panel !== null} title={item?.name} onClose={() => { previewRequest.current++; setBusy(false); setPanel(null); }}>
       <div className="themis-skill-viewer">
         {(panel?.marketplace || panel?.skillSource) && busy ? <p role="status">Loading skills…</p> : <>
           {item?.kind === "plugin" && <><p className="themis-integration-skill-count">{item.plugin.spec.skills.length} {item.plugin.spec.skills.length === 1 ? "skill" : "skills"}</p><ul className="themis-bundled-skills">{item.plugin.spec.skills.map(skill => <li key={skill.id}><button aria-label={`View ${skill.name}`} aria-pressed={file === skill.id} onClick={() => setFile(skill.id)}><span>{skill.name}</span><Icon name="eye" /></button></li>)}</ul></>}
-          {panel?.skillSource && <a href={panel?.skillSource} target="_blank" rel="noreferrer">Read SKILL.md</a>}
           {server ? <dl className="themis-integration-summary"><dt>Transport</dt><dd>{server.url ? "HTTP" : "Local process"}</dd><dt>{server.url ? "Endpoint" : "Command"}</dt><dd>{server.url ?? server.command}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : hook ? <dl className="themis-integration-summary"><dt>Event</dt><dd>{hook.event}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : text ? <ResponseBody text={text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")} /> : !item?.plugin.spec.skills.length ? <p>No bundled skills.</p> : null}
           {!!item?.plugin.spec.unsupported.length && <details><summary>Compatibility notes</summary><ul>{item.plugin.spec.unsupported.map((warning, i) => <li key={i}>{warning}</li>)}</ul></details>}
         </>}
       </div>
       {error && <p role="alert">{error}</p>}<Button variant="ghost" onClick={() => { previewRequest.current++; setBusy(false); setPanel(null); }}>Close</Button>
+    </Dialog>
+    <Dialog open={removing !== null} title={`Uninstall ${removing?.name ?? ""}?`} onClose={() => { if (!busy) setRemoving(null); }}>
+      <p>{removing?.kind === "plugin" ? "Remove this plugin and its bundled capabilities?" : `Remove this ${removing?.kind} from ${removing?.plugin.spec.name}? Other capabilities remain installed.`}</p>
+      {error && <p role="alert">{error}</p>}
+      <Button variant="ghost" disabled={busy} onClick={() => setRemoving(null)}>Cancel</Button>
+      <Button variant="danger" disabled={busy} onClick={() => { if (removing) void action({ action: removing.kind === "plugin" ? "delete" : "remove_component", kind: removing.kind, id: removing.id, name: removing.plugin.spec.name, scope: removing.plugin.scope }).then(() => setRemoving(null)).catch(() => {}); }}>Uninstall</Button>
     </Dialog>
   </div>;
 }
