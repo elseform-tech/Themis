@@ -302,3 +302,125 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
         .unwrap();
     serving.await.unwrap().unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn agent_marketplace_management_dispatches_approvals_and_refreshes_catalog() {
+    use std::time::Duration;
+    use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let marketplace = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(marketplace.path().join(".claude-plugin")).unwrap();
+    std::fs::create_dir_all(marketplace.path().join("bundle/skills/review")).unwrap();
+    std::fs::write(
+        marketplace.path().join(".claude-plugin/marketplace.json"),
+        r#"{"plugins":[{"name":"agent-bundle","source":"./bundle"}]}"#,
+    )
+    .unwrap();
+    std::fs::write(marketplace.path().join("bundle/skills/review/SKILL.md"),"---\nname: review\ndescription: UNIQUE_INSTALLED_REVIEW_METADATA\n---\nPRIVATE_INSTALLED_REVIEW_BODY\n").unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state.plugin_action(json!({"action":"add_marketplace","name":"fixture","source":marketplace.path(),"projectRoot":project.path()})).await.unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("POST")).respond_with(|request: &Request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        let latest = messages.iter().rfind(|message|message["role"] == "user").unwrap()["content"].as_str().unwrap();
+        let step = messages.iter().filter(|message|message["role"] == "tool").count();
+        let actions = if latest.contains("Clean up") { vec![
+            json!({"action":"set_component_enabled","name":"agent-bundle","kind":"skill","id":"review","enabled":false}),
+            json!({"action":"remove_component","name":"agent-bundle","kind":"skill","id":"review"}),
+            json!({"action":"delete","name":"agent-bundle"}),
+        ] } else if latest.contains("Install") { vec![
+            json!({"action":"preview","marketplace":"fixture","name":"agent-bundle"}),
+            json!({"action":"install","marketplace":"fixture","name":"agent-bundle"}),
+        ] } else { vec![] };
+        let message = if let Some(args) = actions.get(step) {
+            json!({"role":"assistant","tool_calls":[{"id":format!("operation-{step}"),"type":"function","function":{"name":"manage_integrations","arguments":args.to_string()}}]})
+        } else { json!({"role":"assistant","content":"Requested management completed"}) };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if step<actions.len() {"tool_calls"} else {"stop"}}]}))
+    }).mount(&provider).await;
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        &[
+            "thread",
+            "create",
+            project.path().to_str().unwrap(),
+            "test-model",
+        ],
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    let mut events = Client::new(data.path().into()).subscribe().await.unwrap();
+    let mut approval_count = 0;
+    for (prompt, expected_metadata, expected_tool_results) in [
+        ("Install the public package", false, 2),
+        ("Clean up the installed package", true, 3),
+        ("Confirm cleanup", false, 0),
+    ] {
+        let request_start = provider.received_requests().await.unwrap().len();
+        cli(data.path(), &["thread", "send", &id, prompt, "--detach"]);
+        let terminal = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let event = Client::next_event(&mut events).await.unwrap();
+                if event["name"] == "approval-request" {
+                    approval_count += 1;
+                    Client::new(data.path().into()).call("approve_action",json!({"threadId":id,"approvalId":event["payload"]["approval_id"],"decision":"once"})).await.unwrap();
+                }
+                if event["name"] == "thread-event" && matches!(event["payload"]["event"]["kind"].as_str(),Some("finished"|"failed")) { break event; }
+            }
+        }).await.unwrap();
+        assert_eq!(
+            terminal["payload"]["event"]["kind"], "finished",
+            "{terminal}"
+        );
+        let requests = provider.received_requests().await.unwrap();
+        let first: Value = serde_json::from_slice(&requests[request_start].body).unwrap();
+        let system = first["messages"][0]["content"].as_str().unwrap();
+        assert_eq!(
+            system.contains("UNIQUE_INSTALLED_REVIEW_METADATA"),
+            expected_metadata
+        );
+        assert!(!system.contains("PRIVATE_INSTALLED_REVIEW_BODY"));
+        let last: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+        let results: Vec<_> = last["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .collect();
+        assert_eq!(results.len(), expected_tool_results);
+        for result in results {
+            serde_json::from_str::<Value>(result["content"].as_str().unwrap())
+                .expect("Shared management mutations return JSON, not tool errors");
+        }
+        let packages = state
+            .plugin_action(json!({"action":"list","projectRoot":project.path()}))
+            .await
+            .unwrap();
+        let installed = packages
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|plugin| plugin["spec"]["name"] == "agent-bundle");
+        if prompt.contains("Install") {
+            assert_eq!(installed.unwrap()["spec"]["package_kind"], "plugin");
+        } else {
+            assert!(installed.is_none());
+        }
+    }
+    assert_eq!(
+        approval_count, 5,
+        "Every preview/install/mutation received explicit one-time approval"
+    );
+    Client::new(data.path().into())
+        .call("shutdown", json!({}))
+        .await
+        .unwrap();
+    serving.await.unwrap().unwrap();
+}
