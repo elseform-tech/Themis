@@ -401,3 +401,103 @@ async fn skill_catalog_reaches_system_request_without_body() {
     ));
     assert!(!system.contains("BODY_MUST_REMAIN_LAZY"));
 }
+
+async fn stopped_provider_request_finishes(compacting: bool) {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    use themis_core::runtime::{ConversationRole, ConversationTurn};
+    use wiremock::{matchers::method, Mock, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_secs(30))
+                .set_body_json(common::final_text_body("Too late")),
+        )
+        .mount(&server)
+        .await;
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let history = if compacting {
+        vec![ConversationTurn {
+            role: ConversationRole::User,
+            text: "old context ".repeat(500),
+        }]
+    } else {
+        vec![]
+    };
+    let run = tokio::spawn(run_task_with_policy(
+        llm,
+        vec![],
+        "Continue".into(),
+        history,
+        Arc::new(AllowAllHook),
+        RunPolicy {
+            segment_turns: 5,
+            total_turns: 5,
+            context_token_budget: if compacting { 64 } else { usize::MAX },
+            recent_messages: 4,
+        },
+        tx,
+        stopped.clone(),
+    ));
+    let mut events = Vec::new();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let ready = if compacting {
+            matches!(event, RunEvent::ContextCompacting)
+        } else {
+            matches!(event, RunEvent::Started { .. })
+        };
+        events.push(event);
+        if ready {
+            break;
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while server.received_requests().await.unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    stopped.store(true, Ordering::SeqCst);
+    let result = tokio::time::timeout(Duration::from_millis(500), run)
+        .await
+        .expect("Stop must preempt a stalled provider request")
+        .unwrap();
+    assert!(result.unwrap_err().to_string().contains("Stopped by you"));
+    events.extend(common::drain(&mut rx).await);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::Failed { .. }))
+            .count(),
+        1,
+        "{events:?}"
+    );
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        RunEvent::ContextCheckpoint { .. } | RunEvent::Finished { .. }
+    )));
+}
+
+#[tokio::test]
+async fn stop_cancels_stalled_compaction_provider_request() {
+    stopped_provider_request_finishes(true).await;
+}
+
+#[tokio::test]
+async fn stop_cancels_stalled_answer_provider_request() {
+    stopped_provider_request_finishes(false).await;
+}

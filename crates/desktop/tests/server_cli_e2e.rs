@@ -684,3 +684,98 @@ async fn projects_use_one_fixed_root_and_rename_preserves_threads_after_restart(
         "preserve"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
+    use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .update_settings(themis_desktop::types::SettingsPatch {
+            context_token_budget: Some(2000),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Late checkpoint"},"finish_reason":"stop"}]})))
+        .mount(&provider).await;
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        &[
+            "thread",
+            "create",
+            project.path().to_str().unwrap(),
+            "test-model",
+        ],
+    );
+    let id = thread["id"].as_str().unwrap();
+    let mut events = Client::new(data.path().into()).subscribe().await.unwrap();
+    cli(
+        data.path(),
+        &[
+            "thread",
+            "send",
+            id,
+            &"Original task ".repeat(3000),
+            "--detach",
+        ],
+    );
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            if event["name"] == "thread-event"
+                && event["payload"]["event"]["kind"] == "context_compacting"
+            {
+                break;
+            }
+        }
+        while provider.received_requests().await.unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Compaction must reach the stalled mock provider");
+    cli(data.path(), &["thread", "stop", id]);
+    let terminal = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            if event["name"] == "thread-event" && event["payload"]["event"]["kind"] == "failed" {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("CLI Stop must release stalled compaction promptly");
+    assert!(terminal["payload"]["event"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("Stopped by you"));
+    let threads = Client::new(data.path().into())
+        .call("list_threads", json!({"projectRoot":project.path()}))
+        .await
+        .unwrap();
+    assert_eq!(
+        threads
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|thread| thread["id"] == id)
+            .unwrap()["running"],
+        false
+    );
+    Client::new(data.path().into())
+        .call("shutdown", json!({}))
+        .await
+        .unwrap();
+    serving.await.unwrap().unwrap();
+}

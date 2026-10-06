@@ -370,7 +370,12 @@ pub async fn run_task_with_policy_and_catalog(
                 &events,
             )
             .await?;
-            if let Err(error) = compact_context(&llm, &mut messages, &policy, &events).await {
+            if let Err(error) =
+                compact_context(&llm, &mut messages, &policy, &events, &stopped).await
+            {
+                if stopped.load(Ordering::SeqCst) {
+                    return Err(error);
+                }
                 let error = format!("Context checkpoint failed: {error}");
                 emit(RunEvent::Failed {
                     error: error.clone(),
@@ -431,7 +436,10 @@ pub async fn run_task_with_policy_and_catalog(
             &events,
         )
         .await?;
-        if let Err(error) = compact_context(&llm, &mut messages, &policy, &events).await {
+        if let Err(error) = compact_context(&llm, &mut messages, &policy, &events, &stopped).await {
+            if stopped.load(Ordering::SeqCst) {
+                return Err(error);
+            }
             emit(RunEvent::Failed {
                 error: format!("Context checkpoint failed: {error}"),
             })
@@ -478,7 +486,43 @@ pub async fn run_task_with_policy_and_catalog(
     Err(anyhow!(error))
 }
 
+// Model requests are safe to cancel: no tool execution is in progress here.
+// Atomic stop flags are shared with desktop/CLI; poll while awaiting I/O too.
+async fn until_stopped<T>(
+    future: impl std::future::Future<Output = T>,
+    stopped: &AtomicBool,
+    events: &tokio::sync::mpsc::Sender<RunEvent>,
+) -> anyhow::Result<T> {
+    tokio::select! {
+        biased;
+        _ = async {
+            while !stopped.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        } => {
+            check_stopped(stopped, events).await?;
+            unreachable!("stop flag remains set for this run")
+        }
+        result = future => Ok(result),
+    }
+}
+
 async fn request_answer(
+    llm: &Arc<dyn LLMProvider>,
+    messages: &[ChatMessage],
+    llm_tools: &[Tool],
+    events: &tokio::sync::mpsc::Sender<RunEvent>,
+    stopped: &AtomicBool,
+) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
+    until_stopped(
+        request_answer_inner(llm, messages, llm_tools, events, stopped),
+        stopped,
+        events,
+    )
+    .await?
+}
+
+async fn request_answer_inner(
     llm: &Arc<dyn LLMProvider>,
     messages: &[ChatMessage],
     llm_tools: &[Tool],
@@ -579,7 +623,39 @@ fn estimated_tokens(messages: &[ChatMessage]) -> usize {
         .sum()
 }
 
+const COMPACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 async fn compact_context(
+    llm: &Arc<dyn LLMProvider>,
+    messages: &mut Vec<ChatMessage>,
+    policy: &RunPolicy,
+    events: &tokio::sync::mpsc::Sender<RunEvent>,
+    stopped: &AtomicBool,
+) -> anyhow::Result<()> {
+    compact_context_with_timeout(llm, messages, policy, events, stopped, COMPACTION_TIMEOUT).await
+}
+
+async fn compact_context_with_timeout(
+    llm: &Arc<dyn LLMProvider>,
+    messages: &mut Vec<ChatMessage>,
+    policy: &RunPolicy,
+    events: &tokio::sync::mpsc::Sender<RunEvent>,
+    stopped: &AtomicBool,
+    timeout: std::time::Duration,
+) -> anyhow::Result<()> {
+    until_stopped(
+        tokio::time::timeout(
+            timeout,
+            compact_context_inner(llm, messages, policy, events),
+        ),
+        stopped,
+        events,
+    )
+    .await?
+    .map_err(|_| anyhow!("summarization timed out before completing checkpoint"))?
+}
+
+async fn compact_context_inner(
     llm: &Arc<dyn LLMProvider>,
     messages: &mut Vec<ChatMessage>,
     policy: &RunPolicy,
@@ -798,6 +874,56 @@ mod tests {
             summary: "test".to_owned(),
             risk: RiskLevel::Write,
         }
+    }
+
+    #[tokio::test]
+    async fn stalled_compaction_times_out_without_replacing_conversation() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(30)).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Late checkpoint"},"finish_reason":"stop"}]})))
+            .mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let mut messages = initial_messages(
+            vec![ConversationTurn {
+                role: ConversationRole::User,
+                text: "Original context ".repeat(500),
+            }],
+            "Continue".into(),
+        );
+        let before = serde_json::to_value(&messages).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let result = compact_context_with_timeout(
+            &llm,
+            &mut messages,
+            &RunPolicy {
+                segment_turns: 5,
+                total_turns: 5,
+                context_token_budget: 64,
+                recent_messages: 4,
+            },
+            &tx,
+            &AtomicBool::new(false),
+            std::time::Duration::from_millis(100),
+        )
+        .await;
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("summarization timed out"));
+        assert_eq!(serde_json::to_value(&messages).unwrap(), before);
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            RunEvent::ContextCompacting
+        ));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[test]
