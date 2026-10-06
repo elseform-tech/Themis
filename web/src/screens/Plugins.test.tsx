@@ -2,7 +2,6 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Plugins } from "./Plugins";
-import { readSession, writeSession } from "../state/session";
 import { initialState } from "../state/reducer";
 import type { Plugin } from "../lib/types";
 import { pluginAction } from "../lib/tauri";
@@ -80,16 +79,13 @@ describe("Integrations management", () => {
     expect(screen.getByRole("button", { name: "Import" })).toBeEnabled();
   });
 
-  it("requires a chat for agent help and keeps drafts untouched", async () => {
+  it("keeps integration actions available without agent help or a selected chat", async () => {
     activeThreadId = null;
-    writeSession("drafts", { "other-chat": "Preserve me" });
     render(<Plugins />);
-    await screen.findByRole("button", { name: "View docs" });
-    fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Open a chat");
-    expect(readSession("drafts", {})).toEqual({ "other-chat": "Preserve me" });
-    expect(screen.getByRole("button", { name: "Ask Themis" })).toHaveAttribute("title", "Ask Themis");
-    expect(screen.getByRole("button", { name: "Ask Themis" })).toHaveTextContent(/^$/);
+    fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
+    expect(screen.queryByRole("button", { name: "Ask Themis" })).toBeNull();
+    expect(screen.queryByLabelText("What would you like Themis to do?")).toBeNull();
+    expect(screen.getByRole("button", { name: "Source" })).toBeInTheDocument();
   });
 
   it("keeps disabled plugin children gated and replaces failed icons with a glyph", async () => {
@@ -138,8 +134,7 @@ describe("Integrations management", () => {
     expect(screen.getByRole("button", { name: "View Discovered draft" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "View Imported draft" })).toBeInTheDocument();
   });
-  it("searches descriptions across categories and prepares a targeted agent draft", async () => {
-    writeSession("drafts", { "test-chat": "Keep my existing request." });
+  it("searches descriptions across categories with a recoverable empty result", async () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "document" } });
@@ -148,12 +143,6 @@ describe("Integrations management", () => {
     expect(screen.getByRole("button", { name: "View Draft" })).toBeInTheDocument();
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "missing" } });
     expect(screen.getByText("No matching integrations")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
-    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("[[skill:manage-skills]]");
-    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("Please [[skill:manage-skills]] for me.");
-    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).not.toContain("Help me manage");
-    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("Current search: missing");
-    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toMatch(/^Keep my existing request\.\n\n/);
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "save" }));
   });
 
@@ -163,10 +152,8 @@ describe("Integrations management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add plugins" }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByLabelText("Source")).toBeVisible();
-    fireEvent.change(within(dialog).getByLabelText("What would you like Themis to do?"), { target: { value: "Connect my document service" } });
     expect(within(dialog).getByText("Advanced").closest("details")).not.toHaveAttribute("open");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Ask Themis" }));
-    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("Connect my document service");
+    expect(within(dialog).queryByRole("button", { name: "Ask Themis" })).toBeNull();
   });
 
   it("searches MCP and hook names and collapses their configuration", async () => {
@@ -197,11 +184,38 @@ describe("Integrations management", () => {
     await screen.findByRole("button", { name: "View docs" });
     fireEvent.click(screen.getByRole("button", { name: "MCP" }));
     fireEvent.click(screen.getByRole("button", { name: "More actions for filesystem" }));
-    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+    expect(screen.queryByRole("button", { name: "Test" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Export plugin" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "View" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Configure" }));
+    expect(screen.getByRole("dialog", { name: "Configure filesystem" })).toBeInTheDocument();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run test" })));
     expect(screen.getByRole("status")).toHaveTextContent("Connected · 1 tools");
     expect(screen.getByText("read_file")).toBeVisible();
     expect(screen.getByText("Advanced result").closest("details")).not.toHaveAttribute("open");
+    fireEvent.change(screen.getByLabelText("Configuration"), { target: { value: "invalid unsaved configuration" } });
+    expect(screen.getByRole("button", { name: "Run test" })).toBeDisabled();
+  });
+
+  it("keeps personal copies in read-only configuration and imports files through one source field", async () => {
+    installed[0].source = "official";
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "More actions for docs" }));
+    expect(screen.queryByRole("button", { name: "Create personal copy" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Update" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Configure" }));
+    expect(screen.getByLabelText("Configuration")).toHaveAttribute("readonly");
+    fireEvent.click(screen.getByRole("button", { name: "Create personal copy" }));
+    expect(screen.getByLabelText("Configuration")).not.toHaveAttribute("readonly");
+    expect((screen.getByLabelText("Configuration") as HTMLTextAreaElement).value).toContain("docs-copy-1");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add plugins" }));
+    expect(screen.queryByLabelText("Read a JSON file")).toBeNull();
+    expect(screen.getByLabelText("Import from")).toHaveValue("path");
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "/tmp/plugin.json" } });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Import" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "import_path", path: "/tmp/plugin.json" }));
   });
 
   it("creates a manual hook template that outputs valid JSON", async () => {
@@ -252,17 +266,6 @@ describe("Integrations management", () => {
     expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "preview", marketplace: "official", name: "public-docs" }));
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "save" }));
-  });
-
-  it("passes the selected import source into an editable agent draft", async () => {
-    render(<Plugins />);
-    await screen.findByRole("button", { name: "View docs" });
-    fireEvent.click(screen.getByRole("button", { name: "Add plugins" }));
-    fireEvent.change(screen.getByLabelText("Import from"), { target: { value: "repository" } });
-    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "https://github.com/example/skills.git" } });
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Ask Themis" }));
-    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("https://github.com/example/skills.git");
-    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "import_repository" }));
   });
 
   it("keeps marketplace entries associated with the source used to install them", async () => {

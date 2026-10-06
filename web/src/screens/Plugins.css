@@ -9,9 +9,6 @@
 .themis-integrations-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem 0; }
 .themis-integrations-toolbar > div { display: flex; align-items: center; gap: .5rem; }
 .themis-integrations-search { margin: .25rem 0 .75rem; }
-.themis-integrations-agent { display: flex; align-items: end; gap: .75rem; margin-bottom: 1rem; }
-.themis-integrations-agent label { flex: 1; }
-.themis-integrations-agent button { flex-shrink: 0; }
 .themis-integrations-list { padding: 0; margin: 0; list-style: none; flex: 1; min-height: 0; overflow-y: auto; }
 .themis-integrations-list > li { display: flex; align-items: center; gap: .5rem; min-height: 3.5rem; border-bottom: 1px solid var(--themis-border-subtle); }
 .themis-integration-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }

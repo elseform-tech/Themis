@@ -1,6 +1,5 @@
 import { promptParts } from "../lib/prompt";
 import { PromptInput } from "../components/PromptInput";
-import { AskThemisIcon } from "../components/AskThemisIcon";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useState } from "react";
 import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
@@ -21,7 +20,6 @@ import {
   updateAutomation,
 } from "../lib/tauri";
 import type { Automation, GoModel } from "../lib/types";
-import { readSession, writeSession } from "../state/session";
 import { describeError, toast, useApp } from "../state/store";
 import {
   automationToForm,
@@ -91,31 +89,6 @@ export function Automations() {
     });
     return () => { active = false; };
   }, [targetMode, state.secretStatus.go, modelRefresh]);
-
-  function askThemis() {
-    const threadId = state.activeThreadId;
-    if (!threadId) return;
-    let request = "Help me create or manage automations in this chat.";
-    if (dialog.mode !== "closed") {
-      const form = dialog.form;
-      request = dialog.mode === "edit"
-        ? `Help me update automation ${form.name} (id: ${dialog.automationId}).`
-        : "Help me create an automation from these instructions.";
-      const repeat = form.repeat === "interval" ? `Every ${form.intervalMinsRaw} minutes`
-        : `${form.repeat === "weekly" ? `Weekly on ${weekdays[form.weekday]}` : form.repeat === "weekdays" ? "Weekdays" : "Daily"} at ${form.time} (${form.timezone})`;
-      request += `\nInstructions: ${form.task}\nRepeat: ${repeat}`;
-      request += `\nRun in: ${form.targetMode === "continue" ? `chat ${form.targetThreadId || threadId}` : "a new chat each run"}\nProject: ${form.projectRoot || state.activeProjectRoot || "current project"}`;
-      request += `\nName: ${form.name.trim() || "derive from instructions"}\nStatus: ${form.enabled ? "enabled" : "paused"}`;
-      if (form.targetMode === "new") request += `\nModel: ${form.model || "configured default"}\nReasoning effort: ${form.effort || "default"}`;
-    }
-    const drafts = readSession<Record<string, string>>("drafts", {});
-    const existing = drafts[threadId]?.trim();
-    drafts[threadId] = `${existing ? `${existing}\n\n` : ""}Please [[skill:manage-automations]] for me. ${request} `;
-    writeSession("drafts", drafts);
-    window.dispatchEvent(new Event("themis-drafts-changed"));
-    setDialog({ mode: "closed" });
-    dispatch({ type: "ui/view", view: "thread" });
-  }
 
   function openCreate() {
     setSaveError(null);
@@ -266,7 +239,6 @@ export function Automations() {
         <h2 className="themis-automations-title">Automations</h2>
         <div className="themis-automations-head-actions">
           <Button variant="ghost" size="small" onClick={openCreate}>+ New automation</Button>
-          <button className="themis-ask-button" aria-label="Ask Themis" title="Ask Themis" disabled={!state.activeThreadId} onClick={askThemis}><AskThemisIcon /></button>
         </div>
       </div>
       {!state.settings.automations_enabled && (
@@ -459,7 +431,6 @@ export function Automations() {
               >
                 Cancel
               </Button>
-              <button className="themis-ask-button" aria-label="Ask Themis" title="Ask Themis" disabled={saving || creatingProject || !state.activeThreadId} onClick={askThemis}><AskThemisIcon /></button>
               <Button
                 variant="primary"
                 disabled={saving || creatingProject || newProjectName !== null}

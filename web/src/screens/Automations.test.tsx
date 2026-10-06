@@ -2,7 +2,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../state/reducer";
-import { readSession, writeSession } from "../state/session";
 import { Automations } from "./Automations";
 import * as api from "../lib/tauri";
 
@@ -27,36 +26,13 @@ function expectNoAutomationMutation() {
 }
 
 describe("Automation navigation", () => {
-  it("opens an editable agent draft and preserves an existing chat draft without executing anything", () => {
-    writeSession("drafts", { "chat-1": "Existing notes", "other-chat": "Keep me" });
+  it("opens the direct form without agent help or mutations", () => {
     render(<Automations />);
-    fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
-    const drafts = readSession<Record<string, string>>("drafts", {});
-    expect(drafts["chat-1"]).toContain("[[skill:manage-automations]]");
-    expect(drafts["chat-1"]).toContain("Existing notes");
-    expect(drafts["other-chat"]).toBe("Keep me");
-    expect(mocks.dispatch).toHaveBeenCalledWith({ type: "ui/view", view: "thread" });
-    expectNoAutomationMutation();
-  });
-
-  it("carries instructions and the selected schedule from the simple form into the draft", () => {
-    render(<Automations />);
+    expect(screen.queryByRole("button", { name: "Ask Themis" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "+ New automation" }));
     const dialog = screen.getByRole("dialog", { name: "New automation" });
-    const instructions = within(dialog).getByRole("textbox", { name: "Instructions" });
-    instructions.textContent = "Review important changes";
-    fireEvent.input(instructions);
-    fireEvent.change(within(dialog).getByRole("combobox", { name: "Repeat" }), { target: { value: "weekly" } });
-    fireEvent.change(within(dialog).getByLabelText("Time", { exact: true }), { target: { value: "17:30" } });
-    fireEvent.click(within(dialog).getByRole("checkbox", { name: "Enabled" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Ask Themis" }));
-    const draft = readSession<Record<string, string>>("drafts", {})["chat-1"];
-    expect(draft).toContain("Review important changes");
-    expect(draft).toContain("17:30");
-    expect(draft).toContain("Monday");
-    expect(draft).toContain("Status: paused");
-    expect(draft).toContain("Run in: chat chat-1");
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(within(dialog).getByRole("textbox", { name: "Instructions" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Ask Themis" })).toBeNull();
     expectNoAutomationMutation();
   });
 
@@ -78,21 +54,13 @@ describe("Automation navigation", () => {
     expect(screen.getByText("Inbox cleanup")).toBeInTheDocument();
   });
 
-  it("preserves the name, paused status and new-chat model selections when editing through the agent", () => {
-    mocks.state.automations[1] = { ...mocks.state.automations[1], model: "chosen-model", reasoning_effort: "high" };
+  it("keeps direct editing available without a selected chat", () => {
+    mocks.state = { ...mocks.state, activeThreadId: null };
     render(<Automations />);
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]);
     const dialog = screen.getByRole("dialog", { name: "Edit automation" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Ask Themis" }));
-    const draft = readSession<Record<string, string>>("drafts", {})["chat-1"];
-    for (const detail of ["id: a2", "Name: Inbox cleanup", "Status: paused", "Every 30 minutes", "a new chat each run", "Model: chosen-model", "Reasoning effort: high"]) expect(draft).toContain(detail);
-    expectNoAutomationMutation();
-  });
-
-  it("requires a current chat for agent handoff", () => {
-    mocks.state = { ...mocks.state, activeThreadId: null };
-    render(<Automations />);
-    expect(screen.getByRole("button", { name: "Ask Themis" })).toBeDisabled();
+    expect(within(dialog).getByRole("checkbox", { name: "Enabled" })).not.toBeChecked();
+    expect(within(dialog).queryByRole("button", { name: "Ask Themis" })).toBeNull();
     expectNoAutomationMutation();
   });
 });
