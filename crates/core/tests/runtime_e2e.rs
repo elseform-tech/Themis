@@ -345,3 +345,59 @@ async fn live_go_chat_completions_run() {
     assert!(has_finished(&events), "events: {events:?}");
     assert!(!result.trim().is_empty(), "events: {events:?}");
 }
+
+#[tokio::test]
+async fn skill_catalog_reaches_system_request_without_body() {
+    let server = MockServer::start().await;
+    common::mount_script(&server, vec![common::final_text_body("Done")]).await;
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let skill = themis_core::skills::Skill {
+        id: "review".into(),
+        name: "Review".into(),
+        description: "Inspect changes".into(),
+        instructions: "BODY_MUST_REMAIN_LAZY".into(),
+        allowed_tools: vec![],
+        scripts: vec![],
+    };
+    themis_core::skills::materialize_scripts(std::slice::from_ref(&skill), root.path()).unwrap();
+    let catalog = themis_core::skills::catalog_prompt(&[skill], root.path());
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    themis_core::runtime::run_task_with_policy_and_catalog(
+        llm,
+        vec![],
+        "Inspect changes".into(),
+        vec![],
+        Arc::new(AllowAllHook),
+        RunPolicy {
+            segment_turns: 2,
+            total_turns: 2,
+            context_token_budget: usize::MAX,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        catalog,
+    )
+    .await
+    .unwrap();
+    common::drain(&mut rx).await;
+    let requests = server.received_requests().await.unwrap();
+    let request: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let system = request["messages"][0]["content"].as_str().unwrap();
+    assert_eq!(request["messages"][0]["role"], "system");
+    assert!(system.contains("Inspect changes"));
+    assert!(system.contains(
+        root.path()
+            .join(".themis/skills/review/SKILL.md")
+            .to_str()
+            .unwrap()
+    ));
+    assert!(!system.contains("BODY_MUST_REMAIN_LAZY"));
+}

@@ -318,6 +318,33 @@ pub async fn run_task_with_policy(
     events: tokio::sync::mpsc::Sender<RunEvent>,
     stopped: Arc<AtomicBool>,
 ) -> anyhow::Result<String> {
+    run_task_with_policy_and_catalog(
+        llm,
+        tools,
+        task,
+        history,
+        approvals,
+        policy,
+        events,
+        stopped,
+        String::new(),
+    )
+    .await
+}
+
+/// Run with an immutable metadata-only skill catalog in the system message.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_task_with_policy_and_catalog(
+    llm: Arc<dyn LLMProvider>,
+    tools: Vec<Box<dyn ToolT>>,
+    task: String,
+    history: Vec<ConversationTurn>,
+    approvals: Arc<dyn ApprovalHook>,
+    policy: RunPolicy,
+    events: tokio::sync::mpsc::Sender<RunEvent>,
+    stopped: Arc<AtomicBool>,
+    skill_catalog: String,
+) -> anyhow::Result<String> {
     let emit = |event: RunEvent| events.send(event);
     let caching = CachingApprovals::wrap(approvals);
     let llm_tools: Vec<Tool> = tools.iter().map(to_llm_tool).collect();
@@ -330,6 +357,7 @@ pub async fn run_task_with_policy(
     .ok();
 
     let mut messages = initial_messages(history, task);
+    messages[0].content.push_str(&skill_catalog);
 
     for turn in 0..policy.total_turns {
         check_stopped(&stopped, &events).await?;
@@ -397,6 +425,12 @@ pub async fn run_task_with_policy(
     check_stopped(&stopped, &events).await?;
     // The last tool batch is complete. Save a handoff before the hard stop.
     if policy.context_token_budget != usize::MAX && messages.len() > 3 {
+        crate::plugins::hooks::emit_current(
+            "BeforeCompaction",
+            serde_json::json!({"event":"BeforeCompaction"}),
+            &events,
+        )
+        .await?;
         if let Err(error) = compact_context(&llm, &mut messages, &policy, &events).await {
             emit(RunEvent::Failed {
                 error: format!("Context checkpoint failed: {error}"),
@@ -732,8 +766,8 @@ async fn execute_call(
         Err(err) => return Err(format!("tool '{name}' got invalid arguments: {err}")),
     };
     crate::plugins::hooks::emit_current(
-        "BeforeToolCall",
-        serde_json::json!({"event":"BeforeToolCall","tool":name,"arguments":parsed}),
+        "BeforeTool",
+        serde_json::json!({"event":"BeforeTool","tool":name,"arguments":parsed}),
         events,
     )
     .await
@@ -742,16 +776,11 @@ async fn execute_call(
     // the tool's own execution-time check passes without prompting twice.
     // (Direct `execute` calls outside `run_task` carry no permit and stay
     // fully gated.)
-    let outcome = match crate::tools::with_dispatch_permit(tool.execute(parsed)).await {
+    let outcome = match crate::tools::with_dispatch_permit(tool.execute(parsed.clone())).await {
         Ok(value) => Ok(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())),
         Err(err) => Err(format!("tool '{name}' failed: {err}")),
     };
-    let event = if outcome.is_ok() {
-        "AfterToolCall"
-    } else {
-        "ToolCallFailed"
-    };
-    crate::plugins::hooks::emit_current(event,serde_json::json!({"event":event,"tool":name,"ok":outcome.is_ok(),"output":outcome.as_ref().ok(),"error":outcome.as_ref().err()}),events).await.map_err(|e|e.to_string())?;
+    crate::plugins::hooks::emit_current("AfterTool", serde_json::json!({"event":"AfterTool","tool":name,"arguments":parsed,"ok":outcome.is_ok(),"output":outcome.as_ref().ok(),"error":outcome.as_ref().err()}), events).await.map_err(|e|e.to_string())?;
     outcome
 }
 

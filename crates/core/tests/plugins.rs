@@ -198,6 +198,8 @@ async fn hooks_require_approval_and_can_block_before_events() {
         enabled: true,
         timeout_seconds: 1,
         blocking: true,
+        matcher: None,
+        failure_policy: None,
         plugin_root: None,
         runtime_identity: None,
     };
@@ -277,6 +279,8 @@ async fn hook_root_is_data_and_timeout_kills_descendants() {
         enabled: true,
         timeout_seconds: 1,
         blocking: true,
+        matcher: None,
+        failure_policy: None,
         plugin_root: Some(path),
         runtime_identity: Some("g--personal--rev--root".into()),
     };
