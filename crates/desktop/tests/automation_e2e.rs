@@ -170,7 +170,7 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
     assert_eq!(run.run_id, handle.run_id);
     assert!(matches!(
         run.events.last(),
-        Some(ThreadEvent::Finished { result }) if result == "done, skillfully"
+        Some(ThreadEvent::Finished { result, .. }) if result == "done, skillfully"
     ));
 
     // The tools schema sent to the model carries only the granted tool...

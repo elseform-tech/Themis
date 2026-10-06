@@ -31,6 +31,7 @@ fn transcript_survives_reopen_and_keeps_threads_separate() {
             thread_id: "thread-a".into(),
             run_id: "run-1".into(),
             event: ThreadEvent::Finished {
+                model: None,
                 result: "I will remember ORBIT-17".into(),
             },
         })
@@ -46,7 +47,7 @@ fn transcript_survives_reopen_and_keeps_threads_separate() {
         matches!(&history[1], HistoryItem::Event { envelope } if matches!(&envelope.event, ThreadEvent::ToolFinished { output, .. } if output == "saved tool result"))
     );
     assert!(
-        matches!(&history[2], HistoryItem::Event { envelope } if matches!(&envelope.event, ThreadEvent::Finished { result } if result == "I will remember ORBIT-17"))
+        matches!(&history[2], HistoryItem::Event { envelope } if matches!(&envelope.event, ThreadEvent::Finished { result, .. } if result == "I will remember ORBIT-17"))
     );
     assert_eq!(reopened.history("thread-b").unwrap().len(), 1);
     assert_eq!(reopened.context("thread-a", 2).unwrap().len(), 2);
@@ -92,13 +93,18 @@ fn checkpoint_replaces_old_model_context_but_preserves_full_history() {
             thread_id: "thread".into(),
             run_id: "run".into(),
             event: ThreadEvent::Finished {
+                model: Some("original-model".into()),
                 result: "Done".into(),
             },
         })
         .unwrap();
     drop(store);
     let reopened = TranscriptStore::open(&path).unwrap();
-    assert_eq!(reopened.history("thread").unwrap().len(), 5);
+    let history = reopened.history("thread").unwrap();
+    assert_eq!(history.len(), 5);
+    assert!(
+        matches!(&history[4], HistoryItem::Event { envelope } if matches!(&envelope.event, ThreadEvent::Finished { model: Some(model), .. } if model == "original-model"))
+    );
     let context = reopened.context("thread", 20).unwrap();
     assert_eq!(context.len(), 2);
     assert!(context[0].text.contains("Original task; read note.txt"));

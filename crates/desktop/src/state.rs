@@ -164,6 +164,7 @@ impl RegistryEntry {
 struct AppStateInner {
     stop_flags: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
     projects: tokio::sync::RwLock<HashMap<String, ProjectInfo>>,
+    default_project_init: tokio::sync::Mutex<()>,
     threads: tokio::sync::RwLock<HashMap<String, ThreadRecord>>,
     pending: PendingMap,
     settings: SettingsStore,
@@ -223,7 +224,13 @@ impl AppState {
         let app_dir = settings_app_dir(&settings_path);
         let worktrees_root = app_dir.join("worktrees");
         let registry_path = app_dir.join("threads.json");
-        let state = Self::new_with_dirs(settings_path, worktrees_root, registry_path, secrets);
+        let state = Self::new_with_dirs(
+            settings_path,
+            worktrees_root,
+            registry_path,
+            secrets,
+            PathBuf::from(crate::types::default_projects_directory()),
+        );
         Self::spawn_automation_scheduler(state.clone());
         state
     }
@@ -241,6 +248,7 @@ impl AppState {
             worktrees_root,
             registry_path,
             Arc::new(MemoryStore::new()),
+            app_dir.join("projects"),
         )
     }
 
@@ -251,12 +259,14 @@ impl AppState {
         settings_path: PathBuf,
         worktrees_root: PathBuf,
     ) -> Self {
-        let registry_path = settings_app_dir(&settings_path).join("threads.json");
+        let app_dir = settings_app_dir(&settings_path);
+        let registry_path = app_dir.join("threads.json");
         Self::new_with_dirs(
             settings_path,
             worktrees_root,
             registry_path,
             Arc::new(MemoryStore::new()),
+            app_dir.join("projects"),
         )
     }
 
@@ -265,6 +275,7 @@ impl AppState {
         worktrees_root: PathBuf,
         registry_path: PathBuf,
         secrets: Arc<dyn SecretStore>,
+        projects_root: PathBuf,
     ) -> Self {
         let app_dir = settings_app_dir(&settings_path);
         let transcript = TranscriptStore::open(&app_dir.join("sessions.sqlite3"))
@@ -280,9 +291,10 @@ impl AppState {
             inner: Arc::new(AppStateInner {
                 stop_flags: std::sync::Mutex::new(HashMap::new()),
                 projects: tokio::sync::RwLock::new(HashMap::new()),
+                default_project_init: tokio::sync::Mutex::new(()),
                 threads: tokio::sync::RwLock::new(threads),
                 pending: PendingMap::default(),
-                settings: SettingsStore::load(settings_path),
+                settings: SettingsStore::load_with_projects_root(settings_path, projects_root),
                 transcript,
                 secrets,
                 go_base_url_override: std::sync::Mutex::new(None),
@@ -1189,7 +1201,16 @@ mod tests {
             .expect("accept");
 
         let settings = state.get_settings().await;
-        assert_eq!(settings, Settings::default());
+        assert_eq!(
+            settings,
+            Settings {
+                projects_directory: settings_app_dir(state.inner.settings.path())
+                    .join("projects")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..Settings::default()
+            }
+        );
         let updated = state
             .update_settings(SettingsPatch {
                 theme: Some(ThemeMode::Light),
@@ -1198,7 +1219,7 @@ mod tests {
             })
             .await
             .expect("update");
-        assert_eq!(updated.theme, ThemeMode::Light);
+        assert_eq!(updated.theme, ThemeMode::Dark);
         assert_eq!(updated.max_turns, 7);
         let bad = state
             .update_settings(SettingsPatch {

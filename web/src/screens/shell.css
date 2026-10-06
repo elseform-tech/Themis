@@ -8,6 +8,7 @@
 }
 
 .themis-main {
+  position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -60,7 +61,7 @@ html, body, #root { margin: 0; height: 100%; }
 * { box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
 button, input, textarea, select { font-family: inherit; }
-.themis-shell { height: 100dvh; font-family: inherit; font-size: .875rem; line-height: 1.5; font-optical-sizing: auto; overflow: hidden; }
+.themis-shell { height: 100dvh; border: 0; border-radius: 12px; font-family: inherit; font-size: .875rem; line-height: 1.5; font-optical-sizing: auto; overflow: hidden; }
 .themis-nav { min-height: 48px; padding: 6px 16px; background: var(--themis-canvas); font-size: .8125rem; }
 .themis-nav-context { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .themis-nav-context > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -69,7 +70,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 @media (max-width: 800px) { .themis-sidebar-slot { width: 220px; } .themis-sidebar { width: 220px; } .themis-settings { padding: 20px; } .themis-settings-tabs { gap: 10px; flex-wrap: wrap; } .themis-panel { position: fixed; inset: 48px 0 0 auto; width: min(28rem, 90vw); max-width: 90vw; z-index: 25; box-shadow: -8px 0 24px #0002; } }
 .themis-button--ghost { border-color: transparent; background: transparent; font-weight: 400; }
-.themis-button--ghost:hover:not(:disabled) { border-color: transparent; background: color-mix(in srgb, var(--themis-text) 5%, transparent); }
+.themis-button--ghost:hover:not(:disabled) { border-color: transparent; background: transparent; }
 .themis-badge { text-transform: none; letter-spacing: 0; font-weight: 500; background: transparent; border: 0; color: var(--themis-text-2); padding: 0 4px; }
 .themis-badge--warning { color: var(--themis-warning); }
 .themis-badge--danger { color: var(--themis-danger); }
@@ -77,8 +78,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 .themis-button--ghost { font-weight: 400; }
 .themis-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
-.themis-shell-body { display: flex; flex: 1; min-height: 0; padding: 0 8px 8px 0; }
-.themis-main { background: var(--themis-canvas); border: 1px solid var(--themis-border-subtle); border-radius: 10px; overflow: hidden; }
+.themis-shell-body { display: flex; flex: 1; min-height: 0; padding: 0; }
+.themis-main { background: var(--themis-canvas); border: 0; border-radius: 0; overflow: hidden; }
 .themis-nav { border: 0; background: var(--themis-shell-bg); min-height: 46px; padding: 6px 14px; }
 .themis-shell--mac .themis-nav { padding-left: 88px; }
 #sidebar-toggle svg { width: 17px; height: 17px; }

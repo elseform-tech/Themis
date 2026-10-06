@@ -377,3 +377,5 @@
 /* Inline skills use the existing composer surface, without a nested input box. */
 .themis-thread-composer .themis-prompt-editor { min-height: 52px; max-height: 240px; overflow-y: auto; padding: 6px 4px; border: 0; border-radius: 0; background: transparent; line-height: 1.5; font-size: .875rem; }
 .themis-thread-composer .themis-prompt-editor:focus-visible { outline: none; }
+
+.themis-response-model { display: block; margin-top: .5rem; color: var(--themis-text-2); font-size: .75rem; }

@@ -21,33 +21,18 @@ import {
 import { SidebarIcon } from "./screens/Sidebar";
 import { isTauri } from "@tauri-apps/api/core";
 import "./screens/shell.css";
+import { applyAppearance } from "./theme/appearance";
+import { KnightCompanion, KnightControl, KnightLoading, readCompanionPreferences, type CompanionPreferences, type KnightMood } from "./components/KnightCompanion";
+import { useDesktopCompanion } from "./components/DesktopCompanion";
 
 function Shell() {
-  const { state, dispatch } = useApp();
+  const { state, startup, dispatch } = useApp();
+  const [companion, setCompanion] = useState(readCompanionPreferences);
+  function updateCompanion(next: CompanionPreferences) { setCompanion(next); writeSession("companion", next); }
   const [collapsed, setCollapsed] = useState(() => readSession("sidebar-collapsed", false));
   function toggleSidebar() { setCollapsed(value => { writeSession("sidebar-collapsed", !value); return !value; }); }
-  useEffect(() => { document.documentElement.style.fontSize = `${16 * state.settings.text_size / 14}px`; }, [state.settings.text_size]);
-  useEffect(() => {
-    document.documentElement.dataset.palette = state.settings.theme_palette ?? "system";
-    document.documentElement.dataset.font = state.settings.font_family ?? "system";
-  }, [state.settings.theme_palette, state.settings.font_family]);
+  useEffect(() => { applyAppearance(state.settings); }, [state.settings]);
   const headApproval = state.approvals[0];
-
-  // Theme: settings value, resolving `system` via matchMedia.
-  useEffect(() => {
-    const mode = state.settings.theme;
-    const query = window.matchMedia("(prefers-color-scheme: light)");
-    const apply = () => {
-      const resolved =
-        mode === "system" ? (query.matches ? "light" : "dark") : mode;
-      document.documentElement.dataset.theme = resolved;
-    };
-    apply();
-    query.addEventListener("change", apply);
-    return () => {
-      query.removeEventListener("change", apply);
-    };
-  }, [state.settings.theme]);
 
   // Global keys: Cmd/Ctrl+K toggles the palette, Esc closes the topmost layer.
   useEffect(() => {
@@ -88,6 +73,15 @@ function Shell() {
 
   }
 
+  const threadId = state.activeThreadId;
+  const messages = threadId ? state.messages[threadId] ?? [] : [];
+  const last = messages[messages.length - 1];
+  const selectedThread = state.activeProjectRoot ? state.threadsByProject[state.activeProjectRoot]?.find(thread => thread.id === threadId) : undefined;
+  const working = threadId ? state.running[threadId] ?? selectedThread?.running : false;
+  const mood: KnightMood = (threadId && (state.sendErrors[threadId] || state.approvals.some(approval => approval.thread_id === threadId))) || (last?.role === "system" && /^(Run failed:|Send failed:|Send rejected:)/.test(last.text)) ? "attention"
+    : working ? "working" : last?.role === "assistant" && !last.incomplete ? "complete" : "idle";
+  const desktopCompanion = useDesktopCompanion(companion, mood, startup === null, error => toast(dispatch, `Companion unavailable: ${describeError(error)}`, "warning"));
+  if (startup !== null) return <KnightLoading variant={companion.variant} status={startup} />;
   return (
     <div className={`themis-shell ${isTauri() && /Mac/.test(navigator.platform) ? "themis-shell--mac" : ""}`}>
         <header className="themis-nav" data-tauri-drag-region>
@@ -95,10 +89,9 @@ function Shell() {
             <Button id="sidebar-toggle" variant="ghost" size="small" aria-label={collapsed ? "Show sidebar" : "Collapse sidebar"} aria-controls="themis-sidebar" aria-expanded={!collapsed} onClick={toggleSidebar}><SidebarIcon name="panel" /></Button>
             <span>{state.mainView === "thread" ? (state.projects.find(p => p.root === state.activeProjectRoot)?.name ?? "Workspace") : ({ skills: "Plugins", automations: "Automations", settings: "Settings", queue: "Review queue" }[state.mainView])}</span>
           </div>
-          {state.reviews.some(r => r.status === "pending") && <Button variant="ghost" size="small" onClick={() => dispatch({ type: "ui/view", view: "queue" })}>Review queue · {state.reviews.filter(r => r.status === "pending").length}</Button>}
         </header>
         <div className="themis-shell-body">
-          <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
+          <Sidebar collapsed={collapsed} companionControl={<KnightControl preferences={companion} onChange={updateCompanion} />} />
           <main className="themis-main">
         <div className="themis-view">
           {state.mainView === "thread" && <ThreadView />}
@@ -107,6 +100,7 @@ function Shell() {
           {state.mainView === "settings" && <SettingsScreen />}
           {state.mainView === "queue" && <ReviewQueue />}
         </div>
+        {companion.enabled && !desktopCompanion && <KnightCompanion preferences={companion} onChange={updateCompanion} mood={mood} />}
       </main>
       </div>
       {headApproval !== undefined && (

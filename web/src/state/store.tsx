@@ -8,6 +8,7 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type Dispatch,
   type ReactNode,
 } from "react";
@@ -18,6 +19,7 @@ import type { PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
 import {
   getSecretStatus,
   getSettings,
+  getDefaultProject,
   getThread,
   getThreadHistory,
   importLegacyHistory,
@@ -44,6 +46,7 @@ export * from "./reducer";
 
 interface AppContextValue {
   state: AppState;
+  startup: string | null;
   dispatch: Dispatch<import("./reducer").AppAction>;
   armManualRun: (threadId: string) => void;
   cancelManualRun: (threadId: string) => void;
@@ -99,6 +102,7 @@ export { describeError };
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [startup, setStartup] = useState<string | null>("Loading preferences…");
   const legacyMessages = useRef(readSession<Record<string, PersistedMessage[]>>("messages", {}));
   const restoredSession = useRef(false);
   const savedSelection = useRef(readSession<{ root: string; threadId: string } | null>("selection", null));
@@ -177,19 +181,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     getSettings()
-      .then((settings) => {
+      .then(async (settings) => {
         if (cancelled) return;
         dispatch({ type: "settings/loaded", settings });
-        void restoreRecentProjects(settings.recent_roots, {
-          api: { openProject, listThreads, getThreadHistory, importLegacyHistory },
+        setStartup("Opening workspace…");
+        const defaultProject = await getDefaultProject().catch(error => {
+          if (!cancelled) toast(dispatch, `Default workspace unavailable: ${describeError(error)}`, "danger");
+          return null;
+        });
+        const roots = [...settings.recent_roots];
+        if (defaultProject && !roots.includes(defaultProject.root)) roots.push(defaultProject.root);
+        setStartup("Restoring conversations…");
+        const completed = await restoreRecentProjects(roots, {
+          api: { openProject: root => defaultProject?.root === root ? Promise.resolve(defaultProject) : openProject(root), listThreads, getThreadHistory, importLegacyHistory },
           dispatch,
           isCancelled: () => cancelled,
           legacyMessages: legacyMessages.current,
           savedSelection: savedSelection.current,
           warn: (message) => toast(dispatch, message, "warning"),
-        }).then((completed) => {
-          if (completed) restoredSession.current = true;
         });
+        if (completed) restoredSession.current = true;
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -199,7 +210,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             settings: state.settings,
           });
         }
-      });
+      })
+      .finally(() => { if (!cancelled) setStartup(null); });
     getSecretStatus()
       .then((status) => {
         if (!cancelled) dispatch({ type: "secrets/loaded", status });
@@ -228,6 +240,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const value = useMemo(() => ({ state, dispatch, armManualRun, cancelManualRun }), [state]);
+  const value = useMemo(() => ({ state, startup, dispatch, armManualRun, cancelManualRun }), [state, startup]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

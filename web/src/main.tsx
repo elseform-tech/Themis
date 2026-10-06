@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { DesktopCompanion } from "./components/DesktopCompanion";
 import "./theme/tokens.css";
 
 const root = document.getElementById("root");
@@ -14,6 +15,6 @@ if (document.documentElement.dataset.theme !== "light") {
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <App />
+    {new URLSearchParams(window.location.search).has("companion") ? <DesktopCompanion /> : <App />}
   </React.StrictMode>,
 );

@@ -24,8 +24,25 @@
           "x": 16,
           "y": 20
         }
+      },
+      {
+        "label": "companion",
+        "title": "Themis Knight",
+        "url": "index.html?companion",
+        "width": 108,
+        "height": 132,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false,
+        "resizable": false
       }
-    ]
+    ],
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

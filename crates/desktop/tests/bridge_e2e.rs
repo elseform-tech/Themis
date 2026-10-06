@@ -179,10 +179,11 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
         !output.is_empty(),
         "tool output reaches the conversation bridge"
     );
-    let ThreadEvent::Finished { result } = run.events.last().expect("terminal event") else {
+    let ThreadEvent::Finished { result, model } = run.events.last().expect("terminal event") else {
         panic!("expected finished, got {:?}", run.events.last());
     };
     assert_eq!(result, "done writing the file");
+    assert_eq!(model.as_deref(), Some("test-model"));
 
     // The agent writes directly into the shared project checkout.
     assert!(thread.worktree_path.is_none());
@@ -403,14 +404,20 @@ async fn non_git_project_has_no_diff_and_read_only_runs() {
 #[tokio::test]
 async fn name_only_project_creation_is_safe_and_ready_for_a_thread() {
     let (state, directory) = test_state();
-    let projects = directory.path().join("projects");
-    state
+    let projects = std::path::PathBuf::from(state.get_settings().await.projects_directory);
+    assert!(state
         .update_settings(themis_desktop::types::SettingsPatch {
-            projects_directory: Some(projects.to_string_lossy().into_owned()),
+            projects_directory: Some(
+                directory
+                    .path()
+                    .join("other")
+                    .to_string_lossy()
+                    .into_owned()
+            ),
             ..Default::default()
         })
         .await
-        .unwrap();
+        .is_err());
     for name in ["", "../escape", "a/b", "a\\b", ".hidden", "bad:name"] {
         assert!(
             state.create_project(name.to_owned(), None).await.is_err(),

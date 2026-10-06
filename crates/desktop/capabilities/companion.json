@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/capability",
+  "identifier": "companion",
+  "description": "Local knight window: native dragging, position and pointer tracking only.",
+  "windows": [
+    "companion"
+  ],
+  "permissions": [
+    "core:window:default",
+    "core:event:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-position"
+  ]
+}

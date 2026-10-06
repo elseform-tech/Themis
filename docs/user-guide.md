@@ -18,9 +18,8 @@ from its environment.
 ## Getting started
 
 Themis opens directly into the workspace. Choose **Create project**, enter a
-name, and start chatting in the new thread. The default location is
-`~/ThemisOS/Projects`; change it under Settings → General, or expand
-**Change location** when creating a project. Existing folders are never overwritten.
+name, and start chatting in the new thread. All new projects live under the fixed
+`~/ThemisOS/Projects` root. Existing folders are never overwritten.
 
 New projects get a Git repository and initial empty commit so each thread can
 work in isolation. Open an existing folder through the project actions menu.
@@ -28,7 +27,7 @@ work in isolation. Open an existing folder through the project actions menu.
 ## Keys
 
 Use `OPENCODE_KEY` in the environment when launching Themis, or enter a key in
-Settings → Models & connections → Manage key → **Save key**.
+Settings → Models → Manage key → **Save key**.
 Entered keys remain in macOS Keychain across app restarts. They are not saved
 in the conversation database, settings files, or browser storage.
 Forgetting a saved key does not unset an environment key. A Finder launch
@@ -143,7 +142,7 @@ IDs. Their effort controls follow the selected model's catalog levels.
 
 ## Settings reference
 
-Settings has General, Appearance, Models & connections, Permissions, and Advanced sections.
+Settings has General, Appearance, Models, Permissions, and Advanced sections.
 Ordinary preferences save on change; text inputs save when focus leaves the field.
 Errors appear inline, and rejected changes leave the previous preferences intact.
 Permissions lets you require approval for read tools and set the approval
@@ -153,7 +152,7 @@ Preferences persisted to `settings.json`:
 
 | Key | Meaning | Default |
 | --- | --- | --- |
-| `theme` | `dark`, `light`, or `system` | `system` |
+| `theme` | Dark only; legacy values normalize to `dark` | `dark` |
 | `default_provider` | Provider for new threads | `go` |
 | `default_model` | Model for new threads (`""` = provider default) | `""` |
 | `max_turns` | Max agent turns per run (backend validates 1–200) | `20` |
@@ -163,7 +162,7 @@ Preferences persisted to `settings.json`:
 | `recent_roots` | Recently opened projects, most recent first (max 10, managed automatically) | `[]` |
 | `concurrency_limit` | Max parallel runs across all threads (1–16); sends past the limit are rejected | `3` |
 | `automations_enabled` | Global automation kill-switch | `true` |
-| `projects_directory` | Parent folder for new projects | `~/ThemisOS/Projects` |
+| `projects_directory` | Fixed parent folder for new projects | `~/ThemisOS/Projects` |
 | `text_size` | Conversation text size (12–18 px) | `13` |
 | `sidebar_hover` | Reveal collapsed navigation on edge hover | `true` |
 
@@ -229,5 +228,36 @@ are displayed without execution. Mermaid fences render diagrams with expandable
 source; invalid diagrams show their source instead. Diagram configuration
 directives and image resources fall back to source for safety.
 
-The sidebar keeps its galaxy brand header in both themes. Its scale animates
-gently and respects the system reduced-motion preference.
+The expandable sidebar shows a shimmering Themis wordmark and respects reduced motion.
+
+
+### Workspace and appearance
+
+The icon rail stays visible when the project dock is collapsed. Utilities open
+in the main view; New chat, projects, and threads stay in the project dock.
+Hover or focus a utility icon for its label. Long thread titles reveal their
+full text in one leftward pass on hover or keyboard focus. With reduced motion,
+titles wrap instead.
+
+The default **Themis** project lives at `~/ThemisOS/Projects/Themis` and remains
+in the sidebar without a lock. Every project, including Themis, supports
+display-name changes. Settings shows only the shared projects root. Every new
+project is created under `~/ThemisOS/Projects`, with no folder override. Renaming leaves
+folders and conversation history in place. Existing projects are not moved.
+
+Appearance is dark only, including when old settings request light or system
+mode. **Appearance** offers 17 presets (the original Themis scheme plus 16
+alternatives), including GitHub-inspired Dark and Dimmed, and 12 local font
+choices with fallback families. Theme, font, and size preview across the app;
+**Apply** saves them, **Revert** restores saved choices, and leaving Appearance
+cancels an unapplied preview. Code always uses monospace typography. Other
+settings continue to save automatically.
+
+Thread editing changes only the name. Select models in the composer between runs.
+Each completed response shows the model used; later switches leave those labels
+unchanged. Older responses say “Model not recorded” when metadata is missing.
+See [UI rules](ui-rules.md) for the maintained interface contract.
+
+The workspace uses continuous surface layers: lighter utility/header frame, dark
+project sidebar, darker canvas. Appearance swatches and the Surface preview show
+these three levels in the same order for every theme.

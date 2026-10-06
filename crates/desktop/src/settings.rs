@@ -2,7 +2,43 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::types::{Settings, SettingsPatch};
+use crate::types::{Settings, SettingsPatch, ThemeMode};
+
+pub const THEME_PALETTES: &[&str] = &[
+    "system",
+    "warm",
+    "violet",
+    "github-dark",
+    "github-dimmed",
+    "midnight",
+    "nordic",
+    "graphite",
+    "ink",
+    "forest",
+    "copper",
+    "plum",
+    "ocean",
+    "rosewood",
+    "olive",
+    "amethyst",
+    "terminal",
+    "sandstone",
+    "carbon",
+];
+pub const FONT_FAMILIES: &[&str] = &[
+    "system",
+    "sans",
+    "serif",
+    "mono",
+    "rounded",
+    "avenir",
+    "helvetica",
+    "verdana",
+    "trebuchet",
+    "palatino",
+    "charter",
+    "menlo",
+];
 
 /// Inclusive bounds for `max_turns` updates.
 pub const MAX_TURNS_MIN: i64 = 1;
@@ -27,6 +63,7 @@ pub const MAX_RECENT_ROOTS: usize = 10;
 /// update is written back immediately.
 pub struct SettingsStore {
     path: PathBuf,
+    projects_root: PathBuf,
     current: tokio::sync::Mutex<Settings>,
 }
 
@@ -34,16 +71,26 @@ impl SettingsStore {
     /// Loads settings from `path`, falling back to defaults.
     #[must_use]
     pub fn load(path: PathBuf) -> Self {
+        Self::load_with_projects_root(
+            path,
+            PathBuf::from(crate::types::default_projects_directory()),
+        )
+    }
+
+    pub(crate) fn load_with_projects_root(path: PathBuf, projects_root: PathBuf) -> Self {
         let mut settings: Settings = std::fs::read_to_string(&path)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
+        settings.theme = ThemeMode::Dark;
+        settings.projects_directory = projects_root.to_string_lossy().into_owned();
         if settings.default_provider == crate::types::ProviderKind::Legacy {
             settings.default_provider = crate::types::ProviderKind::Go;
             settings.default_model.clear();
         }
         Self {
             path,
+            projects_root,
             current: tokio::sync::Mutex::new(settings),
         }
     }
@@ -65,19 +112,9 @@ impl SettingsStore {
         let mut current = guard.clone();
         let snapshot = {
             if let Some(directory) = patch.projects_directory {
-                let path = Path::new(directory.trim());
-                if !path.is_absolute()
-                    || path
-                        .components()
-                        .any(|c| matches!(c, std::path::Component::ParentDir))
-                    || (path.exists() && !path.is_dir())
-                {
-                    return Err(
-                        "Projects folder must be an absolute directory path without '..'"
-                            .to_owned(),
-                    );
+                if Path::new(&directory) != self.projects_root {
+                    return Err("Projects root is fixed".to_owned());
                 }
-                current.projects_directory = path.to_string_lossy().into_owned();
             }
             if let Some(size) = patch.text_size {
                 if !(12..=22).contains(&size) {
@@ -86,13 +123,13 @@ impl SettingsStore {
                 current.text_size = size;
             }
             if let Some(palette) = patch.theme_palette {
-                if !["system", "warm", "ocean", "forest", "violet"].contains(&palette.as_str()) {
+                if !THEME_PALETTES.contains(&palette.as_str()) {
                     return Err("Unknown theme palette".to_owned());
                 }
                 current.theme_palette = palette;
             }
             if let Some(font) = patch.font_family {
-                if !["system", "sans", "serif", "mono", "rounded"].contains(&font.as_str()) {
+                if !FONT_FAMILIES.contains(&font.as_str()) {
                     return Err("Unknown font family".to_owned());
                 }
                 current.font_family = font;
@@ -138,9 +175,8 @@ impl SettingsStore {
             if let Some(confirm) = patch.confirm_reads {
                 current.confirm_reads = confirm;
             }
-            if let Some(theme) = patch.theme {
-                current.theme = theme;
-            }
+            // Accept old clients' light/system requests, always return dark.
+            current.theme = ThemeMode::Dark;
             if let Some(provider) = patch.default_provider {
                 current.default_provider = provider;
             }
@@ -180,6 +216,15 @@ impl SettingsStore {
         self.save(&snapshot)?;
         *guard = snapshot.clone();
         Ok(snapshot)
+    }
+
+    pub(crate) async fn rename_project(&self, root: String, name: String) -> Result<(), String> {
+        let mut guard = self.current.lock().await;
+        let mut next = guard.clone();
+        next.project_names.insert(root, name);
+        self.save(&next)?;
+        *guard = next;
+        Ok(())
     }
 
     fn save(&self, settings: &Settings) -> Result<(), String> {
@@ -374,6 +419,38 @@ mod tests {
 #[cfg(test)]
 mod preference_tests {
     use super::*;
+    #[tokio::test]
+    async fn every_preset_and_font_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let store = SettingsStore::load(path.clone());
+        for palette in THEME_PALETTES {
+            store
+                .update(SettingsPatch {
+                    theme_palette: Some((*palette).to_owned()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                SettingsStore::load(path.clone()).get().await.theme_palette,
+                *palette
+            );
+        }
+        for font in FONT_FAMILIES {
+            store
+                .update(SettingsPatch {
+                    font_family: Some((*font).to_owned()),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                SettingsStore::load(path.clone()).get().await.font_family,
+                *font
+            );
+        }
+    }
     #[tokio::test]
     async fn rejected_or_unwritable_updates_preserve_memory_and_disk() {
         let temp = tempfile::tempdir().unwrap();

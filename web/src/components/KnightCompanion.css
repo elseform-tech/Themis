@@ -1,0 +1,42 @@
+.themis-knight-art { display: block; width: 100%; height: 100%; }
+.themis-knight-art svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.themis-knight-art .blob { transform-origin: 92px 150px; animation: themis-knight-breathe 5s ease-in-out infinite; }
+.themis-knight-art .eyes { transform-origin: 92px 94px; animation: themis-knight-blink 6.7s infinite; }
+.themis-knight-art .gaze { transform: translate(var(--knight-gaze, 0px), var(--knight-gaze-y, 0px)); transition: transform 180ms ease-out; }
+.themis-knight-art[data-mood="working"] .head { transform-origin: 92px 108px; animation: themis-knight-look 2.8s ease-in-out infinite; }
+.themis-knight-art[data-mood="complete"] .blob { animation: themis-knight-nod 1.6s ease-in-out 1; }
+.themis-knight-art[data-mood="attention"] .head { transform-origin: 92px 108px; transform: rotate(-8deg); }
+.themis-knight-art.is-icon .blob, .themis-knight-art.is-icon .eyes { animation: none; }
+@keyframes themis-knight-breathe { 50% { transform: translateY(-3px) scale(1.015, .985); } }
+@keyframes themis-knight-blink { 0%,44%,48%,100% { transform: scaleY(1); } 46% { transform: scaleY(.1); } }
+@keyframes themis-knight-look { 25% { transform: rotate(-5deg); } 75% { transform: rotate(5deg); } }
+@keyframes themis-knight-nod { 25%,65% { transform: translateY(-7px); } 45%,85% { transform: translateY(0) scale(1.03, .97); } }
+.themis-knight-control > .themis-tooltip .themis-knight-art { width: 30px; height: 30px; }
+.themis-knight-control .themis-dialog-overlay::before { display: none; }
+.themis-knight-control .themis-dialog-panel { position: fixed; left: 64px; bottom: 105px; width: 270px; min-width: 0; max-width: calc(100vw - 80px); background: var(--themis-sidebar-bg); }
+.themis-knight-control .themis-dialog-title { font-size: .875rem; font-weight: 500; }
+.themis-knight-choices { display: flex; gap: 8px; }
+.themis-knight-choices button { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--themis-text-2); padding: 0; cursor: pointer; font: inherit; font-size: .8125rem; }
+.themis-knight-choices .themis-knight-art { height: 65px; }
+.themis-knight-choices button[aria-pressed="true"] { color: var(--themis-accent); }
+.themis-knight-choices button[aria-pressed="true"] > span:last-child { background: linear-gradient(110deg, var(--themis-accent), var(--themis-text), var(--themis-accent)); background-size: 240% 100%; background-clip: text; color: transparent; animation: themis-selected-glint 4s ease-in-out infinite; }
+.themis-knight-toggle { display: flex; align-items: center; justify-content: space-between; margin-top: 20px; font-size: .875rem; }
+.themis-knight-toggle input { accent-color: var(--themis-accent); width: 18px; height: 18px; }
+.themis-companion-area { position: absolute; inset: 12px 12px 96px; pointer-events: none; z-index: 24; }
+.themis-knight-companion { position: absolute; width: 88px; height: 88px; max-width: 100%; max-height: 100%; border: 0; padding: 0; background: transparent; pointer-events: auto; touch-action: none; cursor: grab; }
+.themis-knight-companion:active { cursor: grabbing; }
+.themis-knight-loading { height: 100dvh; background: var(--themis-canvas); color: var(--themis-text); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; font-family: inherit; }
+.themis-knight-loading p { color: var(--themis-text-2); font-size: .875rem; }
+.themis-knight-wake { width: 148px; height: 148px; padding: 0; background: transparent; border: 0; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .themis-knight-art *, .themis-knight-art .gaze { animation: none !important; transition: none !important; transform: none !important; } }
+.themis-knight-size { display: grid; gap: 8px; margin-top: 16px; }
+.themis-knight-size > span { display: flex; justify-content: space-between; }
+.themis-knight-size output { color: var(--themis-text-2); font-size: .75rem; }
+.themis-knight-size input { width: 100%; accent-color: var(--themis-accent); }
+.themis-knight-grip { display: block; text-align: center; height: 22px; font: 400 18px/22px system-ui; color: var(--themis-text-2); cursor: grab; }
+.themis-knight-companion > .themis-knight-art { height: calc(100% - 22px); }
+html.themis-desktop-companion, .themis-desktop-companion body, .themis-desktop-companion #root { background: transparent !important; overflow: hidden; margin: 0; width: 100%; height: 100%; }
+.themis-desktop-pet { height: 100%; padding: 10px; display: flex; flex-direction: column; }
+.themis-desktop-character { flex: 1; min-height: 0; width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.themis-desktop-pet .themis-knight-grip { border: 0; background: transparent; width: 100%; padding: 0; flex: 0 0 22px; touch-action: none; color: var(--themis-text); text-shadow: 0 1px 3px var(--themis-canvas); }
+.themis-desktop-pet .themis-knight-grip:active { cursor: grabbing; }

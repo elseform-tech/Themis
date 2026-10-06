@@ -172,6 +172,7 @@ impl AppState {
             let pump_thread_id = thread_id.clone();
             let terminated = Arc::new(AtomicBool::new(false));
             let pump_terminated = Arc::clone(&terminated);
+            let run_model = snapshot.model.clone();
             let pump = tokio::spawn(async move {
                 let mut pending_text = String::new();
                 while let Some(event) = events_rx.recv().await {
@@ -212,10 +213,16 @@ impl AppState {
                             | themis_core::runtime::RunEvent::Incomplete { .. }
                             | themis_core::runtime::RunEvent::Failed { .. }
                     );
+                    let mut captured_event = ThreadEvent::from(event.clone());
+                    if let ThreadEvent::Finished { model, .. }
+                    | ThreadEvent::Incomplete { model, .. } = &mut captured_event
+                    {
+                        *model = Some(run_model.clone());
+                    }
                     let envelope = ThreadEventEnvelope {
                         thread_id: pump_thread.clone(),
                         run_id: pump_run.clone(),
-                        event: ThreadEvent::from(event.clone()),
+                        event: captured_event,
                     };
                     if let Err(error) = pump_state.inner.transcript.append_event(&envelope) {
                         pump_state.record_error("save_thread_event", error);

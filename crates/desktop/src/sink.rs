@@ -104,6 +104,7 @@ mod tests {
             thread_id: "t".to_owned(),
             run_id: "r".to_owned(),
             event: ThreadEvent::Finished {
+                model: None,
                 result: "ok".to_owned(),
             },
         });

@@ -16,6 +16,7 @@ export interface ProjectInfo {
   root: string;
   name: string;
   is_git: boolean;
+  is_default?: boolean;
 }
 
 export interface ThreadInfo {
@@ -155,8 +156,8 @@ export type ThreadEvent =
   | { kind: 'approval_decided'; tool: string; decision: ApprovalDecision }
   | { kind: 'context_compacting' }
   | { kind: 'context_checkpoint'; summary: string }
-  | { kind: 'incomplete'; result: string }
-  | { kind: 'finished'; result: string }
+  | { kind: 'incomplete'; result: string; model?: string }
+  | { kind: 'finished'; result: string; model?: string }
   | { kind: 'failed'; error: string };
 
 export interface ThreadEventEnvelope {
@@ -171,6 +172,7 @@ export interface PersistedMessage {
   text: string;
   runId?: string;
   final?: boolean;
+  model?: string;
   /** Internal handoff marker; not shown as a conversation label. */
   incomplete?: boolean;
   tool?: { name: string; ok?: boolean; output?: string };
@@ -224,9 +226,10 @@ export interface ThreadComment {
 
 export interface Settings {
   projects_directory: string;
+  project_names?: Record<string, string>;
   text_size: number;
-  theme_palette: "system" | "warm" | "ocean" | "forest" | "violet";
-  font_family: "system" | "sans" | "serif" | "mono" | "rounded";
+  theme_palette: string;
+  font_family: "system" | "sans" | "serif" | "mono" | "rounded" | "avenir" | "helvetica" | "verdana" | "trebuchet" | "palatino" | "charter" | "menlo";
   sidebar_hover: boolean;
   theme: ThemeMode;
   default_provider: ProviderKind;

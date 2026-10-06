@@ -8,11 +8,11 @@ import * as bridge from "../lib/tauri";
 vi.mock("../lib/tauri", async importOriginal => ({
   ...await importOriginal<typeof import("../lib/tauri")>(),
   pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
-  getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
+  getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
-  setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
-  openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", effort_levels: [] }, { id: "gpt-5.6-luna", effort_levels: ["low", "medium", "high"] }]),
+  renameThread: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
+  openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), renameProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", effort_levels: [] }, { id: "gpt-5.6-luna", effort_levels: ["low", "medium", "high"] }]),
 }));
 const settings = { ...DEFAULT_SETTINGS, projects_directory: "/tmp/Themis/Projects" };
 beforeEach(() => {
@@ -20,6 +20,7 @@ beforeEach(() => {
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), clear: () => storage.clear() });
   vi.mocked(bridge.getSettings).mockResolvedValue(settings);
+  vi.mocked(bridge.listThreads).mockResolvedValue([]);
   vi.mocked(bridge.getSecretStatus).mockResolvedValue({ go: true });
   vi.mocked(bridge.updateSettings).mockImplementation(async patch => ({ ...settings, ...patch }));
   window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() });
@@ -29,6 +30,103 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("selects and hides the companion from the permanent rail and restores that choice", async () => {
+    const app = render(<App />);
+    await screen.findByRole("button", { name: "Knight companion" });
+    const utilities = screen.getByRole("navigation", { name: "Utilities" });
+    fireEvent.click(within(utilities).getByRole("button", { name: "Knight companion" }));
+    const options = screen.getByRole("dialog", { name: "Knight companion" });
+    fireEvent.click(within(options).getByRole("button", { name: "Ink" }));
+    expect(screen.getByRole("button", { name: "Move Ink companion" })).toBeInTheDocument();
+    fireEvent.click(within(options).getByRole("checkbox", { name: "Companion" }));
+    expect(screen.queryByRole("button", { name: "Move Ink companion" })).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(within(utilities).getByRole("button", { name: "Knight companion" })).toBeInTheDocument();
+    app.unmount();
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Knight companion" }));
+    const restored = screen.getByRole("dialog", { name: "Knight companion" });
+    expect(within(restored).getByRole("button", { name: "Ink" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(restored).getByRole("checkbox", { name: "Companion" })).not.toBeChecked();
+    fireEvent.click(within(restored).getByRole("checkbox", { name: "Companion" }));
+    expect(screen.getByRole("button", { name: "Move Ink companion" })).toBeInTheDocument();
+  });
+  it("keeps the actual startup loader until workspace restoration finishes", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof bridge.getDefaultProject>>) => void;
+    vi.mocked(bridge.getDefaultProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<App />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading preferences");
+    await act(async () => {});
+    expect(screen.getByRole("status")).toHaveTextContent("Opening workspace");
+    expect(screen.queryByRole("navigation", { name: "Utilities" })).toBeNull();
+    await act(async () => finish({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true }));
+    expect(screen.queryByText("Opening workspace")).toBeNull();
+    expect(screen.getByRole("navigation", { name: "Utilities" })).toBeInTheDocument();
+  });
+  it("adjusts and restores companion size from the rail", async () => {
+    const app = render(<App />);
+    await screen.findByRole("button", { name: "Knight companion" });
+    fireEvent.click(screen.getByRole("button", { name: "Knight companion" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Size" }), { target: { value: "144" } });
+    expect(screen.getByRole("button", { name: "Move Honey companion" }).style.width).toBe("144px");
+    app.unmount(); await mount();
+    expect(screen.getByRole("button", { name: "Move Honey companion" }).style.width).toBe("144px");
+  });
+  it("exits startup on failure and keeps companion position within bounds using the keyboard", async () => {
+    vi.mocked(bridge.getSettings).mockRejectedValueOnce(new Error("offline"));
+    await mount();
+    expect(screen.getByRole("button", { name: "Knight companion" })).toBeInTheDocument();
+    const pet = screen.getByRole("button", { name: "Move Honey companion" });
+    for (let i = 0; i < 20; i++) fireEvent.keyDown(pet, { key: "ArrowLeft" });
+    expect(pet.style.left).toBe("0%");
+    for (let i = 0; i < 20; i++) fireEvent.keyDown(pet, { key: "ArrowRight" });
+    expect(pet.style.left).toBe("100%");
+    expect(JSON.parse(localStorage.getItem("themis:companion")!).position.x).toBe(1);
+  });
+  it("shows a fixed root without location controls", async () => {
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.queryByRole("button", { name: "Choose folder" })).toBeNull();
+    expect(screen.queryByLabelText("New projects")).toBeNull();
+    expect(screen.queryByText("/tmp/fixed-themis")).toBeNull();
+    expect(screen.getByText(settings.projects_directory)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New project" }));
+    expect(screen.queryByText("Change location")).toBeNull();
+    expect(screen.queryByLabelText("Parent folder")).toBeNull();
+  });
+  it("renames projects without changing their roots, including Themis", async () => {
+    const root = "/tmp/Themis/Projects/Research";
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
+    vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Research", is_git: true });
+    vi.mocked(bridge.renameProject).mockResolvedValue({ root, name: "Research notes", is_git: true });
+    await mount();
+    expect(screen.getByRole("button", { name: "Rename Themis" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Rename Research" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Research notes" } });
+    await act(async () => fireEvent.submit(screen.getByLabelText("Name").closest("form")!));
+    expect(bridge.renameProject).toHaveBeenCalledWith(root, "Research notes");
+    expect(screen.getByRole("button", { name: "New thread in Research notes" })).toBeInTheDocument();
+  });
+  it("edits only a thread name and retains response model labels", async () => {
+    const thread = { id: "caption-thread", title: "Caption", provider: "go" as const, model: "current-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.renameThread).mockResolvedValue({ ...thread, title: "Renamed" });
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Caption" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit Caption" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit thread" });
+    expect(within(dialog).queryByLabelText("Model")).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Renamed" } });
+    await act(async () => fireEvent.submit(within(dialog).getByLabelText("Name").closest("form")!));
+    expect(bridge.renameThread).toHaveBeenCalledWith(thread.id, "Renamed");
+    expect(bridge.setProvider).not.toHaveBeenCalled();
+    const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => receive({ thread_id: thread.id, run_id: "first", event: { kind: "finished", result: "First response", model: "original-model" } }));
+    await act(async () => receive({ thread_id: thread.id, run_id: "second", event: { kind: "finished", result: "Second response", model: "another-model" } }));
+    expect(screen.getByText("original-model")).toBeInTheDocument();
+    expect(screen.getByText("another-model")).toBeInTheDocument();
+  });
   it("clears a transient plugin load error after refreshing", async () => {
     vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
     await mount();
@@ -52,7 +150,7 @@ describe("Workspace journey", () => {
     })));
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
     vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Sound project", is_git: true });
-    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.listThreads).mockImplementation(async root => root === "/tmp/fixed-themis" ? [] : [thread]);
     vi.mocked(bridge.getThread).mockResolvedValue(thread);
     await mount();
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
@@ -90,7 +188,8 @@ describe("Workspace journey", () => {
     });
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
     expect(within(within(sidebar).getByRole("button", { name: /^Scheduled check/ })).getByRole("img", { name: "Done" })).toBeInTheDocument();
-    const queueButton = within(sidebar).getByRole("button", { name: /Review queue\s*1/ });
+    const queueButton = within(screen.getByRole("navigation", { name: "Utilities" })).getByRole("button", { name: /Review queue\s*1/ });
+    expect(screen.getAllByRole("button", { name: /Review queue/ })).toHaveLength(1);
     fireEvent.click(queueButton);
     expect(screen.getByRole("tab", { name: "Pending (1)" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Reviewed (0)" })).toBeInTheDocument();
@@ -105,7 +204,7 @@ describe("Workspace journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "New project" }));
     fireEvent.change(screen.getByLabelText("Project name"), { target: { value: "My project" } });
     await act(async () => fireEvent.submit(screen.getByLabelText("Project name").closest("form")!));
-    expect(bridge.createProject).toHaveBeenCalledWith("My project", undefined);
+    expect(bridge.createProject).toHaveBeenCalledWith("My project");
     expect(bridge.createThread).toHaveBeenCalledWith("/tmp/Themis/Projects/My project", "go", "muse-spark-1.3-contributor");
     expect(screen.getByLabelText("Message")).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("muse-spark-1.3-contributor");
@@ -175,7 +274,7 @@ describe("Workspace journey", () => {
     const thread = { id: "legacy-thread", title: "Legacy", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/legacy"] });
     vi.mocked(bridge.openProject).mockResolvedValue({ root: "/tmp/legacy", name: "Legacy", is_git: true });
-    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.listThreads).mockImplementation(async root => root === "/tmp/fixed-themis" ? [] : [thread]);
     vi.mocked(bridge.getThreadHistory).mockResolvedValue([{ kind: "legacy", message: { id: "old-answer", role: "assistant", text: "Restored final answer" } }]);
     await mount();
     expect(await screen.findByText("Restored final answer")).toBeInTheDocument();
@@ -203,7 +302,7 @@ describe("Workspace journey", () => {
     const first = { id: "a", title: "First thread", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/one", "/tmp/two"] });
     vi.mocked(bridge.openProject).mockImplementation(async root => ({ root, name: root.endsWith("one") ? "One" : "Two", is_git: true }));
-    vi.mocked(bridge.listThreads).mockImplementation(async root => [root.endsWith("one") ? first : { ...first, id: "b", title: "Second thread" }]);
+    vi.mocked(bridge.listThreads).mockImplementation(async root => root === "/tmp/fixed-themis" ? [] : [root.endsWith("one") ? first : { ...first, id: "b", title: "Second thread" }]);
     const view = await act(async () => render(<App />));
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
     expect(within(sidebar).getByRole("button", { name: /^Second thread/ })).toBeInTheDocument();
@@ -221,7 +320,7 @@ describe("Workspace journey", () => {
     const thread = { id: "status", title: "Status thread", provider: "go" as const, model: "muse-spark-1.3-contributor", running: true, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/one"] });
     vi.mocked(bridge.openProject).mockResolvedValue({ root: "/tmp/one", name: "One", is_git: true });
-    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.listThreads).mockImplementation(async root => root === "/tmp/fixed-themis" ? [] : [thread]);
     await mount();
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
     expect(within(sidebar).getByRole("img", { name: "Working" })).toBeInTheDocument();
@@ -244,8 +343,8 @@ describe("Workspace journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     const sidebar = document.getElementById("themis-sidebar")!;
     expect(sidebar).toHaveAttribute("inert");
-    const rail = screen.getByRole("navigation", { name: "Compact workspace navigation" });
-    expect(within(rail).getByRole("img", { name: "ThemisCode" })).toBeInTheDocument();
+    const rail = screen.getByRole("navigation", { name: "Utilities" });
+    expect(within(rail).queryByRole("img", { name: "ThemisCode" })).not.toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: "Settings" })).toBeEnabled();
     expect(document.getElementById("sidebar-toggle")?.closest("header")).toBeInTheDocument();
     expect(screen.queryByTestId("sidebar-edge")).not.toBeInTheDocument();
@@ -260,41 +359,58 @@ describe("Workspace journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
     expect(sidebar).not.toHaveAttribute("inert");
   });
-  it("saves appearance independently and reports save failure", async () => {
+  it("previews appearance without saving and reverts failed writes", async () => {
     await mount(); fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
-    const sound = screen.getByRole("checkbox", { name: "Play a click when my response finishes" });
-    expect(sound).toBeChecked();
-    await act(async () => fireEvent.click(sound));
-    expect(bridge.updateSettings).toHaveBeenCalledWith({ completion_sound: false });
-    await act(async () => fireEvent.change(screen.getByLabelText("Text size"), { target: { value: "16" } }));
-    expect(bridge.updateSettings).toHaveBeenCalledWith({ text_size: 16 });
-    expect(screen.getByText("Saved")).toBeInTheDocument();
-    vi.mocked(bridge.updateSettings).mockRejectedValueOnce("Disk is full");
-    await act(async () => fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "light" } }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Disk is full");
-    expect(screen.getByLabelText("Theme")).toHaveValue("system");
-  });
-  it("saves and applies palette, font and larger text without replacing composer controls", async () => {
-    await mount();
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
-    await act(async () => fireEvent.change(screen.getByLabelText("Color palette"), { target: { value: "ocean" } }));
-    expect(bridge.updateSettings).toHaveBeenCalledWith({ theme_palette: "ocean" });
-    expect(document.documentElement.dataset.palette).toBe("ocean");
-    await act(async () => fireEvent.change(screen.getByLabelText("Font"), { target: { value: "mono" } }));
-    expect(bridge.updateSettings).toHaveBeenCalledWith({ font_family: "mono" });
+    expect(screen.queryByRole("combobox", { name: "Theme" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ink" }));
+    fireEvent.change(screen.getByLabelText("Font"), { target: { value: "mono" } });
+    fireEvent.change(screen.getByLabelText("Size"), { target: { value: "18" } });
+    expect(bridge.updateSettings).not.toHaveBeenCalled();
+    expect(document.documentElement.dataset.palette).toBe("ink");
     expect(document.documentElement.dataset.font).toBe("mono");
-    await act(async () => fireEvent.change(screen.getByLabelText("Text size"), { target: { value: "22" } }));
-    expect(bridge.updateSettings).toHaveBeenCalledWith({ text_size: 22 });
+    fireEvent.click(screen.getByRole("button", { name: "Revert" }));
+    expect(document.documentElement.dataset.palette).toBe("system");
+    fireEvent.click(screen.getByRole("button", { name: "Ocean" }));
+    vi.mocked(bridge.updateSettings).mockRejectedValueOnce("Disk is full");
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
+    expect(screen.getByRole("alert")).toHaveTextContent("Disk is full");
+    expect(document.documentElement.dataset.palette).toBe("system");
+    fireEvent.click(screen.getByRole("button", { name: "Ink" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme: "dark", theme_palette: "ink", font_family: "serif", text_size: 13 });
+    fireEvent.click(screen.getByRole("button", { name: "Forest" }));
+    fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+    expect(document.documentElement.dataset.palette).toBe("ink");
+  });
+  it("keeps utilities separate from the expanded project dock and pins Themis", async () => {
+    await mount();
+    const rail = screen.getByRole("navigation", { name: "Utilities" });
+    const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+    expect(within(sidebar).getByRole("button", { name: "New chat" })).toBeEnabled();
+    expect(within(sidebar).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("button", { name: "Plugins" })).not.toBeInTheDocument();
+    expect(within(sidebar).getByText("Themis", { selector: ".themis-wordmark" })).toBeInTheDocument();
+    expect(within(sidebar).getByRole("button", { name: "Themis" })).toHaveAttribute("title", "/tmp/fixed-themis");
+    fireEvent.focus(within(rail).getByRole("button", { name: "Plugins" }));
+    expect(within(rail).getByRole("button", { name: "Plugins" }).parentElement).toHaveAttribute("data-tooltip", "Plugins");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(within(rail).getByRole("button", { name: "Settings" })).toBeEnabled();
+    expect(document.getElementById("themis-sidebar")).toHaveAttribute("inert");
+  });
+  it("ignores old light preferences even on a light system", async () => {
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, theme: "light" });
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    await mount();
+    expect(document.documentElement.dataset.theme).toBe("dark");
   });
   it("selects the default model from the Go catalog", async () => {
     await mount();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Models & connections" })));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Models" })));
     expect(bridge.listGoModels).toHaveBeenCalled();
-    expect(screen.queryByRole("textbox", { name: "Default model" })).toBeNull();
-    const select = screen.getByRole("combobox", { name: "Default model" });
+    expect(screen.queryByRole("textbox", { name: "Model" })).toBeNull();
+    const select = screen.getByRole("combobox", { name: "Model" });
     expect(select).toHaveValue("muse-spark-1.3-contributor");
     await act(async () => fireEvent.change(select, { target: { value: "gpt-5.6-luna" } }));
     expect(bridge.updateSettings).toHaveBeenCalledWith({ default_model: "gpt-5.6-luna" });
