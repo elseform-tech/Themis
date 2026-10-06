@@ -130,7 +130,7 @@ describe("Workspace journey", () => {
   it("clears a transient plugin load error after refreshing", async () => {
     vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
     await mount();
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Plugins" })));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Integrations" })));
     expect(screen.getByRole("alert")).toHaveTextContent("Marketplace store is busy");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -380,7 +380,7 @@ describe("Workspace journey", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
     expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme: "dark", theme_palette: "ink", font_family: "serif", text_size: 13 });
     fireEvent.click(screen.getByRole("button", { name: "Forest" }));
-    fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+    fireEvent.click(screen.getByRole("button", { name: "Integrations" }));
     expect(document.documentElement.dataset.palette).toBe("ink");
   });
   it("keeps utilities separate from the expanded project dock and pins Themis", async () => {
@@ -389,11 +389,11 @@ describe("Workspace journey", () => {
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
     expect(within(sidebar).getByRole("button", { name: "New chat" })).toBeEnabled();
     expect(within(sidebar).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
-    expect(within(sidebar).queryByRole("button", { name: "Plugins" })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("button", { name: "Integrations" })).not.toBeInTheDocument();
     expect(within(sidebar).getByText("Themis", { selector: ".themis-wordmark" })).toBeInTheDocument();
     expect(within(sidebar).getByRole("button", { name: "Themis" })).toHaveAttribute("title", "/tmp/fixed-themis");
-    fireEvent.focus(within(rail).getByRole("button", { name: "Plugins" }));
-    expect(within(rail).getByRole("button", { name: "Plugins" }).parentElement).toHaveAttribute("data-tooltip", "Plugins");
+    fireEvent.focus(within(rail).getByRole("button", { name: "Integrations" }));
+    expect(within(rail).getByRole("button", { name: "Integrations" }).parentElement).toHaveAttribute("data-tooltip", "Integrations");
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     expect(within(rail).getByRole("button", { name: "Settings" })).toBeEnabled();
     expect(document.getElementById("themis-sidebar")).toHaveAttribute("inert");

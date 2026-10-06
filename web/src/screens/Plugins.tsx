@@ -1,89 +1,166 @@
-import type { InputProps } from "../components/primitives/Input";
-import { useCallback, useEffect, useState, useId } from "react";
-import { Button, Dialog, Input as PrimitiveInput, EmptyState } from "../components";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button, Dialog, EmptyState } from "../components";
 import { pluginAction } from "../lib/tauri";
 import type { Marketplace, Plugin, PluginSpec } from "../lib/types";
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
-import { Skills as PersonalSkills } from "./Skills";
-import "./Skills.css";
 import "./Plugins.css";
 
-function Field(props: Omit<InputProps,"id">) { const id=useId(); return <PrimitiveInput id={id} {...props}/>; }
-
-const events=["RunStart","BeforeToolCall","AfterToolCall","ToolCallFailed","RunFinished","BeforeCompaction"];
-function nextName(prefix:string, names:string[]) { let index=1; while(names.includes(`${prefix}-${index}`))index++; return `${prefix}-${index}`; }
-const emptySpec=():PluginSpec=>({name:"",description:"",version:"",skills:[],mcp:{},hooks:[],files:{},unsupported:[]});
+type Category = "Plugins" | "Skills" | "MCP" | "Hooks";
+type Item = { key: string; name: string; plugin: Plugin; kind: "plugin" | "skill" | "mcp" | "hook"; id: string; enabled: boolean };
+type Panel = { mode: "view" | "edit" | "uninstall" | "import" | "create" | "market" | "test"; item?: Item };
+const categories: Category[] = ["Plugins", "Skills", "MCP", "Hooks"];
+const hookEvents = ["RunStart", "BeforeTool", "AfterTool", "BeforeCompaction", "RunEnd"];
+const emptySpec = (): PluginSpec => ({ name: "personal", description: "", version: "", skills: [], mcp: {}, hooks: [], files: {}, unsupported: [] });
+function items(plugins: Plugin[], category: Category): Item[] {
+  return plugins.flatMap<Item>(plugin => {
+    const base = { plugin, key: `${plugin.scope}:${plugin.spec.name}` };
+    if (category === "Plugins") return [{ ...base, name: plugin.spec.name, kind: "plugin" as const, id: plugin.spec.name, enabled: plugin.enabled }];
+    if (category === "Skills") return plugin.spec.skills.map(skill => ({ ...base, key: `${base.key}:skill:${skill.id}`, name: skill.name, id: skill.id, kind: "skill" as const, enabled: plugin.enabled && !(plugin.spec.disabled_skills ?? []).includes(skill.id) }));
+    if (category === "MCP") return Object.entries(plugin.spec.mcp).map(([id, server]) => ({ ...base, key: `${base.key}:mcp:${id}`, name: id, id, kind: "mcp" as const, enabled: plugin.enabled && server.enabled }));
+    return plugin.spec.hooks.map(hook => ({ ...base, key: `${base.key}:hook:${hook.name}`, name: hook.name, id: hook.name, kind: "hook" as const, enabled: plugin.enabled && hook.enabled }));
+  });
+}
+function markdown(plugin: Plugin, id: string) {
+  const skill = plugin.spec.skills.find(skill => skill.id === id);
+  if (!skill) return "";
+  return plugin.spec.files[`skills/${id}/SKILL.md`] ?? `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n${skill.instructions}`;
+}
+function Icon({ name }: { name: "view" | "more" | "add" | "folder" | "plug" | "file" | "hook" }) {
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+    {name === "view" && <><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>}
+    {name === "more" && <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>}
+    {name === "add" && <path d="M12 5v14M5 12h14" />}
+    {name === "folder" && <path d="M3 7h7l2 2h9v11H3ZM3 7V4h7l2 3" />}
+    {name === "plug" && <path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0ZM12 18v4" />}
+    {name === "file" && <path d="M5 3h10l4 4v14H5ZM15 3v5h4M8 12h8M8 16h8" />}
+    {name === "hook" && <path d="M5 4v9a7 7 0 0 0 14 0v-3l-4 4M19 10l4 4" />}
+  </svg>;
+}
+function PluginIcon({ plugin }: { plugin: PluginSpec }) {
+  const icon = plugin.icon;
+  if (icon?.startsWith("https://")) return <img className="themis-origin-icon" src={icon} alt="" referrerPolicy="no-referrer" />;
+  if (icon && plugin.files[icon]?.trim().startsWith("<svg")) return <img className="themis-origin-icon" src={`data:image/svg+xml,${encodeURIComponent(plugin.files[icon])}`} alt="" />;
+  return <Icon name="folder" />;
+}
 export function Plugins() {
-  const {state,dispatch}=useApp();
-  const root=state.activeProjectRoot;
-  const [plugins,setPlugins]=useState<Plugin[]>([]),[markets,setMarkets]=useState<Marketplace[]>([]);
-  const [tab,setTab]=useState("Installed"),[error,setError]=useState(""),[busy,setBusy]=useState(false);
-  const [catalog,setCatalog]=useState<{market:string;entries:Array<{name:string;description?:string}>}|null>(null);
-  const [marketName,setMarketName]=useState(""),[marketSource,setMarketSource]=useState("");
-  const [scope,setScope]=useState<"local"|"global">("global");
-  const [editing,setEditing]=useState<{original:Plugin|null;spec:PluginSpec;scope:"local"|"global"}|null>(null);
-  const [section,setSection]=useState("Skills"),[result,setResult]=useState("");
-  const [removing,setRemoving]=useState<Plugin|null>(null);
-  const load=useCallback(async()=>{const [items,sources]=await Promise.all([pluginAction<Plugin[]>({action:"list",projectRoot:root}),pluginAction<Marketplace[]>({action:"marketplaces"})]);setPlugins(items);setMarkets(sources);setError("");},[root]);
-  useEffect(()=>{let active=true;void load().catch(e=>{if(active)setError(describeError(e));});return()=>{active=false;};},[load]);
-  async function action(args:Record<string,unknown>) {
-    setBusy(true);setError("");try{const value=await pluginAction<unknown>({projectRoot:root,...args});await load();window.dispatchEvent(new Event("themis-plugins-changed"));return value;}catch(e){setError(describeError(e));throw e;}finally{setBusy(false);}
+  const { state, dispatch } = useApp();
+  const root = state.activeProjectRoot;
+  const activeRoot = useRef(root);
+  activeRoot.current = root;
+  const loadRequest = useRef(0), catalogRequest = useRef(0);
+  const [plugins, setPlugins] = useState<Plugin[]>([]), [markets, setMarkets] = useState<Marketplace[]>([]);
+  const [category, setCategory] = useState<Category>("Plugins"), [publicView, setPublicView] = useState(false);
+  const [panel, setPanel] = useState<Panel | null>(null), [menu, setMenu] = useState<string | null>(null);
+  const [error, setError] = useState(""), [busy, setBusy] = useState(false), [draft, setDraft] = useState("");
+  const [file, setFile] = useState(""), [scope, setScope] = useState<"local" | "global">(root ? "local" : "global");
+  const [reference, setReference] = useState(""), [subdirectory, setSubdirectory] = useState("");
+  const [sourceType, setSourceType] = useState("paste"), [source, setSource] = useState(""), [name, setName] = useState("");
+  const [testResult, setTestResult] = useState("");
+  const [catalog, setCatalog] = useState<Array<{ name: string; description?: string; icon?: string }>>([]), [market, setMarket] = useState("");
+  const load = useCallback(async () => {
+    if (root !== activeRoot.current) return;
+    const request = ++loadRequest.current;
+    const [installed, sources] = await Promise.all([pluginAction<Plugin[]>({ action: "list", projectRoot: root }), pluginAction<Marketplace[]>({ action: "marketplaces" })]);
+    if (request === loadRequest.current && root === activeRoot.current) { setPlugins(installed); setMarkets(sources); setError(""); }
+  }, [root]);
+  useEffect(() => {
+    let cancelled = false;
+    setPlugins([]); setPanel(null); setMenu(null);
+    void load().catch(error => { if (!cancelled) setError(describeError(error)); });
+    return () => { cancelled = true; };
+  }, [load]);
+  useEffect(() => {
+    const refresh = () => void load().catch(error => setError(describeError(error)));
+    window.addEventListener("themis-plugins-changed", refresh);
+    return () => window.removeEventListener("themis-plugins-changed", refresh);
+  }, [load]);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: Event) => { if (event instanceof KeyboardEvent && event.key === "Escape" || event instanceof MouseEvent && !(event.target as Element)?.closest(".themis-integration-more")) setMenu(null); };
+    window.addEventListener("keydown", close); window.addEventListener("click", close);
+    return () => { window.removeEventListener("keydown", close); window.removeEventListener("click", close); };
+  }, [menu]);
+  async function action(args: Record<string, unknown>) {
+    setBusy(true); setError("");
+    try { const value = await pluginAction<unknown>({ projectRoot: root, ...args }); await load(); window.dispatchEvent(new Event("themis-plugins-changed")); return value; }
+    catch (error) { setError(describeError(error)); throw error; } finally { setBusy(false); }
   }
-  function patch(patch:Partial<PluginSpec>){setEditing(current=>current?{...current,spec:{...current.spec,...patch}}:null);}
-  function createSkill(){
-    if(!editing)return;
-    const id=state.activeThreadId;
-    if(!id){setError("Open a chat in this project to ask the agent to create a skill.");return;}
-    const drafts=readSession<Record<string,string>>("drafts",{});
-    drafts[id]=`[[skill:create-skill]] Create a reusable skill in the ${editing.scope} plugin ${editing.spec.name || "personal"}. `;
-    writeSession("drafts",drafts);window.dispatchEvent(new Event("themis-drafts-changed"));setEditing(null);dispatch({type:"ui/view",view:"thread"});
+  function open(mode: Panel["mode"], item?: Item) {
+    setMenu(null); setError(""); setTestResult(""); setPanel({ mode, item });
+    setFile(item?.kind === "plugin" ? item.plugin.spec.skills[0]?.id ?? "" : item?.id ?? "");
+    const template = emptySpec();
+    let number = 1;
+    while (plugins.some(plugin => plugin.spec.name === `personal-${number}`)) number++;
+    template.name = `personal-${number}`;
+    if (!item && category === "Skills") template.skills = [{ id: "my-skill", name: "My skill", description: "", instructions: "Describe the workflow here.", allowedTools: [], scripts: [] }];
+    if (!item && category === "MCP") template.mcp = { server: { command: "npx", args: ["-y", "package-name"], env: {}, enabled: true } };
+    if (!item && category === "Hooks") template.hooks = [{ name: "my-hook", event: "RunStart", command: "printf 'hook ran'", enabled: false, timeout_seconds: 10, blocking: false }];
+    setDraft(JSON.stringify(item?.plugin.spec ?? template, null, 2)); setName(""); setSource("");
   }
-  return <div className="themis-skills themis-plugins">
-    <div className="themis-skills-head"><h2 className="themis-skills-title">Plugins</h2><Button onClick={()=>{setEditing({original:null,spec:emptySpec(),scope:root?"local":"global"});setSection("Skills");setResult("");}}>New plugin</Button></div>
-    <div className="themis-plugins-toolbar" role="group" aria-label="Plugin views">{["Installed","Marketplaces"].map(t=><Button key={t} variant={t===tab?"primary":"ghost"} onClick={()=>setTab(t)}>{t}</Button>)}<Button variant="ghost" disabled={busy} onClick={()=>void load().catch(e=>setError(describeError(e)))}>Refresh</Button></div>
-    {error&&<p role="alert" className="themis-skills-error">{error}</p>}
-    {tab==="Installed"?<>
-      {plugins.length===0&&<EmptyState title="No plugins installed" hint="Browse a marketplace or create a personal plugin. Use /create-skill in a chat to ask the agent to build skills."/>}
-      {plugins.map(plugin=><section key={plugin.scope+plugin.spec.name} className="themis-plugin-row"><div><strong>{plugin.spec.name}</strong><p>{plugin.spec.description}</p><small>{plugin.scope} · {plugin.source ?? "Personal"} · {plugin.spec.skills.length} skills · {Object.keys(plugin.spec.mcp).length} connections · {plugin.spec.hooks.length} hooks</small></div><div className="themis-plugins-toolbar">
-        <Button disabled={busy} onClick={()=>{setEditing({original:plugin,spec:structuredClone(plugin.spec),scope:plugin.scope});setSection("Skills");setResult("");}}>Manage</Button>
-        <Button disabled={busy} onClick={()=>void action({action:plugin.enabled?"disable":"enable",scope:plugin.scope,name:plugin.spec.name}).catch(()=>{})}>{plugin.enabled?"Disable":"Enable"}</Button>
-        {plugin.source&&<Button disabled={busy} onClick={()=>void action({action:"update",scope:plugin.scope,name:plugin.spec.name,marketplace:plugin.source}).catch(()=>{})}>Update</Button>}
-        <Button variant="danger" disabled={busy} onClick={()=>setRemoving(plugin)}>Uninstall</Button>
-      </div></section>)}
-      {state.skills.length>0&&<details><summary>Personal skills from earlier versions</summary><PersonalSkills/></details>}
-    </>:<>
-      <label>Install scope <select value={scope} onChange={e=>setScope(e.target.value as "local"|"global")}><option value="global">Global · all projects</option><option value="local" disabled={!root}>Local · current project</option></select></label>
-      {markets.map(market=><section className="themis-plugin-row" key={market.name}><div><strong>{market.name}</strong><p>{market.source}</p></div><div className="themis-plugins-toolbar"><Button disabled={busy} onClick={()=>void action({action:"catalog",name:market.name}).then(value=>setCatalog({market:market.name,entries:(value as {plugins:Array<{name:string;description?:string}>}).plugins})).catch(()=>{})}>Browse</Button><Button disabled={busy} onClick={()=>void action({action:"catalog",name:market.name,refresh:true}).then(value=>setCatalog({market:market.name,entries:(value as {plugins:Array<{name:string;description?:string}>}).plugins})).catch(()=>{})}>Refresh catalog</Button><Button variant="ghost" disabled={busy} onClick={()=>void action({action:"remove_marketplace",name:market.name}).then(()=>setCatalog(null)).catch(()=>{})}>Remove</Button></div></section>)}
-      <form onSubmit={e=>{e.preventDefault();void action({action:"add_marketplace",name:marketName,source:marketSource}).then(()=>{setMarketName("");setMarketSource("");}).catch(()=>{});}} className="themis-plugins-form"><Field label="Marketplace name" value={marketName} onChange={e=>setMarketName(e.target.value)} required/><Field label="Repository URL or local directory" value={marketSource} onChange={e=>setMarketSource(e.target.value)} required/><Button type="submit" disabled={busy}>Add marketplace</Button></form>
-      {catalog&&<div><h3>{catalog.market}</h3>{catalog.entries.map(entry=><section className="themis-plugin-row" key={entry.name}><div><strong>{entry.name}</strong><p>{entry.description}</p></div><Button disabled={busy} onClick={()=>void action({action:"install",name:entry.name,marketplace:catalog.market,scope}).catch(()=>{})}>Install</Button></section>)}</div>}
+  async function toggle(item: Item) {
+    const args = { scope: item.plugin.scope, name: item.plugin.spec.name, expectedRevision: item.plugin.revision };
+    await action(item.kind === "plugin" ? { ...args, action: item.enabled ? "disable" : "enable" } : { ...args, action: "set_component_enabled", kind: item.kind, id: item.id, enabled: !item.enabled });
+  }
+  function askAgent() {
+    if (!state.activeThreadId) { setError("Open a chat to ask Themis."); return; }
+    const drafts = readSession<Record<string, string>>("drafts", {});
+    const skill = { Plugins: "manage-plugins", Skills: "manage-skills", MCP: "manage-mcp", Hooks: "manage-hooks" }[category];
+    drafts[state.activeThreadId] = `[[skill:${skill}]] Help me create or install ${category.toLowerCase()} in ${scope} scope. `;
+    writeSession("drafts", drafts); window.dispatchEvent(new Event("themis-drafts-changed")); setPanel(null); dispatch({ type: "ui/view", view: "thread" });
+  }
+  function exportPlugin(plugin: Plugin) {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(plugin.spec, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a"); link.href = url; link.download = `${plugin.spec.name}.json`; link.click(); URL.revokeObjectURL(url);
+  }
+  function personalCopy(plugin: Plugin) {
+    open("create");
+    let number = 1;
+    while (plugins.some(existing => existing.spec.name === `${plugin.spec.name}-copy-${number}`)) number++;
+    setDraft(JSON.stringify({ ...plugin.spec, name: `${plugin.spec.name}-copy-${number}` }, null, 2));
+  }
+  async function saveDraft() {
+    try { const spec = JSON.parse(draft) as PluginSpec; await action({ action: "save", scope: panel?.item?.plugin.scope ?? scope, spec, expectedRevision: panel?.item?.plugin.revision ?? null }); setPanel(null); }
+    catch (error) { setError(describeError(error)); }
+  }
+  async function importSource() {
+    const args = sourceType === "paste" ? { action: "import_json", content: source, name: name || null } : sourceType === "repository" ? { action: "import_repository", url: source, name: name || "imported", reference: reference || null, subdirectory: subdirectory || null } : { action: "import_path", path: source, name: name || null };
+    await action({ ...args, scope }); setPanel(null);
+  }
+  async function browse(selected: string) {
+    const request = ++catalogRequest.current;
+    setMarket(selected); setCatalog([]); setBusy(true); setError("");
+    try { const value = await pluginAction<{ plugins: typeof catalog }>({ action: "catalog", name: selected }); if (request === catalogRequest.current) setCatalog(value.plugins); }
+    catch (error) { if (request === catalogRequest.current) setError(describeError(error)); } finally { if (request === catalogRequest.current) setBusy(false); }
+  }
+  const item = panel?.item, rows = items(plugins, category);
+  const text = item?.kind === "mcp" ? JSON.stringify(item.plugin.spec.mcp[item.id], null, 2) : item?.kind === "hook" ? JSON.stringify(item.plugin.spec.hooks.find(hook => hook.name === item.id), null, 2) : item ? markdown(item.plugin, file) : "";
+  return <div className="themis-integrations">
+    <h2>Integrations</h2>
+    <nav className="themis-integrations-tabs" aria-label="Integration categories">{categories.map(value => <button key={value} aria-pressed={category === value} onClick={() => { setCategory(value); setPublicView(false); setMenu(null); }}>{value}</button>)}</nav>
+    <div className="themis-integrations-toolbar"><div>{category === "Plugins" && <><button aria-pressed={!publicView} onClick={() => setPublicView(false)}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (markets[0]) void browse(markets[0].name); }}>Public</button></>}</div><div><button aria-label="Refresh" disabled={busy} onClick={() => void load().catch(error => setError(describeError(error)))}>↻</button><button aria-label={`Add ${category.toLowerCase()}`} onClick={() => open("import")}><Icon name="add" /></button></div></div>
+    {error && !panel && <p role="alert">{error}</p>}
+    {publicView ? <>
+      <div className="themis-integrations-toolbar"><select aria-label="Marketplace" disabled={busy} value={market} onChange={event => void browse(event.target.value)}>{markets.map(m => <option key={m.name}>{m.name}</option>)}</select><button onClick={() => open("market")}>Add source</button></div>
+      <ul className="themis-integrations-list">{catalog.map(entry => <li key={entry.name}><PluginIcon plugin={{ ...emptySpec(), icon: entry.icon }} /><span className="themis-integration-name">{entry.name}</span><button disabled={busy} onClick={() => void action({ action: "install", name: entry.name, marketplace: market, scope }).catch(() => {})}>Install</button></li>)}</ul>
+    </> : <>
+      {!rows.length && <EmptyState title={`No ${category.toLowerCase()} installed`} />}
+      <ul className="themis-integrations-list">{rows.map(row => <li key={row.key}>
+        {row.kind === "plugin" ? <PluginIcon plugin={row.plugin.spec} /> : <Icon name={row.kind === "mcp" ? "plug" : row.kind === "hook" ? "hook" : "file"} />}<span className="themis-integration-name">{row.name}</span><span className="themis-integration-source">{row.kind === "plugin" ? row.plugin.spec.origin?.kind === "discovered" ? "Discovered" : row.plugin.source ?? row.plugin.spec.origin?.kind ?? "Personal" : row.plugin.spec.name} · {row.plugin.scope === "global" ? "User" : "Project"}</span>
+        <button className="themis-integration-status" aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.name}`} disabled={busy || row.kind !== "plugin" && !row.plugin.enabled} onClick={() => void toggle(row).catch(() => {})}>{row.kind !== "plugin" && !row.plugin.enabled ? "Plugin disabled" : row.enabled ? "Enabled" : "Disabled"}</button>
+        <button aria-label={`View ${row.name}`} onClick={() => open("view", row)}><Icon name="view" /></button>
+        <details className="themis-integration-more" open={menu === row.key}><summary role="button" aria-label={`More actions for ${row.name}`} onClick={event => { event.preventDefault(); setMenu(menu === row.key ? null : row.key); }}><Icon name="more" /></summary>{menu === row.key && <div className="themis-integration-menu"><button onClick={() => open("view", row)}>View{row.kind === "plugin" ? " skills" : ""}</button><button disabled={busy || row.kind !== "plugin" && !row.plugin.enabled} onClick={() => { setMenu(null); void toggle(row).catch(() => {}); }}>{row.enabled ? "Disable" : "Enable"}</button><button onClick={() => open("edit", row)}>Configure</button>{(row.kind === "mcp" || row.kind === "hook") && <button onClick={() => open("test", row)}>Test</button>}{row.plugin.source && row.plugin.source !== "discovered" && <button disabled={busy} onClick={() => { setMenu(null); void action({ action: "update", name: row.plugin.spec.name, scope: row.plugin.scope, marketplace: row.plugin.source }).catch(() => {}); }}>Update</button>}<button onClick={() => exportPlugin(row.plugin)}>Export plugin</button>{row.plugin.source && <button onClick={() => personalCopy(row.plugin)}>Create personal copy</button>}<button onClick={() => open("uninstall", row)}>Uninstall</button></div>}</details>
+      </li>)}</ul>
     </>}
-    <Dialog open={editing!==null} title={editing?.original?`Manage ${editing.spec.name}`:"New plugin"} onClose={()=>{if(!busy)setEditing(null);}}>
-      {editing&&<div className="themis-plugins-form">
-        {editing.original?.source&&<p>Marketplace package. Create a personal copy to customize its skills, connections, and hooks.</p>}
-        <Field label="Plugin name" value={editing.spec.name} disabled={!!editing.original} onChange={e=>patch({name:e.target.value})}/>
-        <Field label="Description" value={editing.spec.description} disabled={!!editing.original?.source} onChange={e=>patch({description:e.target.value})}/>
-        {!editing.original&&<label>Scope <select value={editing.scope} onChange={e=>setEditing({...editing,scope:e.target.value as "local"|"global"})}><option value="global">Global</option><option value="local" disabled={!root}>Local</option></select></label>}
-        <div className="themis-plugins-toolbar" role="group" aria-label="Plugin components">{["Skills","Connections","Hooks","Advanced"].map(t=><Button key={t} variant={section===t?"primary":"ghost"} onClick={()=>setSection(t)}>{t}</Button>)}</div>
-        <fieldset disabled={!!editing.original?.source || busy}>
-        {section==="Skills"&&<><Button onClick={createSkill}>Ask agent to create skill</Button>{editing.spec.skills.map((skill,index)=><details key={skill.id}><summary>{skill.name}</summary><Field label="Skill name" value={skill.name} onChange={e=>patch({skills:editing.spec.skills.map((s,i)=>i===index?{...s,name:e.target.value}:s)})}/><label>Instructions<textarea value={skill.instructions} onChange={e=>patch({skills:editing.spec.skills.map((s,i)=>i===index?{...s,instructions:e.target.value}:s)})}/></label><Button variant="danger" onClick={()=>patch({skills:editing.spec.skills.filter((_,i)=>i!==index)})}>Delete skill</Button></details>)}</>}
-        {section==="Connections"&&<><Button onClick={()=>{const name=nextName("connection",Object.keys(editing.spec.mcp));patch({mcp:{...editing.spec.mcp,[name]:{url:"",args:[],env:{},enabled:false}},skills:editing.spec.skills.length?editing.spec.skills:[{id:"connect",name:`Use ${editing.spec.name}`,description:"Use this plugin's connected tools",instructions:"Use the available MCP tools to complete the user's task. Respect approvals.",allowedTools:[],scripts:[]}]});}}>Add MCP server</Button>{Object.entries(editing.spec.mcp).map(([name,server])=><details key={name}><summary>{name} · {server.enabled?"Enabled":"Disabled"}</summary>
-          <label>Transport<select value={server.command!=null?"local":"remote"} onChange={e=>patch({mcp:{...editing.spec.mcp,[name]:{...server,command:e.target.value==="local"?"":null,url:e.target.value==="remote"?"":null}}})}><option value="remote">Remote URL</option><option value="local">Local executable</option></select></label>
-          <Field label={server.command!=null?"Executable":"Server URL"} value={server.command ?? server.url ?? ""} onChange={e=>patch({mcp:{...editing.spec.mcp,[name]:{...server,...(server.command!=null?{command:e.target.value}:{url:e.target.value})}}})}/>
-          {server.command!=null&&<label>Arguments (one per line)<textarea value={server.args.join("\n")} onChange={e=>patch({mcp:{...editing.spec.mcp,[name]:{...server,args:e.target.value.split("\n").filter(Boolean)}}})}/></label>}
-          {server.url!=null&&<Field label="Bearer token environment variable (optional)" value={server.bearer_env??""} onChange={e=>patch({mcp:{...editing.spec.mcp,[name]:{...server,bearer_env:e.target.value||null}}})}/>}
-          <label><input type="checkbox" checked={server.enabled} onChange={e=>patch({mcp:{...editing.spec.mcp,[name]:{...server,enabled:e.target.checked}}})}/> Enabled when a skill from this plugin is used</label>
-          <Button onClick={()=>void action({action:"test_mcp",server}).then(value=>setResult(JSON.stringify(value,null,2))).catch(()=>{})}>Test connection & list tools</Button><Button variant="danger" onClick={()=>patch({mcp:Object.fromEntries(Object.entries(editing.spec.mcp).filter(([key])=>key!==name))})}>Remove connection</Button>
-        </details>)}</>}
-        {section==="Hooks"&&<><Button onClick={()=>patch({hooks:[...editing.spec.hooks,{name:nextName("hook",editing.spec.hooks.map(h=>h.name)),event:"AfterToolCall",command:"",enabled:false,timeout_seconds:10,blocking:false}]})}>Add hook</Button>{editing.spec.hooks.map((hook,index)=><details key={index}><summary>{hook.name} · {hook.event}</summary><Field label="Name" value={hook.name} onChange={e=>patch({hooks:editing.spec.hooks.map((h,i)=>i===index?{...h,name:e.target.value}:h)})}/><label>Event<select value={hook.event} onChange={e=>patch({hooks:editing.spec.hooks.map((h,i)=>i===index?{...h,event:e.target.value}:h)})}>{events.map(event=><option key={event}>{event}</option>)}</select></label><Field label="Command" value={hook.command} onChange={e=>patch({hooks:editing.spec.hooks.map((h,i)=>i===index?{...h,command:e.target.value}:h)})}/><Field label="Timeout (seconds, 1–60)" type="number" min={1} max={60} value={hook.timeout_seconds} onChange={e=>patch({hooks:editing.spec.hooks.map((h,i)=>i===index?{...h,timeout_seconds:Number(e.target.value)}:h)})}/><label><input type="checkbox" checked={hook.enabled} onChange={e=>patch({hooks:editing.spec.hooks.map((h,i)=>i===index?{...h,enabled:e.target.checked}:h)})}/> Enabled</label><label><input type="checkbox" checked={hook.blocking} onChange={e=>patch({hooks:editing.spec.hooks.map((h,i)=>i===index?{...h,blocking:e.target.checked}:h)})}/> Block on failure at before events</label><Button onClick={()=>void action({action:"test_hook",hook}).then(value=>setResult(JSON.stringify(value,null,2))).catch(()=>{})}>Run test command</Button><Button variant="danger" onClick={()=>patch({hooks:editing.spec.hooks.filter((_,i)=>i!==index)})}>Delete hook</Button></details>)}</>}
-        {section==="Advanced"&&<label>Bundle configuration<textarea defaultValue={JSON.stringify(editing.spec,null,2)} onBlur={e=>{try{const spec=JSON.parse(e.target.value) as PluginSpec; if(typeof spec.name!=="string" || !Array.isArray(spec.skills) || !Array.isArray(spec.hooks) || !spec.mcp || typeof spec.mcp!=="object" || !spec.files || !Array.isArray(spec.unsupported)) throw new Error("Invalid bundle"); patch(spec);}catch{setError("Invalid bundle JSON");}}}/></label>}
-        </fieldset>
-        {editing.spec.unsupported.length>0&&<div><strong>Unsupported imported components</strong><ul>{editing.spec.unsupported.map((item,i)=><li key={i}>{item}</li>)}</ul></div>}
-        {result&&<pre aria-live="polite">{result}</pre>}
-        {error&&<p role="alert">{error}</p>}
-        <div className="themis-plugins-toolbar"><Button disabled={busy} onClick={()=>setEditing(null)}>Close</Button>{editing.original?.source?<Button onClick={()=>setEditing({original:null,scope:root?"local":"global",spec:{...structuredClone(editing.spec),name:`${editing.spec.name}-personal`}})}>Create personal copy</Button>:<Button variant="primary" disabled={busy} onClick={()=>void action({action:"save",scope:editing.scope,spec:editing.spec,expectedRevision:editing.original?.revision??null}).then(()=>setEditing(null)).catch(()=>{})}>Save changes</Button>}<Button onClick={()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(editing.spec,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download=`${editing.spec.name||"plugin"}.json`;a.click();URL.revokeObjectURL(url);}}>Export</Button></div>
-      </div>}
+    <Dialog open={panel !== null} title={panel?.mode === "view" ? item?.name : panel?.mode === "uninstall" ? `Uninstall ${item?.name}?` : panel?.mode === "edit" ? `Configure ${item?.name}` : panel?.mode === "market" ? "Add marketplace" : panel?.mode === "test" ? `Test ${item?.name}` : "Add integration"} onClose={() => { if (!busy) setPanel(null); }}>
+      {panel?.mode === "view" && <>{item?.kind === "plugin" && <div className="themis-integration-files">{item.plugin.spec.skills.map(skill => <button key={skill.id} aria-pressed={file === skill.id} onClick={() => setFile(skill.id)}>{skill.name}</button>)}</div>}<pre className="themis-integration-markdown">{text || "No bundled skills."}</pre>{!!item?.plugin.spec.unsupported.length && <ul>{item.plugin.spec.unsupported.map((warning, i) => <li key={i}>{warning}</li>)}</ul>}</>}
+      {(panel?.mode === "edit" || panel?.mode === "create") && <>{panel?.mode === "create" && <label>Scope<select value={scope} onChange={event => setScope(event.target.value as "local" | "global")}><option value="global">User</option><option value="local" disabled={!root}>Project</option></select></label>}<label>Configuration<textarea aria-label="Configuration" value={draft} onChange={event => setDraft(event.target.value)} /></label>{item?.plugin.source && <p>Package contents are read-only. Enablement can be changed from the list.</p>}<div className="themis-integrations-actions"><Button onClick={askAgent}>Ask Themis</Button><Button disabled={busy || !!item?.plugin.source} onClick={() => void saveDraft()}>Save</Button></div></>}
+      {panel?.mode === "uninstall" && <><p>{item?.plugin.source === "discovered" ? `This skill is discovered from ${item.plugin.spec.origin?.location}. Disable it here, or remove it from its source directory.` : item?.kind === "plugin" ? "Remove this plugin and its bundled capabilities." : `Remove this ${item?.kind} from ${item?.plugin.spec.name}. Other capabilities remain installed.`}</p><div className="themis-integrations-actions"><Button variant="ghost" onClick={() => setPanel(null)}>Cancel</Button><Button variant="danger" disabled={busy || item?.plugin.source === "discovered"} onClick={() => { if (item) void action({ action: item.kind === "plugin" ? "delete" : "remove_component", kind: item.kind, id: item.id, scope: item.plugin.scope, name: item.plugin.spec.name }).then(() => setPanel(null)).catch(() => {}); }}>Uninstall</Button></div></>}
+      {panel?.mode === "test" && item && <><pre className="themis-integration-markdown">{text}</pre><Button disabled={busy} onClick={() => void action(item.kind === "mcp" ? { action: "test_mcp", server: item.plugin.spec.mcp[item.id] } : { action: "test_hook", hook: item.plugin.spec.hooks.find(hook => hook.name === item.id) }).then(value => setTestResult(JSON.stringify(value, null, 2))).catch(() => {})}>Run test</Button>{testResult && <pre className="themis-integration-markdown">{testResult}</pre>}</>}
+      {panel?.mode === "import" && <div className="themis-integrations-form"><div className="themis-integrations-toolbar"><Button variant="ghost" onClick={askAgent}>Ask Themis</Button><Button variant="ghost" onClick={() => open("create")}>Create manually</Button></div><label>Import from<select value={sourceType} onChange={event => setSourceType(event.target.value)}><option value="paste">Paste JSON</option><option value="path">File or folder</option><option value="repository">Repository URL</option></select></label><label>Scope<select value={scope} onChange={event => setScope(event.target.value as "local" | "global")}><option value="global">User</option><option value="local" disabled={!root}>Project</option></select></label><label>Name<input value={name} onChange={event => setName(event.target.value)} placeholder="Optional" /></label><label>{sourceType === "paste" ? "JSON" : "Source"}{sourceType === "paste" ? <textarea value={source} onChange={event => setSource(event.target.value)} /> : <input value={source} onChange={event => setSource(event.target.value)} />}</label>{sourceType === "repository" && <details><summary>Advanced</summary><label>Git reference<input value={reference} onChange={event => setReference(event.target.value)} placeholder="Branch, tag, or commit" /></label><label>Subdirectory<input value={subdirectory} onChange={event => setSubdirectory(event.target.value)} placeholder="skills/my-skill" /></label></details>}{sourceType === "paste" && <label>Read a JSON file<input type="file" accept=".json" onChange={event => { const selected = event.target.files?.[0]; if (selected) void selected.text().then(setSource).catch(error => setError(describeError(error))); }} /></label>}<Button disabled={busy || !source.trim()} onClick={() => void importSource().catch(() => {})}>Import</Button></div>}
+      {panel?.mode === "market" && <div className="themis-integrations-form"><label>Name<input value={name} onChange={event => setName(event.target.value)} /></label><label>Repository or folder<input value={source} onChange={event => setSource(event.target.value)} /></label><Button disabled={busy || !name || !source} onClick={() => void action({ action: "add_marketplace", name, source }).then(() => setPanel(null)).catch(() => {})}>Add</Button></div>}
+      {error && <p role="alert">{error}</p>}<Button variant="ghost" disabled={busy} onClick={() => setPanel(null)}>Close</Button>
     </Dialog>
-    <Dialog open={removing!==null} title="Uninstall plugin?" onClose={()=>setRemoving(null)}><p>Saved prompts and automations referencing {removing?.spec.name} will retain unavailable skill chips and cannot run until repaired.</p><Button variant="danger" disabled={busy} onClick={()=>{if(removing)void action({action:"delete",scope:removing.scope,name:removing.spec.name}).then(()=>setRemoving(null)).catch(()=>{});}}>Uninstall</Button></Dialog>
+    {category === "Hooks" && <p className="themis-integration-footnote">Events: {hookEvents.join(" · ")}</p>}
   </div>;
 }

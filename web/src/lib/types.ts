@@ -66,6 +66,12 @@ export interface SkillInput {
 }
 
 export interface PluginSpec {
+  icon?: string | null;
+  disabled_skills?: string[];
+  manual_skills?: string[];
+  origin?: { kind: string; location: string; reference?: string | null; subdirectory?: string | null } | null;
+  skill_paths?: Record<string, string>;
+  executable_files?: string[];
   name: string; description: string; version: string;
   skills: Array<{ id: string; name: string; description: string; instructions: string; allowedTools: string[]; scripts: SkillScript[] }>;
   mcp: Record<string, { command?: string | null; args: string[]; url?: string | null; env: Record<string,string>; bearer_env?: string | null; enabled: boolean }>;
