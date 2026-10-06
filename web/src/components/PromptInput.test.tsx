@@ -11,6 +11,38 @@ const plugins = [
   { id: "l--disabled", name: "Disabled", description: "Hidden", origin: "Project", enabled: false },
 ];
 
+const builtinSkills=[
+  ["create-skill","Create skill"],
+  ["manage-plugins","Manage plugins"],
+  ["manage-skills","Manage skills"],
+  ["manage-mcp","Manage MCP"],
+  ["manage-hooks","Manage hooks"],
+  ["manage-automations","Manage automations"],
+].map(([id,name])=>({id,name,description:"Manage capabilities",plugin:"Themis"}));
+
+it.each(builtinSkills.flatMap(skill=>["Enter","Tab"].map(key=>({skill,key}))))("selects /$skill.id with $key using its canonical command",({skill,key})=>{
+  const changed=vi.fn(),send=vi.fn();
+  render(<PromptInput label="Management" value={`Please /${skill.id}`} onChange={changed} skills={builtinSkills} onSubmit={send} />);
+  const input=screen.getByRole("textbox",{name:"Management"});
+  const range=document.createRange();range.selectNodeContents(input);range.collapse(false);
+  window.getSelection()!.removeAllRanges();window.getSelection()!.addRange(range);
+  fireEvent.focus(input);
+  expect(screen.getByRole("option",{name:new RegExp(skill.name)})).toBeInTheDocument();
+  fireEvent.keyDown(input,{key});
+  expect(changed).toHaveBeenLastCalledWith(`Please [[skill:${skill.id}]] `);
+  expect(send).not.toHaveBeenCalled();
+});
+
+it("matches the hyphenated management command prefix seen in the native composer",()=>{
+  render(<PromptInput label="Prefix" value="/manage-sk" onChange={vi.fn()} skills={builtinSkills} />);
+  const input=screen.getByRole("textbox",{name:"Prefix"});
+  const range=document.createRange();range.selectNodeContents(input);range.collapse(false);
+  window.getSelection()!.removeAllRanges();window.getSelection()!.addRange(range);
+  fireEvent.focus(input);
+  expect(screen.getByRole("option",{name:/Manage skills/})).toBeInTheDocument();
+  expect(screen.queryByText("No matching skills")).toBeNull();
+});
+
 it("keeps reference icons and labels together despite Tailwind's block image reset",()=>{
   const style=document.createElement("style");
   style.textContent=readFileSync("node_modules/tailwindcss/preflight.css","utf8")+readFileSync("src/components/PromptInput.css","utf8");

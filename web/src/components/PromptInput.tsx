@@ -44,7 +44,7 @@ export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,
   const [active,setActive]=useState(0);
   const labels = skills.map(s=>`${s.id}:${s.name}`).join("|")+plugins.map(p=>`${p.id}:${p.name}:${p.icon ?? ""}:${p.enabled}`).join("|");
   const previousLabels = useRef(labels);
-  const choices:Array<PromptSkill|PromptPlugin>=slash?.kind==="plugin" ? plugins.filter(p=>p.enabled && `${p.name} ${p.origin}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12) : skills.filter(s=>!s.retired).filter(s=>!slash?.query || slash.query==="skill" || `${s.name} ${s.plugin} ${s.id==="create-skill"?"create-skill":""}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12);
+  const choices:Array<PromptSkill|PromptPlugin>=slash?.kind==="plugin" ? plugins.filter(p=>p.enabled && `${p.name} ${p.origin}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12) : skills.filter(s=>!s.retired).filter(s=>!slash?.query || slash.query==="skill" || `${s.name} ${s.plugin} ${s.id}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12);
   const listId=(id ?? "prompt")+"-skills";
   function update(next:string) {undo.current.push(value);redo.current=[];onChange(next);}
   function detectSlash() {
