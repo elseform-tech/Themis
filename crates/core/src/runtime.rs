@@ -743,10 +743,12 @@ async fn execute_call(
             available.join(", ")
         ));
     };
+    let approval_args: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
     let decision = approvals.approve(&ToolAction {
-        tool: name.to_owned(),
+        tool: crate::tools::integration_approval_identity(name, &approval_args),
         summary: summary.to_owned(),
-        risk: risk_for(name),
+        risk: crate::tools::integration_risk(name, &approval_args)
+            .unwrap_or_else(|| risk_for(name)),
     });
     events
         .send(RunEvent::ApprovalDecided {

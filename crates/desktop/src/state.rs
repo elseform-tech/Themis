@@ -7,6 +7,7 @@
 
 mod automation;
 mod changes;
+mod integration_tools;
 mod plugins;
 mod preferences;
 mod projects;
@@ -109,6 +110,7 @@ struct RunSnapshot {
     /// follows a hand-edited store file).
     skills: Vec<themis_core::skills::Skill>,
     plugins: Vec<themis_core::plugins::Plugin>,
+    skill_catalog: Vec<themis_core::skills::Skill>,
 }
 
 /// One automation run in flight: the completion registry entry that lets the

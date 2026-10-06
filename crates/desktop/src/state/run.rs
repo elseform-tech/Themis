@@ -4,7 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use themis_core::providers::ProviderConfig;
-use themis_core::runtime::{run_task_with_policy, CachingApprovals, RunEvent, RunPolicy};
+use themis_core::runtime::{
+    run_task_with_policy_and_catalog, CachingApprovals, RunEvent, RunPolicy,
+};
 use themis_core::skills::materialize_scripts;
 use themis_core::tools::{boxed_tools, ApprovalHook};
 
@@ -87,9 +89,13 @@ impl AppState {
         // Materialize skill scripts into the run workroot BEFORE building
         // tools: a failure aborts the spawn (the caller resets `running`),
         // so a run never starts half-skilled.
-        if let Err(err) = materialize_scripts(&snapshot.skills, &snapshot.work_root) {
-            return Err(format!("failed to materialize skill scripts: {err:#}"));
-        }
+        let skill_catalog = themis_core::skills::materialize_catalog(
+            &snapshot.skill_catalog,
+            &snapshot.work_root,
+            run_id,
+        )
+        .map_err(|error| format!("failed to materialize skill catalog: {error:#}"))?;
+        materialize_scripts(&snapshot.skills, &snapshot.work_root).map_err(|e| e.to_string())?;
         let mut tools = boxed_tools(&snapshot.work_root, Arc::clone(&approvals))
             .map_err(|err| format!("failed to build tools: {err:#}"))?;
         let store = self.plugin_store(Some(snapshot.work_root.clone()));
@@ -140,11 +146,15 @@ impl AppState {
                 return Err("Duplicate plugin tool identity".into());
             }
         }
-        if snapshot.skills.iter().any(|s| s.id == "create-skill") {
-            tools.extend(store.management_tools(approvals.clone()));
-        }
+        tools.extend(self.integration_management_tools(
+            approvals.clone(),
+            snapshot.work_root.clone(),
+            thread_id.to_owned(),
+        ));
         let hook_runtime = themis_core::plugins::hooks::HookRuntime {
             hooks,
+            run_id: run_id.to_owned(),
+            thread_id: thread_id.to_owned(),
             root: snapshot.work_root.clone(),
             approvals: approvals.clone(),
         };
@@ -261,7 +271,7 @@ impl AppState {
                     &hook_task,
                     events_tx,
                     |events_tx| {
-                        run_task_with_policy(
+                        run_task_with_policy_and_catalog(
                             llm,
                             themis_core::skills::filter_tools(tools, &skills),
                             themis_core::skills::compose_task(&task, &skills),
@@ -270,6 +280,7 @@ impl AppState {
                             policy,
                             events_tx,
                             stopped,
+                            skill_catalog,
                         )
                     },
                 )

@@ -257,6 +257,27 @@ pub fn materialize_scripts(skills: &[Skill], work_root: &Path) -> anyhow::Result
     Ok(written)
 }
 
+/// Per-run copies keep concurrent turns from overwriting lazy skill definitions.
+pub fn materialize_catalog(skills: &[Skill], root: &Path, run_id: &str) -> anyhow::Result<String> {
+    if !is_safe_file_name(run_id) {
+        anyhow::bail!("Unsafe catalog run id");
+    }
+    let canonical = root.canonicalize()?;
+    let mut directory = root.to_path_buf();
+    for component in [".themis", "skill-catalogs", run_id] {
+        directory.push(component);
+        if directory.exists() {
+            if !directory.canonicalize()?.starts_with(&canonical) {
+                anyhow::bail!("Skill catalog escapes work root");
+            }
+        } else {
+            std::fs::create_dir(&directory)?;
+        }
+    }
+    materialize_scripts(skills, &directory)?;
+    Ok(catalog_prompt(skills, &directory))
+}
+
 /// Only metadata enters the system message; read the referenced body when relevant.
 pub fn catalog_prompt(skills: &[Skill], root: &Path) -> String {
     let entries: Vec<_> = skills
@@ -476,6 +497,21 @@ mod tests {
             filter_tools(tools, &[skill("review", "Review", &["read_file"], vec![])]).len(),
             count
         );
+    }
+
+    #[test]
+    fn lazy_catalog_bodies_are_isolated_between_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let mut old = skill("review", "Review", &[], vec![]);
+        old.instructions = "OLD_BODY".into();
+        materialize_catalog(&[old.clone()], root.path(), "run-one").unwrap();
+        old.instructions = "NEW_BODY".into();
+        materialize_catalog(&[old], root.path(), "run-two").unwrap();
+        let first = root
+            .path()
+            .join(".themis/skill-catalogs/run-one/.themis/skills/review/SKILL.md");
+        assert!(std::fs::read_to_string(first).unwrap().contains("OLD_BODY"));
+        assert!(materialize_catalog(&[], root.path(), "../escape").is_err());
     }
 
     #[test]

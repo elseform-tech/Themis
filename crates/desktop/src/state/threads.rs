@@ -179,9 +179,74 @@ impl AppState {
             .map(Skill::core_skill)
             .collect();
         let store = self.plugin_store(Some(project_root));
-        let (resolved_text, inline_skills, plugins) = store
+        let (resolved_text, inline_skills, selected_plugins) = store
             .resolve_prompt(&text, &legacy)
             .map_err(|e| e.to_string())?;
+        let mut plugins: Vec<_> = store
+            .list()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|plugin| plugin.enabled)
+            .collect();
+        // Explicit saved references retain their revision; all other capabilities use current revisions.
+        for selected in selected_plugins {
+            plugins.retain(|plugin| {
+                plugin.scope != selected.scope || plugin.spec.name != selected.spec.name
+            });
+            plugins.push(selected);
+        }
+        let mut skill_catalog = legacy.clone();
+        for available in store
+            .available_skills()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|skill| !skill.retired)
+        {
+            let parts: Vec<_> = available.id.split("--").collect();
+            if parts.last().is_some_and(|id| {
+                plugins.iter().any(|plugin| {
+                    plugin.scope == available.scope
+                        && plugin.spec.name == available.plugin
+                        && plugin.spec.manual_skills.iter().any(|manual| manual == id)
+                })
+            }) {
+                continue;
+            }
+            if parts.len() == 3
+                && !plugins.iter().any(|plugin| {
+                    plugin.scope == available.scope
+                        && plugin.spec.name == available.plugin
+                        && plugin.spec.skills.iter().any(|skill| skill.id == parts[2])
+                })
+            {
+                continue;
+            }
+            let id = if parts.len() == 3 {
+                plugins
+                    .iter()
+                    .find(|plugin| {
+                        plugin.spec.name == available.plugin && plugin.scope == available.scope
+                    })
+                    .map(|plugin| {
+                        if plugin.source.as_deref() == Some("discovered") {
+                            available.id.clone()
+                        } else {
+                            plugin.skill_id(parts[2])
+                        }
+                    })
+                    .unwrap_or(available.id)
+            } else {
+                available.id
+            };
+            let (_, skills, _) = store
+                .resolve_prompt(&format!("[[skill:{id}]]"), &legacy)
+                .map_err(|e| e.to_string())?;
+            for skill in skills {
+                if !skill_catalog.iter().any(|known| known.id == skill.id) {
+                    skill_catalog.push(skill);
+                }
+            }
+        }
         {
             let threads = self.inner.threads.read().await;
             for id in threads
@@ -249,6 +314,7 @@ impl AppState {
                 model: record.model.clone(),
                 skills: resolved,
                 plugins,
+                skill_catalog,
             }
         };
         if let Err(error) = self

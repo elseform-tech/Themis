@@ -22,12 +22,12 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use autoagents::async_trait;
+pub use autoagents::async_trait;
 use autoagents_derive::{tool, ToolInput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use autoagents::core::tool::ToolCallError;
+pub use autoagents::core::tool::ToolCallError;
 pub use autoagents::core::tool::{ToolRuntime, ToolT};
 pub use autoagents_toolkit::tools::filesystem::{
     CopyFile, CreateDir, DeleteFile, ListDir, MoveFile, ReadFile, SearchFile, WriteFile,
@@ -50,6 +50,51 @@ pub enum RiskLevel {
     Network,
     /// Irreversible or hard-to-reverse (recursive delete, force push, ...).
     Destructive,
+}
+
+/// Management tools carry distinct approvals for reads, changes and executable tests.
+pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
+    if !matches!(
+        name,
+        "list_plugins" | "save_skill" | "manage_integrations" | "manage_automations"
+    ) {
+        return None;
+    }
+    let action = match name {
+        "save_skill" => "save_skill",
+        "list_plugins" => "list",
+        _ => args["action"].as_str().unwrap_or("list"),
+    };
+    Some(match action {
+        "list" | "marketplaces" => RiskLevel::Read,
+        "catalog" if args["refresh"] != true => RiskLevel::Read,
+        "catalog" | "install" | "update" if name == "manage_integrations" => RiskLevel::Network,
+        "import_repository" => RiskLevel::Network,
+        "test_hook" => RiskLevel::Execute,
+        "test_mcp" if args["server"]["command"].is_string() => RiskLevel::Execute,
+        "test_mcp" => RiskLevel::Network,
+        "delete" | "remove_marketplace" | "remove_component" => RiskLevel::Destructive,
+        _ => RiskLevel::Write,
+    })
+}
+
+pub fn integration_approval_identity(name: &str, args: &Value) -> String {
+    if matches!(name, "manage_integrations" | "manage_automations") {
+        use std::hash::{Hash, Hasher};
+        let action = args["action"].as_str().unwrap_or("list");
+        let mut definition = std::collections::hash_map::DefaultHasher::new();
+        if matches!(action, "test_hook" | "test_mcp") {
+            args.to_string().hash(&mut definition);
+        }
+        format!(
+            "{}_{action}_{:?}_{:016x}",
+            name,
+            integration_risk(name, args),
+            definition.finish()
+        )
+    } else {
+        name.into()
+    }
 }
 
 /// A single proposed action awaiting an approval decision.
@@ -174,7 +219,7 @@ fn take_dispatch_permit() -> bool {
 /// All in-`execute` approval checks must use this (never `check_approval`
 /// directly) so agent-driven calls prompt exactly once while direct
 /// `execute` calls stay fully gated.
-pub(crate) fn check_approval_permitted(
+pub fn check_approval_permitted(
     hook: &dyn ApprovalHook,
     action: &ToolAction,
 ) -> Result<(), ToolCallError> {
@@ -1290,6 +1335,44 @@ mod tests {
         }
         assert!(!child_env_allowed("RANDOM_UNRELATED_VAR"));
         assert!(!child_env_allowed("SSH_AUTH_SOCK"));
+    }
+
+    #[test]
+    fn management_approvals_separate_read_mutation_and_changed_execution() {
+        assert_eq!(
+            integration_risk("save_skill", &json!({"action":"list"})),
+            Some(RiskLevel::Write)
+        );
+        assert_eq!(
+            integration_risk("manage_integrations", &json!({"action":"list"})),
+            Some(RiskLevel::Read)
+        );
+        assert_eq!(
+            integration_risk("manage_integrations", &json!({"action":"delete"})),
+            Some(RiskLevel::Destructive)
+        );
+        assert_eq!(
+            integration_risk("manage_integrations", &json!({"action":"remove_component"})),
+            Some(RiskLevel::Destructive)
+        );
+        assert_eq!(
+            integration_risk("manage_integrations", &json!({"action":"test_hook"})),
+            Some(RiskLevel::Execute)
+        );
+        assert_ne!(
+            integration_approval_identity("manage_integrations", &json!({"action":"list"})),
+            integration_approval_identity("manage_integrations", &json!({"action":"save"}))
+        );
+        assert_ne!(
+            integration_approval_identity(
+                "manage_integrations",
+                &json!({"action":"test_hook","hook":{"command":"true"}})
+            ),
+            integration_approval_identity(
+                "manage_integrations",
+                &json!({"action":"test_hook","hook":{"command":":"}})
+            )
+        );
     }
 
     #[test]

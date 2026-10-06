@@ -95,7 +95,12 @@ impl ApprovalHook for DesktopApprovalHook {
         if action.risk == CoreRisk::Read && !self.confirm_reads {
             return Approval::AllowOnce;
         }
-        if !self.is_git && action.risk != CoreRisk::Read {
+        let integration = action.tool.starts_with("mcp_")
+            || action.tool.starts_with("hook_")
+            || action.tool.starts_with("manage_integrations_")
+            || action.tool.starts_with("manage_automations_")
+            || matches!(action.tool.as_str(), "list_plugins" | "save_skill");
+        if !self.is_git && action.risk != CoreRisk::Read && !integration {
             return Approval::Deny;
         }
         if let Some(queue) = &self.test_decisions {
@@ -178,6 +183,20 @@ mod tests {
             PendingMap::default(),
         );
         (hook, rx)
+    }
+
+    #[test]
+    fn non_git_integrations_still_require_and_accept_explicit_approval() {
+        let (hook, _) = hook_with_sink(false);
+        let hook = hook.with_test_decisions(vec![Approval::AllowOnce]);
+        assert_eq!(
+            hook.approve(&action("manage_integrations_save", CoreRisk::Write)),
+            Approval::AllowOnce
+        );
+        assert_eq!(
+            hook.approve(&action("write_file", CoreRisk::Write)),
+            Approval::Deny
+        );
     }
 
     #[test]
