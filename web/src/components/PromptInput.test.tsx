@@ -4,11 +4,28 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { PromptInput, PromptText } from "./PromptInput";
 import { pluginToken, promptParts } from "../lib/prompt";
+import { readFileSync } from "node:fs";
 
 const plugins = [
   { id: "g--drive", name: "Google Drive", description: "Drive tools", origin: "Global · personal", icon: "https://example.com/drive.svg", enabled: true },
   { id: "l--disabled", name: "Disabled", description: "Hidden", origin: "Project", enabled: false },
 ];
+
+it("keeps reference icons and labels together despite Tailwind's block image reset",()=>{
+  const style=document.createElement("style");
+  style.textContent=readFileSync("node_modules/tailwindcss/preflight.css","utf8")+readFileSync("src/components/PromptInput.css","utf8");
+  document.head.append(style);
+  try {
+    const {container}=render(<PromptText value="Please [[plugin:g--drive]] and [[skill:review]] for me" plugins={plugins} skills={[{id:"review",name:"Review",description:"Code",plugin:"review"}]} />);
+    const references=container.querySelectorAll(".themis-skill-chip");
+    for (const reference of references) {
+      expect(getComputedStyle(reference).display).toBe("inline-flex");
+      expect(getComputedStyle(reference).padding).toBe("0px");
+      expect(getComputedStyle(reference).verticalAlign).toBe("baseline");
+      expect(getComputedStyle(reference.querySelector("img,svg")!).display).toBe("inline-block");
+    }
+  } finally {style.remove();}
+});
 
 it.each(["Enter", "Tab"])("selects an @ plugin with %s without submitting and preserves its scoped marker", key => {
   const changed = vi.fn(), send = vi.fn();

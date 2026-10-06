@@ -2,8 +2,8 @@
 .themis-prompt-editor { min-height: 5rem; padding: .625rem; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--themis-text); border: 1px solid var(--themis-border-subtle); border-radius: .5rem; background: var(--themis-composer-bg, var(--themis-surface)); }
 .themis-prompt-editor:empty::before { content: attr(data-placeholder); color: var(--themis-text-2); pointer-events: none; }
 .themis-prompt-editor[aria-disabled="true"] { opacity: .6; }
-.themis-skill-chip { display: inline; padding: 0; background: none; color: inherit; font: inherit; line-height: inherit; vertical-align: baseline; }
-.themis-skill-chip > svg, .themis-skill-chip > img, .themis-skill-chip > span[aria-hidden] { vertical-align: -.1em; margin-right: .2em; }
+.themis-skill-chip { display: inline-flex; align-items: baseline; gap: .2em; padding: 0; background: none; color: inherit; font: inherit; line-height: inherit; vertical-align: baseline; white-space: nowrap; }
+.themis-skill-chip > svg, .themis-skill-chip > img, .themis-skill-chip > span[aria-hidden] { display: inline-block; align-self: center; flex: none; }
 .themis-reference-label { line-height: inherit; }
 .themis-reference-label.themis-shimmer { animation-duration: 3.8s; }
 .themis-prompt-plugin-icon { width: 1rem; height: 1rem; object-fit: contain; flex: none; }
