@@ -223,3 +223,8 @@ Fixture integrity was verified against the staged copies:
 Scoped persisted evidence is saved at `/tmp/themis-triple-evidence.json`, with the runnable orchestration script `/tmp/themis-triple-compaction.py` and observations `/tmp/themis-triple.log`. A final assertion check verified every checkpoint's expected records, exactly three checkpoints, two ACK answers, an exact final nine-line answer and absence of model tool-start events. Source files and staged hashes matched. The test completed successfully.
 
 This establishes retention over three successive compactions for a consistent explicit preservation task and sparse records in repetitive filler. It does not establish general losslessness, retention after arbitrary task changes, dense-document retention, or stability over many more compactions. The roughly 90–95-second runs also leave limited headroom under the 120-second global timeout. No product code was changed in this follow-up. Fresh documentation-task checks: `python3 -m unittest quality_dashboard.test_dashboard` passed 13 tests; `ruff check quality_dashboard` and `git diff --check` passed. Product metrics and coverage remain those of the unchanged implementation reported above.
+
+
+## Rich narrative follow-up
+
+The subsequent six-compaction narrative test failed to finish: only two checkpoints succeeded, and the third part timed out twice. See [the full narrative verification](narrative-compaction-six.md). The three-round marker result above must not be treated as proof of general narrative reliability.
