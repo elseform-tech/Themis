@@ -28,6 +28,8 @@ it.each(["Enter", "Tab"])("selects an @ plugin with %s without submitting and pr
   expect(changed).toHaveBeenLastCalledWith("[[plugin:g--drive]] ");
   expect(send).not.toHaveBeenCalled();
   expect(input.querySelector('[data-plugin="g--drive"]')).toHaveTextContent("Google Drive");
+  expect(input.querySelector('[data-plugin="g--drive"] .themis-shimmer')).toHaveTextContent("Google Drive");
+  expect(input.querySelector('[data-plugin="g--drive"] img')).not.toHaveClass("themis-shimmer");
 });
 
 it("parses persisted mixed plugin and skill references and renders their separate chips", () => {
@@ -36,6 +38,8 @@ it("parses persisted mixed plugin and skill references and renders their separat
   render(<PromptText value={value} skills={[{ id: "g--review--rust", name: "Review", description: "Review code", plugin: "review" }]} plugins={plugins} />);
   expect(screen.getByText("Google Drive")).toBeInTheDocument();
   expect(screen.getByText("Review")).toBeInTheDocument();
+  expect(screen.getByText("Google Drive")).toHaveClass("themis-shimmer");
+  expect(screen.getByText("Review")).toHaveClass("themis-shimmer");
 });
 
 it.each(["Enter", "Tab"])("selects an inline / skill with %s without submitting and preserves its stable reference", key => {
@@ -56,6 +60,7 @@ it.each(["Enter", "Tab"])("selects an inline / skill with %s without submitting 
   expect(changed).toHaveBeenLastCalledWith("[[skill:g--review--v1--rust]] ");
   expect(send).not.toHaveBeenCalled();
   expect(screen.getByText("Rust review")).toBeInTheDocument();
+  expect(input.querySelector('[data-skill="g--review--v1--rust"] .themis-shimmer')).toHaveTextContent("Rust review");
 });
 
 it.each(["mail@example.com", "`@drive", "```\n@drive"])("does not offer plugin mentions inside %s", value => {

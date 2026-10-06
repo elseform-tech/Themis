@@ -17,6 +17,12 @@ function caret(element:HTMLElement):number {
   const range=selection.getRangeAt(0).cloneRange();range.selectNodeContents(element);range.setEnd(selection.anchorNode!,selection.anchorOffset);
   return serialize(range.cloneContents()).length;
 }
+function referenceLabel(name:string) {
+  const label=document.createElement("span");
+  label.className="themis-reference-label themis-shimmer";
+  label.textContent=name;
+  return label;
+}
 export function SkillIcon() { return <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="m8 2 1.6 4.4L14 8l-4.4 1.6L8 14l-1.6-4.4L2 8l4.4-1.6L8 2Zm7 10 .8 2.2L18 15l-2.2.8L15 18l-.8-2.2L12 15l2.2-.8L15 12Z"/></svg>; }
 export function PluginIcon({plugin}:{plugin?:PromptPlugin}) {
   return plugin?.icon ? <img className="themis-prompt-plugin-icon" src={plugin.icon} alt="" referrerPolicy="no-referrer" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0ZM12 18v4"/></svg>;
@@ -26,10 +32,10 @@ export function PromptText({value,skills,plugins=[]}:{value:string;skills:Prompt
     if ("text" in part) return part.text;
     if ("plugin" in part) {
       const plugin=plugins.find(p=>p.id===part.plugin);
-      return <span key={index} className="themis-skill-chip themis-plugin-chip" title={plugin?.origin ?? "Unavailable plugin"}><PluginIcon plugin={plugin} />{plugin?.name ?? "Unavailable plugin"}</span>;
+      return <span key={index} className="themis-skill-chip themis-plugin-chip" title={plugin?.origin ?? "Unavailable plugin"}><PluginIcon plugin={plugin} /><span className="themis-reference-label themis-shimmer">{plugin?.name ?? "Unavailable plugin"}</span></span>;
     }
     const skill=skills.find(s=>s.id===part.skill);
-    return <span key={index} className="themis-skill-chip" title={skill?.plugin ?? "Unavailable skill"}><SkillIcon />{skill?.name ?? (part.skill==="create-skill"?"Create skill":"Unavailable skill")}</span>;
+    return <span key={index} className="themis-skill-chip" title={skill?.plugin ?? "Unavailable skill"}><SkillIcon /><span className="themis-reference-label themis-shimmer">{skill?.name ?? (part.skill==="create-skill"?"Create skill":"Unavailable skill")}</span></span>;
   })}</>;
 }
 export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,placeholder,onSubmit,history=[]}:Props) {
@@ -63,13 +69,13 @@ export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,
           chip.title=plugin?.origin ?? "Unavailable plugin; replace before running";
           if (plugin?.icon) {const icon=document.createElement("img");icon.className="themis-prompt-plugin-icon";icon.src=plugin.icon;icon.alt="";icon.referrerPolicy="no-referrer";chip.append(icon);}
           else {const icon=document.createElement("span");icon.textContent=plugin?"⊞":"⚠";icon.setAttribute("aria-hidden","true");chip.append(icon);}
-          chip.append(document.createTextNode(plugin?.name ?? "Unavailable plugin"));element.append(chip);continue;
+          chip.append(referenceLabel(plugin?.name ?? "Unavailable plugin"));element.append(chip);continue;
         }
         const skill=skills.find(s=>s.id===part.skill),chip=document.createElement("span");
         chip.className="themis-skill-chip";chip.contentEditable="false";chip.dataset.skill=part.skill;
         chip.title=skill ? `${skill.plugin} · ${skill.description}` : "Unavailable skill; replace before running";
         const icon=document.createElement("span");icon.textContent=skill?"✧":"⚠";icon.setAttribute("aria-hidden","true");
-        chip.append(icon,document.createTextNode(skill?.name ?? (part.skill==="create-skill"?"Create skill":"Unavailable skill")));
+        chip.append(icon,referenceLabel(skill?.name ?? (part.skill==="create-skill"?"Create skill":"Unavailable skill")));
         element.append(chip);
       }
       if (!element.lastChild || (element.lastChild instanceof HTMLElement && (element.lastChild.dataset.skill || element.lastChild.dataset.plugin))) element.append(document.createTextNode(""));
