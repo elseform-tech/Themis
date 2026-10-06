@@ -402,6 +402,7 @@ impl AppState {
                 ),
                 run_id.clone(),
                 effort,
+                Vec::new(),
             )
             .await
         {

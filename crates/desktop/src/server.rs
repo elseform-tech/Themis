@@ -405,13 +405,24 @@ pub async fn dispatch(
         "list_threads" => output!(state.list_threads(arg(&args, "projectRoot")?).await?),
         "merge_thread" => output!(state.merge_thread(arg(&args, "threadId")?).await?),
         "discard_thread" => done!(state.discard_thread(arg(&args, "threadId")?).await),
+        "attach_files" => output!(
+            state
+                .attach_files(arg(&args, "threadId")?, arg(&args, "paths")?)
+                .await?
+        ),
         "send_message" => output!(
             state
-                .send_message_with_effort(
+                .send_message_with_attachments(
                     sink,
                     arg(&args, "threadId")?,
                     arg(&args, "text")?,
-                    arg(&args, "reasoningEffort")?
+                    arg(&args, "reasoningEffort")?,
+                    serde_json::from_value(
+                        args.get("attachments")
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::json!([]))
+                    )
+                    .map_err(|e| e.to_string())?
                 )
                 .await?
         ),

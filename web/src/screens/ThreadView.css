@@ -379,3 +379,8 @@
 .themis-thread-composer .themis-prompt-editor:focus-visible { outline: none; }
 
 .themis-response-model { display: block; margin-top: .5rem; color: var(--themis-text-2); font-size: .75rem; }
+
+.themis-composer-attachments { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 8px 0; margin: 0; }
+.themis-composer-attachments li { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px; padding: 3px 8px; max-width: 100%; }
+.themis-composer-attachments span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-composer-attachments button { background: none; border: 0; color: inherit; cursor: pointer; padding: 2px 4px; }

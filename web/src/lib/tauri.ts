@@ -79,8 +79,13 @@ export function createThread(
   });
 }
 
-export function sendMessage(threadId: string, text: string, reasoningEffort?: string): Promise<RunHandle> {
-  return invoke('send_message', { threadId, text, reasoningEffort: reasoningEffort || null });
+export interface Attachment { path: string; name: string; size: number }
+export function attachFiles(threadId: string, paths: string[]): Promise<Attachment[]> {
+  return invoke("attach_files", { threadId, paths });
+}
+
+export function sendMessage(threadId: string, text: string, reasoningEffort?: string, attachments: string[] = []): Promise<RunHandle> {
+  return invoke('send_message', { threadId, text, reasoningEffort: reasoningEffort || null, attachments });
 }
 
 export function getThreadHistory(threadId: string): Promise<HistoryItem[]> {

@@ -3,10 +3,13 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../state/reducer";
 import App from "../App";
+import { open } from "@tauri-apps/plugin-dialog";
 import * as bridge from "../lib/tauri";
 
+vi.mock("@tauri-apps/plugin-dialog", () => ({open: vi.fn()}));
 vi.mock("../lib/tauri", async importOriginal => ({
   ...await importOriginal<typeof import("../lib/tauri")>(),
+  attachFiles: vi.fn(),
   pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
   getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
@@ -30,6 +33,33 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("synchronizes attachments when returning before upload and send complete", async () => {
+    const thread = { id: "upload-thread", title: "Attachment test", provider: "go" as const, model: "test-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    vi.mocked(open).mockResolvedValue(["/source/music.mp3"]);
+    let uploaded!: (files: bridge.Attachment[]) => void;
+    vi.mocked(bridge.attachFiles).mockImplementationOnce(() => new Promise(resolve => { uploaded = resolve; }));
+    await mount();
+    fireEvent.click(screen.getByRole("button", {name: /^Attachment test/}));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Attach files"})));
+    fireEvent.click(screen.getByRole("button", {name: "Settings"}));
+    fireEvent.click(screen.getByRole("button", {name: /^Attachment test/}));
+    await act(async () => uploaded([{name:"music.mp3",path:"/tmp/fixed-themis/.themis/attachments/music.mp3",size:12}]));
+    expect(await screen.findByRole("button", {name: "Remove music.mp3"})).toBeInTheDocument();
+    let sent!: (handle: {run_id: string}) => void;
+    vi.mocked(bridge.sendMessage).mockImplementationOnce(() => new Promise(resolve => { sent = resolve; }));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Send"})));
+    fireEvent.click(screen.getByRole("button", {name: "Settings"}));
+    fireEvent.click(screen.getByRole("button", {name: /^Attachment test/}));
+    vi.mocked(bridge.attachFiles).mockResolvedValueOnce([{name:"next.txt",path:"/tmp/fixed-themis/.themis/attachments/next.txt",size:2}]);
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Attach files"})));
+    await act(async () => sent({run_id:"upload-run"}));
+    expect(screen.getByRole("button", {name: "Remove next.txt"})).toBeInTheDocument();
+    expect(screen.queryByRole("button", {name: "Remove music.mp3"})).toBeNull();
+    expect(bridge.sendMessage).toHaveBeenCalledWith(thread.id, "Inspect the attached files.", "", ["/tmp/fixed-themis/.themis/attachments/music.mp3"]);
+  });
+
   it("selects and hides the companion from the permanent rail and restores that choice", async () => {
     const app = render(<App />);
     await screen.findByRole("button", { name: "Knight companion" });
@@ -226,7 +256,7 @@ describe("Workspace journey", () => {
     expect(bridge.setThreadEffort).toHaveBeenCalledWith("thread1", "low");
     fireEvent.input(screen.getByLabelText("Message"), { target: { textContent: "Read the test file" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
-    expect(bridge.sendMessage).toHaveBeenCalledWith("thread1", "Read the test file", "low");
+    expect(bridge.sendMessage).toHaveBeenCalledWith("thread1", "Read the test file", "low", []);
     expect(screen.queryByText("Thread options")).toBeNull();
     expect(screen.getByRole("button", { name: "Edit New thread" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove New thread" })).toBeInTheDocument();

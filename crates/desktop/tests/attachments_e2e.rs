@@ -1,0 +1,233 @@
+use serde_json::{json, Value};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
+use themis_desktop::{
+    server::{Client, Server},
+    state::AppState,
+};
+use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+
+fn cli(dir: &Path, command: &str, args: Value) -> Value {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(dir)
+        .args(["call", command, &args.to_string()])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap()
+        .success());
+    let sources = tempfile::tempdir().unwrap();
+    let text = format!(
+        "BEGIN-17{}MIDDLE-42{}END-99",
+        " apple".repeat(105_001),
+        " apple".repeat(105_001)
+    );
+    assert!(text.len().div_ceil(4) > 200_000);
+    std::fs::write(sources.path().join("control.txt"), &text).unwrap();
+    let binary = [0, 255, 128, 1, 2];
+    for name in [
+        "photo.png",
+        "music.mp3",
+        "movie.mp4",
+        "archive.zip",
+        "[[skill:missing]].bin",
+    ] {
+        std::fs::write(sources.path().join(name), binary).unwrap();
+    }
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let provider = MockServer::start().await;
+    let summaries = Arc::new(Mutex::new(Vec::new()));
+    let captured = summaries.clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let summary = body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context");
+        let answer = if summary {
+            let dump = body["messages"][1]["content"].as_str().unwrap();
+            captured.lock().unwrap().push(dump.to_owned());
+            if ["BEGIN-17", "MIDDLE-42", "END-99"].iter().all(|marker| dump.contains(marker)) {
+                "The uploaded text contained BEGIN-17, MIDDLE-42, END-99."
+            } else { "Missing markers" }
+        } else {
+            let input = body.to_string();
+            if ["BEGIN-17", "MIDDLE-42", "END-99", "Report all three markers", "music.mp3", "movie.mp4"].iter().all(|marker| input.contains(marker)) {
+                "BEGIN-17, MIDDLE-42, END-99"
+            } else { "Missing context" }
+        };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":answer},"finish_reason":"stop"}]}))
+    }).mount(&provider).await;
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let paths: Vec<_> = [
+        "control.txt",
+        "photo.png",
+        "music.mp3",
+        "movie.mp4",
+        "archive.zip",
+        "[[skill:missing]].bin",
+    ]
+    .iter()
+    .map(|name| sources.path().join(name))
+    .collect();
+    let uploaded = cli(
+        data.path(),
+        "attach_files",
+        json!({"threadId":id,"paths":paths}),
+    );
+    let attachments = uploaded.as_array().unwrap();
+    assert_eq!(attachments.len(), 6);
+    let stored: Vec<_> = attachments
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(std::fs::read_to_string(stored[0]).unwrap(), text);
+    assert!(std::process::Command::new("git")
+        .arg("check-ignore")
+        .args(&stored)
+        .current_dir(project.path())
+        .output()
+        .unwrap()
+        .status
+        .success());
+    for file in &stored[1..] {
+        assert_eq!(std::fs::read(file).unwrap(), binary);
+    }
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Report all three markers", "attachments":stored, "reasoningEffort":null}),
+    );
+    let mut checkpoint = false;
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            if event["name"] == "thread-event" {
+                let event = &event["payload"]["event"];
+                if event["kind"] == "context_checkpoint" {
+                    checkpoint = true;
+                }
+                if event["kind"] == "finished" || event["kind"] == "failed" {
+                    break event.clone();
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(checkpoint);
+    assert_eq!(terminal["kind"], "finished", "{terminal}");
+    assert_eq!(terminal["result"], "BEGIN-17, MIDDLE-42, END-99");
+    {
+        let dumps = summaries.lock().unwrap();
+        assert_eq!(dumps.len(), 1);
+        assert!(dumps[0].contains(&text));
+    }
+    let requests = provider.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].body.len() < 50_000);
+    let history = state.get_thread_history(id).await.unwrap();
+    assert!(serde_json::to_string(&history)
+        .unwrap()
+        .contains("control.txt"));
+    client.call("shutdown", json!({})).await.unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn attachment_paths_and_symlinked_storage_cannot_escape_project() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into_owned(),
+            themis_desktop::types::ProviderKind::Go,
+            None,
+        )
+        .await
+        .unwrap();
+    std::fs::write(outside.path().join("secret.txt"), "control").unwrap();
+    // A rejected selection does not create attachment copies.
+    assert!(state
+        .attach_files(
+            thread.id.clone(),
+            vec![outside.path().to_string_lossy().into_owned()]
+        )
+        .await
+        .is_err());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            project.path().join(".themis/attachments/escape.txt"),
+        )
+        .unwrap();
+        let server = Server::bind(state.clone(), data.path()).await.unwrap();
+        let task = tokio::spawn(server.run());
+        let client = Client::new(data.path().into());
+        let error = client.call("send_message", json!({"threadId":thread.id,"text":"Inspect", "attachments":[project.path().join(".themis/attachments/escape.txt")],"reasoningEffort":null})).await.unwrap_err();
+        assert!(error.contains("does not belong"), "{error}");
+        assert!(!state.get_thread(&thread.id).await.unwrap().running);
+        assert!(state
+            .get_thread_history(&thread.id)
+            .await
+            .unwrap()
+            .is_empty());
+        client.call("shutdown", json!({})).await.unwrap();
+        task.await.unwrap().unwrap();
+        let other_project = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), other_project.path().join(".themis")).unwrap();
+        let other = state
+            .create_thread(
+                other_project.path().to_string_lossy().into_owned(),
+                themis_desktop::types::ProviderKind::Go,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(state
+            .attach_files(
+                other.id,
+                vec![outside
+                    .path()
+                    .join("secret.txt")
+                    .to_string_lossy()
+                    .into_owned()]
+            )
+            .await
+            .is_err());
+        assert!(!outside.path().join("attachments").exists());
+    }
+}

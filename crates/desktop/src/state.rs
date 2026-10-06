@@ -5,6 +5,7 @@
 //! one of these plain async methods, which take an [`EventSink`] instead of
 //! touching Tauri — that keeps them directly drivable from headless tests.
 
+mod attachments;
 mod automation;
 mod changes;
 mod integration_tools;

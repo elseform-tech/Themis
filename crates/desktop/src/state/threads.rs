@@ -124,7 +124,7 @@ impl AppState {
         text: String,
         run_id: String,
     ) -> Result<RunHandle, String> {
-        self.send_message_with_options(sink, thread_id, text, run_id, None)
+        self.send_message_with_options(sink, thread_id, text, run_id, None, Vec::new())
             .await
     }
 
@@ -136,12 +136,25 @@ impl AppState {
         text: String,
         effort: Option<String>,
     ) -> Result<RunHandle, String> {
+        self.send_message_with_attachments(sink, thread_id, text, effort, Vec::new())
+            .await
+    }
+
+    pub async fn send_message_with_attachments(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        text: String,
+        effort: Option<String>,
+        attachments: Vec<String>,
+    ) -> Result<RunHandle, String> {
         self.send_message_with_options(
             sink,
             thread_id,
             text,
             uuid::Uuid::new_v4().to_string(),
             effort,
+            attachments,
         )
         .await
     }
@@ -153,6 +166,7 @@ impl AppState {
         text: String,
         run_id: String,
         reasoning_effort: Option<String>,
+        attachments: Vec<String>,
     ) -> Result<RunHandle, String> {
         let automation_run = self
             .inner
@@ -161,7 +175,7 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(&run_id);
         let settings = self.inner.settings.get().await;
-        let history = self.inner.transcript.context(&thread_id, usize::MAX)?;
+        let mut history = self.inner.transcript.context(&thread_id, usize::MAX)?;
         let project_root = {
             let threads = self.inner.threads.read().await;
             threads
@@ -170,6 +184,9 @@ impl AppState {
                 .project_root
                 .clone()
         };
+        let (files, manifest) =
+            super::attachments::attachment_context(&project_root, &attachments)?;
+        history.extend(files);
         let legacy: Vec<_> = self
             .inner
             .skills
@@ -182,6 +199,8 @@ impl AppState {
         let (resolved_text, inline_skills, selected_plugins) = store
             .resolve_prompt(&text, &legacy)
             .map_err(|e| e.to_string())?;
+        let resolved_text = format!("{resolved_text}{manifest}");
+        let display_text = format!("{text}{manifest}");
         let mut plugins: Vec<_> = store
             .list()
             .map_err(|e| e.to_string())?
@@ -325,7 +344,7 @@ impl AppState {
         if let Err(error) = self
             .inner
             .transcript
-            .append_user(&thread_id, &run_id, &text)
+            .append_user(&thread_id, &run_id, &display_text)
         {
             self.finish_run(&thread_id).await;
             return Err(error);

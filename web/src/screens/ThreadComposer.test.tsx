@@ -26,6 +26,19 @@ function composer(running:boolean,draft="",composerDisabled=running) {
 }
 
 describe("ThreadComposer", () => {
+  it("attaches any file type, removes pending files and permits attachment-only sends", () => {
+    const view = composer(false);
+    const onAttach = vi.fn(), onRemoveAttachment = vi.fn();
+    view.rerender(<ThreadComposer {...view.props}
+      attachments={[{name:"music.mp3",path:"/project/.themis/attachments/music.mp3",size:12}]}
+      onAttach={onAttach} onRemoveAttachment={onRemoveAttachment} />);
+    fireEvent.click(screen.getByRole("button", {name:"Attach files"}));
+    expect(onAttach).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", {name:"Send"})).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", {name:"Remove music.mp3"}));
+    expect(onRemoveAttachment).toHaveBeenCalledWith("/project/.themis/attachments/music.mp3");
+  });
+
   it("stops once on double Escape without requiring focus in the disabled running composer",()=>{
     const {onStop,onSend}=composer(true);
     fireEvent.keyDown(window,{key:"Escape"});

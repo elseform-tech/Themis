@@ -1,8 +1,10 @@
+import { open } from "@tauri-apps/plugin-dialog";
+import type { Attachment } from "../lib/tauri";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useState } from "react";
 import { Button } from "../components";
 import type { GoModel } from "../lib/types";
-import { getThread, listGoModels, sendMessage, setProvider, setThreadEffort, stopThread } from "../lib/tauri";
+import { attachFiles, getThread, listGoModels, sendMessage, setProvider, setThreadEffort, stopThread } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
@@ -18,6 +20,9 @@ export function ThreadView() {
   const project = useActiveProject();
   const thread = useActiveThread();
   const [drafts, setDrafts] = useState<Record<string, string>>(() => readSession("drafts", {}));
+  const [pendingFiles, setPendingFiles] = useState<Record<string, Attachment[]>>(() => readSession("attachments", {}));
+  const attachments = thread ? pendingFiles[thread.id] ?? [] : [];
+  const [attaching, setAttaching] = useState(false);
   const draft = thread ? drafts[thread.id] ?? "" : "";
   function setDraft(value: string) {
     if (!thread) return;
@@ -27,6 +32,11 @@ export function ThreadView() {
     const reload = () => setDrafts(readSession("drafts", {}));
     window.addEventListener("themis-drafts-changed", reload);
     return () => window.removeEventListener("themis-drafts-changed", reload);
+  }, []);
+  useEffect(() => {
+    const reload = () => setPendingFiles(readSession("attachments", {}));
+    window.addEventListener("themis-attachments-changed", reload);
+    return () => window.removeEventListener("themis-attachments-changed", reload);
   }, []);
   const newThread = useNewThread();
   const { skills: promptSkills, plugins: promptPlugins, error: skillsError } = usePromptSkills(project?.root, state.running[thread?.id ?? ""]);
@@ -46,8 +56,8 @@ export function ThreadView() {
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
   const readOnly = project !== null && !project.is_git;
-  const composerDisabled = thread === null || thread.provider !== "go" || running || sending || readOnly || project === null;
-  const composerBusy = running || sending;
+  const composerDisabled = thread === null || thread.provider !== "go" || running || sending || attaching || readOnly || project === null;
+  const composerBusy = running || sending || attaching;
   const trace = thread ? state.traces[thread.id] ?? [] : [];
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -82,20 +92,41 @@ export function ThreadView() {
     catch (error: unknown) { setStopping(false); toast(dispatch, describeError(error), "danger"); }
   }
 
+  function updateAttachments(id: string, update: (files: Attachment[]) => Attachment[]) {
+    const previous = readSession<Record<string, Attachment[]>>("attachments", {});
+    const next = { ...previous, [id]: update(previous[id] ?? []) };
+    writeSession("attachments", next);
+    window.dispatchEvent(new Event("themis-attachments-changed"));
+  }
+  async function attach() {
+    if (!thread || composerDisabled) return;
+    const id = thread.id;
+    setAttaching(true);
+    try {
+      const paths = await open({ multiple: true, directory: false, title: "Attach files" });
+      if (paths) {
+        const files = await attachFiles(id, Array.isArray(paths) ? paths : [paths]);
+        updateAttachments(id, previous => [...previous, ...files]);
+      }
+    } catch (error) { toast(dispatch, `Attachment failed: ${describeError(error)}`, "danger"); }
+    finally { setAttaching(false); }
+  }
+
   async function send() {
     if (thread === null) return;
-    const text = draft.trim();
+    const text = draft.trim() || (attachments.length ? "Inspect the attached files." : "");
     if (text === "" || composerDisabled) return;
     setDraft("");
     setSending(true);
     dispatch({
       type: "message/append",
       threadId: thread.id,
-      message: { id: newId("msg"), role: "user", text },
+      message: { id: newId("msg"), role: "user", text: text + (attachments.length ? `\n\nAttached: ${attachments.map(file => file.name).join(", ")}` : "") },
     });
     armManualRun(thread.id);
     try {
-      await sendMessage(thread.id, text, effort);
+      await sendMessage(thread.id, text, effort, attachments.map(file => file.path));
+      updateAttachments(thread.id, files => files.filter(file => !attachments.some(sent => sent.path === file.path)));
       dispatch({ type: "thread/send-cleared", threadId: thread.id });
       getThread(thread.id).then(updated => dispatch({ type: "thread/updated", projectRoot: project!.root, thread: updated })).catch(() => {});
     } catch (error: unknown) {
@@ -180,6 +211,9 @@ export function ThreadView() {
         thread={thread}
         key={thread.id}
         draft={draft}
+        attachments={attachments}
+        onAttach={() => void attach()}
+        onRemoveAttachment={path => updateAttachments(thread.id, files => files.filter(file => file.path !== path))}
         skills={promptSkills}
         plugins={promptPlugins}
         history={messages.filter(m => m.role === "user" && !messages.some(error => m.runId !== undefined && error.runId === m.runId && error.text.startsWith("Send failed:"))).map(m => m.text)}
