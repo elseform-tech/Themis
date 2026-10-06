@@ -52,6 +52,7 @@ describe("Integrations management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
     expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("[[skill:manage-skills]]");
     expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("Please [[skill:manage-skills]] for me.");
+    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).not.toContain("Help me manage");
     expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("Current search: missing");
     expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toMatch(/^Keep my existing request\.\n\n/);
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "save" }));

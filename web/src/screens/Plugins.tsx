@@ -124,11 +124,11 @@ export function Plugins() {
     const skill = { Plugins: "manage-plugins", Skills: "manage-skills", MCP: "manage-mcp", Hooks: "manage-hooks" }[category];
     const selected = fromToolbar ? undefined : panel?.item;
     const targetScope = selected?.plugin.scope ?? (fromToolbar ? root ? "local" : "global" : scope);
-    const request = selected ? `Help me understand or manage ${selected.name} in plugin ${pluginDisplayName(selected.plugin)} (ID: ${selected.plugin.spec.name}, ${targetScope} scope).` : `Help me manage ${category.toLowerCase()} in ${targetScope === "local" ? "this project" : "user scope"}.`;
+    const request = selected ? ` Help me understand or manage ${selected.name} in plugin ${pluginDisplayName(selected.plugin)} (ID: ${selected.plugin.spec.name}, ${targetScope} scope).` : "";
     const publicContext = !fromToolbar && panel?.marketplace ? `\nPublic plugin preview from marketplace: ${panel.marketplace}. Inspect or install it if requested.` : !fromToolbar && panel?.skillSource ? `\nAvailable standalone skill: ${panel.skillSource}. Repository: ${skillRepository}; reference: ${skillReference}; subdirectory: skills/${selected?.id}.` : "";
     const details = !fromToolbar && source.trim() ? `\nSource (${sourceType}):\n${source}\n${name ? `Name: ${name}\n` : ""}${reference ? `Git reference: ${reference}\n` : ""}${subdirectory ? `Subdirectory: ${subdirectory}\n` : ""}` : "";
     const existing = drafts[state.activeThreadId]?.trim();
-    drafts[state.activeThreadId] = `${existing ? `${existing}\n\n` : ""}Please [[skill:${skill}]] for me. ${request}${!fromToolbar && intent.trim() ? `\nWhat I want: ${intent.trim()}` : ""}${fromToolbar && search.trim() ? `\nCurrent search: ${search.trim()}` : ""}${root ? `\nProject: ${root}` : ""}${publicContext}${details} `;
+    drafts[state.activeThreadId] = `${existing ? `${existing}\n\n` : ""}Please [[skill:${skill}]] for me.${request}${!fromToolbar && intent.trim() ? `\nWhat I want: ${intent.trim()}` : ""}${fromToolbar && search.trim() ? `\nCurrent search: ${search.trim()}` : ""}${root ? `\nProject: ${root}` : ""}${publicContext}${details} `;
     writeSession("drafts", drafts); window.dispatchEvent(new Event("themis-drafts-changed")); setPanel(null); dispatch({ type: "ui/view", view: "thread" });
   }
   function exportPlugin(plugin: Plugin) {
