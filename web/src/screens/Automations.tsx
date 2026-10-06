@@ -1,5 +1,6 @@
 import { promptParts } from "../lib/prompt";
 import { PromptInput } from "../components/PromptInput";
+import { AskThemisIcon } from "../components/AskThemisIcon";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useState } from "react";
 import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
@@ -109,7 +110,7 @@ export function Automations() {
     }
     const drafts = readSession<Record<string, string>>("drafts", {});
     const existing = drafts[threadId]?.trim();
-    drafts[threadId] = `${existing ? `${existing}\n\n` : ""}[[skill:manage-automations]] ${request} `;
+    drafts[threadId] = `${existing ? `${existing}\n\n` : ""}Please [[skill:manage-automations]] for me. ${request} `;
     writeSession("drafts", drafts);
     window.dispatchEvent(new Event("themis-drafts-changed"));
     setDialog({ mode: "closed" });
@@ -265,7 +266,7 @@ export function Automations() {
         <h2 className="themis-automations-title">Automations</h2>
         <div className="themis-automations-head-actions">
           <Button variant="ghost" size="small" onClick={openCreate}>+ New automation</Button>
-          <Button variant="primary" size="small" disabled={!state.activeThreadId} title={!state.activeThreadId ? "Open a chat to ask Themis" : ""} onClick={askThemis}>Ask Themis</Button>
+          <Button variant="primary" size="small" disabled={!state.activeThreadId} title={!state.activeThreadId ? "Open a chat to ask Themis" : ""} onClick={askThemis}><AskThemisIcon />Ask Themis</Button>
         </div>
       </div>
       {!state.settings.automations_enabled && (
@@ -458,7 +459,7 @@ export function Automations() {
               >
                 Cancel
               </Button>
-              <Button variant="ghost" disabled={saving || creatingProject || !state.activeThreadId} title={!state.activeThreadId ? "Open a chat to ask Themis" : ""} onClick={askThemis}>Ask Themis</Button>
+              <Button variant="ghost" disabled={saving || creatingProject || !state.activeThreadId} title={!state.activeThreadId ? "Open a chat to ask Themis" : ""} onClick={askThemis}><AskThemisIcon />Ask Themis</Button>
               <Button
                 variant="primary"
                 disabled={saving || creatingProject || newProjectName !== null}
