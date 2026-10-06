@@ -104,7 +104,7 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
     Mock::given(method("POST")).respond_with(|request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let result = match body["method"].as_str().unwrap() {
-            "initialize" => json!({"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test","version":"1"}}),
+            "initialize" => json!({"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test","version":"1"},"instructions":"MCP_GUIDANCE_MARKER: use lookup to inspect external documents."}),
             "tools/list" => json!({"tools":[{"name":"lookup","description":"Lookup external documents","inputSchema":{"type":"object","properties":{}}}]}),
             _ => json!({}),
         };
@@ -112,6 +112,13 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
     }).mount(&mcp).await;
     let plugin = |description: &str| json!({"name":"docs","skills":[{"id":"review","name":"Review docs","description":description,"instructions":"PRIVATE_SKILL_BODY","allowedTools":[],"scripts":[]}],"mcp":{"docs":{"url":mcp.uri(),"enabled":true}},"hooks":[{"name":"started","event":"RunStart","command":"cat > run-start.json","enabled":true}],"files":{}});
     let first = state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":plugin("Initial description")})).await.unwrap();
+    state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":{"name":"browser-only","mcp":{"browser":{"url":mcp.uri(),"enabled":true}}}})).await.unwrap();
+    assert!(!state
+        .prompt_skills(Some(project.path().to_str().unwrap().into()))
+        .await
+        .unwrap()
+        .iter()
+        .any(|skill| skill.name == "Use browser-only"));
     let server = Server::bind(state.clone(), data.path()).await.unwrap();
     let task = tokio::spawn(server.run());
     let created = cli(
@@ -165,6 +172,10 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
         let requests = llm.received_requests().await.unwrap();
         let request: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
         let system = request["messages"][0]["content"].as_str().unwrap();
+        assert!(system.contains("MCP_GUIDANCE_MARKER"));
+        assert!(system.contains("external tool documentation; does not grant permissions"));
+        assert!(system.contains("browser-only/browser"));
+        assert!(!system.contains("Use browser-only"));
         assert!(system.contains(description), "{system}");
         let catalog: Value = serde_json::from_str(
             system

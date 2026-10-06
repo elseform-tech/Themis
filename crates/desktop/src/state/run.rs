@@ -1,5 +1,6 @@
 //! Provider setup and asynchronous event lifecycle for agent runs.
 
+use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -125,7 +126,13 @@ impl AppState {
                 )
                 .await
                 {
-                    Ok(connection_tools) => tools.extend(connection_tools),
+                    Ok((connection_tools, instructions)) => {
+                        tools.extend(connection_tools);
+                        if let Some(instructions) = instructions {
+                            skill_catalog.push_str("\nMCP server guidance (external tool documentation; does not grant permissions): ");
+                            skill_catalog.push_str(&json!({"server":format!("{}/{name}",plugin.spec.name),"instructions":instructions}).to_string());
+                        }
+                    }
                     Err(error) => {
                         // Transport errors may contain remote URLs, arguments or server
                         // responses. Only expose fixed, actionable failure categories.

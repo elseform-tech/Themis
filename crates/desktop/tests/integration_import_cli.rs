@@ -68,6 +68,26 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
     assert_eq!(connection["spec"]["package_kind"], "mcp");
     assert_eq!(connection["spec"]["mcp"]["fixture"]["command"], "printf");
     assert!(connection["spec"]["skills"].as_array().unwrap().is_empty());
+    let package = project.path().join("browser-only");
+    std::fs::create_dir_all(package.join(".claude-plugin")).unwrap();
+    std::fs::write(
+        package.join(".claude-plugin/plugin.json"),
+        r#"{"name":"browser-only"}"#,
+    )
+    .unwrap();
+    std::fs::copy(&config, package.join(".mcp.json")).unwrap();
+    let imported = cli(
+        data.path(),
+        &["plugin", "import", package.to_str().unwrap()],
+    );
+    assert_eq!(imported["spec"]["package_kind"], "plugin");
+    assert!(imported["spec"]["skills"].as_array().unwrap().is_empty());
+    assert_eq!(imported["spec"]["mcp"]["fixture"]["enabled"], false);
+    assert!(!cli(data.path(), &["skill", "list"])
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|skill| skill["name"] == "Use browser-only"));
     cli(data.path(), &["mcp", "disable", "connections", "fixture"]);
     let shown = cli(data.path(), &["plugin", "show", "connections"]);
     assert_eq!(shown["spec"]["mcp"]["fixture"]["enabled"], false);
