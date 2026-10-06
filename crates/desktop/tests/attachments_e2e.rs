@@ -63,14 +63,12 @@ async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
         let answer = if summary {
             let dump = body["messages"][1]["content"].as_str().unwrap();
             captured.lock().unwrap().push(dump.to_owned());
-            if ["BEGIN-17", "MIDDLE-42", "END-99"].iter().all(|marker| dump.contains(marker)) {
-                "The uploaded text contained BEGIN-17, MIDDLE-42, END-99."
-            } else { "Missing markers" }
+            ["BEGIN-17", "MIDDLE-42", "END-99"].into_iter().filter(|marker| dump.contains(marker)).collect::<Vec<_>>().join(", ") + " (section examined)"
         } else {
             let input = body.to_string();
             if ["BEGIN-17", "MIDDLE-42", "END-99", "Report all three markers", "music.mp3", "movie.mp4"].iter().all(|marker| input.contains(marker)) {
-                "BEGIN-17, MIDDLE-42, END-99"
-            } else { "Missing context" }
+                "BEGIN-17, MIDDLE-42, END-99".to_owned()
+            } else { "Missing context".to_owned() }
         };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":answer},"finish_reason":"stop"}]}))
     }).mount(&provider).await;
@@ -158,12 +156,15 @@ async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
     assert_eq!(terminal["result"], "BEGIN-17, MIDDLE-42, END-99");
     {
         let dumps = summaries.lock().unwrap();
-        assert_eq!(dumps.len(), 1);
-        assert!(dumps[0].contains(&text));
+        assert!(dumps.len() > 1);
+        assert!(dumps.iter().all(|dump| dump.len() < 70_000));
+        for marker in ["BEGIN-17", "MIDDLE-42", "END-99"] {
+            assert!(dumps.iter().any(|dump| dump.contains(marker)));
+        }
     }
     let requests = provider.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 2);
-    assert!(requests[1].body.len() < 50_000);
+    assert!(requests.len() > 2);
+    assert!(requests.last().unwrap().body.len() < 50_000);
     let history = state.get_thread_history(id).await.unwrap();
     assert_eq!(
         serde_json::to_value(&history[0]).unwrap()["attachments"],
