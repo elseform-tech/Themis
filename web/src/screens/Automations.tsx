@@ -20,6 +20,7 @@ import {
   updateAutomation,
 } from "../lib/tauri";
 import type { Automation, GoModel } from "../lib/types";
+import { readSession, writeSession } from "../state/session";
 import { describeError, toast, useApp } from "../state/store";
 import {
   automationToForm,
@@ -54,6 +55,7 @@ export function Automations() {
     | { mode: "create"; form: AutomationFormState }
     | { mode: "edit"; automationId: string; form: AutomationFormState }
   >({ mode: "closed" });
+  const [query, setQuery] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -88,6 +90,31 @@ export function Automations() {
     });
     return () => { active = false; };
   }, [targetMode, state.secretStatus.go, modelRefresh]);
+
+  function askThemis() {
+    const threadId = state.activeThreadId;
+    if (!threadId) return;
+    let request = "Help me create or manage automations in this chat.";
+    if (dialog.mode !== "closed") {
+      const form = dialog.form;
+      request = dialog.mode === "edit"
+        ? `Help me update automation ${form.name} (id: ${dialog.automationId}).`
+        : "Help me create an automation from these instructions.";
+      const repeat = form.repeat === "interval" ? `Every ${form.intervalMinsRaw} minutes`
+        : `${form.repeat === "weekly" ? `Weekly on ${weekdays[form.weekday]}` : form.repeat === "weekdays" ? "Weekdays" : "Daily"} at ${form.time} (${form.timezone})`;
+      request += `\nInstructions: ${form.task}\nRepeat: ${repeat}`;
+      request += `\nRun in: ${form.targetMode === "continue" ? `chat ${form.targetThreadId || threadId}` : "a new chat each run"}\nProject: ${form.projectRoot || state.activeProjectRoot || "current project"}`;
+      request += `\nName: ${form.name.trim() || "derive from instructions"}\nStatus: ${form.enabled ? "enabled" : "paused"}`;
+      if (form.targetMode === "new") request += `\nModel: ${form.model || "configured default"}\nReasoning effort: ${form.effort || "default"}`;
+    }
+    const drafts = readSession<Record<string, string>>("drafts", {});
+    const existing = drafts[threadId]?.trim();
+    drafts[threadId] = `${existing ? `${existing}\n\n` : ""}[[skill:manage-automations]] ${request} `;
+    writeSession("drafts", drafts);
+    window.dispatchEvent(new Event("themis-drafts-changed"));
+    setDialog({ mode: "closed" });
+    dispatch({ type: "ui/view", view: "thread" });
+  }
 
   function openCreate() {
     setSaveError(null);
@@ -222,6 +249,13 @@ export function Automations() {
     }
   }
 
+  const search = query.trim().toLocaleLowerCase();
+  const visibleAutomations = state.automations.filter(automation =>
+    [automation.name, automation.task, scheduleLabel(automation), automation.project_root,
+      automation.enabled ? "enabled" : "paused"]
+      .join(" ").toLocaleLowerCase().includes(search),
+  );
+
   const deleteTarget =
     state.automations.find((a) => a.id === deleting) ?? null;
 
@@ -229,9 +263,10 @@ export function Automations() {
     <div className="themis-automations">
       <div className="themis-automations-head">
         <h2 className="themis-automations-title">Automations</h2>
-        <Button variant="primary" size="small" onClick={openCreate}>
-          + New automation
-        </Button>
+        <div className="themis-automations-head-actions">
+          <Button variant="ghost" size="small" onClick={openCreate}>+ New automation</Button>
+          <Button variant="primary" size="small" disabled={!state.activeThreadId} title={!state.activeThreadId ? "Open a chat to ask Themis" : ""} onClick={askThemis}>Ask Themis</Button>
+        </div>
       </div>
       {!state.settings.automations_enabled && (
         <p className="themis-automations-disabled-note" role="note">
@@ -239,14 +274,17 @@ export function Automations() {
         </p>
       )}
 
+      {state.automations.length > 0 && <input className="themis-automations-search" type="search" aria-label="Search automations" placeholder="Search automations" value={query} onChange={event => setQuery(event.target.value)} />}
       {state.automations.length === 0 ? (
         <EmptyState
           title="No automations"
           hint="Create an automation to run a scheduled agent in a project."
         />
+      ) : visibleAutomations.length === 0 ? (
+        <EmptyState title="No matching automations" />
       ) : (
         <ul className="themis-automations-list">
-          {state.automations.map((automation) => {
+          {visibleAutomations.map((automation) => {
             const busy = rowBusy === automation.id;
             return (
               <li key={automation.id} className="themis-automations-card">
@@ -420,6 +458,7 @@ export function Automations() {
               >
                 Cancel
               </Button>
+              <Button variant="ghost" disabled={saving || creatingProject || !state.activeThreadId} title={!state.activeThreadId ? "Open a chat to ask Themis" : ""} onClick={askThemis}>Ask Themis</Button>
               <Button
                 variant="primary"
                 disabled={saving || creatingProject || newProjectName !== null}
