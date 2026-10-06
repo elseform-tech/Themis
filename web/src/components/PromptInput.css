@@ -9,5 +9,5 @@
 .themis-prompt-plugin-icon { width: 1rem; height: 1rem; object-fit: contain; flex: none; }
 .themis-prompt-menu { position: absolute; bottom: calc(100% + .25rem); left: 0; width: 100%; max-height: 20rem; overflow-y: auto; background: var(--themis-surface); color: var(--themis-text); border: 1px solid var(--themis-border-subtle); border-radius: .5rem; padding: .25rem; z-index: 50; box-shadow: 0 8px 24px color-mix(in srgb, var(--themis-text) 12%, transparent); }
 .themis-prompt-menu button { display: flex; align-items: center; gap: .5rem; width: 100%; padding: .5rem; border: 0; text-align: left; background: transparent; color: inherit; font: inherit; border-radius: .25rem; }
-.themis-prompt-menu button[aria-selected="true"] { background: var(--themis-raised); }
+.themis-prompt-menu button[aria-selected="true"] { background: color-mix(in srgb, var(--themis-text) 6%, transparent); box-shadow: inset 2px 0 var(--themis-text-2); }
 .themis-prompt-menu small { display: block; color: var(--themis-text-2); font-size: .75rem; }
