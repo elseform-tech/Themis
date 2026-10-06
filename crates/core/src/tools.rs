@@ -70,7 +70,7 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
         "catalog" | "preview" | "install" | "update" if name == "manage_integrations" => {
             RiskLevel::Network
         }
-        "import_repository" => RiskLevel::Network,
+        "import_repository" | "preview_repository" => RiskLevel::Network,
         "test_hook" => RiskLevel::Execute,
         "test_mcp" if args["server"]["command"].is_string() => RiskLevel::Execute,
         "test_mcp" => RiskLevel::Network,
@@ -1361,6 +1361,13 @@ mod tests {
             integration_risk(
                 "manage_integrations",
                 &json!({"action":"preview","refresh":false})
+            ),
+            Some(RiskLevel::Network)
+        );
+        assert_eq!(
+            integration_risk(
+                "manage_integrations",
+                &json!({"action":"preview_repository"})
             ),
             Some(RiskLevel::Network)
         );

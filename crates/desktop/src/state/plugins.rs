@@ -85,6 +85,16 @@ impl AppState {
                         )?)?
                     }
                 }
+                "preview_repository" => serde_json::to_value(
+                    store
+                        .preview_repository(
+                            name,
+                            args["url"].as_str().unwrap_or_default(),
+                            args["reference"].as_str(),
+                            args["subdirectory"].as_str(),
+                        )
+                        .await?,
+                )?,
                 "import_repository" => serde_json::to_value(
                     store
                         .import_repository(

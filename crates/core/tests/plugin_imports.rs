@@ -380,6 +380,21 @@ async fn repository_import_infers_name_without_override() {
                 .unwrap()
                 .success());
         }
+        let preview = store
+            .preview_repository("", source.to_str().unwrap(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(preview.name, expected);
+        let path = &preview.skill_paths["review"];
+        assert_eq!(
+            preview.files[path],
+            fs::read_to_string(skill_path.join("SKILL.md")).unwrap()
+        );
+        assert!(!store
+            .list()
+            .unwrap()
+            .iter()
+            .any(|plugin| plugin.spec.name == expected));
         let imported = store
             .import_repository("global", "", source.to_str().unwrap(), None, None)
             .await

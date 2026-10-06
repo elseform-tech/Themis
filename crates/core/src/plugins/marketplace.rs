@@ -76,6 +76,18 @@ impl PluginStore {
         reference: Option<&str>,
         subdirectory: Option<&str>,
     ) -> anyhow::Result<Plugin> {
+        let spec = self
+            .preview_repository(name, source, reference, subdirectory)
+            .await?;
+        self.save(scope, spec, None)
+    }
+    pub async fn preview_repository(
+        &self,
+        name: &str,
+        source: &str,
+        reference: Option<&str>,
+        subdirectory: Option<&str>,
+    ) -> anyhow::Result<PluginSpec> {
         if !name.is_empty() && !safe_name(name) {
             bail!("Invalid plugin name");
         }
@@ -121,7 +133,8 @@ impl PluginStore {
                 reference: reference.map(str::to_owned),
                 subdirectory: subdirectory.map(str::to_owned),
             });
-            self.save(scope, spec, None)
+            validate(&spec)?;
+            Ok(spec)
         }
         .await;
         if staging.exists() {
@@ -555,6 +568,7 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
             };
             let name = metadata.get("name").map(String::as_str).unwrap_or(fallback);
             let id = if safe_name(name) { name } else { fallback };
+            spec.skill_paths.insert(id.into(), path.clone());
             spec.skills.push(Skill {
                 id: id.into(),
                 name: name.into(),
