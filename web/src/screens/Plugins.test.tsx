@@ -25,6 +25,49 @@ beforeEach(() => {
   });
 });
 describe("Integrations management", () => {
+  it("searches descriptions across categories and prepares a targeted agent draft", async () => {
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "document" } });
+    expect(screen.getByRole("button", { name: "View docs" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByRole("button", { name: "View Draft" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "missing" } });
+    expect(screen.getByText("No matching integrations")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
+    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("[[skill:manage-skills]]");
+    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("Current search: missing");
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "save" }));
+  });
+
+  it("keeps direct import accessible and puts manual configuration behind Advanced", async () => {
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Add plugins" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("Source")).toBeVisible();
+    fireEvent.change(within(dialog).getByLabelText("What would you like Themis to do?"), { target: { value: "Connect my document service" } });
+    expect(within(dialog).getByText("Advanced").closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Ask Themis" }));
+    expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("Connect my document service");
+  });
+
+  it("searches MCP and hook names and collapses their configuration", async () => {
+    installed[0].spec.mcp = { filesystem: { command: "node", args: [], env: {}, enabled: true } };
+    installed[0].spec.hooks = [{ name: "startup-check", event: "RunStart", command: "true", enabled: true, blocking: false, timeout_seconds: 10 }];
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "filesystem" } });
+    fireEvent.click(screen.getByRole("button", { name: "View filesystem" }));
+    expect(within(screen.getByRole("dialog")).getByText("Advanced configuration").closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hooks" }));
+    expect(screen.getByText("No matching integrations")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "startup" } });
+    expect(screen.getByRole("button", { name: "View startup-check" })).toBeInTheDocument();
+  });
+
   it("shows discovered skill names while retaining internal identities for actions", async () => {
     installed[0] = { ...installed[0], source: "discovered", spec: { ...installed[0].spec, name: "discovered-1234", origin: { kind: "discovered", location: "/project/.agents/skills/draft" } } };
     render(<Plugins />);
@@ -43,7 +86,7 @@ describe("Integrations management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add plugins" }));
     fireEvent.change(screen.getByLabelText("Import from"), { target: { value: "repository" } });
     fireEvent.change(screen.getByLabelText("Source"), { target: { value: "https://github.com/example/skills.git" } });
-    fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Ask Themis" }));
     expect(readSession<Record<string, string>>("drafts", {})["test-chat"]).toContain("https://github.com/example/skills.git");
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "import_repository" }));
   });
@@ -60,8 +103,13 @@ describe("Integrations management", () => {
     await screen.findByRole("button", { name: "View docs" });
     fireEvent.click(screen.getByRole("button", { name: "Public" }));
     expect(screen.getByRole("combobox", { name: "Marketplace" })).toBeDisabled();
-    await act(async () => finish({ plugins: [{ name: "review" }] }));
+    await act(async () => finish({ plugins: [{ name: "review", description: "Review pull requests" }] }));
     expect(screen.getByRole("combobox", { name: "Marketplace" })).toBeEnabled();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "pull official-source" } });
+    expect(screen.getByText("review")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "missing" } });
+    expect(screen.getByText("No matching integrations")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Install" })));
     expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "install", name: "review", marketplace: "official" }));
   });
