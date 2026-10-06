@@ -1,4 +1,5 @@
 import { PromptInput } from "../components/PromptInput";
+import { useEffect, useRef } from "react";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
 import type { GoModel, ThreadInfo } from "../lib/types";
@@ -57,6 +58,25 @@ export function ThreadComposer({
   onEffortChange,
   onOpenSettings,
 }: ThreadComposerProps) {
+  const stopAction = useRef(onStop);
+  stopAction.current = onStop;
+  useEffect(() => {
+    if (!running || stopping) return;
+    let firstEscape: number | null = null;
+    let requested = false;
+    function stopShortcut(event: KeyboardEvent) {
+      if (event.isComposing || event.repeat || requested) return;
+      if (event.key !== "Escape") { firstEscape = null; return; }
+      const now = Date.now();
+      if (firstEscape !== null && now - firstEscape <= 500) {
+        event.preventDefault();
+        requested = true;
+        stopAction.current();
+      } else firstEscape = now;
+    }
+    window.addEventListener("keydown", stopShortcut, true);
+    return () => window.removeEventListener("keydown", stopShortcut, true);
+  }, [running, stopping, thread.id]);
   const choices = ["", ...effortLevels];
   const effortIndex = Math.max(0, choices.indexOf(effort));
   return (
@@ -123,7 +143,7 @@ export function ThreadComposer({
               className="themis-send"
               variant="ghost"
               aria-label={stopping ? "Stopping" : "Stop"}
-              title={stopping ? "Stopping after current action" : "Stop"}
+              title={stopping ? "Stopping…" : "Stop (Esc twice)"}
               disabled={stopping}
               onClick={onStop}
             >
