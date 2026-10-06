@@ -52,9 +52,10 @@ function Icon({ name }: { name: Glyph }) {
   </svg>;
 }
 function PluginIcon({ plugin, fallback = "folder" }: { plugin: PluginSpec; fallback?: Glyph }) {
+  const [failedIcon, setFailedIcon] = useState<string | null>(null);
   const icon = plugin.icon;
-  if (icon?.startsWith("https://")) return <img className="themis-origin-icon" src={icon} alt="" referrerPolicy="no-referrer" />;
-  if (icon && plugin.files[icon]?.trim().startsWith("<svg")) return <img className="themis-origin-icon" src={`data:image/svg+xml,${encodeURIComponent(plugin.files[icon])}`} alt="" />;
+  if (icon?.startsWith("https://") && failedIcon !== icon) return <img className="themis-origin-icon" src={icon} alt="" referrerPolicy="no-referrer" onError={() => setFailedIcon(icon)} />;
+  if (icon && failedIcon !== icon && plugin.files[icon]?.trim().startsWith("<svg")) return <img className="themis-origin-icon" src={`data:image/svg+xml,${encodeURIComponent(plugin.files[icon])}`} alt="" onError={() => setFailedIcon(icon)} />;
   return <Icon name={fallback} />;
 }
 export function Plugins() {
@@ -116,6 +117,9 @@ export function Plugins() {
   }
   async function toggle(item: Item) {
     const args = { scope: item.plugin.scope, name: item.plugin.spec.name, expectedRevision: item.plugin.revision };
+    if (item.kind !== "plugin" && !item.plugin.enabled && !isPluginPackage(item.plugin)) {
+      await action({ ...args, action: "enable" });
+    }
     await action(item.kind === "plugin" ? { ...args, action: item.enabled ? "disable" : "enable" } : { ...args, action: "set_component_enabled", kind: item.kind, id: item.id, enabled: !item.enabled });
   }
   function askAgent(fromToolbar = false) {
@@ -204,8 +208,8 @@ export function Plugins() {
       {!rows.length && <EmptyState title={search.trim() ? "No matching integrations" : `No ${category.toLowerCase()} installed`} />}
       <ul className="themis-integrations-list">{rows.map(row => <li key={row.key}>
         <PluginIcon plugin={row.plugin.spec} fallback={row.kind === "plugin" ? "folder" : row.kind === "mcp" ? "plug" : row.kind === "hook" ? "hook" : skillGlyph(row.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${row.name}`} onClick={() => open("view", row)}>{row.name}</button><span className="themis-integration-source">{row.kind === "plugin" ? row.plugin.spec.origin?.kind === "discovered" ? "Discovered" : row.plugin.source ?? row.plugin.spec.origin?.kind ?? "Personal" : pluginDisplayName(row.plugin)} · {row.plugin.scope === "global" ? "User" : "Project"}</span>
-        <button className="themis-integration-status" aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.name}`} disabled={busy || row.kind !== "plugin" && !row.plugin.enabled} onClick={() => void toggle(row).catch(() => {})}>{row.kind !== "plugin" && !row.plugin.enabled ? "Plugin disabled" : row.enabled ? "Enabled" : "Disabled"}</button>
-        <details className="themis-integration-more" open={menu === row.key}><summary role="button" aria-label={`More actions for ${row.name}`} onClick={event => { event.preventDefault(); setMenu(menu === row.key ? null : row.key); }}><Icon name="more" /></summary>{menu === row.key && <div className="themis-integration-menu"><button onClick={() => open("view", row)}>View{row.kind === "plugin" ? " skills" : ""}</button><button disabled={busy || row.kind !== "plugin" && !row.plugin.enabled} onClick={() => { setMenu(null); void toggle(row).catch(() => {}); }}>{row.enabled ? "Disable" : "Enable"}</button><button onClick={() => open("edit", row)}>Configure</button>{(row.kind === "mcp" || row.kind === "hook") && <button onClick={() => open("test", row)}>Test</button>}{row.plugin.source && row.plugin.source !== "discovered" && <button disabled={busy} onClick={() => { setMenu(null); void action({ action: "update", name: row.plugin.spec.name, scope: row.plugin.scope, marketplace: row.plugin.source }).catch(() => {}); }}>Update</button>}<button onClick={() => exportPlugin(row.plugin)}>Export plugin</button>{row.plugin.source && <button onClick={() => personalCopy(row.plugin)}>Create personal copy</button>}<button onClick={() => open("uninstall", row)}>Uninstall</button></div>}</details>
+        <button className="themis-integration-status" aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.name}`} disabled={busy || row.kind !== "plugin" && !row.plugin.enabled && isPluginPackage(row.plugin)} onClick={() => void toggle(row).catch(() => {})}>{row.kind !== "plugin" && !row.plugin.enabled && isPluginPackage(row.plugin) ? "Plugin disabled" : row.enabled ? "Enabled" : "Disabled"}</button>
+        <details className="themis-integration-more" open={menu === row.key}><summary role="button" aria-label={`More actions for ${row.name}`} onClick={event => { event.preventDefault(); setMenu(menu === row.key ? null : row.key); }}><Icon name="more" /></summary>{menu === row.key && <div className="themis-integration-menu"><button onClick={() => open("view", row)}>View{row.kind === "plugin" ? " skills" : ""}</button><button disabled={busy || row.kind !== "plugin" && !row.plugin.enabled && isPluginPackage(row.plugin)} onClick={() => { setMenu(null); void toggle(row).catch(() => {}); }}>{row.enabled ? "Disable" : "Enable"}</button><button onClick={() => open("edit", row)}>Configure</button>{(row.kind === "mcp" || row.kind === "hook") && <button onClick={() => open("test", row)}>Test</button>}{row.plugin.source && row.plugin.source !== "discovered" && <button disabled={busy} onClick={() => { setMenu(null); void action({ action: "update", name: row.plugin.spec.name, scope: row.plugin.scope, marketplace: row.plugin.source }).catch(() => {}); }}>Update</button>}<button onClick={() => exportPlugin(row.plugin)}>Export plugin</button>{row.plugin.source && <button onClick={() => personalCopy(row.plugin)}>Create personal copy</button>}<button onClick={() => open("uninstall", row)}>Uninstall</button></div>}</details>
       </li>)}</ul>
     </>}
     <Dialog open={panel !== null} title={panel?.mode === "view" ? item?.name : panel?.mode === "uninstall" ? `Uninstall ${item?.name}?` : panel?.mode === "edit" ? `Configure ${item?.name}` : panel?.mode === "market" ? "Add marketplace" : panel?.mode === "test" ? `Test ${item?.name}` : "Add integration"} onClose={() => { if (!busy || panel?.marketplace) setPanel(null); }}>

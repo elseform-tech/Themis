@@ -7,12 +7,14 @@ import { initialState } from "../state/reducer";
 import type { Plugin } from "../lib/types";
 import { pluginAction } from "../lib/tauri";
 
-vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), useApp: () => ({ state: { ...initialState, activeProjectRoot: "/project", activeThreadId: "test-chat" }, dispatch: vi.fn() }) }));
+vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), useApp: () => ({ state: { ...initialState, activeProjectRoot: "/project", activeThreadId }, dispatch: vi.fn() }) }));
 vi.mock("../lib/tauri", () => ({ pluginAction: vi.fn() }));
 let installed: Plugin[];
+let activeThreadId: string | null;
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => {
   vi.clearAllMocks();
+  activeThreadId = "test-chat";
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) });
   installed = [{ scope: "global", revision: "v1", enabled: true, source: null, spec: { name: "docs", description: "Documents", version: "1", skills: [{ id: "draft", name: "Draft", description: "Draft a document", instructions: "Read the sources before drafting.", allowedTools: [], scripts: [] }], mcp: {}, hooks: [], files: {}, unsupported: [] } }];
@@ -25,6 +27,66 @@ beforeEach(() => {
   });
 });
 describe("Integrations management", () => {
+  it("leaves a failed import editable and shows its error", async () => {
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "list") return installed as never;
+      if (args.action === "marketplaces") return [] as never;
+      if (args.action === "import_path") throw new Error("Skill folder unavailable");
+      return null as never;
+    });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Add plugins" }));
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "/missing/skill" } });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Import" })));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Skill folder unavailable");
+    expect(screen.getByLabelText("Source")).toHaveValue("/missing/skill");
+    expect(screen.getByRole("button", { name: "Import" })).toBeEnabled();
+  });
+
+  it("requires a chat for agent help and keeps drafts untouched", async () => {
+    activeThreadId = null;
+    writeSession("drafts", { "other-chat": "Preserve me" });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Ask Themis" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Open a chat");
+    expect(readSession("drafts", {})).toEqual({ "other-chat": "Preserve me" });
+  });
+
+  it("keeps disabled plugin children gated and replaces failed icons with a glyph", async () => {
+    installed[0].enabled = false;
+    installed[0].spec.icon = "https://example.com/missing.svg";
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.error(screen.getByAltText(""));
+    expect(screen.queryByAltText("")).toBeNull();
+    expect(screen.getByRole("button", { name: "View docs" }).closest("li")!.querySelector("svg")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByRole("button", { name: "Enable Draft" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Enable Draft" })).toHaveTextContent("Plugin disabled");
+  });
+  it.each(["discovered", "imported"])("reenables a disabled %s standalone skill from Skills", async source => {
+    installed[0] = { ...installed[0], enabled: false, source: source === "discovered" ? "discovered" : null, spec: { ...installed[0].spec, package_kind: "skill", disabled_skills: ["draft"] } };
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "list") return structuredClone(installed) as never;
+      if (args.action === "marketplaces") return [] as never;
+      if (args.action === "enable") installed[0].enabled = true;
+      if (args.action === "set_component_enabled") installed[0].spec.disabled_skills = [];
+      return null as never;
+    });
+    render(<Plugins />);
+    await screen.findByText("No plugins installed");
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    const enable = screen.getByRole("button", { name: "Enable Draft" });
+    expect(enable).toBeEnabled();
+    expect(enable).toHaveTextContent("Disabled");
+    await act(async () => fireEvent.click(enable));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "enable", name: "docs" }));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "set_component_enabled", id: "draft", enabled: true }));
+    expect(screen.getByRole("button", { name: "Disable Draft" })).toBeEnabled();
+  });
   it("lists standalone capabilities in Skills instead of Plugins while retaining real one-skill packages", async () => {
     installed.push({ ...installed[0], source: "discovered", spec: { ...installed[0].spec, name: "discovered-1234", skills: [{ ...installed[0].spec.skills[0], name: "Discovered draft" }] } });
     installed.push({ ...installed[0], spec: { ...installed[0].spec, name: "standalone", package_kind: "skill", skills: [{ ...installed[0].spec.skills[0], name: "Imported draft" }] } });
