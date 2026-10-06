@@ -37,7 +37,7 @@ beforeEach(() => {
   });
 });
 function expectNoConfiguration() {
-  expect(screen.queryByRole("button", { name: /^(Add|Import|Configure|Update|Test|Run test|Save|More actions|Ask Themis)( |$)/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^(Add (plugin|skill|MCP|hook)|Import|Configure|Update|Test|Run test|Save|More actions|Ask Themis)( |$)/ })).toBeNull();
   expect(screen.queryByRole("textbox", { name: "Configuration" })).toBeNull();
   expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["list", "marketplaces", "catalog", "preview", "preview_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
 }
@@ -72,6 +72,65 @@ describe("Integration browsing and lifecycle", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "View Review" }));
     expect(dialog).toHaveTextContent("FULL_REVIEW_TAIL");
     expect(dialog).not.toHaveTextContent("Draft source");
+  });
+  it("replaces a long public bundle list with its selected body and returns to skills", async () => {
+    installed[0].spec.skills = Array.from({ length: 23 }, (_, index) => ({ ...installed[0].spec.skills[0], id: `skill-${index}`, name: `Skill ${index}`, instructions: `# Body ${index}\nComplete instructions` }));
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Not installed" })));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "View public-docs" })));
+    const dialog = screen.getByRole("dialog");
+    const listViewer = dialog.querySelector(".themis-skill-viewer")!;
+    listViewer.scrollTop = 600;
+    fireEvent.click(within(dialog).getByRole("button", { name: "View Skill 22" }));
+    expect(within(dialog).getByRole("heading", { name: "Body 22" })).toBeInTheDocument();
+    expect(dialog.querySelector(".themis-bundled-skills")).toBeNull();
+    expect(dialog.querySelector(".themis-skill-viewer")).not.toBe(listViewer);
+    expect(dialog.querySelector(".themis-skill-viewer")!.scrollTop).toBe(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Back to skills" }));
+    expect(within(dialog).queryByRole("heading", { name: "Body 22" })).toBeNull();
+    expect(within(dialog).getAllByRole("button", { name: /^View Skill/ })).toHaveLength(23);
+    expect(dialog.querySelector(".themis-skill-viewer")!.scrollTop).toBe(0);
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
+  });
+  it.each(["https://example.com/marketplace.json", "/local/marketplace.json"])("adds marketplace source %s and browses without installing", async source => {
+    const previous = vi.mocked(pluginAction).getMockImplementation()!;
+    vi.mocked(pluginAction).mockImplementation(async args => args.action === "add_marketplace" ? null as never : previous(args) as never);
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Not installed" })));
+    const add = screen.getByRole("button", { name: "Add marketplace" });
+    expect(add.querySelector("svg")).toBeInTheDocument();
+    expect(add).toHaveAttribute("title", "Add marketplace");
+    fireEvent.click(add);
+    const dialog = screen.getByRole("dialog", { name: "Add marketplace" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: "personal" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "URL or local path" }), { target: { value: source } });
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Add" })));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "add_marketplace", name: "personal", source }));
+    expect(pluginAction).toHaveBeenCalledWith({ action: "catalog", name: "personal" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
+  });
+  it("keeps marketplace errors actionable and allows correction without installing", async () => {
+    const previous = vi.mocked(pluginAction).getMockImplementation()!;
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "add_marketplace") throw new Error("Marketplace source could not be read");
+      return previous(args) as never;
+    });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Not installed" })));
+    fireEvent.click(screen.getByRole("button", { name: "Add marketplace" }));
+    const dialog = screen.getByRole("dialog", { name: "Add marketplace" });
+    expect(within(dialog).getByRole("button", { name: "Add" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: "personal" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "URL or local path" }), { target: { value: "/missing" } });
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Add" })));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Marketplace source could not be read");
+    expect(within(dialog).getByRole("textbox", { name: "URL or local path" })).toHaveValue("/missing");
+    expect(within(dialog).getByRole("button", { name: "Add" })).toBeEnabled();
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
   });
   it("reports empty packages without inventing skills", async () => {
     installed[0].spec.skills = [];

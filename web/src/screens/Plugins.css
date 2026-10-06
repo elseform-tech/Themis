@@ -39,3 +39,9 @@
 .themis-integration-toggle[aria-checked="true"] .themis-toggle-track { background: var(--themis-text); }
 .themis-integration-toggle[aria-checked="true"] .themis-toggle-track > span { transform: translateX(.875rem); background: var(--themis-surface); }
 @media (prefers-reduced-motion: reduce) { .themis-toggle-track > span { transition: none; } }
+
+.themis-marketplace-picker { flex: 1; min-width: 0; }
+.themis-marketplace-picker button, .themis-skill-back { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.themis-marketplace-form { display: flex; flex-direction: column; gap: .75rem; }
+.themis-marketplace-form label { display: flex; flex-direction: column; gap: .25rem; }
+.themis-marketplace-form > div { display: flex; justify-content: flex-end; gap: .5rem; }

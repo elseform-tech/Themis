@@ -18,7 +18,7 @@ const publicSkills = [
   { id: "docx", name: "Word documents", description: "Create and edit Word documents." },
   { id: "xlsx", name: "Spreadsheets", description: "Create, edit, and analyze spreadsheets." },
 ];
-type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye" | "trash";
+type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye" | "trash" | "plus" | "back";
 const skillGlyph = (id: string): Glyph => ["pdf", "docx", "xlsx"].includes(id) ? id as Glyph : "file";
 const emptySpec = (): PluginSpec => ({ name: "personal", description: "", version: "", skills: [], mcp: {}, hooks: [], files: {}, unsupported: [] });
 function pluginDisplayName(plugin: Plugin) {
@@ -44,6 +44,8 @@ function markdown(plugin: Plugin, id: string) {
 }
 function Icon({ name }: { name: Glyph }) {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+    {name === "plus" && <path d="M12 5v14M5 12h14" />}
+    {name === "back" && <path d="m14 5-7 7 7 7" />}
     {name === "trash" && <path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7" />}
     {name === "eye" && <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>}
     {name === "folder" && <path d="M3 7h7l2 2h9v11H3ZM3 7V4h7l2 3" />}
@@ -71,6 +73,7 @@ export function Plugins() {
   const [panel, setPanel] = useState<Panel | null>(null), [removing, setRemoving] = useState<Item | null>(null);
   const [error, setError] = useState(""), [busy, setBusy] = useState(false);
   const [file, setFile] = useState("");
+  const [addingMarket, setAddingMarket] = useState(false), [marketName, setMarketName] = useState(""), [marketSource, setMarketSource] = useState("");
   const previewRequest = useRef(0);
   const [search, setSearch] = useState("");
   const [catalog, setCatalog] = useState<Array<{ name: string; description?: string; icon?: string; source?: unknown }>>([]), [market, setMarket] = useState("");
@@ -82,7 +85,7 @@ export function Plugins() {
   }, [root]);
   useEffect(() => {
     let cancelled = false;
-    setPlugins([]); setPanel(null); setRemoving(null); setCatalog([]); setPublicView(false); catalogRequest.current++; previewRequest.current++; setBusy(false);
+    setPlugins([]); setAddingMarket(false); setPanel(null); setRemoving(null); setCatalog([]); setPublicView(false); catalogRequest.current++; previewRequest.current++; setBusy(false);
     void load().catch(error => { if (!cancelled) setError(describeError(error)); });
     return () => { cancelled = true; };
   }, [load]);
@@ -165,12 +168,12 @@ export function Plugins() {
     <nav className="themis-integrations-tabs" aria-label="Integration categories">{categories.map(value => <button key={value} aria-pressed={category === value} onClick={() => { setCategory(value); setPublicView(false); }}>{value}</button>)}</nav>
     <div className="themis-integrations-toolbar"><div>{(category === "Plugins" || category === "Skills") && <><button aria-pressed={!publicView} onClick={() => setPublicView(false)}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins" && markets[0]) void browse(markets[0].name); }}>Not installed</button></>}</div><div><button aria-label="Refresh" disabled={busy} onClick={() => void load().catch(error => setError(describeError(error)))}>↻</button></div></div>
     <input className="themis-integrations-search" type="search" aria-label="Search integrations" placeholder={`Search ${publicView ? `available ${category.toLowerCase()}` : category.toLowerCase()}`} value={search} onChange={event => setSearch(event.target.value)} />
-    {error && !panel && <p role="alert">{error}</p>}
+    {error && !panel && !addingMarket && <p role="alert">{error}</p>}
     {publicView && category === "Skills" ? <>
       {!skillRows.length && <EmptyState title={search.trim() ? "No matching integrations" : "All available skills installed"} />}
       <ul className="themis-integrations-list">{skillRows.map(skill => <li key={skill.id}><Icon name={skillGlyph(skill.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${skill.name}`} onClick={() => void previewSkill(skill)}>{skill.name}</button><span className="themis-integration-source">Anthropic</span><button disabled={busy} onClick={() => void action({ action: "import_repository", url: skillRepository, reference: skillReference, subdirectory: `skills/${skill.id}`, name: skill.id, scope: root ? "local" : "global" }).catch(() => {})}>Install</button></li>)}</ul>
     </> : publicView ? <>
-      <div className="themis-integrations-toolbar"><select aria-label="Marketplace" disabled={busy} value={market} onChange={event => void browse(event.target.value)}>{markets.map(m => <option key={m.name}>{m.name}</option>)}</select></div>
+      <div className="themis-integrations-toolbar"><div className="themis-marketplace-picker"><select aria-label="Marketplace" disabled={busy} value={market} onChange={event => void browse(event.target.value)}>{markets.map(m => <option key={m.name}>{m.name}</option>)}</select><button aria-label="Add marketplace" title="Add marketplace" disabled={busy} onClick={() => { setError(""); setMarketName(""); setMarketSource(""); setAddingMarket(true); }}><Icon name="plus" /></button></div></div>
       {!catalogRows.length && <EmptyState title={search.trim() ? "No matching integrations" : "No public plugins available"} />}
       <ul className="themis-integrations-list">{catalogRows.map(entry => <li key={entry.name}><PluginIcon plugin={{ ...emptySpec(), icon: entry.icon }} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy} onClick={() => void preview(entry.name, entry.icon)}>{entry.name}</button><button disabled={busy} onClick={() => void action({ action: "install", name: entry.name, marketplace: market, scope: root ? "local" : "global" }).catch(() => {})}>Install</button></li>)}</ul>
     </> : <>
@@ -183,14 +186,27 @@ export function Plugins() {
       </li>)}</ul>
     </>}
     <Dialog open={panel !== null} title={item?.name} onClose={() => { previewRequest.current++; setBusy(false); setPanel(null); }}>
-      <div className="themis-skill-viewer">
+      <div className="themis-skill-viewer" key={`${item?.key}:${file}`}>
         {(panel?.marketplace || panel?.skillSource) && busy ? <p role="status">Loading skills…</p> : <>
-          {item?.kind === "plugin" && <><p className="themis-integration-skill-count">{item.plugin.spec.skills.length} {item.plugin.spec.skills.length === 1 ? "skill" : "skills"}</p><ul className="themis-bundled-skills">{item.plugin.spec.skills.map(skill => <li key={skill.id}><button aria-label={`View ${skill.name}`} aria-pressed={file === skill.id} onClick={() => setFile(skill.id)}><span>{skill.name}</span><Icon name="eye" /></button></li>)}</ul></>}
+          {item?.kind === "plugin" && !file && <><p className="themis-integration-skill-count">{item.plugin.spec.skills.length} {item.plugin.spec.skills.length === 1 ? "skill" : "skills"}</p><ul className="themis-bundled-skills">{item.plugin.spec.skills.map(skill => <li key={skill.id}><button aria-label={`View ${skill.name}`} aria-pressed={file === skill.id} onClick={() => setFile(skill.id)}><span>{skill.name}</span><Icon name="eye" /></button></li>)}</ul></>}
+          {item?.kind === "plugin" && file && <button className="themis-skill-back" aria-label="Back to skills" title="Back to skills" onClick={() => setFile("")}><Icon name="back" /></button>}
           {server ? <dl className="themis-integration-summary"><dt>Transport</dt><dd>{server.url ? "HTTP" : "Local process"}</dd><dt>{server.url ? "Endpoint" : "Command"}</dt><dd>{server.url ?? server.command}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : hook ? <dl className="themis-integration-summary"><dt>Event</dt><dd>{hook.event}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : text ? <ResponseBody text={text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")} /> : !item?.plugin.spec.skills.length ? <p>No bundled skills.</p> : null}
           {!!item?.plugin.spec.unsupported.length && <details><summary>Compatibility notes</summary><ul>{item.plugin.spec.unsupported.map((warning, i) => <li key={i}>{warning}</li>)}</ul></details>}
         </>}
       </div>
       {error && <p role="alert">{error}</p>}<Button variant="ghost" onClick={() => { previewRequest.current++; setBusy(false); setPanel(null); }}>Close</Button>
+    </Dialog>
+    <Dialog open={addingMarket} title="Add marketplace" onClose={() => { if (!busy) setAddingMarket(false); }}>
+      <form className="themis-marketplace-form" onSubmit={event => {
+        event.preventDefault();
+        if (busy || !marketName.trim() || !marketSource.trim()) return;
+        void action({ action: "add_marketplace", name: marketName.trim(), source: marketSource.trim() }).then(async () => { setAddingMarket(false); await browse(marketName.trim()); }).catch(() => {});
+      }}>
+        <label>Name<input value={marketName} onChange={event => setMarketName(event.target.value)} required disabled={busy} /></label>
+        <label>URL or local path<input value={marketSource} onChange={event => setMarketSource(event.target.value)} required disabled={busy} /></label>
+        {error && <p role="alert">{error}</p>}
+        <div><Button type="button" variant="ghost" disabled={busy} onClick={() => setAddingMarket(false)}>Cancel</Button><Button type="submit" disabled={busy || !marketName.trim() || !marketSource.trim()}>Add</Button></div>
+      </form>
     </Dialog>
     <Dialog open={removing !== null} title={`Uninstall ${removing?.name ?? ""}?`} onClose={() => { if (!busy) setRemoving(null); }}>
       <p>{removing?.kind === "plugin" ? "Remove this plugin and its bundled capabilities?" : `Remove this ${removing?.kind} from ${removing?.plugin.spec.name}? Other capabilities remain installed.`}</p>
