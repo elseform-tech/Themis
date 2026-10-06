@@ -311,101 +311,112 @@ impl PluginStore {
             .find(|e| e["name"] == name)
             .context("Plugin not listed")?;
         let source = &entry["source"];
-        let directory = if let Some(path) = source.as_str() {
-            let path = path.strip_prefix("./").unwrap_or(path);
-            if !safe_relative(path) {
-                bail!("Unsafe marketplace source path");
-            }
-            let directory = root.join(path).canonicalize()?;
-            if !directory.starts_with(root.canonicalize()?) {
-                bail!("Marketplace source escapes repository");
-            }
-            directory
-        } else {
-            let url = match source["source"].as_str() {
-                Some("github") => format!(
-                    "https://github.com/{}.git",
-                    source["repo"].as_str().context("Missing repo")?
-                ),
-                Some("url" | "git-subdir") => source["url"].as_str().context("Missing URL")?.into(),
-                _ => bail!("Unsupported marketplace source type"),
-            };
-            validate_source(&url)?;
-            let staging = self
-                .global
-                .join("marketplace-cache")
-                .join(format!("plugin-{}", revision()));
-            clone_repository(
-                &url,
-                &staging,
-                source
-                    .get("sha")
-                    .or_else(|| source.get("ref"))
-                    .map(|value| value.as_str().context("Invalid repository reference"))
-                    .transpose()?,
-            )
-            .await?;
-            if let Some(path) = source.get("path") {
-                let path = path.as_str().context("Invalid repository subdirectory")?;
+        let mut temporary_root = None;
+        let result = async {
+            let directory = if let Some(path) = source.as_str() {
+                let path = path.strip_prefix("./").unwrap_or(path);
                 if !safe_relative(path) {
-                    bail!("Unsafe repository subdirectory");
+                    bail!("Unsafe marketplace source path");
                 }
-                let directory = staging.join(path).canonicalize()?;
-                if !directory.starts_with(staging.canonicalize()?) {
-                    bail!("Plugin directory escapes repository");
+                let directory = root.join(path).canonicalize()?;
+                if !directory.starts_with(root.canonicalize()?) {
+                    bail!("Marketplace source escapes repository");
                 }
                 directory
             } else {
-                staging
+                let url = match source["source"].as_str() {
+                    Some("github") => format!(
+                        "https://github.com/{}.git",
+                        source["repo"].as_str().context("Missing repo")?
+                    ),
+                    Some("url" | "git-subdir") => {
+                        source["url"].as_str().context("Missing URL")?.into()
+                    }
+                    _ => bail!("Unsupported marketplace source type"),
+                };
+                validate_source(&url)?;
+                let staging = self
+                    .global
+                    .join("marketplace-cache")
+                    .join(format!("plugin-{}", revision()));
+                temporary_root = Some(staging.clone());
+                clone_repository(
+                    &url,
+                    &staging,
+                    source
+                        .get("sha")
+                        .or_else(|| source.get("ref"))
+                        .map(|value| value.as_str().context("Invalid repository reference"))
+                        .transpose()?,
+                )
+                .await?;
+                if let Some(path) = source.get("path") {
+                    let path = path.as_str().context("Invalid repository subdirectory")?;
+                    if !safe_relative(path) {
+                        bail!("Unsafe repository subdirectory");
+                    }
+                    let directory = staging.join(path).canonicalize()?;
+                    if !directory.starts_with(staging.canonicalize()?) {
+                        bail!("Plugin directory escapes repository");
+                    }
+                    directory
+                } else {
+                    staging
+                }
+            };
+            let mut spec = import_directory(&directory)?;
+            spec.name = name.into();
+            for field in [
+                "skills",
+                "commands",
+                "agents",
+                "hooks",
+                "mcpServers",
+                "lspServers",
+                "dependencies",
+                "settings",
+                "userConfig",
+                "channels",
+            ] {
+                if entry.get(field).is_some() {
+                    spec.unsupported.push(format!(
+                        "Marketplace entry {field}: component declarations require plugin manifest"
+                    ));
+                }
             }
-        };
-        let mut spec = import_directory(&directory)?;
-        spec.name = name.into();
-        for field in [
-            "skills",
-            "commands",
-            "agents",
-            "hooks",
-            "mcpServers",
-            "lspServers",
-            "dependencies",
-            "settings",
-            "userConfig",
-            "channels",
-        ] {
-            if entry.get(field).is_some() {
-                spec.unsupported.push(format!(
-                    "Marketplace entry {field}: component declarations require plugin manifest"
-                ));
+            if let Some(icon) = entry.get("icon").and_then(Value::as_str) {
+                let icon = icon.strip_prefix("./").unwrap_or(icon);
+                if icon.starts_with("https://")
+                    || (icon.ends_with(".svg") && spec.files.contains_key(icon))
+                {
+                    spec.icon = Some(icon.into());
+                } else {
+                    spec.unsupported
+                        .push("Marketplace icon resource is unavailable or unsupported".into());
+                }
             }
+            spec.origin = Some(PluginOrigin {
+                kind: "marketplace".into(),
+                location: marketplace.into(),
+                reference: source
+                    .get("sha")
+                    .or_else(|| source.get("ref"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                subdirectory: source
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .or_else(|| source.as_str())
+                    .map(str::to_owned),
+            });
+            validate(&spec)?;
+            Ok(spec)
         }
-        if let Some(icon) = entry.get("icon").and_then(Value::as_str) {
-            let icon = icon.strip_prefix("./").unwrap_or(icon);
-            if icon.starts_with("https://")
-                || (icon.ends_with(".svg") && spec.files.contains_key(icon))
-            {
-                spec.icon = Some(icon.into());
-            } else {
-                spec.unsupported
-                    .push("Marketplace icon resource is unavailable or unsupported".into());
-            }
+        .await;
+        if let Some(directory) = temporary_root {
+            let _ = fs::remove_dir_all(directory);
         }
-        spec.origin = Some(PluginOrigin {
-            kind: "marketplace".into(),
-            location: marketplace.into(),
-            reference: source
-                .get("sha")
-                .or_else(|| source.get("ref"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            subdirectory: source
-                .get("path")
-                .and_then(Value::as_str)
-                .or_else(|| source.as_str())
-                .map(str::to_owned),
-        });
-        validate(&spec)?;
-        Ok(spec)
+        result
     }
 }
 

@@ -327,6 +327,30 @@ async fn repository_import_infers_name_without_override() {
             .await
             .unwrap();
         assert_eq!(imported.spec.name, expected);
+        let marketplace = sources.path().join(format!("catalog-{folder}"));
+        fs::create_dir_all(marketplace.join(".claude-plugin")).unwrap();
+        fs::write(
+            marketplace.join(".claude-plugin/marketplace.json"),
+            json!({"plugins":[{"name":"preview-package","source":{"source":"url","url":source}}]})
+                .to_string(),
+        )
+        .unwrap();
+        store
+            .add_marketplace(folder, marketplace.to_str().unwrap())
+            .unwrap();
+        assert!(!store
+            .preview(folder, "preview-package")
+            .await
+            .unwrap()
+            .skills
+            .is_empty());
+        assert!(fs::read_dir(global.path().join("marketplace-cache"))
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("plugin-")));
         let overridden = store
             .import_repository(
                 "global",
