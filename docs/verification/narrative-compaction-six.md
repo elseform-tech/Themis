@@ -77,3 +77,45 @@ To finish a meaningful six-round retention evaluation, first measure section lat
 Local artifacts: `/tmp/themis-narrative-six/manifest.json`, `rubric.json`, `evidence.json`, `run.log`, `retry.log`, `retry3.log`, and the preparation/orchestration scripts in that directory. The authoritative events and latest checkpoint are in the production SQLite store. Full novel text and credentials were not committed.
 
 Fresh checks: `python3 -m unittest quality_dashboard.test_dashboard` passed 13 tests; `ruff check quality_dashboard` passed. A final scoped assertion checked staged-source hash equality and unchanged last checkpoint after the failed attempts. `git diff --check` passed. Product source/metrics/coverage are unchanged from the preceding verification; full Rust and frontend suites were not rerun for this documentation-only follow-up.
+
+
+## Retest with 150-second compaction timeout
+
+On 2026-10-07 the user authorized an additional 30 seconds. Commit `16f1be2` changes only the shared runtime timeout constant from 120 to **150 seconds**, plus the current behavior documentation. The saved context budget remains **200000**. The production app was rebuilt; all known project threads were checked idle, and both the production window and shared server were restarted to load the changed runtime. The running server executable was verified as the new production bundle. Executable SHA-256: `5c8a1da89b021c9e6ca4d9c1b4e0e573510bbd23ebc8f0bc587b1bb0e1652680`.
+
+**The retest still failed to complete six compactions.** Five parts completed on their first attempt; the final part timed out at 150 seconds on both its initial attempt and one byte-identical retry. No final complete-story answer exists, so the 24 narrative retention checks remain unscored. No additional timeout increase or prompt change was made.
+
+A fresh conversation used the same six files and prompts above, through the production CLI/shared server with the same real model. Input hashes were verified against every staged attachment. The first five answers were exactly `RECEIVED`; none repeated narrative content. Unrelated browser-use MCP startups for parts 2–6 and the final retry were denied in the native app. There were no model recovery calls or attachment rereads. The first part had no startup approval event in this rerun.
+
+Thread: `efdf0b9e-ff48-4f00-bd1d-748dd1bd35b5`.
+
+| Part / attempt | Run | Sequences | Outcome | Checkpoint UTF-8 bytes | Observed total after send returned |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `8c975d6e-5d3c-4575-9048-b66a1f7dc996` | 462–467 | Completed | 61,273 | ~115 s |
+| 2 | `6f1595cb-32a2-4ad1-a25a-4886ac3a9665` | 468–474 | Completed | 62,071 | ~115 s |
+| 3 | `b6bea07f-2b4c-4ff7-98c9-f5e6bd54d0e7` | 475–481 | Completed | 62,052 | ~110 s |
+| 4 | `4b1e78d2-7bb0-4637-96f2-dc1b67fc318c` | 482–488 | Completed | 70,164 | ~90 s |
+| 5 | `8664768d-b76d-47bc-9672-9c5d1afaec66` | 489–495 | Completed | 88,439 | ~130 s |
+| 6, first | `d22d5f38-0cfa-44ba-a77f-a7144514ecb2` | 496–500 | Summary timeout | None | ~150 s |
+| 6, retry | `9459803e-acad-46bd-9b45-d429f626b32f` | 501–505 | Summary timeout | None | ~150 s |
+
+Times include any continuing answer and use five-second polling; they are not exact summary-stage or per-section timings. Both failures report `Context checkpoint failed: summarization timed out before completing checkpoint`. The stored checkpoint remains through sequence **493**, byte-identical to the fifth successful checkpoint. The conversation is no longer running. A scoped assertion verified the five checkpoints, two timeout events, source/staged hash matches and unchanged last checkpoint. This confirms safe failure while leaving six-round narrative effectiveness unverified.
+
+This rerun progressed farther than the 120-second experiment, but it is not a controlled causal comparison of deadline alone: model/provider variability and input caching were not measured, and earlier checkpoints differ between runs. Successful parts whose total runtime was below 120 seconds do not prove the additional allowance caused success. The repeated final failure does demonstrate that a fixed 150-second global deadline is still insufficient for this tested workload. Before increasing it again, measure section timings and output sizes to distinguish slow requests from accumulated work.
+
+Fresh verification:
+
+```sh
+cargo test -p themis-core --lib compaction
+cargo test -p themis-desktop --test attachments_e2e cli_large_file_upload_compacts_once_and_preserves_binary_files -- --nocapture
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+python3 -m unittest quality_dashboard.test_dashboard
+ruff check quality_dashboard
+```
+
+Core compaction tests: **2 passed** (bounded large-input delivery and timeout preserving original conversation). Isolated CLI attachment E2E: **1 passed**, 1 filtered, 2.68 s. Format and Clippy passed. Dashboard: **13 passed**; Ruff passed. Production release build passed in 1m 01s using the previously documented build command/override. Full Rust and frontend suites were not rerun for the timeout-constant change.
+
+The dashboard was started at `http://127.0.0.1:4178` and `/api/metrics` refreshed. Product metrics remain 103 files, mean cyclomatic 2.49, cognitive 2.22, maintainability 73.8. Runtime including inline tests remains 1,309 LOC, 46 functions, cyclomatic 2.19, cognitive 1.14, maintainability 67.3. Existing Rust coverage is 13,825/16,104 (85.8%); coverage was not regenerated and frontend coverage remains unavailable. No metric regression at reported precision.
+
+Local evidence: `/tmp/themis-narrative-six/evidence-150.json`, `run-150.log`, `retry6-150.log`, `metrics-150.json`, and `build-150.log`. The production SQLite store remains authoritative. The 150-second timeout is left installed as requested; the context budget is unchanged.
