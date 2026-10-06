@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 describe("Integrations management", () => {
   it("shows complete captured skill source with frontmatter, bundle count, and rendered Markdown", async () => {
-    const source = `---\nname: draft\nlicense: Original-License\n---\n# Full skill\n\n${"Complete source text. ".repeat(100)}\n\n## Final section\nUNTRUNCATED_TAIL`;
+    const source = `---\nname: draft\nlicense: Original-License\n---\n# Full skill\n\n${"Complete source text. ".repeat(100)}\n\n## Final section\nUNTRUNCATED_TAIL`.replace(/\n/g, "\r\n");
     installed[0].spec.files = { "custom/notes/SKILL.md": source };
     installed[0].spec.skill_paths = { draft: "custom/notes/SKILL.md" };
     render(<Plugins />);
@@ -39,6 +39,10 @@ describe("Integrations management", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Rendered" }));
     expect(within(dialog).getByRole("heading", { name: "Full skill" })).toBeInTheDocument();
     expect(within(dialog).getByRole("heading", { name: "Final section" })).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("Original-License");
+    expect(dialog).toHaveTextContent("UNTRUNCATED_TAIL");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Source" }));
+    expect(dialog).toHaveTextContent("Original-License");
   });
   it("lists every bundled skill and selects its original nested source", async () => {
     installed[0].spec.skills.push({ ...installed[0].spec.skills[0], id: "review", name: "Review" });
