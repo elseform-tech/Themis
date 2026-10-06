@@ -662,6 +662,7 @@ impl PluginStore {
             .map(|p| p.spec.clone())
             .unwrap_or(PluginSpec {
                 name: plugin_name.into(),
+                package_kind: Some("skill".into()),
                 ..Default::default()
             });
         spec.skills.retain(|s| s.id != skill.id);

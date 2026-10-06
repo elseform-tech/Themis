@@ -614,3 +614,65 @@ async fn real_public_plugin_and_skill_import_acceptance() {
         tools.len()
     );
 }
+
+#[test]
+fn agent_created_personal_skills_do_not_become_plugin_packages() {
+    use themis_core::{plugins::PluginSpec, skills::Skill};
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    let skill: Skill = serde_json::from_value(serde_json::json!({"id":"review","name":"Review","description":"Review changes","instructions":"Inspect the changes","allowedTools":[],"scripts":[]})).unwrap();
+    let saved = store
+        .save_skill("global", "personal", skill.clone(), None)
+        .unwrap();
+    assert_eq!(saved.spec.package_kind.as_deref(), Some("skill"));
+    let updated = store
+        .save_skill("global", "personal", skill.clone(), Some(&saved.revision))
+        .unwrap();
+    assert_eq!(updated.spec.package_kind.as_deref(), Some("skill"));
+    let bundle = store
+        .save(
+            "global",
+            PluginSpec {
+                name: "real-bundle".into(),
+                package_kind: Some("plugin".into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    let bundle = store
+        .save_skill(
+            "global",
+            "real-bundle",
+            skill.clone(),
+            Some(&bundle.revision),
+        )
+        .unwrap();
+    assert_eq!(bundle.spec.package_kind.as_deref(), Some("plugin"));
+    let legacy = store
+        .save(
+            "global",
+            PluginSpec {
+                name: "ambiguous-legacy".into(),
+                skills: vec![skill.clone()],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    store
+        .save_skill("global", "ambiguous-legacy", skill, Some(&legacy.revision))
+        .unwrap();
+    assert_eq!(
+        store
+            .list()
+            .unwrap()
+            .iter()
+            .find(|plugin| plugin.spec.name == "ambiguous-legacy")
+            .unwrap()
+            .spec
+            .package_kind
+            .as_deref(),
+        Some("plugin")
+    );
+}
