@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog, EmptyState } from "../components";
 import { pluginAction } from "../lib/tauri";
+import { isPluginPackage } from "../lib/integrations";
 import type { Marketplace, Plugin, PluginSpec } from "../lib/types";
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
@@ -18,7 +19,7 @@ function pluginDisplayName(plugin: Plugin) {
 function items(plugins: Plugin[], category: Category): Item[] {
   return plugins.flatMap<Item>(plugin => {
     const base = { plugin, key: `${plugin.scope}:${plugin.spec.name}` };
-    if (category === "Plugins") return [{ ...base, name: pluginDisplayName(plugin), kind: "plugin" as const, id: plugin.spec.name, enabled: plugin.enabled }];
+    if (category === "Plugins") return isPluginPackage(plugin) ? [{ ...base, name: pluginDisplayName(plugin), kind: "plugin" as const, id: plugin.spec.name, enabled: plugin.enabled }] : [];
     if (category === "Skills") return plugin.spec.skills.map(skill => ({ ...base, key: `${base.key}:skill:${skill.id}`, name: skill.name, id: skill.id, kind: "skill" as const, enabled: plugin.enabled && !(plugin.spec.disabled_skills ?? []).includes(skill.id) }));
     if (category === "MCP") return Object.entries(plugin.spec.mcp).map(([id, server]) => ({ ...base, key: `${base.key}:mcp:${id}`, name: id, id, kind: "mcp" as const, enabled: plugin.enabled && server.enabled }));
     return plugin.spec.hooks.map(hook => ({ ...base, key: `${base.key}:hook:${hook.name}`, name: hook.name, id: hook.name, kind: "hook" as const, enabled: plugin.enabled && hook.enabled }));
@@ -96,6 +97,7 @@ export function Plugins() {
     let number = 1;
     while (plugins.some(plugin => plugin.spec.name === `personal-${number}`)) number++;
     template.name = `personal-${number}`;
+    template.package_kind = category === "Plugins" ? "plugin" : category === "Skills" ? "skill" : category === "MCP" ? "mcp" : "hook";
     if (!item && category === "Skills") template.skills = [{ id: "my-skill", name: "My skill", description: "", instructions: "Describe the workflow here.", allowedTools: [], scripts: [] }];
     if (!item && category === "MCP") template.mcp = { server: { command: "npx", args: ["-y", "package-name"], env: {}, enabled: true } };
     if (!item && category === "Hooks") template.hooks = [{ name: "my-hook", event: "RunStart", command: "printf '{}'", enabled: false, timeout_seconds: 10, blocking: false }];

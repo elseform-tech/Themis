@@ -25,6 +25,20 @@ beforeEach(() => {
   });
 });
 describe("Integrations management", () => {
+  it("lists standalone capabilities in Skills instead of Plugins while retaining real one-skill packages", async () => {
+    installed.push({ ...installed[0], source: "discovered", spec: { ...installed[0].spec, name: "discovered-1234", skills: [{ ...installed[0].spec.skills[0], name: "Discovered draft" }] } });
+    installed.push({ ...installed[0], spec: { ...installed[0].spec, name: "standalone", package_kind: "skill", skills: [{ ...installed[0].spec.skills[0], name: "Imported draft" }] } });
+    for (const kind of ["mcp", "hook"] as const) installed.push({ ...installed[0], spec: { ...installed[0].spec, name: `standalone-${kind}`, package_kind: kind, skills: [] } });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    expect(screen.queryByRole("button", { name: "View Discovered draft" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "View standalone" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "View standalone-mcp" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "View standalone-hook" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    expect(screen.getByRole("button", { name: "View Discovered draft" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Imported draft" })).toBeInTheDocument();
+  });
   it("searches descriptions across categories and prepares a targeted agent draft", async () => {
     writeSession("drafts", { "test-chat": "Keep my existing request." });
     render(<Plugins />);
@@ -102,19 +116,20 @@ describe("Integrations management", () => {
   it("shows discovered skill names while retaining internal identities for actions", async () => {
     installed[0] = { ...installed[0], source: "discovered", spec: { ...installed[0].spec, name: "discovered-1234", origin: { kind: "discovered", location: "/project/.agents/skills/draft" } } };
     render(<Plugins />);
+    await screen.findByText("No plugins installed");
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
     await screen.findByRole("button", { name: "View Draft" });
     expect(screen.queryByText("discovered-1234")).toBeNull();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Disable Draft" })));
-    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "disable", name: "discovered-1234" }));
-    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "set_component_enabled", name: "discovered-1234", kind: "skill" }));
     expect(screen.getByText("Draft · User")).toBeInTheDocument();
     expect(screen.queryByText("discovered-1234")).toBeNull();
   });
 
-  it("uses a source folder name for an unavailable discovered package", async () => {
+  it("keeps unavailable discovered skills out of Plugins", async () => {
     installed[0] = { ...installed[0], source: "discovered", spec: { ...installed[0].spec, name: "discovered-1234", skills: [], origin: { kind: "discovered", location: "/project/.agents/skills/broken-skill/" } } };
     render(<Plugins />);
-    await screen.findByRole("button", { name: "View broken-skill" });
+    await screen.findByText("No plugins installed");
     expect(screen.queryByText("discovered-1234")).toBeNull();
   });
 
