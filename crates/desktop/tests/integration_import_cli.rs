@@ -180,3 +180,95 @@ fn hook_child_cli_cannot_start_a_nested_run() {
     );
     assert!(!data.path().join("server.json").exists());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repository_preview_preserves_full_skill_without_installing_then_imports() {
+    let data = tempfile::tempdir().unwrap();
+    let repository = tempfile::tempdir().unwrap();
+    let skill_dir = repository.path().join("skills/review");
+    std::fs::create_dir_all(skill_dir.join("references")).unwrap();
+    let markdown = "---\nname: review\ndescription: Review source changes\n---\n# Review workflow\n\nKeep this complete Markdown, including frontmatter and Unicode: résumé.\nRead [supporting notes](references/notes.md) when relevant.\n";
+    std::fs::write(skill_dir.join("SKILL.md"), markdown).unwrap();
+    std::fs::write(
+        skill_dir.join("references/notes.md"),
+        "Preserve this supporting resource.\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "."],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@local",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    ] {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repository.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let revision = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repository.path())
+        .output()
+        .unwrap();
+    assert!(revision.status.success());
+    let reference = String::from_utf8(revision.stdout)
+        .unwrap()
+        .trim()
+        .to_owned();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let before = cli(data.path(), &["plugin", "list"]);
+    let mut args = json!({"action":"preview_repository","name":"review-preview","url":repository.path(),"reference":reference,"subdirectory":"skills/review","scope":"global"});
+    let preview = cli(data.path(), &["call", "plugin_action", &args.to_string()]);
+    assert_eq!(preview["files"]["SKILL.md"], markdown);
+    assert_eq!(
+        preview["files"]["references/notes.md"],
+        "Preserve this supporting resource.\n"
+    );
+    assert_eq!(preview["skills"][0]["id"], "review");
+    assert_eq!(preview["skill_paths"]["review"], "SKILL.md");
+    assert_eq!(preview["origin"]["reference"], reference);
+    assert_eq!(
+        cli(data.path(), &["plugin", "list"]),
+        before,
+        "Preview must leave the registry unchanged"
+    );
+    args["action"] = "import_repository".into();
+    let installed = cli(data.path(), &["call", "plugin_action", &args.to_string()]);
+    assert_eq!(installed["spec"]["files"]["SKILL.md"], markdown);
+    assert_eq!(
+        installed["spec"]["files"]["references/notes.md"],
+        preview["files"]["references/notes.md"]
+    );
+    assert_eq!(installed["spec"]["name"], "review-preview");
+    assert_eq!(installed["spec"]["package_kind"], "skill");
+    assert_eq!(installed["spec"]["skill_paths"]["review"], "SKILL.md");
+    assert!(cli(data.path(), &["plugin", "list"])
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|plugin| plugin["revision"] == installed["revision"]));
+    Client::new(data.path().into())
+        .call("shutdown", json!({}))
+        .await
+        .unwrap();
+    serving.await.unwrap().unwrap();
+}
