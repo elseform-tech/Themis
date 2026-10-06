@@ -150,6 +150,11 @@ impl AppState {
                         .catalog(name, args["refresh"].as_bool().unwrap_or(false))
                         .await?
                 }
+                "preview" => serde_json::to_value(
+                    store
+                        .preview(args["marketplace"].as_str().unwrap_or_default(), name)
+                        .await?,
+                )?,
                 "install" | "update" => serde_json::to_value(
                     store
                         .install(

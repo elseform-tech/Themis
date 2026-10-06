@@ -78,6 +78,10 @@ async fn marketplace_import_keeps_resources_and_disables_executable_components()
     store
         .add_marketplace("fixture", repo.path().to_str().unwrap())
         .unwrap();
+    let preview = store.preview("fixture", "review").await.unwrap();
+    assert_eq!(preview.skills[0].instructions, "Check ownership.");
+    assert!(preview.files.contains_key("skills/rust/SKILL.md"));
+    assert!(!global.path().join("plugins/registry.json").exists());
     let imported = store.install("global", "fixture", "review").await.unwrap();
     assert_eq!(imported.spec.skills[0].instructions, "Check ownership.");
     assert!(!imported.spec.mcp["docs"].enabled);

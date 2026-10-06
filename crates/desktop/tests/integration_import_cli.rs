@@ -70,6 +70,37 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
     let shown = cli(data.path(), &["plugin", "show", "connections"]);
     assert_eq!(shown["spec"]["mcp"]["fixture"]["enabled"], false);
     let client = Client::new(data.path().into());
+    std::fs::create_dir(project.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        project.path().join(".claude-plugin/marketplace.json"),
+        json!({"plugins":[{"name":"preview-only","source":"./review"}]}).to_string(),
+    )
+    .unwrap();
+    client
+        .call(
+            "plugin_action",
+            json!({"action":"add_marketplace","name":"preview-fixture","source":project.path()}),
+        )
+        .await
+        .unwrap();
+    let preview = cli(
+        data.path(),
+        &[
+            "call",
+            "plugin_action",
+            r#"{"action":"preview","marketplace":"preview-fixture","name":"preview-only"}"#,
+        ],
+    );
+    assert_eq!(preview["skills"][0]["id"], "review");
+    assert!(preview["files"]["SKILL.md"]
+        .as_str()
+        .unwrap()
+        .contains("Inspect ownership"));
+    assert!(!cli(data.path(), &["plugin", "list"])
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|plugin| plugin["spec"]["name"] == "preview-only"));
     cli(data.path(), &["mcp", "delete", "connections", "fixture"]);
     assert!(
         cli(data.path(), &["plugin", "show", "connections"])["spec"]["mcp"]

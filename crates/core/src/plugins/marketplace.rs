@@ -242,14 +242,64 @@ impl PluginStore {
         marketplace: &str,
         name: &str,
     ) -> anyhow::Result<Plugin> {
-        if !safe_name(name) {
-            bail!("Invalid plugin name");
-        }
         let refresh = self
             .registry(scope)?
             .current
             .get(name)
             .is_some_and(|p| p.source.as_deref() == Some(marketplace));
+        let mut spec = self.marketplace_spec(marketplace, name, refresh).await?;
+        self.mutate(scope, |registry| {
+            let previous = registry.current.get(name);
+            if previous.is_some_and(|p| p.source.as_deref() != Some(marketplace)) {
+                bail!("A different plugin already uses this name; rename it first");
+            }
+            if let Some(previous) = previous {
+                for (name, server) in &mut spec.mcp {
+                    server.enabled = previous.spec.mcp.get(name).is_some_and(|s| s.enabled);
+                }
+                for hook in &mut spec.hooks {
+                    hook.enabled = previous
+                        .spec
+                        .hooks
+                        .iter()
+                        .find(|h| h.name == hook.name)
+                        .is_some_and(|h| h.enabled);
+                }
+                for id in &previous.spec.disabled_skills {
+                    if spec.skills.iter().any(|s| &s.id == id) && !spec.disabled_skills.contains(id)
+                    {
+                        spec.disabled_skills.push(id.clone());
+                    }
+                }
+            }
+            let plugin = Plugin {
+                scope: scope.into(),
+                revision: revision(),
+                enabled: previous.map(|p| p.enabled).unwrap_or(true),
+                source: Some(marketplace.into()),
+                spec,
+            };
+            registry.revisions.insert(
+                format!("{}--{}", plugin.spec.name, plugin.revision),
+                plugin.clone(),
+            );
+            registry.current.insert(name.into(), plugin.clone());
+            Ok(plugin)
+        })
+    }
+    /// Read supported package contents without registering or enabling any capability.
+    pub async fn preview(&self, marketplace: &str, name: &str) -> anyhow::Result<PluginSpec> {
+        self.marketplace_spec(marketplace, name, false).await
+    }
+    async fn marketplace_spec(
+        &self,
+        marketplace: &str,
+        name: &str,
+        refresh: bool,
+    ) -> anyhow::Result<PluginSpec> {
+        if !safe_name(name) {
+            bail!("Invalid plugin name");
+        }
         let root = self.marketplace_directory(marketplace, refresh).await?;
         let catalog: Value = serde_json::from_str(&fs::read_to_string(
             root.join(".claude-plugin/marketplace.json"),
@@ -355,44 +405,7 @@ impl PluginStore {
                 .map(str::to_owned),
         });
         validate(&spec)?;
-        self.mutate(scope, |registry| {
-            let previous = registry.current.get(name);
-            if previous.is_some_and(|p| p.source.as_deref() != Some(marketplace)) {
-                bail!("A different plugin already uses this name; rename it first");
-            }
-            if let Some(previous) = previous {
-                for (name, server) in &mut spec.mcp {
-                    server.enabled = previous.spec.mcp.get(name).is_some_and(|s| s.enabled);
-                }
-                for hook in &mut spec.hooks {
-                    hook.enabled = previous
-                        .spec
-                        .hooks
-                        .iter()
-                        .find(|h| h.name == hook.name)
-                        .is_some_and(|h| h.enabled);
-                }
-                for id in &previous.spec.disabled_skills {
-                    if spec.skills.iter().any(|s| &s.id == id) && !spec.disabled_skills.contains(id)
-                    {
-                        spec.disabled_skills.push(id.clone());
-                    }
-                }
-            }
-            let plugin = Plugin {
-                scope: scope.into(),
-                revision: revision(),
-                enabled: previous.map(|p| p.enabled).unwrap_or(true),
-                source: Some(marketplace.into()),
-                spec,
-            };
-            registry.revisions.insert(
-                format!("{}--{}", plugin.spec.name, plugin.revision),
-                plugin.clone(),
-            );
-            registry.current.insert(name.into(), plugin.clone());
-            Ok(plugin)
-        })
+        Ok(spec)
     }
 }
 
