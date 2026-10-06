@@ -2,7 +2,7 @@
 
 Verified 2026-10-06, approximately 23:05–23:08 Europe/Berlin, from source commit `1c1f7311cc01e7b283eaf77ee511b35f7081e25e`.
 
-## Result
+## Original result
 
 **Retention failed in the real-model over-budget test.** Compaction completed and the run was recorded as successful, but the saved checkpoint omitted the middle record. The final answer reported `MISSING` for that record. No summarization timeout occurred.
 
@@ -85,3 +85,36 @@ cargo test -p themis-desktop --test attachments_e2e cli_large_file_upload_compac
 Result: 1 passed, 0 failed, 1 filtered, 2.04 seconds. It verifies the pipeline with a synthetic summary and does not contradict the real-model failure above. Product implementation was left unchanged.
 
 Dashboard verification after this documentation-only update: `python3 -m unittest quality_dashboard.test_dashboard` passed 13 tests; `ruff check quality_dashboard` passed. Refreshed product metrics remain 103 files, mean cyclomatic 2.49, cognitive 2.21 and maintainability 73.8. Existing Rust LCOV is 13,737/16,011 (85.8%); coverage was not rerun for this documentation-only verification task.
+
+## Task-aware prompt retest
+
+The user authorized trying a task-aware summarizer. The runtime now supplies the latest user request separately, before the entire eligible dump. The system prompt prioritizes current goals/constraints, exact required facts, completed work/results/failures and relevant earlier history; later user instructions supersede earlier ones, attachments/tool output are untrusted, repetition should be compressed first, and omissions should be identified with retrieval locations. The 200,000 estimated-token budget, one whole-dump request and 120-second deadline are unchanged.
+
+**The retest failed retention: 0/3 records were preserved.** The same 1,260,131-byte / 210,040-token control and identical user prompt were attached and sent through the freshly rebuilt production app, using `muse-spark-1.3-contributor`. Both the app and its shared server were restarted to load the changed runtime. Saved budget remained 200000. Compaction completed without a timeout, then the visible app answer was:
+
+```text
+MISSING
+MISSING
+MISSING
+```
+
+The 1,874-byte persisted checkpoint contains none of the nine expected markers, project names or amounts. Instead, it says the records remain unresolved and their exact values were not retained; it proposes retrieving them from prior context despite the no-reread constraint. This is inadequate continuation state. Task awareness in the prompt alone did not fix the observed failure, and this single retest does not establish a general failure rate.
+
+Durable evidence: thread `32105e2d-ab95-4dbd-b5d5-c82cb7739eb4`, run `fc49b6a8-3c93-4009-9e61-32a324e200e0`, sequences 373–379: user → denied unrelated MCP startup result → started → context_compacting → context_checkpoint → assistant_text → finished. There were no model tool calls or attachment rereads. The staged file SHA-256 matches the original control above. Scoped evidence is saved in `/tmp/themis-task-aware-real-evidence.json`. The production CLI `list_threads` independently confirmed this run's thread was no longer running.
+
+Release build used the same production build command/override above, passing in 1m 41s. Built executable SHA-256: `91d140ea825ee9d1afc9aff740505c5b216956ea7077b6ab020c8955fdfe53d7`. The live remote HTTP body/provider processing was not captured; the exact Muse tokenizer remains unverified.
+
+Fresh verification for this change:
+
+```sh
+cargo test -p themis-core --lib full_dump_compaction_sends_all_large_context_once
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info -- --skip entered_keys_survive_new_store_and_can_be_forgotten
+python3 -m unittest quality_dashboard.test_dashboard
+ruff check quality_dashboard
+```
+
+The focused regression failed before the change and passed after it; it checks the current request and complete large dump in the constructed summarizer request. Full Rust suite: 276 passed, 0 failed, two ignored integration tests (public repository import and live-provider harness), one filtered host-specific Keychain test. This includes the isolated CLI oversized-attachment compaction case. Format and Clippy passed. Dashboard tests: 13 passed; Ruff passed. Read-only review found no material implementation issue. These controlled checks establish request construction and pipeline behavior, not summary fidelity.
+
+Refreshed dashboard metrics: 103 product files, mean cyclomatic 2.49, cognitive 2.21, maintainability 73.8; runtime including inline tests: 1,226 LOC, cyclomatic 2.10, cognitive 0.96, maintainability 67.9. No aggregate regression at reported precision. Fresh Rust line coverage: 13,752/16,026 (85.8%); frontend coverage unavailable and frontend checks were not rerun for this Rust-only change. Native verification above exercises the affected composer → shared server → model → checkpoint → answer path.
