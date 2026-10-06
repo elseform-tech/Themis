@@ -84,6 +84,19 @@ pub async fn run() -> Result<(), String> {
         println!("themis {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    let starts_run = match words.as_slice() {
+        [command, ..] if command == "chat" => true,
+        [command, action, ..] => matches!(
+            (command.as_str(), action.as_str()),
+            ("thread", "send")
+                | ("skill", "create")
+                | ("call", "send_message" | "run_automation_now")
+        ),
+        _ => false,
+    };
+    if std::env::var_os("THEMIS_HOOK_ACTIVE").is_some() && starts_run {
+        return Err("Hooks cannot start nested agent runs".into());
+    }
     if words.first().is_some_and(|word| {
         matches!(
             word.as_str(),

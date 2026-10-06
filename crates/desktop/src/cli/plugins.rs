@@ -7,16 +7,20 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
     let mut project = None;
     let mut scope = "global".to_owned();
     let mut expected = None;
+    let mut reference = None;
+    let mut subdirectory = None;
     let mut index = 0;
     while index < words.len() {
         match words[index].as_str() {
-            "--project" | "--scope" | "--expected" => {
+            "--project" | "--scope" | "--expected" | "--ref" | "--subdirectory" => {
                 let key = &words[index];
                 index += 1;
                 let value = words.get(index).ok_or("Missing option value")?.clone();
                 match key.as_str() {
                     "--project" => project = Some(value),
                     "--scope" => scope = value,
+                    "--ref" => reference = Some(value),
+                    "--subdirectory" => subdirectory = Some(value),
                     _ => expected = Some(value),
                 }
             }
@@ -37,7 +41,14 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
     match positional.as_slice(){
         ["plugin","list"]=>request["action"]=json!("list"),
         ["plugin","create",name]=>{request["action"]=json!("save");request["spec"]=json!({"name":name});},
-        ["plugin","save",file]|["plugin","import",file]=>{request["action"]=json!("save");request["spec"]=read(file)?;},
+        ["plugin","save",file]=>{request["action"]=json!("save");request["spec"]=read(file)?;},
+        [component,"import",source] | [component,"import",source,_] if matches!(*component,"plugin"|"skill"|"mcp"|"hook")=>{
+            if source.starts_with("https://") || source.starts_with("http://") || reference.is_some() || subdirectory.is_some() {
+                request["action"]=json!("import_repository"); request["url"]=json!(source);
+                request["name"]=json!(positional.get(3).copied().unwrap_or("imported"));
+                request["reference"]=json!(reference);request["subdirectory"]=json!(subdirectory);
+            } else { request["action"]=json!("import_path");request["path"]=json!(source);request["name"]=json!(positional.get(3)); }
+        },
         ["plugin",action,name] if matches!(*action,"enable"|"disable"|"delete"|"uninstall")=>{request["action"]=json!(if *action=="uninstall"{"delete"}else{action});request["name"]=json!(name);},
         ["plugin","marketplace","list"]=>request["action"]=json!("marketplaces"),
         ["plugin","marketplace","add",name,source]=>{request["action"]=json!("add_marketplace");request["name"]=json!(name);request["source"]=json!(source);},
@@ -71,24 +82,24 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         [component,"list",plugin]|[component,"show",plugin] if matches!(*component,"skill"|"mcp"|"hook")=>{let p=find(client,&request,plugin).await?;return Ok(p["spec"][field(component)].clone());},
         [component,action,plugin,name,file] if matches!(*component,"mcp"|"hook")&&matches!(*action,"add"|"update")=>{
             let p=find(client,&request,plugin).await?;let mut spec=p["spec"].clone();let mut value=read(file)?;
-            if *component=="mcp" {if *action=="add"&&spec["mcp"].get(name).is_some(){return Err("Connection already exists".into());}spec["mcp"][name]=value;ensure_connection_skill(&mut spec);}
+            if *component=="mcp" {if *action=="add"&&spec["mcp"].get(name).is_some(){return Err("Connection already exists".into());}spec["mcp"][name]=value;}
             else {value["name"]=json!(name);let hooks=spec["hooks"].as_array_mut().ok_or("Invalid hook list")?;if *action=="add"&&hooks.iter().any(|h|h["name"]==*name){return Err("Hook already exists".into());}hooks.retain(|h|h["name"]!=*name);hooks.push(value);}
             request["action"]=json!("save");request["spec"]=spec;request["expectedRevision"]=p["revision"].clone();
         },
         ["skill","save",plugin,file]=>{let p=find(client,&request,plugin).await?;request["action"]=json!("save_skill");request["plugin"]=json!(plugin);request["skill"]=read(file)?;request["expectedRevision"]=p["revision"].clone();},
         [component,action,plugin,name] if matches!(*component,"skill"|"mcp"|"hook")&&matches!(*action,"delete"|"remove"|"enable"|"disable"|"test")=>{
-            let p=find(client,&request,plugin).await?;let mut spec=p["spec"].clone();
-            if *action=="test"&&*component!="skill" {
+            let p=find(client,&request,plugin).await?;let spec=p["spec"].clone();
+            if matches!(*action,"delete"|"remove") {
+                request["action"]=json!("remove_component");request["name"]=json!(plugin);request["kind"]=json!(component);request["id"]=json!(name);
+            } else if matches!(*action,"enable"|"disable") {
+                request["action"]=json!("set_component_enabled");request["name"]=json!(plugin);request["kind"]=json!(component);request["id"]=json!(name);request["enabled"]=json!(*action=="enable");
+            } else if *component!="skill" {
                 request["action"]=json!(if *component=="mcp"{"test_mcp"}else{"test_hook"});
                 request[if *component=="mcp"{"server"}else{"hook"}]=if *component=="mcp"{spec["mcp"].get(name).cloned().ok_or("Unknown connection")?}else{spec["hooks"].as_array().ok_or("Invalid hooks")?.iter().find(|h|h["name"]==*name).cloned().ok_or("Unknown hook")?};
-            }else{
-                if *component=="mcp"{let map=spec["mcp"].as_object_mut().ok_or("Invalid MCP map")?;if matches!(*action,"delete"|"remove"){map.remove(*name).ok_or("Unknown connection")?;}else{map.get_mut(*name).ok_or("Unknown connection")?["enabled"]=json!(*action=="enable");}}
-                else if *component=="hook" && matches!(*action,"enable"|"disable") { let hooks=spec["hooks"].as_array_mut().ok_or("Invalid hooks")?; hooks.iter_mut().find(|h|h["name"]==*name).ok_or("Unknown hook")?["enabled"]=json!(*action=="enable"); }
-                else{if !matches!(*action,"delete"|"remove"){return Err("Use skill verify FILE; skills are selected through prompts".into());}let list=spec[field(component)].as_array_mut().ok_or("Invalid component list")?;let key=if *component=="skill"{"id"}else{"name"};if !list.iter().any(|c|c[key]==*name){return Err("Unknown component".into());}list.retain(|c|c[key]!=*name);}
-                request["action"]=json!("save");request["spec"]=spec;request["expectedRevision"]=p["revision"].clone();
-            }
+            } else { return Err("Use skill verify FILE".into()); }
+
         },
-        _=>return Err("Use plugin list|create NAME|show NAME|edit NAME|save FILE|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|add NAME SOURCE|browse NAME|refresh NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION. For agent creation: skill create THREAD REQUEST.".into()),
+        _=>return Err("Use plugin list|create NAME|show NAME|edit NAME|save FILE|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|add NAME SOURCE|browse NAME|refresh NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH. For agent creation: skill create THREAD REQUEST.".into()),
     }
     client.call("plugin_action", request).await
 }
@@ -112,9 +123,4 @@ async fn find(client: &Client, args: &Value, name: &str) -> Result<Value, String
         .find(|p| p["scope"] == args["scope"] && p["spec"]["name"] == name)
         .cloned()
         .ok_or_else(|| format!("Unknown plugin '{name}' in selected scope"))
-}
-fn ensure_connection_skill(spec: &mut Value) {
-    if spec["skills"].as_array().is_some_and(|s| s.is_empty()) {
-        spec["skills"] = json!([{"id":"connect","name":format!("Use {}",spec["name"].as_str().unwrap_or("connection")),"description":"Use connected tools","instructions":"Use the available MCP tools to complete the user's task. Respect approvals.","allowedTools":[],"scripts":[]}]);
-    }
 }

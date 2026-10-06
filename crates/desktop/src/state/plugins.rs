@@ -49,17 +49,74 @@ impl AppState {
         let scope = args["scope"].as_str().unwrap_or("global");
         let name = args["name"].as_str().unwrap_or_default();
         let action = args["action"].as_str().unwrap_or("list");
-        // No mutation while a project is running: its capability snapshot is immutable.
-        if !matches!(
-            action,
-            "list" | "marketplaces" | "catalog" | "test_mcp" | "test_hook"
-        ) && self.inner.running_count.load(Ordering::SeqCst) > 0
-        {
-            return Err("Wait for active runs to finish before changing plugins".into());
-        }
+        // Active runs retain their immutable snapshot; changes apply to the next run.
         let outcome = async {
             Ok::<_, anyhow::Error>(match action {
                 "list" => serde_json::to_value(store.list()?)?,
+                "import_path" => serde_json::to_value(store.import_path(
+                    scope,
+                    Path::new(args["path"].as_str().unwrap_or_default()),
+                    args["name"].as_str(),
+                )?)?,
+                "import_json" => {
+                    let content = args["content"].as_str().unwrap_or_default();
+                    if content.len() > 8 * 1024 * 1024 {
+                        return Err(anyhow::anyhow!("Import exceeds 8 MiB"));
+                    }
+                    let value: Value = serde_json::from_str(content)?;
+                    if value.get("spec").is_some()
+                        || value.get("name").is_some_and(Value::is_string)
+                    {
+                        let mut spec: PluginSpec =
+                            serde_json::from_value(value.get("spec").cloned().unwrap_or(value))?;
+                        if !name.is_empty() {
+                            spec.name = name.into();
+                        }
+                        serde_json::to_value(store.save(scope, spec, None)?)?
+                    } else {
+                        serde_json::to_value(store.import_mcp_json(
+                            scope,
+                            if name.is_empty() {
+                                "imported-mcp"
+                            } else {
+                                name
+                            },
+                            content,
+                        )?)?
+                    }
+                }
+                "import_repository" => serde_json::to_value(
+                    store
+                        .import_repository(
+                            scope,
+                            name,
+                            args["url"].as_str().unwrap_or_default(),
+                            args["reference"].as_str(),
+                            args["subdirectory"].as_str(),
+                        )
+                        .await?,
+                )?,
+                "remove_component" => {
+                    store.remove_component(
+                        scope,
+                        name,
+                        args["kind"].as_str().unwrap_or_default(),
+                        args["id"].as_str().unwrap_or_default(),
+                    )?;
+                    Value::Null
+                }
+                "set_component_enabled" => {
+                    store.set_component_enabled(
+                        scope,
+                        name,
+                        args["kind"].as_str().unwrap_or_default(),
+                        args["id"].as_str().unwrap_or_default(),
+                        args["enabled"]
+                            .as_bool()
+                            .ok_or_else(|| anyhow::anyhow!("enabled must be a boolean"))?,
+                    )?;
+                    Value::Null
+                }
                 "save" => serde_json::to_value(store.save(
                     scope,
                     serde_json::from_value::<PluginSpec>(args["spec"].clone())?,
