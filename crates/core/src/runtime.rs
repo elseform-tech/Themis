@@ -623,7 +623,7 @@ fn estimated_tokens(messages: &[ChatMessage]) -> usize {
         .sum()
 }
 
-const COMPACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const COMPACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
 
 async fn compact_context(
     llm: &Arc<dyn LLMProvider>,
