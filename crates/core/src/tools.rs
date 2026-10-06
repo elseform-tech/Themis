@@ -67,8 +67,9 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
     };
     Some(match action {
         "list" | "marketplaces" => RiskLevel::Read,
-        "catalog" if args["refresh"] != true => RiskLevel::Read,
-        "catalog" | "install" | "update" if name == "manage_integrations" => RiskLevel::Network,
+        "catalog" | "preview" | "install" | "update" if name == "manage_integrations" => {
+            RiskLevel::Network
+        }
         "import_repository" => RiskLevel::Network,
         "test_hook" => RiskLevel::Execute,
         "test_mcp" if args["server"]["command"].is_string() => RiskLevel::Execute,
@@ -1346,6 +1347,22 @@ mod tests {
         assert_eq!(
             integration_risk("manage_integrations", &json!({"action":"list"})),
             Some(RiskLevel::Read)
+        );
+        // Cached catalog requests can still fetch when the source cache is absent.
+        assert_eq!(
+            integration_risk(
+                "manage_integrations",
+                &json!({"action":"catalog","refresh":false})
+            ),
+            Some(RiskLevel::Network)
+        );
+        // Preview does not install, but uncached sources can fetch repositories.
+        assert_eq!(
+            integration_risk(
+                "manage_integrations",
+                &json!({"action":"preview","refresh":false})
+            ),
+            Some(RiskLevel::Network)
         );
         assert_eq!(
             integration_risk("manage_integrations", &json!({"action":"delete"})),
