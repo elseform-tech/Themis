@@ -27,6 +27,41 @@ beforeEach(() => {
   });
 });
 describe("Integrations management", () => {
+  it("shows complete captured skill source with frontmatter, bundle count, and rendered Markdown", async () => {
+    const source = `---\nname: draft\nlicense: Original-License\n---\n# Full skill\n\n${"Complete source text. ".repeat(100)}\n\n## Final section\nUNTRUNCATED_TAIL`;
+    installed[0].spec.files = { "custom/notes/SKILL.md": source };
+    installed[0].spec.skill_paths = { draft: "custom/notes/SKILL.md" };
+    render(<Plugins />);
+    fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
+    const dialog = screen.getByRole("dialog", { name: "docs" });
+    expect(dialog).toHaveTextContent("1 skill");
+    expect(dialog).toHaveTextContent("Original-License");
+    expect(dialog).toHaveTextContent("UNTRUNCATED_TAIL");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rendered" }));
+    expect(within(dialog).getByRole("heading", { name: "Full skill" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Final section" })).toBeInTheDocument();
+  });
+  it("lists every bundled skill and selects its original nested source", async () => {
+    installed[0].spec.skills.push({ ...installed[0].spec.skills[0], id: "review", name: "Review" });
+    installed[0].spec.files = { "skills/draft/SKILL.md": "# Draft source", "skills/review/SKILL.md": "# Review source\nlicense: Review-License" };
+    render(<Plugins />);
+    fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
+    const dialog = screen.getByRole("dialog", { name: "docs" });
+    expect(dialog).toHaveTextContent("2 skills");
+    expect(within(dialog).getByRole("button", { name: "Draft" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Review" }));
+    expect(dialog).toHaveTextContent("Review-License");
+    expect(dialog).not.toHaveTextContent("Draft source");
+  });
+  it("reports an empty package without inventing bundled skills", async () => {
+    installed[0].spec.skills = [];
+    render(<Plugins />);
+    fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
+    const dialog = screen.getByRole("dialog", { name: "docs" });
+    expect(dialog).toHaveTextContent("0 skills");
+    expect(dialog).toHaveTextContent("No bundled skills.");
+    expect(within(dialog).queryByRole("button", { name: "Source" })).toBeNull();
+  });
   it("leaves a failed import editable and shows its error", async () => {
     vi.mocked(pluginAction).mockImplementation(async args => {
       if (args.action === "list") return installed as never;
@@ -213,7 +248,7 @@ describe("Integrations management", () => {
     expect(screen.getByAltText("")).toHaveAttribute("src", "https://example.com/icon.svg");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "View public-docs" })));
     const dialog = screen.getByRole("dialog", { name: "public-docs" });
-    expect(within(dialog).getByText("Read the sources before drafting.", { exact: false })).toBeVisible();
+    expect(dialog).toHaveTextContent("Read the sources before drafting.");
     expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "preview", marketplace: "official", name: "public-docs" }));
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "save" }));
@@ -274,6 +309,7 @@ describe("Integrations management", () => {
     vi.mocked(pluginAction).mockImplementation(async args => {
       if (args.action === "list") return structuredClone(installed) as never;
       if (args.action === "marketplaces") return [] as never;
+      if (args.action === "preview_repository") return { ...installed[0].spec, name: "pdf", skills: [{ ...installed[0].spec.skills[0], id: "pdf" }], files: { "SKILL.md": "---\nname: pdf\nlicense: Original-License\n---\n# PDF workflow\nUPSTREAM_FULL_TAIL" } } as never;
       if (args.action === "import_repository") installed.push({ ...installed[0], enabled: false, spec: { ...installed[0].spec, name: "pdf", package_kind: "skill", origin: { kind: "repository", location: String(args.url), subdirectory: String(args.subdirectory) } } });
       return null as never;
     });
@@ -283,8 +319,11 @@ describe("Integrations management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Not installed" }));
     expect(screen.getByRole("button", { name: "View Word documents" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "View Spreadsheets" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "View PDF" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "View PDF" })));
     expect(screen.getByRole("link", { name: "Read SKILL.md" })).toHaveAttribute("href", "https://github.com/anthropics/skills/blob/683bc88e56f3e09ba94f7055977f3d3aa499f202/skills/pdf/SKILL.md");
+    expect(screen.getByRole("dialog")).toHaveTextContent("UPSTREAM_FULL_TAIL");
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "preview_repository", name: "pdf", url: "https://github.com/anthropics/skills.git", subdirectory: "skills/pdf", reference: "683bc88e56f3e09ba94f7055977f3d3aa499f202", projectRoot: "/project" }));
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "import_repository" }));
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     const row = screen.getByRole("button", { name: "View PDF" }).closest("li")!;
     expect(row.querySelector("svg")).toBeInTheDocument();
@@ -297,7 +336,7 @@ describe("Integrations management", () => {
     render(<Plugins />);
     fireEvent.click(await screen.findByRole("button", { name: "View docs" }));
     const dialog = screen.getByRole("dialog", { name: "docs" });
-    expect(within(dialog).getByText("Read the sources before drafting.", { exact: false })).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("Read the sources before drafting.");
     expect(screen.getByRole("button", { name: "MCP" })).toBeInTheDocument();
   });
   it("shows actions before opening the uninstall dialog and removes only after confirmation", async () => {
