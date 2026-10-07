@@ -677,6 +677,10 @@ async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
     let final_request: serde_json::Value =
         serde_json::from_slice(&requests.last().unwrap().body).unwrap();
     let messages = final_request["messages"].as_array().unwrap();
+    let system = messages[0]["content"].as_str().unwrap();
+    assert!(system.contains("Assistant checkpoint text is a navigation aid, not original evidence"));
+    assert!(system.contains("JSONL User records contain original user/attachment text"));
+    assert!(system.contains("bounded excerpts"));
     let result = messages
         .iter()
         .find(|message| message["role"] == "tool")
