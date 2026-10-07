@@ -108,6 +108,11 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
 }
 
 pub(super) fn responses_response(value: serde_json::Value) -> Result<WireChatResponse, LLMError> {
+    if value["status"] == "incomplete"
+        && value["incomplete_details"]["reason"] == "max_output_tokens"
+    {
+        return Err(LLMError::Generic("Provider response was truncated".into()));
+    }
     if matches!(value["status"].as_str(), Some("failed" | "incomplete")) {
         return Err(LLMError::Generic(
             "Provider response failed or was incomplete".to_owned(),

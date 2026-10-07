@@ -1206,21 +1206,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chat_completions_rejects_truncated_checkpoint_text() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Partial state"},"finish_reason":"length"}]})))
-            .mount(&server).await;
-        let provider = CompatibleProvider::go(
-            "synthetic".into(),
-            "mimo-v2.6-flash".into(),
-            Some(server.uri()),
-            None,
-        );
-        assert!(provider
-            .chat(&[user_message("Summarize")], None)
-            .await
-            .is_err());
+    async fn providers_identify_output_truncation_without_exposing_response_content() {
+        for (model, response) in [
+            (
+                "mimo-v2.6-flash",
+                json!({"choices":[{"message":{"content":"Partial private state"},"finish_reason":"length"}]}),
+            ),
+            (
+                "muse-spark-1.3-contributor",
+                json!({"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","content":[{"type":"output_text","text":"Partial private state"}]}]}),
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(response))
+                .mount(&server)
+                .await;
+            let provider =
+                CompatibleProvider::go("synthetic".into(), model.into(), Some(server.uri()), None);
+            let result = provider.chat(&[user_message("Summarize")], None).await;
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("partial checkpoint must be rejected"),
+            };
+            assert!(
+                matches!(&error, LLMError::Generic(message) if message == "Provider response was truncated"),
+                "{error}"
+            );
+            assert!(!error.to_string().contains("private state"));
+        }
     }
 
     #[tokio::test]

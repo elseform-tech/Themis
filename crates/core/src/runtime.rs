@@ -1131,11 +1131,21 @@ async fn compaction_chat(
                 delay.as_millis()
             );
             tokio::time::sleep(delay).await;
-            llm.chat_and_sampling(messages, None, Some(&sampling))
-                .await?
+            llm.chat_and_sampling(messages, None, Some(&sampling)).await
         }
-        result => result?,
-    };
+        result => result,
+    }
+    .inspect_err(|error| {
+        use autoagents::llm::error::LLMError;
+        // Log categories only: provider errors may contain private request/response content.
+        eprintln!(
+            "compaction request failed status={:?} transport={} output_truncated={} response_incomplete={}",
+            error.http_status_code(),
+            matches!(error, LLMError::HttpError(_)),
+            matches!(error, LLMError::Generic(message) if message == "Provider response was truncated"),
+            matches!(error, LLMError::Generic(message) if message == "Provider response failed or was incomplete"),
+        );
+    })?;
     Ok(answer.text().unwrap_or_default())
 }
 
