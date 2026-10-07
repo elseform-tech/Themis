@@ -833,6 +833,7 @@ async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
     let system = messages[0]["content"].as_str().unwrap();
     assert!(system.contains("Assistant checkpoint text is a navigation aid, not original evidence"));
     assert!(system.contains("Saved compaction section notes are Assistant navigation records"));
+    assert!(system.contains("Respect the current request’s restrictions on tool use"));
     assert!(system.contains("JSONL User records contain original user/attachment text"));
     assert!(system.contains("bounded excerpts"));
     assert!(system.contains("If bounded searches do not recover the needed evidence"));
