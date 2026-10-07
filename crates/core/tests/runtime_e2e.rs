@@ -829,6 +829,8 @@ async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
     assert!(system.contains("Assistant checkpoint text is a navigation aid, not original evidence"));
     assert!(system.contains("JSONL User records contain original user/attachment text"));
     assert!(system.contains("bounded excerpts"));
+    assert!(system.contains("Sampling the first matches does not establish absence"));
+    assert!(system.contains("distinguish an actual event from a plan, allegation"));
     let result = messages
         .iter()
         .find(|message| message["role"] == "tool")
