@@ -119,3 +119,62 @@ Core compaction tests: **2 passed** (bounded large-input delivery and timeout pr
 The dashboard was started at `http://127.0.0.1:4178` and `/api/metrics` refreshed. Product metrics remain 103 files, mean cyclomatic 2.49, cognitive 2.22, maintainability 73.8. Runtime including inline tests remains 1,309 LOC, 46 functions, cyclomatic 2.19, cognitive 1.14, maintainability 67.3. Existing Rust coverage is 13,825/16,104 (85.8%); coverage was not regenerated and frontend coverage remains unavailable. No metric regression at reported precision.
 
 Local evidence: `/tmp/themis-narrative-six/evidence-150.json`, `run-150.log`, `retry6-150.log`, `metrics-150.json`, and `build-150.log`. The production SQLite store remains authoritative. The 150-second timeout is left installed as requested; the context budget is unchanged.
+
+
+## Completion-order scheduling and measured retest
+
+Verified 2026-10-07 against implementation commit `93b4e25`. Replaced `buffered(3)` with `buffer_unordered(3)` in the shared runtime and restored section indices to source order before concatenation. This fixes head-of-line scheduling: an already completed request now frees a slot even while an earlier request remains pending. Concurrency remains three, context budget **200000**, and the global deadline **150 seconds**. Added content-free server stderr diagnostics for section starts, elapsed milliseconds, input/output bytes and provider success. Normal launchers discard stderr; this experiment explicitly redirected the production server's stderr to capture it. No new logging service or setting was added.
+
+The regression `compaction_refills_slots_before_slow_first_section_finishes` failed against the previous implementation because the fourth section did not start while the first was pending. After the fix it passed and confirmed source ordering in the assembled checkpoint. The review found no concrete bug in the scoped change.
+
+The production app was rebuilt, idle project threads checked, and the production window/server restarted. For diagnostic capture the unchanged production server entry point was launched directly from the rebuilt bundle with stderr redirected, and the native app connected to it. This is the same shared backend used by the app and CLI, not a debug/test provider. Running executable SHA-256: `08eb2cfdfb7c27c632271b4e197c8daeaf8008a95e35adf9a1c0ee3c28e86553`. The existing launch-environment credential fallback was available; Keychain read warnings remain, so this does not establish Keychain persistence.
+
+**The narrative journey still failed before six compactions could be evaluated.** In a fresh conversation, part one timed out; one identical-file/prompt retry also timed out. No successful checkpoint or final retelling exists. Parts two through six were not submitted, and all 24 source-anchored retention criteria remain unscored. The same part-one SHA-256 and original prompts were used. The retry also includes the prior failed user turn in historical context, so its entire serialized request is not byte-identical to the initial attempt. The unrelated browser-use MCP startup on retry was denied in the native app. No agent recovery tool calls or file rereads occurred.
+
+Thread: `b1972a01-8e7e-45ca-b372-50d92a8eeda4`.
+
+| Attempt | Run | Sequences | Completed sections / total | Observed total after send returned | Outcome |
+| --- | --- | --- | --- | --- | --- |
+| Initial | `899e3cbb-47e4-4d96-af7d-29667adc3889` | 506–509 | 11 / 14 | 150.14 s | Summary timeout |
+| Retry | `ac3fa260-7018-4e4d-944a-5a89f3a5be18` | 510–514 | 12 / 14 | 150.15 s | Summary timeout |
+
+Both terminal events report `Context checkpoint failed: summarization timed out before completing checkpoint`. All fourteen sections started on each attempt. The initial request finished section three in **22.644 s** and started section four while sections one and two were still pending, directly confirming refill in the production path. Completed provider requests ranged from **22.644–50.509 s** initially and **19.536–48.986 s** on retry. Their combined request time was **375.352 s** and **386.787 s**, respectively; these are sums across concurrent requests, not wall-clock time. Completed outputs totaled 49,213 and 54,651 UTF-8 bytes. These partial outputs were discarded.
+
+| Section | Initial duration / output bytes | Retry duration / output bytes |
+| --- | --- | --- |
+| 1 | 32.698 s / 5,230 | 48.986 s / 8,857 |
+| 2 | 44.460 s / 3,943 | 47.163 s / 5,662 |
+| 3 | 22.644 s / 2,367 | 38.437 s / 5,340 |
+| 4 | 38.008 s / 6,230 | 36.045 s / 4,463 |
+| 5 | 50.509 s / 7,329 | 24.893 s / 3,685 |
+| 6 | 28.703 s / 3,869 | 26.329 s / 2,592 |
+| 7 | 27.339 s / 4,163 | 20.582 s / 2,343 |
+| 8 | 33.579 s / 4,859 | 29.388 s / 4,029 |
+| 9 | 33.221 s / 4,721 | 26.081 s / 2,918 |
+| 10 | 29.488 s / 3,442 | 35.502 s / 5,824 |
+| 11 | 34.703 s / 3,060 | 33.845 s / 4,756 |
+| 12 | Pending at global timeout | 19.536 s / 4,182 |
+| 13 | Pending at global timeout | Pending at global timeout |
+| 14 | Pending at global timeout | Pending at global timeout |
+
+A scoped persistence assertion verified both compaction starts, both timeout events, identical source/staged file hashes, no checkpoint row or checkpoint event, saved budget 200000 and an idle thread. Failure remains atomic. This scheduling bug is fixed; it was not sufficient to make this dense workload fit the deadline. The previous five-success run and this zero-success run are not a controlled comparison of scheduler performance: provider variability and generated summary lengths differ, and earlier runs lacked section timings. No conclusion about increased/decreased model quality follows from them.
+
+The next experiment should bound section-summary output and request a concise continuity record, reserving verbatim quotation for facts requiring exact wording, while keeping source coverage and checking the same narrative criteria. Input bounds alone do not bound output or aggregate latency. These timings do not separate time to first token, generation time, or remote queueing; output limits and richer latency capture would help distinguish them. No prompt/output-limit change or further timeout increase was implemented in this task.
+
+Fresh verification commands:
+
+```sh
+cargo test -p themis-core --lib compaction -- --nocapture
+cargo test --workspace -- --skip entered_keys_survive_new_store_and_can_be_forgotten
+cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info -- --skip entered_keys_survive_new_store_and_can_be_forgotten
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+python3 -m unittest quality_dashboard.test_dashboard
+ruff check quality_dashboard
+```
+
+Focused compaction tests: **3 passed**, including the red/green scheduling regression. Workspace: **278 passed**, two ignored integration tests (`real_public_plugin_and_skill_import_acceptance`, `live_go_chat_completions_run`), one ignored tools doctest, and the known synthetic Keychain test excluded by name. The isolated CLI large-file compaction/attachment test and CLI stalled-compaction cancellation test both passed within the workspace run. Coverage reran the workspace successfully and produced fresh LCOV. Format, Clippy and Ruff passed; dashboard **13 passed**. Production build passed in **1m37s**, using `/Users/cutedandelion/.npm/_npx/81a0b12969b730e4/node_modules/.bin/tauri build --bundles app --config /tmp/themis-real-compaction-build.json` from `crates/desktop`; the override skips the unchanged frontend build hook. Frontend checks and native composer upload rendering were not repeated for this backend-only change.
+
+The running dashboard at `http://127.0.0.1:4178` was refreshed after coverage. AST metrics via rust-code-analysis 0.0.25: 103 files, mean cyclomatic 2.49, cognitive 2.22, maintainability 73.8 (unchanged at displayed precision). Runtime including inline tests: **1,392 LOC**, 47 functions, cyclomatic 2.15, cognitive 1.14, maintainability 67.5; previously 1,309 LOC, 46 functions, 2.19/1.14/67.3. Most added code is the focused regression; these averages do not establish a production complexity improvement. Fresh Rust line coverage: **13,908/16,187 (85.9%)**; frontend coverage unavailable. No unrelated metric cleanup was made.
+
+Local evidence: `/tmp/themis-narrative-six/server-unordered.log`, `timings-unordered.json`, `evidence-unordered.json`, `run-unordered.log`, `retry-unordered.log`, `tests-unordered.log`, `coverage-unordered.log`, `metrics-unordered.json`, and `build-unordered.log`. Full narrative text and credentials were not committed. The implementation is installed; its six-compaction narrative reliability and semantic retention remain unverified.
