@@ -829,6 +829,11 @@ async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
     assert!(system.contains("Assistant checkpoint text is a navigation aid, not original evidence"));
     assert!(system.contains("JSONL User records contain original user/attachment text"));
     assert!(system.contains("bounded excerpts"));
+    assert!(system.contains("If bounded searches do not recover the needed evidence"));
+    assert!(system.contains("let task-aware compaction focus it on the current request"));
+    assert!(!system.contains("Do not read whole archives into the model again"));
+    assert!(system.contains("use Assistant summaries to locate source references"));
+    assert!(system.contains("truncated tool output is incomplete evidence"));
     assert!(system.contains("Sampling the first matches does not establish absence"));
     assert!(system.contains("distinguish an actual event from a plan, allegation"));
     let result = messages

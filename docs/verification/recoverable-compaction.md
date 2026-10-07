@@ -2,6 +2,24 @@
 
 Status: implementation and verification ongoing; do not claim completion or lossless summary retention.
 
+## Harness references and next experiment (2026-10-07)
+
+These are implementation references, not retention benchmarks. Sources are pinned to inspected commits; none of these harnesses has been run against our six-part narrative or coding fixture.
+
+| Harness | Observed mechanism | Relevance to Themis |
+| --- | --- | --- |
+| [OpenCode core, b1fe25a](https://github.com/anomalyco/opencode/blob/b1fe25ab5ecc9f9bc911a8a2e6a51565cc764322/packages/core/src/session/compaction.ts) | Builds one structured objective/constraints/work-state/next-action/file summary. An update distinguishes the prior summary from newer conversation, carries applicable earlier constraints, and gives newer corrections precedence. Core defaults retain 8,000 recent tokens, reserve a 20,000-token buffer, and cap summary output at 4,096 tokens. | Reuse the coherent update pattern. Do not copy defaults without accounting for our provider window, tools, and large source inputs. |
+| [Codex local compaction, 9dd7988](https://github.com/openai/codex/blob/9dd798805fdf9dd0f836f35ccc9480cb0af17784/codex-rs/core/src/compact.rs) | Includes executed-tool information in the compaction request, reconstructs user-message history with a summary, and tracks goal/context metadata. Context-window failures can remove the oldest history item and retry. Post-turn compaction rejects an empty assistant summary. | Completed tool receipts and user intent need deliberate preservation. Its oldest-item trimming does not establish full original-source coverage for our case. |
+| [Pi, f10993b](https://github.com/earendil-works/pi/blob/f10993bc7f28145df1375f3ff39c7f5c4cfc05f0/packages/coding-agent/src/core/compaction/compaction.ts) | Updates a structured prior summary from newer messages, carries cumulative read/modified file lists separately, and rejects length-stopped or failed summarization responses as checkpoints. | Keep source references deterministic rather than depending entirely on prose memory. Distinguish a complete checkpoint from partial model output. |
+
+[OpenCode's application wrapper](https://github.com/anomalyco/opencode/blob/b1fe25ab5ecc9f9bc911a8a2e6a51565cc764322/packages/opencode/src/session/compaction.ts) selects the latest completed prior summary and supplies it separately to the core prompt builder. Its versioned documentation and core code have different defaults; the table describes the pinned core implementation, not every OpenCode release or configuration.
+
+Analysis: our current `compact_context_inner` orders section summaries but concatenates them without reconciling global task state. In `/tmp/themis-narrative-six/recovery-order-checkpoint.txt`, an earlier section reports no verification calls while a later section records completed retrievals. Both statements describe partial sections, but the continuing agent receives them together. A coherent task-state update is therefore a concrete next experiment, not evidence that a second summarization pass will preserve every detail. Keep the deterministic source-range index and durable originals independently of that update. Benchmark the unchanged 24 narrative criteria, source attribution, requirement revisions, and restart recovery before claiming improvement.
+
+The smaller recovery-prompt change permits one relevant complete-source reread after bounded searches fail, allows summaries to locate original references, and labels truncated output incomplete. `cargo test -p themis-core --test runtime_e2e` passed 12 tests with one live-provider test ignored; `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and `python3 -m unittest quality_dashboard.test_dashboard` passed (13 dashboard tests). This proves constructed-request and existing offloaded-result behavior, not autonomous recovery effectiveness. The production backend still runs the preceding build.
+
+Dashboard refresh `2026-10-07T17:43:04Z`: 103 files, mean cyclomatic 2.49/cognitive 2.22/maintainability 73.7; runtime including inline tests remains 1,935 LOC, 57 functions, 2.30/1.46/69.0. The displayed 86.5% Rust coverage predates this prompt change; frontend coverage is unavailable. No new coverage claim or UI verification follows from the prompt-only change.
+
 Goal: compact working state while durably preserving original conversation/tool/source evidence and validating retrieval after repeated real-model compactions and restart.
 
 Implementation remains on `codex/full-dump-attachments`, continuing the existing compaction task. Production budget200000, global checkpoint deadline150s; section input64000UTF-8bytes, overlap1024, concurrency3. New summaries aim for300words; evidence references are deterministic. Source-complete recovery checkpoints explicitly mark unavailable summaries. Original-source availability and summary-only retention must be measured separately.
