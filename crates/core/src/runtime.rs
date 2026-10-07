@@ -1117,6 +1117,13 @@ async fn compaction_chat(
     let sampling = SamplingOverrides::with_max_tokens(max_tokens);
     let result = llm.chat_and_sampling(messages, None, Some(&sampling)).await;
     let answer = match result {
+        Err(autoagents::llm::error::LLMError::Generic(message))
+            if message == "Provider response was truncated" =>
+        {
+            let headroom = SamplingOverrides::with_max_tokens(max_tokens.saturating_mul(2));
+            eprintln!("compaction retry=1 output_truncated=true max_tokens={}", max_tokens.saturating_mul(2));
+            llm.chat_and_sampling(messages, None, Some(&headroom)).await
+        }
         Err(error) if error.is_retryable() => {
             let delay = match &error {
                 autoagents::llm::error::LLMError::RateLimitError { retry_after, .. }
@@ -2106,6 +2113,53 @@ mod tests {
             rx.try_recv().unwrap(),
             RunEvent::ContextCheckpoint { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn truncated_summary_retries_once_with_more_headroom_without_accepting_partial_text() {
+        use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+        for limit in [2048, 4096] {
+            for recovers in [true, false] {
+                let server = MockServer::start().await;
+                let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let observed = Arc::clone(&calls);
+                Mock::given(method("POST")).respond_with(move |_: &Request| {
+                    let attempt = observed.fetch_add(1, Ordering::SeqCst);
+                    let complete = recovers && attempt == 1;
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "choices":[{"message":{"role":"assistant","content":if complete { "complete state" } else { "partial state" }},"finish_reason":if complete { "stop" } else { "length" }}]
+                    }))
+                }).mount(&server).await;
+                let llm = crate::providers::resolve(
+                    &crate::providers::ProviderConfig::new(
+                        crate::providers::ProviderKind::Go,
+                        "test-key",
+                    )
+                    .with_model("test-model")
+                    .with_base_url(server.uri()),
+                )
+                .await
+                .unwrap();
+                let messages = [ChatMessage {
+                    role: ChatRole::User,
+                    message_type: MessageType::Text,
+                    content: "preserve task state".into(),
+                }];
+                let result = compaction_chat(&llm, &messages, limit).await;
+                if recovers {
+                    assert_eq!(result.unwrap(), "complete state");
+                } else {
+                    assert!(result.is_err(), "never accept truncated text");
+                }
+                let requests = server.received_requests().await.unwrap();
+                assert_eq!(requests.len(), 2, "one retry total");
+                for (index, request) in requests.iter().enumerate() {
+                    let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                    assert_eq!(body["max_tokens"], limit * (index as u32 + 1));
+                    assert_eq!(body["messages"][0]["content"], "preserve task state");
+                }
+            }
+        }
     }
 
     #[tokio::test]
