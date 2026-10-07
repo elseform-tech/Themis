@@ -73,6 +73,20 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
         .unwrap()
         .iter()
         .any(|message| message["role"] == "user" && message["content"] == "Read the note"));
+    let messages = final_request["messages"].as_array().unwrap();
+    let request = messages
+        .iter()
+        .position(|message| message["role"] == "user" && message["content"] == "Read the note")
+        .unwrap();
+    let checkpoint = messages
+        .iter()
+        .position(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("Earlier context checkpoint"))
+        })
+        .unwrap();
+    assert!(request < checkpoint, "completed work must follow the active request, so it is not presented as a new request to repeat");
 }
 
 #[tokio::test]
