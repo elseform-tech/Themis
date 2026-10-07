@@ -353,3 +353,146 @@ async fn attachment_paths_and_symlinked_storage_cannot_escape_project() {
         assert!(!outside.path().join("attachments").exists());
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_completed_tool_original_survives_restart_without_compaction() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap()
+        .success());
+    let original = format!(
+        "{}historical receipt: copper-753",
+        "observed source line\n".repeat(5000)
+    );
+    std::fs::write(project.path().join("observation.txt"), &original).unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("POST")).respond_with(|request: &Request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let tool = body["messages"].as_array().unwrap().iter().any(|message| message["role"] == "tool");
+        let message = if tool { json!({"role":"assistant","content":"READY"}) } else {
+            json!({"role":"assistant","content":null,"tool_calls":[{"id":"original-read","type":"function","function":{"name":"read_file","arguments":"{\"file_path\":\"observation.txt\"}"}}]})
+        };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if tool {"stop"} else {"tool_calls"}}]}))
+    }).mount(&provider).await;
+    let client = Client::new(data.path().into());
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let mut events = client.subscribe().await.unwrap();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Read observation.txt and reply READY","reasoningEffort":null}),
+    );
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] == "approval-request" {
+                cli(data.path(), "approve_action", json!({"threadId":id,"approvalId":item["payload"]["approval_id"],"decision":"once"}));
+            }
+            if item["name"] == "thread-event" {
+                let event = &item["payload"]["event"];
+                assert_ne!(event["kind"], "context_checkpoint");
+                if event["kind"] == "tool_finished" {
+                    let output = event["output"].as_str().unwrap();
+                    assert!(output.contains("[Output truncated]"));
+                    assert!(!output.contains("copper-753"));
+                }
+                if event["kind"] == "finished" || event["kind"] == "failed" { break event.clone(); }
+            }
+        }
+    }).await.unwrap();
+    assert_eq!(terminal["result"], "READY");
+    let evidence = project.path().join(".themis/context").join(id);
+    let archives: Vec<_> = std::fs::read_dir(&evidence)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
+        })
+        .collect();
+    assert_eq!(archives.len(), 1);
+    let saved = std::fs::read_to_string(&archives[0]).unwrap();
+    let records: Vec<Value> = saved
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let output = records[1]["message_type"]["ToolResult"][0]["function"]["arguments"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(output).unwrap()["content"],
+        original
+    );
+    client.call("shutdown", json!({})).await.unwrap();
+    task.await.unwrap().unwrap();
+    drop(state);
+    std::fs::write(
+        project.path().join("observation.txt"),
+        "current receipt: silver-864",
+    )
+    .unwrap();
+    provider.reset().await;
+    let archive = archives[0].clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let tool = body["messages"].as_array().unwrap().iter().find(|message| message["role"] == "tool");
+        let message = if let Some(tool) = tool {
+            assert!(tool.to_string().contains("copper-753"), "actual recovery tool result: {tool}");
+            assert!(!tool.to_string().contains("silver-864"));
+            json!({"role":"assistant","content":"copper-753"})
+        } else {
+            assert!(!body.to_string().contains("copper-753"), "display/context must not leak the historical receipt");
+            assert!(body["messages"][0]["content"].as_str().unwrap().contains(archive.parent().unwrap().to_str().unwrap()), "the restarted model must receive the journal directory without needing a checkpoint");
+            let script = "import json,sys; r=[json.loads(x) for x in open(sys.argv[1])]; v=json.loads(r[1]['message_type']['ToolResult'][0]['function']['arguments']); print(v['content'].split('historical receipt: ')[1])";
+            json!({"role":"assistant","content":null,"tool_calls":[{"id":"recover","type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",script,archive],"cwd":""}).to_string()}}]})
+        };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if tool.is_some() {"stop"} else {"tool_calls"}}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let mut events = client.subscribe().await.unwrap();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Recover the historical receipt using the saved original.","reasoningEffort":null}),
+    );
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] == "approval-request" {
+                cli(data.path(), "approve_action", json!({"threadId":id,"approvalId":item["payload"]["approval_id"],"decision":"once"}));
+            }
+            if item["name"] == "thread-event" {
+                let event = &item["payload"]["event"];
+                if event["kind"] == "finished" || event["kind"] == "failed" { break event.clone(); }
+            }
+        }
+    }).await.unwrap();
+    assert_eq!(terminal["result"], "copper-753");
+    assert_eq!(std::fs::read_to_string(&archives[0]).unwrap(), saved);
+    client.call("shutdown", json!({})).await.unwrap();
+    task.await.unwrap().unwrap();
+}
