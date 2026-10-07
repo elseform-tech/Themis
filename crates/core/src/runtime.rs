@@ -706,23 +706,32 @@ async fn compact_context_inner(
         }
         format!("{}\n[Relevance hint omits {} bytes. The continuing agent retains the complete active request; do not infer absent requirements from this partial hint.]\n{}", &current_request[..head], tail - head, &current_request[tail..])
     };
-    let summaries: Vec<String> = futures_util::stream::iter(sections.into_iter().enumerate())
+    let mut summaries: Vec<(usize, String)> = futures_util::stream::iter(sections.into_iter().enumerate())
         .map(move |(index, section)| {
             let llm = Arc::clone(&summarizer);
             let current_request = current_request.clone();
             async move {
             let section = format!("SECTION {} OF {total} (partial context; absence here does not establish absence elsewhere):\n{section}", index + 1);
-            let summary = summarize_context(&llm, &section, &current_request).await?;
+            let started = std::time::Instant::now();
+            eprintln!("compaction section={}/{} started input_bytes={}", index + 1, total, section.len());
+            let result = summarize_context(&llm, &section, &current_request).await;
+            eprintln!("compaction section={}/{} elapsed_ms={} output_bytes={} success={}", index + 1, total, started.elapsed().as_millis(), result.as_ref().map_or(0, |summary| summary.len()), result.is_ok());
+            let summary = result?;
             if summary.trim().is_empty() {
                 anyhow::bail!("summarizer returned an empty section checkpoint");
             }
-            Ok::<_, anyhow::Error>(format!("Section {} of {total}:\n{summary}", index + 1))
+            Ok::<_, anyhow::Error>((index, format!("Section {} of {total}:\n{summary}", index + 1)))
             }
         })
-        .buffered(3)
+        .buffer_unordered(3)
         .try_collect()
         .await?;
-    let summary = summaries.join("\n\n");
+    summaries.sort_unstable_by_key(|(index, _)| *index);
+    let summary = summaries
+        .into_iter()
+        .map(|(_, summary)| summary)
+        .collect::<Vec<_>>()
+        .join("\n\n");
     if summary.trim().is_empty() {
         anyhow::bail!("summarizer returned an empty checkpoint");
     }
@@ -976,6 +985,80 @@ mod tests {
         ));
         assert!(rx.try_recv().is_err());
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn compaction_refills_slots_before_slow_first_section_finishes() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let fourth_started = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&fourth_started);
+        Mock::given(method("POST"))
+            .respond_with(move |request: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                let input = body["messages"][1]["content"].as_str().unwrap();
+                let index = input.split("SECTION ").nth(1).unwrap()
+                    .split_whitespace().next().unwrap().parse::<usize>().unwrap();
+                if index == 4 { observed.store(true, Ordering::SeqCst); }
+                let response = ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "choices":[{"message":{"role":"assistant","content":format!("Fact-{index}")},"finish_reason":"stop"}]
+                }));
+                if index == 1 { response.set_delay(std::time::Duration::from_secs(3)) } else { response }
+            })
+            .mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let mut messages = initial_messages(
+            vec![ConversationTurn {
+                role: ConversationRole::User,
+                text: "x".repeat(230_000),
+            }],
+            "Continue".into(),
+        );
+        let (tx, _) = tokio::sync::mpsc::channel(16);
+        let policy = RunPolicy {
+            segment_turns: 20,
+            total_turns: 200,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        };
+        let stopped = AtomicBool::new(false);
+        let compact = compact_context_with_timeout(
+            &llm,
+            &mut messages,
+            &policy,
+            &tx,
+            &stopped,
+            std::time::Duration::from_secs(10),
+        );
+        let observe = async {
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                while !fourth_started.load(Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .is_ok()
+        };
+        let (result, refilled) = tokio::join!(compact, observe);
+        result.unwrap();
+        assert!(
+            refilled,
+            "completed sections must free slots while section one is still pending"
+        );
+        let checkpoint = &messages[1].content;
+        let positions: Vec<_> = (1..=4)
+            .map(|index| checkpoint.find(&format!("Fact-{index}")).unwrap())
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "checkpoint must retain source order"
+        );
     }
 
     #[test]
