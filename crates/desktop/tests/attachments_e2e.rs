@@ -26,7 +26,7 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
+async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeating_successes() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     assert!(std::process::Command::new("git")
@@ -57,11 +57,20 @@ async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
     let provider = MockServer::start().await;
     let summaries = Arc::new(Mutex::new(Vec::new()));
     let captured = summaries.clone();
+    let attempts = Arc::new(Mutex::new(std::collections::HashMap::<String, usize>::new()));
+    let observed_attempts = Arc::clone(&attempts);
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let summary = body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context");
         let answer = if summary {
             let dump = body["messages"][1]["content"].as_str().unwrap();
+            let mut calls = observed_attempts.lock().unwrap();
+            let count = calls.entry(dump.to_owned()).or_default();
+            *count += 1;
+            if *count == 1 && (dump.contains("BEGIN-17") || dump.contains("ORDERED SECTION NOTES TO RECONCILE")) {
+                return ResponseTemplate::new(if dump.contains("ORDERED SECTION NOTES TO RECONCILE") { 429 } else { 503 });
+            }
+            drop(calls);
             captured.lock().unwrap().push(dump.to_owned());
             ["BEGIN-17", "MIDDLE-42", "END-99"].into_iter().filter(|marker| dump.contains(marker)).collect::<Vec<_>>().join(", ") + " (section examined)"
         } else {
@@ -161,6 +170,20 @@ async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
         for marker in ["BEGIN-17", "MIDDLE-42", "END-99"] {
             assert!(dumps.iter().any(|dump| dump.contains(marker)));
         }
+    }
+    {
+        let calls = attempts.lock().unwrap();
+        assert_eq!(
+            calls.values().filter(|count| **count == 2).count(),
+            2,
+            "only the failed section and merge should retry"
+        );
+        assert!(calls.values().all(|count| *count <= 2));
+        assert_eq!(
+            calls.len(),
+            summaries.lock().unwrap().len(),
+            "successful summaries must not be repeated"
+        );
     }
     let requests = provider.received_requests().await.unwrap();
     assert!(requests.len() > 2);
