@@ -90,6 +90,147 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
 }
 
 #[tokio::test]
+async fn tool_evidence_survives_completed_runs_without_compaction() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body(
+                "observed_1",
+                "read_file",
+                json!({"file_path":"observation.txt"}),
+            ),
+            common::final_text_body("READY"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    let original = format!(
+        "{}historical receipt: copper-753",
+        "observed source line\n".repeat(5000)
+    );
+    std::fs::write(project.path().join("observation.txt"), &original).unwrap();
+    let evidence = project.path().join("evidence");
+    std::fs::create_dir(&evidence).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Read observation.txt then reply only READY".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            segment_turns: 20,
+            total_turns: 5,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, "READY");
+    let events = common::drain(&mut rx).await;
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })));
+    assert!(events.iter().any(|event| matches!(event, RunEvent::ToolCallFinished { output, .. } if output.ends_with("[Output truncated]") && !output.contains("copper-753"))));
+    std::fs::write(
+        project.path().join("observation.txt"),
+        "current receipt: silver-864",
+    )
+    .unwrap();
+    let snapshots: Vec<_> = std::fs::read_dir(&evidence)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "completed tool evidence must survive even without a checkpoint"
+    );
+    let records: Vec<serde_json::Value> = std::fs::read_to_string(&snapshots[0])
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(records[0]["message_type"]["ToolUse"][0]["id"], "observed_1");
+    let output = records[1]["message_type"]["ToolResult"][0]["function"]["arguments"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(output).unwrap()["content"],
+        original
+    );
+}
+
+#[tokio::test]
+async fn failed_tool_evidence_save_stops_before_model_continuation() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("read_1", "read_file", json!({"file_path":"note.txt"})),
+            common::final_text_body("Must not continue"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("note.txt"), "historical evidence").unwrap();
+    let evidence = project.path().join("evidence");
+    std::fs::write(&evidence, "a file cannot hold snapshots").unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Read note.txt".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            segment_turns: 20,
+            total_turns: 5,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await;
+    assert!(result.is_err());
+    let events = common::drain(&mut rx).await;
+    assert!(events.iter().any(|event| matches!(event, RunEvent::Failed { error } if error.starts_with("Tool evidence failed:"))));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, RunEvent::ToolCallFinished { ok: true, .. })),
+        "the completed read must be reported even when saving fails"
+    );
+    assert!(!has_finished(&events));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
     let server = MockServer::start().await;
     common::mount_script(
@@ -149,7 +290,11 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
         .map(|entry| entry.unwrap().path())
         .collect();
     snapshots.sort();
-    assert_eq!(snapshots.len(), 2);
+    assert_eq!(
+        snapshots.len(),
+        4,
+        "two completed calls and two checkpoints"
+    );
     let events = common::drain(&mut rx).await;
     let checkpoints: Vec<_> = events
         .iter()
@@ -166,14 +311,17 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
         checkpoints[1].contains(evidence.to_str().unwrap()),
         "later checkpoints must preserve the directory for all older evidence"
     );
-    assert!(checkpoints[1].contains(snapshots[1].to_str().unwrap()));
+    assert!(checkpoints[1].contains(snapshots[3].to_str().unwrap()));
     assert!(
-        std::fs::read_to_string(&snapshots[1])
+        std::fs::read_to_string(&snapshots[3])
             .unwrap()
-            .contains(snapshots[0].to_str().unwrap()),
+            .contains(snapshots[1].to_str().unwrap()),
         "the latest original must retain the earlier checkpoint reference"
     );
-    for (path, fact) in snapshots.iter().zip(["red-753", "blue-864"]) {
+    for (path, fact) in snapshots
+        .iter()
+        .zip(["red-753", "red-753", "blue-864", "blue-864"])
+    {
         let text = std::fs::read_to_string(path).unwrap();
         let records: Vec<serde_json::Value> = text
             .lines()

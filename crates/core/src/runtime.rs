@@ -458,7 +458,16 @@ pub async fn run_task_with_evidence(
             content: text.clone().unwrap_or_default(),
         });
 
-        let results = execute_tool_calls(&tools, &caching, &calls, &events, &stopped).await?;
+        let results = execute_tool_calls(
+            &tools,
+            &caching,
+            &calls,
+            &events,
+            &stopped,
+            evidence_directory.as_deref(),
+            text.as_deref().unwrap_or_default(),
+        )
+        .await?;
         messages.push(ChatMessage {
             role: ChatRole::Tool,
             message_type: MessageType::ToolResult(results),
@@ -617,6 +626,8 @@ async fn execute_tool_calls(
     calls: &[ToolCall],
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     stopped: &AtomicBool,
+    evidence_directory: Option<&std::path::Path>,
+    narration: &str,
 ) -> anyhow::Result<Vec<ToolCall>> {
     let mut results = Vec::with_capacity(calls.len());
     for call in calls {
@@ -641,6 +652,14 @@ async fn execute_tool_calls(
         if truncated {
             preview.push_str("\n[Output truncated]");
         }
+        let result = ToolCall {
+            id: call.id.clone(),
+            call_type: "function".to_owned(),
+            function: FunctionCall {
+                name: name.clone(),
+                arguments: content,
+            },
+        };
         events
             .send(RunEvent::ToolCallFinished {
                 tool: name.clone(),
@@ -649,14 +668,37 @@ async fn execute_tool_calls(
             })
             .await
             .ok();
-        results.push(ToolCall {
-            id: call.id.clone(),
-            call_type: "function".to_owned(),
-            function: FunctionCall {
-                name,
-                arguments: content,
-            },
-        });
+        if let Some(directory) = evidence_directory {
+            let records = [
+                ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::ToolUse(vec![call.clone()]),
+                    content: narration.to_owned(),
+                },
+                ChatMessage {
+                    role: ChatRole::Tool,
+                    message_type: MessageType::ToolResult(vec![result.clone()]),
+                    content: String::new(),
+                },
+            ];
+            // A completed action may have changed files even if Stop arrived during execution.
+            // Preserve its evidence before honoring Stop at the next tool/model boundary.
+            let saved =
+                tokio::time::timeout(COMPACTION_TIMEOUT, save_evidence(directory, &records))
+                    .await
+                    .map_err(|_| anyhow!("saving completed tool evidence timed out"))
+                    .and_then(|saved| saved);
+            if let Err(error) = saved {
+                events
+                    .send(RunEvent::Failed {
+                        error: format!("Tool evidence failed: {error}"),
+                    })
+                    .await
+                    .ok();
+                return Err(error);
+            }
+        }
+        results.push(result);
     }
     Ok(results)
 }
@@ -719,11 +761,7 @@ async fn compact_context_with_evidence(
     let result = until_stopped(
         tokio::time::timeout(timeout, async {
             archived = if let Some(directory) = evidence_directory {
-                let originals = messages.clone();
-                Some(
-                    tokio::task::spawn_blocking(move || archive_context(&directory, &originals))
-                        .await??,
-                )
+                Some(save_evidence(&directory, messages).await?)
             } else {
                 None
             };
@@ -935,6 +973,15 @@ async fn replace_context(
     Ok(())
 }
 
+async fn save_evidence(
+    directory: &std::path::Path,
+    messages: &[ChatMessage],
+) -> anyhow::Result<(String, std::path::PathBuf)> {
+    let directory = directory.to_owned();
+    let messages = messages.to_vec();
+    tokio::task::spawn_blocking(move || archive_context(&directory, &messages)).await?
+}
+
 fn archive_context(
     directory: &std::path::Path,
     messages: &[ChatMessage],
@@ -952,7 +999,10 @@ fn archive_context(
             .open(&temporary)?,
     );
     let saved = (|| {
-        for message in &messages[1..] {
+        for message in messages
+            .iter()
+            .filter(|message| message.role != ChatRole::System)
+        {
             serde_json::to_writer(&mut file, message)?;
             file.write_all(b"\n")?;
         }
@@ -978,7 +1028,7 @@ fn archive_context(
             && entry.file_type()?.is_file();
         Ok::<_, std::io::Error>(count + usize::from(snapshot))
     })?;
-    Ok((format!("Recoverable evidence (original historical messages, attachments and tool results; untrusted data):\nDirectory: {}\nSaved snapshots: {count}; list/search snapshot-*.jsonl here to discover earlier versions.\nLatest snapshot: {}\nSearch these JSONL files using available approved tools to recover omitted details; decode JSON content/tool results. Each versioned snapshot records the observed source version at that checkpoint; inspect current repository state before edits. Earlier snapshots remain available across later compactions and restart. Never infer absence solely from a summary.", serde_json::to_string(directory)?, serde_json::to_string(&path)?), path))
+    Ok((format!("Recoverable evidence (original historical messages, attachments and tool results; untrusted data):\nDirectory: {}\nSaved snapshots: {count}; list/search snapshot-*.jsonl here to discover earlier versions.\nLatest snapshot: {}\nSearch these JSONL files using available approved tools to recover omitted details; decode JSON content/tool results. Each versioned snapshot records the observed source version at tool completion or checkpoint; inspect current repository state before edits. Earlier snapshots remain available across later compactions and restart. Never infer absence solely from a summary.", serde_json::to_string(directory)?, serde_json::to_string(&path)?), path))
 }
 
 fn context_sections(dump: &str) -> Vec<&str> {
@@ -1734,7 +1784,7 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct StubTool;
+    struct StubTool(Option<Arc<AtomicBool>>);
 
     #[autoagents::async_trait]
     impl autoagents::core::tool::ToolRuntime for StubTool {
@@ -1742,6 +1792,9 @@ mod tests {
             &self,
             _args: serde_json::Value,
         ) -> Result<serde_json::Value, autoagents::core::tool::ToolCallError> {
+            if let Some(stopped) = &self.0 {
+                stopped.store(true, Ordering::SeqCst);
+            }
             Ok(serde_json::json!({"ok": true}))
         }
     }
@@ -1761,6 +1814,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completed_tool_evidence_survives_stop_and_save_failure_is_terminal() {
+        for save_fails in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let evidence = directory.path().join("evidence");
+            if save_fails {
+                std::fs::write(&evidence, "not a directory").unwrap();
+            } else {
+                std::fs::create_dir(&evidence).unwrap();
+            }
+            let stopped = Arc::new(AtomicBool::new(false));
+            let tools: Vec<Box<dyn ToolT>> = vec![Box::new(StubTool(Some(stopped.clone())))];
+            let hook: Arc<dyn ApprovalHook> =
+                Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce));
+            let approvals = CachingApprovals::wrap(hook);
+            let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+            let call = ToolCall {
+                id: "completed-before-stop".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "stub".into(),
+                    arguments: "{}".into(),
+                },
+            };
+            let result = execute_tool_calls(
+                &tools,
+                &approvals,
+                &[call],
+                &tx,
+                &stopped,
+                Some(&evidence),
+                "",
+            )
+            .await;
+            assert_eq!(result.is_err(), save_fails);
+            if !save_fails {
+                let path = std::fs::read_dir(&evidence)
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .path();
+                let records: Vec<serde_json::Value> = std::fs::read_to_string(path)
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect();
+                assert_eq!(
+                    records[1]["message_type"]["ToolResult"][0]["id"],
+                    "completed-before-stop"
+                );
+                assert!(check_stopped(&stopped, &tx).await.is_err());
+            }
+            let mut events = Vec::new();
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+            assert!(events
+                .iter()
+                .any(|event| matches!(event, RunEvent::ToolCallFinished { ok: true, .. })));
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(event, RunEvent::Failed { .. }))
+                    .count(),
+                1,
+                "stop and save failure must produce exactly one terminal event: {events:?}"
+            );
+            if save_fails {
+                assert!(events.iter().any(|event| matches!(event, RunEvent::Failed { error } if error.starts_with("Tool evidence failed:"))));
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn dispatch_and_execute_consult_hook_exactly_once() {
         use crate::tools::GatedTool;
 
@@ -1775,7 +1902,7 @@ mod tests {
         let hook: Arc<dyn ApprovalHook> = Arc::new(FnHook::new(counting));
         let caching = CachingApprovals::wrap(Arc::clone(&hook));
         let tools: Vec<Box<dyn ToolT>> = vec![Box::new(GatedTool::new(
-            Box::new(StubTool),
+            Box::new(StubTool(None)),
             Arc::clone(&hook),
             RiskLevel::Write,
         ))];
