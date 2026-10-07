@@ -66,6 +66,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             let dump = body["messages"][1]["content"].as_str().unwrap();
             let merge = dump.contains("ORDERED SECTION NOTES TO RECONCILE");
             assert_eq!(body["max_tokens"], if merge { 4096 } else { 2048 });
+            assert!(body["messages"][0]["content"].as_str().unwrap().contains("Preserve explicit subjects and objects"), "both section and merge requests must preserve action ownership");
             if merge {
                 assert!(body["messages"][0]["content"].as_str().unwrap().contains("recency alone is not a reason to discard it"));
             }
