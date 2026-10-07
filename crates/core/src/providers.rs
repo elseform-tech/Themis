@@ -1350,7 +1350,7 @@ mod tests {
         }
     }
 
-    // Snapshot of GET /zen/go/v1/models, verified against docs/go on 2026-09-23.
+    // Snapshot of GET /zen/go/v1/models, updated against docs/go on 2026-10-07.
     #[tokio::test]
     async fn every_go_catalog_model_uses_its_wire_protocol() {
         let server = MockServer::start().await;
@@ -1387,6 +1387,7 @@ mod tests {
             (
                 "/messages",
                 &[
+                    "claude-haiku-5-5",
                     "minimax-m3",
                     "minimax-m2.7",
                     "minimax-m2.5",
@@ -1453,7 +1454,7 @@ mod tests {
                 assert_eq!(request.body_json::<Value>().unwrap()["model"], *model);
             }
         }
-        assert_eq!(server.received_requests().await.unwrap().len(), 42);
+        assert_eq!(server.received_requests().await.unwrap().len(), 43);
     }
 
     #[test]

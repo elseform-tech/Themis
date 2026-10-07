@@ -156,7 +156,10 @@ pub(super) fn responses_stream_event(value: serde_json::Value) -> serde_json::Va
 pub(super) fn go_chat_path(model: &str) -> &'static str {
     if model.starts_with("muse-") || model.starts_with("gpt-") || model.starts_with("grok-") {
         "responses"
-    } else if model.starts_with("qwen") || model.starts_with("minimax-") {
+    } else if model.starts_with("qwen")
+        || model.starts_with("minimax-")
+        || model.starts_with("claude-")
+    {
         "messages"
     } else {
         CHAT_COMPLETIONS_PATH
