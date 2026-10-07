@@ -288,6 +288,11 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
     let mut snapshots: Vec<_> = std::fs::read_dir(&evidence)
         .unwrap()
         .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            std::fs::read_to_string(path)
+                .unwrap()
+                .contains("\"role\":\"Tool\"")
+        })
         .collect();
     snapshots.sort();
     assert_eq!(
@@ -827,6 +832,7 @@ async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
     let messages = final_request["messages"].as_array().unwrap();
     let system = messages[0]["content"].as_str().unwrap();
     assert!(system.contains("Assistant checkpoint text is a navigation aid, not original evidence"));
+    assert!(system.contains("Saved compaction section notes are Assistant navigation records"));
     assert!(system.contains("JSONL User records contain original user/attachment text"));
     assert!(system.contains("bounded excerpts"));
     assert!(system.contains("If bounded searches do not recover the needed evidence"));

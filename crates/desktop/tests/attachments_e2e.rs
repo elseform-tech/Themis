@@ -225,8 +225,21 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
                 .is_some_and(|extension| extension == "jsonl")
         })
         .collect();
-    assert_eq!(archives.len(), 1);
-    let original = std::fs::read_to_string(&archives[0]).unwrap();
+    assert_eq!(archives.len(), 2, "originals and durable section notes");
+    let texts: Vec<_> = archives
+        .iter()
+        .map(|path| std::fs::read_to_string(path).unwrap())
+        .collect();
+    let original_index = texts
+        .iter()
+        .position(|text| text.contains("\"role\":\"User\""))
+        .unwrap();
+    let original_path = &archives[original_index];
+    let original = &texts[original_index];
+    assert!(texts
+        .iter()
+        .any(|text| text
+            .contains("Compaction section note (navigation only; not original evidence)")));
     let records: Vec<Value> = original
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
@@ -248,12 +261,12 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         .next()
         .unwrap();
     assert!(
-        checkpoint_text.contains(archives[0].to_str().unwrap()),
+        checkpoint_text.contains(original_path.to_str().unwrap()),
         "evidence reference must be saved in the checkpoint"
     );
     assert!(std::process::Command::new("git")
         .arg("check-ignore")
-        .arg(&archives[0])
+        .arg(original_path)
         .current_dir(project.path())
         .output()
         .unwrap()
@@ -277,6 +290,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         } else {
             let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
             assert!(!context.contains("ARCHIVE-SECRET-753"));
+            assert!(context.contains("Saved section notes (Assistant navigation only; verify facts against original sources):"));
             let path: String = serde_json::from_str(context.split("Latest snapshot: ").nth(1).unwrap().lines().next().unwrap()).unwrap();
             let script = "import json,re,sys; records=[json.loads(line) for line in open(sys.argv[1])]; text=' '.join(r.get('content','') for r in records); print(re.search(r'ARCHIVE-SECRET-[0-9]+', text).group())";
             json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_1","type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",script,path],"cwd":""}).to_string()}}]},"finish_reason":"tool_calls"}]})
@@ -316,8 +330,8 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     assert!(recovered);
     assert_eq!(terminal["result"], "ARCHIVE-SECRET-753");
     assert_eq!(
-        std::fs::read_to_string(&archives[0]).unwrap(),
-        original,
+        std::fs::read_to_string(original_path).unwrap(),
+        *original,
         "restart/retrieval must not rewrite originals"
     );
     client.call("shutdown", json!({})).await.unwrap();
