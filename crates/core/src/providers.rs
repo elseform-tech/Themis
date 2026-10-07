@@ -545,7 +545,14 @@ impl CompatibleProvider {
 /// (Needed because themis-core's reqwest 0.12 error type differs from the reqwest
 /// 0.13 error the SDK's `From` impl targets.)
 fn transport_error(context: &str, err: reqwest::Error) -> LLMError {
-    LLMError::HttpError(format!("{context}: {err}"))
+    let category = if err.is_timeout() {
+        "request timed out: "
+    } else if err.is_connect() {
+        "connection failed: "
+    } else {
+        ""
+    };
+    LLMError::HttpError(format!("{category}{context}: {err}"))
 }
 
 /// Maps non-2xx responses to typed `LLMError`s (auth / rate-limit / generic).
@@ -973,6 +980,45 @@ mod tests {
     /// Serializes tests that touch `THEMIS_*` environment variables (`resolve`
     /// reads them, and process env is global across test threads).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn transport_failures_keep_native_retry_classification() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(1)))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(20))
+            .build()
+            .unwrap();
+        let timeout = client.get(server.uri()).send().await.unwrap_err();
+        assert!(
+            transport_error("chat request failed", timeout).is_retryable(),
+            "native timeout must reach the summarization retry predicate"
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let connect = client
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            transport_error("chat request failed", connect).is_retryable(),
+            "native connection failure must remain retryable"
+        );
+        let malformed = reqwest::Client::new()
+            .get("://invalid")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            !transport_error("chat request failed", malformed).is_retryable(),
+            "invalid URLs are not transient failures"
+        );
+    }
 
     fn user_message(content: &str) -> ChatMessage {
         ChatMessage {
