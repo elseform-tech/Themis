@@ -67,8 +67,11 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             let merge = dump.contains("ORDERED SECTION NOTES TO RECONCILE");
             assert_eq!(body["max_tokens"], if merge { 4096 } else { 2048 });
             assert!(body["messages"][0]["content"].as_str().unwrap().contains("Preserve explicit subjects and objects"), "both section and merge requests must preserve action ownership");
+            assert!(body["messages"][0]["content"].as_str().unwrap().contains("retrieval pointers do not replace required facts when tools or rereading are forbidden"), "both requests must preserve facts required for a no-reread task");
             if merge {
                 assert!(body["messages"][0]["content"].as_str().unwrap().contains("recency alone is not a reason to discard it"));
+                assert!(body["messages"][0]["content"].as_str().unwrap().contains("The new state must stand alone"));
+                assert!(!body["messages"][0]["content"].as_str().unwrap().contains("Move detailed chronology, completed-work logs, and background evidence out of the working state"));
             }
             let mut calls = observed_attempts.lock().unwrap();
             let count = calls.entry(dump.to_owned()).or_default();
