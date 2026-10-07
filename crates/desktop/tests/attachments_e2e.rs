@@ -164,7 +164,23 @@ async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
     }
     let requests = provider.received_requests().await.unwrap();
     assert!(requests.len() > 2);
+    let reconciliation = requests
+        .iter()
+        .find_map(|request| {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            body["messages"][1]["content"]
+                .as_str()
+                .is_some_and(|text| text.contains("ORDERED SECTION NOTES TO RECONCILE"))
+                .then_some(body)
+        })
+        .expect("the shared CLI/app path must reconcile multi-section context");
+    assert!(reconciliation["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("one coherent task state"));
     assert!(requests.last().unwrap().body.len() < 50_000);
+    assert!(String::from_utf8_lossy(&requests.last().unwrap().body)
+        .contains("Original source section index"));
     let history = state.get_thread_history(id).await.unwrap();
     assert_eq!(
         serde_json::to_value(&history[0]).unwrap()["attachments"],

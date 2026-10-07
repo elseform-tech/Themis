@@ -2,6 +2,16 @@
 
 Status: implementation and verification ongoing; do not claim completion or lossless summary retention.
 
+## Coherent task-state reconciliation experiment
+
+Multi-section compaction now submits all ordered section notes to one no-tools reconciliation request before replacing model context. The request preserves applicable earlier constraints, distinct relevant facts, completed actions, uncertainty and next steps; later actual corrections take precedence, while section-local pending/absence claims cannot erase completed work elsewhere. The complete deterministic source-range index is appended outside model output. Single-section compaction is unchanged. Input-budget rejection, empty reconciliation, provider failure, timeout and cancellation use the existing preservation/recovery paths. The 200,000 estimated-token budget and total 150-second deadline remain unchanged; the extra model call is within that deadline and can increase latency or omission risk. Semantic effectiveness and repeated real-model acceptance are pending.
+
+The regression failed on concatenation-only code, then passed with reconciliation. It checks that later sections refill slots while the first waits, that the reconciliation input follows source order rather than completion order, and that source-index entries survive a model output that omits them. A failure regression verifies empty or over-budget reconciliation does not publish replacement context. The shared production-server/CLI large-attachment test additionally verifies the reconciliation system request and deterministic index in the continuation wire request.
+
+Fresh `cargo test --workspace -- --skip entered_keys_survive_new_store_and_can_be_forgotten`: 289 passed, three ignored, one known synthetic Keychain case excluded; complete output inspected in `/tmp/themis-reconciliation-final-workspace.log`. `cargo test -p themis-desktop --test attachments_e2e` passed all three after adding the CLI wire assertions. Clippy (`--workspace --all-targets -- -D warnings`), formatting and diff checks passed; dashboard self-tests passed 13. Dashboard refresh `2026-10-07T18:09:30Z`: 103 files, overall means 2.49 cyclomatic/2.22 cognitive/73.7 maintainability; runtime including inline tests 2,066 LOC, 59 functions, 2.30/1.48/68.7. Runtime cognitive complexity rose 0.02 and maintainability fell 0.3; the additions cover actual reconciliation/failure behavior. Displayed Rust coverage 86.5% predates this change and is not new coverage evidence; frontend coverage unavailable. UI behavior was not changed or verified.
+
+The preceding production source-proof diagnostic (`f2d15201-e3f1-4db6-a099-21e2b3d09a34`) ended with a persisted provider HTTP 503 `service_overloaded` failure after 589.37 seconds including approval waits. Its observed tool results remain available, but no grounded final answer was produced. This is neither a retention pass nor evidence of an archival/compaction failure. `/tmp/themis-narrative-six/rehydration-grounded-events.json` records the terminal provider error. The reconciliation build is not yet deployed at this checkpoint.
+
 ## Harness references and next experiment (2026-10-07)
 
 These are implementation references, not retention benchmarks. Sources are pinned to inspected commits; none of these harnesses has been run against our six-part narrative or coding fixture.
