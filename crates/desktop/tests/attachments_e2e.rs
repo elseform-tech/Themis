@@ -37,7 +37,7 @@ async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
         .success());
     let sources = tempfile::tempdir().unwrap();
     let text = format!(
-        "BEGIN-17{}MIDDLE-42{}END-99",
+        "BEGIN-17{}MIDDLE-42 ARCHIVE-SECRET-753{}END-99",
         " apple".repeat(105_001),
         " apple".repeat(105_001)
     );
@@ -173,6 +173,114 @@ async fn cli_large_file_upload_compacts_once_and_preserves_binary_files() {
     assert!(serde_json::to_string(&history)
         .unwrap()
         .contains("control.txt"));
+    let evidence = project.path().join(".themis/context").join(id);
+    assert!(
+        evidence.is_dir(),
+        "compaction must expose recoverable originals in the project"
+    );
+    let archives: Vec<_> = std::fs::read_dir(&evidence)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
+        })
+        .collect();
+    assert_eq!(archives.len(), 1);
+    let original = std::fs::read_to_string(&archives[0]).unwrap();
+    let records: Vec<Value> = original
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(records.iter().any(|record| record["content"]
+        .as_str()
+        .is_some_and(|content| content.contains(&text))));
+    let checkpoint_text = history
+        .iter()
+        .filter_map(|item| match item {
+            themis_desktop::transcript::HistoryItem::Event { envelope } => match &envelope.event {
+                themis_desktop::types::ThreadEvent::ContextCheckpoint { summary } => {
+                    Some(summary.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .next()
+        .unwrap();
+    assert!(
+        checkpoint_text.contains(archives[0].to_str().unwrap()),
+        "evidence reference must be saved in the checkpoint"
+    );
+    assert!(std::process::Command::new("git")
+        .arg("check-ignore")
+        .arg(&archives[0])
+        .current_dir(project.path())
+        .output()
+        .unwrap()
+        .status
+        .success());
+    assert!(
+        !checkpoint_text.contains("ARCHIVE-SECRET-753"),
+        "the recovery probe must use a fact omitted by the summary"
+    );
+    client.call("shutdown", json!({})).await.unwrap();
+    task.await.unwrap().unwrap();
+    drop(state);
+    provider.reset().await;
+    Mock::given(method("POST")).respond_with(|request: &Request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        let result = messages.iter().find(|message| message["role"] == "tool");
+        let answer = if let Some(result) = result {
+            assert!(result.to_string().contains("ARCHIVE-SECRET-753"), "the real tool must recover the omitted fact");
+            json!({"choices":[{"message":{"role":"assistant","content":"ARCHIVE-SECRET-753"},"finish_reason":"stop"}]})
+        } else {
+            let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
+            assert!(!context.contains("ARCHIVE-SECRET-753"));
+            let path: String = serde_json::from_str(context.split("Latest snapshot: ").nth(1).unwrap().lines().next().unwrap()).unwrap();
+            let script = "import json,re,sys; records=[json.loads(line) for line in open(sys.argv[1])]; text=' '.join(r.get('content','') for r in records); print(re.search(r'ARCHIVE-SECRET-[0-9]+', text).group())";
+            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_1","type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",script,path],"cwd":""}).to_string()}}]},"finish_reason":"tool_calls"}]})
+        };
+        ResponseTemplate::new(200).set_body_json(answer)
+    }).mount(&provider).await;
+    let rebooted = AppState::new_for_test(data.path().join("settings.json"));
+    rebooted
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    rebooted.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(rebooted.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let mut events = client.subscribe().await.unwrap();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Recover the archived decision using the evidence references.","reasoningEffort":null}),
+    );
+    let mut recovered = false;
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            if event["name"] == "approval-request" {
+                cli(data.path(), "approve_action", json!({"threadId":id,"approvalId":event["payload"]["approval_id"],"decision":"once"}));
+            }
+            if event["name"] == "thread-event" {
+                let event = &event["payload"]["event"];
+                if event["kind"] == "tool_finished" && event["tool"] == "shell" {
+                    recovered = event["ok"] == true && event["output"].as_str().unwrap().contains("ARCHIVE-SECRET-753");
+                }
+                if event["kind"] == "finished" || event["kind"] == "failed" { break event.clone(); }
+            }
+        }
+    }).await.unwrap();
+    assert!(recovered);
+    assert_eq!(terminal["result"], "ARCHIVE-SECRET-753");
+    assert_eq!(
+        std::fs::read_to_string(&archives[0]).unwrap(),
+        original,
+        "restart/retrieval must not rewrite originals"
+    );
     client.call("shutdown", json!({})).await.unwrap();
     task.await.unwrap().unwrap();
 }

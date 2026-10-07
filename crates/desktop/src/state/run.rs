@@ -5,9 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use themis_core::providers::ProviderConfig;
-use themis_core::runtime::{
-    run_task_with_policy_and_catalog, CachingApprovals, RunEvent, RunPolicy,
-};
+use themis_core::runtime::{run_task_with_evidence, CachingApprovals, RunEvent, RunPolicy};
 use themis_core::skills::materialize_scripts;
 use themis_core::tools::{boxed_tools, ApprovalHook};
 
@@ -201,6 +199,10 @@ impl AppState {
             .cloned()
             .ok_or_else(|| "Run is no longer active".to_owned())?;
 
+        let evidence_directory = super::attachments::project_storage_directory(
+            &snapshot.work_root,
+            &["context", thread_id],
+        )?;
         let state = self.clone();
         let thread_id = thread_id.to_owned();
         let run_id = run_id.to_owned();
@@ -307,7 +309,7 @@ impl AppState {
                     &hook_task,
                     events_tx,
                     |events_tx| {
-                        run_task_with_policy_and_catalog(
+                        run_task_with_evidence(
                             llm,
                             themis_core::skills::filter_tools(tools, &skills),
                             themis_core::skills::compose_task(&task, &skills),
@@ -317,6 +319,7 @@ impl AppState {
                             events_tx,
                             stopped,
                             skill_catalog,
+                            Some(evidence_directory),
                         )
                     },
                 )

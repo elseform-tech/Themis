@@ -76,6 +76,105 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
 }
 
 #[tokio::test]
+async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("read_1", "read_file", json!({"file_path":"note.txt"})),
+            common::final_text_body("Read notes; originals remain recoverable."),
+            common::tool_call_body("read_2", "read_file", json!({"file_path":"other.txt"})),
+            common::final_text_body("Continue with the pending task."),
+            common::final_text_body("Done"),
+        ],
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let evidence = dir.path().join("evidence");
+    std::fs::create_dir(&evidence).unwrap();
+    std::fs::write(
+        dir.path().join("note.txt"),
+        "original tool evidence: red-753",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("other.txt"),
+        "second tool evidence: blue-864",
+    )
+    .unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(dir.path(), approvals.clone()).unwrap(),
+        "Read both notes".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            segment_turns: 1,
+            total_turns: 3,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence.clone()),
+    )
+    .await
+    .unwrap();
+    let mut snapshots: Vec<_> = std::fs::read_dir(&evidence)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    snapshots.sort();
+    assert_eq!(snapshots.len(), 2);
+    let events = common::drain(&mut rx).await;
+    let checkpoints: Vec<_> = events
+        .iter()
+        .filter_map(|event| {
+            if let RunEvent::ContextCheckpoint { summary } = event {
+                Some(summary)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(checkpoints.len(), 2);
+    assert!(
+        checkpoints[1].contains(evidence.to_str().unwrap()),
+        "later checkpoints must preserve the directory for all older evidence"
+    );
+    assert!(checkpoints[1].contains(snapshots[1].to_str().unwrap()));
+    assert!(
+        std::fs::read_to_string(&snapshots[1])
+            .unwrap()
+            .contains(snapshots[0].to_str().unwrap()),
+        "the latest original must retain the earlier checkpoint reference"
+    );
+    for (path, fact) in snapshots.iter().zip(["red-753", "blue-864"]) {
+        let text = std::fs::read_to_string(path).unwrap();
+        let records: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(
+            records
+                .iter()
+                .any(|record| record["role"] == "Tool" && record.to_string().contains(fact)),
+            "full original tool result must survive: {text}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn hard_cap_returns_natural_handoff_without_failing() {
     let server = MockServer::start().await;
     common::mount_script(

@@ -52,17 +52,19 @@ impl AppState {
     }
 }
 
-fn copy_files(root: &Path, paths: Vec<String>) -> Result<Vec<Attachment>, String> {
+pub(super) fn project_storage_directory(root: &Path, parts: &[&str]) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let mut directory = root.clone();
-    for part in [".themis", "attachments"] {
+    for part in std::iter::once(".themis").chain(parts.iter().copied()) {
         directory.push(part);
-        if !directory.exists() {
-            fs::create_dir(&directory).map_err(|e| e.to_string())?;
+        match fs::create_dir(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.to_string()),
         }
         directory = directory.canonicalize().map_err(|e| e.to_string())?;
         if !directory.starts_with(&root) {
-            return Err("Attachment directory is outside the project".into());
+            return Err("Storage directory is outside the project".into());
         }
     }
     let ignore = directory.join(".gitignore");
@@ -79,11 +81,16 @@ fn copy_files(root: &Path, paths: Vec<String>) -> Result<Vec<Attachment>, String
                 .is_symlink()
                 || fs::read_to_string(&ignore).map_err(|e| e.to_string())? != "*\n"
             {
-                return Err("Attachment storage must remain excluded from Git".into());
+                return Err("Project storage must remain excluded from Git".into());
             }
         }
         Err(error) => return Err(error.to_string()),
     }
+    Ok(directory)
+}
+
+fn copy_files(root: &Path, paths: Vec<String>) -> Result<Vec<Attachment>, String> {
+    let directory = project_storage_directory(root, &["attachments"])?;
     // Validate the whole selection before copying any file.
     let sources = paths
         .iter()
@@ -184,4 +191,29 @@ pub(super) fn attachment_context(
         ));
     }
     Ok((turns, manifest))
+}
+
+#[cfg(test)]
+mod storage_tests {
+    #[test]
+    fn concurrent_first_runs_share_project_storage() {
+        let project = tempfile::tempdir().unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
+        let runs: Vec<_> = (0..16)
+            .map(|index| {
+                let root = project.path().to_owned();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    super::project_storage_directory(&root, &["context", &format!("chat-{index}")])
+                })
+            })
+            .collect();
+        for run in runs {
+            assert!(
+                run.join().unwrap().is_ok(),
+                "concurrent chats must not reject shared directory creation"
+            );
+        }
+    }
 }
