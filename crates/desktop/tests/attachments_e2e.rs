@@ -64,6 +64,11 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         let summary = body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context");
         let answer = if summary {
             let dump = body["messages"][1]["content"].as_str().unwrap();
+            let merge = dump.contains("ORDERED SECTION NOTES TO RECONCILE");
+            assert_eq!(body["max_tokens"], if merge { 4096 } else { 2048 });
+            if merge {
+                assert!(body["messages"][0]["content"].as_str().unwrap().contains("recency alone is not a reason to discard it"));
+            }
             let mut calls = observed_attempts.lock().unwrap();
             let count = calls.entry(dump.to_owned()).or_default();
             *count += 1;

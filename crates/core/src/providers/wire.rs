@@ -40,6 +40,8 @@ pub(super) struct WireChatResponse {
 /// Single chat choice of [`WireChatResponse`].
 #[derive(Deserialize)]
 pub(super) struct WireChoice {
+    #[serde(default)]
+    pub(super) finish_reason: Option<String>,
     pub(super) message: WireChoiceMessage,
 }
 
@@ -244,6 +246,7 @@ pub(super) fn messages_response(value: serde_json::Value) -> Result<WireChatResp
     }
     Ok(WireChatResponse {
         choices: vec![WireChoice {
+            finish_reason: None,
             message: WireChoiceMessage {
                 content: Some(text),
                 tool_calls: Some(calls),

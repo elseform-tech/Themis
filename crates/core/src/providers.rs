@@ -55,8 +55,8 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use autoagents::llm::{
     chat::{
-        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, StreamChunk,
-        StructuredOutputFormat, Tool, Usage,
+        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, SamplingOverrides,
+        StreamChunk, StructuredOutputFormat, Tool, Usage,
     },
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
@@ -483,8 +483,9 @@ impl CompatibleProvider {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
         stream: bool,
+        sampling: Option<&SamplingOverrides>,
     ) -> Result<reqwest::RequestBuilder, LLMError> {
-        if self.uses_responses() {
+        let mut body = if self.uses_responses() {
             let mut input = Vec::new();
             for message in to_wire_messages(messages)? {
                 if let Some(id) = message.tool_call_id {
@@ -506,24 +507,46 @@ impl CompatibleProvider {
             if let Some(effort) = &self.reasoning_effort {
                 body["reasoning"] = serde_json::json!({"effort":effort});
             }
-            return Ok(self.post("responses").json(&body));
+            body
+        } else if self.uses_messages() {
+            messages_body(&self.model, messages, tools, stream)?
+        } else {
+            serde_json::to_value(WireChatRequest {
+                model: &self.model,
+                messages: to_wire_messages(messages)?,
+                stream,
+                reasoning_effort: self.reasoning_effort.as_deref(),
+                max_tokens: None,
+                temperature: None,
+                tools,
+            })?
+        };
+        if let Some(sampling) = sampling {
+            if let Some(limit) = sampling.max_tokens {
+                let key = if self.uses_responses() {
+                    "max_output_tokens"
+                } else {
+                    "max_tokens"
+                };
+                body[key] = limit.into();
+            }
+            if let Some(temperature) = sampling.temperature {
+                body["temperature"] = temperature.into();
+            }
+            if let Some(top_p) = sampling.top_p {
+                body["top_p"] = top_p.into();
+            }
         }
-        if self.uses_messages() {
-            return Ok(self
-                .post("messages")
+        let request = if self.uses_responses() {
+            self.post("responses")
+        } else if self.uses_messages() {
+            self.post("messages")
                 .header("anthropic-version", "2023-06-01")
                 .header("x-api-key", &self.api_key)
-                .json(&messages_body(&self.model, messages, tools, stream)?));
-        }
-        Ok(self.post(CHAT_COMPLETIONS_PATH).json(&WireChatRequest {
-            model: &self.model,
-            messages: to_wire_messages(messages)?,
-            stream,
-            reasoning_effort: self.reasoning_effort.as_deref(),
-            max_tokens: None,
-            temperature: None,
-            tools,
-        }))
+        } else {
+            self.post(CHAT_COMPLETIONS_PATH)
+        };
+        Ok(request.json(&body))
     }
 
     /// POST builder for `{base}/{path}` with auth, Themis user agent, and extras.
@@ -595,7 +618,18 @@ impl ChatProvider for CompatibleProvider {
         &self,
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
+        json_schema: Option<StructuredOutputFormat>,
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        self.chat_with_tools_and_sampling(messages, tools, json_schema, None)
+            .await
+    }
+
+    async fn chat_with_tools_and_sampling(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
         _json_schema: Option<StructuredOutputFormat>,
+        sampling: Option<&SamplingOverrides>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
         if self.api_key.is_empty() {
             return Err(LLMError::missing_api_key(format!(
@@ -604,7 +638,7 @@ impl ChatProvider for CompatibleProvider {
             )));
         }
         let response = self
-            .chat_request(messages, tools, false)?
+            .chat_request(messages, tools, false, sampling)?
             .send()
             .await
             .map_err(|err| transport_error("chat request failed", err))?;
@@ -635,6 +669,9 @@ impl ChatProvider for CompatibleProvider {
                     message: format!("{} returned no choices", self.provider_name),
                     raw_response: String::new(),
                 })?;
+        if choice.finish_reason.as_deref() == Some("length") {
+            return Err(LLMError::Generic("Provider response was truncated".into()));
+        }
         Ok(Box::new(CompatibleChatResponse {
             text: choice.message.content,
             tool_calls: choice.message.tool_calls,
@@ -651,7 +688,7 @@ impl ChatProvider for CompatibleProvider {
         let messages_api = self.uses_messages();
         let responses_api = self.uses_responses();
         let response = self
-            .chat_request(messages, tools, true)?
+            .chat_request(messages, tools, true, None)?
             .send()
             .await
             .map_err(|error| transport_error("stream request failed", error))?;
@@ -1108,6 +1145,82 @@ mod tests {
                 "thread-123"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn sampling_output_limit_reaches_each_protocol_without_changing_defaults() {
+        use autoagents::llm::chat::SamplingOverrides;
+        for (model, endpoint, key, response, default_limit) in [
+            (
+                "mimo-v2.6-flash",
+                "/chat/completions",
+                "max_tokens",
+                json!({"choices":[{"message":{"content":"State"},"finish_reason":"stop"}]}),
+                None,
+            ),
+            (
+                "muse-spark-1.3-contributor",
+                "/responses",
+                "max_output_tokens",
+                json!({"output":[{"type":"message","content":[{"type":"output_text","text":"State"}]}]}),
+                None,
+            ),
+            (
+                "claude-haiku-4-5",
+                "/messages",
+                "max_tokens",
+                json!({"content":[{"type":"text","text":"State"}],"stop_reason":"end_turn"}),
+                Some(16384),
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path(endpoint))
+                .respond_with(ResponseTemplate::new(200).set_body_json(response))
+                .expect(2)
+                .mount(&server)
+                .await;
+            let provider: Arc<dyn LLMProvider> = Arc::new(CompatibleProvider::go(
+                "synthetic".into(),
+                model.into(),
+                Some(server.uri()),
+                Some("summary-test".into()),
+            ));
+            let messages = [user_message("Summarize")];
+            provider
+                .chat_and_sampling(
+                    &messages,
+                    None,
+                    Some(&SamplingOverrides::with_max_tokens(4096)),
+                )
+                .await
+                .unwrap();
+            provider.chat(&messages, None).await.unwrap();
+            let requests = server.received_requests().await.unwrap();
+            let bounded: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+            let ordinary: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+            assert_eq!(bounded[key], 4096, "{model}");
+            assert_eq!(ordinary[key].as_u64(), default_limit, "{model}");
+            assert_eq!(requests[0].headers[GO_SESSION_HEADER], "summary-test");
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_completions_rejects_truncated_checkpoint_text() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Partial state"},"finish_reason":"length"}]})))
+            .mount(&server).await;
+        let provider = CompatibleProvider::go(
+            "synthetic".into(),
+            "mimo-v2.6-flash".into(),
+            Some(server.uri()),
+            None,
+        );
+        assert!(provider
+            .chat(&[user_message("Summarize")], None)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
