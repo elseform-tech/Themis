@@ -614,3 +614,102 @@ async fn stop_cancels_stalled_compaction_provider_request() {
 async fn stop_cancels_stalled_answer_provider_request() {
     stopped_provider_request_finishes(false).await;
 }
+
+#[tokio::test]
+async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
+    use wiremock::{matchers::method, Mock, Request, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            let messages = body["messages"].as_array().unwrap();
+            let summary_request = messages.iter().any(|message| {
+                message["content"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("CONVERSATION TO SUMMARIZE"))
+            });
+            let answer = if summary_request {
+                common::final_text_body("Read completed. Reply READY next; no implementation yet.")
+            } else if messages.len() == 2 {
+                common::tool_call_body("read_1", "read_file", json!({"file_path":"repository.txt"}))
+            } else {
+                common::final_text_body("READY")
+            };
+            ResponseTemplate::new(200).set_body_json(answer)
+        })
+        .mount(&server)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let source = "Observed repository evidence. ".repeat(32_000);
+    std::fs::write(project.path().join("repository.txt"), &source).unwrap();
+    let evidence = project.path().join("evidence");
+    std::fs::create_dir(&evidence).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, _rx) = tokio::sync::mpsc::channel(1024);
+    let answer = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Read repository.txt once, then reply READY without editing.".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            segment_turns: 20,
+            total_turns: 4,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "READY");
+    let requests = server.received_requests().await.unwrap();
+    let final_request: serde_json::Value =
+        serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    let messages = final_request["messages"].as_array().unwrap();
+    let result = messages
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .expect("completed tool result must remain in the continuation wire request");
+    assert_eq!(result["tool_call_id"], "read_1");
+    assert!(
+        messages.iter().any(
+            |message| message["tool_calls"].as_array().is_some_and(|calls| calls
+                .iter()
+                .any(|call| call["id"] == "read_1" && call["function"]["name"] == "read_file"))
+        ),
+        "offloaded results must preserve their matching invocation"
+    );
+    let receipt: serde_json::Value =
+        serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+    assert_eq!(receipt["result_offloaded"], true);
+    assert_eq!(receipt["success"], true);
+    let path = std::path::Path::new(receipt["original_snapshot"].as_str().unwrap());
+    assert!(path.starts_with(&evidence));
+    let originals: Vec<serde_json::Value> = std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let raw = originals
+        .iter()
+        .find(|message| message["role"] == "Tool")
+        .unwrap()["message_type"]["ToolResult"][0]["function"]["arguments"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(raw).unwrap()["content"],
+        source
+    );
+    assert!(serde_json::to_vec(&final_request).unwrap().len() < 100_000);
+}

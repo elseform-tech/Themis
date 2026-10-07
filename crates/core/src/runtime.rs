@@ -737,7 +737,7 @@ async fn compact_context_with_evidence(
         Ok(Ok(())) => Ok(()),
         failure => {
             check_stopped(stopped, events).await?;
-            if let Some((evidence, _)) = archived {
+            if let Some((evidence, path)) = archived {
                 let reason = if failure.is_err() {
                     "summarization exceeded its deadline"
                 } else {
@@ -745,7 +745,7 @@ async fn compact_context_with_evidence(
                 };
                 let summary = format!("Working summary unavailable: {reason}. The complete originals are saved below. Before substantive continuation, retrieve the relevant original goals, constraints, decisions, evidence and unresolved work using approved tools. Do not treat this checkpoint as an exhaustive summary or invent missing facts.\n{evidence}");
                 let split = context_split(messages, policy);
-                replace_context(messages, policy, split, summary, events).await
+                replace_context(messages, policy, split, summary, events, Some(&path)).await
             } else {
                 failure
                     .map_err(|_| anyhow!("summarization timed out before completing checkpoint"))?
@@ -833,11 +833,20 @@ async fn compact_context_inner(
     if summary.trim().is_empty() {
         anyhow::bail!("summarizer returned an empty checkpoint");
     }
+    let original_snapshot = evidence.as_ref().map(|(_, path)| path.clone());
     if let Some((evidence, _)) = evidence {
         summary.push_str("\n\n");
         summary.push_str(&evidence);
     }
-    replace_context(messages, policy, split, summary, events).await
+    replace_context(
+        messages,
+        policy,
+        split,
+        summary,
+        events,
+        original_snapshot.as_deref(),
+    )
+    .await
 }
 
 fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
@@ -861,16 +870,43 @@ async fn replace_context(
     split: usize,
     summary: String,
     events: &tokio::sync::mpsc::Sender<RunEvent>,
+    original_snapshot: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    let active_request = messages
+    let active_index = messages
         .iter()
-        .rposition(|message| matches!(message.role, ChatRole::User))
+        .rposition(|message| matches!(message.role, ChatRole::User));
+    let active_request = active_index
         .filter(|index| *index < split)
         .map(|index| messages[index].clone());
+    let completed = original_snapshot.filter(|_| split == messages.len()).and_then(|path| {
+        let last = messages.len().checked_sub(1)?;
+        if !active_index.is_some_and(|index| index < last) || last == 0 || !matches!(messages[last - 1].message_type, MessageType::ToolUse(_)) {
+            return None;
+        }
+        let MessageType::ToolResult(results) = &messages[last].message_type else { return None; };
+        let results = results.iter().map(|result| {
+            let mut receipt = serde_json::json!({"result_offloaded":true,"original_snapshot":path,"original_result_bytes":result.function.arguments.len(),"note":"This tool call has already returned; its full original output is archived. Completion does not imply success. Continue from completed work, retrieving bounded relevant excerpts if needed; do not repeat a full read merely because its output was compacted."});
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&result.function.arguments) {
+                for field in ["success", "ok", "exit_code", "path", "error"] {
+                    if let Some(value) = value.get(field).filter(|value| value.is_boolean() || value.is_number() || value.as_str().is_some_and(|text| text.len() <= 2048)) {
+                        receipt[field] = value.clone();
+                    }
+                }
+            }
+            let mut result = result.clone();
+            result.function.arguments = receipt.to_string();
+            result
+        }).collect();
+        Some([messages[last - 1].clone(), ChatMessage { role: ChatRole::Tool, message_type: MessageType::ToolResult(results), content: String::new() }])
+    });
     let retained = &messages[split..];
     let mut durable_summary = summary.clone();
     durable_summary.push_str("\nRecent completed context:\n");
-    for message in active_request.iter().chain(retained) {
+    for message in active_request
+        .iter()
+        .chain(completed.iter().flatten())
+        .chain(retained)
+    {
         durable_summary.push_str(&serde_json::to_string(message)?);
         durable_summary.push('\n');
     }
@@ -882,6 +918,7 @@ async fn replace_context(
         message_type: MessageType::Text,
         content: format!("Earlier context checkpoint (historical; later user requests take precedence):\n{summary}"),
     });
+    compacted.extend(completed.into_iter().flatten());
     compacted.extend_from_slice(retained);
     if estimated_tokens(&compacted) > policy.context_token_budget {
         anyhow::bail!("checkpoint and active request exceed the context budget; original conversation preserved");
