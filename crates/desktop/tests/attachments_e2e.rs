@@ -213,6 +213,13 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     assert!(requests.last().unwrap().body.len() < 50_000);
     assert!(String::from_utf8_lossy(&requests.last().unwrap().body)
         .contains("Original source section index"));
+    let final_request: serde_json::Value =
+        serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    let system = final_request["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("r.get('role')=='User'"));
+    assert!(system.contains("enumerate(p.open(),1)"));
+    assert!(system.contains("r['content'][:4500]"));
+    assert!(system.contains("Root-scoped file tools require relative paths"));
     let history = state.get_thread_history(id).await.unwrap();
     assert_eq!(
         serde_json::to_value(&history[0]).unwrap()["attachments"],
