@@ -8,7 +8,7 @@ use crate::skills::Skill;
 use anyhow::{bail, Context};
 pub use connections::McpServer;
 pub use hooks::Hook;
-pub use marketplace::Marketplace;
+pub use marketplace::{ImportComponent, ImportPreview, ImportReport, Marketplace};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -46,6 +46,8 @@ pub struct PluginSpec {
     pub executable_files: Vec<String>,
     #[serde(default)]
     pub unsupported: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub import_issues: Vec<ImportComponent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

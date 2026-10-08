@@ -2,6 +2,99 @@ use super::*;
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportComponent {
+    pub kind: String,
+    pub name: String,
+    pub status: String,
+    pub field: Option<String>,
+    pub reason: Option<String>,
+    pub remedy: Option<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportReport {
+    pub status: String,
+    pub components: Vec<ImportComponent>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportPreview {
+    pub spec: PluginSpec,
+    pub report: ImportReport,
+}
+impl ImportPreview {
+    pub fn from_spec(spec: PluginSpec) -> anyhow::Result<Self> {
+        validate(&spec)?;
+        Ok(Self::new(spec))
+    }
+    fn new(spec: PluginSpec) -> Self {
+        let mut components = spec.import_issues.clone();
+        for (kind, names) in [
+            (
+                "skill",
+                spec.skills.iter().map(|s| s.id.clone()).collect::<Vec<_>>(),
+            ),
+            ("mcp", spec.mcp.keys().cloned().collect()),
+            ("hook", spec.hooks.iter().map(|h| h.name.clone()).collect()),
+        ] {
+            components.extend(names.into_iter().map(|name| ImportComponent {
+                kind: kind.into(),
+                name,
+                status: "supported".into(),
+                field: None,
+                reason: None,
+                remedy: None,
+            }));
+        }
+        components.extend(spec.unsupported.iter().map(|reason| ImportComponent {
+            kind: "package".into(),
+            name: spec.name.clone(),
+            status: "unsupported".into(),
+            field: None,
+            reason: Some(reason.clone()),
+            remedy: Some(
+                "Remove the unsupported component or install only supported components".into(),
+            ),
+        }));
+        let status = if components.iter().any(|c| c.status != "supported") {
+            "partial"
+        } else {
+            "supported"
+        };
+        Self {
+            spec,
+            report: ImportReport {
+                status: status.into(),
+                components,
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+struct UnsupportedMcp {
+    field: String,
+    reason: &'static str,
+    remedy: &'static str,
+}
+impl std::fmt::Display for UnsupportedMcp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}. {}", self.field, self.reason, self.remedy)
+    }
+}
+impl std::error::Error for UnsupportedMcp {}
+fn unsupported_mcp(
+    field: impl Into<String>,
+    reason: &'static str,
+    remedy: &'static str,
+) -> anyhow::Error {
+    UnsupportedMcp {
+        field: field.into(),
+        reason,
+        remedy,
+    }
+    .into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Marketplace {
     pub name: String,
     pub source: String,
@@ -19,13 +112,37 @@ impl PluginStore {
         path: &Path,
         name: Option<&str>,
     ) -> anyhow::Result<Plugin> {
+        self.import_path_with_options(scope, path, name, false)
+    }
+    pub fn import_path_with_options(
+        &self,
+        scope: &str,
+        path: &Path,
+        name: Option<&str>,
+        allow_partial: bool,
+    ) -> anyhow::Result<Plugin> {
+        self.save(scope, self.path_spec(path, name, allow_partial)?, None)
+    }
+    /// Inspect compatibility without registering or executing plugin capabilities.
+    pub fn inspect_path(&self, path: &Path, name: Option<&str>) -> anyhow::Result<ImportPreview> {
+        Ok(ImportPreview::new(self.path_spec(path, name, true)?))
+    }
+    fn path_spec(
+        &self,
+        path: &Path,
+        name: Option<&str>,
+        allow_partial: bool,
+    ) -> anyhow::Result<PluginSpec> {
         let path = path.canonicalize().context("Import path is unavailable")?;
         let mut spec = if path.is_dir() || path.file_name().is_some_and(|s| s == "SKILL.md") {
-            import_directory(if path.is_dir() {
-                &path
-            } else {
-                path.parent().context("Missing skill directory")?
-            })?
+            import_directory(
+                if path.is_dir() {
+                    &path
+                } else {
+                    path.parent().context("Missing skill directory")?
+                },
+                allow_partial,
+            )?
         } else {
             let bytes = fs::read(&path)?;
             if bytes.len() > 8 * 1024 * 1024 {
@@ -40,7 +157,7 @@ impl PluginStore {
                 serde_json::from_value(value)?
             } else {
                 let name = name.unwrap_or("imported-mcp");
-                mcp_spec(name, &value)?
+                mcp_spec(name, &value, allow_partial)?
             }
         };
         if let Some(name) = name {
@@ -52,21 +169,46 @@ impl PluginStore {
             reference: None,
             subdirectory: None,
         });
-        self.save(scope, spec, None)
+        validate(&spec)?;
+        if !allow_partial && !spec.import_issues.is_empty() {
+            bail!("Plugin contains unsupported components; inspect it and explicitly select partial installation");
+        }
+        Ok(spec)
     }
     pub fn import_mcp_json(&self, scope: &str, name: &str, input: &str) -> anyhow::Result<Plugin> {
+        self.import_mcp_json_with_options(scope, name, input, false)
+    }
+    pub fn import_mcp_json_with_options(
+        &self,
+        scope: &str,
+        name: &str,
+        input: &str,
+        allow_partial: bool,
+    ) -> anyhow::Result<Plugin> {
+        self.save(scope, self.mcp_json_spec(name, input, allow_partial)?, None)
+    }
+    pub fn inspect_mcp_json(&self, name: &str, input: &str) -> anyhow::Result<ImportPreview> {
+        Ok(ImportPreview::new(self.mcp_json_spec(name, input, true)?))
+    }
+    fn mcp_json_spec(
+        &self,
+        name: &str,
+        input: &str,
+        allow_partial: bool,
+    ) -> anyhow::Result<PluginSpec> {
         if input.len() > 1024 * 1024 {
             bail!("MCP configuration exceeds 1 MiB");
         }
         let value: Value = serde_json::from_str(input).context("Invalid MCP JSON")?;
-        let mut spec = mcp_spec(name, &value)?;
+        let mut spec = mcp_spec(name, &value, allow_partial)?;
         spec.origin = Some(PluginOrigin {
             kind: "mcp-json".into(),
             location: "pasted configuration".into(),
             reference: None,
             subdirectory: None,
         });
-        self.save(scope, spec, None)
+        validate(&spec)?;
+        Ok(spec)
     }
     pub async fn import_repository(
         &self,
@@ -76,10 +218,34 @@ impl PluginStore {
         reference: Option<&str>,
         subdirectory: Option<&str>,
     ) -> anyhow::Result<Plugin> {
+        self.import_repository_with_options(scope, name, source, reference, subdirectory, false)
+            .await
+    }
+    pub async fn import_repository_with_options(
+        &self,
+        scope: &str,
+        name: &str,
+        source: &str,
+        reference: Option<&str>,
+        subdirectory: Option<&str>,
+        allow_partial: bool,
+    ) -> anyhow::Result<Plugin> {
         let spec = self
-            .preview_repository(name, source, reference, subdirectory)
+            .repository_spec(name, source, reference, subdirectory, allow_partial)
             .await?;
         self.save(scope, spec, None)
+    }
+    pub async fn inspect_repository(
+        &self,
+        name: &str,
+        source: &str,
+        reference: Option<&str>,
+        subdirectory: Option<&str>,
+    ) -> anyhow::Result<ImportPreview> {
+        Ok(ImportPreview::new(
+            self.repository_spec(name, source, reference, subdirectory, true)
+                .await?,
+        ))
     }
     pub async fn preview_repository(
         &self,
@@ -87,6 +253,17 @@ impl PluginStore {
         source: &str,
         reference: Option<&str>,
         subdirectory: Option<&str>,
+    ) -> anyhow::Result<PluginSpec> {
+        self.repository_spec(name, source, reference, subdirectory, false)
+            .await
+    }
+    async fn repository_spec(
+        &self,
+        name: &str,
+        source: &str,
+        reference: Option<&str>,
+        subdirectory: Option<&str>,
+        allow_partial: bool,
     ) -> anyhow::Result<PluginSpec> {
         if !name.is_empty() && !safe_name(name) {
             bail!("Invalid plugin name");
@@ -108,7 +285,7 @@ impl PluginStore {
             if !directory.starts_with(staging.canonicalize()?) {
                 bail!("Plugin directory escapes repository");
             }
-            let mut spec = import_directory(&directory)?;
+            let mut spec = import_directory(&directory, allow_partial)?;
             if !name.is_empty() {
                 spec.name = name.into();
             } else if directory == staging.canonicalize()?
@@ -255,12 +432,24 @@ impl PluginStore {
         marketplace: &str,
         name: &str,
     ) -> anyhow::Result<Plugin> {
+        self.install_with_options(scope, marketplace, name, false)
+            .await
+    }
+    pub async fn install_with_options(
+        &self,
+        scope: &str,
+        marketplace: &str,
+        name: &str,
+        allow_partial: bool,
+    ) -> anyhow::Result<Plugin> {
         let refresh = self
             .registry(scope)?
             .current
             .get(name)
             .is_some_and(|p| p.source.as_deref() == Some(marketplace));
-        let mut spec = self.marketplace_spec(marketplace, name, refresh).await?;
+        let mut spec = self
+            .marketplace_spec(marketplace, name, refresh, allow_partial)
+            .await?;
         self.mutate(scope, |registry| {
             let previous = registry.current.get(name);
             if previous.is_some_and(|p| p.source.as_deref() != Some(marketplace)) {
@@ -302,13 +491,24 @@ impl PluginStore {
     }
     /// Read supported package contents without registering or enabling any capability.
     pub async fn preview(&self, marketplace: &str, name: &str) -> anyhow::Result<PluginSpec> {
-        self.marketplace_spec(marketplace, name, false).await
+        self.marketplace_spec(marketplace, name, false, false).await
+    }
+    pub async fn inspect_marketplace(
+        &self,
+        marketplace: &str,
+        name: &str,
+    ) -> anyhow::Result<ImportPreview> {
+        Ok(ImportPreview::new(
+            self.marketplace_spec(marketplace, name, false, true)
+                .await?,
+        ))
     }
     async fn marketplace_spec(
         &self,
         marketplace: &str,
         name: &str,
         refresh: bool,
+        allow_partial: bool,
     ) -> anyhow::Result<PluginSpec> {
         if !safe_name(name) {
             bail!("Invalid plugin name");
@@ -377,7 +577,7 @@ impl PluginStore {
                     staging
                 }
             };
-            let mut spec = import_directory(&directory)?;
+            let mut spec = import_directory(&directory, allow_partial)?;
             spec.name = name.into();
             spec.package_kind = Some("plugin".into());
             for field in [
@@ -508,7 +708,7 @@ async fn run_git(args: &[&str], directory: Option<&Path>) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
+fn import_directory(root: &Path, allow_partial: bool) -> anyhow::Result<PluginSpec> {
     let manifest_path = root.join(".claude-plugin/plugin.json");
     let manifest: Value = if manifest_path.exists() {
         serde_json::from_str(&fs::read_to_string(&manifest_path)?)?
@@ -607,11 +807,11 @@ fn import_directory(root: &Path) -> anyhow::Result<PluginSpec> {
     if let Some(raw) = spec.files.get(".mcp.json") {
         let config: Value = serde_json::from_str(raw)?;
         let servers = config.get("mcpServers").unwrap_or(&config);
-        import_mcp(servers, false, &mut spec.mcp)?;
+        import_mcp_components(servers, false, &mut spec, allow_partial)?;
     }
     if let Some(servers) = manifest.get("mcpServers") {
         if servers.is_object() {
-            import_mcp(servers, false, &mut spec.mcp)?;
+            import_mcp_components(servers, false, &mut spec, allow_partial)?;
         } else {
             spec.unsupported
                 .push("External MCP configuration paths".into());
@@ -758,7 +958,7 @@ pub(super) fn parse_skill(content: &str) -> anyhow::Result<(BTreeMap<String, Str
     }
     Ok((metadata, tail[end + 4..].trim().into()))
 }
-fn mcp_spec(name: &str, value: &Value) -> anyhow::Result<PluginSpec> {
+fn mcp_spec(name: &str, value: &Value, allow_partial: bool) -> anyhow::Result<PluginSpec> {
     let (servers, opencode) = if let Some(servers) = value.get("mcpServers") {
         if value
             .as_object()
@@ -783,11 +983,45 @@ fn mcp_spec(name: &str, value: &Value) -> anyhow::Result<PluginSpec> {
         name: name.into(),
         ..Default::default()
     };
-    import_mcp(servers, opencode, &mut spec.mcp)?;
-    if spec.mcp.is_empty() {
+    import_mcp_components(servers, opencode, &mut spec, allow_partial)?;
+    if spec.mcp.is_empty() && spec.import_issues.is_empty() {
         bail!("MCP configuration has no connections");
     }
     Ok(spec)
+}
+fn import_mcp_components(
+    value: &Value,
+    opencode: bool,
+    spec: &mut PluginSpec,
+    allow_partial: bool,
+) -> anyhow::Result<()> {
+    let root = if opencode { "mcp" } else { "mcpServers" };
+    for (name, raw) in value.as_object().context("Invalid MCP configuration")? {
+        match import_mcp_server(name, raw, opencode) {
+            Ok(server) => {
+                if spec.mcp.insert(name.clone(), server).is_some() {
+                    bail!("Duplicate MCP connection '{name}'");
+                }
+            }
+            Err(error) => {
+                if allow_partial {
+                    if let Some(issue) = error.downcast_ref::<UnsupportedMcp>() {
+                        spec.import_issues.push(ImportComponent {
+                            kind: "mcp".into(),
+                            name: name.clone(),
+                            status: "unsupported".into(),
+                            field: Some(format!("{root}.{}", issue.field)),
+                            reason: Some(issue.reason.into()),
+                            remedy: Some(issue.remedy.into()),
+                        });
+                        continue;
+                    }
+                }
+                return Err(error.context(format!("{root}.{name}")));
+            }
+        }
+    }
+    Ok(())
 }
 fn environment_reference(value: &str) -> anyhow::Result<String> {
     let name = value.strip_prefix("${").and_then(|v| v.strip_suffix('}'))
@@ -798,146 +1032,180 @@ fn environment_reference(value: &str) -> anyhow::Result<String> {
     }
     Ok(name.into())
 }
-fn import_mcp(
-    value: &Value,
-    opencode: bool,
-    servers: &mut BTreeMap<String, McpServer>,
-) -> anyhow::Result<()> {
-    for (name, raw) in value.as_object().context("Invalid MCP configuration")? {
-        if !safe_name(name) {
-            bail!("Invalid MCP connection name");
+fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<McpServer> {
+    if !safe_name(name) {
+        bail!("Invalid MCP connection name");
+    }
+    let fields = raw
+        .as_object()
+        .context("MCP connection must be an object")?;
+    let allowed: &[&str] = if opencode {
+        &[
+            "type",
+            "command",
+            "environment",
+            "url",
+            "headers",
+            "enabled",
+            "oauth",
+        ]
+    } else {
+        &[
+            "type",
+            "command",
+            "args",
+            "env",
+            "url",
+            "headers",
+            "enabled",
+            "bearer_env",
+        ]
+    };
+    let mut compatibility_error = None;
+    if let Some(field) = fields.keys().find(|key| !allowed.contains(&key.as_str())) {
+        compatibility_error = Some(unsupported_mcp(
+            format!("{name}.{field}"),
+            "Unsupported MCP field",
+            "Remove this field or configure the component manually",
+        ));
+    }
+    if let Some(enabled) = raw.get("enabled") {
+        if !enabled.is_boolean() {
+            bail!("MCP enabled must be a boolean");
         }
-        let fields = raw
-            .as_object()
-            .context("MCP connection must be an object")?;
-        let allowed: &[&str] = if opencode {
-            &[
-                "type",
-                "command",
-                "environment",
-                "url",
-                "headers",
-                "enabled",
-                "oauth",
-            ]
+    }
+    if let Some(kind) = raw.get("type") {
+        let kind = kind
+            .as_str()
+            .context("MCP transport type must be a string")?;
+        let supported = if opencode {
+            ["local", "remote"].contains(&kind)
         } else {
-            &[
-                "type",
-                "command",
-                "args",
-                "env",
-                "url",
-                "headers",
-                "enabled",
-                "bearer_env",
-            ]
+            ["stdio", "http", "streamable-http"].contains(&kind)
         };
-        if let Some(field) = fields.keys().find(|key| !allowed.contains(&key.as_str())) {
-            bail!("MCP connection '{name}' uses unsupported field '{field}'");
+        if !supported {
+            compatibility_error = Some(unsupported_mcp(
+                format!("{name}.type"),
+                "Unsupported MCP transport",
+                "Use stdio or Streamable HTTP; SSE is not supported",
+            ));
         }
-        if let Some(kind) = raw.get("type") {
-            let supported = if opencode {
-                ["local", "remote"].contains(&kind.as_str().unwrap_or_default())
-            } else {
-                ["stdio", "http", "streamable-http"].contains(&kind.as_str().unwrap_or_default())
-            };
-            if !supported {
-                bail!("MCP connection '{name}' uses an unsupported transport");
-            }
-        }
-        if raw.get("oauth").is_some_and(|v| v != &Value::Bool(false)) {
-            bail!("MCP connection '{name}' requires unsupported browser OAuth; use an environment bearer reference");
-        }
-        let mut server = McpServer::default();
-        if let Some(command) = raw.get("command") {
-            if opencode {
-                let command = command
-                    .as_array()
-                    .context("OpenCode command must be an array")?;
-                server.command = Some(
-                    command
-                        .first()
-                        .and_then(Value::as_str)
-                        .context("Empty MCP command")?
-                        .into(),
-                );
-                server.args = command[1..]
-                    .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .map(str::to_owned)
-                            .context("MCP command arguments must be strings")
-                    })
-                    .collect::<anyhow::Result<_>>()?;
-            } else {
-                server.command = Some(
-                    command
-                        .as_str()
-                        .context("MCP command must be a string")?
-                        .into(),
-                );
-            }
-        }
-        if let Some(args) = raw.get("args") {
-            server.args = serde_json::from_value(args.clone()).context("Invalid MCP arguments")?;
-        }
-        if let Some(url) = raw.get("url") {
-            server.url = Some(url.as_str().context("MCP URL must be a string")?.into());
-        }
-        if let Some(env) = raw.get(if opencode { "environment" } else { "env" }) {
-            for (key, value) in env
-                .as_object()
-                .context("MCP environment must be an object")?
-            {
-                server.env.insert(
-                    key.clone(),
-                    environment_reference(
-                        value
-                            .as_str()
-                            .context("MCP environment must contain strings")?,
-                    )?,
-                );
-            }
-        }
-        if let Some(bearer) = raw.get("bearer_env") {
-            server.bearer_env = Some(
-                bearer
+    }
+    if raw.get("oauth").is_some_and(|v| v != &Value::Bool(false)) {
+        if let Some(secret) = raw["oauth"].get("clientSecret") {
+            environment_reference(
+                secret
                     .as_str()
-                    .context("Invalid bearer environment reference")?
+                    .context("OAuth secret must be an environment reference")?,
+            )?;
+        }
+        compatibility_error = Some(unsupported_mcp(
+            format!("{name}.oauth"),
+            "Browser OAuth is not supported",
+            "Use an environment bearer reference when supported by the server",
+        ));
+    }
+    let mut server = McpServer::default();
+    if let Some(command) = raw.get("command") {
+        if opencode {
+            let command = command
+                .as_array()
+                .context("OpenCode command must be an array")?;
+            server.command = Some(
+                command
+                    .first()
+                    .and_then(Value::as_str)
+                    .context("Empty MCP command")?
+                    .into(),
+            );
+            server.args = command[1..]
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_owned)
+                        .context("MCP command arguments must be strings")
+                })
+                .collect::<anyhow::Result<_>>()?;
+        } else {
+            server.command = Some(
+                command
+                    .as_str()
+                    .context("MCP command must be a string")?
                     .into(),
             );
         }
-        if let Some(headers) = raw.get("headers") {
-            for (key, value) in headers
-                .as_object()
-                .context("MCP headers must be an object")?
-            {
-                if !key.eq_ignore_ascii_case("authorization") || server.bearer_env.is_some() {
-                    bail!("MCP connection '{name}' uses unsupported or duplicate authentication headers");
-                }
-                let token = value
-                    .as_str()
-                    .and_then(|s| s.strip_prefix("Bearer "))
-                    .context("Only Bearer environment reference headers are supported")?;
-                server.bearer_env = Some(environment_reference(token)?);
-            }
-        }
-        if let Some(kind) = raw.get("type").and_then(Value::as_str) {
-            if (["local", "stdio"].contains(&kind) && server.command.is_none())
-                || (["remote", "http", "streamable-http"].contains(&kind) && server.url.is_none())
-            {
-                bail!("MCP transport conflicts with connection configuration");
-            }
-        }
-        if server.command.is_some() && server.bearer_env.is_some() {
-            bail!("Stdio authentication must use environment references");
-        }
-        server.validate()?;
-        if servers.insert(name.clone(), server).is_some() {
-            bail!("Duplicate MCP connection '{name}'");
+    }
+    if let Some(args) = raw.get("args") {
+        server.args = serde_json::from_value(args.clone()).context("Invalid MCP arguments")?;
+    }
+    if let Some(url) = raw.get("url") {
+        server.url = Some(url.as_str().context("MCP URL must be a string")?.into());
+    }
+    if let Some(env) = raw.get(if opencode { "environment" } else { "env" }) {
+        for (key, value) in env
+            .as_object()
+            .context("MCP environment must be an object")?
+        {
+            server.env.insert(
+                key.clone(),
+                environment_reference(
+                    value
+                        .as_str()
+                        .context("MCP environment must contain strings")?,
+                )?,
+            );
         }
     }
-    Ok(())
+    if let Some(bearer) = raw.get("bearer_env") {
+        server.bearer_env = Some(
+            bearer
+                .as_str()
+                .context("Invalid bearer environment reference")?
+                .into(),
+        );
+    }
+    if let Some(headers) = raw.get("headers") {
+        for (key, value) in headers
+            .as_object()
+            .context("MCP headers must be an object")?
+        {
+            if !key.eq_ignore_ascii_case("authorization") || server.bearer_env.is_some() {
+                environment_reference(
+                    value
+                        .as_str()
+                        .context("MCP header must be an environment reference")?,
+                )?;
+                compatibility_error = Some(unsupported_mcp(
+                    format!("{name}.headers"),
+                    "Unsupported or duplicate authentication headers",
+                    "Use one Authorization Bearer environment reference",
+                ));
+                continue;
+            }
+            let token = value
+                .as_str()
+                .and_then(|s| s.strip_prefix("Bearer "))
+                .context("Only Bearer environment reference headers are supported")?;
+            server.bearer_env = Some(environment_reference(token)?);
+        }
+    }
+    if let Some(kind) = raw.get("type").and_then(Value::as_str) {
+        if (["local", "stdio"].contains(&kind) && server.command.is_none())
+            || (["remote", "http", "streamable-http"].contains(&kind) && server.url.is_none())
+        {
+            bail!("MCP transport conflicts with connection configuration");
+        }
+    }
+    if server.command.is_some() && server.bearer_env.is_some() {
+        bail!("Stdio authentication must use environment references");
+    }
+    // Validate credentials and connection shape even when a component is unsupported.
+    // Partial installation must never turn an unsafe configuration into a saved resource.
+    server.validate()?;
+    if let Some(error) = compatibility_error {
+        return Err(error);
+    }
+    Ok(server)
 }
 fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
     let events = value

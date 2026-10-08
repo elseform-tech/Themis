@@ -469,3 +469,99 @@ fn duplicate_hook_names_cannot_share_an_approval_identity() {
         .to_string()
         .contains("Duplicate hook"));
 }
+
+#[test]
+fn inspection_reports_incompatible_mcp_without_installing_or_losing_skills() {
+    let global = tempfile::tempdir().unwrap();
+    let package = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(package.path().join("skills/review")).unwrap();
+    std::fs::write(
+        package.path().join("skills/review/SKILL.md"),
+        "---\nname: review\ndescription: Review\n---\nCheck code.",
+    )
+    .unwrap();
+    std::fs::write(package.path().join(".mcp.json"), r#"{"mcpServers":{"working":{"url":"https://example.com/mcp"},"legacy":{"type":"sse","url":"https://example.com/events"}}}"#).unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    assert!(store
+        .import_path("global", package.path(), Some("fixture"))
+        .is_err());
+    let preview = store.inspect_path(package.path(), Some("fixture")).unwrap();
+    assert_eq!(preview.report.status, "partial");
+    let issue = preview
+        .report
+        .components
+        .iter()
+        .find(|c| c.name == "legacy")
+        .unwrap();
+    assert_eq!(issue.status, "unsupported");
+    assert_eq!(issue.field.as_deref(), Some("mcpServers.legacy.type"));
+    assert_eq!(preview.spec.skills.len(), 1);
+    assert!(!global.path().join("plugins/registry.json").exists());
+    let installed = store
+        .import_path_with_options("global", package.path(), Some("fixture"), true)
+        .unwrap();
+    assert_eq!(installed.spec.skills.len(), 1);
+    assert!(!installed.spec.mcp.contains_key("legacy"));
+    assert!(!installed.spec.mcp["working"].enabled);
+}
+
+#[test]
+fn partial_mcp_import_rejects_unsafe_credentials_and_malformed_configuration() {
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    for input in [
+        r#"{"mcpServers":{"docs":{"url":"https://user:secret@example.com/mcp"}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","env":{"TOKEN":"secret"}}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","args":42}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","enabled":"yes"}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","type":5}}}"#,
+        r#"{"mcpServers":{"docs":{"url":"https://user:secret@example.com/mcp","timeout":5000}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","env":{"TOKEN":"secret"},"timeout":5000}}}"#,
+    ] {
+        assert!(store
+            .import_mcp_json_with_options("global", "fixture", input, true)
+            .is_err());
+    }
+    assert!(!global.path().join("plugins/registry.json").exists());
+}
+
+#[test]
+fn opencode_mcp_inspection_names_fields_and_preserves_disabled_supported_servers() {
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    let input = r#"{"$schema":"https://opencode.ai/config.json","mcp":{"local":{"type":"local","command":["node","server.js"],"environment":{"TOKEN":"{env:TEST_TOKEN}"},"enabled":true},"slow":{"type":"remote","url":"https://example.com/mcp","timeout":9000},"oauth":{"type":"remote","url":"https://example.com/mcp","oauth":true}}}"#;
+    let preview = store.inspect_mcp_json("fixture", input).unwrap();
+    assert_eq!(preview.spec.mcp["local"].command.as_deref(), Some("node"));
+    assert_eq!(preview.spec.mcp["local"].args, ["server.js"]);
+    assert_eq!(preview.spec.mcp["local"].env["TOKEN"], "TEST_TOKEN");
+    assert!(!preview.spec.mcp["local"].enabled);
+    let fields: Vec<_> = preview
+        .spec
+        .import_issues
+        .iter()
+        .filter_map(|i| i.field.as_deref())
+        .collect();
+    assert!(fields.contains(&"mcp.slow.timeout"));
+    assert!(fields.contains(&"mcp.oauth.oauth"));
+    assert!(store.import_mcp_json("global", "fixture", input).is_err());
+    let installed = store
+        .import_mcp_json_with_options("global", "fixture", input, true)
+        .unwrap();
+    assert_eq!(installed.spec.mcp.len(), 1);
+    assert_eq!(store.list().unwrap()[0].spec.import_issues.len(), 2);
+}
+
+#[test]
+fn native_bundle_inspection_validates_before_reporting_compatibility() {
+    let invalid: PluginSpec = serde_json::from_value(json!({"name":"../escape"})).unwrap();
+    assert!(themis_core::plugins::ImportPreview::from_spec(invalid).is_err());
+    let global = tempfile::tempdir().unwrap();
+    let package = global.path().join("bundle.json");
+    std::fs::write(&package, r#"{"name":"fixture","import_issues":[{"kind":"mcp","name":"docs","status":"unsupported","field":"mcp.docs.oauth","reason":"Unsupported OAuth","remedy":"Use supported authentication"}]}"#).unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    assert!(store.import_path("global", &package, None).is_err());
+    assert_eq!(
+        store.inspect_path(&package, None).unwrap().report.status,
+        "partial"
+    );
+}
