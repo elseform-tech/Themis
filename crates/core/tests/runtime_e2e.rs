@@ -831,18 +831,20 @@ async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
         serde_json::from_slice(&requests.last().unwrap().body).unwrap();
     let messages = final_request["messages"].as_array().unwrap();
     let system = messages[0]["content"].as_str().unwrap();
-    assert!(system.contains("Assistant checkpoint text is a navigation aid, not original evidence"));
-    assert!(system.contains("Saved compaction section notes are Assistant navigation records"));
-    assert!(system.contains("Respect the current request’s restrictions on tool use"));
-    assert!(system.contains("JSONL User records contain original user/attachment text"));
-    assert!(system.contains("bounded excerpts"));
+    assert!(system.contains(
+        "Checkpoints and Assistant section notes are navigation, never original evidence"
+    ));
+    assert!(system.contains("Assistant navigation is not citable proof"));
+    assert!(system.contains("Respect the current request's tool restrictions"));
+    assert!(system.contains("/content contains original User/attachment text"));
+    assert!(system.contains("Bounded reads include record_role"));
     assert!(system.contains("If bounded searches do not recover the needed evidence"));
     assert!(system.contains("let task-aware compaction focus it on the current request"));
     assert!(!system.contains("Do not read whole archives into the model again"));
-    assert!(system.contains("use Assistant summaries to locate source references"));
+    assert!(system.contains("Use section notes to locate originals"));
     assert!(system.contains("truncated tool output is incomplete evidence"));
     assert!(system.contains("Sampling the first matches does not establish absence"));
-    assert!(system.contains("distinguish an actual event from a plan, allegation"));
+    assert!(system.contains("actual events versus plans or allegations"));
     let result = messages
         .iter()
         .find(|message| message["role"] == "tool")

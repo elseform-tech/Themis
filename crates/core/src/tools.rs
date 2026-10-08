@@ -247,9 +247,9 @@ pub type SummaryFn = fn(&str, &Value) -> String;
 /// Wraps a third-party [`ToolT`] whose `execute` never consults our
 /// [`ApprovalHook`] so every call is approval-gated first.
 ///
-/// Metadata (`name`, `description`, `args_schema`, `output_schema`) delegates
-/// to the inner tool, so wrapping is transparent to tool listings, skill
-/// filters, and LLM bindings. `execute` builds a [`ToolAction`] from the
+/// Metadata delegates to the inner tool except `read_file`, whose schema and
+/// description also expose bounded reads. Tool names stay unchanged for skill
+/// filters and LLM bindings. `execute` builds a [`ToolAction`] from the
 /// inner name, `risk`, and `summarize`, consults the hook (`AllowOnce` /
 /// `AllowAlways` proceed; `Deny` fails with an approval-mentioning error),
 /// then delegates to the inner tool.
@@ -311,11 +311,22 @@ impl ToolT for GatedTool {
     }
 
     fn description(&self) -> &str {
-        self.inner.description()
+        if self.inner.name() == "read_file" {
+            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record searches decoded records, preferring original User/Tool matches over Assistant navigation; continue using the returned jsonl_record and next_offset. These modes return at most 4000 characters with provenance and next_offset; no shell is needed. Omitting these options preserves whole-file reading."
+        } else {
+            self.inner.description()
+        }
     }
 
     fn args_schema(&self) -> Value {
-        self.inner.args_schema()
+        let mut schema = self.inner.args_schema();
+        if self.inner.name() == "read_file" {
+            schema["properties"]["jsonl_record"] = serde_json::json!({"type":"integer","minimum":1,"description":"One-based JSONL record; decode it before reading"});
+            schema["properties"]["json_pointer"] = serde_json::json!({"type":"string","description":"String field within selected JSONL record; default /content, e.g. /message_type/ToolResult/0/function/arguments"});
+            schema["properties"]["offset"] = serde_json::json!({"type":"integer","minimum":0,"description":"Start character for paging or searching; use returned next_offset to continue"});
+            schema["properties"]["find"] = serde_json::json!({"type":"string","minLength":1,"description":"Exact case-sensitive literal; returns surrounding text and next_offset for the next match"});
+        }
+        schema
     }
 
     fn output_schema(&self) -> Option<Value> {
@@ -333,8 +344,164 @@ impl ToolRuntime for GatedTool {
             risk: self.risk,
         };
         check_approval_permitted(self.approvals.as_ref(), &action)?;
-        self.inner.execute(args).await
+        if name == "read_file"
+            && ["jsonl_record", "json_pointer", "offset", "find"]
+                .iter()
+                .any(|key| args.get(key).is_some())
+        {
+            let result = self.inner.execute(args.clone()).await?;
+            bounded_read_result(&args, result)
+        } else {
+            self.inner.execute(args).await
+        }
     }
+}
+
+/// Bound existing authorized reads; path resolution stays in the filesystem tool.
+// ponytail: the underlying tool still loads the whole file; stream records if archive memory use becomes a problem.
+fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCallError> {
+    let invalid = |message: &str| ToolCallError::RuntimeError(message.to_owned().into());
+    let number = |key: &str, default| -> Result<usize, ToolCallError> {
+        match args.get(key) {
+            None => Ok(default),
+            Some(value) => value
+                .as_u64()
+                .and_then(|v| v.try_into().ok())
+                .ok_or_else(|| invalid("Read offsets/record numbers must be nonnegative integers")),
+        }
+    };
+    let mut text = result["content"]
+        .as_str()
+        .ok_or_else(|| invalid("File content is not text"))?
+        .to_owned();
+    let offset = number("offset", 0)?;
+    let needle = args
+        .get("find")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| invalid("find must be a nonempty string"))
+        })
+        .transpose()?;
+    let pointer = match args.get("json_pointer") {
+        None => "/content",
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| invalid("json_pointer must be a string"))?,
+    };
+    let record = if args.get("jsonl_record").is_some() {
+        Some(number("jsonl_record", 0)?)
+    } else if let Some(needle) = needle.filter(|_| {
+        result["path"]
+            .as_str()
+            .is_some_and(|p| p.ends_with(".jsonl"))
+    }) {
+        let records = text
+            .lines()
+            .map(serde_json::from_str::<Value>)
+            .collect::<Result<Vec<_>, _>>()?;
+        result["total_records"] = records.len().into();
+        let matches: Vec<_> = records
+            .iter()
+            .enumerate()
+            .filter(|(_, record)| {
+                record
+                    .pointer(pointer)
+                    .and_then(Value::as_str)
+                    .is_some_and(|field| {
+                        let byte = field
+                            .char_indices()
+                            .nth(offset)
+                            .map_or(field.len(), |(n, _)| n);
+                        field[byte..].contains(needle)
+                    })
+            })
+            .collect();
+        let matched = matches
+            .iter()
+            .find(|(_, record)| matches!(record["role"].as_str(), Some("User" | "Tool")))
+            .or_else(|| matches.first());
+        if let Some((index, _)) = matched {
+            Some(index + 1)
+        } else {
+            result["content"] = "".into();
+            result["found"] = false.into();
+            result["next_offset"] = Value::Null;
+            result["search_scope"] =
+                format!("All JSONL records at {pointer}, after character {offset}").into();
+            return Ok(result);
+        }
+    } else {
+        None
+    };
+    if let Some(record) = record {
+        result["total_records"] = text.lines().count().into();
+        let line = record
+            .checked_sub(1)
+            .and_then(|n| text.lines().nth(n))
+            .ok_or_else(|| invalid("JSONL record does not exist (record numbers start at 1)"))?;
+        let decoded: Value = serde_json::from_str(line)?;
+        text = decoded
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("Selected JSONL field is missing or is not a string"))?
+            .to_owned();
+        result["jsonl_record"] = record.into();
+        result["json_pointer"] = pointer.into();
+        result["record_role"] = decoded["role"].clone();
+        if decoded["role"] == "Assistant" {
+            result["evidence_warning"] = "Assistant navigation, not original evidence. Follow source references and verify claims in User/Tool records before citing.".into();
+            result["navigation_header"] = text
+                .lines()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join("\n")
+                .chars()
+                .take(1000)
+                .collect::<String>()
+                .into();
+        }
+    } else if args.get("json_pointer").is_some() {
+        return Err(invalid("json_pointer requires jsonl_record"));
+    }
+    let total = text.chars().count();
+    if offset > total {
+        return Err(invalid("Read offset exceeds text length"));
+    }
+    let mut start = offset;
+    let mut next = None;
+    let mut found = true;
+    if let Some(needle) = needle {
+        let byte = text
+            .char_indices()
+            .nth(offset)
+            .map_or(text.len(), |(n, _)| n);
+        if let Some(index) = text[byte..].find(needle) {
+            let matched = offset + text[byte..byte + index].chars().count();
+            result["match_offset"] = matched.into();
+            start = matched.saturating_sub(200);
+            next = Some(matched + needle.chars().count());
+        } else {
+            found = false;
+        }
+    }
+    let excerpt: String = if found {
+        text.chars().skip(start).take(4000).collect()
+    } else {
+        String::new()
+    };
+    let end = start + excerpt.chars().count();
+    if args.get("find").is_none() && end < total {
+        next = Some(end);
+    }
+    result["content"] = excerpt.into();
+    result["found"] = found.into();
+    result["excerpt_offset"] = start.into();
+    result["total_chars"] = total.into();
+    result["next_offset"] = serde_json::to_value(next)?;
+    result["truncated"] = (found && end < total).into();
+    Ok(result)
 }
 
 /// One-line summary for filesystem toolkit calls.
@@ -1202,6 +1369,111 @@ mod tests {
         assert_eq!(seen[0].tool, "read_file");
         assert_eq!(seen[0].risk, RiskLevel::Read);
         assert!(!seen[0].summary.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bounded_read_decodes_originals_and_pages_without_shell_or_path_escape() {
+        let (_tmp, root) = rooted_case();
+        let original = format!(
+            "{}Original 🔎 instruction\nsecond line{}",
+            "é".repeat(5000),
+            "z".repeat(5000)
+        );
+        let dump = format!(
+            "{}\n{}\n",
+            json!({"role":"Assistant","content":format!("Navigation only\nSource: snapshot-original.jsonl\n{}Original 🔎 summary navigation", "x".repeat(5000))}),
+            json!({"role":"User","content":original})
+        );
+        fs::write(root.join("evidence.jsonl"), &dump).unwrap();
+        let hook = Arc::new(RecordingHook::new(Approval::AllowOnce));
+        let tools = boxed_tools(&root, hook.clone()).unwrap();
+        let tool = find_tool(&tools, "read_file");
+        assert!(tool.args_schema()["properties"]["jsonl_record"].is_object());
+        let result = tool
+            .execute(json!({"file_path":"evidence.jsonl","jsonl_record":2,"find":"Original 🔎"}))
+            .await
+            .unwrap();
+        assert_eq!(result["record_role"], "User");
+        assert_eq!(result["total_records"], 2);
+        assert_eq!(result["match_offset"], 5000);
+        let automatic = tool
+            .execute(json!({"file_path":"evidence.jsonl","find":"Original 🔎"}))
+            .await
+            .unwrap();
+        assert_eq!(automatic["record_role"], "User");
+        assert_eq!(automatic["jsonl_record"], 2);
+        assert!(automatic.get("evidence_warning").is_none());
+        let navigation = tool
+            .execute(json!({"file_path":"evidence.jsonl","find":"summary navigation"}))
+            .await
+            .unwrap();
+        assert_eq!(navigation["record_role"], "Assistant");
+        assert!(navigation["evidence_warning"]
+            .as_str()
+            .unwrap()
+            .contains("not original evidence"));
+        assert_eq!(
+            navigation["navigation_header"],
+            "Navigation only\nSource: snapshot-original.jsonl"
+        );
+        assert!(!navigation["content"].as_str().unwrap().contains("Source:"));
+        let missing = tool
+            .execute(json!({"file_path":"evidence.jsonl","find":"not present"}))
+            .await
+            .unwrap();
+        assert_eq!(missing["found"], false);
+        assert_eq!(missing["total_records"], 2);
+        assert!(missing["search_scope"]
+            .as_str()
+            .unwrap()
+            .contains("/content"));
+        assert!(automatic["content"]
+            .as_str()
+            .unwrap()
+            .contains("instruction\nsecond line"));
+        assert!(result["content"]
+            .as_str()
+            .unwrap()
+            .contains("instruction\nsecond line"));
+        assert!(result["content"].as_str().unwrap().chars().count() <= 4000);
+        let next = result["next_offset"].as_u64().unwrap();
+        let absent = tool.execute(json!({"file_path":"evidence.jsonl","jsonl_record":2,"find":"Original 🔎","offset":next})).await.unwrap();
+        assert_eq!(absent["found"], false);
+        assert_eq!(absent["content"], "");
+        let page = tool
+            .execute(json!({"file_path":"evidence.jsonl","jsonl_record":2,"offset":5000}))
+            .await
+            .unwrap();
+        assert!(page["content"].as_str().unwrap().starts_with("Original 🔎"));
+        assert_eq!(
+            tool.execute(json!({"file_path":"evidence.jsonl"}))
+                .await
+                .unwrap()["content"],
+            dump
+        );
+        for args in [
+            json!({"file_path":"../outside","offset":0}),
+            json!({"file_path":"evidence.jsonl","jsonl_record":0}),
+            json!({"file_path":"evidence.jsonl","offset":-1}),
+            json!({"file_path":"evidence.jsonl","find":""}),
+            json!({"file_path":"evidence.jsonl","json_pointer":"/content"}),
+            json!({"file_path":"evidence.jsonl","jsonl_record":2,"json_pointer":"/missing"}),
+            json!({"file_path":root.join("evidence.jsonl"),"offset":0}),
+        ] {
+            assert!(tool.execute(args).await.is_err());
+        }
+        assert!(hook
+            .seen()
+            .iter()
+            .all(|a| a.tool == "read_file" && a.risk == RiskLevel::Read));
+        assert_eq!(
+            fs::read_to_string(root.join("evidence.jsonl")).unwrap(),
+            dump
+        );
+        fs::write(root.join("tool.jsonl"), json!({"role":"Tool","content":"","message_type":{"ToolResult":[{"function":{"arguments":"Quoted 🔎 output\nverbatim"}}]}}).to_string()).unwrap();
+        let tool_result = tool.execute(json!({"file_path":"tool.jsonl","jsonl_record":1,"json_pointer":"/message_type/ToolResult/0/function/arguments"})).await.unwrap();
+        assert_eq!(tool_result["record_role"], "Tool");
+        assert_eq!(tool_result["content"], "Quoted 🔎 output\nverbatim");
     }
 
     #[tokio::test]

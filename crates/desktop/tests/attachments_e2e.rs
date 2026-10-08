@@ -295,8 +295,11 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     client.call("shutdown", json!({})).await.unwrap();
     task.await.unwrap().unwrap();
     drop(state);
+    std::fs::remove_dir_all(project.path().join(".git")).unwrap();
+    assert!(!project.path().join(".git").exists());
     provider.reset().await;
-    Mock::given(method("POST")).respond_with(|request: &Request| {
+    let recovery_root = project.path().canonicalize().unwrap();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let messages = body["messages"].as_array().unwrap();
         let result = messages.iter().find(|message| message["role"] == "tool");
@@ -308,8 +311,9 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             assert!(!context.contains("ARCHIVE-SECRET-753"));
             assert!(context.contains("Saved section notes (Assistant navigation only; verify facts against original sources):"));
             let path: String = serde_json::from_str(context.split("Latest snapshot: ").nth(1).unwrap().lines().next().unwrap()).unwrap();
-            let script = "import json,re,sys; records=[json.loads(line) for line in open(sys.argv[1])]; text=' '.join(r.get('content','') for r in records); print(re.search(r'ARCHIVE-SECRET-[0-9]+', text).group())";
-            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_1","type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",script,path],"cwd":""}).to_string()}}]},"finish_reason":"tool_calls"}]})
+            let relative = Path::new(&path).strip_prefix(&recovery_root).unwrap();
+            assert!(body["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "read_file" && tool["function"]["parameters"]["properties"]["jsonl_record"].is_object()));
+            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_1","type":"function","function":{"name":"read_file","arguments":json!({"file_path":relative,"find":"ARCHIVE-SECRET-"}).to_string()}}]},"finish_reason":"tool_calls"}]})
         };
         ResponseTemplate::new(200).set_body_json(answer)
     }).mount(&provider).await;
@@ -331,18 +335,27 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     let terminal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
         loop {
             let event = Client::next_event(&mut events).await.unwrap();
-            if event["name"] == "approval-request" {
-                cli(data.path(), "approve_action", json!({"threadId":id,"approvalId":event["payload"]["approval_id"],"decision":"once"}));
-            }
+            assert_ne!(
+                event["name"], "approval-request",
+                "non-Git recovery must require only read access"
+            );
             if event["name"] == "thread-event" {
                 let event = &event["payload"]["event"];
-                if event["kind"] == "tool_finished" && event["tool"] == "shell" {
-                    recovered = event["ok"] == true && event["output"].as_str().unwrap().contains("ARCHIVE-SECRET-753");
+                if event["kind"] == "tool_finished" && event["tool"] == "read_file" {
+                    recovered = event["ok"] == true
+                        && event["output"]
+                            .as_str()
+                            .unwrap()
+                            .contains("ARCHIVE-SECRET-753");
                 }
-                if event["kind"] == "finished" || event["kind"] == "failed" { break event.clone(); }
+                if event["kind"] == "finished" || event["kind"] == "failed" {
+                    break event.clone();
+                }
             }
         }
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
     assert!(recovered);
     assert_eq!(terminal["result"], "ARCHIVE-SECRET-753");
     assert_eq!(
