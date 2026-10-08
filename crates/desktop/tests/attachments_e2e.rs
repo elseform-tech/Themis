@@ -26,6 +26,104 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let provider = MockServer::start().await;
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&updates);
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        let summary = body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context");
+        if summary {
+            let input = body["messages"][1]["content"].as_str().unwrap();
+            assert!(input.contains("NEW ORIGINAL MESSAGE RECORDS"));
+            assert!(!input.contains("ORDERED SECTION NOTES TO RECONCILE"));
+            assert!(input.contains("EARLY_LIMIT_A"));
+            assert_eq!(body["max_tokens"], 8192);
+            observed.lock().unwrap().push(input.to_owned());
+        }
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":if summary { "EARLY_LIMIT_A remains required." } else { "READY" }},"finish_reason":"stop"}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    for index in 0..7 {
+        let text = format!(
+            "Record {index}; EARLY_LIMIT_A remains required. {}",
+            "x".repeat(120_000)
+        );
+        cli(
+            data.path(),
+            "send_message",
+            json!({"threadId":id,"text":text}),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let event = Client::next_event(&mut events).await.unwrap();
+                if event["name"] != "thread-event" {
+                    continue;
+                }
+                let event = &event["payload"]["event"];
+                assert_ne!(event["kind"], "failed", "{event}");
+                if event["kind"] == "finished" {
+                    assert_eq!(event["result"], "READY");
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        updates.lock().unwrap().len(),
+        1,
+        "one fitting update replaces the section/merge pipeline"
+    );
+    let files = std::fs::read_dir(project.path().join(".themis/context").join(id))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        files.len(),
+        1,
+        "normal compaction saves originals without intermediate note archives"
+    );
+    let original = std::fs::read_to_string(&files[0]).unwrap();
+    let records = original
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["role"] == "User")
+            .count(),
+        7
+    );
+    assert!(original.contains(&"x".repeat(120_000)));
+    client.call("shutdown", json!({})).await.unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_reopens_completed_navigation_after_a_section_failure() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
