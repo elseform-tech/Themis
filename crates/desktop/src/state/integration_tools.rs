@@ -77,7 +77,7 @@ impl ToolRuntime for ManagementTool {
             args["projectRoot"] = self.project.to_string_lossy().as_ref().into();
         }
         if args.get("scope").is_none() {
-            args["scope"] = "local".into();
+            args["scope"] = "global".into();
         }
         self.state.plugin_action(args).await.map_err(error)
     }
@@ -144,7 +144,7 @@ impl ToolT for ManagementTool {
         match self.name {
             "list_plugins" => "Inspect installed plugins, bundled skills, MCP connections and hooks in the current project and user scope.",
             "save_skill" => "Create or update a personal skill through the shared registry. Supply skill, plugin, scope and expectedRevision when updating.",
-            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list, save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, catalog, preview, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. preview takes marketplace and name to inspect supported package contents without installing; it may fetch uncached repositories. test_mcp takes server configuration; test_hook takes hook configuration. Defaults to current project/local scope. Executable operations require approval.",
+            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list, save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, scan_marketplace, catalog, preview, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. preview takes marketplace and name to inspect supported package contents without installing; it reuses the completed marketplace scan. scan_marketplace returns saved status and starts or resumes background work; refresh requests a new scan. test_mcp takes server configuration; test_hook takes hook configuration. New integrations default to global scope, available across projects; preserve the existing scope when editing. Executable operations require approval.",
             _ => "Manage recurring tasks. Actions: list, create, update, enable, disable, delete. Supply id for existing tasks; input contains name/task and optional calendar schedule {repeat,time,timezone,weekday}. Creation defaults to current project/chat. Updates merge input with saved fields. Calendar timezone is IANA; time HH:MM; weekday 0=Monday. Uses normal runtime approvals.",
         }
     }
@@ -279,6 +279,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(saved[0]["spec"]["skills"][0]["id"], "review");
+        assert_eq!(saved[0]["scope"], "global");
+        assert!(state
+            .plugin_store(None)
+            .available_skills()
+            .unwrap()
+            .iter()
+            .any(|skill| skill.name == "Review"));
         let restarted = AppState::new_for_test(data.path().join("settings.json"));
         assert!(restarted
             .prompt_skills(Some(project.path().to_string_lossy().into()))

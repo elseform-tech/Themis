@@ -67,7 +67,16 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
     };
     Some(match action {
         "list" | "marketplaces" => RiskLevel::Read,
-        "catalog" | "preview" | "install" | "update" if name == "manage_integrations" => {
+        "catalog"
+        | "preview"
+        | "install"
+        | "update"
+        | "scan_marketplace"
+        | "add_marketplace"
+        | "inspect_marketplace"
+        | "inspect_repository"
+            if name == "manage_integrations" =>
+        {
             RiskLevel::Network
         }
         "import_repository" | "preview_repository" => RiskLevel::Network,
@@ -1985,6 +1994,17 @@ mod tests {
             integration_risk("manage_integrations", &json!({"action":"list"})),
             Some(RiskLevel::Read)
         );
+        for action in [
+            "scan_marketplace",
+            "add_marketplace",
+            "inspect_marketplace",
+            "inspect_repository",
+        ] {
+            assert_eq!(
+                integration_risk("manage_integrations", &json!({"action":action})),
+                Some(RiskLevel::Network)
+            );
+        }
         // Cached catalog requests can still fetch when the source cache is absent.
         assert_eq!(
             integration_risk(

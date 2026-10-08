@@ -18,6 +18,7 @@ QA builds with a different app identifier have separate data directories.
 | App-data `runtime.jsonc` | Runtime defaults, Custom approval rules, logging, discovery | User, across projects |
 | Project `.themis/config.jsonc` | Project runtime overrides and additional approval restrictions | Selected project/run root |
 | App-data `settings.json` | Existing desktop preferences and legacy run defaults | User |
+| App-data `compatibility-cache/` | Derived marketplace scan progress and validated package snapshots | User; refreshed explicitly |
 | App-data `plugins/registry.json` | Revisioned plugin, skill, MCP, and hook definitions and activation | Global |
 | Project `.themis/plugins/` | Project integration store | Project |
 | `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills` | Discovered original user skills | Global, read-only discovery |
@@ -31,8 +32,8 @@ separate approval-policy JSONL file. Approval decisions are diagnostic records;
 approval rules live in runtime JSONC. API keys stay in Keychain or the launch
 environment, not these configuration files.
 
-Use Integrations' installation scope selector to choose **User (Global)** or
-**Project**. Selecting a project does not force a global import into that project.
+Integrations → Discover installs into **User (Global)** scope without a destination
+selector. Project-scoped imports remain available through the advanced CLI/shared API.
 Global packages are available across projects; local packages retain their own
 scope identity. Use shared import/edit/export APIs rather than hand-editing the
 revisioned registry. Portable plugin manifests and MCP JSON are import sources,
@@ -136,7 +137,7 @@ approval configuration is supplied.
 
 Project approval configuration may add deny rules only. Those restrictions are
 evaluated ahead of user rules; a project cannot grant itself access. Explicit
-run overrides are caller-supplied policy. An interactive **Always** grant is
+run overrides are caller-supplied policy. An interactive **Allow for this run** grant is
 cached for the same tool and risk within the run and cannot override a deny rule.
 Unattended CLI `ask` requests deny; use explicit policy or an interactive client.
 

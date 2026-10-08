@@ -245,7 +245,7 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let handled = body["messages"].as_array().unwrap().iter().any(|message| message["role"] == "tool");
         let message = if handled { json!({"role":"assistant","content":"Disabled the broken connection"}) }
-            else { json!({"role":"assistant","tool_calls":[{"id":"disable","type":"function","function":{"name":"manage_integrations","arguments":json!({"action":"set_component_enabled","name":"broken","kind":"mcp","id":"missing","enabled":false}).to_string()}}]}) };
+            else { json!({"role":"assistant","tool_calls":[{"id":"disable","type":"function","function":{"name":"manage_integrations","arguments":json!({"action":"set_component_enabled","scope":"local","name":"broken","kind":"mcp","id":"missing","enabled":false}).to_string()}}]}) };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if handled {"stop"} else {"tool_calls"}}]}))
     }).mount(&provider).await;
     state

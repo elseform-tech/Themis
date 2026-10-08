@@ -337,6 +337,10 @@ impl PluginStore {
         result
     }
     pub fn marketplaces(&self) -> anyhow::Result<Vec<Marketplace>> {
+        // Registration writes use atomic rename; existing snapshots need no exclusive read lock.
+        if self.global.join("marketplaces.json").is_file() {
+            return self.read_marketplaces();
+        }
         let lock = self.marketplace_lock()?;
         let result = self.read_marketplaces();
         lock.unlock()?;
@@ -391,12 +395,21 @@ impl PluginStore {
         result
     }
     pub fn remove_marketplace(&self, name: &str) -> anyhow::Result<()> {
+        let _scan_lock = self.scan_lock(name)?;
         let lock = self.marketplace_lock()?;
         let mut sources = self.read_marketplaces()?;
         if !sources.iter().any(|s| s.name == name) {
             bail!("Unknown marketplace");
         }
         sources.retain(|s| s.name != name);
+        let scan = self
+            .global
+            .join("compatibility-cache")
+            .join(name)
+            .join("scan.json");
+        if scan.exists() {
+            fs::remove_file(scan)?;
+        }
         let result = write_json(
             &self.global.join("marketplaces.json"),
             &Catalogs { sources },
@@ -405,6 +418,14 @@ impl PluginStore {
         result
     }
     pub async fn catalog(&self, name: &str, refresh: bool) -> anyhow::Result<Value> {
+        let _lock = self.scan_lock(name)?;
+        self.catalog_for_scan(name, refresh).await
+    }
+    pub(super) async fn catalog_for_scan(
+        &self,
+        name: &str,
+        refresh: bool,
+    ) -> anyhow::Result<Value> {
         let directory = self.marketplace_directory(name, refresh).await?;
         let path = directory.join(".claude-plugin/marketplace.json");
         let value: Value = serde_json::from_str(&fs::read_to_string(path)?)?;
@@ -459,15 +480,25 @@ impl PluginStore {
         name: &str,
         allow_partial: bool,
     ) -> anyhow::Result<Plugin> {
+        let _scan_lock = self.scan_lock(marketplace)?;
         let refresh = self
             .registry(scope)?
             .current
             .get(name)
             .is_some_and(|p| p.source.as_deref() == Some(marketplace));
-        let mut spec = self
+        let spec = self
             .marketplace_spec(marketplace, name, refresh, allow_partial)
             .await?;
         spec.ensure_installable()?;
+        self.install_spec(scope, marketplace, name, spec)
+    }
+    pub(super) fn install_spec(
+        &self,
+        scope: &str,
+        marketplace: &str,
+        name: &str,
+        mut spec: PluginSpec,
+    ) -> anyhow::Result<Plugin> {
         self.mutate(scope, |registry| {
             let previous = registry.current.get(name);
             if previous.is_some_and(|p| p.source.as_deref() != Some(marketplace)) {
@@ -509,9 +540,18 @@ impl PluginStore {
     }
     /// Read supported package contents without registering or enabling any capability.
     pub async fn preview(&self, marketplace: &str, name: &str) -> anyhow::Result<PluginSpec> {
+        let _lock = self.scan_lock(marketplace)?;
         self.marketplace_spec(marketplace, name, false, false).await
     }
     pub async fn inspect_marketplace(
+        &self,
+        marketplace: &str,
+        name: &str,
+    ) -> anyhow::Result<ImportPreview> {
+        let _lock = self.scan_lock(marketplace)?;
+        self.inspect_for_scan(marketplace, name).await
+    }
+    pub(super) async fn inspect_for_scan(
         &self,
         marketplace: &str,
         name: &str,

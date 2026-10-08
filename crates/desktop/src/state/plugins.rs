@@ -89,7 +89,12 @@ impl AppState {
                     } else { serde_json::to_value(store.inspect_mcp_json(if name.is_empty(){"imported-mcp"}else{name}, &value.to_string())?)? }
                 },
                 "inspect_repository" => serde_json::to_value(store.inspect_repository(name,args["url"].as_str().unwrap_or_default(),args["reference"].as_str(),args["subdirectory"].as_str()).await?)?,
-                "inspect_marketplace" => serde_json::to_value(store.inspect_marketplace(args["marketplace"].as_str().unwrap_or_default(),name).await?)?,
+                "scan_marketplace" => serde_json::to_value(store.start_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false))?)?,
+                "inspect_marketplace" => {
+                    let marketplace = args["marketplace"].as_str().unwrap_or_default();
+                    store.wait_marketplace_scan(marketplace, false).await?;
+                    serde_json::to_value(store.scanned_marketplace_preview(marketplace,name).await?)?
+                },
                 "import_path" => serde_json::to_value(store.import_path_with_options(
                     scope,
                     Path::new(args["path"].as_str().unwrap_or_default()),
@@ -191,32 +196,23 @@ impl AppState {
                 "marketplaces" => serde_json::to_value(store.marketplaces()?)?,
                 "add_marketplace" => {
                     store.add_marketplace(name, args["source"].as_str().unwrap_or_default())?;
-                    Value::Null
+                    serde_json::to_value(store.start_marketplace_scan(name, false)?)?
                 }
                 "remove_marketplace" => {
                     store.remove_marketplace(name)?;
                     Value::Null
                 }
-                "catalog" => {
-                    store
-                        .catalog(name, args["refresh"].as_bool().unwrap_or(false))
-                        .await?
-                }
-                "preview" => serde_json::to_value(
-                    store
-                        .preview(args["marketplace"].as_str().unwrap_or_default(), name)
-                        .await?,
-                )?,
-                "install" | "update" => serde_json::to_value(
-                    store
-                        .install_with_options(
-                            scope,
-                            args["marketplace"].as_str().unwrap_or_default(),
-                            name,
-                            args["allowPartial"].as_bool().unwrap_or(false),
-                        )
-                        .await?,
-                )?,
+                "catalog" => store.wait_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false)).await?.catalog,
+                "preview" => {
+                    let marketplace = args["marketplace"].as_str().unwrap_or_default();
+                    store.wait_marketplace_scan(marketplace, false).await?;
+                    serde_json::to_value(store.scanned_marketplace_preview(marketplace,name).await?.spec)?
+                },
+                "install" | "update" => {
+                    let marketplace = args["marketplace"].as_str().unwrap_or_default();
+                    if !args["expectedScan"].is_string() { store.wait_marketplace_scan(marketplace, action == "update").await?; }
+                    serde_json::to_value(store.install_scanned(scope, marketplace, name, args["allowPartial"].as_bool().unwrap_or(false), args["expectedScan"].as_str()).await?)?
+                },
                 "test_mcp" => {
                     let spec = serde_json::from_value(args["server"].clone())?;
                     let root = project

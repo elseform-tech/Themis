@@ -292,3 +292,74 @@ async fn repository_preview_preserves_full_skill_without_installing_then_imports
         .unwrap();
     serving.await.unwrap().unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(source.path().join(".claude-plugin")).unwrap();
+    std::fs::create_dir(source.path().join("review")).unwrap();
+    std::fs::write(
+        source.path().join("review/SKILL.md"),
+        "---\nname: review\ndescription: Review\n---\nCACHED_REVIEW_BODY",
+    )
+    .unwrap();
+    std::fs::write(
+        source.path().join(".claude-plugin/marketplace.json"),
+        json!({"plugins":[{"name":"review","source":"./review"}]}).to_string(),
+    )
+    .unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    cli(
+        data.path(),
+        &[
+            "plugin",
+            "marketplace",
+            "add",
+            "saved",
+            source.path().to_str().unwrap(),
+        ],
+    );
+    let preview = cli(
+        data.path(),
+        &[
+            "call",
+            "plugin_action",
+            r#"{"action":"inspect_marketplace","marketplace":"saved","name":"review"}"#,
+        ],
+    );
+    assert!(preview["spec"]["skills"][0]["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("CACHED_REVIEW_BODY"));
+    let before = cli(
+        data.path(),
+        &[
+            "call",
+            "plugin_action",
+            r#"{"action":"scan_marketplace","name":"saved"}"#,
+        ],
+    );
+    std::fs::remove_file(source.path().join("review/SKILL.md")).unwrap();
+    let second = cli(
+        data.path(),
+        &[
+            "call",
+            "plugin_action",
+            r#"{"action":"inspect_marketplace","marketplace":"saved","name":"review"}"#,
+        ],
+    );
+    assert_eq!(preview, second);
+    let client = Client::new(data.path().into());
+    assert!(client
+        .call(
+            "plugin_action",
+            json!({"action":"install","marketplace":"saved","name":"review","expectedScan":"stale"})
+        )
+        .await
+        .is_err());
+    let installed = client.call("plugin_action", json!({"action":"install","marketplace":"saved","name":"review","expectedScan":before["revision"]})).await.unwrap();
+    assert_eq!(installed["scope"], "global");
+    task.abort();
+}

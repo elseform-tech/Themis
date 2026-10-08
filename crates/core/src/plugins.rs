@@ -3,6 +3,8 @@ pub mod connections;
 mod discovery;
 pub mod hooks;
 mod marketplace;
+mod scans;
+pub use scans::MarketplaceScan;
 
 use crate::skills::Skill;
 use anyhow::{bail, Context};
