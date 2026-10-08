@@ -21,7 +21,72 @@ fn has_finished(events: &[RunEvent]) -> bool {
 }
 
 #[tokio::test]
-async fn checkpoint_continues_same_request_after_segment_limit() {
+async fn context_within_budget_keeps_exact_tool_result() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("read_1", "read_file", json!({"file_path":"note.txt"})),
+            common::final_text_body("Answered from the original evidence"),
+            common::final_text_body("Answered after a lossy checkpoint"),
+        ],
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let original = "The letter was WRITTEN September 6 and DELIVERED September 8, after the death.";
+    std::fs::write(dir.path().join("note.txt"), original).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let tools = boxed_tools(dir.path(), Arc::clone(&approvals)).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let answer = run_task_with_policy(
+        llm,
+        tools,
+        "When did the letter arrive?".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 3,
+            context_token_budget: 200000,
+            recent_messages: 1,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    let events = common::drain(&mut rx).await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })),
+        "context within budget must not be summarized solely because a segment ended: {events:?}"
+    );
+    assert_eq!(answer, "Answered from the original evidence");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    let request: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert!(request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| {
+            message["role"] == "tool"
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(original))
+        }));
+    assert!(has_finished(&events));
+}
+
+#[tokio::test]
+async fn checkpoint_continues_same_request_after_token_pressure() {
     let server = MockServer::start().await;
     common::mount_script(
         &server,
@@ -33,7 +98,7 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
     )
     .await;
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
+    std::fs::write(dir.path().join("note.txt"), "hello".repeat(3000)).unwrap();
     let llm = resolve(
         &ProviderConfig::new(ProviderKind::Go, "test-key")
             .with_model("test-model")
@@ -51,9 +116,8 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 1,
             total_turns: 3,
-            context_token_budget: 16000,
+            context_token_budget: 2000,
             recent_messages: 4,
         },
         tx,
@@ -128,7 +192,6 @@ async fn tool_evidence_survives_completed_runs_without_compaction() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 20,
             total_turns: 5,
             context_token_budget: 200_000,
             recent_messages: 4,
@@ -206,7 +269,6 @@ async fn failed_tool_evidence_save_stops_before_model_continuation() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 20,
             total_turns: 5,
             context_token_budget: 200_000,
             recent_messages: 4,
@@ -249,12 +311,12 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
     std::fs::create_dir(&evidence).unwrap();
     std::fs::write(
         dir.path().join("note.txt"),
-        "original tool evidence: red-753",
+        format!("original tool evidence: red-753 {}", "x".repeat(12000)),
     )
     .unwrap();
     std::fs::write(
         dir.path().join("other.txt"),
-        "second tool evidence: blue-864",
+        format!("second tool evidence: blue-864 {}", "x".repeat(12000)),
     )
     .unwrap();
     let llm = resolve(
@@ -273,9 +335,8 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 1,
             total_turns: 3,
-            context_token_budget: 200_000,
+            context_token_budget: 2000,
             recent_messages: 4,
         },
         tx,
@@ -379,7 +440,6 @@ async fn hard_cap_returns_natural_handoff_without_failing() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 1,
             total_turns: 1,
             context_token_budget: 2000,
             recent_messages: 4,
@@ -443,7 +503,6 @@ async fn empty_handoff_does_not_claim_the_task_was_completed() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 1,
             total_turns: 1,
             context_token_budget: 2000,
             recent_messages: 4,
@@ -642,7 +701,6 @@ async fn skill_catalog_reaches_system_request_without_body() {
         vec![],
         Arc::new(AllowAllHook),
         RunPolicy {
-            segment_turns: 2,
             total_turns: 2,
             context_token_budget: usize::MAX,
             recent_messages: 4,
@@ -706,7 +764,6 @@ async fn stopped_provider_request_finishes(compacting: bool) {
         history,
         Arc::new(AllowAllHook),
         RunPolicy {
-            segment_turns: 5,
             total_turns: 5,
             context_token_budget: if compacting { 64 } else { usize::MAX },
             recent_messages: 4,
@@ -813,7 +870,6 @@ async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 20,
             total_turns: 4,
             context_token_budget: 200_000,
             recent_messages: 4,

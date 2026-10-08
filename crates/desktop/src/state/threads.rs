@@ -351,12 +351,7 @@ impl AppState {
             return Err(error);
         }
         self.persist_registry().await;
-        // Clamp: updates are validated, but the file may predate validation.
-        let segment_turns = usize::try_from(settings.max_turns)
-            .unwrap_or(crate::settings::MAX_TURNS_MAX as usize)
-            .clamp(1, crate::settings::MAX_TURNS_MAX as usize);
         let policy = RunPolicy {
-            segment_turns,
             total_turns: settings.max_total_turns.clamp(1, 2000) as usize,
             context_token_budget: settings.context_token_budget.clamp(2000, 200000) as usize,
             recent_messages: settings.context_messages.clamp(1, 100) as usize,

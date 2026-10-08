@@ -426,6 +426,16 @@ describe("Workspace journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "Integrations" }));
     expect(document.documentElement.dataset.palette).toBe("ink");
   });
+  it("shows budget-driven compaction settings without the legacy checkpoint interval", async () => {
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(screen.queryByLabelText("Checkpoint turns")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Context tokens")).toHaveValue(settings.context_token_budget);
+    expect(screen.getByLabelText("Turn limit")).toHaveValue(settings.max_total_turns);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reset limits" })));
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3, approval_timeout_seconds: 300 });
+  });
   it("keeps utilities separate from the expanded project dock and pins Themis", async () => {
     await mount();
     const rail = screen.getByRole("navigation", { name: "Utilities" });

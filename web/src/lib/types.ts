@@ -252,6 +252,7 @@ export interface Settings {
   theme: ThemeMode;
   default_provider: ProviderKind;
   default_model: string;
+  /** Legacy checkpoint interval; retained for compatibility, no runtime effect. */
   max_turns: number;
   max_total_turns: number;
   context_token_budget: number;

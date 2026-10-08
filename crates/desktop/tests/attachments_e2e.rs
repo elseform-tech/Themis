@@ -299,6 +299,11 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     assert!(!project.path().join(".git").exists());
     provider.reset().await;
     let recovery_root = project.path().canonicalize().unwrap();
+    std::fs::write(
+        recovery_root.join("pressure.txt"),
+        "pressure data ".repeat(4000),
+    )
+    .unwrap();
     let recovery_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed_calls = Arc::clone(&recovery_calls);
     let recovery_original = Arc::new(Mutex::new(None::<String>));
@@ -315,7 +320,13 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             json!({"choices":[{"message":{"role":"assistant","content":"ARCHIVE-SECRET-753"},"finish_reason":"stop"}]})
         } else if stage > 1 {
             if stage == 2 { assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native bounded read must deliver the fact"); }
-            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":format!("navigation_{stage}"),"type":"function","function":{"name":"list_dir","arguments":json!({"directory_path":"."}).to_string()}}]},"finish_reason":"tool_calls"}]})
+            let calls = if stage == 4 {
+                // Exceed the 16k estimate through actual tool results, rather than a turn-count trigger.
+                (0..3).map(|index| json!({"id":format!("pressure_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt"}).to_string()}})).collect::<Vec<_>>()
+            } else {
+                vec![json!({"id":format!("navigation_{stage}"),"type":"function","function":{"name":"list_dir","arguments":json!({"directory_path":"."}).to_string()}})]
+            };
+            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":calls},"finish_reason":"tool_calls"}]})
         } else {
             let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
             assert!(!context.contains("ARCHIVE-SECRET-753"));
@@ -342,7 +353,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     rebooted.set_go_base_url_override(Some(provider.uri()));
     rebooted
         .update_settings(themis_desktop::types::SettingsPatch {
-            max_turns: Some(1),
+            context_token_budget: Some(16000),
             context_messages: Some(4),
             ..Default::default()
         })
@@ -367,7 +378,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             if event["name"] == "thread-event" {
                 let event = &event["payload"]["event"];
                 if event["kind"] == "tool_finished" && event["tool"] == "read_file" {
-                    recovered = event["ok"] == true
+                    recovered |= event["ok"] == true
                         && event["output"]
                             .as_str()
                             .unwrap()

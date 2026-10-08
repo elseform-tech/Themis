@@ -483,6 +483,7 @@ pub struct Settings {
     pub theme: ThemeMode,
     pub default_provider: ProviderKind,
     pub default_model: String,
+    /// Legacy checkpoint interval, retained for settings/API compatibility; no runtime effect.
     pub max_turns: u32,
     #[serde(default = "default_max_total_turns")]
     pub max_total_turns: u32,
@@ -595,6 +596,7 @@ pub struct SettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Legacy checkpoint interval; accepted for compatibility, no runtime effect.
     pub max_turns: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_total_turns: Option<i64>,

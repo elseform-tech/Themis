@@ -43,7 +43,6 @@ pub struct ConversationTurn {
 
 #[derive(Debug, Clone, Copy)]
 pub struct RunPolicy {
-    pub segment_turns: usize,
     pub total_turns: usize,
     pub context_token_budget: usize,
     pub recent_messages: usize,
@@ -295,7 +294,6 @@ pub async fn run_task_with_stop(
         history,
         approvals,
         RunPolicy {
-            segment_turns: max_turns,
             total_turns: max_turns,
             context_token_budget: usize::MAX,
             recent_messages: 20,
@@ -397,11 +395,9 @@ pub async fn run_task_with_evidence(
         ));
     }
 
-    for turn in 0..policy.total_turns {
+    for _ in 0..policy.total_turns {
         check_stopped(&stopped, &events).await?;
-        if (turn > 0 && turn % policy.segment_turns.max(1) == 0)
-            || estimated_tokens(&messages) > policy.context_token_budget
-        {
+        if estimated_tokens(&messages) > policy.context_token_budget {
             crate::plugins::hooks::emit_current(
                 "BeforeCompaction",
                 serde_json::json!({"event":"BeforeCompaction"}),
@@ -1493,7 +1489,6 @@ mod tests {
                 &llm,
                 &mut messages,
                 &RunPolicy {
-                    segment_turns: 5,
                     total_turns: 5,
                     context_token_budget: 200_000,
                     recent_messages: 4,
@@ -1553,7 +1548,6 @@ mod tests {
             &llm,
             &mut messages,
             &RunPolicy {
-                segment_turns: 5,
                 total_turns: 5,
                 context_token_budget: 64,
                 recent_messages: 4,
@@ -1619,7 +1613,6 @@ mod tests {
         );
         let (tx, _) = tokio::sync::mpsc::channel(16);
         let policy = RunPolicy {
-            segment_turns: 20,
             total_turns: 200,
             context_token_budget: 200_000,
             recent_messages: 20,
@@ -1703,7 +1696,6 @@ mod tests {
                 &llm,
                 &mut messages,
                 &RunPolicy {
-                    segment_turns: 20,
                     total_turns: 200,
                     context_token_budget: 200_000,
                     recent_messages: 20,
@@ -1769,7 +1761,6 @@ mod tests {
                 &llm,
                 &mut messages,
                 &RunPolicy {
-                    segment_turns: 20,
                     total_turns: 200,
                     context_token_budget: 4_096,
                     recent_messages: 20,
@@ -1817,7 +1808,6 @@ mod tests {
             &llm,
             &mut messages,
             &RunPolicy {
-                segment_turns: 20,
                 total_turns: 200,
                 context_token_budget: 200_000,
                 recent_messages: 4,
@@ -1899,7 +1889,6 @@ mod tests {
                 &llm,
                 &mut messages,
                 &RunPolicy {
-                    segment_turns: 20,
                     total_turns: 200,
                     context_token_budget: 200_000,
                     recent_messages: 4,
@@ -2050,7 +2039,6 @@ mod tests {
             content: "Retrieved evidence".into(),
         });
         let policy = RunPolicy {
-            segment_turns: 20,
             total_turns: 200,
             context_token_budget: 200_000,
             recent_messages: 4,
@@ -2157,7 +2145,6 @@ mod tests {
                 &llm,
                 &mut messages,
                 &RunPolicy {
-                    segment_turns: 20,
                     total_turns: 200,
                     context_token_budget: 200_000,
                     recent_messages: 20,
@@ -2240,7 +2227,6 @@ mod tests {
             &llm,
             &mut messages,
             &RunPolicy {
-                segment_turns: 20,
                 total_turns: 200,
                 context_token_budget: 200_000,
                 recent_messages: 20,
@@ -2354,7 +2340,6 @@ mod tests {
             &llm,
             &mut messages,
             &RunPolicy {
-                segment_turns: 5,
                 total_turns: 5,
                 context_token_budget: 2000,
                 recent_messages: 4,
