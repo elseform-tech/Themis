@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use themis_core::providers::ProviderConfig;
-use themis_core::runtime::{run_task_with_evidence, CachingApprovals, RunEvent, RunPolicy};
+use themis_core::runtime::{run_task_with_evidence, RunEvent, RunPolicy};
 use themis_core::skills::materialize_scripts;
-use themis_core::tools::{boxed_tools, ApprovalHook};
+use themis_core::tools::ApprovalHook;
 
 use crate::approvals::DesktopApprovalHook;
 use crate::sink::EventSink;
@@ -17,6 +17,22 @@ use super::{AppState, RunSnapshot};
 
 /// Channel capacity for the run-event pump (runs emit a handful of events).
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
+
+struct AuditedApprovals {
+    inner: Arc<dyn ApprovalHook>,
+    context: themis_core::diagnostics::DiagnosticContext,
+}
+impl ApprovalHook for AuditedApprovals {
+    fn approve(&self, action: &themis_core::tools::ToolAction) -> themis_core::tools::Approval {
+        let started = std::time::Instant::now();
+        let decision = self.inner.approve(action);
+        let _ = self.context.log.append_with_level("approval", "decided", "info", json!({
+            "thread_id":self.context.thread_id,"run_id":self.context.run_id,"operation_id":self.context.run_id,"tool":action.tool,
+            "risk":format!("{:?}",action.risk),"decision":format!("{decision:?}"),"elapsed_ms":started.elapsed().as_millis()
+        }), Some(&self.context.level));
+        decision
+    }
+}
 
 impl AppState {
     /// Resolves the provider, builds tools, and spawns the run task.
@@ -72,6 +88,14 @@ impl AppState {
                     snapshot.provider.as_str()
                 )
             })?;
+        let diagnostic_context = themis_core::diagnostics::DiagnosticContext {
+            log: self.inner.diagnostics.clone(),
+            thread_id: thread_id.to_owned(),
+            run_id: run_id.to_owned(),
+            level: snapshot.runtime_configuration.logging.level.clone(),
+        };
+        let run_configuration = snapshot.runtime_configuration.clone();
+        let yolo = snapshot.approval_mode == themis_core::configuration::ApprovalMode::Yolo;
         let hook = Arc::new(
             DesktopApprovalHook::new(
                 thread_id.to_owned(),
@@ -82,9 +106,17 @@ impl AppState {
             .with_timeout(std::time::Duration::from_secs(u64::from(
                 snapshot.approval_timeout_seconds,
             )))
-            .with_read_approval(snapshot.confirm_reads),
+            .with_read_approval(true),
         );
-        let approvals: Arc<dyn ApprovalHook> = CachingApprovals::wrap(hook);
+        let approvals = themis_core::configuration::configured_hook(
+            snapshot.approval_mode,
+            run_configuration.approval.clone(),
+            hook,
+        );
+        let approvals: Arc<dyn ApprovalHook> = Arc::new(AuditedApprovals {
+            inner: approvals,
+            context: diagnostic_context.clone(),
+        });
         // Materialize skill scripts into the run workroot BEFORE building
         // tools: a failure aborts the spawn (the caller resets `running`),
         // so a run never starts half-skilled.
@@ -95,8 +127,12 @@ impl AppState {
         )
         .map_err(|error| format!("failed to materialize skill catalog: {error:#}"))?;
         materialize_scripts(&snapshot.skills, &snapshot.work_root).map_err(|e| e.to_string())?;
-        let mut tools = boxed_tools(&snapshot.work_root, Arc::clone(&approvals))
-            .map_err(|err| format!("failed to build tools: {err:#}"))?;
+        let mut tools = themis_core::tools::boxed_tools_with_mode(
+            &snapshot.work_root,
+            Arc::clone(&approvals),
+            yolo,
+        )
+        .map_err(|err| format!("failed to build tools: {err:#}"))?;
         let store = self.plugin_store(Some(snapshot.work_root.clone()));
         store
             .materialize(&snapshot.plugins, &snapshot.work_root)
@@ -116,13 +152,17 @@ impl AppState {
                 for arg in &mut server.args {
                     *arg = arg.replace("${CLAUDE_PLUGIN_ROOT}", &resource_root.to_string_lossy());
                 }
-                match themis_core::plugins::connections::tools(
-                    &plugin.skill_id(name),
-                    &server,
-                    &snapshot.work_root,
-                    approvals.clone(),
-                )
-                .await
+                match themis_core::diagnostics::ACTIVE
+                    .scope(
+                        diagnostic_context.clone(),
+                        themis_core::plugins::connections::tools(
+                            &plugin.skill_id(name),
+                            &server,
+                            &snapshot.work_root,
+                            approvals.clone(),
+                        ),
+                    )
+                    .await
                 {
                     Ok((connection_tools, instructions)) => {
                         tools.extend(connection_tools);
@@ -304,26 +344,37 @@ impl AppState {
                     let _ = events_tx.send(event).await;
                 }
                 let hook_task = task.clone();
-                themis_core::plugins::hooks::with_hooks(
-                    hook_runtime,
-                    &hook_task,
-                    events_tx,
-                    |events_tx| {
-                        run_task_with_evidence(
-                            llm,
-                            themis_core::skills::filter_tools(tools, &skills),
-                            themis_core::skills::compose_task(&task, &skills),
-                            snapshot.history,
-                            approvals,
-                            policy,
-                            events_tx,
-                            stopped,
-                            skill_catalog,
-                            Some(evidence_directory),
-                        )
-                    },
-                )
-                .await
+                themis_core::diagnostics::ACTIVE
+                    .scope(
+                        diagnostic_context,
+                        themis_core::runtime::with_configuration(
+                            run_configuration.compaction,
+                            themis_core::plugins::hooks::with_hooks(
+                                hook_runtime,
+                                &hook_task,
+                                events_tx,
+                                |events_tx| {
+                                    run_task_with_evidence(
+                                        llm,
+                                        if yolo {
+                                            tools
+                                        } else {
+                                            themis_core::skills::filter_tools(tools, &skills)
+                                        },
+                                        themis_core::skills::compose_task(&task, &skills),
+                                        snapshot.history,
+                                        approvals,
+                                        policy,
+                                        events_tx,
+                                        stopped,
+                                        skill_catalog,
+                                        Some(evidence_directory),
+                                    )
+                                },
+                            ),
+                        ),
+                    )
+                    .await
             })
             .await;
             let _pump = pump.await;

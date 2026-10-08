@@ -10,7 +10,13 @@ fn server_exposes_all_frontend_backend_commands() {
     let called: BTreeSet<_> = frontend
         .lines()
         .filter_map(|line| {
-            let tail = line.split("invoke(").nth(1)?;
+            let tail = line.split("invoke").nth(1)?;
+            let tail = if tail.starts_with('<') {
+                tail.split_once('>')?.1
+            } else {
+                tail
+            };
+            let tail = tail.strip_prefix('(')?;
             let quote = tail.chars().next()?;
             (quote == '\'' || quote == '"').then(|| tail[1..].split(quote).next().unwrap())
         })

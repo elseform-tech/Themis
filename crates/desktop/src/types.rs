@@ -111,6 +111,8 @@ pub struct ThreadInfo {
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub approval_mode: themis_core::configuration::ApprovalMode,
     pub running: bool,
     /// Worktree backing this thread (`None` for non-git read-only threads).
     pub worktree_path: Option<String>,
@@ -985,6 +987,7 @@ mod tests {
             provider: ProviderKind::Go,
             model: "m".to_owned(),
             reasoning_effort: None,
+            approval_mode: Default::default(),
             running: false,
             worktree_path: Some("/tmp/wt".to_owned()),
             branch: Some("themis/abc".to_owned()),
@@ -999,6 +1002,7 @@ mod tests {
                 "title": "hi",
                 "provider": "go",
                 "model": "m",
+                "approval_mode": "custom",
                 "running": false,
                 "worktree_path": "/tmp/wt",
                 "branch": "themis/abc",

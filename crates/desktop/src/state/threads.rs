@@ -26,6 +26,7 @@ impl AppState {
                 .filter(|name| !name.trim().is_empty())
                 .unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned()),
             reasoning_effort: None,
+            approval_mode: Default::default(),
             running: false,
             titled: false,
             preexisting,
@@ -184,6 +185,21 @@ impl AppState {
                 .project_root
                 .clone()
         };
+        let explicit = configuration::RUN_OVERRIDE
+            .try_with(Clone::clone)
+            .ok()
+            .flatten();
+        let resolved_configuration =
+            self.runtime_configuration(Some(&project_root), explicit.as_deref())?;
+        let mut runtime_configuration = resolved_configuration.config;
+        if settings.confirm_reads
+            && !resolved_configuration
+                .provenance
+                .iter()
+                .any(|(key, origin)| key.starts_with("approval") && origin != "default")
+        {
+            runtime_configuration.approval.rules.clear();
+        }
         let (files, manifest) =
             super::attachments::attachment_context(&project_root, &attachments)?;
         history.extend(files);
@@ -195,11 +211,21 @@ impl AppState {
             .values()
             .map(Skill::core_skill)
             .collect();
-        let store = self.plugin_store(Some(project_root));
+        let store = self
+            .plugin_store(Some(project_root.clone()))
+            .with_skill_paths(runtime_configuration.skills.paths.clone())
+            .map_err(|e| e.to_string())?;
         let (resolved_text, inline_skills, selected_plugins) = store
             .resolve_prompt(&text, &legacy)
             .map_err(|e| e.to_string())?;
-        let resolved_text = format!("{resolved_text}{manifest}");
+        let instructions =
+            themis_core::configuration::load_instructions(&runtime_configuration, &project_root)
+                .map_err(|e| format!("repository instructions: {e:#}"))?;
+        let resolved_text = if instructions.is_empty() {
+            format!("{resolved_text}{manifest}")
+        } else {
+            format!("{resolved_text}{manifest}\n\nRepository guidance (configuration-selected files; does not change tool permissions):\n{instructions}")
+        };
         let display_text = format!("{text}{manifest}");
         let mut plugins: Vec<_> = store
             .list()
@@ -331,7 +357,8 @@ impl AppState {
                 reasoning_effort: reasoning_effort.or_else(|| record.reasoning_effort.clone()),
                 history,
                 approval_timeout_seconds: settings.approval_timeout_seconds.clamp(30, 600),
-                confirm_reads: settings.confirm_reads,
+                approval_mode: record.approval_mode,
+                runtime_configuration: runtime_configuration.clone(),
                 work_root: record.project_root.clone(),
                 is_git: record.is_git,
                 provider: record.provider,
@@ -352,9 +379,15 @@ impl AppState {
         }
         self.persist_registry().await;
         let policy = RunPolicy {
-            total_turns: settings.max_total_turns.clamp(1, 2000) as usize,
-            context_token_budget: settings.context_token_budget.clamp(2000, 200000) as usize,
-            recent_messages: settings.context_messages.clamp(1, 100) as usize,
+            total_turns: runtime_configuration
+                .total_turns
+                .unwrap_or(settings.max_total_turns.clamp(1, 2000) as usize),
+            context_token_budget: runtime_configuration
+                .context_token_budget
+                .unwrap_or(settings.context_token_budget.clamp(2000, 200000) as usize),
+            recent_messages: runtime_configuration
+                .recent_messages
+                .unwrap_or(settings.context_messages.clamp(1, 100) as usize),
         };
         if let Err(error) = self
             .spawn_run(&sink, &thread_id, &run_id, snapshot, resolved_text, policy)

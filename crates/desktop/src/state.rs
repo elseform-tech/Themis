@@ -8,6 +8,7 @@
 mod attachments;
 mod automation;
 mod changes;
+pub(crate) mod configuration;
 mod integration_tools;
 mod plugins;
 mod preferences;
@@ -68,6 +69,7 @@ struct ThreadRecord {
     provider: ProviderKind,
     model: String,
     reasoning_effort: Option<String>,
+    approval_mode: themis_core::configuration::ApprovalMode,
     running: bool,
     titled: bool,
     preexisting: HashSet<String>,
@@ -100,7 +102,8 @@ struct RunSnapshot {
     reasoning_effort: Option<String>,
     history: Vec<ConversationTurn>,
     approval_timeout_seconds: u32,
-    confirm_reads: bool,
+    approval_mode: themis_core::configuration::ApprovalMode,
+    runtime_configuration: themis_core::configuration::RuntimeConfig,
     /// Tool sandbox root: the shared project checkout.
     work_root: PathBuf,
     is_git: bool,
@@ -140,6 +143,8 @@ pub(crate) struct RegistryEntry {
     #[serde(default)]
     was_running: bool,
     #[serde(default)]
+    approval_mode: themis_core::configuration::ApprovalMode,
+    #[serde(default)]
     pub(crate) skill_ids: Vec<String>,
 }
 
@@ -158,6 +163,7 @@ impl RegistryEntry {
             provider: record.provider,
             model: record.model.clone(),
             reasoning_effort: record.reasoning_effort.clone(),
+            approval_mode: record.approval_mode,
             was_running: record.running,
             skill_ids: record.skill_ids.clone(),
         }
@@ -172,6 +178,7 @@ struct AppStateInner {
     pending: PendingMap,
     settings: SettingsStore,
     transcript: TranscriptStore,
+    diagnostics: Arc<themis_core::diagnostics::DiagnosticLog>,
     secrets: Arc<dyn SecretStore>,
     go_base_url_override: std::sync::Mutex<Option<String>>,
     go_catalog: tokio::sync::RwLock<Vec<themis_core::providers::GoModel>>,
@@ -290,6 +297,14 @@ impl AppState {
         let skills = load_store_file(&skills_path, "skill", &mut report);
         let automations = load_automations_file(&automations_path, &mut report);
         let reviews = load_store_file(&reviews_path, "review item", &mut report);
+        let diagnostics = Arc::new(themis_core::diagnostics::DiagnosticLog::new(
+            themis_core::diagnostics::directory_for(&app_dir),
+        ));
+        if let Ok(content) = std::fs::read_to_string(app_dir.join("runtime.jsonc")) {
+            if let Ok(config) = themis_core::configuration::resolve(Some(&content), None, None) {
+                diagnostics.set_level(&config.config.logging.level);
+            }
+        }
         Self {
             inner: Arc::new(AppStateInner {
                 stop_flags: std::sync::Mutex::new(HashMap::new()),
@@ -299,6 +314,7 @@ impl AppState {
                 pending: PendingMap::default(),
                 settings: SettingsStore::load_with_projects_root(settings_path, projects_root),
                 transcript,
+                diagnostics,
                 secrets,
                 go_base_url_override: std::sync::Mutex::new(None),
                 go_catalog: tokio::sync::RwLock::new(Vec::new()),
@@ -371,6 +387,12 @@ impl AppState {
     /// the `record_cmd!` helper in [`crate::commands`], attributing its own
     /// command name.
     pub fn record_error(&self, command: &str, message: String) {
+        let _ = self.inner.diagnostics.append(
+            "server",
+            "command_failed",
+            "error",
+            serde_json::json!({"method": command}),
+        );
         let entry = DiagnosticsError {
             at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
             command: command.to_owned(),
@@ -547,6 +569,7 @@ fn thread_info(record: &ThreadRecord) -> ThreadInfo {
         provider: record.provider,
         model: record.model.clone(),
         reasoning_effort: record.reasoning_effort.clone(),
+        approval_mode: record.approval_mode,
         running: record.running,
         worktree_path: None,
         branch: None,
@@ -733,6 +756,7 @@ fn load_and_reconcile(
                 provider: entry.provider,
                 model: entry.model.clone(),
                 reasoning_effort: entry.reasoning_effort.clone(),
+                approval_mode: entry.approval_mode,
                 running: false,
                 // The persisted title stands; never retitle a restored thread.
                 titled: true,

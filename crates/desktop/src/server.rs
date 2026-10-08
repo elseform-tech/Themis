@@ -184,6 +184,7 @@ impl Server {
     }
 
     pub async fn run(self) -> Result<(), String> {
+        self.state.log_server_event("started");
         let mut stopped = self.shutdown.subscribe();
         loop {
             let (stream, _) = tokio::select! {
@@ -207,6 +208,7 @@ impl Server {
         {
             std::fs::remove_file(path).map_err(|err| err.to_string())?;
         }
+        self.state.log_server_event("stopped");
         Ok(())
     }
 }
@@ -357,6 +359,19 @@ pub async fn dispatch(
         }};
     }
     match method {
+        "get_runtime_configuration" => state.get_runtime_configuration(arg(&args, "projectRoot")?),
+        "save_runtime_configuration" => state.save_runtime_configuration(
+            &arg::<String>(&args, "scope")?,
+            arg(&args, "projectRoot")?,
+            &arg::<String>(&args, "json")?,
+        ),
+        "query_diagnostic_logs" => output!(state
+            .query_diagnostic_logs(serde_json::from_value(args).map_err(|e| e.to_string())?)?),
+        "set_thread_approval_mode" => output!(
+            state
+                .set_thread_approval_mode(arg(&args, "threadId")?, arg(&args, "mode")?)
+                .await?
+        ),
         "plugin_action" => output!(state.plugin_action(args).await?),
         "list_prompt_skills" => output!(state.prompt_skills(arg(&args, "projectRoot")?).await?),
         "ping" => output!(state.ping().await),
@@ -416,18 +431,21 @@ pub async fn dispatch(
                 .await?
         ),
         "send_message" => output!(
-            state
-                .send_message_with_attachments(
-                    sink,
-                    arg(&args, "threadId")?,
-                    arg(&args, "text")?,
-                    arg(&args, "reasoningEffort")?,
-                    serde_json::from_value(
-                        args.get("attachments")
-                            .cloned()
-                            .unwrap_or_else(|| serde_json::json!([]))
+            crate::state::configuration::RUN_OVERRIDE
+                .scope(
+                    arg(&args, "runtimeConfiguration")?,
+                    state.send_message_with_attachments(
+                        sink,
+                        arg(&args, "threadId")?,
+                        arg(&args, "text")?,
+                        arg(&args, "reasoningEffort")?,
+                        serde_json::from_value(
+                            args.get("attachments")
+                                .cloned()
+                                .unwrap_or_else(|| serde_json::json!([]))
+                        )
+                        .map_err(|e| e.to_string())?
                     )
-                    .map_err(|e| e.to_string())?
                 )
                 .await?
         ),

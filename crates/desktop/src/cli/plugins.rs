@@ -9,9 +9,11 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
     let mut expected = None;
     let mut reference = None;
     let mut subdirectory = None;
+    let mut allow_partial = false;
     let mut index = 0;
     while index < words.len() {
         match words[index].as_str() {
+            "--allow-partial" => allow_partial = true,
             "--project" | "--scope" | "--expected" | "--ref" | "--subdirectory" => {
                 let key = &words[index];
                 index += 1;
@@ -29,7 +31,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         }
         index += 1;
     }
-    let mut request = json!({"scope":scope,"projectRoot":project,"expectedRevision":expected});
+    let mut request = json!({"scope":scope,"projectRoot":project,"expectedRevision":expected,"allowPartial":allow_partial});
     let read = |path: &str| -> Result<Value, String> {
         let metadata = std::fs::metadata(path).map_err(|e| e.to_string())?;
         if metadata.len() > 8 * 1024 * 1024 {
@@ -42,12 +44,12 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         ["plugin","list"]=>request["action"]=json!("list"),
         ["plugin","create",name]=>{request["action"]=json!("save");request["spec"]=json!({"name":name});},
         ["plugin","save",file]=>{request["action"]=json!("save");request["spec"]=read(file)?;},
-        [component,"import",source] | [component,"import",source,_] if matches!(*component,"plugin"|"skill"|"mcp"|"hook")=>{
+        [component,import_action,source] | [component,import_action,source,_] if matches!(*component,"plugin"|"skill"|"mcp"|"hook") && matches!(*import_action,"import"|"inspect")=>{
             if source.starts_with("https://") || source.starts_with("http://") || reference.is_some() || subdirectory.is_some() {
-                request["action"]=json!("import_repository"); request["url"]=json!(source);
+                request["action"]=json!(if *import_action=="inspect" {"inspect_repository"}else{"import_repository"}); request["url"]=json!(source);
                 request["name"]=json!(positional.get(3).copied().unwrap_or(""));
                 request["reference"]=json!(reference);request["subdirectory"]=json!(subdirectory);
-            } else { request["action"]=json!("import_path");request["path"]=json!(source);request["name"]=json!(positional.get(3)); }
+            } else { request["action"]=json!(if *import_action=="inspect" {"inspect_path"}else{"import_path"});request["path"]=json!(source);request["name"]=json!(positional.get(3)); }
         },
         ["plugin",action,name] if matches!(*action,"enable"|"disable"|"delete"|"uninstall")=>{request["action"]=json!(if *action=="uninstall"{"delete"}else{action});request["name"]=json!(name);},
         ["plugin","marketplace","list"]=>request["action"]=json!("marketplaces"),
@@ -99,7 +101,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             } else { return Err("Use skill verify FILE".into()); }
 
         },
-        _=>return Err("Use plugin list|create NAME|show NAME|edit NAME|save FILE|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|add NAME SOURCE|browse NAME|refresh NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH. For agent creation: skill create THREAD REQUEST.".into()),
+        _=>return Err("Use plugin list|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|add NAME SOURCE|browse NAME|refresh NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
     }
     client.call("plugin_action", request).await
 }
