@@ -301,6 +301,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     let recovery_root = project.path().canonicalize().unwrap();
     let recovery_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed_calls = Arc::clone(&recovery_calls);
+    let recovery_original = Arc::new(Mutex::new(None::<String>));
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let messages = body["messages"].as_array().unwrap();
@@ -308,21 +309,28 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Task state only; recovered details omitted."},"finish_reason":"stop"}]}));
         }
         let stage = observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let answer = if stage >= 4 {
+        let answer = if stage >= 5 {
             let checkpoint = messages.iter().find(|message| message["content"].as_str().is_some_and(|text| text.starts_with("Earlier context checkpoint") && text.contains("Preserved bounded reads"))).expect("bounded evidence must survive another checkpoint");
             assert!(checkpoint["content"].as_str().unwrap().contains("ARCHIVE-SECRET-753"));
             json!({"choices":[{"message":{"role":"assistant","content":"ARCHIVE-SECRET-753"},"finish_reason":"stop"}]})
-        } else if stage > 0 {
-            if stage == 1 { assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native bounded read must deliver the fact"); }
+        } else if stage > 1 {
+            if stage == 2 { assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native bounded read must deliver the fact"); }
             json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":format!("navigation_{stage}"),"type":"function","function":{"name":"list_dir","arguments":json!({"directory_path":"."}).to_string()}}]},"finish_reason":"tool_calls"}]})
         } else {
             let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
             assert!(!context.contains("ARCHIVE-SECRET-753"));
             assert!(context.contains("Saved section notes (Assistant navigation only; verify facts against original sources):"));
             let path: String = serde_json::from_str(context.split("Latest snapshot: ").nth(1).unwrap().lines().next().unwrap()).unwrap();
-            let relative = Path::new(&path).strip_prefix(&recovery_root).unwrap();
+            let relative = if stage == 0 {
+                let relative = Path::new(&path).strip_prefix(&recovery_root).unwrap().to_string_lossy().into_owned();
+                *recovery_original.lock().unwrap() = Some(relative.clone());
+                relative
+            } else {
+                assert!(body.to_string().contains("Total records:"), "record metadata must reach the model request");
+                recovery_original.lock().unwrap().clone().unwrap()
+            };
             assert!(body["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "read_file" && tool["function"]["parameters"]["properties"]["jsonl_record"].is_object()));
-            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_1","type":"function","function":{"name":"read_file","arguments":json!({"file_path":relative,"find":"ARCHIVE-SECRET-"}).to_string()}}]},"finish_reason":"tool_calls"}]})
+            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_1","type":"function","function":{"name":"read_file","arguments":if stage == 0 { json!({"file_path":relative,"find":"ARCHIVE-SECRET-","jsonl_record":999}).to_string() } else { json!({"file_path":relative,"find":"ARCHIVE-SECRET-"}).to_string() }}}]},"finish_reason":"tool_calls"}]})
         };
         ResponseTemplate::new(200).set_body_json(answer)
     }).mount(&provider).await;
@@ -375,7 +383,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     .unwrap();
     assert!(recovered);
     assert_eq!(terminal["result"], "ARCHIVE-SECRET-753");
-    assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 5);
+    assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 6);
     let saved = rebooted.get_thread_history(id).await.unwrap();
     let checkpoint = saved
         .iter()

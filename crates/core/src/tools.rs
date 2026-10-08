@@ -444,7 +444,16 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
         let line = record
             .checked_sub(1)
             .and_then(|n| text.lines().nth(n))
-            .ok_or_else(|| invalid("JSONL record does not exist (record numbers start at 1)"))?;
+            .ok_or_else(|| {
+                let available = text.lines().take(8).enumerate().map(|(index, line)| {
+                    let decoded = serde_json::from_str::<Value>(line).unwrap_or(Value::Null);
+                    let role = decoded["role"].as_str()
+                        .filter(|role| matches!(*role, "User" | "Assistant" | "Tool" | "System"))
+                        .unwrap_or("Unknown");
+                    serde_json::json!({"record":index + 1,"role":role})
+                }).collect::<Vec<_>>();
+                invalid(&format!("JSONL record {record} does not exist (record numbers start at 1). Total records: {}. First up to 8 records: {}. Retry with an available record, or omit jsonl_record and use find to search decoded records; Assistant records are navigation, not original evidence.", text.lines().count(), serde_json::json!(available)))
+            })?;
         let decoded: Value = serde_json::from_str(line)?;
         text = decoded
             .pointer(pointer)
@@ -1378,6 +1387,63 @@ mod tests {
         assert_eq!(seen[0].tool, "read_file");
         assert_eq!(seen[0].risk, RiskLevel::Read);
         assert!(!seen[0].summary.is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalid_record_guides_original_recovery() {
+        let (_tmp, root) = rooted_case();
+        let original = format!(
+            "{}\n{}\n",
+            json!({"role":"User","content":"Early original 🔎 RETAIN-753"}),
+            json!({"role":"Assistant","content":"Navigation only"})
+        );
+        fs::write(root.join("early.jsonl"), &original).unwrap();
+        let tools = boxed_tools(&root, Arc::new(RecordingHook::new(Approval::AllowOnce))).unwrap();
+        let tool = find_tool(&tools, "read_file");
+        let error = tool
+            .execute(json!({"file_path":"early.jsonl","jsonl_record":3,"find":"Early original"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Total records: 2"), "{error}");
+        assert!(error.contains(r#"{"record":1,"role":"User"}"#), "{error}");
+        assert!(error.contains("omit jsonl_record"), "{error}");
+        assert!(
+            !error.contains("RETAIN-753"),
+            "record metadata must not expose content"
+        );
+        let recovered = tool
+            .execute(json!({"file_path":"early.jsonl","find":"Early original"}))
+            .await
+            .unwrap();
+        assert_eq!(recovered["jsonl_record"], 1);
+        assert_eq!(recovered["record_role"], "User");
+        assert!(recovered["content"]
+            .as_str()
+            .unwrap()
+            .contains("RETAIN-753"));
+        assert_eq!(
+            fs::read_to_string(root.join("early.jsonl")).unwrap(),
+            original
+        );
+        let many = (0..10)
+            .map(|_| {
+                json!({"role":"UNTRUSTED_ROLE_DO_NOT_ECHO","content":"PRIVATE_BODY"}).to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(root.join("many.jsonl"), many).unwrap();
+        let error = tool
+            .execute(json!({"file_path":"many.jsonl","jsonl_record":999}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("Total records: 10")
+                && error.contains(r#"{"record":8,"role":"Unknown"}"#)
+        );
+        assert!(!error.contains(r#"{"record":9"#));
+        assert!(!error.contains("UNTRUSTED_ROLE") && !error.contains("PRIVATE_BODY"));
     }
 
     #[tokio::test]
