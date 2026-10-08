@@ -1,92 +1,78 @@
-# Themis sandbox model
+# Themis tool permissions and isolation
 
-Plain-language threat model for running coding agents on your machine. This
-document describes what this repo's code actually enforces — paths and names
-refer to the real implementation.
+The composer shield selects **Custom** (default) or **YOLO**. This is a harness
+policy, not an operating-system sandbox. See [configuration](configuration.md)
+for JSONC examples and exact limits.
 
-## What agents can do
+## Custom mode
 
-An agent acts through exactly 11 tools (`boxed_tools` in
-`crates/core/src/tools.rs`): `list_dir`, `read_file`, `write_file`,
-`copy_file`, `move_file`, `delete_file`, `create_dir`, `search_file`,
-`shell`, `apply_patch`, `git`. Every tool call is classified with a risk
-level (`read`, `write`, `execute`, `network`, `destructive`) and checked
-against the approval hook before it runs.
+Core file tools confine paths to the canonical project/worktree root and reject
+traversal and symlink escapes. The tools are `list_dir`, `read_file`, `write_file`,
+`copy_file`, `move_file`, `delete_file`, `create_dir`, `search_file`, `shell`,
+`apply_patch`, and `git`. Plugins can supply MCP tools and integration management
+adds its own tools.
 
-Concretely, an approved agent can: read, write, copy, move, and delete files
-**inside the project root**; create directories; search file contents; run
-programs; apply patches; and run a limited git subset (read-only commands
-freely; `add`, `commit`, `checkout`, `branch` with approval; everything else
-is denied outright).
+Actions have a risk (`read`, `write`, `execute`, `network`, `destructive`). Ordered
+Custom rules choose allow, ask, or deny; the first matching rule wins. Default
+policy allows reads and asks for other actions. Project rules may only add deny
+restrictions. Explicit user/run allow rules proceed without the interactive gate.
 
-## What agents cannot do
+An ask invokes the desktop/CLI approval hook. **Once** grants one action,
+**Always** remembers the same tool and risk for this run, and **Deny** rejects it.
+Cached grants cannot bypass policy denies. Approval timeouts (default five minutes),
+lost clients, and unattended CLI requests deny. The interactive hook denies
+non-read actions in non-Git projects; explicit allow policy or YOLO bypasses
+that interactive restriction. A non-Git folder is not an OS-enforced read-only
+sandbox.
 
-- **Escape the project root.** All file paths resolve inside the canonicalized
-  root; `..` tricks and absolute detours are rejected (`resolve_within_root`).
-- **Run shell strings.** There is no shell: the `shell` tool takes a program
-  plus an argv array, resolved via `PATH`. Pipes, redirects, glob expansion,
-  and `VAR=x cmd` prefixes do not exist — a command containing `|` passes a
-  literal pipe character as an argument.
-- **Touch your checkout directly.** On git projects the agent works in a
-  per-thread worktree; your files change only when you press **Merge**.
-- **See your keys.** API keys live in macOS Keychain or the launch environment and only presence
-  (`set`/`missing`) crosses the bridge to the UI. Diagnostics, settings
-  snapshots, logs, and error strings never carry secret values.
-- **Act silently on writes.** Every non-read tool call needs your decision
-  (or a cached Always for that tool in that run). There is no "approve
-  everything" mode.
+Custom's Git tool limits subcommands; permitted commands still consult approval
+policy, including reads. Skill tool allowlists further filter available tools.
+Hooks and MCP initialization instructions do not grant permissions.
 
-## Approvals
+## YOLO mode
 
-Policy (`crates/desktop/src/approvals.rs` + `CachingApprovals` in
-`crates/core/src/runtime.rs`):
+YOLO bypasses harness approval, the core file-tool root restriction, the Git
+subcommand allowlist, and skill tool filtering. OS permissions and tool input
+validation, timeouts, output bounds, and child environment handling still apply.
+The choice is saved per thread. An active run retains its captured mode and
+configuration; edits affect subsequent runs.
 
-- `read`-risk calls are auto-allowed without a dialog.
-- Everything else emits an `approval-request` event and blocks for your
-  decision in the dialog: **Once**, **Always** (remembered per tool name for
-  the rest of the run only), or **Deny**.
-- The dialog waits ~5 minutes (`APPROVAL_TIMEOUT`), then denies. Lost
-  connections and expired requests also deny. The safe default is always "no".
+## Programs and filesystem access
 
-## Read-only mode
+The `shell` tool launches a program with an argv array, without implicitly
+parsing shell strings. Pipes and redirects are literal arguments unless an
+explicit interpreter such as `bash -c` is launched. An approved program can
+perform its own filesystem/network operations: pinning its working directory
+does not confine the process. Core path guards do not sandbox subprocesses or
+third-party MCP servers/hooks.
 
-Open a folder that is **not** a git checkout and the thread runs read-only:
-reads proceed, every other action is denied outright without even a dialog.
-Use this for exploring untrusted code. `git` detection happens at project
-open; the sidebar tags such projects **no git**.
+Custom requires the tool working directory to stay inside the project root.
+YOLO permits external paths. Shell output is bounded at 32 KiB; the default
+execution timeout is 120 seconds. Child environment handling excludes provider
+credentials from normal tool launches. MCP servers can receive explicitly configured environment-variable references.
+Hooks receive the fixed allowlist plus `CLAUDE_PLUGIN_ROOT`, rather than a
+configurable environment map. Imported MCP servers and hooks
+begin disabled and require explicit activation; hook trust remains separate
+from installation.
 
-## Worktree isolation
+## Shared checkout and secrets
 
-Each thread on a git project gets a branch `themis/<first-8-of-thread-id>`
-and a dedicated worktree (`crates/desktop/src/worktree.rs`). The agent's
-edits, commits, and command side effects land there — never in your checkout.
-**Merge** applies the worktree changes to your checkout only when they apply
-cleanly; on conflict it reports the paths and touches nothing. **Discard**
-deletes the thread, its worktree, and its branch.
+Threads currently share the project checkout, including existing uncommitted
+files. File edits affect that checkout directly. Select a separate Git worktree
+as a project when you want checkout isolation. Approved programs and YOLO can
+access other paths. Inspect changes in your Git client. Stopping or removing a
+thread does not undo its completed filesystem operations.
 
-## Shell policy
+Entered API keys remain in macOS Keychain; launch environment keys are handled
+by the backend. Only key availability crosses the settings bridge. Diagnostic
+records exclude prompt/tool/provider bodies, redact credential fields and
+referenced secret values, and bound debug stderr. Third-party stderr may contain
+other private information; inspect exported logs before sharing them.
 
-- **argv-only, no shell** (above). The working directory is pinned inside the
-  project root (`cwd` is relative; empty means the root).
-- **Always approval-gated** (`RiskLevel::Execute`): every invocation needs a
-  dialog decision or a cached Always for `shell`.
-- **Output is capped**: combined stdout/stderr is truncated at 32 KiB
-  (`MAX_COMMAND_OUTPUT`) with a `[output truncated]` marker.
-- **Execution timeout**: shell commands default to 120 seconds.
-- **Environment scrubbing**: child processes receive an allowlisted environment;
-  variable names containing KEY, TOKEN or SECRET are excluded. Go reads
-  `OPENCODE_KEY` in the backend; entered keys remain in macOS Keychain.
+## On an unexpected action
 
-Related real timeouts: provider HTTP calls time out after 120 s, and approval
-dialogs deny after the configured timeout (default 5 minutes).
-
-## On a suspicious action
-
-1. Press **Deny**. Denials are safe: the agent is told and must adapt or stop.
-2. Find the worktree path in Thread options and inspect its changes in your editor or Git client.
-3. If anything looks wrong, **Discard** the thread (worktree and branch are
-   removed; your checkout was never touched).
-4. If a key may have leaked (e.g. pasted into a prompt or file), rotate it at
-   your provider, then replace it in Settings → Models & connections.
-5. Use Settings → General → Updates & diagnostics → **Copy diagnostics** to capture a secret-free
-   snapshot for a bug report.
+1. Deny a pending request or stop the run.
+2. Inspect the worktree and any paths affected by approved programs.
+3. Review the recorded tool events and Settings → Diagnostics.
+4. If a key was pasted into a prompt/file or otherwise exposed, rotate it with
+   the provider and replace the stored key.

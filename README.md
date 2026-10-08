@@ -15,6 +15,7 @@ Plan: [.agents/plans/2026-09-23-themis-coding-agent.md](.agents/plans/2026-09-23
 - Organized settings with autosave, manual update checks, one-click diagnostics
 
 Docs: [user guide](docs/user-guide.md) · [sandbox model](docs/sandbox.md) ·
+[configuration and diagnostics](docs/configuration.md) · [plugins and skills](docs/plugins.md) ·
 [distribution guide](docs/maintainer-distribution.md).
 
 ## Layout

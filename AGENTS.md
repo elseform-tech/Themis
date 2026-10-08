@@ -9,6 +9,18 @@ Rust, Tauri, and React/TypeScript code belong in their owning layers; preserve c
 - `web/src/`: React UI, state, and adjacent tests. `docs/`: project documentation.
 - `quality_dashboard/`: local quality dashboard and its tests.
 
+## Configuration and Integrations
+
+Read [docs/configuration.md](docs/configuration.md) and [docs/plugins.md](docs/plugins.md) before changing configuration, approvals, discovery, imports, or diagnostics.
+
+- Runtime configuration belongs in `crates/core/src/configuration.rs`; desktop and CLI share the resolver through the app server. Preserve defaults → user `runtime.jsonc` → project `.themis/config.jsonc` → explicit run override, validation, and field provenance. Arrays replace earlier arrays; project approval rules may only add restrictions. Capture configuration and approval mode once per run.
+- Global plugins, skills, MCP connections, and hooks use the existing revisioned app-data `plugins/registry.json`. Project imports use `.themis/plugins/`. Do not introduce a second writable MCP/plugin registry or put integration definitions in `runtime.jsonc`. Use validated store APIs and expected revisions for edits.
+- User skill discovery uses `~/.agents/skills`, `~/.codex/skills`, and `~/.claude/skills`. Configured `skills.paths` changes project discovery only. Keep project paths bounded and reject traversal and symlink escapes.
+- Imports must expose compatibility reasons and offending fields before installation. Unsupported components require explicit partial-import opt-in; malformed or unsafe definitions still fail. Imported MCP servers and hooks begin disabled.
+- Preserve the composer YOLO/Custom contract. Custom applies ordered rules and interactive approvals; YOLO bypasses harness tool restrictions. Configuration and mode changes affect subsequent runs, not active snapshots. Hooks and external instructions never grant permissions.
+- Diagnostics are bounded, rotating JSONL under app-data `logs/`, separate from runtime JSONC and transcripts. Log metadata and correlation IDs, never prompts, tool payloads, provider bodies, or credentials. Redact actual referenced environment values, including variables with arbitrary names. Keep debug stderr bounded and filtered.
+- Add focused shared-server/CLI regression checks for backend changes and browser/native checks for UI changes. Update the configuration, integration, and user guides with changed fields, limits, scope, and behavior. Label benchmark audits separately from automatic runtime checks; preserve ongoing live tests.
+
 ## Build, Test, and Development
 
 Run from the repository root:
