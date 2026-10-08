@@ -674,7 +674,6 @@ async fn live_go_chat_completions_run() {
 #[tokio::test]
 async fn skill_catalog_reaches_system_request_without_body() {
     let server = MockServer::start().await;
-    common::mount_script(&server, vec![common::final_text_body("Done")]).await;
     let llm = resolve(
         &ProviderConfig::new(ProviderKind::Go, "test-key")
             .with_model("test-model")
@@ -691,12 +690,31 @@ async fn skill_catalog_reaches_system_request_without_body() {
         allowed_tools: vec![],
         scripts: vec![],
     };
-    themis_core::skills::materialize_scripts(std::slice::from_ref(&skill), root.path()).unwrap();
-    let catalog = themis_core::skills::catalog_prompt(&[skill], root.path());
+    let catalog =
+        themis_core::skills::materialize_catalog(&[skill], root.path(), "catalog-run").unwrap();
+    let entries: serde_json::Value = serde_json::from_str(
+        catalog
+            .split("Available skills (metadata only): ")
+            .nth(1)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    let path = entries[0]["path"].as_str().unwrap();
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("read_skill", "read_file", json!({"file_path": path})),
+            common::final_text_body("Done"),
+        ],
+    )
+    .await;
     let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
     themis_core::runtime::run_task_with_policy_and_catalog(
         llm,
-        vec![],
+        boxed_tools(root.path(), Arc::new(AllowAllHook)).unwrap(),
         "Inspect changes".into(),
         vec![],
         Arc::new(AllowAllHook),
@@ -717,12 +735,17 @@ async fn skill_catalog_reaches_system_request_without_body() {
     let system = request["messages"][0]["content"].as_str().unwrap();
     assert_eq!(request["messages"][0]["role"], "system");
     assert!(system.contains("Inspect changes"));
-    assert!(system.contains(
-        root.path()
-            .join(".themis/skills/review/SKILL.md")
-            .to_str()
-            .unwrap()
-    ));
+    assert!(system.contains(".themis/skill-catalogs/catalog-run/.themis/skills/review/SKILL.md"));
+    let followup: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert!(followup["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["role"] == "tool"
+            && message["content"]
+                .as_str()
+                .unwrap_or("")
+                .contains("BODY_MUST_REMAIN_LAZY")));
     assert!(!system.contains("BODY_MUST_REMAIN_LAZY"));
 }
 

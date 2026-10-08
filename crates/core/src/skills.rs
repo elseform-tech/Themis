@@ -275,7 +275,7 @@ pub fn materialize_catalog(skills: &[Skill], root: &Path, run_id: &str) -> anyho
         }
     }
     materialize_scripts(skills, &directory)?;
-    Ok(catalog_prompt(skills, &directory))
+    Ok(catalog_prompt(skills, directory.strip_prefix(root)?))
 }
 
 /// Only metadata enters the system message; read the referenced body when relevant.
