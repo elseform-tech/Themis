@@ -5,6 +5,8 @@
 .themis-response h1, .themis-response h2, .themis-response h3, .themis-response h4 { font-weight: 600; line-height: 1.4; margin: 1em 0 .5em; }
 .themis-response h1 { font-size: 1.25rem; }.themis-response h2 { font-size: 1.1rem; }.themis-response h3, .themis-response h4 { font-size: .9375rem; }
 .themis-response ul, .themis-response ol { padding-left: 1.5em; margin: .5em 0; }
+.themis-response ul { list-style: disc; }
+.themis-response ol { list-style: decimal; }
 .themis-response li { margin: .25em 0; }
 .themis-response a { color: var(--themis-info); text-decoration: underline; }
 .themis-response :not(pre) > code { background: var(--themis-raised); border-radius: 4px; padding: 2px 4px; font-size: .9em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

@@ -46,9 +46,11 @@ Make the work, its state, and the next useful action obvious. Keep the interface
 
 ## Integration browsing
 
-- Check catalog compatibility on visible tiles without requiring the user to open each plugin. Bound background work and ignore stale responses after source changes.
+- Complete marketplace compatibility checks in the background before publishing its tiles. Save results across visits; manual views reuse them. Bound background work and ignore stale responses after source changes.
 - Compatibility means the import format is supported. It does not prove credentials, external services, or runtime execution work.
 - Use **Compatible**, **Partially supported**, **Unsupported**, **Checking…**, or **Check failed** honestly. Do not silently turn failure into success.
+- Show compatibility reasons on the tile. Long reasons reveal from start to end on hover or keyboard focus, using the existing moving-text behavior; reduced motion wraps the complete text. Avoid perpetual marquees.
+- Render full skill instructions in a restrained inset reading surface, with distinct Markdown headings, lists, inline code, and syntax-highlighted code blocks. Do not flatten the document into a monotone paragraph or add decorative editor controls.
 - Keep Install on the tile. New UI installations are global; preserve existing project installations and their scope.
 - Opening a plugin shows its skill list and View actions. Viewing a skill opens the full instructions with a way back. A package with no skills gets only a concise empty state.
 - Keep descriptions, compatibility explanations, MCP inventories, hook inventories, and installation controls out of the plugin's skill-list view.
@@ -81,7 +83,7 @@ Compatibility badges currently use the following dark color pairs in [`Plugins.c
 | --- | --- | --- | --- |
 | Compatible | `#8cdbab` | `#193c29` | `#3b7350` |
 | Partially supported | `#f3cc7c` | `#41351c` | `#816833` |
-| Unsupported | `#f3a1aa` | `#48252c` | `#884b55` |
+| Unsupported / Check failed | `#f3a1aa` | `#48252c` | `#884b55` |
 | Unchecked / disabled | Secondary text token | Neutral surface | Border token |
 
 - Color reinforces a written status; it must never carry meaning alone.
@@ -109,3 +111,5 @@ Before calling a UI change complete:
 5. Run relevant automated checks and record failures, skips, and unverified journeys separately from passes.
 
 These rules guide implementation and review. They do not replace actual runtime verification or authorize changing unrelated workflows.
+
+Compatibility scans belong to the backend. Save and reuse results across visits. Show one compact progress indicator while a marketplace is checked, keep navigation usable, and expose its tiles only after the entire scan completes. Manual previews and installs reuse that snapshot. A refresh must invalidate older pending views and installation approvals, and duplicate clicks must never create duplicate operations.

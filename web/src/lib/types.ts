@@ -81,6 +81,10 @@ export interface PluginSpec {
   hooks: Array<{name:string;event:string;command:string;enabled:boolean;timeout_seconds:number;blocking:boolean}>;
   files: Record<string,string>; unsupported: string[];
 }
+export interface ImportPreview {
+  spec: PluginSpec;
+  report: { status: "supported" | "partial" | "unsupported"; components: NonNullable<PluginSpec["import_issues"]> };
+}
 export interface Plugin { scope: "local"|"global"; revision: string; enabled: boolean; source: string|null; spec: PluginSpec }
 export interface Marketplace { name: string; source: string }
 
