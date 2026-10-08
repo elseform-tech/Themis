@@ -26,6 +26,125 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_reopens_completed_navigation_after_a_section_failure() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().canonicalize().unwrap();
+    let source = root.join("control.txt");
+    let text = "Original source Ω ".repeat(60_000);
+    assert!(text.len().div_ceil(4) > 200_000);
+    std::fs::write(&source, &text).unwrap();
+    let provider = MockServer::start().await;
+    let recovery_root = root.clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            let input = messages[1]["content"].as_str().unwrap();
+            if input.contains("SECTION 1 OF ") {
+                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"NAV_KEEP_753"},"finish_reason":"stop"}]}));
+            }
+            return ResponseTemplate::new(451).set_body_string("Later section unavailable").set_delay(std::time::Duration::from_millis(150));
+        }
+        if let Some(receipt) = messages.iter().find(|message| message["tool_call_id"] == "recover_partial") {
+            let result: Value = serde_json::from_str(receipt["content"].as_str().unwrap()).unwrap();
+            assert_eq!(result["record_role"], "Assistant");
+            assert!(result["content"].as_str().unwrap().contains("NAV_KEEP_753"));
+            assert!(result["content"].as_str().unwrap().contains("UTF-8 bytes"));
+            assert!(result["evidence_warning"].as_str().unwrap().contains("not original evidence"));
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Recovered navigation; original verification remains required."},"finish_reason":"stop"}]}));
+        }
+        let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
+        assert!(context.contains("Working summary unavailable"));
+        assert!(!context.contains("NAV_KEEP_753"));
+        let Some(line) = context.lines().find(|line| line.starts_with("Partial section notes")) else {
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"No completed navigation saved."},"finish_reason":"stop"}]}));
+        };
+        assert!(line.contains("coverage is incomplete"));
+        let path: String = serde_json::from_str(line.split(": ").nth(1).unwrap()).unwrap();
+        let relative = Path::new(&path).strip_prefix(&recovery_root).unwrap();
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_partial","type":"function","function":{"name":"read_file","arguments":json!({"file_path":relative,"jsonl_record":1,"json_pointer":"/content"}).to_string()}}]},"finish_reason":"tool_calls"}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":root,"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let files = cli(
+        data.path(),
+        "attach_files",
+        json!({"threadId":id,"paths":[source]}),
+    );
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Recover completed navigation; verify originals before treating it as fact.","attachments":[files[0]["path"]],"reasoningEffort":null}),
+    );
+    let mut recovered = false;
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            assert_ne!(event["name"], "approval-request");
+            if event["name"] != "thread-event" {
+                continue;
+            }
+            let event = &event["payload"]["event"];
+            if event["kind"] == "tool_finished" && event["tool"] == "read_file" {
+                recovered |= event["ok"] == true
+                    && event["output"].as_str().unwrap().contains("NAV_KEEP_753");
+            }
+            if event["kind"] == "finished" || event["kind"] == "failed" {
+                break event.clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        recovered,
+        "CLI/app continuation must actually reopen the saved partial note"
+    );
+    assert_eq!(
+        terminal["result"],
+        "Recovered navigation; original verification remains required."
+    );
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), text);
+    let originals = std::fs::read_dir(root.join(".themis/context").join(id))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
+        })
+        .flat_map(|entry| {
+            std::fs::read_to_string(entry)
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .map(|line| serde_json::from_str::<Value>(&line).unwrap())
+        .collect::<Vec<_>>();
+    assert!(originals.iter().any(|record| record["role"] == "User"
+        && record["content"]
+            .as_str()
+            .is_some_and(|content| content.contains(&text))));
+    client.call("shutdown", json!({})).await.unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeating_successes() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

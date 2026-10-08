@@ -814,6 +814,7 @@ async fn compact_context_with_evidence(
     evidence_directory: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     let mut archived = None;
+    let mut summaries = Vec::new();
     let result = until_stopped(
         tokio::time::timeout(timeout, async {
             archived = if let Some(directory) = evidence_directory {
@@ -821,7 +822,15 @@ async fn compact_context_with_evidence(
             } else {
                 None
             };
-            compact_context_inner(llm, messages, policy, events, archived.clone()).await
+            compact_context_inner(
+                llm,
+                messages,
+                policy,
+                events,
+                archived.clone(),
+                &mut summaries,
+            )
+            .await
         }),
         stopped,
         events,
@@ -831,7 +840,22 @@ async fn compact_context_with_evidence(
         Ok(Ok(())) => Ok(()),
         failure => {
             check_stopped(stopped, events).await?;
-            if let Some((evidence, path)) = archived {
+            if let Some((mut evidence, path)) = archived {
+                if !summaries.is_empty() {
+                    summaries.sort_unstable_by_key(|(index, _, _)| *index);
+                    let notes = summaries.iter().map(|(_, source, summary)| ChatMessage {
+                        role: ChatRole::Assistant,
+                        message_type: MessageType::Text,
+                        content: format!("Compaction section note (navigation only; not original evidence).\n{source}\n{summary}"),
+                    }).collect::<Vec<_>>();
+                    let (_, notes_path) = save_evidence(
+                        path.parent()
+                            .ok_or_else(|| anyhow!("Evidence snapshot has no directory"))?,
+                        &notes,
+                    )
+                    .await?;
+                    evidence.push_str(&format!("\nPartial section notes (Assistant navigation only; coverage is incomplete; verify against originals): {}", serde_json::to_string(&notes_path)?));
+                }
                 let reason = if failure.is_err() {
                     "summarization exceeded its deadline"
                 } else {
@@ -855,6 +879,7 @@ async fn compact_context_inner(
     policy: &RunPolicy,
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     evidence: Option<(String, std::path::PathBuf)>,
+    summaries: &mut Vec<(usize, String, String)>,
 ) -> anyhow::Result<()> {
     let split = context_split(messages, policy);
     let older = &messages[1..split];
@@ -888,7 +913,7 @@ async fn compact_context_inner(
     let summarizer = Arc::clone(llm);
     let current_request = bounded_context_hint(current_request);
     let previous_hint = bounded_context_hint(previous.unwrap_or_default());
-    let mut summaries: Vec<(usize, String, String)> = futures_util::stream::iter(sections.into_iter().enumerate())
+    let mut pending = futures_util::stream::iter(sections.into_iter().enumerate())
         .map(|(index, (start, end, section))| {
             let source = archive_path.as_ref().map_or(String::new(), |path| format!(" Source: {path}, UTF-8 bytes {start}..{end} of the snapshot."));
             let llm = Arc::clone(&summarizer);
@@ -907,9 +932,11 @@ async fn compact_context_inner(
             Ok::<_, anyhow::Error>((index, format!("Section {} of {total}.{source}", index + 1), summary))
             }
         })
-        .buffer_unordered(3)
-        .try_collect()
-        .await?;
+        .buffer_unordered(3);
+    // Retain completed work outside the timed future so a later failure cannot discard it.
+    while let Some(summary) = pending.try_next().await? {
+        summaries.push(summary);
+    }
     summaries.sort_unstable_by_key(|(index, _, _)| *index);
     // Keep the already-generated notes before the lossy merge; no additional model calls.
     let saved_notes = if let Some((_, original)) = &evidence {
@@ -934,7 +961,7 @@ async fn compact_context_inner(
         .map(|(_, source, _)| source.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let mut summary = summaries
+    let mut summary = std::mem::take(summaries)
         .into_iter()
         .map(|(_, source, summary)| format!("{source}\n{summary}"))
         .collect::<Vec<_>>()
@@ -2536,6 +2563,99 @@ mod tests {
             serde_json::from_str(recovered["content"].as_str().unwrap()).unwrap();
         assert_eq!(receipt, original);
         assert_eq!(std::fs::read_to_string(&live).unwrap(), "changed decision");
+    }
+
+    #[tokio::test]
+    async fn completed_section_notes_survive_a_later_failure_or_deadline() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        for deadline in [false, true] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(move |request: &wiremock::Request| {
+                    let body: serde_json::Value = request.body_json().unwrap();
+                    if body["messages"][1]["content"]
+                        .as_str()
+                        .unwrap()
+                        .contains("SECTION 1 OF 2")
+                    {
+                        return ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "choices":[{"message":{"role":"assistant","content":"EARLY_NAV_753"},"finish_reason":"stop"}]
+                        }));
+                    }
+                    ResponseTemplate::new(451)
+                        .set_body_string("Section unavailable")
+                        .set_delay(if deadline {
+                            std::time::Duration::from_secs(30)
+                        } else {
+                            std::time::Duration::from_millis(150)
+                        })
+                })
+                .mount(&server)
+                .await;
+            let llm = crate::providers::resolve(
+                &crate::providers::ProviderConfig::new(
+                    crate::providers::ProviderKind::Go,
+                    "test-key",
+                )
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+            )
+            .await
+            .unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let mut messages = initial_messages(
+                vec![ConversationTurn {
+                    role: ConversationRole::User,
+                    text: "Original decision Ω ".repeat(4000),
+                }],
+                "Continue the task".into(),
+            );
+            let (tx, _rx) = tokio::sync::mpsc::channel(16);
+            compact_context_with_evidence(
+                &llm,
+                &mut messages,
+                &RunPolicy {
+                    total_turns: 200,
+                    context_token_budget: 200_000,
+                    recent_messages: 20,
+                },
+                &tx,
+                &AtomicBool::new(false),
+                std::time::Duration::from_millis(300),
+                Some(directory.path().to_owned()),
+            )
+            .await
+            .unwrap();
+            assert!(messages[1].content.contains("Working summary unavailable"));
+            assert!(!messages[1].content.contains("EARLY_NAV_753"));
+            let notes = std::fs::read_dir(directory.path())
+                .unwrap()
+                .filter_map(|entry| {
+                    let text = std::fs::read_to_string(entry.unwrap().path()).ok()?;
+                    text.contains(
+                        "Compaction section note (navigation only; not original evidence)",
+                    )
+                    .then_some(text)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                notes.len(),
+                1,
+                "completed navigation must survive later failure, deadline={deadline}"
+            );
+            let records = notes[0]
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0]["role"], "Assistant");
+            let note = records[0]["content"].as_str().unwrap();
+            assert!(note.contains("EARLY_NAV_753"));
+            assert!(note.contains("Section 1 of 2."));
+            assert!(note.contains("UTF-8 bytes"));
+            assert!(messages[1].content.contains("Partial section notes"));
+            assert!(messages[1].content.contains("coverage is incomplete"));
+        }
     }
 
     #[tokio::test]
