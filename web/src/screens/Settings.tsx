@@ -3,7 +3,6 @@ import { Badge, Button, EmptyState, Input } from "../components";
 import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
 import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 import type {
-  Diagnostics,
   GoModel,
   SecretStatus,
   Settings,
@@ -12,16 +11,13 @@ import type {
 import {
   checkForUpdates,
   clearSecret,
-  getDiagnostics,
   getSecretStatus,
   setSecret,
   updateSettings,
   listGoModels,
 } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
-import { copyDiagnostics } from "./diagnostics";
 import "./Settings.css";
-import { RuntimeConfiguration, DiagnosticLogs } from "./RuntimeConfiguration";
 import { AppearanceSettings } from "./Appearance";
 
 const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
@@ -98,13 +94,11 @@ export function SettingsScreen() {
   const [saving, setSaving] = useState(false);
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [keyBusy, setKeyBusy] = useState<string | null>(null);
-  const [section, setSection] = useState(state.settingsSection ?? "General");
+  const [section, setSection] = useState("General");
   const [saved, setSaved] = useState("");
   const [error, setError] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
-  const [copying, setCopying] = useState(false);
 
   useEffect(() => {
     setForm(state.settings);
@@ -176,21 +170,6 @@ export function SettingsScreen() {
     }
   }
 
-  async function copyDiagnosticsToClipboard() {
-    if (copying) return;
-    setCopying(true);
-    try {
-      const loaded = await copyDiagnostics({
-        load: getDiagnostics,
-        writeClipboard: (text) => navigator.clipboard.writeText(text),
-        notify: (message, tone) => toast(dispatch, message, tone),
-      });
-      if (loaded !== null) setDiagnostics(loaded);
-    } finally {
-      setCopying(false);
-    }
-  }
-
   async function clearKey(provider: (typeof SECRET_PROVIDERS)[number]) {
     setKeyBusy(provider);
     try {
@@ -215,7 +194,7 @@ export function SettingsScreen() {
   return (
     <div className="themis-settings">
       <div className="themis-settings-heading"><div><h2 className="themis-settings-title">Settings</h2><p className="themis-settings-hint">App preferences</p></div><span role="status" className="themis-settings-hint">{saving ? "Saving…" : saved}</span></div>
-      <nav className="themis-settings-tabs" aria-label="Settings sections">{["General", "Appearance", "Models", "Permissions", "Configuration", "Diagnostics", "Advanced"].map(label => <button key={label} aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setSaved(""); }}>{label}</button>)}</nav>
+      <nav className="themis-settings-tabs" aria-label="Settings sections">{["General", "Appearance", "Models", "Permissions", "Advanced"].map(label => <button key={label} aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setSaved(""); }}>{label}</button>)}</nav>
       {error && <p role="alert" className="themis-form-error">{error}</p>}
       <fieldset disabled={saving} className="themis-settings-fields">
       {section === "General" && <>
@@ -224,7 +203,7 @@ export function SettingsScreen() {
 
         </section>
         <section className="themis-settings-section" aria-label="Automations"><h3 className="themis-settings-subtitle">Automations</h3><label className="themis-settings-check"><input type="checkbox" checked={form.automations_enabled} onChange={event => void save({ automations_enabled: event.target.checked })} />Scheduled runs</label><p className="themis-settings-hint">Manage in Automations.</p></section>
-        <details className="themis-settings-section"><summary>Updates</summary><UpdateStatusView status={update} /><div><Button variant="ghost" size="small" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check updates"}</Button><Button variant="ghost" size="small" disabled={copying} onClick={() => void copyDiagnosticsToClipboard()}>{copying ? "Copying…" : "Copy diagnostics"}</Button></div><p className="themis-settings-hint">Manual checks · Diagnostics exclude keys.</p>{diagnostics && <p className="themis-settings-hint">{diagnostics.app_version} · {diagnostics.os}</p>}</details>
+        <details className="themis-settings-section"><summary>Updates</summary><UpdateStatusView status={update} /><div><Button variant="ghost" size="small" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check updates"}</Button></div></details>
       </>}
       {section === "Appearance" && <>
         <AppearanceSettings settings={state.settings} save={save} />
@@ -246,9 +225,7 @@ export function SettingsScreen() {
           <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div>{provider === "go" && <p className="themis-settings-hint">Forgetting a saved key does not remove OPENCODE_KEY from your environment.</p>}</details></div>)}
         </section>
       </>}
-      {section === "Permissions" && <section className="themis-settings-section" aria-label="Permissions"><h3 className="themis-settings-subtitle">Composer shield</h3><dl className="themis-permissions"><dt>YOLO</dt><dd>No harness restrictions or approval prompts. Operating-system and service permissions still apply.</dd><dt>Custom</dt><dd>Uses the configured allow, ask and deny rules.</dd><dt>When changes apply</dt><dd>Each run captures its permission mode and configuration at startup.</dd></dl><Button variant="ghost" onClick={()=>setSection("Configuration")}>Edit custom configuration</Button></section>}
-      {section === "Configuration" && <RuntimeConfiguration projectRoot={state.activeProjectRoot} />}
-      {section === "Diagnostics" && <DiagnosticLogs operationId={state.diagnosticOperation} />}
+      {section === "Permissions" && <section className="themis-settings-section" aria-label="Permissions"><h3 className="themis-settings-subtitle">Composer shield</h3><dl className="themis-permissions"><dt>YOLO</dt><dd>No harness restrictions or approval prompts. Operating-system and service permissions still apply.</dd><dt>Custom</dt><dd>Uses the configured allow, ask and deny rules.</dd><dt>When changes apply</dt><dd>Each run captures its permission mode and configuration at startup.</dd></dl></section>}
       {section === "Advanced" && <section className="themis-settings-section" aria-label="Advanced settings">
         <h3 className="themis-settings-subtitle">Run limits</h3>
         <Input id="themis-total-turns" label="Turn limit" type="number" min={1} max={2000} value={form.max_total_turns} onChange={event => setForm(f => ({ ...f, max_total_turns: Number(event.target.value) }))} onBlur={() => { if (form.max_total_turns !== state.settings.max_total_turns) void save({ max_total_turns: form.max_total_turns }); }} />

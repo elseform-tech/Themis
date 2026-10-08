@@ -28,7 +28,23 @@ vi.mock("../lib/tauri", () => ({
   updateSettings: vi.fn(),
 }));
 
-import { UpdateStatusView } from "./Settings";
+import { UpdateStatusView, SettingsScreen } from "./Settings";
+import { initialState } from "../state/reducer";
+
+vi.mock("../state/store", () => ({
+  useApp: () => ({ state: { ...initialState, settingsLoaded: true }, dispatch: vi.fn() }),
+  describeError: String,
+  toast: vi.fn(),
+}));
+
+it("keeps settings free of advanced configuration and log controls", () => {
+  const html = renderToStaticMarkup(createElement(SettingsScreen));
+  expect(html).toContain("Check updates");
+  expect(html).not.toContain("Copy diagnostics");
+  expect(html).not.toContain("Configuration");
+  expect(html).not.toContain("Diagnostics");
+  expect(html).not.toContain("Export JSONL");
+});
 
 function render(status: UpdateStatus | null): string {
   return renderToStaticMarkup(createElement(UpdateStatusView, { status }));

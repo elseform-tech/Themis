@@ -195,8 +195,9 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
             .unwrap();
         let guide = std::fs::read_to_string(manager["path"].as_str().unwrap()).unwrap();
         assert!(guide.contains("configure and troubleshoot integrations in chat"));
-        assert!(guide.contains("basic install, enable, disable and uninstall controls"));
-        assert!(!system.contains("Do not direct users to configuration forms"));
+        assert!(guide.contains("one-click plugin/skill installation"));
+        assert!(guide.contains("raw configuration and logs stay out of the desktop UI"));
+        assert!(!system.contains("raw configuration and logs stay out of the desktop UI"));
         assert!(!system.contains("PRIVATE_SKILL_BODY"));
         assert!(system.contains("GLOBAL_LEGACY_DESCRIPTION"));
         assert!(!system.contains("LEGACY_BODY_STAYS_LAZY"));

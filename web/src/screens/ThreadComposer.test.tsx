@@ -34,7 +34,8 @@ describe("ThreadComposer", () => {
     expect(Array.from(select.querySelectorAll("option")).map(option=>option.textContent)).toEqual(["YOLO","Custom"]);
     expect(select).toBeEnabled();fireEvent.change(select,{target:{value:"yolo"}});
     expect(onApprovalModeChange).toHaveBeenCalledWith("yolo");
-    expect(screen.getByText(/Applies to the next run/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", {name:"Edit configuration"})).toBeNull();
+    expect(screen.queryByText(/configured allow|next run/)).toBeNull();
   });
   it("attaches any file type, removes pending files and permits attachment-only sends", () => {
     const view = composer(false);

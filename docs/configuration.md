@@ -1,8 +1,9 @@
 # Configuration, scope, permissions, and diagnostics
 
-Desktop and CLI use the same local app server. Settings → Configuration edits
-runtime JSONC and shows the effective values, source of each field, and schema.
-Invalid configuration remains visible for repair; a run does not silently ignore it.
+Desktop and CLI use the same local app server. Runtime configuration is an
+advanced file/CLI feature; the desktop does not expose raw configuration or logs.
+The shared API returns effective values, field provenance, schema, and invalid
+configuration for repair. Runs reject invalid configuration rather than ignoring it.
 
 ## Files and scope
 
@@ -30,12 +31,15 @@ separate approval-policy JSONL file. Approval decisions are diagnostic records;
 approval rules live in runtime JSONC. API keys stay in Keychain or the launch
 environment, not these configuration files.
 
-Use Integrations' **Installation scope** selector to choose **User (Global)** or
+Use Integrations' installation scope selector to choose **User (Global)** or
 **Project**. Selecting a project does not force a global import into that project.
 Global packages are available across projects; local packages retain their own
 scope identity. Use shared import/edit/export APIs rather than hand-editing the
 revisioned registry. Portable plugin manifests and MCP JSON are import sources,
 not a second configuration store. See [plugins](plugins.md) for formats.
+An MCP import's custom file path selects the source to read once. Imported
+global servers share `plugins/registry.json`; each server does not get a separate
+active configuration file. Project imports use the project integration store.
 
 ## Runtime resolution
 
@@ -121,7 +125,8 @@ configuration change does not add compaction UI or guarantee lossless recall.
 
 ## Composer permissions
 
-The shield selects **Custom** (default) or **YOLO**, persisted per thread.
+The shield offers only **Custom** (default) or **YOLO**, persisted per thread.
+It has no configuration editor or advanced settings link.
 Custom checks rules in order: first matching tool/risk wins, otherwise `default`
 applies. Tool names match exactly or with a trailing `*` prefix wildcard.
 Actions are `allow`, `ask`, or `deny`; risks are `read`, `write`, `execute`,
@@ -144,9 +149,9 @@ See [sandbox](sandbox.md) for the enforcement boundary.
 
 ## Diagnostics
 
-Settings → Diagnostics reads, filters, copies, and exports JSONL records. Filter
-by exact severity, service, or operation ID. Integration errors provide a
-**View diagnostics** link to the associated operation.
+Logs stay out of the desktop UI. Advanced users can query structured records
+through the CLI/API or inspect the local JSONL files. Filters accept exact
+severity, service, or operation ID.
 
 Records contain epoch-millisecond timestamp, severity, service, event, and
 metadata. Events cover server lifecycle, configuration saves, integration
@@ -159,10 +164,9 @@ programs may contain other private information; review exports before sharing.
 Three files retain at most 2 MiB each. Individual records are capped at 16 KiB;
 queries default to the latest 200 records and support up to 2,000. Rotation is
 local retention, not a permanent audit archive. Severity thresholds can suppress
-lower-severity records, including info-level approval events. Export preserves
-the currently filtered records. Connection **Ready** is a successful explicit
-test for that saved definition in the current UI session, not continuous health
-monitoring or a promise that a future connection will succeed.
+lower-severity records, including info-level approval events. CLI/API queries
+return the filtered records. An explicit MCP test checks only that invocation; it does not establish
+continuous health or guarantee future connections.
 
 The resolver and read/query APIs are available through the actual CLI:
 
@@ -186,7 +190,7 @@ policy denies, and immutable run behavior when changing those contracts.
 Use synthetic credentials and isolated app data. The production-server/CLI
 regression is `cargo test -p themis-desktop --test configuration_diagnostics`.
 Core checks include `cargo test -p themis-core --lib`; UI tests are adjacent to
-the composer, Integrations, configuration editor, and bridge.
+the composer, Integrations, and bridge.
 
 Automated tests prove their exercised paths. Native verification, third-party
 network acceptance, and model retention benchmarks are separate evidence;

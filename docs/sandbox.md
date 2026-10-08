@@ -73,6 +73,6 @@ other private information; inspect exported logs before sharing them.
 
 1. Deny a pending request or stop the run.
 2. Inspect the worktree and any paths affected by approved programs.
-3. Review the recorded tool events and Settings → Diagnostics.
+3. Review the recorded tool events; advanced users can inspect local diagnostic logs.
 4. If a key was pasted into a prompt/file or otherwise exposed, rotate it with
    the provider and replace the stored key.

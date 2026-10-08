@@ -5,7 +5,7 @@ description: Create, import, install, configure and troubleshoot event hooks wit
 
 # Manage hooks
 
-Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, compatibility reports, configuration, connection tests, and lifecycle controls. Use shared tools for requested changes; Settings runtime JSONC may be inspected or edited when the user requests configuration.
+Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, one-click plugin/skill installation, and basic lifecycle controls. Use shared tools for requested changes. Runtime and MCP configuration use advanced files or CLI APIs; raw configuration and logs stay out of the desktop UI.
 
 Inspect installed hook definitions using `list_plugins`. The supported runtime events are RunStart, BeforeTool, AfterTool, BeforeCompaction and RunEnd. Users configure handlers for these events; they do not create new runtime events.
 

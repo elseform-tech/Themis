@@ -289,9 +289,3 @@ export function setThreadApprovalMode(threadId: string, mode: "custom" | "yolo")
   pendingPermissionChanges.set(threadId, tracked);
   return tracked;
 }
-
-export interface RuntimeConfigurationView {validation_error?:string|null;config:unknown;provenance:unknown;user_path:string;project_path?:string|null;user_json?:string|null;project_json?:string|null;schema:unknown}
-export interface DiagnosticRecord {timestamp:number;level:string;service:string;event:string;operation_id?:string;thread_id?:string;run_id?:string;details:unknown}
-export function getRuntimeConfiguration(projectRoot?:string|null):Promise<RuntimeConfigurationView>{return invoke("get_runtime_configuration",{projectRoot:projectRoot??null});}
-export function saveRuntimeConfiguration(scope:"user"|"project",json:string,projectRoot?:string|null):Promise<RuntimeConfigurationView>{return invoke("save_runtime_configuration",{scope,json,projectRoot:projectRoot??null});}
-export function queryDiagnosticLogs(filters:{service?:string;level?:string;operationId?:string;limit?:number}):Promise<DiagnosticRecord[]>{return invoke("query_diagnostic_logs",filters);}

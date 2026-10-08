@@ -394,9 +394,8 @@
 .themis-composer-permissions { position: relative; }
 .themis-composer-permissions summary { display: flex; align-items: center; gap: .35rem; cursor: pointer; font-size: .75rem; list-style: none; padding: .5rem; }
 .themis-composer-permissions summary::-webkit-details-marker { display: none; }
-.themis-permissions-panel { position: absolute; bottom: 100%; left: 0; width: 16rem; z-index: 10; background: var(--themis-surface); border: 1px solid var(--themis-border); border-radius: .5rem; padding: .75rem; font-size: .8rem; }
+.themis-permissions-panel { position: absolute; bottom: 100%; left: 0; width: max-content; z-index: 10; background: var(--themis-surface); border: 1px solid var(--themis-border); border-radius: .5rem; padding: .75rem; font-size: .8rem; }
 .themis-permissions-panel label { display: flex; gap: .5rem; align-items: center; }
-.themis-permissions-panel p { color: var(--themis-text-2); }
 
 .themis-composer-permissions[data-mode="yolo"] summary { color: var(--themis-warning); }
 .themis-composer-permissions summary:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 2px; }

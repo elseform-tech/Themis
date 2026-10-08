@@ -81,8 +81,6 @@ export interface AppState {
   activeProjectRoot: string | null;
   activeThreadId: string | null;
   mainView: MainView;
-  settingsSection?: string;
-  diagnosticOperation?: string;
   messages: Record<string, ChatMessage[]>;
   /** Live streamed assistant text per thread (cleared on finished/failed). */
   streams: Record<string, string>;
@@ -151,7 +149,7 @@ export type AppAction =
   | { type: "secrets/loaded"; status: SecretStatus }
   | { type: "toast/push"; toast: ToastItem }
   | { type: "toast/dismiss"; id: string }
-  | { type: "ui/view"; view: MainView; settingsSection?: string; diagnosticOperation?: string }
+  | { type: "ui/view"; view: MainView }
   | { type: "ui/diff-panel"; open: boolean }
   | { type: "ui/palette"; open: boolean }
   | { type: "ui/project-dialog"; open: boolean };

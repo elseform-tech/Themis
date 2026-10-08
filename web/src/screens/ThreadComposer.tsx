@@ -37,7 +37,6 @@ interface ThreadComposerProps {
   onEffortChange: (effort: string) => void;
   onOpenSettings: () => void;
   permissionSaving?: boolean;
-  onOpenConfiguration?: () => void;
   onApprovalModeChange?: (mode: "custom" | "yolo") => void;
 }
 
@@ -68,7 +67,6 @@ export function ThreadComposer({
   onProviderChange,
   onEffortChange,
   onOpenSettings,
-  onOpenConfiguration,
   permissionSaving = false,
   onApprovalModeChange,
 }: ThreadComposerProps) {
@@ -130,9 +128,7 @@ export function ThreadComposer({
               <span>{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>
             </summary>
             <div className="themis-permissions-panel">
-              <label>Mode<select aria-label="Approval mode" value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
-              <p>{thread.approval_mode === "yolo" ? "No harness restrictions or approval prompts." : "Apply configured allow, ask and deny rules."} {running && "Applies to the next run."}</p>
-              {thread.approval_mode !== "yolo" && <Button variant="ghost" size="small" onClick={onOpenConfiguration ?? onOpenSettings}>Edit configuration</Button>}
+              <label><select aria-label="Approval mode" value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
             </div>
           </details>
           <div className="themis-composer-selectors">

@@ -249,7 +249,6 @@ export function ThreadView() {
         }}
         permissionSaving={permissionSaving}
         onApprovalModeChange={mode => void changeApprovalMode(mode)}
-        onOpenConfiguration={() => dispatch({type:"ui/view",view:"settings",settingsSection:"Configuration"})}
         onOpenSettings={() => dispatch({ type: "ui/view", view: "settings" })}
       />
 

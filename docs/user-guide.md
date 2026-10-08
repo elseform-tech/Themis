@@ -84,7 +84,7 @@ conversation records, not the project files or completed edits.
 ## Approvals
 
 The composer shield selects **Custom** or **YOLO** for the thread. Custom is
-initially selected and uses ordered approval rules from Settings → Configuration.
+initially selected and uses ordered approval rules from advanced file configuration.
 Its default policy allows reads and asks before other tools. A matching deny
 rule rejects the action; a matching allow rule proceeds. Projects can add
 restrictions but cannot grant access.
@@ -188,17 +188,12 @@ of:
 
 ## Diagnostics
 
-Settings → **Diagnostics** offers the existing app/version/settings snapshot
-and structured event logs. Filter logs by severity, service, or operation ID;
-copy or export the selected JSONL records. Integration errors link directly to
-their matching diagnostics. Logs rotate locally and contain bounded metadata,
-not conversation bodies. Review third-party debug stderr before sharing exports.
-
-Settings → **Configuration** edits User or Project JSONC and displays the
-resolved values and their source. Global integration definitions use the
-revisioned app-data registry; project imports use `.themis/plugins/`. See the
-[configuration guide](configuration.md) for exact paths, schema, limits, and CLI
-examples.
+The desktop keeps configuration files and logs out of normal user flows.
+Advanced users can inspect local rotating JSONL logs and configure User or
+Project runtime JSONC through files and the shared CLI/API. Global integration
+definitions use the revisioned app-data registry; project imports use
+`.themis/plugins/`. See the [configuration guide](configuration.md) for paths,
+schema, limits, and CLI examples.
 
 ## FAQ
 
@@ -231,7 +226,7 @@ Settings.
 **The app forgot my projects / acts strangely after an upgrade?**
 Settings load from `settings.json`; a corrupt file falls back to defaults
 (this can look like forgotten recents). Reopen projects from the sidebar and
-check Settings → Diagnostics to confirm the loaded snapshot.
+inspect settings with `themis call get_settings` when troubleshooting.
 
 ## Formatted responses
 
