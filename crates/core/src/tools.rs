@@ -391,6 +391,7 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
             .ok_or_else(|| invalid("json_pointer must be a string"))?,
     };
     if needle.is_some() {
+        result["find"] = serde_json::to_value(needle)?;
         result["match_count"] = 0.into();
         result["last_match_offset"] = Value::Null;
     }

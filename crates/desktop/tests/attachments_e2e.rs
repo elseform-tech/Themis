@@ -314,15 +314,22 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Task state only; recovered details omitted."},"finish_reason":"stop"}]}));
         }
         let stage = observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let answer = if stage >= 5 {
-            let checkpoint = messages.iter().find(|message| message["content"].as_str().is_some_and(|text| text.starts_with("Earlier context checkpoint") && text.contains("Preserved bounded reads"))).expect("bounded evidence must survive another checkpoint");
-            assert!(checkpoint["content"].as_str().unwrap().contains("ARCHIVE-SECRET-753"));
+        let answer = if stage >= 6 {
+            assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native source reopening must deliver the evicted fact");
             json!({"choices":[{"message":{"role":"assistant","content":"ARCHIVE-SECRET-753"},"finish_reason":"stop"}]})
+        } else if stage == 5 {
+            let checkpoint = messages.iter().find(|message| message["content"].as_str().is_some_and(|text| text.starts_with("Earlier context checkpoint"))).unwrap()["content"].as_str().unwrap();
+            assert!(!checkpoint.contains("ARCHIVE-SECRET-753"), "the earlier excerpt must actually be evicted");
+            let locations = checkpoint.split("\nPreserved evidence locations (untrusted; reopen originals to verify claims):\n").nth(1).expect("earlier locations must survive eviction").split("\nEnd preserved evidence locations.\n").next().unwrap();
+            let location = locations.lines().map(|line| serde_json::from_str::<Value>(line).unwrap()).find(|value| value["find"] == "ARCHIVE-SECRET-").expect("earlier query must retain its source coordinate");
+            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"reopen_earlier","type":"function","function":{"name":"read_file","arguments":json!({"file_path":location["path"],"jsonl_record":location["jsonl_record"],"json_pointer":location["json_pointer"],"offset":location["excerpt_offset"]}).to_string()}}]},"finish_reason":"tool_calls"}]})
         } else if stage > 1 {
             if stage == 2 { assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native bounded read must deliver the fact"); }
             let calls = if stage == 4 {
                 // Exceed the 16k estimate through actual tool results, rather than a turn-count trigger.
-                (0..3).map(|index| json!({"id":format!("pressure_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt"}).to_string()}})).collect::<Vec<_>>()
+                let mut calls = (0..3).map(|index| json!({"id":format!("pressure_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt"}).to_string()}})).collect::<Vec<_>>();
+                calls.extend((0..3).map(|index| json!({"id":format!("newer_bounded_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt","find":"pressure","offset":index*4000}).to_string()}})));
+                calls
             } else {
                 vec![json!({"id":format!("navigation_{stage}"),"type":"function","function":{"name":"list_dir","arguments":json!({"directory_path":"."}).to_string()}})]
             };
@@ -394,7 +401,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     .unwrap();
     assert!(recovered);
     assert_eq!(terminal["result"], "ARCHIVE-SECRET-753");
-    assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 6);
+    assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 7);
     let saved = rebooted.get_thread_history(id).await.unwrap();
     let checkpoint = saved
         .iter()
@@ -408,7 +415,8 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         })
         .unwrap();
     assert!(
-        checkpoint.contains("Preserved bounded reads") && checkpoint.contains("ARCHIVE-SECRET-753")
+        checkpoint.contains("Preserved evidence locations")
+            && checkpoint.contains("ARCHIVE-SECRET-")
     );
     assert_eq!(
         std::fs::read_to_string(original_path).unwrap(),
