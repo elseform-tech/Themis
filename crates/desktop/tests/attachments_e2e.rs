@@ -439,6 +439,39 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         true,
         "a bounded search must report incomplete coverage"
     );
+    // One crowded query must not starve another query's original evidence.
+    std::fs::write(
+        search.path().join("snapshot-last.jsonl"),
+        json!({"role":"User","content":"OMEGA distinct later original"}).to_string(),
+    )
+    .unwrap();
+    let batch = script.replace("q=['needle_match']", "q=['needle_match','omega','absent']");
+    let output = std::process::Command::new("python3")
+        .args(["-c", &batch])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.len() <= 17_000);
+    let rows: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(rows.iter().any(|row| row["query"] == "omega"
+        && row["content"]
+            .as_str()
+            .is_some_and(|text| text.contains("OMEGA distinct later original"))));
+    assert!(rows
+        .iter()
+        .any(|row| row["query"] == "absent" && row["matches"] == 0));
+    assert!(rows
+        .iter()
+        .any(|row| row["query"] == "needle_match" && row["truncated"] == true));
+    assert!(rows.iter().all(|row| row["role"] != "Assistant"));
     assert!(system.contains("Root-scoped file tools require relative paths"));
     assert!(system.contains("it does not fall back to Assistant navigation"));
     assert!(system.contains("Before citing, pair each claim"));
