@@ -202,7 +202,7 @@ def _ast_complexity_row(path: str, analysis: dict) -> dict:
         "functions": int(_metric_number(metrics.get("nom", {}).get("functions"), 0)),
         "cyclomatic": _metric_number(metrics.get("cyclomatic", {}).get("average")),
         "cognitive": _metric_number(metrics.get("cognitive", {}).get("average")),
-        "maintainability": round(statistics.mean(function_indexes), 1) if function_indexes else _metric_number(metrics.get("mi", {}).get("mi_visual_studio"), 1),
+        "maintainability": round(statistics.mean(function_indexes), 1) if function_indexes else None,
         "maintainabilityTotal": sum(function_indexes),
         "maintainabilitySamples": len(function_indexes),
     }
@@ -302,7 +302,7 @@ def complexity_metrics() -> dict:
         "available": True,
         "method": (
             f"Tree-sitter AST metrics via rust-code-analysis {AST_ANALYZER_VERSION}; "
-            "Visual Studio maintainability index, mean across callable AST nodes. Files without functions use module index in the table only."
+            "Visual Studio maintainability index, mean across callable AST nodes. Files without functions have no function index."
         ),
         "filesAnalyzed": len(rows),
         "averageCyclomatic": round(statistics.mean(row["cyclomatic"] for row in rows), 2) if rows else 0,
@@ -310,7 +310,7 @@ def complexity_metrics() -> dict:
         "averageMaintainability": round(
             sum(row["maintainabilityTotal"] for row in rows) / sum(row["maintainabilitySamples"] for row in rows), 1,
         ) if sum(row["maintainabilitySamples"] for row in rows) else 0,
-        "files": sorted(rows, key=lambda row: (row["maintainability"], -row["cognitive"])),
+        "files": sorted(rows, key=lambda row: (row["maintainability"] if row["maintainability"] is not None else float("inf"), -row["cognitive"])),
     }
 
 
