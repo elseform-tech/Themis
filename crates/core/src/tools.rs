@@ -312,7 +312,7 @@ impl ToolT for GatedTool {
 
     fn description(&self) -> &str {
         if self.inner.name() == "read_file" {
-            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record searches decoded records, preferring original User/Tool matches over Assistant navigation; continue using the returned jsonl_record and next_offset. These modes return at most 4000 characters with provenance and next_offset; no shell is needed. Omitting these options preserves whole-file reading."
+            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record searches decoded records, preferring original User/Tool matches over Assistant navigation; continue using the returned jsonl_record and next_offset. These modes return at most 4000 content characters with provenance and next_offset. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. Omitting these options preserves whole-file reading."
         } else {
             self.inner.description()
         }
@@ -390,6 +390,10 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
             .as_str()
             .ok_or_else(|| invalid("json_pointer must be a string"))?,
     };
+    if needle.is_some() {
+        result["match_count"] = 0.into();
+        result["last_match_offset"] = Value::Null;
+    }
     let record = if args.get("jsonl_record").is_some() {
         Some(number("jsonl_record", 0)?)
     } else if let Some(needle) = needle.filter(|_| {
@@ -477,9 +481,14 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
             .char_indices()
             .nth(offset)
             .map_or(text.len(), |(n, _)| n);
-        if let Some(index) = text[byte..].find(needle) {
+        let mut matches = text[byte..].match_indices(needle);
+        if let Some((index, _)) = matches.next() {
+            let (count, last) =
+                matches.fold((1usize, index), |(count, _), (index, _)| (count + 1, index));
             let matched = offset + text[byte..byte + index].chars().count();
             result["match_offset"] = matched.into();
+            result["match_count"] = count.into();
+            result["last_match_offset"] = (offset + text[byte..byte + last].chars().count()).into();
             start = matched.saturating_sub(200);
             next = Some(matched + needle.chars().count());
         } else {
@@ -1422,6 +1431,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing["found"], false);
+        assert_eq!(missing["match_count"], 0);
+        assert_eq!(missing["last_match_offset"], Value::Null);
         assert_eq!(missing["total_records"], 2);
         assert!(missing["search_scope"]
             .as_str()
@@ -1474,6 +1485,37 @@ mod tests {
         let tool_result = tool.execute(json!({"file_path":"tool.jsonl","jsonl_record":1,"json_pointer":"/message_type/ToolResult/0/function/arguments"})).await.unwrap();
         assert_eq!(tool_result["record_role"], "Tool");
         assert_eq!(tool_result["content"], "Quoted 🔎 output\nverbatim");
+    }
+
+    #[tokio::test]
+    async fn bounded_find_exposes_later_unicode_matches() {
+        let (_tmp, root) = rooted_case();
+        fs::write(root.join("events.txt"), "é🔎 plan; later é🔎 done").unwrap();
+        let tools = boxed_tools(&root, Arc::new(RecordingHook::new(Approval::AllowOnce))).unwrap();
+        let tool = find_tool(&tools, "read_file");
+        let first = tool
+            .execute(json!({"file_path":"events.txt","find":"é🔎"}))
+            .await
+            .unwrap();
+        assert_eq!(first["match_count"], 2);
+        assert_eq!(first["match_offset"], 0);
+        assert_eq!(first["last_match_offset"], 15);
+        let later = tool
+            .execute(
+                json!({"file_path":"events.txt","find":"é🔎","offset":first["last_match_offset"]}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(later["match_count"], 1);
+        assert_eq!(later["match_offset"], 15);
+        assert_eq!(later["last_match_offset"], 15);
+        let absent = tool
+            .execute(json!({"file_path":"events.txt","find":"é🔎","offset":later["next_offset"]}))
+            .await
+            .unwrap();
+        assert_eq!(absent["match_count"], 0);
+        assert_eq!(absent["last_match_offset"], Value::Null);
+        assert_eq!(absent["found"], false);
     }
 
     #[tokio::test]
