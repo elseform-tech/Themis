@@ -299,13 +299,22 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     assert!(!project.path().join(".git").exists());
     provider.reset().await;
     let recovery_root = project.path().canonicalize().unwrap();
+    let recovery_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed_calls = Arc::clone(&recovery_calls);
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let messages = body["messages"].as_array().unwrap();
-        let result = messages.iter().find(|message| message["role"] == "tool");
-        let answer = if let Some(result) = result {
-            assert!(result.to_string().contains("ARCHIVE-SECRET-753"), "the real tool must recover the omitted fact");
+        if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Task state only; recovered details omitted."},"finish_reason":"stop"}]}));
+        }
+        let stage = observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let answer = if stage >= 4 {
+            let checkpoint = messages.iter().find(|message| message["content"].as_str().is_some_and(|text| text.starts_with("Earlier context checkpoint") && text.contains("Preserved bounded reads"))).expect("bounded evidence must survive another checkpoint");
+            assert!(checkpoint["content"].as_str().unwrap().contains("ARCHIVE-SECRET-753"));
             json!({"choices":[{"message":{"role":"assistant","content":"ARCHIVE-SECRET-753"},"finish_reason":"stop"}]})
+        } else if stage > 0 {
+            if stage == 1 { assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native bounded read must deliver the fact"); }
+            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":format!("navigation_{stage}"),"type":"function","function":{"name":"list_dir","arguments":json!({"directory_path":"."}).to_string()}}]},"finish_reason":"tool_calls"}]})
         } else {
             let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
             assert!(!context.contains("ARCHIVE-SECRET-753"));
@@ -323,6 +332,14 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         .await
         .unwrap();
     rebooted.set_go_base_url_override(Some(provider.uri()));
+    rebooted
+        .update_settings(themis_desktop::types::SettingsPatch {
+            max_turns: Some(1),
+            context_messages: Some(4),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
     let server = Server::bind(rebooted.clone(), data.path()).await.unwrap();
     let task = tokio::spawn(server.run());
     let mut events = client.subscribe().await.unwrap();
@@ -358,6 +375,22 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     .unwrap();
     assert!(recovered);
     assert_eq!(terminal["result"], "ARCHIVE-SECRET-753");
+    assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 5);
+    let saved = rebooted.get_thread_history(id).await.unwrap();
+    let checkpoint = saved
+        .iter()
+        .rev()
+        .find_map(|item| match item {
+            themis_desktop::transcript::HistoryItem::Event { envelope } => match &envelope.event {
+                themis_desktop::types::ThreadEvent::ContextCheckpoint { summary } => Some(summary),
+                _ => None,
+            },
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        checkpoint.contains("Preserved bounded reads") && checkpoint.contains("ARCHIVE-SECRET-753")
+    );
     assert_eq!(
         std::fs::read_to_string(original_path).unwrap(),
         *original,

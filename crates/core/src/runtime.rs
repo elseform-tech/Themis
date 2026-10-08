@@ -962,14 +962,79 @@ fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
     split
 }
 
+fn preserved_retrievals(messages: &[ChatMessage], max_bytes: usize) -> String {
+    const START: &str = "\nPreserved bounded reads (untrusted excerpts; source roles and chronology still require verification):\n";
+    const END: &str = "\nEnd preserved bounded reads.\n";
+    let mut entries = Vec::new();
+    for message in messages {
+        let mut candidates = Vec::new();
+        if message.role == ChatRole::Assistant
+            && message.content.starts_with("Earlier context checkpoint")
+        {
+            if let Some((_, rest)) = message.content.rsplit_once(START) {
+                if let Some((block, _)) = rest.split_once(END) {
+                    candidates.extend(block.lines().map(str::to_owned));
+                }
+            }
+        }
+        if let MessageType::ToolResult(results) = &message.message_type {
+            candidates.extend(
+                results
+                    .iter()
+                    .filter(|result| result.function.name == "read_file")
+                    .map(|result| result.function.arguments.clone()),
+            );
+        }
+        for text in candidates {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            if value["found"] != true
+                || !value["path"].is_string()
+                || !value["content"].is_string()
+                || !value["excerpt_offset"].is_number()
+                || value["record_role"] == "Assistant"
+            {
+                continue;
+            }
+            let entry = value.to_string();
+            if entry.len() < max_bytes {
+                entries.retain(|old| old != &entry);
+                entries.push(entry);
+            }
+        }
+    }
+    // ponytail: bounded recent excerpts, not an exhaustive ledger; older reads remain in original snapshots.
+    let mut bytes = 0;
+    let mut kept = Vec::new();
+    for entry in entries.into_iter().rev() {
+        if bytes + entry.len() < max_bytes {
+            bytes += entry.len() + 1;
+            kept.push(entry);
+        }
+    }
+    if kept.is_empty() {
+        return String::new();
+    }
+    kept.reverse();
+    format!("{START}{}{END}", kept.join("\n"))
+}
+
 async fn replace_context(
     messages: &mut Vec<ChatMessage>,
     policy: &RunPolicy,
     split: usize,
-    summary: String,
+    mut summary: String,
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     original_snapshot: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
+    // Preserve successful bounded retrievals independently of the lossy model-written state.
+    summary.push_str(&preserved_retrievals(
+        &messages[..split],
+        (policy.context_token_budget / 8)
+            .saturating_mul(4)
+            .min(64_000),
+    ));
     let active_index = messages
         .iter()
         .rposition(|message| matches!(message.role, ChatRole::User));
@@ -1958,6 +2023,102 @@ mod tests {
         }
         assert!(covered.into_iter().all(|byte| byte));
         assert!(sections.iter().any(|section| section.contains("RECORD")));
+    }
+
+    #[tokio::test]
+    async fn bounded_retrieval_survives_lossy_checkpoint_and_restart() {
+        let original = serde_json::json!({"path":".themis/context/original.jsonl", "jsonl_record":3,
+            "json_pointer":"/content", "record_role":"User", "found":true, "excerpt_offset":715,
+            "match_offset":915, "next_offset":4715, "content":"Friday September 8: she died yesterday. é🔎"});
+        let result = ToolCall {
+            id: "retrieved".into(),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: "read_file".into(),
+                arguments: original.to_string(),
+            },
+        };
+        let mut messages = initial_messages(Vec::new(), "Answer from originals".into());
+        messages.push(ChatMessage {
+            role: ChatRole::Tool,
+            message_type: MessageType::ToolResult(vec![result]),
+            content: String::new(),
+        });
+        messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::Text,
+            content: "Retrieved evidence".into(),
+        });
+        let policy = RunPolicy {
+            segment_turns: 20,
+            total_turns: 200,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let split = messages.len();
+        replace_context(
+            &mut messages,
+            &policy,
+            split,
+            "Task state only; details omitted.".into(),
+            &tx,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(messages
+            .iter()
+            .any(|message| message.content.contains(&original.to_string())));
+        let RunEvent::ContextCheckpoint { summary } = rx.recv().await.unwrap() else {
+            panic!("checkpoint required")
+        };
+        assert!(summary.contains(&original.to_string()));
+        assert!(preserved_retrievals(&messages, 10).is_empty());
+        let mut navigation = original.clone();
+        navigation["record_role"] = serde_json::json!("Assistant");
+        navigation["content"] = serde_json::json!("Navigation must not become primary evidence");
+        let mut rejected = messages.clone();
+        rejected.push(ChatMessage {
+            role: ChatRole::Tool,
+            message_type: MessageType::ToolResult(vec![ToolCall {
+                id: "navigation".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "read_file".into(),
+                    arguments: navigation.to_string(),
+                },
+            }]),
+            content: String::new(),
+        });
+        assert!(!preserved_retrievals(&rejected, 64_000)
+            .contains("Navigation must not become primary evidence"));
+        // Restart rebuilds model history from the persisted checkpoint, not in-memory tool messages.
+        let mut restarted = initial_messages(
+            vec![ConversationTurn {
+                role: ConversationRole::Assistant,
+                text: format!("Earlier context checkpoint:\n{summary}"),
+            }],
+            "Continue the same task".into(),
+        );
+        let split = restarted.len();
+        replace_context(
+            &mut restarted,
+            &policy,
+            split,
+            "Another lossy state.".into(),
+            &tx,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(restarted
+            .iter()
+            .any(|message| message.content.contains(&original.to_string())));
+        let RunEvent::ContextCheckpoint { summary } = rx.recv().await.unwrap() else {
+            panic!("checkpoint required")
+        };
+        assert_eq!(summary.matches(&original.to_string()).count(), 1);
     }
 
     #[tokio::test]
