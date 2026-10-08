@@ -1,6 +1,6 @@
 # Themis UI rules
 
-Polish the existing workspace; preserve its conversation and review workflows.
+Follow the [product design rules and color system](../DESIGN.md). Polish the existing workspace; preserve its conversation and review workflows.
 
 - Keep a permanent icon-only utility rail. Each icon has one clear tooltip and accessible name. The expandable dock contains Themis, New chat, projects and threads. Animate its width with the canvas so collapse/expand moves smoothly; reduced motion uses an immediate toggle.
 - Keep Themis in the sidebar at `~/ThemisOS/Projects/Themis`, without a lock or name protection. All new projects live under `~/ThemisOS/Projects`. No setting or creation action changes this root. Settings shows only the shared projects root. Renaming any project, including Themis, changes its display name only; folders and history stay in place. Existing folders are never moved automatically.
