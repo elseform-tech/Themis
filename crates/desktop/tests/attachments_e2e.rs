@@ -218,9 +218,108 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     let final_request: serde_json::Value =
         serde_json::from_slice(&requests.last().unwrap().body).unwrap();
     let system = final_request["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("r.get('role')=='User'"));
-    assert!(system.contains("enumerate(p.open(),1)"));
-    assert!(system.contains("r['content'][:4500]"));
+    // Execute the recipe actually delivered by the shared CLI/app request.
+    // A large original beyond the opening window and a second snapshot must
+    // both be discoverable; Assistant navigation must never count as proof.
+    let search = tempfile::tempdir().unwrap();
+    let original_text = format!("{} Ω NEEDLE_MATCH late original", "padding ".repeat(10_000));
+    let records = [
+        json!({"role":"Assistant","content":"NEEDLE_MATCH invented navigation"}),
+        json!({"role":"User","content":original_text}),
+        json!({"role":"Tool","content":"","message_type":{"ToolResult":[{"function":{"arguments":"needle_match original tool output"}}]}}),
+    ];
+    std::fs::write(
+        search.path().join("snapshot-one.jsonl"),
+        records
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        search.path().join("snapshot-two.jsonl"),
+        json!({"role":"User","content":"needle_match second original"}).to_string(),
+    )
+    .unwrap();
+    let recipe = system
+        .split("```python\n")
+        .nth(1)
+        .unwrap()
+        .split("\n```")
+        .next()
+        .unwrap();
+    let script = recipe
+        .lines()
+        .map(|line| {
+            if line.starts_with("d=pathlib.Path(") {
+                format!(
+                    "d=pathlib.Path({})",
+                    serde_json::to_string(search.path()).unwrap()
+                )
+            } else {
+                line.replace("SEARCH_TERM", "needle_match")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let search_output = std::process::Command::new("python3")
+        .args(["-c", &script])
+        .output()
+        .unwrap();
+    assert!(
+        search_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&search_output.stderr)
+    );
+    let hits: Vec<Value> = String::from_utf8(search_output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .filter(|row: &Value| row.get("path").is_some())
+        .collect();
+    assert_eq!(
+        hits.len(),
+        3,
+        "search must include large originals, other snapshots and original Tool results"
+    );
+    assert!(hits.iter().all(|row| row["role"] != "Assistant"));
+    let large = hits.iter().find(|row| row["record"] == 2).unwrap();
+    assert!(large["offset"].as_u64().unwrap() > 12_000);
+    assert!(large["content"]
+        .as_str()
+        .unwrap()
+        .contains("NEEDLE_MATCH late original"));
+    assert!(hits
+        .iter()
+        .any(|row| row["json_pointer"] == "/message_type/ToolResult/0/function/arguments"));
+    let crowded = (0..32)
+        .map(|_| {
+            json!({"role":"User","content":format!("needle_match {}", "x".repeat(1500))})
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(search.path().join("snapshot-zero.jsonl"), crowded).unwrap();
+    let capped = std::process::Command::new("python3")
+        .args(["-c", &script])
+        .output()
+        .unwrap();
+    assert!(capped.status.success());
+    assert!(
+        capped.stdout.len() <= 16_300,
+        "the recipe must bound aggregate output"
+    );
+    let rows: Vec<Value> = String::from_utf8(capped.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        rows.last().unwrap()["truncated"],
+        true,
+        "a bounded search must report incomplete coverage"
+    );
     assert!(system.contains("Root-scoped file tools require relative paths"));
     assert!(system.contains("it does not fall back to Assistant navigation"));
     assert!(system.contains("Before citing, pair each claim"));
