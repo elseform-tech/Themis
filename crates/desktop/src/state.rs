@@ -511,6 +511,16 @@ impl AppState {
         Ok(entry)
     }
 
+    pub fn pending_approvals(&self) -> Vec<crate::types::ApprovalRequest> {
+        self.inner
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .map(|entry| entry.request.clone())
+            .collect()
+    }
+
     /// Delivers a UI decision to a pending approval dialog.
     pub async fn approve_action(
         &self,

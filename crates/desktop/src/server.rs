@@ -417,6 +417,7 @@ pub async fn dispatch(
                 )
                 .await
         ),
+        "get_pending_approvals" => output!(state.pending_approvals()),
         "list_threads" => output!(state.list_threads(arg(&args, "projectRoot")?).await?),
         "merge_thread" => output!(state.merge_thread(arg(&args, "threadId")?).await?),
         "discard_thread" => done!(state.discard_thread(arg(&args, "threadId")?).await),

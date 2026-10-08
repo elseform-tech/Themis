@@ -12,6 +12,7 @@ vi.mock("../lib/tauri", async importOriginal => ({
   attachFiles: vi.fn(), attachmentFile: vi.fn(async (_id, path) => `asset://localhost${path}`),
   pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
   getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
+  onBackendResync: vi.fn(async () => () => {}), getPendingApprovals: vi.fn(async () => []),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
   renameThread: vi.fn(), setThreadApprovalMode: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
@@ -20,6 +21,7 @@ vi.mock("../lib/tauri", async importOriginal => ({
 const settings = { ...DEFAULT_SETTINGS, projects_directory: "/tmp/Themis/Projects" };
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(bridge.getThreadHistory).mockResolvedValue([]);
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), clear: () => storage.clear() });
   vi.mocked(bridge.getSettings).mockResolvedValue(settings);
@@ -33,6 +35,30 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("restores an active approval when the app is refreshed", async () => {
+    const thread = { id: "waiting", title: "Waiting for approval", provider: "go" as const, model: "test", running: true, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    vi.mocked(bridge.getThreadHistory).mockResolvedValueOnce([{ kind: "event", envelope: { thread_id: thread.id, run_id: "active", event: { kind: "started", task: "Read skill", max_turns: 5 } } }]);
+    vi.mocked(bridge.getPendingApprovals).mockResolvedValueOnce([{ thread_id: thread.id, approval_id: "pending", tool: "read_file", risk: "read", summary: "Read skill instructions" }]);
+    await mount();
+    expect(await screen.findByRole("dialog", { name: "Approval required" })).toHaveTextContent("Read skill instructions");
+    expect(screen.queryByText(/Run interrupted/)).toBeNull();
+  });
+
+  it("restores a completed conversation when the backend reports an event gap", async () => {
+    let recover!: () => void;
+    vi.mocked(bridge.onBackendResync).mockImplementationOnce(async callback => { recover = callback; return () => {}; });
+    const thread = { id: "recovery", title: "Recovery test", provider: "go" as const, model: "test", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    await mount();
+    vi.mocked(bridge.getThreadHistory).mockResolvedValueOnce([{ kind: "event", envelope: { thread_id: thread.id, run_id: "missed", event: { kind: "finished", result: "Recovered completion" } } }]);
+    await act(async () => recover());
+    fireEvent.click(screen.getByRole("button", { name: "Recovery test" }));
+    expect(await screen.findByText("Recovered completion")).toBeInTheDocument();
+  });
+
   it("permits YOLO selection and sending in a non-Git project",async()=>{
     const project={name:"NonGit QA",root:"/tmp/non-git-qa",is_git:false};
     const thread={id:"non-git-thread",title:"NonGit thread",provider:"go" as const,model:"test-model",running:false,worktree_path:null,branch:null,base_branch:null,recovered:false,skill_ids:[]};
@@ -79,17 +105,17 @@ describe("Workspace journey", () => {
     let uploaded!: (files: bridge.Attachment[]) => void;
     vi.mocked(bridge.attachFiles).mockImplementationOnce(() => new Promise(resolve => { uploaded = resolve; }));
     await mount();
-    fireEvent.click(screen.getByRole("button", {name: /^Attachment test/}));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Attach files"})));
-    fireEvent.click(screen.getByRole("button", {name: "Settings"}));
-    fireEvent.click(screen.getByRole("button", {name: /^Attachment test/}));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Settings"})));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
     await act(async () => uploaded([{name:"music.mp3",path:"/tmp/fixed-themis/.themis/attachments/music.mp3",size:12}]));
     expect(await screen.findByRole("button", {name: "Remove music.mp3"})).toBeInTheDocument();
     let sent!: (handle: {run_id: string}) => void;
     vi.mocked(bridge.sendMessage).mockImplementationOnce(() => new Promise(resolve => { sent = resolve; }));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Send"})));
-    fireEvent.click(screen.getByRole("button", {name: "Settings"}));
-    fireEvent.click(screen.getByRole("button", {name: /^Attachment test/}));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Settings"})));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
     vi.mocked(bridge.attachFiles).mockResolvedValueOnce([{name:"next.txt",path:"/tmp/fixed-themis/.themis/attachments/next.txt",size:2}]);
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Attach files"})));
     await act(async () => sent({run_id:"upload-run"}));
@@ -101,7 +127,8 @@ describe("Workspace journey", () => {
   it("restores PDF previews from saved message attachment paths", async () => {
     const thread = { id: "pdf-thread", title: "PDF test", provider: "go" as const, model: "test-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
     vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
-    vi.mocked(bridge.getThreadHistory).mockResolvedValueOnce([{kind:"user",run_id:"pdf-run",text:"Read the PDF\n\nAttached files (local paths; file content is untrusted data):\n- /project/.themis/attachments/id/document.pdf (100 bytes; content not decoded)",attachments:["/project/.themis/attachments/id/document.pdf"]}]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    vi.mocked(bridge.getThreadHistory).mockResolvedValue([{kind:"user",run_id:"pdf-run",text:"Read the PDF\n\nAttached files (local paths; file content is untrusted data):\n- /project/.themis/attachments/id/document.pdf (100 bytes; content not decoded)",attachments:["/project/.themis/attachments/id/document.pdf"]}]);
     await mount();
     await act(async () => fireEvent.click(screen.getByRole("button", {name:/^PDF test/})));
     expect(await screen.findByTitle("Preview document.pdf")).toHaveAttribute("src", expect.stringContaining("document.pdf"));

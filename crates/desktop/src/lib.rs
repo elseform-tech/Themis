@@ -132,14 +132,20 @@ fn forward_remote_events(app: tauri::AppHandle, client: server::Client) {
     tauri::async_runtime::spawn(async move {
         loop {
             if let Ok(mut stream) = client.subscribe().await {
+                let _ = app.emit("backend-resync", ());
                 while let Ok(event) = server::Client::next_event(&mut stream).await {
                     if let (Some(name), Some(payload)) = (
                         event.get("name").and_then(Value::as_str),
                         event.get("payload"),
                     ) {
-                        if name != "lagged" {
-                            let _ = app.emit(name, payload.clone());
-                        }
+                        let _ = app.emit(
+                            if name == "lagged" {
+                                "backend-resync"
+                            } else {
+                                name
+                            },
+                            payload.clone(),
+                        );
                     }
                 }
             }

@@ -284,3 +284,67 @@ async fn configured_policy_and_repository_guidance_reach_the_actual_run() {
     cli(data.path(), "shutdown", Value::Null);
     host.await.unwrap().unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_catalog_inspection_distinguishes_partial_and_unsupported() {
+    let data = tempfile::tempdir().unwrap();
+    let market = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(market.path().join(".claude-plugin")).unwrap();
+    for name in ["useful", "empty"] {
+        std::fs::create_dir_all(market.path().join(name)).unwrap();
+        std::fs::write(
+            market.path().join(name).join(".mcp.json"),
+            r#"{"mcpServers":{"legacy":{"type":"sse","url":"https://example.com/events"}}}"#,
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        market.path().join("useful/SKILL.md"),
+        "---\nname: useful\ndescription: Useful fixture\n---\nReview the fixture.",
+    )
+    .unwrap();
+    std::fs::write(market.path().join(".claude-plugin/marketplace.json"), r#"{"name":"fixture","plugins":[{"name":"useful","source":"./useful"},{"name":"empty","source":"./empty"}]}"#).unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let host = tokio::spawn(server.run());
+    cli(
+        data.path(),
+        "plugin_action",
+        json!({"action":"add_marketplace","name":"fixture","source":market.path()}),
+    );
+    for (name, status) in [("useful", "partial"), ("empty", "unsupported")] {
+        assert_eq!(
+            cli(
+                data.path(),
+                "plugin_action",
+                json!({"action":"inspect_marketplace","marketplace":"fixture","name":name})
+            )["report"]["status"],
+            status
+        );
+    }
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .args([
+            "--data-dir",
+            data.path().to_str().unwrap(),
+            "call",
+            "plugin_action",
+            r#"{"action":"install","marketplace":"fixture","name":"empty","allowPartial":true}"#,
+        ])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("No supported capabilities"));
+    let installed = cli(
+        data.path(),
+        "plugin_action",
+        json!({"action":"install","marketplace":"fixture","name":"useful","allowPartial":true}),
+    );
+    assert_eq!(installed["spec"]["skills"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        cli(data.path(), "get_pending_approvals", Value::Null),
+        json!([])
+    );
+    cli(data.path(), "shutdown", Value::Null);
+    host.await.unwrap().unwrap();
+}

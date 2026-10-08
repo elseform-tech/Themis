@@ -289,3 +289,10 @@ export function setThreadApprovalMode(threadId: string, mode: "custom" | "yolo")
   pendingPermissionChanges.set(threadId, tracked);
   return tracked;
 }
+
+export function onBackendResync(handler: () => void): Promise<UnlistenFn> {
+  return listen('backend-resync', handler);
+}
+export function getPendingApprovals(): Promise<ApprovalRequest[]> {
+  return invoke('get_pending_approvals');
+}

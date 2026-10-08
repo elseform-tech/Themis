@@ -18,6 +18,8 @@ import { playCompletionSound, prepareCompletionSound } from "../lib/completionSo
 import type { PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
 import {
   getSecretStatus,
+  getPendingApprovals,
+  onBackendResync,
   getSettings,
   getDefaultProject,
   getThread,
@@ -106,6 +108,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const legacyMessages = useRef(readSession<Record<string, PersistedMessage[]>>("messages", {}));
   const restoredSession = useRef(false);
   const savedSelection = useRef(readSession<{ root: string; threadId: string } | null>("selection", null));
+  const currentState = useRef(state);
+  currentState.current = state;
+  const recoverState = useRef<() => void>(() => {});
+  useEffect(() => { if (startup === null) recoverState.current(); }, [startup]);
   const manualRuns = useRef(new Set<string>());
   const settings = useRef(state.settings);
   settings.current = state.settings;
@@ -122,10 +128,59 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     let unlistens: Array<() => void> = [];
+    let eventVersion = 0;
+    let recovering = false;
+    let recoveryRequested = false;
+    let recoveryWarning = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    async function recover() {
+      if (cancelled) return;
+      if (recovering) { recoveryRequested = true; return; }
+      recovering = true;
+      let pending = false;
+      try {
+        for (const project of currentState.current.projects) {
+          const listVersion = eventVersion;
+          const threads = await listThreads(project.root);
+          if (cancelled) return;
+          if (listVersion !== eventVersion) { pending = true; continue; }
+          for (const thread of threads) {
+            const version = eventVersion;
+            if (thread.running) {
+              dispatch({ type: "thread/synced", projectRoot: project.root, thread });
+              dispatch({ type: "thread/running-loaded", threadId: thread.id, running: true });
+              pending = true; continue;
+            }
+            const history = await getThreadHistory(thread.id);
+            const latest = await getThread(thread.id);
+            if (cancelled) return;
+            if (version !== eventVersion || latest.running) { pending = true; continue; }
+            dispatch({ type: "thread/synced", projectRoot: project.root, thread: latest });
+            dispatch({ type: "thread/history-loaded", threadId: thread.id, history });
+            dispatch({ type: "thread/running-loaded", threadId: thread.id, running: false });
+          }
+        }
+        const version = eventVersion;
+        const requests = await getPendingApprovals();
+        if (!cancelled && version === eventVersion) dispatch({ type: "approval/loaded", requests });
+        else pending = true;
+        if (!cancelled) await loadPhase4Lists(action => { if (!cancelled) dispatch(action); }, { listSkills, listAutomations, listReviewItems });
+      } catch (error) {
+        pending = true;
+        if (!cancelled && !recoveryWarning) toast(dispatch, `Connection recovery failed; retrying: ${describeError(error)}`, "warning");
+        recoveryWarning = true;
+      } finally {
+        recovering = false;
+        // Active streams keep their live text; reconcile durable history when they finish.
+        if ((pending || recoveryRequested) && !cancelled) retry = setTimeout(() => void recover(), 2000);
+        recoveryRequested = false;
+      }
+    }
     (async () => {
       try {
         const offThread = await onThreadEvent((envelope) => {
           if (cancelled) return;
+          eventVersion++;
           dispatch({ type: "thread/event", envelope });
           const { kind } = envelope.event;
           if (kind === "finished" || kind === "incomplete" || kind === "failed") {
@@ -138,6 +193,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
         const offApproval = await onApprovalRequest((request) => {
           if (cancelled) return;
+          eventVersion++;
           dispatch({ type: "approval/enqueued", request });
         });
         const offReview = await onReviewItemAdded((item) => {
@@ -153,12 +209,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (!cancelled) dispatch({ type: "thread/synced", projectRoot, thread });
           }).catch(() => {});
         });
+        const offRecovery = await onBackendResync(() => { clearTimeout(retry); void recover(); });
         if (cancelled) {
+          offRecovery();
           offThread();
           offApproval();
           offReview();
         } else {
-          unlistens = [offThread, offApproval, offReview];
+          unlistens = [offThread, offApproval, offReview, offRecovery];
+          recoverState.current = () => { clearTimeout(retry); void recover(); };
+          if (restoredSession.current) recoverState.current();
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -172,6 +232,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })();
     return () => {
       cancelled = true;
+      recoverState.current = () => {};
+      clearTimeout(retry);
       for (const off of unlistens) off();
     };
   }, []);

@@ -13,6 +13,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Bound simultaneous jsdom apps so full-suite runs do not starve interaction tests.
+    maxWorkers: 2,
     environmentMatchGlobs: [["src/components/**", "jsdom"]],
     setupFiles: ["./src/components/test-setup.ts"],
   },

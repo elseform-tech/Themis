@@ -17,6 +17,7 @@ pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
 /// One outstanding approval dialog: the owning thread plus the rendezvous the
 /// decision arrives on.
 pub struct PendingApproval {
+    pub request: ApprovalRequest,
     /// Thread that raised the approval.
     pub thread_id: String,
     /// Receives the UI decision; the hook blocks on the other end.
@@ -111,6 +112,13 @@ impl ApprovalHook for DesktopApprovalHook {
                 .unwrap_or(Approval::Deny);
         }
         let approval_id = uuid::Uuid::new_v4().to_string();
+        let request = ApprovalRequest {
+            thread_id: self.thread_id.clone(),
+            approval_id: approval_id.clone(),
+            tool: action.tool.clone(),
+            summary: action.summary.clone(),
+            risk: RiskLevel::from(action.risk),
+        };
         let (sender, receiver) = std::sync::mpsc::channel();
         {
             let mut pending = self
@@ -120,18 +128,13 @@ impl ApprovalHook for DesktopApprovalHook {
             pending.insert(
                 approval_id.clone(),
                 PendingApproval {
+                    request: request.clone(),
                     thread_id: self.thread_id.clone(),
                     sender,
                 },
             );
         }
-        self.sink.emit_approval_request(&ApprovalRequest {
-            thread_id: self.thread_id.clone(),
-            approval_id: approval_id.clone(),
-            tool: action.tool.clone(),
-            summary: action.summary.clone(),
-            risk: RiskLevel::from(action.risk),
-        });
+        self.sink.emit_approval_request(&request);
         let decision = wait_for_decision(&receiver, self.timeout);
         // `approve_action` removes its entry on success; this covers timeouts.
         self.pending
