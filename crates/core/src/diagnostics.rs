@@ -303,6 +303,11 @@ fn redact_stderr(retained: &[u8], secrets: &[String]) -> String {
                 "apikey",
                 "private key",
                 "bearer",
+                "prompt",
+                "content",
+                "arguments",
+                "output",
+                "command",
             ]
             .iter()
             .any(|word| line.to_ascii_lowercase().contains(word))
@@ -359,6 +364,10 @@ mod tests {
         );
         assert!(!output.contains("first-fragment"));
         assert!(output.contains("startup"));
+        assert_eq!(
+            redact_stderr(br#"{"arguments":{"content":"private-marker"}}"#, &[]),
+            "[redacted]"
+        );
         assert_eq!(
             redact_stderr(b"abc-longer", &["abc".into(), "abc-longer".into()]),
             "[redacted]"
