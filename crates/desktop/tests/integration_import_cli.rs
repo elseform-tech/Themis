@@ -131,7 +131,7 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
             .unwrap()
             .is_empty()
     );
-    let pasted = client.call("plugin_action", json!({"action":"import_json","content":json!({"spec":{"name":"pasted","skills":[]}}).to_string(),"scope":"global"})).await.unwrap();
+    let pasted = client.call("plugin_action", json!({"action":"import_json","content":json!({"spec":{"name":"pasted","skills":[{"id":"review","name":"Review","description":"Review changes","instructions":"Read the diff","allowedTools":[],"scripts":[]}]}}).to_string(),"scope":"global"})).await.unwrap();
     assert_eq!(pasted["spec"]["name"], "pasted");
     let malformed = client.call("plugin_action", json!({"action":"import_json","content":"{invalid","scope":"global","name":"connections"})).await;
     assert!(malformed.is_err());

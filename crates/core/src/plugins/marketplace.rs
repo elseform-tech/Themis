@@ -54,7 +54,9 @@ impl ImportPreview {
                 "Remove the unsupported component or install only supported components".into(),
             ),
         }));
-        let status = if components.iter().any(|c| c.status != "supported") {
+        let status = if spec.skills.is_empty() && spec.mcp.is_empty() && spec.hooks.is_empty() {
+            "unsupported"
+        } else if components.iter().any(|c| c.status != "supported") {
             "partial"
         } else {
             "supported"
@@ -104,6 +106,16 @@ struct Catalogs {
     sources: Vec<Marketplace>,
 }
 
+impl PluginSpec {
+    /// Installation must add a capability; empty personal drafts may still be saved.
+    pub fn ensure_installable(&self) -> anyhow::Result<()> {
+        if self.skills.is_empty() && self.mcp.is_empty() && self.hooks.is_empty() {
+            bail!("No supported capabilities to install. Inspect compatibility details or choose another package.");
+        }
+        Ok(())
+    }
+}
+
 impl PluginStore {
     /// Import a local skill/plugin folder, SKILL.md, native JSON bundle, or MCP JSON file.
     pub fn import_path(
@@ -121,7 +133,9 @@ impl PluginStore {
         name: Option<&str>,
         allow_partial: bool,
     ) -> anyhow::Result<Plugin> {
-        self.save(scope, self.path_spec(path, name, allow_partial)?, None)
+        let spec = self.path_spec(path, name, allow_partial)?;
+        spec.ensure_installable()?;
+        self.save(scope, spec, None)
     }
     /// Inspect compatibility without registering or executing plugin capabilities.
     pub fn inspect_path(&self, path: &Path, name: Option<&str>) -> anyhow::Result<ImportPreview> {
@@ -185,7 +199,9 @@ impl PluginStore {
         input: &str,
         allow_partial: bool,
     ) -> anyhow::Result<Plugin> {
-        self.save(scope, self.mcp_json_spec(name, input, allow_partial)?, None)
+        let spec = self.mcp_json_spec(name, input, allow_partial)?;
+        spec.ensure_installable()?;
+        self.save(scope, spec, None)
     }
     pub fn inspect_mcp_json(&self, name: &str, input: &str) -> anyhow::Result<ImportPreview> {
         Ok(ImportPreview::new(self.mcp_json_spec(name, input, true)?))
@@ -233,6 +249,7 @@ impl PluginStore {
         let spec = self
             .repository_spec(name, source, reference, subdirectory, allow_partial)
             .await?;
+        spec.ensure_installable()?;
         self.save(scope, spec, None)
     }
     pub async fn inspect_repository(
@@ -450,6 +467,7 @@ impl PluginStore {
         let mut spec = self
             .marketplace_spec(marketplace, name, refresh, allow_partial)
             .await?;
+        spec.ensure_installable()?;
         self.mutate(scope, |registry| {
             let previous = registry.current.get(name);
             if previous.is_some_and(|p| p.source.as_deref() != Some(marketplace)) {

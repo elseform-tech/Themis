@@ -562,6 +562,27 @@ fn native_bundle_inspection_validates_before_reporting_compatibility() {
     assert!(store.import_path("global", &package, None).is_err());
     assert_eq!(
         store.inspect_path(&package, None).unwrap().report.status,
-        "partial"
+        "unsupported"
     );
+}
+
+#[test]
+fn unsupported_only_imports_cannot_create_empty_installed_packages() {
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    let input = r#"{"mcpServers":{"legacy":{"type":"sse","url":"https://example.com/events"}}}"#;
+    assert_eq!(
+        store
+            .inspect_mcp_json("legacy", input)
+            .unwrap()
+            .report
+            .status,
+        "unsupported"
+    );
+    assert!(store
+        .import_mcp_json_with_options("global", "legacy", input, true)
+        .unwrap_err()
+        .to_string()
+        .contains("No supported capabilities"));
+    assert!(!global.path().join("plugins/registry.json").exists());
 }

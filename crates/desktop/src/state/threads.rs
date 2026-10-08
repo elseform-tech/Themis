@@ -241,6 +241,7 @@ impl AppState {
             plugins.push(selected);
         }
         let mut skill_catalog = legacy.clone();
+        let mut catalog_references = String::new();
         for available in store
             .available_skills()
             .map_err(|e| e.to_string())?
@@ -288,13 +289,14 @@ impl AppState {
             } else {
                 available.id
             };
-            let (_, skills, _) = store
-                .resolve_prompt(&format!("[[skill:{id}]]"), &legacy)
-                .map_err(|e| e.to_string())?;
-            for skill in skills {
-                if !skill_catalog.iter().any(|known| known.id == skill.id) {
-                    skill_catalog.push(skill);
-                }
+            catalog_references.push_str(&format!("[[skill:{id}]]"));
+        }
+        let (_, skills, _) = store
+            .resolve_prompt(&catalog_references, &legacy)
+            .map_err(|e| e.to_string())?;
+        for skill in skills {
+            if !skill_catalog.iter().any(|known| known.id == skill.id) {
+                skill_catalog.push(skill);
             }
         }
         {

@@ -544,6 +544,9 @@ impl PluginStore {
         prompt: &str,
         legacy: &[Skill],
     ) -> anyhow::Result<(String, Vec<Skill>, Vec<Plugin>)> {
+        let mut available = None;
+        let builtins = self.builtin_skills();
+        let mut registries = std::collections::HashMap::new();
         let mut text = String::new();
         let mut skills = Vec::new();
         let mut plugins = Vec::new();
@@ -567,13 +570,18 @@ impl PluginStore {
                     "l" => "local",
                     _ => bail!("Invalid plugin scope"),
                 };
-                let plugin = self
-                    .list()?
-                    .into_iter()
+                if available.is_none() {
+                    available = Some(self.list()?);
+                }
+                let plugin = available
+                    .as_ref()
+                    .unwrap()
+                    .iter()
                     .find(|plugin| {
                         plugin.scope == scope && plugin.spec.name == name && plugin.enabled
                     })
-                    .context("Plugin is missing or disabled")?;
+                    .context("Plugin is missing or disabled")?
+                    .clone();
                 text.push('@');
                 text.push_str(if plugin.source.as_deref() == Some("discovered") {
                     plugin
@@ -594,81 +602,88 @@ impl PluginStore {
                 rest = &tail[end + 2..];
                 continue;
             }
-            let (skill, plugin) =
-                if let Some(skill) = self.builtin_skills().into_iter().find(|s| s.id == id) {
-                    (skill, None)
-                } else if let Some(skill) = legacy.iter().find(|s| s.id == id) {
-                    (skill.clone(), None)
-                } else {
-                    let parts: Vec<_> = id.split("--").collect();
-                    if !matches!(parts.len(), 3 | 4) {
-                        bail!("Unavailable skill '{id}'");
-                    }
-                    let scope = match parts[0] {
-                        "g" => "global",
-                        "l" => "local",
-                        _ => bail!("Invalid skill scope"),
-                    };
-                    let registry = self.registry(scope)?;
-                    let available = self.list()?;
-                    let current = available
-                        .iter()
-                        .find(|p| p.scope == scope && p.spec.name == parts[1] && p.enabled)
-                        .context("Plugin is missing or disabled")?;
-                    let skill_name = parts[parts.len() - 1];
-                    if !current
-                        .spec
-                        .skills
-                        .iter()
-                        .any(|skill| skill.id == skill_name)
-                    {
-                        bail!("Skill '{skill_name}' has been removed");
-                    }
-                    if current
-                        .spec
-                        .disabled_skills
-                        .iter()
-                        .any(|id| id == skill_name)
-                    {
-                        bail!("Skill '{skill_name}' is disabled");
-                    }
-                    let mut plugin = if parts.len() == 3 {
-                        current.clone()
-                    } else {
-                        registry
-                            .revisions
-                            .get(&format!("{}--{}", parts[1], parts[2]))
-                            .context("Plugin revision is unavailable; replace the skill reference")?
-                            .clone()
-                    };
-                    // Current activation controls also apply to saved revision references.
-                    for (name, server) in &mut plugin.spec.mcp {
-                        server.enabled &= current.spec.mcp.get(name).is_some_and(|s| s.enabled);
-                    }
-                    for hook in &mut plugin.spec.hooks {
-                        hook.enabled &= current
-                            .spec
-                            .hooks
-                            .iter()
-                            .find(|h| h.name == hook.name)
-                            .is_some_and(|h| h.enabled);
-                    }
-                    let mut skill = plugin
-                        .spec
-                        .skills
-                        .iter()
-                        .find(|s| s.id == skill_name)
-                        .context("Skill is unavailable")?
-                        .clone();
-                    skill.id = id.into();
-                    if !plugin.spec.files.is_empty() {
-                        skill.instructions.push_str(&format!(
-                            "\nSupporting files: .themis/plugin-files/{}/",
-                            plugin.skill_id("resources")
-                        ));
-                    }
-                    (skill, Some(plugin))
+            let (skill, plugin) = if let Some(skill) = builtins.iter().find(|s| s.id == id).cloned()
+            {
+                (skill, None)
+            } else if let Some(skill) = legacy.iter().find(|s| s.id == id) {
+                (skill.clone(), None)
+            } else {
+                let parts: Vec<_> = id.split("--").collect();
+                if !matches!(parts.len(), 3 | 4) {
+                    bail!("Unavailable skill '{id}'");
+                }
+                let scope = match parts[0] {
+                    "g" => "global",
+                    "l" => "local",
+                    _ => bail!("Invalid skill scope"),
                 };
+
+                if available.is_none() {
+                    available = Some(self.list()?);
+                }
+                let current = available
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .find(|p| p.scope == scope && p.spec.name == parts[1] && p.enabled)
+                    .context("Plugin is missing or disabled")?;
+                let skill_name = parts[parts.len() - 1];
+                if !current
+                    .spec
+                    .skills
+                    .iter()
+                    .any(|skill| skill.id == skill_name)
+                {
+                    bail!("Skill '{skill_name}' has been removed");
+                }
+                if current
+                    .spec
+                    .disabled_skills
+                    .iter()
+                    .any(|id| id == skill_name)
+                {
+                    bail!("Skill '{skill_name}' is disabled");
+                }
+                let mut plugin = if parts.len() == 3 {
+                    current.clone()
+                } else {
+                    if !registries.contains_key(scope) {
+                        registries.insert(scope, self.registry(scope)?);
+                    }
+                    registries[scope]
+                        .revisions
+                        .get(&format!("{}--{}", parts[1], parts[2]))
+                        .context("Plugin revision is unavailable; replace the skill reference")?
+                        .clone()
+                };
+                // Current activation controls also apply to saved revision references.
+                for (name, server) in &mut plugin.spec.mcp {
+                    server.enabled &= current.spec.mcp.get(name).is_some_and(|s| s.enabled);
+                }
+                for hook in &mut plugin.spec.hooks {
+                    hook.enabled &= current
+                        .spec
+                        .hooks
+                        .iter()
+                        .find(|h| h.name == hook.name)
+                        .is_some_and(|h| h.enabled);
+                }
+                let mut skill = plugin
+                    .spec
+                    .skills
+                    .iter()
+                    .find(|s| s.id == skill_name)
+                    .context("Skill is unavailable")?
+                    .clone();
+                skill.id = id.into();
+                if !plugin.spec.files.is_empty() {
+                    skill.instructions.push_str(&format!(
+                        "\nSupporting files: .themis/plugin-files/{}/",
+                        plugin.skill_id("resources")
+                    ));
+                }
+                (skill, Some(plugin))
+            };
             text.push_str(&skill.name);
             if !skills.iter().any(|s: &Skill| s.id == skill.id) {
                 skills.push(skill);

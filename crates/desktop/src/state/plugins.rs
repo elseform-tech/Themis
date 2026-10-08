@@ -111,6 +111,7 @@ impl AppState {
                             spec.name = name.into();
                         }
                         if !args["allowPartial"].as_bool().unwrap_or(false) && !spec.import_issues.is_empty() { return Err(anyhow::anyhow!("Plugin has unsupported components; inspect and explicitly choose partial installation")); }
+                        spec.ensure_installable()?;
                         serde_json::to_value(store.save(scope, spec, None)?)?
                     } else {
                         serde_json::to_value(store.import_mcp_json_with_options(
