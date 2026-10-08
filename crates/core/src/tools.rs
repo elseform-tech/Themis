@@ -312,7 +312,7 @@ impl ToolT for GatedTool {
 
     fn description(&self) -> &str {
         if self.inner.name() == "read_file" {
-            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record searches decoded records, preferring original User/Tool matches over Assistant navigation; continue using the returned jsonl_record and next_offset. These modes return at most 4000 content characters with provenance and next_offset. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. Omitting these options preserves whole-file reading."
+            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record searches decoded original User/Tool fields when present, without falling back to Assistant navigation. For secondary navigation in a mixed snapshot, explicitly select its jsonl_record; Assistant-only notes remain searchable and carry a navigation warning. Continue using the returned jsonl_record and next_offset. These modes return at most 4000 content characters with provenance and next_offset. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. Omitting these options preserves whole-file reading."
         } else {
             self.inner.description()
         }
@@ -407,11 +407,13 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
             .map(serde_json::from_str::<Value>)
             .collect::<Result<Vec<_>, _>>()?;
         result["total_records"] = records.len().into();
-        let matches: Vec<_> = records
-            .iter()
-            .enumerate()
-            .filter(|(_, record)| {
-                record
+        let originals = records.iter().any(|record| {
+            matches!(record["role"].as_str(), Some("User" | "Tool"))
+                && record.pointer(pointer).is_some_and(Value::is_string)
+        });
+        let matched = records.iter().enumerate().find(|(_, record)| {
+            (!originals || matches!(record["role"].as_str(), Some("User" | "Tool")))
+                && record
                     .pointer(pointer)
                     .and_then(Value::as_str)
                     .is_some_and(|field| {
@@ -421,20 +423,20 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
                             .map_or(field.len(), |(n, _)| n);
                         field[byte..].contains(needle)
                     })
-            })
-            .collect();
-        let matched = matches
-            .iter()
-            .find(|(_, record)| matches!(record["role"].as_str(), Some("User" | "Tool")))
-            .or_else(|| matches.first());
+        });
         if let Some((index, _)) = matched {
             Some(index + 1)
         } else {
             result["content"] = "".into();
             result["found"] = false.into();
             result["next_offset"] = Value::Null;
+            let scope = if originals {
+                "Original User/Tool"
+            } else {
+                "All"
+            };
             result["search_scope"] =
-                format!("All JSONL records at {pointer}, after character {offset}").into();
+                format!("{scope} JSONL records at {pointer}, after character {offset}").into();
             return Ok(result);
         }
     } else {
@@ -1479,8 +1481,20 @@ mod tests {
         assert_eq!(automatic["record_role"], "User");
         assert_eq!(automatic["jsonl_record"], 2);
         assert!(automatic.get("evidence_warning").is_none());
-        let navigation = tool
+        let secondary_only = tool
             .execute(json!({"file_path":"evidence.jsonl","find":"summary navigation"}))
+            .await
+            .unwrap();
+        assert_eq!(secondary_only["found"], false);
+        assert_eq!(secondary_only["content"], "");
+        assert!(secondary_only["search_scope"]
+            .as_str()
+            .unwrap()
+            .contains("Original User/Tool"));
+        let navigation = tool
+            .execute(
+                json!({"file_path":"evidence.jsonl","jsonl_record":1,"find":"summary navigation"}),
+            )
             .await
             .unwrap();
         assert_eq!(navigation["record_role"], "Assistant");
@@ -1493,6 +1507,21 @@ mod tests {
             "Navigation only\nSource: snapshot-original.jsonl"
         );
         assert!(!navigation["content"].as_str().unwrap().contains("Source:"));
+        fs::write(
+            root.join("notes.jsonl"),
+            json!({"role":"Assistant","content":"Navigation only\nsummary navigation"}).to_string(),
+        )
+        .unwrap();
+        let notes = tool
+            .execute(json!({"file_path":"notes.jsonl","find":"summary navigation"}))
+            .await
+            .unwrap();
+        assert_eq!(notes["found"], true);
+        assert_eq!(notes["record_role"], "Assistant");
+        assert!(notes["evidence_warning"]
+            .as_str()
+            .unwrap()
+            .contains("not original evidence"));
         let missing = tool
             .execute(json!({"file_path":"evidence.jsonl","find":"not present"}))
             .await

@@ -220,6 +220,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     assert!(system.contains("enumerate(p.open(),1)"));
     assert!(system.contains("r['content'][:4500]"));
     assert!(system.contains("Root-scoped file tools require relative paths"));
+    assert!(system.contains("it does not fall back to Assistant navigation"));
     let history = state.get_thread_history(id).await.unwrap();
     assert_eq!(
         serde_json::to_value(&history[0]).unwrap()["attachments"],
@@ -300,6 +301,15 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     provider.reset().await;
     let recovery_root = project.path().canonicalize().unwrap();
     std::fs::write(
+        recovery_root.join("mixed-evidence.jsonl"),
+        format!(
+            "{}\n{}\n",
+            json!({"role":"Assistant","content":"SECONDARY-ONLY"}),
+            json!({"role":"User","content":"PRIMARY-ONLY"})
+        ),
+    )
+    .unwrap();
+    std::fs::write(
         recovery_root.join("pressure.txt"),
         "pressure data ".repeat(4000),
     )
@@ -325,7 +335,22 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"reopen_earlier","type":"function","function":{"name":"read_file","arguments":json!({"file_path":location["path"],"jsonl_record":location["jsonl_record"],"json_pointer":location["json_pointer"],"offset":location["excerpt_offset"]}).to_string()}}]},"finish_reason":"tool_calls"}]})
         } else if stage > 1 {
             if stage == 2 { assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native bounded read must deliver the fact"); }
-            let calls = if stage == 4 {
+            if stage == 3 {
+                let automatic: Value = serde_json::from_str(messages.iter().find(|message| message["tool_call_id"] == "secondary_auto").unwrap()["content"].as_str().unwrap()).unwrap();
+                assert_eq!(automatic["found"], false);
+                assert_eq!(automatic["content"], "");
+                let explicit: Value = serde_json::from_str(messages.iter().find(|message| message["tool_call_id"] == "secondary_explicit").unwrap()["content"].as_str().unwrap()).unwrap();
+                assert_eq!(explicit["record_role"], "Assistant");
+                assert_eq!(explicit["content"], "SECONDARY-ONLY");
+                assert!(explicit["evidence_warning"].as_str().unwrap().contains("not original evidence"));
+            }
+            let calls = if stage == 2 {
+                [None, Some(1)].into_iter().map(|record| {
+                    let mut arguments = json!({"file_path":"mixed-evidence.jsonl","find":"SECONDARY-ONLY"});
+                    if let Some(record) = record { arguments["jsonl_record"] = record.into(); }
+                    json!({"id":if record.is_some() { "secondary_explicit" } else { "secondary_auto" },"type":"function","function":{"name":"read_file","arguments":arguments.to_string()}})
+                }).collect::<Vec<_>>()
+            } else if stage == 4 {
                 // Exceed the 16k estimate through actual tool results, rather than a turn-count trigger.
                 let mut calls = (0..3).map(|index| json!({"id":format!("pressure_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt"}).to_string()}})).collect::<Vec<_>>();
                 calls.extend((0..3).map(|index| json!({"id":format!("newer_bounded_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt","find":"pressure","offset":index*4000}).to_string()}})));
