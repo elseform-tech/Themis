@@ -38,7 +38,7 @@ describe("ApprovalDialog", () => {
     const { onDecide } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Allow once (1)" }));
     expect(onDecide).toHaveBeenCalledWith("once");
-    fireEvent.click(screen.getByRole("button", { name: "Always (2)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Allow for this run (2)" }));
     expect(onDecide).toHaveBeenCalledWith("always");
     fireEvent.click(screen.getByRole("button", { name: "Deny (3)" }));
     expect(onDecide).toHaveBeenCalledWith("deny");
@@ -65,4 +65,12 @@ describe("ApprovalDialog", () => {
     render(<ApprovalDialog request={REQUEST} open={false} onDecide={onDecide} />);
     expect(screen.queryByText("shell.exec")).not.toBeInTheDocument();
   });
+});
+
+it.each([["manage_integrations_save_Some(Write)_123", "Manage integrations"], ["mcp_start_g--fixture--123--lookup", "Connect MCP"]])("gives %s a readable label without changing the decision", (tool, label) => {
+  const { onDecide } = setup({ ...REQUEST, tool });
+  expect(screen.getByText(label)).toBeInTheDocument();
+  expect(screen.queryByText(tool)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Allow once (1)" }));
+  expect(onDecide).toHaveBeenCalledWith("once");
 });

@@ -50,3 +50,16 @@ it("offers actual plugins for @ while keeping standalone skills available only t
   await waitFor(()=>expect(result.current.skills).toEqual([slashSkill]));
   expect(result.current.plugins.map(plugin=>plugin.name)).toEqual(["one-skill-plugin","legacy-plugin"]);
 });
+
+it("keeps reference labels during same-project refresh but clears them when switching projects",async()=>{
+  const skill={id:"review",name:"Review",description:"Review",plugin:"personal"};
+  api.listPromptSkills.mockResolvedValue([skill]);api.pluginAction.mockResolvedValue([bundle("personal")]);
+  const {result,rerender}=renderHook(({root,refresh})=>usePromptSkills(root,refresh),{initialProps:{root:"/repo",refresh:0}});
+  await waitFor(()=>expect(result.current.skills).toEqual([skill]));
+  api.listPromptSkills.mockImplementation(()=>new Promise(()=>{}));
+  rerender({root:"/repo",refresh:1});
+  expect(result.current.skills).toEqual([skill]);
+  expect(result.current.plugins[0].name).toBe("personal");
+  rerender({root:"/other",refresh:1});
+  expect(result.current.skills).toEqual([]);expect(result.current.plugins).toEqual([]);
+});

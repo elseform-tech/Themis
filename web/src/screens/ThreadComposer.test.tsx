@@ -35,7 +35,7 @@ describe("ThreadComposer", () => {
     expect(select).toBeEnabled();fireEvent.change(select,{target:{value:"yolo"}});
     expect(onApprovalModeChange).toHaveBeenCalledWith("yolo");
     expect(screen.queryByRole("button", {name:"Edit configuration"})).toBeNull();
-    expect(screen.queryByText(/configured allow|next run/)).toBeNull();
+    expect(screen.getByText(/Changes apply to the next run/)).toBeInTheDocument();
   });
   it("attaches any file type, removes pending files and permits attachment-only sends", () => {
     const view = composer(false);

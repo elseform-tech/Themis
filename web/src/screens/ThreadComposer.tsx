@@ -63,7 +63,6 @@ export function ThreadComposer({
   onDraftChange,
   onSend,
   onStop,
-  onNewThread,
   onProviderChange,
   onEffortChange,
   onOpenSettings,
@@ -114,20 +113,12 @@ export function ThreadComposer({
           <Button variant="ghost" size="small" aria-label="Attach files" title="Attach files" disabled={composerDisabled} onClick={onAttach}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2" /></svg>
           </Button>
-          <Button
-            variant="ghost"
-            size="small"
-            aria-label="New thread"
-            title="New thread (⌘/Ctrl+Shift+O)"
-            onClick={onNewThread}
-          >+
-          </Button>
           <details className="themis-composer-permissions" data-mode={thread.approval_mode ?? "custom"}>
-            <summary aria-label={`Permissions: ${thread.approval_mode === "yolo" ? "YOLO" : "Custom"}`} title="Permissions for the next run">
+            <summary aria-label={`Permissions: ${thread.approval_mode === "yolo" ? "YOLO" : "Custom"}`} title={thread.approval_mode === "yolo" ? "YOLO bypasses harness tool restrictions for the next run" : "Custom applies your rules and asks for tool approvals"}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7Z" /></svg>
               <span>{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>
             </summary>
-            <div className="themis-permissions-panel">
+            <div className="themis-permissions-panel"><p>{thread.approval_mode === "yolo" ? "Bypass harness tool restrictions." : "Apply your rules and ask for tool approvals."} Changes apply to the next run.</p>
               <label><select aria-label="Approval mode" value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
             </div>
           </details>

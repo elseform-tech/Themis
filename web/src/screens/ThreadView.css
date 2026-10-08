@@ -399,3 +399,6 @@
 
 .themis-composer-permissions[data-mode="yolo"] summary { color: var(--themis-warning); }
 .themis-composer-permissions summary:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 2px; }
+.themis-composer-model-provider { opacity: .7; }
+.themis-composer-model-provider img { max-width: 3.25rem; max-height: .85rem; }
+.themis-permissions-panel p { max-width: 18rem; margin: 0 0 .5rem; color: var(--themis-text-2); font-size: .75rem; line-height: 1.5; }

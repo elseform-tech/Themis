@@ -196,3 +196,7 @@
   font-size: 0.875rem;
 }
 .themis-automations-search:focus { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
+.themis-automations-destination { margin: 0; font-size: .8125rem; line-height: 1.5; color: var(--themis-text-2); overflow-wrap: anywhere; }
+.themis-automations-schedule input, .themis-automations-schedule select { min-height: 2.5rem; box-sizing: border-box; }
+.themis-automations-schedule input, .themis-automations-schedule select { height: 2.5rem; }
+.themis-automations-schedule select { appearance: none; padding-right: 2rem; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%239da1ad' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right .5rem center; }

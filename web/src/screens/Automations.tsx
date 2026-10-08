@@ -339,6 +339,10 @@ export function Automations() {
                 <input aria-label="Time" type="time" value={dialog.form.time} disabled={saving} onChange={event => patchForm({ time: event.target.value })} />
               </label>}
             </div>
+            <p className="themis-automations-destination" role="note">
+              {dialog.form.targetMode === "continue" ? `Continue ${selectedThread?.thread.title ?? "a thread — choose one in Advanced"}` : `New thread in ${state.projects.find(project => project.root === dialog.form.projectRoot)?.name ?? "a project — choose one in Advanced"}`}
+              {" · "}{dialog.form.timezone}{" · "}{dialog.form.enabled ? "Enabled" : "Paused"}
+            </p>
             <details className="themis-automations-advanced" open={dialog.form.repeat === "interval" || (!dialog.form.targetThreadId && !dialog.form.projectRoot) || undefined}>
               <summary>Advanced</summary>
               <div className="themis-automations-advanced-fields">

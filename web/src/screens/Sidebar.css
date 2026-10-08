@@ -68,3 +68,11 @@
 .themis-thread-row-actions button:hover { background: transparent; color: var(--themis-accent); }
 @media (max-width: 800px) { .themis-sidebar-slot { width: 276px; } }
 @media (pointer: coarse) { .themis-sidebar-row, .themis-sidebar-rail .themis-sidebar-row { min-height: 44px; } .themis-thread-row-actions { position: static; opacity: 1; } .themis-thread-row-actions button { min-width: 32px; min-height: 44px; } .themis-sidebar-thread > .themis-thread-row { padding-right: 6px; } }
+/* Keep the full title width until row actions are needed. */
+.themis-sidebar-thread > .themis-thread-row { padding-right: 6px; }
+.themis-sidebar-thread:hover > .themis-thread-row, .themis-sidebar-thread:focus-within > .themis-thread-row { padding-right: 48px; }
+.themis-project-heading > .themis-button { opacity: 0; }
+.themis-project-heading:hover > .themis-button, .themis-project-heading:focus-within > .themis-button { opacity: 1; }
+.themis-thread-row-actions { pointer-events: none; background: var(--themis-sidebar-bg); }
+.themis-sidebar-thread:hover .themis-thread-row-actions, .themis-sidebar-thread:focus-within .themis-thread-row-actions { pointer-events: auto; }
+@media (pointer: coarse) { .themis-project-heading > .themis-button { opacity: 1; } .themis-thread-row-actions { pointer-events: auto; } }

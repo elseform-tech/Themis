@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listPromptSkills, pluginAction } from "./tauri";
 import type { PromptPlugin, PromptSkill } from "./prompt";
 import type { Plugin } from "./types";
@@ -16,10 +16,12 @@ export function usePromptSkills(projectRoot?:string|null, refresh?:unknown) {
   const [skills,setSkills]=useState<PromptSkill[]>([{id:"create-skill",name:"Create skill",description:"Ask the agent to create a local or global skill",plugin:"Themis"}]);
   const [error,setError]=useState("");
   const [plugins,setPlugins]=useState<PromptPlugin[]>([]);
+  const previousRoot=useRef(projectRoot);
   useEffect(()=>{
     let active=true, generation=0;
-    setPlugins([]);
-    setSkills([]);
+    if (previousRoot.current!==projectRoot) {
+      setPlugins([]);setSkills([]);previousRoot.current=projectRoot;
+    }
     const load=async()=>{
       const request=++generation;
       try {
