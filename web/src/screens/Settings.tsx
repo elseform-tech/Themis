@@ -21,6 +21,7 @@ import {
 import { describeError, toast, useApp } from "../state/store";
 import { copyDiagnostics } from "./diagnostics";
 import "./Settings.css";
+import { RuntimeConfiguration, DiagnosticLogs } from "./RuntimeConfiguration";
 import { AppearanceSettings } from "./Appearance";
 
 const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
@@ -97,7 +98,7 @@ export function SettingsScreen() {
   const [saving, setSaving] = useState(false);
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [keyBusy, setKeyBusy] = useState<string | null>(null);
-  const [section, setSection] = useState("General");
+  const [section, setSection] = useState(state.settingsSection ?? "General");
   const [saved, setSaved] = useState("");
   const [error, setError] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -214,7 +215,7 @@ export function SettingsScreen() {
   return (
     <div className="themis-settings">
       <div className="themis-settings-heading"><div><h2 className="themis-settings-title">Settings</h2><p className="themis-settings-hint">App preferences</p></div><span role="status" className="themis-settings-hint">{saving ? "Saving…" : saved}</span></div>
-      <nav className="themis-settings-tabs" aria-label="Settings sections">{["General", "Appearance", "Models", "Permissions", "Advanced"].map(label => <button key={label} aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setSaved(""); }}>{label}</button>)}</nav>
+      <nav className="themis-settings-tabs" aria-label="Settings sections">{["General", "Appearance", "Models", "Permissions", "Configuration", "Diagnostics", "Advanced"].map(label => <button key={label} aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setSaved(""); }}>{label}</button>)}</nav>
       {error && <p role="alert" className="themis-form-error">{error}</p>}
       <fieldset disabled={saving} className="themis-settings-fields">
       {section === "General" && <>
@@ -245,7 +246,9 @@ export function SettingsScreen() {
           <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div>{provider === "go" && <p className="themis-settings-hint">Forgetting a saved key does not remove OPENCODE_KEY from your environment.</p>}</details></div>)}
         </section>
       </>}
-      {section === "Permissions" && <section className="themis-settings-section" aria-label="Permissions"><h3 className="themis-settings-subtitle">Approvals</h3><label className="themis-settings-check"><input type="checkbox" checked={form.confirm_reads} onChange={event => void save({ confirm_reads: event.target.checked })} />Confirm reads</label><dl className="themis-permissions"><dt>File access</dt><dd>File tools stay inside the thread’s project or worktree.</dd><dt>Changes and commands</dt><dd>Writes, shell commands, network and destructive tool calls pause for approval.</dd><dt>Approval duration</dt><dd>“Always” remembers a tool decision for the current run only.</dd></dl></section>}
+      {section === "Permissions" && <section className="themis-settings-section" aria-label="Permissions"><h3 className="themis-settings-subtitle">Composer shield</h3><dl className="themis-permissions"><dt>YOLO</dt><dd>No harness restrictions or approval prompts. Operating-system and service permissions still apply.</dd><dt>Custom</dt><dd>Uses the configured allow, ask and deny rules.</dd><dt>When changes apply</dt><dd>Each run captures its permission mode and configuration at startup.</dd></dl><Button variant="ghost" onClick={()=>setSection("Configuration")}>Edit custom configuration</Button></section>}
+      {section === "Configuration" && <RuntimeConfiguration projectRoot={state.activeProjectRoot} />}
+      {section === "Diagnostics" && <DiagnosticLogs operationId={state.diagnosticOperation} />}
       {section === "Advanced" && <section className="themis-settings-section" aria-label="Advanced settings">
         <h3 className="themis-settings-subtitle">Run limits</h3>
         <Input id="themis-total-turns" label="Turn limit" type="number" min={1} max={2000} value={form.max_total_turns} onChange={event => setForm(f => ({ ...f, max_total_turns: Number(event.target.value) }))} onBlur={() => { if (form.max_total_turns !== state.settings.max_total_turns) void save({ max_total_turns: form.max_total_turns }); }} />

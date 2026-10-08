@@ -1,10 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Attachment } from "../lib/tauri";
 import { usePromptSkills } from "../lib/usePromptSkills";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../components";
 import type { GoModel } from "../lib/types";
-import { attachFiles, getThread, listGoModels, sendMessage, setProvider, setThreadEffort, stopThread } from "../lib/tauri";
+import { attachFiles, getThread, listGoModels, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, stopThread } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
@@ -50,13 +50,22 @@ export function ThreadView() {
   const [stopping, setStopping] = useState(false);
   const [sending, setSending] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [permissionSaving,setPermissionSaving]=useState(false);
+  const permissionPending=useRef(false);
+  async function changeApprovalMode(mode:"custom"|"yolo") {
+    if(!thread || !project || permissionPending.current)return;
+    permissionPending.current=true;setPermissionSaving(true);
+    try {const updated=await setThreadApprovalMode(thread.id,mode);dispatch({type:"thread/updated",projectRoot:project.root,thread:updated});}
+    catch(error){toast(dispatch,`Permission change failed: ${describeError(error)}`,"danger");}
+    finally {permissionPending.current=false;setPermissionSaving(false);}
+  }
   const running = thread === null ? false : (state.running[thread.id] ?? false);
   const messages = thread === null ? EMPTY_MESSAGES : (state.messages[thread.id] ?? EMPTY_MESSAGES);
   const stream = thread === null ? "" : (state.streams[thread.id] ?? "");
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
-  const readOnly = project !== null && !project.is_git;
-  const composerDisabled = thread === null || thread.provider !== "go" || running || sending || attaching || readOnly || project === null;
+  const readOnly = project !== null && !project.is_git && thread?.approval_mode !== "yolo";
+  const composerDisabled = thread === null || thread.provider !== "go" || running || sending || attaching || permissionSaving || readOnly || project === null;
   const composerBusy = running || sending || attaching;
   const trace = thread ? state.traces[thread.id] ?? [] : [];
   useEffect(() => {
@@ -113,7 +122,7 @@ export function ThreadView() {
   }
 
   async function send() {
-    if (thread === null) return;
+    if (thread === null || permissionPending.current) return;
     const text = draft.trim() || (attachments.length ? "Inspect the attached files." : "");
     if (text === "" || composerDisabled) return;
     setDraft("");
@@ -238,6 +247,9 @@ export function ThreadView() {
             .then(updated => dispatch({ type: "thread/updated", projectRoot: project.root, thread: updated }))
             .catch(error => toast(dispatch, `Effort change failed: ${describeError(error)}`, "danger"));
         }}
+        permissionSaving={permissionSaving}
+        onApprovalModeChange={mode => void changeApprovalMode(mode)}
+        onOpenConfiguration={() => dispatch({type:"ui/view",view:"settings",settingsSection:"Configuration"})}
         onOpenSettings={() => dispatch({ type: "ui/view", view: "settings" })}
       />
 

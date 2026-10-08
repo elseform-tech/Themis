@@ -24,6 +24,7 @@ export interface ThreadInfo {
   title: string;
   provider: ProviderKind;
   model: string;
+  approval_mode?: "custom" | "yolo";
   reasoning_effort?: string | null;
   running: boolean;
   /** Worktree backing this thread (null for non-git read-only threads). */
@@ -66,6 +67,7 @@ export interface SkillInput {
 }
 
 export interface PluginSpec {
+  import_issues?: Array<{kind:string;name:string;status:string;field?:string|null;reason?:string|null;remedy?:string|null}>;
   package_kind?: "plugin" | "skill" | "mcp" | "hook" | null;
   icon?: string | null;
   disabled_skills?: string[];

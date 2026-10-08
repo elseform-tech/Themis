@@ -26,6 +26,16 @@ function composer(running:boolean,draft="",composerDisabled=running) {
 }
 
 describe("ThreadComposer", () => {
+  it("shows only YOLO and Custom and permits next-run changes while running",()=>{
+    const view=composer(true),onApprovalModeChange=vi.fn();
+    view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);
+    expect(screen.getByText("Custom",{selector:"summary span"})).toBeInTheDocument();
+    const select=screen.getByRole("combobox",{name:"Approval mode",hidden:true});
+    expect(Array.from(select.querySelectorAll("option")).map(option=>option.textContent)).toEqual(["YOLO","Custom"]);
+    expect(select).toBeEnabled();fireEvent.change(select,{target:{value:"yolo"}});
+    expect(onApprovalModeChange).toHaveBeenCalledWith("yolo");
+    expect(screen.getByText(/Applies to the next run/)).toBeInTheDocument();
+  });
   it("attaches any file type, removes pending files and permits attachment-only sends", () => {
     const view = composer(false);
     const onAttach = vi.fn(), onRemoveAttachment = vi.fn();

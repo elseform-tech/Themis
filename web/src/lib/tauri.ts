@@ -84,7 +84,10 @@ export function attachFiles(threadId: string, paths: string[]): Promise<Attachme
   return invoke("attach_files", { threadId, paths });
 }
 
-export function sendMessage(threadId: string, text: string, reasoningEffort?: string, attachments: string[] = []): Promise<RunHandle> {
+const pendingPermissionChanges = new Map<string, Promise<ThreadInfo>>();
+
+export async function sendMessage(threadId: string, text: string, reasoningEffort?: string, attachments: string[] = []): Promise<RunHandle> {
+  while (pendingPermissionChanges.has(threadId)) await pendingPermissionChanges.get(threadId);
   return invoke('send_message', { threadId, text, reasoningEffort: reasoningEffort || null, attachments });
 }
 
@@ -278,3 +281,17 @@ export async function attachmentFile(threadId: string, path: string): Promise<st
   const validated = await tauriInvoke<string>("attachment_file", { threadId, path });
   return convertFileSrc(validated);
 }
+
+export function setThreadApprovalMode(threadId: string, mode: "custom" | "yolo"): Promise<ThreadInfo> {
+  const previous = pendingPermissionChanges.get(threadId);
+  const request = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(() => invoke<ThreadInfo>("set_thread_approval_mode", {threadId, mode}));
+  const tracked = request.finally(() => { if (pendingPermissionChanges.get(threadId) === tracked) pendingPermissionChanges.delete(threadId); });
+  pendingPermissionChanges.set(threadId, tracked);
+  return tracked;
+}
+
+export interface RuntimeConfigurationView {validation_error?:string|null;config:unknown;provenance:unknown;user_path:string;project_path?:string|null;user_json?:string|null;project_json?:string|null;schema:unknown}
+export interface DiagnosticRecord {timestamp:number;level:string;service:string;event:string;operation_id?:string;thread_id?:string;run_id?:string;details:unknown}
+export function getRuntimeConfiguration(projectRoot?:string|null):Promise<RuntimeConfigurationView>{return invoke("get_runtime_configuration",{projectRoot:projectRoot??null});}
+export function saveRuntimeConfiguration(scope:"user"|"project",json:string,projectRoot?:string|null):Promise<RuntimeConfigurationView>{return invoke("save_runtime_configuration",{scope,json,projectRoot:projectRoot??null});}
+export function queryDiagnosticLogs(filters:{service?:string;level?:string;operationId?:string;limit?:number}):Promise<DiagnosticRecord[]>{return invoke("query_diagnostic_logs",filters);}

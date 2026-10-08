@@ -184,3 +184,8 @@
 
 .themis-surface-preview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border-radius: 6px; }
 .themis-surface-preview span { padding: 18px 8px; text-align: center; font-size: .75rem; color: var(--themis-text); }
+
+.themis-settings-section textarea { width: 100%; font-family: monospace; color: var(--themis-text); background: var(--themis-surface); border: 1px solid var(--themis-border); padding: .75rem; }
+.themis-settings-section pre { overflow: auto; max-height: 24rem; font-size: .75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.themis-log-filters { display: flex; gap: .75rem; flex-wrap: wrap; }
+.themis-log-filters label { display: flex; flex-direction: column; gap: .25rem; }

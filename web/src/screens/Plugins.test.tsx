@@ -8,7 +8,8 @@ import { pluginAction } from "../lib/tauri";
 
 let installed: Plugin[];
 let projectRoot: string | null;
-vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), useApp: () => ({ state: { ...initialState, activeProjectRoot: projectRoot }, dispatch: vi.fn() }) }));
+const dispatch=vi.hoisted(()=>vi.fn());
+vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), useApp: () => ({ state: { ...initialState, activeProjectRoot: projectRoot }, dispatch }) }));
 vi.mock("../lib/tauri", () => ({ pluginAction: vi.fn() }));
 afterEach(cleanup);
 beforeEach(() => {
@@ -16,6 +17,8 @@ beforeEach(() => {
   projectRoot = "/project";
   installed = [{ scope: "global", revision: "v1", enabled: true, source: null, spec: { name: "docs", description: "Documents", version: "1", skills: [{ id: "draft", name: "Draft", description: "Draft a document", instructions: "Read the sources before drafting.", allowedTools: [], scripts: [] }], mcp: { filesystem: { command: "node", args: [], env: { SECRET: "hidden-secret" }, enabled: true } }, hooks: [{ name: "startup-check", event: "RunStart", command: "printf '{}'", enabled: false, blocking: false, timeout_seconds: 10 }], files: {}, unsupported: [] } }];
   vi.mocked(pluginAction).mockImplementation(async args => {
+    if (String(args.action).startsWith("inspect_")) return {spec:{...installed[0].spec,name:String(args.name ?? "imported")},report:{status:"supported",components:[{kind:"skill",name:"draft",status:"supported"}]}} as never;
+    if (args.action === "test_mcp") return {connected:true,tools:[{name:"read"}]} as never;
     if (args.action === "list") return structuredClone(installed) as never;
     if (args.action === "marketplaces") return [{ name: "official", source: "official-source" }] as never;
     if (args.action === "catalog") return { plugins: [{ name: "public-docs", description: "Review documents", icon: "https://example.com/icon.svg" }] } as never;
@@ -37,9 +40,9 @@ beforeEach(() => {
   });
 });
 function expectNoConfiguration() {
-  expect(screen.queryByRole("button", { name: /^(Add (plugin|skill|MCP|hook)|Import|Configure|Update|Test|Run test|Save|More actions|Ask Themis)( |$)/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^(Add (plugin|skill|MCP|hook)|Configure|Update|Run test|Save|More actions|Ask Themis)( |$)/ })).toBeNull();
   expect(screen.queryByRole("textbox", { name: "Configuration" })).toBeNull();
-  expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["list", "marketplaces", "catalog", "preview", "preview_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
+  expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["inspect_marketplace", "inspect_repository", "list", "marketplaces", "catalog", "preview", "preview_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
 }
 describe("Integration browsing and lifecycle", () => {
   it("shows complete captured Markdown after selecting a bundled skill", async () => {
@@ -317,12 +320,15 @@ describe("Integration browsing and lifecycle", () => {
     await screen.findByRole("button", { name: "View docs" });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Not installed" })));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Install" })));
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
+    await act(async () => fireEvent.click(within(screen.getByRole("dialog", {name:"Import integration"})).getByRole("button", {name:"Install"})));
     expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "install", name: "public-docs", marketplace: "official" }));
     expect(screen.queryByRole("button", { name: "View public-docs" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Skills" }));
     fireEvent.click(screen.getByRole("button", { name: "Not installed" }));
     const row = screen.getByRole("button", { name: "View PDF" }).closest("li")!;
     await act(async () => fireEvent.click(within(row).getByRole("button", { name: "Install" })));
+    await act(async () => fireEvent.click(within(screen.getByRole("dialog", {name:"Import integration"})).getByRole("button", {name:"Install"})));
     expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "import_repository", name: "pdf", url: "https://github.com/anthropics/skills.git", reference: "683bc88e56f3e09ba94f7055977f3d3aa499f202", subdirectory: "skills/pdf" }));
     expect(screen.queryByRole("button", { name: "View PDF" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Installed" }));
@@ -332,6 +338,62 @@ describe("Integration browsing and lifecycle", () => {
     fireEvent.click(screen.getByRole("button", { name: "Not installed" }));
     expect(screen.getByRole("button", { name: "View PDF" })).toBeInTheDocument();
     expectNoConfiguration();
+  });
+
+  it("filters operational status and tests connections only on explicit action",async()=>{
+    render(<Plugins />);await screen.findByRole("button",{name:"View docs"});
+    fireEvent.click(screen.getByRole("button",{name:"MCP"}));
+    fireEvent.change(screen.getByRole("combobox",{name:"Integration status"}),{target:{value:"Not tested"}});
+    fireEvent.click(screen.getByRole("button",{name:"View filesystem"}));
+    expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({action:"test_mcp"}));
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Test connection"})));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Connected · 1 tools discovered");
+    fireEvent.click(screen.getByRole("button",{name:"Close"}));
+    expect(screen.queryByRole("button",{name:"View filesystem"})).toBeNull();
+    fireEvent.change(screen.getByRole("combobox",{name:"Integration status"}),{target:{value:"Ready"}});
+    expect(screen.getByRole("button",{name:"View filesystem"})).toBeInTheDocument();
+    installed[0].revision="v2";installed[0].spec.mcp.filesystem.args=["changed"];
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Refresh"})));
+    expect(screen.queryByRole("button",{name:"View filesystem"})).toBeNull();
+    fireEvent.change(screen.getByRole("combobox",{name:"Integration status"}),{target:{value:"Not tested"}});
+    expect(screen.getByRole("button",{name:"View filesystem"})).toBeInTheDocument();
+  });
+  it("requires explicit partial installation after compatibility inspection",async()=>{
+    const previous=vi.mocked(pluginAction).getMockImplementation()!;
+    vi.mocked(pluginAction).mockImplementation(async args=>args.action==="inspect_marketplace"?{spec:installed[0].spec,report:{status:"partial",components:[{kind:"mcp",name:"oauth",status:"unsupported",field:"mcp.oauth",reason:"OAuth unsupported"}]}} as never:previous(args) as never);
+    render(<Plugins />);await screen.findByRole("button",{name:"View docs"});
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Not installed"})));
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Install"})));
+    const dialog=screen.getByRole("dialog",{name:"Import integration"});
+    expect(dialog).toHaveTextContent("mcp.oauth");expect(dialog).toHaveTextContent("OAuth unsupported");
+    expect(within(dialog).getByRole("button",{name:"Install"})).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("checkbox"));
+    await act(async()=>fireEvent.click(within(dialog).getByRole("button",{name:"Install"})));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({action:"install",allowPartial:true}));
+  });
+
+  it.each([true,false])("links only a final diagnostic operation marker (valid=%s)",async valid=>{
+    const previous=vi.mocked(pluginAction).getMockImplementation()!;
+    const operation="12345678-1234-1234-1234-123456789abc";
+    vi.mocked(pluginAction).mockImplementation(async args=>{if(args.action==="inspect_path")throw new Error(`Unsupported MCP format\nDiagnostic operation: ${operation}${valid?"":"\nOther information"}`);return previous(args) as never;});
+    render(<Plugins />);await screen.findByRole("button",{name:"View docs"});
+    fireEvent.click(screen.getByRole("button",{name:"Import"}));
+    fireEvent.change(screen.getByRole("textbox",{name:"Import source"}),{target:{value:"/package"}});
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Inspect"})));
+    if(valid){fireEvent.click(screen.getByRole("button",{name:"View diagnostics"}));expect(dispatch).toHaveBeenCalledWith({type:"ui/view",view:"settings",settingsSection:"Diagnostics",diagnosticOperation:operation});}
+    else expect(screen.queryByRole("button",{name:"View diagnostics"})).toBeNull();
+  });
+
+  it("inspects and installs globally while a project is active",async()=>{
+    render(<Plugins />);await screen.findByRole("button",{name:"View docs"});
+    fireEvent.change(screen.getByRole("combobox",{name:"Installation scope"}),{target:{value:"global"}});
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Not installed"})));
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Install"})));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({action:"inspect_marketplace",scope:"global",projectRoot:"/project"}));
+    const dialog=screen.getByRole("dialog",{name:"Import integration"});
+    expect(dialog).toHaveTextContent("Install for User (Global)");
+    await act(async()=>fireEvent.click(within(dialog).getByRole("button",{name:"Install"})));
+    expect(pluginAction).toHaveBeenCalledWith(expect.objectContaining({action:"install",scope:"global",projectRoot:"/project"}));
   });
 
 });

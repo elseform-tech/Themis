@@ -36,6 +36,9 @@ interface ThreadComposerProps {
   onProviderChange: (model: string) => void;
   onEffortChange: (effort: string) => void;
   onOpenSettings: () => void;
+  permissionSaving?: boolean;
+  onOpenConfiguration?: () => void;
+  onApprovalModeChange?: (mode: "custom" | "yolo") => void;
 }
 
 export function ThreadComposer({
@@ -65,6 +68,9 @@ export function ThreadComposer({
   onProviderChange,
   onEffortChange,
   onOpenSettings,
+  onOpenConfiguration,
+  permissionSaving = false,
+  onApprovalModeChange,
 }: ThreadComposerProps) {
   const stopAction = useRef(onStop);
   stopAction.current = onStop;
@@ -118,6 +124,17 @@ export function ThreadComposer({
             onClick={onNewThread}
           >+
           </Button>
+          <details className="themis-composer-permissions" data-mode={thread.approval_mode ?? "custom"}>
+            <summary aria-label={`Permissions: ${thread.approval_mode === "yolo" ? "YOLO" : "Custom"}`} title="Permissions for the next run">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7Z" /></svg>
+              <span>{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>
+            </summary>
+            <div className="themis-permissions-panel">
+              <label>Mode<select aria-label="Approval mode" value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
+              <p>{thread.approval_mode === "yolo" ? "No harness restrictions or approval prompts." : "Apply configured allow, ask and deny rules."} {running && "Applies to the next run."}</p>
+              {thread.approval_mode !== "yolo" && <Button variant="ghost" size="small" onClick={onOpenConfiguration ?? onOpenSettings}>Edit configuration</Button>}
+            </div>
+          </details>
           <div className="themis-composer-selectors">
             <div className="themis-composer-model-picker">
               <span className="themis-composer-model-provider" aria-label="OpenCode Go">

@@ -14,7 +14,7 @@ vi.mock("../lib/tauri", async importOriginal => ({
   getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
-  renameThread: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
+  renameThread: vi.fn(), setThreadApprovalMode: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
   openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), renameProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", effort_levels: [] }, { id: "gpt-5.6-luna", effort_levels: ["low", "medium", "high"] }]),
 }));
 const settings = { ...DEFAULT_SETTINGS, projects_directory: "/tmp/Themis/Projects" };
@@ -33,6 +33,44 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("permits YOLO selection and sending in a non-Git project",async()=>{
+    const project={name:"NonGit QA",root:"/tmp/non-git-qa",is_git:false};
+    const thread={id:"non-git-thread",title:"NonGit thread",provider:"go" as const,model:"test-model",running:false,worktree_path:null,branch:null,base_branch:null,recovered:false,skill_ids:[]};
+    vi.mocked(bridge.getDefaultProject).mockResolvedValueOnce(project);
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    vi.mocked(bridge.setThreadApprovalMode).mockResolvedValueOnce({...thread,approval_mode:"yolo"});
+    await mount();await act(async()=>fireEvent.click(screen.getByRole("button",{name:/^NonGit thread/})));
+    expect(screen.getByLabelText("Message")).toHaveAttribute("aria-disabled","true");
+    fireEvent.click(screen.getByLabelText("Permissions: Custom"));
+    expect(screen.getByRole("combobox",{name:"Approval mode"})).toBeEnabled();
+    await act(async()=>fireEvent.change(screen.getByRole("combobox",{name:"Approval mode"}),{target:{value:"yolo"}}));
+    expect(screen.getByLabelText("Message")).toHaveAttribute("aria-disabled","false");
+    fireEvent.input(screen.getByLabelText("Message"),{target:{textContent:"Inspect project"}});
+    expect(screen.getByRole("button",{name:"Send"})).toBeEnabled();
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Send"})));
+    expect(bridge.sendMessage).toHaveBeenCalledWith(thread.id,"Inspect project","",[]);
+  });
+
+  it("waits for permission persistence before permitting a send",async()=>{
+    const thread={id:"permission-thread",title:"Permission test",provider:"go" as const,model:"test-model",running:false,worktree_path:null,branch:null,base_branch:null,recovered:false,skill_ids:[]};
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    let saved!:(value:typeof thread)=>void;
+    vi.mocked(bridge.setThreadApprovalMode).mockImplementationOnce(()=>new Promise(resolve=>{saved=resolve;}));
+    await mount();await act(async()=>fireEvent.click(screen.getByRole("button",{name:/^Permission test/})));
+    fireEvent.input(screen.getByLabelText("Message"),{target:{textContent:"Hello"}});
+    fireEvent.click(screen.getByLabelText("Permissions: Custom"));
+    fireEvent.change(screen.getByRole("combobox",{name:"Approval mode"}),{target:{value:"yolo"}});
+    expect(screen.getByRole("combobox",{name:"Approval mode"})).toBeDisabled();
+    expect(screen.getByRole("button",{name:"Send"})).toBeDisabled();
+    fireEvent.click(screen.getByRole("button",{name:"Send"}));
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+    await act(async()=>saved({...thread,approval_mode:"yolo"} as typeof thread));
+    expect(screen.getByLabelText("Permissions: YOLO")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Send"})).toBeEnabled();
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Send"})));
+    expect(bridge.sendMessage).toHaveBeenCalledOnce();
+  });
+
   it("synchronizes attachments when returning before upload and send complete", async () => {
     const thread = { id: "upload-thread", title: "Attachment test", provider: "go" as const, model: "test-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
     vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
