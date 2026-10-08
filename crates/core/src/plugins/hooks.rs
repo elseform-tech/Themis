@@ -110,7 +110,7 @@ pub async fn run(
         .env("THEMIS_HOOK_ACTIVE", "1")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::piped());
     for name in ["PATH", "HOME", "SYSTEMROOT", "TMPDIR"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
@@ -122,6 +122,9 @@ pub async fn run(
     #[cfg(unix)]
     command.process_group(0);
     let mut child = command.spawn()?;
+    if let Some(stderr) = child.stderr.take() {
+        crate::diagnostics::capture_stderr(stderr, "hook", Vec::new());
+    }
     let _group = ProcessGroup(child.id());
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(hook.timeout_seconds),

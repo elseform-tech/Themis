@@ -262,6 +262,7 @@ pub struct GatedTool {
     approvals: Arc<dyn ApprovalHook>,
     risk: RiskLevel,
     summarize: SummaryFn,
+    relative_root: Option<PathBuf>,
 }
 
 impl GatedTool {
@@ -272,6 +273,7 @@ impl GatedTool {
             approvals,
             risk,
             summarize: summarize_fs_call,
+            relative_root: None,
         }
     }
 
@@ -287,7 +289,14 @@ impl GatedTool {
             approvals,
             risk,
             summarize,
+            relative_root: None,
         }
+    }
+
+    /// Preserve project-relative paths when the underlying tool can access the filesystem.
+    pub fn with_relative_root(mut self, root: PathBuf) -> Self {
+        self.relative_root = Some(root);
+        self
     }
 
     /// The risk level this wrapper gates under.
@@ -337,6 +346,23 @@ impl ToolT for GatedTool {
 #[async_trait]
 impl ToolRuntime for GatedTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let mut args = args;
+        if let Some(root) = &self.relative_root {
+            for key in [
+                "path",
+                "file_path",
+                "directory_path",
+                "source_path",
+                "destination_path",
+                "directory",
+            ] {
+                if let Some(path) = args.get(key).and_then(Value::as_str) {
+                    if !Path::new(path).is_absolute() {
+                        args[key] = Value::String(root.join(path).to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
         let name = self.inner.name();
         let action = ToolAction {
             tool: name.to_owned(),
@@ -650,6 +676,54 @@ pub fn resolve_within_root(root: &Path, user_path: &str) -> anyhow::Result<PathB
     Ok(resolved)
 }
 
+fn resolve_tool_path(root: &Path, path: &str, unrestricted: bool) -> anyhow::Result<PathBuf> {
+    if !unrestricted {
+        return resolve_within_root(root, path);
+    }
+    let absolute = root.join(path);
+    let filesystem_root = root
+        .ancestors()
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("filesystem root unavailable"))?;
+    resolve_within_root(filesystem_root, &absolute.to_string_lossy())
+}
+fn plan_tool_patch(
+    root: &Path,
+    patch: &str,
+    unrestricted: bool,
+) -> anyhow::Result<Vec<patch::PlannedFile>> {
+    if !unrestricted {
+        return plan_patch(root, patch);
+    }
+    let mut normalized = String::new();
+    for line in patch.lines() {
+        if let Some((prefix, path, strip)) = line
+            .strip_prefix("--- ")
+            .map(|p| ("--- ", p, "a/"))
+            .or_else(|| line.strip_prefix("+++ ").map(|p| ("+++ ", p, "b/")))
+        {
+            normalized.push_str(prefix);
+            if path == "/dev/null" {
+                normalized.push_str(path);
+            } else {
+                normalized.push_str(
+                    &resolve_tool_path(root, path.strip_prefix(strip).unwrap_or(path), true)?
+                        .to_string_lossy(),
+                );
+            }
+        } else {
+            normalized.push_str(line);
+        }
+        normalized.push('\n');
+    }
+    plan_patch(
+        root.ancestors()
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("filesystem root unavailable"))?,
+        &normalized,
+    )
+}
+
 /// Collapse `.` and `..` lexically (no filesystem access).
 fn lexical_normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -923,6 +997,7 @@ pub struct ShellTool {
     root: PathBuf,
     approvals: Arc<dyn ApprovalHook>,
     timeout: Duration,
+    unrestricted: bool,
 }
 
 impl ShellTool {
@@ -932,7 +1007,13 @@ impl ShellTool {
             root,
             approvals,
             timeout: Duration::from_secs(SHELL_TIMEOUT_SECS),
+            unrestricted: false,
         }
+    }
+
+    pub fn with_unrestricted_paths(mut self, unrestricted: bool) -> Self {
+        self.unrestricted = unrestricted;
+        self
     }
 
     /// Override the execution timeout (tests use a short budget).
@@ -965,8 +1046,8 @@ impl ToolRuntime for ShellTool {
         } else {
             cwd.as_str()
         };
-        let workdir =
-            resolve_within_root(&self.root, dir).map_err(|e| tool_error(format!("shell: {e}")))?;
+        let workdir = resolve_tool_path(&self.root, dir, self.unrestricted)
+            .map_err(|e| tool_error(format!("shell: {e}")))?;
         if !workdir.is_dir() {
             return Err(tool_error(format!(
                 "shell: working directory '{}' is not a directory",
@@ -1023,12 +1104,21 @@ pub struct ApplyPatchArgs {
 pub struct ApplyPatchTool {
     root: PathBuf,
     approvals: Arc<dyn ApprovalHook>,
+    unrestricted: bool,
 }
 
 impl ApplyPatchTool {
+    pub fn with_unrestricted_paths(mut self, unrestricted: bool) -> Self {
+        self.unrestricted = unrestricted;
+        self
+    }
     /// Create an apply-patch tool rooted at `root`.
     pub fn new(root: PathBuf, approvals: Arc<dyn ApprovalHook>) -> Self {
-        Self { root, approvals }
+        Self {
+            root,
+            approvals,
+            unrestricted: false,
+        }
     }
 
     /// The project root this tool is scoped to.
@@ -1042,8 +1132,8 @@ impl ToolRuntime for ApplyPatchTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let ApplyPatchArgs { patch } = serde_json::from_value(args)?;
         // Plan first (validates every path and hunk), approve, then commit.
-        let plan =
-            plan_patch(&self.root, &patch).map_err(|e| tool_error(format!("apply_patch: {e}")))?;
+        let plan = plan_tool_patch(&self.root, &patch, self.unrestricted)
+            .map_err(|e| tool_error(format!("apply_patch: {e}")))?;
         let summary = if plan.is_empty() {
             "apply empty patch (no changes)".to_string()
         } else {
@@ -1108,12 +1198,21 @@ pub struct GitArgs {
 pub struct GitTool {
     root: PathBuf,
     approvals: Arc<dyn ApprovalHook>,
+    unrestricted: bool,
 }
 
 impl GitTool {
+    pub fn with_unrestricted_commands(mut self, unrestricted: bool) -> Self {
+        self.unrestricted = unrestricted;
+        self
+    }
     /// Create a git tool rooted at `root`.
     pub fn new(root: PathBuf, approvals: Arc<dyn ApprovalHook>) -> Self {
-        Self { root, approvals }
+        Self {
+            root,
+            approvals,
+            unrestricted: false,
+        }
     }
 
     /// The project root this tool is scoped to.
@@ -1132,7 +1231,26 @@ impl ToolRuntime for GitTool {
         let root =
             resolve_within_root(&self.root, ".").map_err(|e| tool_error(format!("git: {e}")))?;
         match subcommand {
-            "status" | "diff" | "log" | "show" => {}
+            _ if self.unrestricted => {
+                check_approval_permitted(
+                    self.approvals.as_ref(),
+                    &ToolAction {
+                        tool: "git".into(),
+                        summary: format!("run git {}", args.join(" ")),
+                        risk: RiskLevel::Execute,
+                    },
+                )?;
+            }
+            "status" | "diff" | "log" | "show" => {
+                check_approval_permitted(
+                    self.approvals.as_ref(),
+                    &ToolAction {
+                        tool: "git".into(),
+                        summary: format!("run git {}", args.join(" ")),
+                        risk: RiskLevel::Read,
+                    },
+                )?;
+            }
             "add" | "commit" | "checkout" | "branch" => {
                 check_approval_permitted(
                     self.approvals.as_ref(),
@@ -1212,56 +1330,103 @@ pub fn boxed_tools(
     root: &Path,
     approvals: Arc<dyn ApprovalHook>,
 ) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
+    boxed_tools_with_mode(root, approvals, false)
+}
+
+/// YOLO removes workspace and git-command restrictions; relative paths retain project semantics.
+pub fn boxed_tools_with_mode(
+    root: &Path,
+    approvals: Arc<dyn ApprovalHook>,
+    yolo: bool,
+) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
     let canonical = root
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("project root '{}' is not accessible: {e}", root.display()))?;
     let root_string = canonical.to_string_lossy().into_owned();
     let gate = |tool: Box<dyn ToolT>, risk: RiskLevel| -> Box<dyn ToolT> {
-        Box::new(GatedTool::new(tool, Arc::clone(&approvals), risk))
+        let tool = GatedTool::new(tool, Arc::clone(&approvals), risk);
+        Box::new(if yolo {
+            tool.with_relative_root(canonical.clone())
+        } else {
+            tool
+        })
     };
     let mut tools: Vec<Box<dyn ToolT>> = vec![
         gate(
-            Box::new(ListDir::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                ListDir::new_unrestricted()
+            } else {
+                ListDir::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Read,
         ),
         gate(
-            Box::new(ReadFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                ReadFile::new_unrestricted()
+            } else {
+                ReadFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Read,
         ),
         gate(
-            Box::new(WriteFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                WriteFile::new_unrestricted()
+            } else {
+                WriteFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Write,
         ),
         gate(
-            Box::new(CopyFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                CopyFile::new_unrestricted()
+            } else {
+                CopyFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Write,
         ),
         gate(
-            Box::new(MoveFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                MoveFile::new_unrestricted()
+            } else {
+                MoveFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Write,
         ),
         gate(
-            Box::new(DeleteFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                DeleteFile::new_unrestricted()
+            } else {
+                DeleteFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Destructive,
         ),
         gate(
-            Box::new(CreateDir::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                CreateDir::new_unrestricted()
+            } else {
+                CreateDir::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Write,
         ),
         gate(
-            Box::new(SearchFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                SearchFile::new_unrestricted(100)
+            } else {
+                SearchFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Read,
         ),
     ];
-    tools.push(Box::new(ShellTool::new(
-        canonical.clone(),
-        Arc::clone(&approvals),
-    )));
-    tools.push(Box::new(ApplyPatchTool::new(
-        canonical.clone(),
-        Arc::clone(&approvals),
-    )));
-    tools.push(Box::new(GitTool::new(canonical, approvals)));
+    tools.push(Box::new(
+        ShellTool::new(canonical.clone(), Arc::clone(&approvals)).with_unrestricted_paths(yolo),
+    ));
+    tools.push(Box::new(
+        ApplyPatchTool::new(canonical.clone(), Arc::clone(&approvals))
+            .with_unrestricted_paths(yolo),
+    ));
+    tools.push(Box::new(
+        GitTool::new(canonical, approvals).with_unrestricted_commands(yolo),
+    ));
     Ok(tools)
 }
 
@@ -1646,6 +1811,68 @@ mod tests {
             assert_eq!(action.tool, "delete_file");
             assert_eq!(action.risk, RiskLevel::Destructive);
         }
+    }
+
+    #[tokio::test]
+    async fn git_read_obeys_custom_deny_policy() {
+        let temporary = tempdir().unwrap();
+        let policy = crate::configuration::ApprovalPolicy {
+            default: crate::configuration::PolicyAction::Allow,
+            rules: vec![crate::configuration::ApprovalRule {
+                tool: "git".into(),
+                action: crate::configuration::PolicyAction::Deny,
+                risk: Some("read".into()),
+            }],
+        };
+        let approvals = crate::configuration::configured_hook(
+            crate::configuration::ApprovalMode::Custom,
+            policy,
+            allow_all(),
+        );
+        let git = GitTool::new(temporary.path().to_owned(), approvals);
+        let error = git.execute(json!({"args":["status"]})).await.unwrap_err();
+        assert!(error.to_string().contains("denied"));
+    }
+
+    #[tokio::test]
+    async fn yolo_accesses_external_files_preserving_relative_paths() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("project");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("inside.txt"), "inside").unwrap();
+        fs::write(temporary.path().join("outside.txt"), "outside").unwrap();
+        let tools = boxed_tools_with_mode(&root, allow_all(), true).unwrap();
+        let read = tools.iter().find(|t| t.name() == "read_file").unwrap();
+        let inside = read
+            .execute(json!({"file_path":"inside.txt"}))
+            .await
+            .unwrap();
+        assert_eq!(inside["content"], "inside");
+        let outside = read
+            .execute(json!({"file_path":"../outside.txt"}))
+            .await
+            .unwrap();
+        assert_eq!(outside["content"], "outside");
+        let shell = tools.iter().find(|t| t.name() == "shell").unwrap();
+        let result = shell
+            .execute(json!({"command":"pwd","cwd":".."}))
+            .await
+            .unwrap();
+        assert!(result["success"].as_bool().unwrap());
+        let patch = tools.iter().find(|t| t.name() == "apply_patch").unwrap();
+        patch.execute(json!({"patch":"--- a/../outside.txt\n+++ b/../outside.txt\n@@ -1 +1 @@\n-outside\n+changed\n"})).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(temporary.path().join("outside.txt")).unwrap(),
+            "changed\n"
+        );
+        let custom = boxed_tools_with_mode(&root, allow_all(), false).unwrap();
+        assert!(custom
+            .iter()
+            .find(|t| t.name() == "read_file")
+            .unwrap()
+            .execute(json!({"file_path":"../outside.txt"}))
+            .await
+            .is_err());
     }
 
     #[test]

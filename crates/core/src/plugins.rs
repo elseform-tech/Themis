@@ -110,13 +110,24 @@ struct Registry {
 
 #[derive(Clone)]
 pub struct PluginStore {
+    skill_paths: Vec<String>,
     pub global: PathBuf,
     pub project: Option<PathBuf>,
 }
 
 impl PluginStore {
     pub fn new(global: PathBuf, project: Option<PathBuf>) -> Self {
-        Self { global, project }
+        Self {
+            global,
+            project,
+            skill_paths: crate::configuration::SkillConfig::default().paths,
+        }
+    }
+    /// Override project-local skill directories; global discovery retains conventional roots.
+    pub fn with_skill_paths(mut self, paths: Vec<String>) -> anyhow::Result<Self> {
+        crate::configuration::validate_relative_paths(&paths)?;
+        self.skill_paths = paths;
+        Ok(self)
     }
     fn directory(&self, scope: &str) -> anyhow::Result<PathBuf> {
         match scope {

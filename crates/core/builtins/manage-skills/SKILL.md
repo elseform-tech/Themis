@@ -5,7 +5,7 @@ description: Find, import, install, create, inspect, enable, disable, update and
 
 # Manage skills
 
-Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, previews and basic install, enable, disable and uninstall controls. Do not direct users to configuration forms.
+Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, compatibility reports, configuration, connection tests, and lifecycle controls. Use shared tools for requested changes; Settings runtime JSONC may be inspected or edited when the user requests configuration.
 
 Inspect `list_plugins` and the available skill catalog before creating duplicates. Read relevant SKILL.md instructions and supporting Markdown through `read_file`. Skills in user scope are available across chats; project skills apply to chats in that project.
 

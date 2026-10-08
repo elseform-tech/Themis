@@ -22,11 +22,28 @@ fn discover_scope(
 ) -> anyhow::Result<()> {
     let registry = store.registry(scope)?;
     let mut seen = BTreeSet::new();
-    for source in [".agents/skills", ".codex/skills", ".claude/skills"] {
+    let defaults = crate::configuration::SkillConfig::default();
+    let sources = if scope == "local" {
+        &store.skill_paths
+    } else {
+        &defaults.paths
+    };
+    let boundary = if scope == "local" {
+        Some(base.canonicalize()?)
+    } else {
+        None
+    };
+    for source in sources {
         let root = base.join(source);
         if root.is_dir() {
-            scan_skills(&root, 0, &mut seen, &mut |directory| {
+            scan_skills(&root, 0, boundary.as_deref(), &mut seen, &mut |directory| {
                 let skill_file = directory.join("SKILL.md").canonicalize()?;
+                if boundary
+                    .as_ref()
+                    .is_some_and(|root| !skill_file.starts_with(root))
+                {
+                    bail!("Skill instructions escape the project root");
+                }
                 let location = skill_file.to_string_lossy().to_string();
                 // Stable FNV-1a identity uses the source path, never the mutable instructions.
                 let hash = location.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
@@ -137,10 +154,14 @@ fn discover_scope(
 fn scan_skills(
     directory: &Path,
     depth: usize,
+    boundary: Option<&Path>,
     seen: &mut BTreeSet<PathBuf>,
     visit: &mut impl FnMut(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let canonical = directory.canonicalize()?;
+    if boundary.is_some_and(|root| !canonical.starts_with(root)) {
+        bail!("Skill discovery path escapes the project root");
+    }
     if !seen.insert(canonical.clone()) {
         return Ok(());
     }
@@ -156,8 +177,54 @@ fn scan_skills(
     for child in children {
         let path = child.path();
         if path.is_dir() && child.file_name() != ".git" && child.file_name() != "node_modules" {
-            scan_skills(&path, depth + 1, seen, visit)?;
+            scan_skills(&path, depth + 1, boundary, seen, visit)?;
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn configured_skill_paths_replace_local_defaults() {
+        let global = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        for directory in ["custom/review", ".agents/skills/ignored"] {
+            let path = project.path().join(directory);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(
+                path.join("SKILL.md"),
+                "---\nname: review\ndescription: Review changes.\n---\nInspect tests.",
+            )
+            .unwrap();
+        }
+        let store = PluginStore::new(global.path().into(), Some(project.path().into()))
+            .with_skill_paths(vec!["custom".into()])
+            .unwrap();
+        let plugins = store.discovered_plugins().unwrap();
+        let local: Vec<_> = plugins.iter().filter(|p| p.scope == "local").collect();
+        assert_eq!(local.len(), 1);
+        assert!(local[0]
+            .spec
+            .origin
+            .as_ref()
+            .unwrap()
+            .location
+            .contains("custom/review"));
+        assert!(
+            PluginStore::new(global.path().into(), Some(project.path().into()))
+                .with_skill_paths(vec!["../outside".into()])
+                .is_err()
+        );
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(outside.path(), project.path().join("escape")).unwrap();
+            let escaped = PluginStore::new(global.path().into(), Some(project.path().into()))
+                .with_skill_paths(vec!["escape".into()])
+                .unwrap();
+            assert!(escaped.discovered_plugins().is_err());
+        }
+    }
 }

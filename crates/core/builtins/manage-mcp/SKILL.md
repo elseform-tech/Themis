@@ -5,7 +5,7 @@ description: Install, import, configure, create, test and troubleshoot local or 
 
 # Manage MCP
 
-Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, previews and basic install, enable, disable and uninstall controls. Do not direct users to configuration forms.
+Create, configure and troubleshoot integrations in chat through the shared management tools. Integrations provides browsing, compatibility reports, configuration, connection tests, and lifecycle controls. Use shared tools for requested changes; Settings runtime JSONC may be inspected or edited when the user requests configuration.
 
 Inspect existing servers with `list_plugins`. Prefer an existing maintained server over building one. Accept a user's configuration file, JSON, command, endpoint, package or repository; do not assume every source is a repository URL.
 
