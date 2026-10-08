@@ -9,6 +9,7 @@ export interface DialogProps {
 }
 
 export function Dialog({ open, onClose, title, children }: DialogProps) {
+  const focusableSelector = "button:not(:disabled), input:not(:disabled):not([type='hidden']), select:not(:disabled), textarea:not(:disabled), summary, [href], [contenteditable='true'], [tabindex]:not([tabindex='-1'])";
   const panelRef = useRef<HTMLDivElement>(null);
 
   const closeRef = useRef(onClose);
@@ -20,7 +21,7 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") { event.stopPropagation(); closeRef.current(); }
       if (event.key === "Tab") {
-        const targets = Array.from(panelRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [href], [tabindex='0']") ?? []).filter(element => !element.closest("details:not([open])") || element.tagName === "SUMMARY");
+        const targets = Array.from(panelRef.current?.querySelectorAll<HTMLElement>(focusableSelector) ?? []).filter(element => !element.closest("details:not([open])") || element.tagName === "SUMMARY");
         const first = targets[0]; const last = targets[targets.length - 1];
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -31,7 +32,7 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
     const panel = panelRef.current;
     if (panel) {
       const focusable = panel.querySelector<HTMLElement>(
-        "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
+        focusableSelector,
       );
       (focusable ?? panel).focus();
     }

@@ -14,7 +14,10 @@ function serialize(node:Node):string {
 function caret(element:HTMLElement):number {
   const selection=window.getSelection();
   if (!selection?.rangeCount || !element.contains(selection.anchorNode)) return 0;
-  const range=selection.getRangeAt(0).cloneRange();range.selectNodeContents(element);range.setEnd(selection.anchorNode!,selection.anchorOffset);
+  const anchor=selection.anchorNode!;
+  // WebKit can retain the previous child offset briefly after replaceChildren().
+  const offset=Math.min(selection.anchorOffset,anchor.nodeType===Node.TEXT_NODE?(anchor.textContent?.length ?? 0):anchor.childNodes.length);
+  const range=selection.getRangeAt(0).cloneRange();range.selectNodeContents(element);range.setEnd(anchor,offset);
   return serialize(range.cloneContents()).length;
 }
 function referenceLabel(name:string) {
@@ -121,7 +124,7 @@ export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,
     if(event.key==="Enter"&&!event.shiftKey&&onSubmit){event.preventDefault();onSubmit();}
   }
   return <div className="themis-prompt-input">
-    <div ref={editor} id={id} role="textbox" aria-label={label} aria-multiline="true" aria-disabled={disabled} aria-autocomplete="list" aria-controls={slash?listId:undefined} aria-activedescendant={slash&&choices[active]?`${listId}-${active}`:undefined} contentEditable={!disabled} suppressContentEditableWarning className="themis-prompt-editor" data-placeholder={placeholder} onFocus={detectSlash} onKeyUp={event=>{if(!["ArrowUp","ArrowDown","Enter","Tab","Escape"].includes(event.key))detectSlash();}} onKeyDown={keyDown} onInput={()=>{if(editor.current){update(serialize(editor.current));recall.current.index=-1;detectSlash();}}} onPaste={event=>{event.preventDefault();const text=event.clipboardData.getData("text/plain");document.execCommand("insertText",false,text);if(editor.current){update(serialize(editor.current));detectSlash();}}} onCopy={event=>{const selection=window.getSelection();if(selection?.rangeCount){event.clipboardData.setData("text/plain",serialize(selection.getRangeAt(0).cloneContents()));event.preventDefault();}}} />
+    <div ref={editor} id={id} role="textbox" aria-label={label} aria-multiline="true" aria-disabled={disabled} aria-autocomplete="list" aria-controls={slash?listId:undefined} aria-activedescendant={slash&&choices[active]?`${listId}-${active}`:undefined} contentEditable={!disabled} tabIndex={disabled ? -1 : 0} suppressContentEditableWarning className="themis-prompt-editor" data-placeholder={placeholder} onFocus={detectSlash} onKeyUp={event=>{if(!["ArrowUp","ArrowDown","Enter","Tab","Escape"].includes(event.key))detectSlash();}} onKeyDown={keyDown} onInput={()=>{if(editor.current){update(serialize(editor.current));recall.current.index=-1;detectSlash();}}} onPaste={event=>{event.preventDefault();const text=event.clipboardData.getData("text/plain");document.execCommand("insertText",false,text);if(editor.current){update(serialize(editor.current));detectSlash();}}} onCopy={event=>{const selection=window.getSelection();if(selection?.rangeCount){event.clipboardData.setData("text/plain",serialize(selection.getRangeAt(0).cloneContents()));event.preventDefault();}}} />
     {slash&&<div className="themis-prompt-menu" id={listId} role="listbox" aria-label={slash.kind==="plugin"?"Plugins":"Skills"}>
       {choices.length===0?<p>No matching {slash.kind==="plugin"?"plugins":"skills"}</p>:choices.map((choice,index)=><button key={choice.id} ref={index===active?activeOption:undefined} type="button" id={`${listId}-${index}`} role="option" aria-selected={index===active} onMouseDown={event=>event.preventDefault()} onClick={()=>select(choice)}>{"origin" in choice?<PluginIcon plugin={choice} />:<SkillIcon />}<span>{choice.name}<small title={choice.description}>{"origin" in choice?choice.origin:skillOrigin(choice)} · {choice.description}</small></span></button>)}
     </div>}

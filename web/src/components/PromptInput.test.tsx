@@ -231,3 +231,15 @@ it.each(["/", "/Users"])("preserves Shift+Enter and Tab navigation for %s", valu
     expect(send).toHaveBeenCalledTimes(1);
   }
 });
+
+it("handles WebKit retaining a stale element caret after the composer is cleared", () => {
+  const view=render(<PromptInput label="Cleared" value="" onChange={vi.fn()} skills={builtinSkills} />);
+  const input=screen.getByRole("textbox",{name:"Cleared"});
+  const range=document.createRange();range.selectNodeContents(input);range.collapse(false);
+  const selection=vi.spyOn(window,"getSelection").mockReturnValue({rangeCount:1,anchorNode:input,anchorOffset:7,getRangeAt:()=>range,removeAllRanges:vi.fn(),addRange:vi.fn()} as unknown as Selection);
+  try {
+    expect(()=>view.rerender(<PromptInput label="Cleared" value="" onChange={vi.fn()} skills={[]} />)).not.toThrow();
+    expect(input).toHaveTextContent("");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  } finally {selection.mockRestore();}
+});
