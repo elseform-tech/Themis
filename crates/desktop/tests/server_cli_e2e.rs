@@ -201,81 +201,101 @@ fn help_and_version_work_without_starting_a_server() {
 async fn streamed_cli_followup_uses_persisted_context_and_skills() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    let project = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let state = AppState::new_for_test(data.path().join("settings.json"));
-    let provider = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(common::final_text_body()))
-        .mount(&provider)
-        .await;
-    common::use_mock_llm(&state, &provider).await;
-    let server = Server::bind(state, data.path()).await.unwrap();
-    let task = tokio::spawn(server.run());
-    let thread = cli(
-        data.path(),
-        &[
-            "thread",
-            "create",
-            project.path().to_str().unwrap(),
+    for (model, endpoint, response, message_field) in [
+        (
             "test-model",
-        ],
-    );
-    let id = thread["id"].as_str().unwrap();
-    let skill = cli(data.path(), &["call", "create_skill", &json!({"input": {
+            "/chat/completions",
+            common::final_text_body(),
+            "messages",
+        ),
+        (
+            "gpt-6-luna",
+            "/responses",
+            json!({"output":[{"type":"message","content":[{"type":"output_text","text":"Done."}]}]}),
+            "input",
+        ),
+    ] {
+        let project = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let provider = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&provider)
+            .await;
+        common::use_mock_llm(&state, &provider).await;
+        let server = Server::bind(state, data.path()).await.unwrap();
+        let task = tokio::spawn(server.run());
+        let thread = cli(
+            data.path(),
+            &["thread", "create", project.path().to_str().unwrap(), model],
+        );
+        let id = thread["id"].as_str().unwrap();
+        let skill = cli(data.path(), &["call", "create_skill", &json!({"input": {
         "name": "Writer", "description": "test", "instructions": "Always be concise.",
         "allowed_tools": ["read_file"], "scripts": [{"name": "greet.sh", "content": "echo hi"}]
     }}).to_string()]);
-    cli(
-        data.path(),
-        &[
-            "call",
-            "set_thread_skills",
-            &json!({"threadId": id, "skillIds": [skill["id"]]}).to_string(),
-        ],
-    );
-    for prompt in ["Remember my first request", "What was my first request?"] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
-            .arg("--data-dir")
-            .arg(data.path())
-            .args(["thread", "send", id, prompt, "--json"])
-            .env_remove("OPENCODE_KEY")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        cli(
+            data.path(),
+            &[
+                "call",
+                "set_thread_skills",
+                &json!({"threadId": id, "skillIds": [skill["id"]]}).to_string(),
+            ],
         );
-        let events: Vec<Value> = String::from_utf8(output.stdout)
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert!(events
-            .iter()
-            .any(|event| event["payload"]["event"]["kind"] == "finished"));
+        for prompt in ["Remember my first request", "What was my first request?"] {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+                .arg("--data-dir")
+                .arg(data.path())
+                .args(["thread", "send", id, prompt, "--json"])
+                .env_remove("OPENCODE_KEY")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let events: Vec<Value> = String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert!(events
+                .iter()
+                .any(|event| event["payload"]["event"]["kind"] == "finished"));
+        }
+        let requests = provider.received_requests().await.unwrap();
+        let body: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+        let messages = body[message_field].to_string();
+        if endpoint == "/responses" {
+            let reader = body["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "read_file")
+                .unwrap();
+            assert_eq!(reader["strict"], false);
+            assert_eq!(reader["parameters"]["required"], json!(["file_path"]));
+        }
+        assert!(messages.contains("Remember my first request"));
+        assert!(messages.contains("Always be concise."));
+        assert!(project
+            .path()
+            .join(".themis/skills")
+            .join(skill["id"].as_str().unwrap())
+            .join("greet.sh")
+            .exists());
+        assert!(
+            cli(data.path(), &["thread", "history", id])
+                .as_array()
+                .unwrap()
+                .len()
+                >= 4
+        );
+        task.abort();
     }
-    let requests = provider.received_requests().await.unwrap();
-    let body: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
-    let messages = body["messages"].to_string();
-    assert!(messages.contains("Remember my first request"));
-    assert!(messages.contains("Always be concise."));
-    assert!(project
-        .path()
-        .join(".themis/skills")
-        .join(skill["id"].as_str().unwrap())
-        .join("greet.sh")
-        .exists());
-    assert!(
-        cli(data.path(), &["thread", "history", id])
-            .as_array()
-            .unwrap()
-            .len()
-            >= 4
-    );
-    task.abort();
 }
 
 #[test]

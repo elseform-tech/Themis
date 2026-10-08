@@ -502,7 +502,7 @@ impl CompatibleProvider {
             let mut body =
                 serde_json::json!({"model":self.model,"input":input,"stream":stream,"store":false});
             if let Some(tools) = tools {
-                body["tools"] = tools.iter().map(|tool| serde_json::json!({"type":"function","name":tool.function.name,"description":tool.function.description,"parameters":tool.function.parameters})).collect();
+                body["tools"] = tools.iter().map(|tool| serde_json::json!({"type":"function","name":tool.function.name,"description":tool.function.description,"parameters":tool.function.parameters,"strict":false})).collect();
             }
             if let Some(effort) = &self.reasoning_effort {
                 body["reasoning"] = serde_json::json!({"effort":effort});
@@ -1234,6 +1234,46 @@ mod tests {
                 "{error}"
             );
             assert!(!error.to_string().contains("private state"));
+        }
+    }
+
+    #[test]
+    fn responses_keep_optional_read_arguments_optional() {
+        let root = tempfile::tempdir().unwrap();
+        let tools =
+            crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook)).unwrap();
+        let reader = tools
+            .iter()
+            .find(|tool| tool.name() == "read_file")
+            .unwrap();
+        let mut tool = test_tool();
+        tool.function.parameters = reader.args_schema();
+        assert_eq!(tool.function.parameters["required"], json!(["file_path"]));
+        for model in ["gpt-6-luna", "muse-spark-1.3-contributor"] {
+            let provider = CompatibleProvider::go("synthetic".into(), model.into(), None, None);
+            for stream in [false, true] {
+                let request = provider
+                    .chat_request(
+                        &[user_message("Read source.py")],
+                        Some(std::slice::from_ref(&tool)),
+                        stream,
+                        None,
+                    )
+                    .unwrap()
+                    .build()
+                    .unwrap();
+                let body: Value =
+                    serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+                assert_eq!(
+                    body["tools"][0]["strict"], false,
+                    "optional selectors must remain omittable in Responses"
+                );
+                assert_eq!(
+                    body["tools"][0]["parameters"]["required"],
+                    json!(["file_path"])
+                );
+                assert!(body["tools"][0]["parameters"]["properties"]["jsonl_record"].is_object());
+            }
         }
     }
 
