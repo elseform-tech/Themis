@@ -67,6 +67,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             let merge = dump.contains("ORDERED SECTION NOTES TO RECONCILE");
             assert_eq!(body["max_tokens"], if merge { 4096 } else { 2048 });
             assert!(body["messages"][0]["content"].as_str().unwrap().contains("Preserve explicit subjects and objects"), "both section and merge requests must preserve action ownership");
+            assert!(body["messages"][0]["content"].as_str().unwrap().contains("A paraphrase is not a source quotation"), "both section and merge must keep paraphrases separate from exact evidence");
             assert!(body["messages"][0]["content"].as_str().unwrap().contains("retrieval pointers do not replace required facts when tools or rereading are forbidden"), "both requests must preserve facts required for a no-reread task");
             if merge {
                 assert!(body["messages"][0]["content"].as_str().unwrap().contains("recency alone is not a reason to discard it"));
@@ -221,6 +222,8 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     assert!(system.contains("r['content'][:4500]"));
     assert!(system.contains("Root-scoped file tools require relative paths"));
     assert!(system.contains("it does not fall back to Assistant navigation"));
+    assert!(system.contains("Before citing, pair each claim"));
+    assert!(system.contains("Keep paraphrases outside quotation marks"));
     let history = state.get_thread_history(id).await.unwrap();
     assert_eq!(
         serde_json::to_value(&history[0]).unwrap()["attachments"],
