@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use themis_core::runtime::{ConversationRole, ConversationTurn};
+use themis_core::runtime::{checkpoint_parts, ChatRole, ConversationRole, ConversationTurn};
 
 use crate::types::{ThreadEvent, ThreadEventEnvelope};
 
@@ -318,13 +318,29 @@ impl TranscriptStore {
             requests.extend(first);
             requests.sort_by_key(|request| request.0);
             requests.dedup_by_key(|request| request.0);
-            turns.push(ConversationTurn {
-                role: ConversationRole::Assistant,
-                text: format!(
-                    "Earlier context checkpoint (historical; later user requests take precedence):\n{summary}\nVerbatim first and recent user requests (historical):\n{}",
-                    requests.into_iter().map(|request| request.1).collect::<Vec<_>>().join("\n")
-                ),
+            let (_, recent) = checkpoint_parts(&summary);
+            requests.retain(|(_, text)| {
+                !recent
+                    .iter()
+                    .any(|message| message.role == ChatRole::User && &message.content == text)
             });
+            turns.push(ConversationTurn {
+                role: ConversationRole::Checkpoint,
+                text: summary,
+            });
+            if !requests.is_empty() {
+                turns.push(ConversationTurn {
+                    role: ConversationRole::Assistant,
+                    text: format!(
+                        "Verbatim first and recent user requests (historical):\n{}",
+                        requests
+                            .into_iter()
+                            .map(|request| request.1)
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ),
+                });
+            }
         }
         for row in rows {
             let (role, text) = row.map_err(|e| format!("read context: {e}"))?;
@@ -365,7 +381,7 @@ impl TranscriptStore {
 fn role_name(role: &ConversationRole) -> &'static str {
     match role {
         ConversationRole::User => "user",
-        ConversationRole::Assistant => "assistant",
+        ConversationRole::Assistant | ConversationRole::Checkpoint => "assistant",
     }
 }
 

@@ -40,6 +40,8 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
             assert!(input.contains("NEW ORIGINAL MESSAGE RECORDS"));
             assert!(!input.contains("ORDERED SECTION NOTES TO RECONCILE"));
             assert!(input.contains("EARLY_LIMIT_A"));
+            let previous = input.split("\n\nNEW ORIGINAL MESSAGE RECORDS:").next().unwrap();
+            assert!(!previous.contains("Recent completed context:"), "recent messages must not inflate prior task state");
             assert_eq!(body["max_tokens"], 8192);
             observed.lock().unwrap().push(input.to_owned());
         }
@@ -119,6 +121,48 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
         7
     );
     assert!(original.contains(&"x".repeat(120_000)));
+    client.call("shutdown", json!({})).await.unwrap();
+    task.await.unwrap().unwrap();
+
+    // Restore the real SQLite checkpoint and repeat compaction through the CLI.
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let mut events = client.subscribe().await.unwrap();
+    for index in 7..16 {
+        cli(
+            data.path(),
+            "send_message",
+            json!({"threadId":id,"text":format!("Record {index}; EARLY_LIMIT_A remains required. {}", "x".repeat(120_000))}),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let event = Client::next_event(&mut events).await.unwrap();
+                if event["name"] != "thread-event" {
+                    continue;
+                }
+                let event = &event["payload"]["event"];
+                assert_ne!(event["kind"], "failed", "{event}");
+                if event["kind"] == "finished" {
+                    assert_eq!(event["result"], "READY");
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        updates.lock().unwrap().len(),
+        4,
+        "four fitting compactions across restart must stay incremental"
+    );
+    assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), original);
     client.call("shutdown", json!({})).await.unwrap();
     task.await.unwrap().unwrap();
 }

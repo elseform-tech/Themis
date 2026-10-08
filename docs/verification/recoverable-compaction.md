@@ -2,9 +2,15 @@
 
 Status: implementation and verification ongoing; do not claim completion or lossless summary retention.
 
+The user requested a bounded stability check and an end to further provider-heavy benchmarking on 2026-10-08. Finish the observed reload/fallback defect, check repeated compaction and restart locally, and use one targeted free-model verification; do not start another six-compaction narrative sweep.
+
 ## Current simplified path (2026-10-08)
 
 Normal compaction saves originals, then makes one state-update request containing the complete previous checkpoint once and the newly compacted original messages. The recent tail remains verbatim. Fixed-size section extraction and reconciliation run only when that complete update cannot fit the 200,000 estimated-token budget, including 16,384 tokens reserved for the larger retry output. The shared four-minute deadline, one retry, cancellation, replacement-budget checks, and evidence recovery remain. No new model stage, dependency, retrieval framework, or automatic semantic gate.
+
+Reload now decodes the existing runtime-written checkpoint into compact historical state and actual recent messages, preserving their roles and tool receipts. First/recent historical requests remain outside the previous summary and requests already present in the retained user messages are not appended again. Ordinary assistant text is not decoded; malformed checkpoint tails remain intact and cannot introduce system messages. No database migration or new dependency. The real narrative failure showed why this is necessary: the old reload folded the recent JSONL tail and historical requests into the previous summary, so the next fallback exceeded the replacement budget. The originals survived that failure. A file-attachment-only READY ingestion did not accumulate file bodies in persisted context and therefore did not test repeated compaction; exclude it from acceptance.
+
+Observed compaction event intervals: Step recovery approximately 239.36 seconds to fallback; the latest throttled narrative installment approximately 22.09 seconds to fallback. These are not successful-summary speed measurements. The failed next installment's observer resumed after completion, so its event timestamps cannot measure compaction duration. Recovery-turn latency includes tool/model activity and is reported separately.
 
 Complete section-note pointers now survive merge failure/deadline through the existing evidence navigation string; no duplicate archive or extra model request. Regressions fail on the prior normal path and missing fallback pointer, then pass. The CLI/server regression accumulates seven real persisted user messages past the production budget and checks one original-message update, one originals archive, complete source records, and continued answers. Oversized-input scheduling/source-coverage tests explicitly exceed their configured input budget rather than assuming every 64KB requires a separate summary.
 
