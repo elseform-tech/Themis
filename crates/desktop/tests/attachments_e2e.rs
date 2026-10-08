@@ -323,7 +323,9 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Task state only; recovered details omitted."},"finish_reason":"stop"}]}));
         }
-        let stage = observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let request_index = observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if request_index == 3 { return ResponseTemplate::new(503); }
+        let stage = if request_index > 3 { request_index - 1 } else { request_index };
         let answer = if stage >= 6 {
             assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native source reopening must deliver the evicted fact");
             json!({"choices":[{"message":{"role":"assistant","content":"ARCHIVE-SECRET-753"},"finish_reason":"stop"}]})
@@ -426,7 +428,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     .unwrap();
     assert!(recovered);
     assert_eq!(terminal["result"], "ARCHIVE-SECRET-753");
-    assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 7);
+    assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 8);
     let saved = rebooted.get_thread_history(id).await.unwrap();
     let checkpoint = saved
         .iter()

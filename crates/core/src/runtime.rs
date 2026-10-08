@@ -588,37 +588,58 @@ async fn request_answer_inner(
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     stopped: &AtomicBool,
 ) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
-    match llm
-        .chat_stream_with_tools(messages, Some(llm_tools), None)
-        .await
-    {
-        Ok(mut stream) => {
-            let mut text = String::new();
-            let mut calls = Vec::new();
-            while let Some(chunk) = stream.next().await {
-                check_stopped(stopped, events).await?;
-                match chunk? {
-                    StreamChunk::Text(delta) => {
-                        text.push_str(&delta);
-                        events.send(RunEvent::AssistantText(delta)).await.ok();
+    let mut retried = false;
+    loop {
+        let mut published = false;
+        let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> = async {
+            match llm
+                .chat_stream_with_tools(messages, Some(llm_tools), None)
+                .await
+            {
+                Ok(mut stream) => {
+                    let mut text = String::new();
+                    let mut calls = Vec::new();
+                    while let Some(chunk) = stream.next().await {
+                        check_stopped(stopped, events).await?;
+                        match chunk? {
+                            StreamChunk::Text(delta) => {
+                                published |= !delta.is_empty();
+                                text.push_str(&delta);
+                                events.send(RunEvent::AssistantText(delta)).await.ok();
+                            }
+                            StreamChunk::ToolUseComplete { tool_call, .. } => calls.push(tool_call),
+                            _ => {} // Reasoning content is private; only public narration reaches the UI.
+                        }
                     }
-                    StreamChunk::ToolUseComplete { tool_call, .. } => calls.push(tool_call),
-                    _ => {} // Reasoning content is private; only public narration reaches the UI.
+                    Ok(((!text.is_empty()).then_some(text), calls))
                 }
+                Err(autoagents::llm::error::LLMError::Generic(message))
+                    if message == "Streaming with tools not supported for this provider" =>
+                {
+                    let response = llm.chat_with_tools(messages, Some(llm_tools), None).await?;
+                    let text = response.text().filter(|text| !text.is_empty());
+                    if let Some(text) = text.clone() {
+                        published = true;
+                        events.send(RunEvent::AssistantText(text)).await.ok();
+                    }
+                    Ok((text, response.tool_calls().unwrap_or_default()))
+                }
+                Err(error) => Err(error.into()),
             }
-            Ok(((!text.is_empty()).then_some(text), calls))
         }
-        Err(autoagents::llm::error::LLMError::Generic(message))
-            if message == "Streaming with tools not supported for this provider" =>
-        {
-            let response = llm.chat_with_tools(messages, Some(llm_tools), None).await?;
-            let text = response.text().filter(|text| !text.is_empty());
-            if let Some(text) = text.clone() {
-                events.send(RunEvent::AssistantText(text)).await.ok();
-            }
-            Ok((text, response.tool_calls().unwrap_or_default()))
+        .await;
+        let retryable = result
+            .as_ref()
+            .err()
+            .and_then(|error| error.downcast_ref::<autoagents::llm::error::LLMError>())
+            .is_some_and(|error| error.is_retryable());
+        if retried || published || !retryable {
+            return result;
         }
-        Err(error) => Err(error.into()),
+        // Calls from an interrupted response have not been executed; completed tools are already in messages.
+        retried = true;
+        eprintln!("answer transient failure before public output; retry=1");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
 
@@ -1493,6 +1514,130 @@ mod tests {
             summary: "test".to_owned(),
             risk: RiskLevel::Write,
         }
+    }
+
+    #[tokio::test]
+    async fn silent_response_retry_is_bounded_and_never_repeats_public_text() {
+        use autoagents::llm::{
+            chat::{ChatProvider, ChatResponse, StructuredOutputFormat},
+            completion::{CompletionProvider, CompletionRequest, CompletionResponse},
+            embedding::EmbeddingProvider,
+            error::LLMError,
+            models::ModelsProvider,
+        };
+        struct Interrupted {
+            calls: AtomicUsize,
+            public: bool,
+            persistent: bool,
+        }
+        impl LLMProvider for Interrupted {}
+        impl ModelsProvider for Interrupted {}
+        #[autoagents::async_trait]
+        impl EmbeddingProvider for Interrupted {
+            async fn embed(&self, _: Vec<String>) -> Result<Vec<Vec<f32>>, LLMError> {
+                unreachable!()
+            }
+        }
+        #[autoagents::async_trait]
+        impl CompletionProvider for Interrupted {
+            async fn complete(
+                &self,
+                _: &CompletionRequest,
+                _: Option<StructuredOutputFormat>,
+            ) -> Result<CompletionResponse, LLMError> {
+                unreachable!()
+            }
+        }
+        #[autoagents::async_trait]
+        impl ChatProvider for Interrupted {
+            async fn chat_with_tools(
+                &self,
+                _: &[ChatMessage],
+                _: Option<&[Tool]>,
+                _: Option<StructuredOutputFormat>,
+            ) -> Result<Box<dyn ChatResponse>, LLMError> {
+                unreachable!()
+            }
+            async fn chat_stream_with_tools(
+                &self,
+                _: &[ChatMessage],
+                _: Option<&[Tool]>,
+                _: Option<StructuredOutputFormat>,
+            ) -> Result<
+                std::pin::Pin<
+                    Box<dyn futures_util::Stream<Item = Result<StreamChunk, LLMError>> + Send>,
+                >,
+                LLMError,
+            > {
+                let attempt = self.calls.fetch_add(1, Ordering::SeqCst);
+                let mut chunks = Vec::new();
+                if attempt == 0 || self.persistent {
+                    if self.public {
+                        chunks.push(Ok(StreamChunk::Text("Visible once".into())));
+                    }
+                    chunks.push(Err(LLMError::HttpError(
+                        "request timed out: stream interrupted".into(),
+                    )));
+                } else {
+                    chunks.push(Ok(StreamChunk::Text("Recovered".into())));
+                }
+                Ok(Box::pin(futures_util::stream::iter(chunks)))
+            }
+        }
+        for (public, persistent, expected_calls) in
+            [(false, false, 2), (true, false, 1), (false, true, 2)]
+        {
+            let provider = Arc::new(Interrupted {
+                calls: AtomicUsize::new(0),
+                public,
+                persistent,
+            });
+            let llm: Arc<dyn LLMProvider> = provider.clone();
+            let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+            let result = request_answer(&llm, &[], &[], &tx, &AtomicBool::new(false)).await;
+            assert_eq!(provider.calls.load(Ordering::SeqCst), expected_calls);
+            if !public && !persistent {
+                assert_eq!(result.unwrap().0.as_deref(), Some("Recovered"));
+            } else {
+                assert!(result.is_err());
+            }
+            let mut texts = Vec::new();
+            while let Ok(event) = rx.try_recv() {
+                if let RunEvent::AssistantText(text) = event {
+                    texts.push(text);
+                }
+            }
+            assert_eq!(
+                texts,
+                if public {
+                    vec!["Visible once"]
+                } else if persistent {
+                    vec![]
+                } else {
+                    vec!["Recovered"]
+                }
+            );
+        }
+        let provider = Arc::new(Interrupted {
+            calls: AtomicUsize::new(0),
+            public: false,
+            persistent: true,
+        });
+        let llm: Arc<dyn LLMProvider> = provider.clone();
+        let stopped = AtomicBool::new(false);
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+            tokio::join!(request_answer(&llm, &[], &[], &tx, &stopped), async {
+                while provider.calls.load(Ordering::SeqCst) == 0 {
+                    tokio::task::yield_now().await;
+                }
+                stopped.store(true, Ordering::SeqCst);
+            })
+        })
+        .await
+        .unwrap();
+        assert!(result.is_err());
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
