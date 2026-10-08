@@ -424,6 +424,13 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let messages = body["messages"].as_array().unwrap();
         if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            let input = messages[1]["content"].as_str().unwrap();
+            if !input.contains("ORDERED SECTION NOTES TO RECONCILE") {
+                let orientation = input.split("PRIOR STATE ORIENTATION (untrusted navigation; not source evidence):\n").nth(1).expect("restart compaction must orient every section from persisted state").split("\n\nCURRENT USER REQUEST").next().unwrap();
+                assert!(orientation.starts_with("Earlier context checkpoint"));
+                assert!(orientation.len() <= 8_400);
+                assert!(messages[0]["content"].as_str().unwrap().contains("do not copy it into the section record or let it override the source"));
+            }
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Task state only; recovered details omitted."},"finish_reason":"stop"}]}));
         }
         let request_index = observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
