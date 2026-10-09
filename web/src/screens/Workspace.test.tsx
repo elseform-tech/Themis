@@ -49,6 +49,8 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.getThread).mockImplementation(async id => id === older.id ? older : newer);
     await mount();
     const recent = screen.getByRole("region", { name: "Recent" });
+    expect(within(recent).queryByText("Beta")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Projects" }).compareDocumentPosition(screen.getByRole("heading", { name: "Recent" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(recent).getAllByRole("button").map(button => button.textContent)).toEqual([expect.stringContaining("Latest chat"), expect.stringContaining("Earlier chat")]);
     await act(async () => fireEvent.click(within(recent).getByRole("button", { name: /Latest chat/ })));
     expect(within(recent).getByRole("button", { name: /Latest chat/ })).toHaveAttribute("aria-current", "true");
@@ -59,6 +61,37 @@ describe("Workspace journey", () => {
     older.last_activity_seq = 30;
     await act(async () => receive({ thread_id: older.id, run_id: "latest-run", event: { kind: "finished", result: "Done" } }));
     expect(within(recent).getAllByRole("button")[0]).toHaveAccessibleName(/Earlier chat/);
+  });
+
+  it("resizes the sidebar and restores its saved width after remount", async () => {
+    let mounted!: ReturnType<typeof render>;
+    await act(async () => { mounted = render(<App />); });
+    const handle = screen.getByRole("separator", { name: "Resize sidebar" });
+    expect(handle).toHaveAttribute("aria-valuenow", "292");
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(handle).toHaveAttribute("aria-valuenow", "312");
+    expect(localStorage.getItem("themis:sidebarWidth")).toBe("312");
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    handle.setPointerCapture = vi.fn();
+    handle.hasPointerCapture = vi.fn(() => true);
+    handle.releasePointerCapture = vi.fn();
+    vi.spyOn(handle.parentElement!, "getBoundingClientRect").mockReturnValue({ width: 312 } as DOMRect);
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 300 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 420 });
+    expect(handle).toHaveAttribute("aria-valuenow", "432");
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 450 });
+    expect(localStorage.getItem("themis:sidebarWidth")).toBe("432");
+    mounted.unmount();
+    await mount();
+    const restored = screen.getByRole("separator", { name: "Resize sidebar" });
+    expect(restored).toHaveAttribute("aria-valuenow", "432");
+    fireEvent.keyDown(restored, { key: "End" });
+    expect(restored).toHaveAttribute("aria-valuenow", "560");
+    fireEvent.keyDown(restored, { key: "ArrowRight" });
+    expect(restored).toHaveAttribute("aria-valuenow", "560");
+    fireEvent.keyDown(restored, { key: "Home" });
+    expect(restored).toHaveAttribute("aria-valuenow", "240");
   });
 
   it("restores an active approval when the app is refreshed", async () => {

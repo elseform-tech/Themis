@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Badge, Button, Dialog, Input, Tooltip } from "../components";
 import { createProject, getSettings, renameProject, renameThread } from "../lib/tauri";
 import { describeError, toast, useApp, type MainView } from "../state/store";
@@ -14,6 +14,14 @@ const viewIcons: Record<MainView, SidebarIconName> = { thread: "thread", skills:
 
 export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
   const { state, dispatch } = useApp();
+  const [width, setWidth] = useState(() => Math.max(240, Math.min(560, Number(readSession("sidebarWidth", 292)) || 292)));
+  const resizeStart = useRef<{ x: number; width: number } | null>(null);
+  const [resizing, setResizing] = useState(false);
+  function resize(value: number) {
+    const next = Math.round(Math.max(240, Math.min(560, value)));
+    setWidth(next);
+    writeSession("sidebarWidth", next);
+  }
   const openProject = useOpenProject();
   const newThread = useNewThread();
   const [name, setName] = useState("");
@@ -66,7 +74,7 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
     </button></Tooltip>;
   }
   return <>
-    <div className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""}`}>
+    <div className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
       <nav className="themis-sidebar-rail" aria-label="Utilities">
         {views.map(([view, label]) => nav(view, label))}
         <div className="themis-rail-footer">{companionControl}{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={() => setHelp(true)}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
@@ -75,22 +83,30 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
         <div className="themis-brand"><span className="themis-wordmark">Themis</span></div>
         <div className="themis-sidebar-nav"><button type="button" className="themis-sidebar-row" disabled={!state.activeProjectRoot} onClick={() => void newThread()}><SidebarIcon name="thread" /><span>New chat</span></button></div>
         <div className="themis-sidebar-projects">
-          <section aria-label="Recent" className="themis-sidebar-recent">
-            <h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="automations" /><span>Recent</span></h2>
-            {recentThreads.length ? <ul className="themis-sidebar-list">{recentThreads.map(({ project, thread }) => <li key={thread.id}>
-              <button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={`${thread.title} · ${project.name}`} aria-label={`Recent: ${thread.title} · ${project.name}`} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}>
-                <span className="themis-recent-label"><MovingText>{thread.title}</MovingText><small>{project.name}</small></span><ThreadStatus thread={thread} />
-              </button>
-            </li>)}</ul> : <p className="themis-sidebar-note">Your recent chats will appear here.</p>}
-          </section>
           <div className="themis-sidebar-head"><h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="project" /><span>Projects</span></h2><div className="themis-project-actions"><Button size="small" variant="ghost" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>+</Button><details><summary aria-label="Project actions" title="Project actions">···</summary><div className="themis-project-menu"><Button variant="ghost" size="small" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open folder</Button></div></details></div></div>
           {state.projects.length === 0 ? <p className="themis-sidebar-note">No projects</p> : <ul className="themis-sidebar-list">{[...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default)).map(project => <li className="themis-project" key={project.root}>
             <div className="themis-project-heading"><button type="button" className="themis-sidebar-row themis-project-row" title={project.root} aria-expanded={!collapsedProjects[project.root]} onClick={() => setProjectCollapsed(project.root, !collapsedProjects[project.root])}><span aria-hidden="true">{collapsedProjects[project.root] ? "›" : "⌄"}</span><SidebarIcon name="project" /><MovingText>{project.name}</MovingText></button><Button variant="ghost" size="small" aria-label={`Rename ${project.name}`} title="Rename project" onClick={() => { setError(""); setRenaming({ root: project.root, name: project.name }); }}>✎</Button><Button variant="ghost" size="small" aria-label={`New thread in ${project.name}`} title="New thread" onClick={() => { setProjectCollapsed(project.root, false); void newThread(project.root); }}>+</Button></div>
             {!collapsedProjects[project.root] && <ul className="themis-sidebar-list themis-thread-list">{(state.threadsByProject[project.root] ?? []).map(thread => <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={thread.title} aria-label={thread.title} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}><SidebarIcon name="thread" /><MovingText>{thread.title}</MovingText><ThreadStatus thread={thread} /></button><div className="themis-thread-row-actions"><button aria-label={`Edit ${thread.title}`} title="Edit thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => { setEditError(""); setEditing({ ...thread, projectRoot: project.root }); }}>✎</button><button aria-label={`Remove ${thread.title}`} title="Remove thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => setRemoving({ ...thread, projectRoot: project.root })}><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 6v5M9 6v5"/></svg></button></div></li>)}</ul>}
           </li>)}</ul>}
+          <section aria-label="Recent" className="themis-sidebar-recent">
+            <h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="automations" /><span>Recent</span></h2>
+            {recentThreads.length ? <ul className="themis-sidebar-list">{recentThreads.map(({ project, thread }) => <li key={thread.id}>
+              <button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={`${thread.title} · ${project.name}`} aria-label={`Recent: ${thread.title} · ${project.name}`} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}>
+                <SidebarIcon name="thread" /><span className="themis-sidebar-name">{thread.title}</span><ThreadStatus thread={thread} />
+              </button>
+            </li>)}</ul> : <p className="themis-sidebar-note">Your recent chats will appear here.</p>}
+          </section>
         </div>
 
       </aside>
+      {!collapsed && <div className="themis-sidebar-resize" role="separator" aria-label="Resize sidebar" aria-controls="themis-sidebar" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={560} aria-valuenow={width} tabIndex={0}
+        onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.focus(); resizeStart.current = { x: event.clientX, width: event.currentTarget.parentElement!.getBoundingClientRect().width }; event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); }}
+        onPointerMove={event => { if (resizeStart.current) resize(resizeStart.current.width + event.clientX - resizeStart.current.x); }}
+        onLostPointerCapture={() => { resizeStart.current = null; setResizing(false); }}
+        onPointerUp={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); resizeStart.current = null; setResizing(false); }}
+        onPointerCancel={() => { resizeStart.current = null; setResizing(false); }}
+        onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); resize(event.key === "Home" ? 240 : event.key === "End" ? 560 : width + (event.key === "ArrowRight" ? 20 : -20)); } }}
+      />}
     </div>
     <Dialog open={state.projectDialogOpen} title="Create project" onClose={() => { if (!busy) dispatch({ type: "ui/project-dialog", open: false }); }}>
       <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void create(); }}>
