@@ -3303,7 +3303,7 @@ mod tests {
                     .contains("summary unavailable"));
                 assert!(messages[1]
                     .content
-                    .contains("If the current request permits tool retrieval"));
+                    .contains("using approved tools when permitted"));
                 assert!(messages[1].content.contains("If tools are forbidden, continue only from retained state and state the missing context explicitly"));
                 assert!(messages[1].content.contains(
                     serde_json::to_string(evidence.path())
