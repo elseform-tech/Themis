@@ -374,14 +374,20 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
         .collect();
     assert_eq!(checkpoints.len(), 2);
     assert!(
-        checkpoints[1].contains(evidence.to_str().unwrap()),
+        checkpoints[1].contains(serde_json::to_string(&evidence).unwrap().trim_matches('"')),
         "later checkpoints must preserve the directory for all older evidence"
     );
-    assert!(checkpoints[1].contains(snapshots[3].to_str().unwrap()));
+    assert!(checkpoints[1].contains(&serde_json::to_string(&snapshots[3]).unwrap()));
     assert!(
         std::fs::read_to_string(&snapshots[3])
             .unwrap()
-            .contains(snapshots[1].to_str().unwrap()),
+            .lines()
+            .any(|line| {
+                let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                record["content"].as_str().is_some_and(|content| {
+                    content.contains(&serde_json::to_string(&snapshots[1]).unwrap())
+                })
+            }),
         "the latest original must retain the earlier checkpoint reference"
     );
     for (path, fact) in snapshots
@@ -735,7 +741,19 @@ async fn skill_catalog_reaches_system_request_without_body() {
     let system = request["messages"][0]["content"].as_str().unwrap();
     assert_eq!(request["messages"][0]["role"], "system");
     assert!(system.contains("Inspect changes"));
-    assert!(system.contains(".themis/skill-catalogs/catalog-run/.themis/skills/review/SKILL.md"));
+    assert!(system.contains(
+        serde_json::to_string(
+            &std::path::Path::new(".themis")
+                .join("skill-catalogs")
+                .join("catalog-run")
+                .join(".themis")
+                .join("skills")
+                .join("review")
+                .join("SKILL.md")
+        )
+        .unwrap()
+        .trim_matches('"')
+    ));
     let followup: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
     assert!(followup["messages"]
         .as_array()

@@ -202,13 +202,8 @@ mod tests {
         let plugins = store.discovered_plugins().unwrap();
         let local: Vec<_> = plugins.iter().filter(|p| p.scope == "local").collect();
         assert_eq!(local.len(), 1);
-        assert!(local[0]
-            .spec
-            .origin
-            .as_ref()
-            .unwrap()
-            .location
-            .contains("custom/review"));
+        assert!(Path::new(&local[0].spec.origin.as_ref().unwrap().location)
+            .ends_with(Path::new("custom").join("review")));
         assert!(
             PluginStore::new(global.path().into(), Some(project.path().into()))
                 .with_skill_paths(vec!["../outside".into()])

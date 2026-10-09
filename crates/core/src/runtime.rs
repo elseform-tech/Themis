@@ -2477,9 +2477,11 @@ mod tests {
                     .content
                     .contains("If the current request permits tool retrieval"));
                 assert!(messages[1].content.contains("If tools are forbidden, continue only from retained state and state the missing context explicitly"));
-                assert!(messages[1]
-                    .content
-                    .contains(evidence.path().to_str().unwrap()));
+                assert!(messages[1].content.contains(
+                    serde_json::to_string(evidence.path())
+                        .unwrap()
+                        .trim_matches('"')
+                ));
                 assert!(
                     messages[1].content.contains("PRIOR_STATE_753"),
                     "a failed new summary must not erase the last known task state"

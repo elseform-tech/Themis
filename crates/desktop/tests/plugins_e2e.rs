@@ -110,7 +110,7 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
         };
         ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
     }).mount(&mcp).await;
-    let plugin = |description: &str| json!({"name":"docs","skills":[{"id":"review","name":"Review docs","description":description,"instructions":"PRIVATE_SKILL_BODY","allowedTools":[],"scripts":[]}],"mcp":{"docs":{"url":mcp.uri(),"enabled":true}},"hooks":[{"name":"started","event":"RunStart","command":"cat > run-start.json","enabled":true}],"files":{}});
+    let plugin = |description: &str| json!({"name":"docs","skills":[{"id":"review","name":"Review docs","description":description,"instructions":"PRIVATE_SKILL_BODY","allowedTools":[],"scripts":[]}],"mcp":{"docs":{"url":mcp.uri(),"enabled":true}},"hooks":[{"name":"started","event":"RunStart","command":if cfg!(windows) { "more > run-start.json" } else { "cat > run-start.json" },"enabled":true}],"files":{}});
     let first = state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":plugin("Initial description")})).await.unwrap();
     state.plugin_action(json!({"action":"save","scope":"local","projectRoot":project.path(),"spec":{"name":"browser-only","mcp":{"browser":{"url":mcp.uri(),"enabled":true}}}})).await.unwrap();
     assert!(!state
