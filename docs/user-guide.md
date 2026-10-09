@@ -108,7 +108,7 @@ The **Skills** tab holds reusable instruction bundles: a name, description,
 instructions injected into runs, an optional tool allowlist, and helper
 scripts. Attach skills to a thread to scope what it may use. The list includes plugin-bundled skills and skills discovered from local folders. Browse new packages in **Plugins → Discover**; Skills has no separate discovery catalog. Standalone imports remain available through chat or the CLI.
 
-Skill instructions can contain up to 256 KiB of UTF-8 text without truncation.
+Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. File reads are paged at 4,000 content characters; the agent must follow `next_offset` to read longer instructions. Large tool results are saved to disk and represented by a small receipt, so the agent can extract the relevant facts. An oversized tool result normally continues the run. Storage failures or repeated recovery can stop the current run; the chat remains available. Oversized tool arguments are rejected before execution, without partial writes. See [context limits and recovery](context-and-attachments.md).
 
 - An empty allowlist means "all tools".
 - Unknown tool names are rejected. The valid names are exactly:

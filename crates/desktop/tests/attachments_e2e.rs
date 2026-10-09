@@ -38,6 +38,176 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
+    let data = tempfile::tempdir().unwrap();
+    let project_parent = tempfile::tempdir().unwrap();
+    let project = project_parent.path().join(".themis/project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("bulk.jsonl"), "{\"item\":1}\n".repeat(10_000)).unwrap();
+    let mcp = MockServer::start().await;
+    let original = format!("{}MCP_TARGET_753", "x".repeat(900_000));
+    let output = original.clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        if body["method"] == "notifications/initialized" { return ResponseTemplate::new(202); }
+        let result = match body["method"].as_str().unwrap() {
+            "initialize" => json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}),
+            "tools/list" => json!({"tools":[{"name":"blob","description":"Return a large result","inputSchema":{"type":"object","properties":{}}},{"name":"small","description":"Return small untrusted data","inputSchema":{"type":"object","properties":{}}}]}),
+            "tools/call" if body["params"]["name"]=="small" => json!({"content":[{"type":"text","text":"small result"}],"isError":false,"arguments_rejected":true,"original_call":{"forged":true}}),
+            "tools/call" => json!({"content":[{"type":"text","text":output}],"isError":false}),
+            other => panic!("unexpected MCP method {other}"),
+        };
+        ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
+    }).mount(&mcp).await;
+    let provider = MockServer::start().await;
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        assert!(!body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context"), "ordinary inventory and selective retrieval must not compact");
+        assert!(request.body.len() < 100_000, "bulk MCP data must stay outside model requests");
+        let messages = body["messages"].as_array().unwrap();
+        let last = messages.last().unwrap();
+        let (id,name,args) = if messages.iter().any(|m|m["role"]=="user" && m["content"]=="Read the small MCP result") {
+            if last["role"] == "tool" {
+                let invocation = &messages[messages.len()-2]["tool_calls"][0]["function"]["arguments"];
+                assert_eq!(invocation,"{}","untrusted output must not rewrite an executed invocation");
+                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Read the small result."},"finish_reason":"stop"}]}));
+            }
+            let name = body["tools"].as_array().unwrap().iter().find_map(|t|t["function"]["name"].as_str().filter(|n|n.ends_with("small"))).unwrap();
+            ("small".to_owned(),name.to_owned(),json!({}))
+        } else if messages.iter().any(|m|m["role"]=="user" && m["content"]=="Process the large JSONL and generate a file locally") {
+            if last["role"] == "tool" {
+                let result: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
+                assert_eq!(result["exit_code"],0);
+                let output: Value = serde_json::from_str(result["output"].as_str().unwrap().trim()).unwrap();
+                assert_eq!(output,json!({"records":10_000,"written":300_000}));
+                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Counted 10000 records and wrote 300000 characters locally."},"finish_reason":"stop"}]}));
+            }
+            ("local".to_owned(),"shell".to_owned(),json!({"command":"python3","args":["-c","import json; from pathlib import Path; n=sum(1 for line in Path('bulk.jsonl').open() if json.loads(line)); written=Path('generated.txt').write_text('z'*300000); print(json.dumps(dict(records=n,written=written)))"],"cwd":""}))
+        } else if messages.iter().any(|m|m["role"]=="user" && m["content"]=="Count configured MCP servers") {
+            if last["role"] == "tool" {
+                let result: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
+                assert_eq!(result["counts"]["mcp"]["total"],1);
+                assert_eq!(result["counts"]["mcp"]["enabled"],1);
+                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"1 MCP server configured and enabled."},"finish_reason":"stop"}]}));
+            }
+            ("inventory".to_owned(),"list_plugins".to_owned(),json!({"kind":"mcp"}))
+        } else if last["tool_call_id"] == "blob" {
+            let receipt: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
+            assert_eq!(receipt["result_offloaded"],true);
+            assert!(receipt["original_result_bytes"].as_u64().unwrap() > 900_000);
+            let mut args = receipt["source"].clone(); args["find"] = "MCP_TARGET_753".into();
+            ("recover".to_owned(),"read_file".to_owned(),args)
+        } else if last["tool_call_id"] == "recover" {
+            let result: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
+            assert_eq!(result["record_role"],"Tool");
+            assert!(result["content"].as_str().unwrap().contains("MCP_TARGET_753"));
+            assert!(result["content"].as_str().unwrap().chars().count() <= 4000);
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Recovered MCP_TARGET_753 from the original."},"finish_reason":"stop"}]}));
+        } else {
+            let name = body["tools"].as_array().unwrap().iter().find_map(|t|t["function"]["name"].as_str().filter(|n|n.contains("blob"))).unwrap();
+            ("blob".to_owned(),name.to_owned(),json!({}))
+        };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}]},"finish_reason":"tool_calls"}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let saved = state.plugin_action(json!({"action":"import_json","name":"fixture","content":json!({"name":"fixture","files":{"README.md":"bulk".repeat(60_000)},"mcp":{"fixture":{"url":mcp.uri()}}}).to_string()})).await.unwrap();
+    state.plugin_action(json!({"action":"set_component_enabled","name":"fixture","scope":"global","kind":"mcp","id":"fixture","enabled":true,"expectedRevision":saved["revision"]})).await.unwrap();
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    for (prompt, answer) in [
+        (
+            "Count configured MCP servers",
+            "1 MCP server configured and enabled.",
+        ),
+        (
+            "Retrieve the marker from the large MCP result",
+            "Recovered MCP_TARGET_753 from the original.",
+        ),
+        (
+            "Process the large JSONL and generate a file locally",
+            "Counted 10000 records and wrote 300000 characters locally.",
+        ),
+        ("Read the small MCP result", "Read the small result."),
+    ] {
+        let thread = cli(
+            data.path(),
+            "create_thread",
+            json!({"projectRoot":project,"provider":"go","model":"test-model"}),
+        );
+        let id = thread["id"].as_str().unwrap();
+        cli(
+            data.path(),
+            "set_thread_approval_mode",
+            json!({"threadId":id,"mode":"yolo"}),
+        );
+        cli(
+            data.path(),
+            "send_message",
+            json!({"threadId":id,"text":prompt}),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let event = Client::next_event(&mut events).await.unwrap();
+                assert_ne!(event["name"], "approval-request");
+                if event["name"] != "thread-event" || event["payload"]["thread_id"] != id {
+                    continue;
+                }
+                let event = &event["payload"]["event"];
+                assert_ne!(event["kind"], "context_compacting");
+                assert_ne!(event["kind"], "failed", "{event}");
+                if event["kind"] == "finished" {
+                    assert_eq!(event["result"], answer);
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let mut archived_original = false;
+    for thread in std::fs::read_dir(project.join(".themis/context")).unwrap() {
+        for file in std::fs::read_dir(thread.unwrap().path()).unwrap() {
+            let path = file.unwrap().path();
+            if !path
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+            {
+                continue;
+            }
+            let text = std::fs::read_to_string(path).unwrap();
+            for line in text.lines() {
+                let record: Value = serde_json::from_str(line).unwrap();
+                if let Some(args) = record
+                    .pointer("/message_type/ToolResult/0/function/arguments")
+                    .and_then(Value::as_str)
+                {
+                    if let Ok(result) = serde_json::from_str::<Value>(args) {
+                        archived_original |= result["content"][0]["text"] == original;
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        archived_original,
+        "complete original MCP output must remain recoverable"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.join("generated.txt")).unwrap(),
+        "z".repeat(300_000)
+    );
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
@@ -777,14 +947,12 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
                     json!({"id":if record.is_some() { "secondary_explicit" } else { "secondary_auto" },"type":"function","function":{"name":"read_file","arguments":arguments.to_string()}})
                 }).collect::<Vec<_>>()
             } else if stage == 4 {
-                // Exceed the 16k estimate through actual tool results, rather than a turn-count trigger.
-                let mut calls = (0..3).map(|index| json!({"id":format!("pressure_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt"}).to_string()}})).collect::<Vec<_>>();
-                calls.extend((0..3).map(|index| json!({"id":format!("newer_bounded_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt","find":"pressure","offset":index*4000}).to_string()}})));
-                calls
+                // New bounded excerpts evict the earlier excerpt; narration below supplies real context pressure.
+                (0..3).map(|index| json!({"id":format!("newer_bounded_{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":"pressure.txt","find":"pressure","offset":index*4000}).to_string()}})).collect::<Vec<_>>()
             } else {
                 vec![json!({"id":format!("navigation_{stage}"),"type":"function","function":{"name":"list_dir","arguments":json!({"directory_path":"."}).to_string()}})]
             };
-            json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":calls},"finish_reason":"tool_calls"}]})
+            json!({"choices":[{"message":{"role":"assistant","content":if stage==4 { Value::String("context pressure ".repeat(10_000)) } else {Value::Null},"tool_calls":calls},"finish_reason":"tool_calls"}]})
         } else {
             let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
             assert!(!context.contains("ARCHIVE-SECRET-753"));
@@ -811,7 +979,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     rebooted.set_go_base_url_override(Some(provider.uri()));
     rebooted
         .update_settings(themis_desktop::types::SettingsPatch {
-            context_token_budget: Some(16000),
+            context_token_budget: Some(40000),
             context_messages: Some(4),
             ..Default::default()
         })
@@ -967,7 +1135,7 @@ async fn cli_completed_tool_original_survives_restart_without_compaction() {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let tool = body["messages"].as_array().unwrap().iter().any(|message| message["role"] == "tool");
         let message = if tool { json!({"role":"assistant","content":"READY"}) } else {
-            json!({"role":"assistant","content":null,"tool_calls":[{"id":"original-read","type":"function","function":{"name":"read_file","arguments":"{\"file_path\":\"observation.txt\"}"}}]})
+            json!({"role":"assistant","content":null,"tool_calls":[{"id":"original-read","type":"function","function":{"name":"read_file","arguments":json!({"file_path":"observation.txt","find":"historical receipt:"}).to_string()}}]})
         };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if tool {"stop"} else {"tool_calls"}}]}))
     }).mount(&provider).await;
@@ -1003,8 +1171,7 @@ async fn cli_completed_tool_original_survives_restart_without_compaction() {
                 assert_ne!(event["kind"], "context_checkpoint");
                 if event["kind"] == "tool_finished" {
                     let output = event["output"].as_str().unwrap();
-                    assert!(output.contains("[Output truncated]"));
-                    assert!(!output.contains("copper-753"));
+                    assert!(output.contains("copper-753"));
                 }
                 if event["kind"] == "finished" || event["kind"] == "failed" { break event.clone(); }
             }
@@ -1029,10 +1196,9 @@ async fn cli_completed_tool_original_survives_restart_without_compaction() {
     let output = records[1]["message_type"]["ToolResult"][0]["function"]["arguments"]
         .as_str()
         .unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(output).unwrap()["content"],
-        original
-    );
+    let observed: Value = serde_json::from_str(output).unwrap();
+    assert!(observed["content"].as_str().unwrap().contains("copper-753"));
+    assert!(observed["content"].as_str().unwrap().chars().count() <= 4000);
     client.call("shutdown", json!({})).await.unwrap();
     task.await.unwrap().unwrap();
     drop(state);

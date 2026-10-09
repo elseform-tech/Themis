@@ -330,7 +330,7 @@ impl ToolT for GatedTool {
 
     fn description(&self) -> &str {
         if self.inner.name() == "read_file" {
-            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record searches decoded original User/Tool fields when present, without falling back to Assistant navigation. For secondary navigation in a mixed snapshot, explicitly select its jsonl_record; Assistant-only notes remain searchable and carry a navigation warning. Continue using the returned jsonl_record and next_offset. These modes return at most 4000 content characters with provenance and next_offset. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. Omitting these options preserves whole-file reading."
+            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record searches decoded original User/Tool fields when present, without falling back to Assistant navigation. For secondary navigation in a mixed snapshot, explicitly select its jsonl_record; Assistant-only notes remain searchable and carry a navigation warning. Continue using the returned jsonl_record and next_offset. Every read returns at most 4000 content characters with provenance and next_offset, including reads without options. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. For complete-file analysis use approved local shell/Python processing and return selected facts."
         } else {
             self.inner.description()
         }
@@ -379,11 +379,7 @@ impl ToolRuntime for GatedTool {
             risk: self.risk,
         };
         check_approval_permitted(self.approvals.as_ref(), &action)?;
-        if name == "read_file"
-            && ["jsonl_record", "json_pointer", "offset", "find"]
-                .iter()
-                .any(|key| args.get(key).is_some())
-        {
+        if name == "read_file" {
             let result = self.inner.execute(args.clone()).await?;
             bounded_read_result(&args, result)
         } else {
@@ -1726,12 +1722,16 @@ mod tests {
             .await
             .unwrap();
         assert!(page["content"].as_str().unwrap().starts_with("Original 🔎"));
+        let first = tool
+            .execute(json!({"file_path":"evidence.jsonl"}))
+            .await
+            .unwrap();
         assert_eq!(
-            tool.execute(json!({"file_path":"evidence.jsonl"}))
-                .await
-                .unwrap()["content"],
-            dump
+            first["content"],
+            dump.chars().take(4000).collect::<String>()
         );
+        assert_eq!(first["next_offset"], 4000);
+        assert_eq!(first["truncated"], true);
         for args in [
             json!({"file_path":"../outside","offset":0}),
             json!({"file_path":"evidence.jsonl","jsonl_record":0}),
