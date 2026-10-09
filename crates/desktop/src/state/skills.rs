@@ -93,7 +93,7 @@ impl AppState {
                 ));
             }
             record.skill_ids = dedup_ids(skill_ids);
-            thread_info(record)
+            thread_info(record, &self.inner.transcript)?
         };
         self.persist_registry().await;
         Ok(info)

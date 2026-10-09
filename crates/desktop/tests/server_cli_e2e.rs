@@ -10,13 +10,31 @@ use themis_desktop::state::AppState;
 mod common;
 
 fn cli(data_dir: &Path, words: &[&str]) -> Value {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_themis"));
+    command
         .arg("--data-dir")
         .arg(data_dir)
-        .args(words)
-        .env_remove("OPENCODE_KEY")
-        .output()
-        .expect("run CLI");
+        .env_remove("OPENCODE_KEY");
+    let output = if let ["call", method, args] = words {
+        let mut child = command
+            .args(["call", method, "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run CLI");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(args.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    } else {
+        command.args(words).output().expect("run CLI")
+    };
     assert!(
         output.status.success(),
         "CLI {words:?} failed: {}",
@@ -62,6 +80,12 @@ fn headless_desktop_process_persists_cli_created_threads() {
         &["thread", "create", project.path().to_str().unwrap()],
     );
     let id = thread["id"].as_str().unwrap().to_owned();
+    let args = json!({"threadId": id, "messages": [{"id":"recent", "role":"user", "text":"Recent conversation"}]}).to_string();
+    cli(data_dir.path(), &["call", "import_legacy_history", &args]);
+    let activity = cli(data_dir.path(), &["thread", "get", &id])["last_activity_seq"]
+        .as_i64()
+        .unwrap();
+    assert!(activity > 0);
     assert_eq!(cli(data_dir.path(), &["server", "stop"]), Value::Null);
     first.wait().expect("reap first server");
     assert!(!data_dir.path().join("server.json").exists());
@@ -69,6 +93,11 @@ fn headless_desktop_process_persists_cli_created_threads() {
     let mut second = start();
     ready();
     assert_eq!(cli(data_dir.path(), &["thread", "get", &id])["id"], id);
+    let listed = cli(
+        data_dir.path(),
+        &["thread", "list", project.path().to_str().unwrap()],
+    );
+    assert_eq!(listed[0]["last_activity_seq"], activity);
     assert_eq!(cli(data_dir.path(), &["server", "stop"]), Value::Null);
     second.wait().expect("reap second server");
 }
@@ -201,81 +230,101 @@ fn help_and_version_work_without_starting_a_server() {
 async fn streamed_cli_followup_uses_persisted_context_and_skills() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    let project = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let state = AppState::new_for_test(data.path().join("settings.json"));
-    let provider = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(common::final_text_body()))
-        .mount(&provider)
-        .await;
-    common::use_mock_llm(&state, &provider).await;
-    let server = Server::bind(state, data.path()).await.unwrap();
-    let task = tokio::spawn(server.run());
-    let thread = cli(
-        data.path(),
-        &[
-            "thread",
-            "create",
-            project.path().to_str().unwrap(),
+    for (model, endpoint, response, message_field) in [
+        (
             "test-model",
-        ],
-    );
-    let id = thread["id"].as_str().unwrap();
-    let skill = cli(data.path(), &["call", "create_skill", &json!({"input": {
+            "/chat/completions",
+            common::final_text_body(),
+            "messages",
+        ),
+        (
+            "gpt-6-luna",
+            "/responses",
+            json!({"output":[{"type":"message","content":[{"type":"output_text","text":"Done."}]}]}),
+            "input",
+        ),
+    ] {
+        let project = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let provider = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&provider)
+            .await;
+        common::use_mock_llm(&state, &provider).await;
+        let server = Server::bind(state, data.path()).await.unwrap();
+        let task = tokio::spawn(server.run());
+        let thread = cli(
+            data.path(),
+            &["thread", "create", project.path().to_str().unwrap(), model],
+        );
+        let id = thread["id"].as_str().unwrap();
+        let skill = cli(data.path(), &["call", "create_skill", &json!({"input": {
         "name": "Writer", "description": "test", "instructions": "Always be concise.",
         "allowed_tools": ["read_file"], "scripts": [{"name": "greet.sh", "content": "echo hi"}]
     }}).to_string()]);
-    cli(
-        data.path(),
-        &[
-            "call",
-            "set_thread_skills",
-            &json!({"threadId": id, "skillIds": [skill["id"]]}).to_string(),
-        ],
-    );
-    for prompt in ["Remember my first request", "What was my first request?"] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
-            .arg("--data-dir")
-            .arg(data.path())
-            .args(["thread", "send", id, prompt, "--json"])
-            .env_remove("OPENCODE_KEY")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        cli(
+            data.path(),
+            &[
+                "call",
+                "set_thread_skills",
+                &json!({"threadId": id, "skillIds": [skill["id"]]}).to_string(),
+            ],
         );
-        let events: Vec<Value> = String::from_utf8(output.stdout)
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert!(events
-            .iter()
-            .any(|event| event["payload"]["event"]["kind"] == "finished"));
+        for prompt in ["Remember my first request", "What was my first request?"] {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+                .arg("--data-dir")
+                .arg(data.path())
+                .args(["thread", "send", id, prompt, "--json"])
+                .env_remove("OPENCODE_KEY")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let events: Vec<Value> = String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert!(events
+                .iter()
+                .any(|event| event["payload"]["event"]["kind"] == "finished"));
+        }
+        let requests = provider.received_requests().await.unwrap();
+        let body: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+        let messages = body[message_field].to_string();
+        if endpoint == "/responses" {
+            let reader = body["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == "read_file")
+                .unwrap();
+            assert_eq!(reader["strict"], false);
+            assert_eq!(reader["parameters"]["required"], json!(["file_path"]));
+        }
+        assert!(messages.contains("Remember my first request"));
+        assert!(messages.contains("Always be concise."));
+        assert!(project
+            .path()
+            .join(".themis/skills")
+            .join(skill["id"].as_str().unwrap())
+            .join("greet.sh")
+            .exists());
+        assert!(
+            cli(data.path(), &["thread", "history", id])
+                .as_array()
+                .unwrap()
+                .len()
+                >= 4
+        );
+        task.abort();
     }
-    let requests = provider.received_requests().await.unwrap();
-    let body: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
-    let messages = body["messages"].to_string();
-    assert!(messages.contains("Remember my first request"));
-    assert!(messages.contains("Always be concise."));
-    assert!(project
-        .path()
-        .join(".themis/skills")
-        .join(skill["id"].as_str().unwrap())
-        .join("greet.sh")
-        .exists());
-    assert!(
-        cli(data.path(), &["thread", "history", id])
-            .as_array()
-            .unwrap()
-            .len()
-            >= 4
-    );
-    task.abort();
 }
 
 #[test]
@@ -683,4 +732,132 @@ async fn projects_use_one_fixed_root_and_rename_preserves_threads_after_restart(
         std::fs::read_to_string(Path::new(root).join("keep.txt")).unwrap(),
         "preserve"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
+    use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .update_settings(themis_desktop::types::SettingsPatch {
+            context_token_budget: Some(2000),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Late checkpoint"},"finish_reason":"stop"}]})))
+        .mount(&provider).await;
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        &[
+            "thread",
+            "create",
+            project.path().to_str().unwrap(),
+            "test-model",
+        ],
+    );
+    let id = thread["id"].as_str().unwrap();
+    let mut events = Client::new(data.path().into()).subscribe().await.unwrap();
+    cli(
+        data.path(),
+        &[
+            "call",
+            "send_message",
+            &json!({"threadId":id,"text":"Original task ".repeat(3000),"reasoningEffort":null})
+                .to_string(),
+        ],
+    );
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            if event["name"] == "thread-event"
+                && event["payload"]["event"]["kind"] == "context_compacting"
+            {
+                break;
+            }
+        }
+        while provider.received_requests().await.unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Compaction must reach the stalled mock provider");
+    cli(data.path(), &["thread", "stop", id]);
+    let terminal = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            if event["name"] == "thread-event" && event["payload"]["event"]["kind"] == "failed" {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("CLI Stop must release stalled compaction promptly");
+    assert!(terminal["payload"]["event"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("Stopped by you"));
+    let threads = Client::new(data.path().into())
+        .call("list_threads", json!({"projectRoot":project.path()}))
+        .await
+        .unwrap();
+    assert_eq!(
+        threads
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|thread| thread["id"] == id)
+            .unwrap()["running"],
+        false
+    );
+    Client::new(data.path().into())
+        .call("shutdown", json!({}))
+        .await
+        .unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_stdin_rejects_invalid_oversized_and_secret_requests() {
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    for (method, input, error) in [
+        ("get_settings", "{broken".to_owned(), "invalid JSON_ARGS"),
+        (
+            "get_settings",
+            " ".repeat(8 * 1024 * 1024 + 1),
+            "exceeds 8 MiB",
+        ),
+        ("set_secret", "{}".to_owned(), "enter a key securely"),
+    ] {
+        let path = data.path().join("request.json");
+        std::fs::write(&path, input).unwrap();
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(data.path())
+            .args(["call", method, "-"])
+            .stdin(std::fs::File::open(path).unwrap())
+            .env_remove("OPENCODE_KEY")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(error),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    task.abort();
 }

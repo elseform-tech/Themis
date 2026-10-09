@@ -4,14 +4,22 @@ use themis_core::plugins::{AvailableSkill, PluginSpec, PluginStore};
 
 impl AppState {
     pub(super) fn plugin_store(&self, project: Option<PathBuf>) -> PluginStore {
-        PluginStore::new(
+        let config = self.runtime_configuration(project.as_deref(), None).ok();
+        let store = PluginStore::new(
             self.inner
                 .skills_path
                 .parent()
                 .unwrap_or(Path::new("."))
                 .into(),
             project,
-        )
+        );
+        match config {
+            Some(config) => store
+                .clone()
+                .with_skill_paths(config.config.skills.paths)
+                .unwrap_or(store),
+            None => store,
+        }
     }
     pub async fn prompt_skills(
         &self,
@@ -49,17 +57,147 @@ impl AppState {
         let scope = args["scope"].as_str().unwrap_or("global");
         let name = args["name"].as_str().unwrap_or_default();
         let action = args["action"].as_str().unwrap_or("list");
-        // No mutation while a project is running: its capability snapshot is immutable.
-        if !matches!(
-            action,
-            "list" | "marketplaces" | "catalog" | "test_mcp" | "test_hook"
-        ) && self.inner.running_count.load(Ordering::SeqCst) > 0
-        {
-            return Err("Wait for active runs to finish before changing plugins".into());
+        if action == "mcp_tools" {
+            let root = project
+                .as_deref()
+                .ok_or("Choose a project for MCP connections")?;
+            return self.mcp_tool_summaries(
+                root,
+                &format!(
+                    "{scope}:{name}:mcp:{}",
+                    args["id"].as_str().unwrap_or_default()
+                ),
+            );
         }
-        let outcome = async {
+        if action == "mcp_status" {
+            let root = project
+                .as_deref()
+                .ok_or("Choose a project for MCP connections")?;
+            return if args["connect"].as_bool().unwrap_or(false)
+                || args["retry"].as_bool().unwrap_or(false)
+            {
+                self.mcp_status(root, args["retry"].as_bool().unwrap_or(false))
+            } else {
+                Ok(self.mcp_snapshot(root))
+            };
+        }
+        // Active runs retain their immutable snapshot; changes apply to the next run.
+        let started = std::time::Instant::now();
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        let _ = self.inner.diagnostics.append(
+            "integration",
+            "operation_started",
+            "info",
+            json!({"operation_id":operation_id,"action":action,"plugin":name,"scope":scope}),
+        );
+        let context = themis_core::diagnostics::DiagnosticContext {
+            log: self.inner.diagnostics.clone(),
+            thread_id: String::new(),
+            run_id: operation_id.clone(),
+            level: self
+                .runtime_configuration(project.as_deref(), None)
+                .map(|r| r.config.logging.level)
+                .unwrap_or_else(|_| "info".into()),
+        };
+        let outcome = themis_core::diagnostics::ACTIVE.scope(context,async {
             Ok::<_, anyhow::Error>(match action {
                 "list" => serde_json::to_value(store.list()?)?,
+                "inspect_path" => serde_json::to_value(store.inspect_path(Path::new(args["path"].as_str().unwrap_or_default()),args["name"].as_str())?)?,
+                "inspect_json" => {
+                    let content = args["content"].as_str().unwrap_or_default();
+                    let value = themis_core::configuration::parse(content)?;
+                    if value.get("spec").is_some() || value.get("name").is_some_and(Value::is_string) {
+                        let mut spec: PluginSpec = serde_json::from_value(value.get("spec").cloned().unwrap_or(value))?;
+                        if !name.is_empty() { spec.name=name.into(); }
+                        serde_json::to_value(themis_core::plugins::ImportPreview::from_spec(spec)?)?
+                    } else { serde_json::to_value(store.inspect_mcp_json(if name.is_empty(){"imported-mcp"}else{name}, &value.to_string())?)? }
+                },
+                "inspect_repository" => serde_json::to_value(store.inspect_repository(name,args["url"].as_str().unwrap_or_default(),args["reference"].as_str(),args["subdirectory"].as_str()).await?)?,
+                "scan_marketplace" => serde_json::to_value(store.start_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false))?)?,
+                "inspect_marketplace" => {
+                    let marketplace = args["marketplace"].as_str().unwrap_or_default();
+                    store.wait_marketplace_scan(marketplace, false).await?;
+                    serde_json::to_value(store.scanned_marketplace_preview(marketplace,name).await?)?
+                },
+                "import_path" => serde_json::to_value(store.import_path_with_options(
+                    scope,
+                    Path::new(args["path"].as_str().unwrap_or_default()),
+                    args["name"].as_str(),
+                    args["allowPartial"].as_bool().unwrap_or(false),
+                )?)?,
+                "import_json" => {
+                    let content = args["content"].as_str().unwrap_or_default();
+                    if content.len() > 8 * 1024 * 1024 {
+                        return Err(anyhow::anyhow!("Import exceeds 8 MiB"));
+                    }
+                    let value: Value = themis_core::configuration::parse(content)?;
+                    if value.get("spec").is_some()
+                        || value.get("name").is_some_and(Value::is_string)
+                    {
+                        let mut spec: PluginSpec =
+                            serde_json::from_value(value.get("spec").cloned().unwrap_or(value))?;
+                        if !name.is_empty() {
+                            spec.name = name.into();
+                        }
+                        if !args["allowPartial"].as_bool().unwrap_or(false) && !spec.import_issues.is_empty() { return Err(anyhow::anyhow!("Plugin has unsupported components; inspect and explicitly choose partial installation")); }
+                        spec.ensure_installable()?;
+                        serde_json::to_value(store.save(scope, spec, None)?)?
+                    } else {
+                        serde_json::to_value(store.import_mcp_json_with_options(
+                            scope,
+                            if name.is_empty() {
+                                "imported-mcp"
+                            } else {
+                                name
+                            },
+                            &value.to_string(),
+                            args["allowPartial"].as_bool().unwrap_or(false),
+                        )?)?
+                    }
+                }
+                "preview_repository" => serde_json::to_value(
+                    store
+                        .preview_repository(
+                            name,
+                            args["url"].as_str().unwrap_or_default(),
+                            args["reference"].as_str(),
+                            args["subdirectory"].as_str(),
+                        )
+                        .await?,
+                )?,
+                "import_repository" => serde_json::to_value(
+                    store
+                        .import_repository_with_options(
+                            scope,
+                            name,
+                            args["url"].as_str().unwrap_or_default(),
+                            args["reference"].as_str(),
+                            args["subdirectory"].as_str(),
+                            args["allowPartial"].as_bool().unwrap_or(false),
+                        )
+                        .await?,
+                )?,
+                "remove_component" => {
+                    store.remove_component(
+                        scope,
+                        name,
+                        args["kind"].as_str().unwrap_or_default(),
+                        args["id"].as_str().unwrap_or_default(),
+                    )?;
+                    Value::Null
+                }
+                "set_component_enabled" => {
+                    store.set_component_enabled(
+                        scope,
+                        name,
+                        args["kind"].as_str().unwrap_or_default(),
+                        args["id"].as_str().unwrap_or_default(),
+                        args["enabled"]
+                            .as_bool()
+                            .ok_or_else(|| anyhow::anyhow!("enabled must be a boolean"))?,
+                    )?;
+                    Value::Null
+                }
                 "save" => serde_json::to_value(store.save(
                     scope,
                     serde_json::from_value::<PluginSpec>(args["spec"].clone())?,
@@ -82,26 +220,23 @@ impl AppState {
                 "marketplaces" => serde_json::to_value(store.marketplaces()?)?,
                 "add_marketplace" => {
                     store.add_marketplace(name, args["source"].as_str().unwrap_or_default())?;
-                    Value::Null
+                    serde_json::to_value(store.start_marketplace_scan(name, false)?)?
                 }
                 "remove_marketplace" => {
                     store.remove_marketplace(name)?;
                     Value::Null
                 }
-                "catalog" => {
-                    store
-                        .catalog(name, args["refresh"].as_bool().unwrap_or(false))
-                        .await?
-                }
-                "install" | "update" => serde_json::to_value(
-                    store
-                        .install(
-                            scope,
-                            args["marketplace"].as_str().unwrap_or_default(),
-                            name,
-                        )
-                        .await?,
-                )?,
+                "catalog" => store.wait_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false)).await?.catalog,
+                "preview" => {
+                    let marketplace = args["marketplace"].as_str().unwrap_or_default();
+                    store.wait_marketplace_scan(marketplace, false).await?;
+                    serde_json::to_value(store.scanned_marketplace_preview(marketplace,name).await?.spec)?
+                },
+                "install" | "update" => {
+                    let marketplace = args["marketplace"].as_str().unwrap_or_default();
+                    if !args["expectedScan"].is_string() { store.wait_marketplace_scan(marketplace, action == "update").await?; }
+                    serde_json::to_value(store.install_scanned(scope, marketplace, name, args["allowPartial"].as_bool().unwrap_or(false), args["expectedScan"].as_str()).await?)?
+                },
                 "test_mcp" => {
                     let spec = serde_json::from_value(args["server"].clone())?;
                     let root = project
@@ -130,8 +265,56 @@ impl AppState {
                 }
                 _ => return Err(anyhow::anyhow!("Unknown plugin action")),
             })
-        }
+        })
         .await;
-        outcome.map_err(|e| e.to_string())
+        let mut details = json!({"operation_id":operation_id,"action":action,"plugin":name,"scope":scope,"elapsed_ms":started.elapsed().as_millis(),"success":outcome.is_ok()});
+        if let Ok(value) = &outcome {
+            if let Some(report) = value.get("report") {
+                details["report"] = report.clone();
+            }
+        }
+        if let Err(error) = &outcome {
+            let message = format!("{error:#}");
+            details["error_code"] = if message.contains("unsupported") {
+                "unsupported_capability"
+            } else if message.contains("credential") || message.contains("environment") {
+                "invalid_environment_or_authentication"
+            } else {
+                "operation_failed"
+            }
+            .into();
+            if message.starts_with("mcpServers.") || message.starts_with("mcp.") {
+                details["field"] = message.split(':').next().unwrap_or_default().into();
+            }
+        }
+        let _ = self.inner.diagnostics.append(
+            "integration",
+            if outcome.is_ok() {
+                "operation_completed"
+            } else {
+                "operation_failed"
+            },
+            if outcome.is_ok() { "info" } else { "error" },
+            details,
+        );
+        if outcome.is_ok()
+            && matches!(
+                action,
+                "save"
+                    | "delete"
+                    | "enable"
+                    | "disable"
+                    | "set_component_enabled"
+                    | "remove_component"
+                    | "install"
+                    | "update"
+                    | "import_path"
+                    | "import_json"
+                    | "import_repository"
+            )
+        {
+            self.refresh_mcp_connections();
+        }
+        outcome.map_err(|e| format!("{e:#}\nDiagnostic operation: {operation_id}"))
     }
 }

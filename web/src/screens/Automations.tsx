@@ -1,10 +1,10 @@
+import { promptParts } from "../lib/prompt";
 import { PromptInput } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useState } from "react";
 import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
 import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 import {
-  Badge,
   Button,
   Dialog,
   EmptyState,
@@ -19,7 +19,7 @@ import {
   setAutomationEnabled,
   updateAutomation,
 } from "../lib/tauri";
-import type { GoModel } from "../lib/types";
+import type { Automation, GoModel } from "../lib/types";
 import { describeError, toast, useApp } from "../state/store";
 import {
   automationToForm,
@@ -38,6 +38,15 @@ function formatTime(iso: string | null): string {
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 }
 
+const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function scheduleLabel(automation: Automation): string {
+  const schedule = automation.schedule;
+  if (!schedule) return `Every ${automation.interval_mins} minutes`;
+  const repeat = schedule.repeat === "daily" ? "Daily" : schedule.repeat === "weekdays" ? "Weekdays" : weekdays[schedule.weekday];
+  return `${repeat} at ${schedule.time} · ${schedule.timezone}`;
+}
+
 export function Automations() {
   const { state, dispatch } = useApp();
   const [dialog, setDialog] = useState<
@@ -45,6 +54,7 @@ export function Automations() {
     | { mode: "create"; form: AutomationFormState }
     | { mode: "edit"; automationId: string; form: AutomationFormState }
   >({ mode: "closed" });
+  const [query, setQuery] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -88,6 +98,7 @@ export function Automations() {
       mode: "create",
       form: {
         ...emptyAutomationForm(state.settings.default_provider),
+        targetMode: state.activeThreadId ? "continue" : "new",
         targetThreadId: state.activeThreadId ?? "",
         projectRoot: state.activeProjectRoot ?? "",
         model: state.settings.default_model,
@@ -131,8 +142,8 @@ export function Automations() {
     if (dialog.mode === "closed" || saving) return;
     if (dialog.form.targetMode === "new") {
       const selected = selectedModel;
-      if (!selected) { setSaveError("Select an available OpenCode Go model."); return; }
-      if (dialog.form.effort && !selected.effort_levels.includes(dialog.form.effort)) {
+      if (!selected && dialog.form.model !== state.settings.default_model) { setSaveError("Select an available OpenCode Go model in Advanced."); return; }
+      if (dialog.form.effort && !selected?.effort_levels.includes(dialog.form.effort)) {
         setSaveError("Select an effort level available for this model."); return;
       }
     }
@@ -212,6 +223,13 @@ export function Automations() {
     }
   }
 
+  const search = query.trim().toLocaleLowerCase();
+  const visibleAutomations = state.automations.filter(automation =>
+    [automation.name, automation.task, scheduleLabel(automation), automation.project_root,
+      automation.enabled ? "enabled" : "paused"]
+      .join(" ").toLocaleLowerCase().includes(search),
+  );
+
   const deleteTarget =
     state.automations.find((a) => a.id === deleting) ?? null;
 
@@ -219,26 +237,27 @@ export function Automations() {
     <div className="themis-automations">
       <div className="themis-automations-head">
         <h2 className="themis-automations-title">Automations</h2>
-        <Button variant="primary" size="small" onClick={openCreate}>
-          + New automation
-        </Button>
+        <div className="themis-automations-head-actions">
+          <Button variant="ghost" size="small" onClick={openCreate}>+ New automation</Button>
+        </div>
       </div>
       {!state.settings.automations_enabled && (
         <p className="themis-automations-disabled-note" role="note">
-          The scheduler is disabled in Settings — automations will not run on
-          their interval (Run now still works).
+          Scheduled runs are paused. Enable automations in Settings.
         </p>
       )}
 
+      {state.automations.length > 0 && <input className="themis-automations-search" type="search" aria-label="Search automations" placeholder="Search automations" value={query} onChange={event => setQuery(event.target.value)} />}
       {state.automations.length === 0 ? (
         <EmptyState
           title="No automations"
           hint="Create an automation to run a scheduled agent in a project."
         />
+      ) : visibleAutomations.length === 0 ? (
+        <EmptyState title="No matching automations" />
       ) : (
         <ul className="themis-automations-list">
-          {state.automations.map((automation) => {
-            const target = threadChoices.find(choice => choice.thread.id === automation.target_thread_id);
+          {visibleAutomations.map((automation) => {
             const busy = rowBusy === automation.id;
             return (
               <li key={automation.id} className="themis-automations-card">
@@ -246,49 +265,10 @@ export function Automations() {
                   <span className="themis-automations-name">
                     {automation.name}
                   </span>
-                  {automation.enabled ? (
-                    <Badge tone="success">enabled</Badge>
-                  ) : (
-                    <Badge tone="default">disabled</Badge>
-                  )}
+                  {!automation.enabled && <span className="themis-automations-hint">Paused</span>}
                 </div>
-                <dl className="themis-automations-meta">
-                  <div>
-                    <dt>Run in</dt>
-                    <dd>{automation.target_thread_id ? `Continue ${target?.thread.title ?? "missing thread"}` : "New thread each run"}</dd>
-                  </div>
-                  <div>
-                    <dt>Project</dt>
-                    <dd title={automation.project_root}>
-                      {automation.project_root}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Provider</dt>
-                    <dd>
-                      OpenCode Go ·{" "}
-                      {automation.target_thread_id ? target?.thread.model ?? "unavailable" : automation.model || "default"}
-                      {(automation.target_thread_id ? target?.thread.reasoning_effort : automation.reasoning_effort) ? ` · ${automation.target_thread_id ? target?.thread.reasoning_effort : automation.reasoning_effort}` : ""}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Every</dt>
-                    <dd>{automation.interval_mins}m</dd>
-                  </div>
-
-                  <div>
-                    <dt>Last run</dt>
-                    <dd>{formatTime(automation.last_run_at)}</dd>
-                  </div>
-                  <div>
-                    <dt>Next run</dt>
-                    <dd>{formatTime(automation.next_run_at)}</dd>
-                  </div>
-                  <div>
-                    <dt>Runs</dt>
-                    <dd>{automation.run_count}</dd>
-                  </div>
-                </dl>
+                <p className="themis-automations-instructions">{promptParts(automation.task).map((part, index) => "text" in part ? part.text : <span className="themis-automations-skill" key={index}>{"skill" in part ? promptSkills.find(skill => skill.id === part.skill)?.name ?? "Skill" : "Plugin"}</span>)}</p>
+                <p className="themis-automations-hint">{scheduleLabel(automation)}{automation.enabled ? ` · Next ${formatTime(automation.next_run_at)}` : ""}</p>
                 <div className="themis-automations-card-actions">
                   <label className="themis-automations-toggle">
                     <input
@@ -341,10 +321,35 @@ export function Automations() {
       >
         {dialog.mode !== "closed" && (
           <div className="themis-automations-dialog">
+            <div className="themis-automations-field">
+              <label className="themis-automations-label" htmlFor="themis-automation-task">Instructions</label>
+              <PromptInput id="themis-automation-task" label="Instructions" value={dialog.form.task} skills={promptSkills} disabled={saving} placeholder="What should happen? / for skills" onChange={task => patchForm({ task })} />
+              {promptSkillsError && <p role="alert">{promptSkillsError}</p>}
+            </div>
+            <div className="themis-automations-schedule">
+              <label className="themis-automations-field">Repeat
+                <select aria-label="Repeat" value={dialog.form.repeat} disabled={saving} onChange={event => patchForm({ repeat: event.target.value as AutomationFormState["repeat"] })}>
+                  <option value="daily">Daily</option>
+                  <option value="weekdays">Weekdays</option>
+                  <option value="weekly">Weekly · {weekdays[dialog.form.weekday]}</option>
+                  {dialog.mode === "edit" && <option value="interval">Interval (legacy)</option>}
+                </select>
+              </label>
+              {dialog.form.repeat !== "interval" && <label className="themis-automations-field">Time
+                <input aria-label="Time" type="time" value={dialog.form.time} disabled={saving} onChange={event => patchForm({ time: event.target.value })} />
+              </label>}
+            </div>
+            <p className="themis-automations-destination" role="note">
+              {dialog.form.targetMode === "continue" ? `Continue ${selectedThread?.thread.title ?? "a thread — choose one in Advanced"}` : `New thread in ${state.projects.find(project => project.root === dialog.form.projectRoot)?.name ?? "a project — choose one in Advanced"}`}
+              {" · "}{dialog.form.timezone}{" · "}{dialog.form.enabled ? "Enabled" : "Paused"}
+            </p>
+            <details className="themis-automations-advanced" open={dialog.form.repeat === "interval" || (!dialog.form.targetThreadId && !dialog.form.projectRoot) || undefined}>
+              <summary>Advanced</summary>
+              <div className="themis-automations-advanced-fields">
             <Input
               id="themis-automation-name"
-              label="Name"
-              placeholder="nightly-triage"
+              label="Name (optional)"
+              placeholder="From instructions"
               value={dialog.form.name}
               disabled={saving}
               onChange={(event) => patchForm({ name: event.target.value })}
@@ -370,7 +375,6 @@ export function Automations() {
                   })}
                 </select>
               </label>
-              <span className="themis-automations-hint">Each heartbeat continues this thread with its current model and effort. Select skills inside the task prompt.</span>
               {selectedThread && <p className="themis-automations-hint">{selectedThread.project.name} · {selectedThread.thread.model} · {selectedThread.thread.reasoning_effort || "Default effort"}</p>}
             </> : <>
             <div className="themis-automations-field">
@@ -382,7 +386,6 @@ export function Automations() {
                 </select>
                 <Button variant="ghost" size="small" disabled={saving || creatingProject} onClick={() => { setNewProjectName(""); setProjectError(""); }}>New project…</Button>
               </div>
-              <span className="themis-automations-hint">Each run starts a thread in the selected project.</span>
               {newProjectName !== null && <div className="themis-automations-project-create">
                 <Input id="themis-automation-project-name" label="New project name" value={newProjectName} disabled={creatingProject} onChange={event => setNewProjectName(event.target.value)} />
                 <span className="themis-automations-hint">Create in {state.settings.projects_directory}</span>
@@ -405,38 +408,18 @@ export function Automations() {
             <Button variant="ghost" size="small" disabled={saving || modelsLoading || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button>
 
             </>}
-            <Input
-              id="themis-automation-interval"
-              label="Interval (minutes, ≥ 1)"
-              type="number"
-              min={1}
-              value={dialog.form.intervalMinsRaw}
-              disabled={saving}
-              onChange={(event) =>
-                patchForm({ intervalMinsRaw: event.target.value })
-              }
-            />
-            <div className="themis-automations-field">
-              <label
-                className="themis-automations-label"
-                htmlFor="themis-automation-task"
-              >
-                Task
-              </label>
-              <PromptInput id="themis-automation-task" label="Task" value={dialog.form.task} skills={promptSkills} disabled={saving} placeholder="What the scheduled run should do… / for skills" onChange={task => patchForm({ task })} />
-              {promptSkillsError && <p role="alert">{promptSkillsError}</p>}
-            </div>
-            <label className="themis-automations-check">
-              <input
-                type="checkbox"
-                checked={dialog.form.enabled}
-                disabled={saving}
-                onChange={(event) =>
-                  patchForm({ enabled: event.target.checked })
-                }
-              />
-              Enabled
-            </label>
+
+                {dialog.form.repeat === "interval" ? <Input id="themis-automation-interval" label="Interval (minutes)" type="number" min={1} value={dialog.form.intervalMinsRaw} disabled={saving} onChange={event => patchForm({ intervalMinsRaw: event.target.value })} /> : <>
+                  <Input id="themis-automation-timezone" label="Time zone" value={dialog.form.timezone} placeholder="Europe/Berlin" disabled={saving} onChange={event => patchForm({ timezone: event.target.value })} />
+                  {dialog.form.repeat === "weekly" && <label className="themis-automations-field">Day
+                    <select aria-label="Day" value={dialog.form.weekday} disabled={saving} onChange={event => patchForm({ weekday: Number(event.target.value) })}>
+                      {weekdays.map((day, index) => <option key={day} value={index}>{day}</option>)}
+                    </select>
+                  </label>}
+                </>}
+                <label className="themis-automations-check"><input type="checkbox" checked={dialog.form.enabled} disabled={saving} onChange={event => patchForm({ enabled: event.target.checked })} />Enabled</label>
+              </div>
+            </details>
 
             {saveError !== null && (
               <p className="themis-automations-error" role="alert">

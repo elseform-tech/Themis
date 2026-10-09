@@ -1,6 +1,6 @@
 // Typed Tauri bridge client. All frontend code reaches the backend through
 // these functions — never raw invoke() with stringly-typed payloads elsewhere.
-import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke as tauriInvoke } from '@tauri-apps/api/core';
 import type { PromptSkill } from './prompt';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
@@ -79,8 +79,16 @@ export function createThread(
   });
 }
 
-export function sendMessage(threadId: string, text: string, reasoningEffort?: string): Promise<RunHandle> {
-  return invoke('send_message', { threadId, text, reasoningEffort: reasoningEffort || null });
+export interface Attachment { path: string; name: string; size: number }
+export function attachFiles(threadId: string, paths: string[]): Promise<Attachment[]> {
+  return invoke("attach_files", { threadId, paths });
+}
+
+const pendingPermissionChanges = new Map<string, Promise<ThreadInfo>>();
+
+export async function sendMessage(threadId: string, text: string, reasoningEffort?: string, attachments: string[] = []): Promise<RunHandle> {
+  while (pendingPermissionChanges.has(threadId)) await pendingPermissionChanges.get(threadId);
+  return invoke('send_message', { threadId, text, reasoningEffort: reasoningEffort || null, attachments });
 }
 
 export function getThreadHistory(threadId: string): Promise<HistoryItem[]> {
@@ -267,4 +275,24 @@ export function onReviewItemAdded(
   cb: (item: ReviewItem) => void,
 ): Promise<UnlistenFn> {
   return listen<ReviewItem>(REVIEW_ITEM_NAME, (event) => cb(event.payload));
+}
+
+export async function attachmentFile(threadId: string, path: string): Promise<string> {
+  const validated = await tauriInvoke<string>("attachment_file", { threadId, path });
+  return convertFileSrc(validated);
+}
+
+export function setThreadApprovalMode(threadId: string, mode: "custom" | "yolo"): Promise<ThreadInfo> {
+  const previous = pendingPermissionChanges.get(threadId);
+  const request = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(() => invoke<ThreadInfo>("set_thread_approval_mode", {threadId, mode}));
+  const tracked = request.finally(() => { if (pendingPermissionChanges.get(threadId) === tracked) pendingPermissionChanges.delete(threadId); });
+  pendingPermissionChanges.set(threadId, tracked);
+  return tracked;
+}
+
+export function onBackendResync(handler: () => void): Promise<UnlistenFn> {
+  return listen('backend-resync', handler);
+}
+export function getPendingApprovals(): Promise<ApprovalRequest[]> {
+  return invoke('get_pending_approvals');
 }

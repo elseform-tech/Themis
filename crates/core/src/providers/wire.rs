@@ -40,6 +40,8 @@ pub(super) struct WireChatResponse {
 /// Single chat choice of [`WireChatResponse`].
 #[derive(Deserialize)]
 pub(super) struct WireChoice {
+    #[serde(default)]
+    pub(super) finish_reason: Option<String>,
     pub(super) message: WireChoiceMessage,
 }
 
@@ -106,6 +108,11 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
 }
 
 pub(super) fn responses_response(value: serde_json::Value) -> Result<WireChatResponse, LLMError> {
+    if value["status"] == "incomplete"
+        && value["incomplete_details"]["reason"] == "max_output_tokens"
+    {
+        return Err(LLMError::Generic("Provider response was truncated".into()));
+    }
     if matches!(value["status"].as_str(), Some("failed" | "incomplete")) {
         return Err(LLMError::Generic(
             "Provider response failed or was incomplete".to_owned(),
@@ -156,7 +163,10 @@ pub(super) fn responses_stream_event(value: serde_json::Value) -> serde_json::Va
 pub(super) fn go_chat_path(model: &str) -> &'static str {
     if model.starts_with("muse-") || model.starts_with("gpt-") || model.starts_with("grok-") {
         "responses"
-    } else if model.starts_with("qwen") || model.starts_with("minimax-") {
+    } else if model.starts_with("qwen")
+        || model.starts_with("minimax-")
+        || model.starts_with("claude-")
+    {
         "messages"
     } else {
         CHAT_COMPLETIONS_PATH
@@ -241,6 +251,7 @@ pub(super) fn messages_response(value: serde_json::Value) -> Result<WireChatResp
     }
     Ok(WireChatResponse {
         choices: vec![WireChoice {
+            finish_reason: None,
             message: WireChoiceMessage {
                 content: Some(text),
                 tool_calls: Some(calls),

@@ -106,13 +106,12 @@ fn checkpoint_replaces_old_model_context_but_preserves_full_history() {
         matches!(&history[4], HistoryItem::Event { envelope } if matches!(&envelope.event, ThreadEvent::Finished { model: Some(model), .. } if model == "original-model"))
     );
     let context = reopened.context("thread", 20).unwrap();
-    assert_eq!(context.len(), 2);
-    assert!(context[0].text.contains("Original task; read note.txt"));
-    assert!(context[0]
+    assert_eq!(context[0].text, "Original task; read note.txt");
+    assert_eq!(format!("{:?}", context[0].role), "Checkpoint");
+    assert!(context[1]
         .text
-        .contains("Verbatim first and recent user requests (historical):\nOriginal task"));
-    assert!(context[0].text.contains("Middle request\nLatest request"));
-    assert_eq!(context[1].text, "Done");
+        .contains("Original task\nMiddle request\nLatest request"));
+    assert_eq!(context[2].text, "Done");
 }
 
 #[tokio::test]

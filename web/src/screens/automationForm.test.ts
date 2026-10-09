@@ -43,9 +43,9 @@ beforeEach(() => {
 });
 
 describe("validateAutomationForm", () => {
-  it("requires name, project root, and task", () => {
+  it("requires a target and instructions, and derives the optional name", () => {
     expect(validateAutomationForm(emptyAutomationForm("go"))).toBe(
-      "Name is required.",
+      "Choose a thread to continue.",
     );
     expect(
       validateAutomationForm({
@@ -67,7 +67,7 @@ describe("validateAutomationForm", () => {
         targetMode: "new",
         projectRoot: "/repo",
       }),
-    ).toBe("Task is required.");
+    ).toBe("Instructions are required.");
   });
 
   it("rejects intervals below 1 minute", () => {
@@ -176,5 +176,35 @@ describe("saveAutomation flow", () => {
     expect(state.toasts).toHaveLength(1);
     expect(state.toasts[0]?.tone).toBe("danger");
     expect(state.toasts[0]?.message).toContain(backendError);
+  });
+});
+
+
+describe("calendar schedules", () => {
+  it("creates a wall-clock schedule and derives its name from instructions", () => {
+    const form = { ...emptyAutomationForm("go"), targetThreadId: "t1", projectRoot: "/repo", task: "Review incoming changes", timezone: "Europe/Berlin" };
+    expect(validateAutomationForm(form)).toBeNull();
+    expect(toAutomationInput(form)).toMatchObject({ name: "Review incoming changes", schedule: { repeat: "daily", time: "09:00", timezone: "Europe/Berlin", weekday: 0 } });
+  });
+  it("derives a readable name without exposing serialized skill markers", () => {
+    const form = { ...emptyAutomationForm("go"), task: "[[skill:review]] Review changes" };
+    expect(toAutomationInput(form).name).toBe("Review changes");
+    expect(toAutomationInput({ ...form, task: "[[skill:review]]" }).name).toBe("Scheduled task");
+  });
+  it("preserves legacy intervals on edit until the user chooses a calendar schedule", () => {
+    const form = automationToForm(AUTOMATION);
+    expect(form.repeat).toBe("interval");
+    expect(toAutomationInput(form).schedule).toBeNull();
+    const weekly = { ...form, repeat: "weekly" as const, time: "17:30", weekday: 4, timezone: "Europe/Berlin" };
+    expect(toAutomationInput(weekly).schedule).toEqual({ repeat: "weekly", time: "17:30", weekday: 4, timezone: "Europe/Berlin" });
+    expect(automationToForm({ ...AUTOMATION, schedule: toAutomationInput(weekly).schedule }).repeat).toBe("weekly");
+  });
+  it("rejects partial intervals and invalid time, timezone or weekday", () => {
+    const legacy = automationToForm(AUTOMATION);
+    expect(validateAutomationForm({ ...legacy, intervalMinsRaw: "2cats" })).toBe("Interval must be at least 1 minute.");
+    const form = { ...legacy, repeat: "daily" as const, time: "24:00" };
+    expect(validateAutomationForm(form)).toBe("Choose a time in HH:MM format.");
+    expect(validateAutomationForm({ ...form, time: "09:00", timezone: "Unknown/Zone" })).toBe("Choose a valid time zone.");
+    expect(validateAutomationForm({ ...form, time: "09:00", timezone: "Europe/Berlin", repeat: "weekly", weekday: 7 })).toBe("Choose a weekday.");
   });
 });

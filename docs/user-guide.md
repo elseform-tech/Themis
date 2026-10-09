@@ -1,8 +1,9 @@
 # Themis user guide
 
 Themis is a desktop coding agent. You open a project, start a thread, describe
-the change, and the agent works in an isolated worktree. Changes reach your
-checkout; integrate changes with your Git client when ready.
+the change, and the agent works in the selected project checkout. Threads share
+that checkout, including existing uncommitted files. Inspect changes with your
+Git client; open a separate worktree as a project when you want isolation.
 
 ## Install
 
@@ -41,13 +42,13 @@ selected model's catalog levels and stays visible when no levels are listed.
 
 ## Projects, threads, runs
 
-- **Project actions → Open existing folder** opens an existing project. Other
-  folders open read-only (see [sandbox](sandbox.md)).
+- **Project actions → Open existing folder** opens an existing project. In Custom mode, non-Git
+  folders disable sending; YOLO allows runs (see [sandbox](sandbox.md)).
 - The **+** beside a project starts a thread with your default provider and model.
-  Each thread on a git project gets its own worktree and branch
-  (`themis/<short-id>`).
+  Threads share the selected project checkout; they do not automatically create
+  separate branches or worktrees.
 - Type in the thread view and send. The run streams assistant text and a tool
-  trace; non-read tool calls raise an approval dialog (see Approvals below).
+  trace; the selected permission policy governs tool approvals (see below).
 - **⌘/Ctrl+K** opens the command palette: jump to threads and projects, or run
   actions (new thread, open project, toggle theme, open settings). **Esc** closes the topmost layer.
 - Hover or focus a sidebar thread to edit its name or remove it.
@@ -76,31 +77,38 @@ interrupted tool or request. Review any changes before sending a follow-up.
 
 ## Thread changes and removal
 
-Agent edits remain in the isolated worktree. The chat has no diff sidebar or
-Merge control. Use your Git client to inspect and integrate changes when needed.
-The sidebar remove button asks for confirmation before deleting a thread and
-its worktree, including unmerged changes.
+Agent edits land in the shared project checkout. The chat has no Merge control;
+use your Git client to inspect and commit changes. Removing a thread deletes its
+conversation records, not the project files or completed edits.
 
 ## Approvals
 
-Every non-read tool call pauses for an approval dialog showing the tool, a
-summary, and the risk level (`read`, `write`, `execute`, `network`,
-`destructive`). Decide:
+The composer shield selects **Custom** or **YOLO** for the thread. Custom is
+initially selected and uses ordered approval rules from advanced file configuration.
+Its default policy allows reads and asks before other tools. A matching deny
+rule rejects the action; a matching allow rule proceeds. Projects can add
+restrictions but cannot grant access.
+
+When a rule asks, the dialog shows the tool, summary, and risk:
 
 - **Once** — allow this call only.
-- **Always** — allow this tool for the rest of the run (cached per tool).
-- **Deny** — refuse; the agent sees the denial and works around it or stops.
+- **Allow for this run** — allow the same tool and risk for the rest of this run.
+- **Deny** — refuse; the agent sees the denial and adapts or stops.
 
-Reads are auto-allowed unless **Ask before read tools** is enabled in Permissions.
-If you ignore a dialog until the configured timeout, it denies
-automatically — hanging approvals never resolve to "yes". See
-[sandbox](sandbox.md) for the full policy.
+Approval timeouts deny pending requests. Reopening the app restores requests still pending in the running backend. With no explicit approval
+configuration, **Ask before read tools** still controls reads. **YOLO** bypasses
+harness approval and tool restrictions, including the filesystem root and Git
+allowlist. Mode and configuration changes apply to the next run; active runs
+keep their captured policy. See [configuration](configuration.md) for examples
+and [sandbox](sandbox.md) for the enforcement boundary.
 
 ## Skills
 
 The **Skills** tab holds reusable instruction bundles: a name, description,
 instructions injected into runs, an optional tool allowlist, and helper
-scripts. Attach skills to a thread to scope what it may use.
+scripts. Attach skills to a thread to scope what it may use. The list includes plugin-bundled skills and skills discovered from local folders. Browse new packages in **Plugins → Discover**; Skills has no separate discovery catalog. Standalone imports remain available through chat or the CLI.
+
+Skill instructions can contain up to 256 KiB of UTF-8 text without truncation.
 
 - An empty allowlist means "all tools".
 - Unknown tool names are rejected. The valid names are exactly:
@@ -182,10 +190,12 @@ of:
 
 ## Diagnostics
 
-Settings → **Diagnostics** → **Copy diagnostics** copies a pretty-printed JSON
-snapshot (app version, OS, settings, recent errors) to the clipboard for bug
-reports. The button also shows the version and OS inline. **Secret values are
-never included** — only the settings snapshot and error strings.
+The desktop keeps configuration files and logs out of normal user flows.
+Advanced users can inspect local rotating JSONL logs and configure User or
+Project runtime JSONC through files and the shared CLI/API. Global integration
+definitions use the revisioned app-data registry; project imports use
+`.themis/plugins/`. See the [configuration guide](configuration.md) for paths,
+schema, limits, and CLI examples.
 
 ## FAQ
 
@@ -203,13 +213,13 @@ Entered keys stay in macOS Keychain until you forget them. Go also reads
 `OPENCODE_KEY` from the environment. Keys are not written to SQLite or settings.
 
 **Why is my project read-only?**
-Only git checkouts get worktrees. Folders without git open read-only: the
-agent can read and answer, but every write/execute action is denied. See
-[sandbox](sandbox.md).
+Custom mode disables the desktop composer for non-Git folders. The shield
+remains available; selecting YOLO enables sending. See [sandbox](sandbox.md)
+for backend policy and the limits of tool-level restrictions.
 
 **How do I integrate changes?**
-Use your Git client to inspect the thread worktree and merge its branch into
-your project. The chat has no Merge control.
+Changes already affect the selected project checkout. Use your Git client to
+inspect and commit them. The chat has no Merge control.
 
 **A run failed with "send rejected / runs already active"?**
 You hit `concurrency_limit`. Wait for a run to finish or raise the limit in
@@ -218,7 +228,7 @@ Settings.
 **The app forgot my projects / acts strangely after an upgrade?**
 Settings load from `settings.json`; a corrupt file falls back to defaults
 (this can look like forgotten recents). Reopen projects from the sidebar and
-check Settings → Diagnostics to confirm the loaded snapshot.
+inspect settings with `themis call get_settings` when troubleshooting.
 
 ## Formatted responses
 
@@ -261,3 +271,21 @@ See [UI rules](ui-rules.md) for the maintained interface contract.
 The workspace uses continuous surface layers: lighter utility/header frame, dark
 project sidebar, darker canvas. Appearance swatches and the Surface preview show
 these three levels in the same order for every theme.
+
+### Integration discovery and recovery
+
+Discover cards show purpose, origin and compatibility. Install directly from a tile; compatibility is checked automatically. Partial packages list omitted components and offer Install supported parts. Unsupported-only packages have a disabled Install action and are hidden from the checked catalog unless Unsupported or All statuses is selected. Not checked and Connection not checked are explicit unknowns, not errors or verification badges. New catalog installs are global, with a spinner during installation and ✓ Installed afterwards. Marketplace, status and Personal/Public source dropdowns share one toolbar. Existing project imports retain their scope. Colored labels retain readable text; installed items filter by Enabled or Disabled. MCP setup and testing remain available through chat or the CLI.
+
+Automation editors keep destination, timezone and enabled/paused status visible above Advanced. Custom permissions explain their next-run scope; approval dialogs label reusable grants Allow for this run. The companion updates its mood without re-showing its native window. Keyboard focus includes editable instructions.
+
+After a backend event gap or reconnect, Themis reloads completed histories and pending approvals. Active streams keep their current live text and reconcile durable history when the run finishes; missed streaming fragments can remain absent until then. Failed recovery displays a warning and retries. Recovery preserves the selected conversation and local drafts.
+
+The collapsible sidebar includes **Recent**, showing the eight most recently active chats across open projects. It sits below Projects, with one-line chat titles, current status icons, and full titles/project names on hover. Drag the sidebar’s right edge to resize it between 240 and 560 px; the width is remembered. Focus the edge and use Left/Right arrows or Home/End to resize with the keyboard. Ordering uses saved conversation events and survives app restarts; opening a chat alone does not change its position, and empty chats remain in their project until they have activity.
+
+Integrations keeps separate search and filter selections for Installed and Discover. Reset filters affects only the current view. Marketplace checks show the companion and real completed-check percentage, then reveal the checked catalog. Collapsed warnings expand to show compatibility limitations; unavailable local skills remain visible with their validation error.
+
+MCP shows the full saved command and arguments, with status, toggle and uninstall aligned together. Integration errors and installation confirmations appear in the timed notification box at the side. Enabled MCP connections start automatically in the background on app entry and project selection. One failure does not block the app or other connections. Status updates to Connected or Failed; use Refresh to retry a failed connection.
+
+Open an MCP connection’s details to see its exposed tool count, names and descriptions. This reads cached discovery metadata; it does not execute a tool. Tools appear after the connection completes.
+
+For large shared-server requests, use `themis call METHOD - < arguments.json`. The CLI reads bounded UTF-8 JSON from stdin (8 MiB maximum), avoiding operating-system command-line length limits. The complete request, including its method and envelope, must fit the shared server’s 8 MiB frame limit. Secret entry still requires the existing secure provider setup flow.

@@ -8,7 +8,17 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
+#[derive(Debug)]
+struct RequestRejected;
+impl std::fmt::Display for RequestRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MCP request failed")
+    }
+}
+impl std::error::Error for RequestRejected {}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct McpServer {
     #[serde(default)]
     pub command: Option<String>,
@@ -40,13 +50,15 @@ impl McpServer {
                 || !u.username().is_empty()
                 || u.password().is_some()
                 || u.query().is_some()
+                || u.fragment().is_some()
             {
                 bail!("Use HTTPS (or localhost HTTP) without embedded credentials");
             }
         }
         if self
             .env
-            .values()
+            .keys()
+            .chain(self.env.values())
             .chain(self.bearer_env.iter())
             .any(|v| !v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') || v.is_empty())
         {
@@ -73,6 +85,7 @@ pub struct Connection {
     transport: Transport,
     next_id: u64,
     protocol: Option<String>,
+    instructions: Option<String>,
 }
 impl std::fmt::Debug for Connection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -81,7 +94,28 @@ impl std::fmt::Debug for Connection {
 }
 impl Connection {
     pub async fn connect(server: &McpServer, root: &Path) -> anyhow::Result<Self> {
+        let started = std::time::Instant::now();
+        let result = Self::connect_inner(server, root).await;
+        crate::diagnostics::emit(
+            "mcp",
+            if result.is_ok() {
+                "initialized"
+            } else {
+                "initialization_failed"
+            },
+            if result.is_ok() { "info" } else { "warn" },
+            json!({"duration_ms":started.elapsed().as_millis(),"transport":if server.command.is_some(){"stdio"}else{"http"},"protocol":result.as_ref().ok().and_then(|c|c.protocol.clone()),"error_category":result.as_ref().err().map(connection_error_category)}),
+        );
+        result
+    }
+    async fn connect_inner(server: &McpServer, root: &Path) -> anyhow::Result<Self> {
         server.validate()?;
+        crate::diagnostics::emit(
+            "mcp",
+            "connection_started",
+            "info",
+            json!({"transport":if server.command.is_some(){"stdio"}else{"http"}}),
+        );
         let transport = if let Some(command) = &server.command {
             let mut c = tokio::process::Command::new(command);
             c.args(&server.args)
@@ -90,7 +124,7 @@ impl Connection {
                 .kill_on_drop(true)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null());
+                .stderr(std::process::Stdio::piped());
             for name in ["PATH", "HOME", "SYSTEMROOT", "TMPDIR"] {
                 if let Some(value) = std::env::var_os(name) {
                     c.env(name, value);
@@ -106,6 +140,18 @@ impl Connection {
             #[cfg(unix)]
             c.process_group(0);
             let mut child = c.spawn().context("Could not start MCP server")?;
+            if let Some(stderr) = child.stderr.take() {
+                crate::diagnostics::capture_stderr(
+                    stderr,
+                    "mcp",
+                    server
+                        .env
+                        .values()
+                        .chain(server.bearer_env.iter())
+                        .filter_map(|name| std::env::var(name).ok())
+                        .collect(),
+                );
+            }
             let input = child.stdin.take().context("Missing stdin")?;
             let output = BufReader::new(child.stdout.take().context("Missing stdout")?);
             Transport::Stdio {
@@ -136,6 +182,7 @@ impl Connection {
             transport,
             next_id: 1,
             protocol: None,
+            instructions: None,
         };
         let init=result.request("initialize",json!({"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"Themis","version":env!("CARGO_PKG_VERSION")}})).await?;
         if !matches!(
@@ -145,6 +192,15 @@ impl Connection {
             bail!("Unsupported MCP protocol version");
         }
         result.protocol = init["protocolVersion"].as_str().map(str::to_owned);
+        if let Some(instructions) = init.get("instructions") {
+            let instructions = instructions
+                .as_str()
+                .context("MCP instructions must be a string")?;
+            if instructions.len() > 32768 {
+                bail!("MCP instructions exceed 32768 bytes");
+            }
+            result.instructions = Some(instructions.to_owned());
+        }
         result
             .send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
             .await?;
@@ -180,6 +236,12 @@ impl Connection {
                 }
                 let mut response = request.send().await.context("MCP connection failed")?;
                 if !response.status().is_success() {
+                    crate::diagnostics::emit(
+                        "mcp",
+                        "http_failed",
+                        "warn",
+                        json!({"http_status":response.status().as_u16(),"error_category":if matches!(response.status().as_u16(),401|403){"authentication"}else{"remote_http"}}),
+                    );
                     bail!("MCP server returned HTTP {}", response.status());
                 }
                 if let Some(id) = response.headers().get("mcp-session-id") {
@@ -253,7 +315,7 @@ impl Connection {
                 bail!("Mismatched MCP response id");
             }
             if response.get("error").is_some() {
-                bail!("MCP request failed");
+                return Err(RequestRejected.into());
             }
             response
                 .get("result")
@@ -272,6 +334,21 @@ impl Connection {
         }
     }
     pub async fn tools(&mut self) -> anyhow::Result<Vec<Value>> {
+        let started = std::time::Instant::now();
+        let result = self.tools_inner().await;
+        crate::diagnostics::emit(
+            "mcp",
+            if result.is_ok() {
+                "tools_discovered"
+            } else {
+                "discovery_failed"
+            },
+            if result.is_ok() { "info" } else { "warn" },
+            json!({"duration_ms":started.elapsed().as_millis(),"tool_count":result.as_ref().map_or(0,Vec::len),"error_category":result.as_ref().err().map(connection_error_category)}),
+        );
+        result
+    }
+    async fn tools_inner(&mut self) -> anyhow::Result<Vec<Value>> {
         let mut tools = vec![];
         let mut cursor = None;
         for _ in 0..20 {
@@ -308,6 +385,7 @@ struct McpTool {
     description: String,
     schema: Value,
     connection: Arc<tokio::sync::Mutex<Connection>>,
+    healthy: Arc<std::sync::atomic::AtomicBool>,
     approvals: Arc<dyn ApprovalHook>,
 }
 impl std::fmt::Debug for McpTool {
@@ -332,7 +410,13 @@ impl ToolRuntime for McpTool {
             .await
             .request("tools/call", json!({"name":self.remote,"arguments":args}))
             .await
-            .map_err(|e| ToolCallError::RuntimeError(e.to_string().into()))?;
+            .map_err(|e| {
+                if !e.is::<RequestRejected>() {
+                    self.healthy
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+                ToolCallError::RuntimeError(e.to_string().into())
+            })?;
         if result["isError"] == true {
             return Err(ToolCallError::RuntimeError(
                 "MCP tool reported an error".into(),
@@ -355,13 +439,20 @@ impl ToolT for McpTool {
         None
     }
 }
+pub type McpTools = (Vec<Box<dyn ToolT>>, Option<String>);
+
 pub async fn tools(
     name: &str,
     server: &McpServer,
     root: &Path,
     approvals: Arc<dyn ApprovalHook>,
-) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
-    let action = ToolAction {
+) -> anyhow::Result<McpTools> {
+    authorize_start(name, server, approvals.as_ref())?;
+    Session::connect(server, root).await?.tools(name, approvals)
+}
+
+pub fn startup_action(name: &str, server: &McpServer) -> anyhow::Result<ToolAction> {
+    Ok(ToolAction {
         tool: format!("mcp_start_{name}"),
         summary: format!(
             "Connect MCP server: {} {:?}",
@@ -377,29 +468,129 @@ pub async fn tools(
         } else {
             RiskLevel::Network
         },
-    };
+    })
+}
+
+pub fn authorize_start(
+    name: &str,
+    server: &McpServer,
+    approvals: &dyn ApprovalHook,
+) -> anyhow::Result<()> {
+    let action = startup_action(name, server)?;
     if approvals.approve(&action) == crate::tools::Approval::Deny {
+        crate::diagnostics::emit("mcp", "startup_denied", "warn", json!({"server":name}));
         bail!("MCP startup denied");
     }
-    let mut connection = Connection::connect(server, root).await?;
-    let metadata = connection.tools().await?;
-    let connection = Arc::new(tokio::sync::Mutex::new(connection));
-    let mut result: Vec<Box<dyn ToolT>> = vec![];
-    for tool in metadata {
-        let remote = tool["name"].as_str().context("MCP tool has no name")?;
-        if !super::safe_name(remote) {
-            bail!("Unsupported MCP tool name");
+    Ok(())
+}
+
+/// A reusable transport; tool approval hooks remain specific to each run.
+pub struct Session {
+    connection: Arc<tokio::sync::Mutex<Connection>>,
+    metadata: Vec<Value>,
+    instructions: Option<String>,
+    healthy: Arc<std::sync::atomic::AtomicBool>,
+}
+impl Session {
+    pub async fn connect(server: &McpServer, root: &Path) -> anyhow::Result<Self> {
+        crate::diagnostics::emit("mcp", "setup_started", "info", json!({}));
+        let mut connection = Connection::connect(server, root).await.inspect_err(|error| {
+            crate::diagnostics::emit("mcp", "setup_failed", "warn", json!({"stage":"initialization","error_category":connection_error_category(error)}));
+        })?;
+        let metadata = connection.tools().await.inspect_err(|error| {
+            crate::diagnostics::emit(
+                "mcp",
+                "setup_failed",
+                "warn",
+                json!({"stage":"tool_discovery","error_category":connection_error_category(error)}),
+            );
+        })?;
+        for tool in &metadata {
+            if !tool["name"].as_str().is_some_and(super::safe_name) {
+                bail!("Unsupported MCP tool name");
+            }
         }
-        result.push(Box::new(McpTool {
-            name: format!("mcp_{}", tool_identity(name, remote)),
-            remote: remote.into(),
-            description: tool["description"].as_str().unwrap_or("MCP tool").into(),
-            schema: tool["inputSchema"].clone(),
-            connection: connection.clone(),
-            approvals: approvals.clone(),
-        }));
+        crate::diagnostics::emit(
+            "mcp",
+            "setup_completed",
+            "info",
+            json!({"tool_count":metadata.len()}),
+        );
+        Ok(Self {
+            instructions: connection.instructions.clone(),
+            connection: Arc::new(tokio::sync::Mutex::new(connection)),
+            metadata,
+            healthy: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        })
     }
-    Ok(result)
+    pub fn tool_summaries(&self) -> Vec<Value> {
+        self.metadata.iter().map(|tool| json!({"name":tool["name"], "description":tool["description"].as_str().unwrap_or("")})).collect()
+    }
+    pub fn is_connected(&self) -> bool {
+        if let Ok(mut connection) = self.connection.try_lock() {
+            if let Transport::Stdio { child, .. } = &mut connection.transport {
+                if !matches!(child.try_wait(), Ok(None)) {
+                    self.healthy
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+        self.healthy.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    /// Caller must authorize startup before obtaining the session. Calls still
+    /// consult the supplied run's approval hook individually.
+    pub fn tools(&self, name: &str, approvals: Arc<dyn ApprovalHook>) -> anyhow::Result<McpTools> {
+        if !self.is_connected() {
+            bail!("MCP connection closed; reconnect it from Integrations");
+        }
+        let tools = self
+            .metadata
+            .iter()
+            .map(|tool| {
+                let remote = tool["name"].as_str().expect("validated tool name");
+                Box::new(McpTool {
+                    name: format!("mcp_{}", tool_identity(name, remote)),
+                    remote: remote.into(),
+                    description: tool["description"].as_str().unwrap_or("MCP tool").into(),
+                    schema: tool["inputSchema"].clone(),
+                    connection: self.connection.clone(),
+                    healthy: self.healthy.clone(),
+                    approvals: approvals.clone(),
+                }) as Box<dyn ToolT>
+            })
+            .collect();
+        Ok((tools, self.instructions.clone()))
+    }
+}
+
+fn connection_error_category(error: &anyhow::Error) -> &'static str {
+    if let Some(error) = error.downcast_ref::<reqwest::Error>() {
+        if error.is_timeout() {
+            return "timeout";
+        }
+        if error.is_connect() {
+            return "transport";
+        }
+    }
+    let message = error.to_string();
+    if message.starts_with("MCP server returned HTTP 401")
+        || message.starts_with("MCP server returned HTTP 403")
+    {
+        return "authentication";
+    }
+    if message.starts_with("MCP server returned HTTP ") {
+        return "remote_http";
+    }
+    match message.as_str() {
+        "Could not start MCP server" => "process_start",
+        "Required MCP environment variable is unset" | "MCP authentication variable is unset" => {
+            "missing_environment"
+        }
+        "Unsupported MCP protocol version" => "unsupported_protocol",
+        "MCP request timed out" => "timeout",
+        "Missing MCP tools" | "MCP tool list exceeds limit" => "invalid_tool_list",
+        _ => "connection_or_protocol",
+    }
 }
 
 pub fn tool_identity(namespace: &str, component: &str) -> String {

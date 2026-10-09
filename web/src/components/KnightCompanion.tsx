@@ -52,10 +52,14 @@ export function KnightControl({ preferences, onChange }: { preferences: Companio
   </div>;
 }
 
-export function KnightLoading({ variant, status }: { variant: KnightVariant; status: string }) {
+export function KnightLoading({ variant, status, progress, progressLabel = "Loading" }: { variant: KnightVariant; status: string; progress?: number; progressLabel?: string }) {
   const [look, setLook] = useState(0);
-  return <div className="themis-knight-loading" aria-busy="true" onPointerMove={event => setLook(Math.max(-4, Math.min(4, (event.clientX - event.currentTarget.clientWidth / 2) / 80)))} onPointerLeave={() => setLook(0)}>
+  return <div className="themis-knight-loading" aria-busy="true" onPointerMove={event => setLook(Math.max(-4, Math.min(4, (event.clientX - event.currentTarget.getBoundingClientRect().left - event.currentTarget.clientWidth / 2) / 80)))} onPointerLeave={() => setLook(0)}>
+    <div className="themis-knight-progress">
+    <svg className={progress === undefined ? "is-indeterminate" : ""} viewBox="0 0 180 180" role="progressbar" aria-label={progressLabel} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><circle className="themis-progress-track" cx="90" cy="90" r="84" /><circle className="themis-progress-value" cx="90" cy="90" r="84" pathLength="100" strokeDasharray={`${progress ?? 25} 100`} /></svg>
     <button type="button" className="themis-knight-wake" aria-label={`Wake ${knights[variant].name}`} onClick={() => setLook(value => value === 0 ? 4 : -value)} style={{ "--knight-gaze": `${look}px` } as CSSProperties}><KnightArtwork variant={variant} mood="working" /></button>
+    </div>
+    {progress !== undefined && <strong className="themis-loading-percent">{progress}%</strong>}
     <span className="themis-wordmark">Themis</span><p role="status">{status}</p>
   </div>;
 }

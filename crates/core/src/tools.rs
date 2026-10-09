@@ -22,12 +22,12 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use autoagents::async_trait;
+pub use autoagents::async_trait;
 use autoagents_derive::{tool, ToolInput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use autoagents::core::tool::ToolCallError;
+pub use autoagents::core::tool::ToolCallError;
 pub use autoagents::core::tool::{ToolRuntime, ToolT};
 pub use autoagents_toolkit::tools::filesystem::{
     CopyFile, CreateDir, DeleteFile, ListDir, MoveFile, ReadFile, SearchFile, WriteFile,
@@ -50,6 +50,61 @@ pub enum RiskLevel {
     Network,
     /// Irreversible or hard-to-reverse (recursive delete, force push, ...).
     Destructive,
+}
+
+/// Management tools carry distinct approvals for reads, changes and executable tests.
+pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
+    if !matches!(
+        name,
+        "list_plugins" | "save_skill" | "manage_integrations" | "manage_automations"
+    ) {
+        return None;
+    }
+    let action = match name {
+        "save_skill" => "save_skill",
+        "list_plugins" => "list",
+        _ => args["action"].as_str().unwrap_or("list"),
+    };
+    Some(match action {
+        "list" | "marketplaces" => RiskLevel::Read,
+        "catalog"
+        | "preview"
+        | "install"
+        | "update"
+        | "scan_marketplace"
+        | "add_marketplace"
+        | "inspect_marketplace"
+        | "inspect_repository"
+            if name == "manage_integrations" =>
+        {
+            RiskLevel::Network
+        }
+        "import_repository" | "preview_repository" => RiskLevel::Network,
+        "test_hook" => RiskLevel::Execute,
+        "test_mcp" if args["server"]["command"].is_string() => RiskLevel::Execute,
+        "test_mcp" => RiskLevel::Network,
+        "delete" | "remove_marketplace" | "remove_component" => RiskLevel::Destructive,
+        _ => RiskLevel::Write,
+    })
+}
+
+pub fn integration_approval_identity(name: &str, args: &Value) -> String {
+    if matches!(name, "manage_integrations" | "manage_automations") {
+        use std::hash::{Hash, Hasher};
+        let action = args["action"].as_str().unwrap_or("list");
+        let mut definition = std::collections::hash_map::DefaultHasher::new();
+        if matches!(action, "test_hook" | "test_mcp") {
+            args.to_string().hash(&mut definition);
+        }
+        format!(
+            "{}_{action}_{:?}_{:016x}",
+            name,
+            integration_risk(name, args),
+            definition.finish()
+        )
+    } else {
+        name.into()
+    }
 }
 
 /// A single proposed action awaiting an approval decision.
@@ -174,7 +229,7 @@ fn take_dispatch_permit() -> bool {
 /// All in-`execute` approval checks must use this (never `check_approval`
 /// directly) so agent-driven calls prompt exactly once while direct
 /// `execute` calls stay fully gated.
-pub(crate) fn check_approval_permitted(
+pub fn check_approval_permitted(
     hook: &dyn ApprovalHook,
     action: &ToolAction,
 ) -> Result<(), ToolCallError> {
@@ -201,9 +256,9 @@ pub type SummaryFn = fn(&str, &Value) -> String;
 /// Wraps a third-party [`ToolT`] whose `execute` never consults our
 /// [`ApprovalHook`] so every call is approval-gated first.
 ///
-/// Metadata (`name`, `description`, `args_schema`, `output_schema`) delegates
-/// to the inner tool, so wrapping is transparent to tool listings, skill
-/// filters, and LLM bindings. `execute` builds a [`ToolAction`] from the
+/// Metadata delegates to the inner tool except `read_file`, whose schema and
+/// description also expose bounded reads. Tool names stay unchanged for skill
+/// filters and LLM bindings. `execute` builds a [`ToolAction`] from the
 /// inner name, `risk`, and `summarize`, consults the hook (`AllowOnce` /
 /// `AllowAlways` proceed; `Deny` fails with an approval-mentioning error),
 /// then delegates to the inner tool.
@@ -216,6 +271,7 @@ pub struct GatedTool {
     approvals: Arc<dyn ApprovalHook>,
     risk: RiskLevel,
     summarize: SummaryFn,
+    relative_root: Option<PathBuf>,
 }
 
 impl GatedTool {
@@ -226,6 +282,7 @@ impl GatedTool {
             approvals,
             risk,
             summarize: summarize_fs_call,
+            relative_root: None,
         }
     }
 
@@ -241,7 +298,14 @@ impl GatedTool {
             approvals,
             risk,
             summarize,
+            relative_root: None,
         }
+    }
+
+    /// Preserve project-relative paths when the underlying tool can access the filesystem.
+    pub fn with_relative_root(mut self, root: PathBuf) -> Self {
+        self.relative_root = Some(root);
+        self
     }
 
     /// The risk level this wrapper gates under.
@@ -265,11 +329,22 @@ impl ToolT for GatedTool {
     }
 
     fn description(&self) -> &str {
-        self.inner.description()
+        if self.inner.name() == "read_file" {
+            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record searches decoded original User/Tool fields when present, without falling back to Assistant navigation. For secondary navigation in a mixed snapshot, explicitly select its jsonl_record; Assistant-only notes remain searchable and carry a navigation warning. Continue using the returned jsonl_record and next_offset. These modes return at most 4000 content characters with provenance and next_offset. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. Omitting these options preserves whole-file reading."
+        } else {
+            self.inner.description()
+        }
     }
 
     fn args_schema(&self) -> Value {
-        self.inner.args_schema()
+        let mut schema = self.inner.args_schema();
+        if self.inner.name() == "read_file" {
+            schema["properties"]["jsonl_record"] = serde_json::json!({"type":"integer","minimum":1,"description":"One-based JSONL record; decode it before reading"});
+            schema["properties"]["json_pointer"] = serde_json::json!({"type":"string","description":"String field within selected JSONL record; default /content, e.g. /message_type/ToolResult/0/function/arguments"});
+            schema["properties"]["offset"] = serde_json::json!({"type":"integer","minimum":0,"description":"Start character for paging or searching; use returned next_offset to continue"});
+            schema["properties"]["find"] = serde_json::json!({"type":"string","minLength":1,"description":"Exact case-sensitive literal; returns surrounding text and next_offset for the next match"});
+        }
+        schema
     }
 
     fn output_schema(&self) -> Option<Value> {
@@ -280,6 +355,23 @@ impl ToolT for GatedTool {
 #[async_trait]
 impl ToolRuntime for GatedTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let mut args = args;
+        if let Some(root) = &self.relative_root {
+            for key in [
+                "path",
+                "file_path",
+                "directory_path",
+                "source_path",
+                "destination_path",
+                "directory",
+            ] {
+                if let Some(path) = args.get(key).and_then(Value::as_str) {
+                    if !Path::new(path).is_absolute() {
+                        args[key] = Value::String(root.join(path).to_string_lossy().into_owned());
+                    }
+                }
+            }
+        }
         let name = self.inner.name();
         let action = ToolAction {
             tool: name.to_owned(),
@@ -287,8 +379,185 @@ impl ToolRuntime for GatedTool {
             risk: self.risk,
         };
         check_approval_permitted(self.approvals.as_ref(), &action)?;
-        self.inner.execute(args).await
+        if name == "read_file"
+            && ["jsonl_record", "json_pointer", "offset", "find"]
+                .iter()
+                .any(|key| args.get(key).is_some())
+        {
+            let result = self.inner.execute(args.clone()).await?;
+            bounded_read_result(&args, result)
+        } else {
+            self.inner.execute(args).await
+        }
     }
+}
+
+/// Bound existing authorized reads; path resolution stays in the filesystem tool.
+// ponytail: the underlying tool still loads the whole file; stream records if archive memory use becomes a problem.
+fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCallError> {
+    let invalid = |message: &str| ToolCallError::RuntimeError(message.to_owned().into());
+    let number = |key: &str, default| -> Result<usize, ToolCallError> {
+        match args.get(key) {
+            None => Ok(default),
+            Some(value) => value
+                .as_u64()
+                .and_then(|v| v.try_into().ok())
+                .ok_or_else(|| invalid("Read offsets/record numbers must be nonnegative integers")),
+        }
+    };
+    let mut text = result["content"]
+        .as_str()
+        .ok_or_else(|| invalid("File content is not text"))?
+        .to_owned();
+    let offset = number("offset", 0)?;
+    let needle = args
+        .get("find")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| invalid("find must be a nonempty string"))
+        })
+        .transpose()?;
+    let pointer = match args.get("json_pointer") {
+        None => "/content",
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| invalid("json_pointer must be a string"))?,
+    };
+    if needle.is_some() {
+        result["find"] = serde_json::to_value(needle)?;
+        result["match_count"] = 0.into();
+        result["last_match_offset"] = Value::Null;
+    }
+    let record = if args.get("jsonl_record").is_some() {
+        Some(number("jsonl_record", 0)?)
+    } else if let Some(needle) = needle.filter(|_| {
+        result["path"]
+            .as_str()
+            .is_some_and(|p| p.ends_with(".jsonl"))
+    }) {
+        let records = text
+            .lines()
+            .map(serde_json::from_str::<Value>)
+            .collect::<Result<Vec<_>, _>>()?;
+        result["total_records"] = records.len().into();
+        let originals = records.iter().any(|record| {
+            matches!(record["role"].as_str(), Some("User" | "Tool"))
+                && record.pointer(pointer).is_some_and(Value::is_string)
+        });
+        let matched = records.iter().enumerate().find(|(_, record)| {
+            (!originals || matches!(record["role"].as_str(), Some("User" | "Tool")))
+                && record
+                    .pointer(pointer)
+                    .and_then(Value::as_str)
+                    .is_some_and(|field| {
+                        let byte = field
+                            .char_indices()
+                            .nth(offset)
+                            .map_or(field.len(), |(n, _)| n);
+                        field[byte..].contains(needle)
+                    })
+        });
+        if let Some((index, _)) = matched {
+            Some(index + 1)
+        } else {
+            result["content"] = "".into();
+            result["found"] = false.into();
+            result["next_offset"] = Value::Null;
+            let scope = if originals {
+                "Original User/Tool"
+            } else {
+                "All"
+            };
+            result["search_scope"] =
+                format!("{scope} JSONL records at {pointer}, after character {offset}").into();
+            return Ok(result);
+        }
+    } else {
+        None
+    };
+    if let Some(record) = record {
+        result["total_records"] = text.lines().count().into();
+        let line = record
+            .checked_sub(1)
+            .and_then(|n| text.lines().nth(n))
+            .ok_or_else(|| {
+                let available = text.lines().take(8).enumerate().map(|(index, line)| {
+                    let decoded = serde_json::from_str::<Value>(line).unwrap_or(Value::Null);
+                    let role = decoded["role"].as_str()
+                        .filter(|role| matches!(*role, "User" | "Assistant" | "Tool" | "System"))
+                        .unwrap_or("Unknown");
+                    serde_json::json!({"record":index + 1,"role":role})
+                }).collect::<Vec<_>>();
+                invalid(&format!("JSONL record {record} does not exist (record numbers start at 1). Total records: {}. First up to 8 records: {}. Retry with an available record, or omit jsonl_record and use find to search decoded records; Assistant records are navigation, not original evidence.", text.lines().count(), serde_json::json!(available)))
+            })?;
+        let decoded: Value = serde_json::from_str(line)?;
+        text = decoded
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("Selected JSONL field is missing or is not a string"))?
+            .to_owned();
+        result["jsonl_record"] = record.into();
+        result["json_pointer"] = pointer.into();
+        result["record_role"] = decoded["role"].clone();
+        if decoded["role"] == "Assistant" {
+            result["evidence_warning"] = "Assistant navigation, not original evidence. Follow source references and verify claims in User/Tool records before citing.".into();
+            result["navigation_header"] = text
+                .lines()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join("\n")
+                .chars()
+                .take(1000)
+                .collect::<String>()
+                .into();
+        }
+    } else if args.get("json_pointer").is_some() {
+        return Err(invalid("json_pointer requires jsonl_record"));
+    }
+    let total = text.chars().count();
+    if offset > total {
+        return Err(invalid("Read offset exceeds text length"));
+    }
+    let mut start = offset;
+    let mut next = None;
+    let mut found = true;
+    if let Some(needle) = needle {
+        let byte = text
+            .char_indices()
+            .nth(offset)
+            .map_or(text.len(), |(n, _)| n);
+        let mut matches = text[byte..].match_indices(needle);
+        if let Some((index, _)) = matches.next() {
+            let (count, last) =
+                matches.fold((1usize, index), |(count, _), (index, _)| (count + 1, index));
+            let matched = offset + text[byte..byte + index].chars().count();
+            result["match_offset"] = matched.into();
+            result["match_count"] = count.into();
+            result["last_match_offset"] = (offset + text[byte..byte + last].chars().count()).into();
+            start = matched.saturating_sub(200);
+            next = Some(matched + needle.chars().count());
+        } else {
+            found = false;
+        }
+    }
+    let excerpt: String = if found {
+        text.chars().skip(start).take(4000).collect()
+    } else {
+        String::new()
+    };
+    let end = start + excerpt.chars().count();
+    if args.get("find").is_none() && end < total {
+        next = Some(end);
+    }
+    result["content"] = excerpt.into();
+    result["found"] = found.into();
+    result["excerpt_offset"] = start.into();
+    result["total_chars"] = total.into();
+    result["next_offset"] = serde_json::to_value(next)?;
+    result["truncated"] = (found && end < total).into();
+    Ok(result)
 }
 
 /// One-line summary for filesystem toolkit calls.
@@ -414,6 +683,54 @@ pub fn resolve_within_root(root: &Path, user_path: &str) -> anyhow::Result<PathB
         .strip_prefix(&root_canon)
         .map_err(|_| anyhow::anyhow!("path '{user_path}' escapes the project root"))?;
     Ok(resolved)
+}
+
+fn resolve_tool_path(root: &Path, path: &str, unrestricted: bool) -> anyhow::Result<PathBuf> {
+    if !unrestricted {
+        return resolve_within_root(root, path);
+    }
+    let absolute = root.join(path);
+    let filesystem_root = root
+        .ancestors()
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("filesystem root unavailable"))?;
+    resolve_within_root(filesystem_root, &absolute.to_string_lossy())
+}
+fn plan_tool_patch(
+    root: &Path,
+    patch: &str,
+    unrestricted: bool,
+) -> anyhow::Result<Vec<patch::PlannedFile>> {
+    if !unrestricted {
+        return plan_patch(root, patch);
+    }
+    let mut normalized = String::new();
+    for line in patch.lines() {
+        if let Some((prefix, path, strip)) = line
+            .strip_prefix("--- ")
+            .map(|p| ("--- ", p, "a/"))
+            .or_else(|| line.strip_prefix("+++ ").map(|p| ("+++ ", p, "b/")))
+        {
+            normalized.push_str(prefix);
+            if path == "/dev/null" {
+                normalized.push_str(path);
+            } else {
+                normalized.push_str(
+                    &resolve_tool_path(root, path.strip_prefix(strip).unwrap_or(path), true)?
+                        .to_string_lossy(),
+                );
+            }
+        } else {
+            normalized.push_str(line);
+        }
+        normalized.push('\n');
+    }
+    plan_patch(
+        root.ancestors()
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("filesystem root unavailable"))?,
+        &normalized,
+    )
 }
 
 /// Collapse `.` and `..` lexically (no filesystem access).
@@ -689,6 +1006,7 @@ pub struct ShellTool {
     root: PathBuf,
     approvals: Arc<dyn ApprovalHook>,
     timeout: Duration,
+    unrestricted: bool,
 }
 
 impl ShellTool {
@@ -698,7 +1016,13 @@ impl ShellTool {
             root,
             approvals,
             timeout: Duration::from_secs(SHELL_TIMEOUT_SECS),
+            unrestricted: false,
         }
+    }
+
+    pub fn with_unrestricted_paths(mut self, unrestricted: bool) -> Self {
+        self.unrestricted = unrestricted;
+        self
     }
 
     /// Override the execution timeout (tests use a short budget).
@@ -731,8 +1055,8 @@ impl ToolRuntime for ShellTool {
         } else {
             cwd.as_str()
         };
-        let workdir =
-            resolve_within_root(&self.root, dir).map_err(|e| tool_error(format!("shell: {e}")))?;
+        let workdir = resolve_tool_path(&self.root, dir, self.unrestricted)
+            .map_err(|e| tool_error(format!("shell: {e}")))?;
         if !workdir.is_dir() {
             return Err(tool_error(format!(
                 "shell: working directory '{}' is not a directory",
@@ -789,12 +1113,21 @@ pub struct ApplyPatchArgs {
 pub struct ApplyPatchTool {
     root: PathBuf,
     approvals: Arc<dyn ApprovalHook>,
+    unrestricted: bool,
 }
 
 impl ApplyPatchTool {
+    pub fn with_unrestricted_paths(mut self, unrestricted: bool) -> Self {
+        self.unrestricted = unrestricted;
+        self
+    }
     /// Create an apply-patch tool rooted at `root`.
     pub fn new(root: PathBuf, approvals: Arc<dyn ApprovalHook>) -> Self {
-        Self { root, approvals }
+        Self {
+            root,
+            approvals,
+            unrestricted: false,
+        }
     }
 
     /// The project root this tool is scoped to.
@@ -808,8 +1141,8 @@ impl ToolRuntime for ApplyPatchTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let ApplyPatchArgs { patch } = serde_json::from_value(args)?;
         // Plan first (validates every path and hunk), approve, then commit.
-        let plan =
-            plan_patch(&self.root, &patch).map_err(|e| tool_error(format!("apply_patch: {e}")))?;
+        let plan = plan_tool_patch(&self.root, &patch, self.unrestricted)
+            .map_err(|e| tool_error(format!("apply_patch: {e}")))?;
         let summary = if plan.is_empty() {
             "apply empty patch (no changes)".to_string()
         } else {
@@ -874,12 +1207,21 @@ pub struct GitArgs {
 pub struct GitTool {
     root: PathBuf,
     approvals: Arc<dyn ApprovalHook>,
+    unrestricted: bool,
 }
 
 impl GitTool {
+    pub fn with_unrestricted_commands(mut self, unrestricted: bool) -> Self {
+        self.unrestricted = unrestricted;
+        self
+    }
     /// Create a git tool rooted at `root`.
     pub fn new(root: PathBuf, approvals: Arc<dyn ApprovalHook>) -> Self {
-        Self { root, approvals }
+        Self {
+            root,
+            approvals,
+            unrestricted: false,
+        }
     }
 
     /// The project root this tool is scoped to.
@@ -898,7 +1240,26 @@ impl ToolRuntime for GitTool {
         let root =
             resolve_within_root(&self.root, ".").map_err(|e| tool_error(format!("git: {e}")))?;
         match subcommand {
-            "status" | "diff" | "log" | "show" => {}
+            _ if self.unrestricted => {
+                check_approval_permitted(
+                    self.approvals.as_ref(),
+                    &ToolAction {
+                        tool: "git".into(),
+                        summary: format!("run git {}", args.join(" ")),
+                        risk: RiskLevel::Execute,
+                    },
+                )?;
+            }
+            "status" | "diff" | "log" | "show" => {
+                check_approval_permitted(
+                    self.approvals.as_ref(),
+                    &ToolAction {
+                        tool: "git".into(),
+                        summary: format!("run git {}", args.join(" ")),
+                        risk: RiskLevel::Read,
+                    },
+                )?;
+            }
             "add" | "commit" | "checkout" | "branch" => {
                 check_approval_permitted(
                     self.approvals.as_ref(),
@@ -978,56 +1339,103 @@ pub fn boxed_tools(
     root: &Path,
     approvals: Arc<dyn ApprovalHook>,
 ) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
+    boxed_tools_with_mode(root, approvals, false)
+}
+
+/// YOLO removes workspace and git-command restrictions; relative paths retain project semantics.
+pub fn boxed_tools_with_mode(
+    root: &Path,
+    approvals: Arc<dyn ApprovalHook>,
+    yolo: bool,
+) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
     let canonical = root
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("project root '{}' is not accessible: {e}", root.display()))?;
     let root_string = canonical.to_string_lossy().into_owned();
     let gate = |tool: Box<dyn ToolT>, risk: RiskLevel| -> Box<dyn ToolT> {
-        Box::new(GatedTool::new(tool, Arc::clone(&approvals), risk))
+        let tool = GatedTool::new(tool, Arc::clone(&approvals), risk);
+        Box::new(if yolo {
+            tool.with_relative_root(canonical.clone())
+        } else {
+            tool
+        })
     };
     let mut tools: Vec<Box<dyn ToolT>> = vec![
         gate(
-            Box::new(ListDir::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                ListDir::new_unrestricted()
+            } else {
+                ListDir::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Read,
         ),
         gate(
-            Box::new(ReadFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                ReadFile::new_unrestricted()
+            } else {
+                ReadFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Read,
         ),
         gate(
-            Box::new(WriteFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                WriteFile::new_unrestricted()
+            } else {
+                WriteFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Write,
         ),
         gate(
-            Box::new(CopyFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                CopyFile::new_unrestricted()
+            } else {
+                CopyFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Write,
         ),
         gate(
-            Box::new(MoveFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                MoveFile::new_unrestricted()
+            } else {
+                MoveFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Write,
         ),
         gate(
-            Box::new(DeleteFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                DeleteFile::new_unrestricted()
+            } else {
+                DeleteFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Destructive,
         ),
         gate(
-            Box::new(CreateDir::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                CreateDir::new_unrestricted()
+            } else {
+                CreateDir::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Write,
         ),
         gate(
-            Box::new(SearchFile::new_with_root_dir(root_string.clone())),
+            Box::new(if yolo {
+                SearchFile::new_unrestricted(100)
+            } else {
+                SearchFile::new_with_root_dir(root_string.clone())
+            }),
             RiskLevel::Read,
         ),
     ];
-    tools.push(Box::new(ShellTool::new(
-        canonical.clone(),
-        Arc::clone(&approvals),
-    )));
-    tools.push(Box::new(ApplyPatchTool::new(
-        canonical.clone(),
-        Arc::clone(&approvals),
-    )));
-    tools.push(Box::new(GitTool::new(canonical, approvals)));
+    tools.push(Box::new(
+        ShellTool::new(canonical.clone(), Arc::clone(&approvals)).with_unrestricted_paths(yolo),
+    ));
+    tools.push(Box::new(
+        ApplyPatchTool::new(canonical.clone(), Arc::clone(&approvals))
+            .with_unrestricted_paths(yolo),
+    ));
+    tools.push(Box::new(
+        GitTool::new(canonical, approvals).with_unrestricted_commands(yolo),
+    ));
     Ok(tools)
 }
 
@@ -1159,6 +1567,228 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_record_guides_original_recovery() {
+        let (_tmp, root) = rooted_case();
+        let original = format!(
+            "{}\n{}\n",
+            json!({"role":"User","content":"Early original 🔎 RETAIN-753"}),
+            json!({"role":"Assistant","content":"Navigation only"})
+        );
+        fs::write(root.join("early.jsonl"), &original).unwrap();
+        let tools = boxed_tools(&root, Arc::new(RecordingHook::new(Approval::AllowOnce))).unwrap();
+        let tool = find_tool(&tools, "read_file");
+        let error = tool
+            .execute(json!({"file_path":"early.jsonl","jsonl_record":3,"find":"Early original"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Total records: 2"), "{error}");
+        assert!(error.contains(r#"{"record":1,"role":"User"}"#), "{error}");
+        assert!(error.contains("omit jsonl_record"), "{error}");
+        assert!(
+            !error.contains("RETAIN-753"),
+            "record metadata must not expose content"
+        );
+        let recovered = tool
+            .execute(json!({"file_path":"early.jsonl","find":"Early original"}))
+            .await
+            .unwrap();
+        assert_eq!(recovered["jsonl_record"], 1);
+        assert_eq!(recovered["record_role"], "User");
+        assert!(recovered["content"]
+            .as_str()
+            .unwrap()
+            .contains("RETAIN-753"));
+        assert_eq!(
+            fs::read_to_string(root.join("early.jsonl")).unwrap(),
+            original
+        );
+        let many = (0..10)
+            .map(|_| {
+                json!({"role":"UNTRUSTED_ROLE_DO_NOT_ECHO","content":"PRIVATE_BODY"}).to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(root.join("many.jsonl"), many).unwrap();
+        let error = tool
+            .execute(json!({"file_path":"many.jsonl","jsonl_record":999}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("Total records: 10")
+                && error.contains(r#"{"record":8,"role":"Unknown"}"#)
+        );
+        assert!(!error.contains(r#"{"record":9"#));
+        assert!(!error.contains("UNTRUSTED_ROLE") && !error.contains("PRIVATE_BODY"));
+    }
+
+    #[tokio::test]
+    async fn bounded_read_decodes_originals_and_pages_without_shell_or_path_escape() {
+        let (_tmp, root) = rooted_case();
+        let original = format!(
+            "{}Original 🔎 instruction\nsecond line{}",
+            "é".repeat(5000),
+            "z".repeat(5000)
+        );
+        let dump = format!(
+            "{}\n{}\n",
+            json!({"role":"Assistant","content":format!("Navigation only\nSource: snapshot-original.jsonl\n{}Original 🔎 summary navigation", "x".repeat(5000))}),
+            json!({"role":"User","content":original})
+        );
+        fs::write(root.join("evidence.jsonl"), &dump).unwrap();
+        let hook = Arc::new(RecordingHook::new(Approval::AllowOnce));
+        let tools = boxed_tools(&root, hook.clone()).unwrap();
+        let tool = find_tool(&tools, "read_file");
+        assert!(tool.args_schema()["properties"]["jsonl_record"].is_object());
+        let result = tool
+            .execute(json!({"file_path":"evidence.jsonl","jsonl_record":2,"find":"Original 🔎"}))
+            .await
+            .unwrap();
+        assert_eq!(result["record_role"], "User");
+        assert_eq!(result["total_records"], 2);
+        assert_eq!(result["match_offset"], 5000);
+        let automatic = tool
+            .execute(json!({"file_path":"evidence.jsonl","find":"Original 🔎"}))
+            .await
+            .unwrap();
+        assert_eq!(automatic["record_role"], "User");
+        assert_eq!(automatic["jsonl_record"], 2);
+        assert!(automatic.get("evidence_warning").is_none());
+        let secondary_only = tool
+            .execute(json!({"file_path":"evidence.jsonl","find":"summary navigation"}))
+            .await
+            .unwrap();
+        assert_eq!(secondary_only["found"], false);
+        assert_eq!(secondary_only["content"], "");
+        assert!(secondary_only["search_scope"]
+            .as_str()
+            .unwrap()
+            .contains("Original User/Tool"));
+        let navigation = tool
+            .execute(
+                json!({"file_path":"evidence.jsonl","jsonl_record":1,"find":"summary navigation"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(navigation["record_role"], "Assistant");
+        assert!(navigation["evidence_warning"]
+            .as_str()
+            .unwrap()
+            .contains("not original evidence"));
+        assert_eq!(
+            navigation["navigation_header"],
+            "Navigation only\nSource: snapshot-original.jsonl"
+        );
+        assert!(!navigation["content"].as_str().unwrap().contains("Source:"));
+        fs::write(
+            root.join("notes.jsonl"),
+            json!({"role":"Assistant","content":"Navigation only\nsummary navigation"}).to_string(),
+        )
+        .unwrap();
+        let notes = tool
+            .execute(json!({"file_path":"notes.jsonl","find":"summary navigation"}))
+            .await
+            .unwrap();
+        assert_eq!(notes["found"], true);
+        assert_eq!(notes["record_role"], "Assistant");
+        assert!(notes["evidence_warning"]
+            .as_str()
+            .unwrap()
+            .contains("not original evidence"));
+        let missing = tool
+            .execute(json!({"file_path":"evidence.jsonl","find":"not present"}))
+            .await
+            .unwrap();
+        assert_eq!(missing["found"], false);
+        assert_eq!(missing["match_count"], 0);
+        assert_eq!(missing["last_match_offset"], Value::Null);
+        assert_eq!(missing["total_records"], 2);
+        assert!(missing["search_scope"]
+            .as_str()
+            .unwrap()
+            .contains("/content"));
+        assert!(automatic["content"]
+            .as_str()
+            .unwrap()
+            .contains("instruction\nsecond line"));
+        assert!(result["content"]
+            .as_str()
+            .unwrap()
+            .contains("instruction\nsecond line"));
+        assert!(result["content"].as_str().unwrap().chars().count() <= 4000);
+        let next = result["next_offset"].as_u64().unwrap();
+        let absent = tool.execute(json!({"file_path":"evidence.jsonl","jsonl_record":2,"find":"Original 🔎","offset":next})).await.unwrap();
+        assert_eq!(absent["found"], false);
+        assert_eq!(absent["content"], "");
+        let page = tool
+            .execute(json!({"file_path":"evidence.jsonl","jsonl_record":2,"offset":5000}))
+            .await
+            .unwrap();
+        assert!(page["content"].as_str().unwrap().starts_with("Original 🔎"));
+        assert_eq!(
+            tool.execute(json!({"file_path":"evidence.jsonl"}))
+                .await
+                .unwrap()["content"],
+            dump
+        );
+        for args in [
+            json!({"file_path":"../outside","offset":0}),
+            json!({"file_path":"evidence.jsonl","jsonl_record":0}),
+            json!({"file_path":"evidence.jsonl","offset":-1}),
+            json!({"file_path":"evidence.jsonl","find":""}),
+            json!({"file_path":"evidence.jsonl","json_pointer":"/content"}),
+            json!({"file_path":"evidence.jsonl","jsonl_record":2,"json_pointer":"/missing"}),
+            json!({"file_path":root.join("evidence.jsonl"),"offset":0}),
+        ] {
+            assert!(tool.execute(args).await.is_err());
+        }
+        assert!(hook
+            .seen()
+            .iter()
+            .all(|a| a.tool == "read_file" && a.risk == RiskLevel::Read));
+        assert_eq!(
+            fs::read_to_string(root.join("evidence.jsonl")).unwrap(),
+            dump
+        );
+        fs::write(root.join("tool.jsonl"), json!({"role":"Tool","content":"","message_type":{"ToolResult":[{"function":{"arguments":"Quoted 🔎 output\nverbatim"}}]}}).to_string()).unwrap();
+        let tool_result = tool.execute(json!({"file_path":"tool.jsonl","jsonl_record":1,"json_pointer":"/message_type/ToolResult/0/function/arguments"})).await.unwrap();
+        assert_eq!(tool_result["record_role"], "Tool");
+        assert_eq!(tool_result["content"], "Quoted 🔎 output\nverbatim");
+    }
+
+    #[tokio::test]
+    async fn bounded_find_exposes_later_unicode_matches() {
+        let (_tmp, root) = rooted_case();
+        fs::write(root.join("events.txt"), "é🔎 plan; later é🔎 done").unwrap();
+        let tools = boxed_tools(&root, Arc::new(RecordingHook::new(Approval::AllowOnce))).unwrap();
+        let tool = find_tool(&tools, "read_file");
+        let first = tool
+            .execute(json!({"file_path":"events.txt","find":"é🔎"}))
+            .await
+            .unwrap();
+        assert_eq!(first["match_count"], 2);
+        assert_eq!(first["match_offset"], 0);
+        assert_eq!(first["last_match_offset"], 15);
+        let later = tool
+            .execute(
+                json!({"file_path":"events.txt","find":"é🔎","offset":first["last_match_offset"]}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(later["match_count"], 1);
+        assert_eq!(later["match_offset"], 15);
+        assert_eq!(later["last_match_offset"], 15);
+        let absent = tool
+            .execute(json!({"file_path":"events.txt","find":"é🔎","offset":later["next_offset"]}))
+            .await
+            .unwrap();
+        assert_eq!(absent["match_count"], 0);
+        assert_eq!(absent["last_match_offset"], Value::Null);
+        assert_eq!(absent["found"], false);
+    }
+
+    #[tokio::test]
     async fn gated_delete_denied_under_deny_all() {
         let (_tmp, root) = rooted_case();
         let hook = Arc::new(RecordingHook::new(Approval::Deny));
@@ -1190,6 +1820,68 @@ mod tests {
             assert_eq!(action.tool, "delete_file");
             assert_eq!(action.risk, RiskLevel::Destructive);
         }
+    }
+
+    #[tokio::test]
+    async fn git_read_obeys_custom_deny_policy() {
+        let temporary = tempdir().unwrap();
+        let policy = crate::configuration::ApprovalPolicy {
+            default: crate::configuration::PolicyAction::Allow,
+            rules: vec![crate::configuration::ApprovalRule {
+                tool: "git".into(),
+                action: crate::configuration::PolicyAction::Deny,
+                risk: Some("read".into()),
+            }],
+        };
+        let approvals = crate::configuration::configured_hook(
+            crate::configuration::ApprovalMode::Custom,
+            policy,
+            allow_all(),
+        );
+        let git = GitTool::new(temporary.path().to_owned(), approvals);
+        let error = git.execute(json!({"args":["status"]})).await.unwrap_err();
+        assert!(error.to_string().contains("denied"));
+    }
+
+    #[tokio::test]
+    async fn yolo_accesses_external_files_preserving_relative_paths() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("project");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("inside.txt"), "inside").unwrap();
+        fs::write(temporary.path().join("outside.txt"), "outside").unwrap();
+        let tools = boxed_tools_with_mode(&root, allow_all(), true).unwrap();
+        let read = tools.iter().find(|t| t.name() == "read_file").unwrap();
+        let inside = read
+            .execute(json!({"file_path":"inside.txt"}))
+            .await
+            .unwrap();
+        assert_eq!(inside["content"], "inside");
+        let outside = read
+            .execute(json!({"file_path":"../outside.txt"}))
+            .await
+            .unwrap();
+        assert_eq!(outside["content"], "outside");
+        let shell = tools.iter().find(|t| t.name() == "shell").unwrap();
+        let result = shell
+            .execute(json!({"command":"pwd","cwd":".."}))
+            .await
+            .unwrap();
+        assert!(result["success"].as_bool().unwrap());
+        let patch = tools.iter().find(|t| t.name() == "apply_patch").unwrap();
+        patch.execute(json!({"patch":"--- a/../outside.txt\n+++ b/../outside.txt\n@@ -1 +1 @@\n-outside\n+changed\n"})).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(temporary.path().join("outside.txt")).unwrap(),
+            "changed\n"
+        );
+        let custom = boxed_tools_with_mode(&root, allow_all(), false).unwrap();
+        assert!(custom
+            .iter()
+            .find(|t| t.name() == "read_file")
+            .unwrap()
+            .execute(json!({"file_path":"../outside.txt"}))
+            .await
+            .is_err());
     }
 
     #[test]
@@ -1290,6 +1982,78 @@ mod tests {
         }
         assert!(!child_env_allowed("RANDOM_UNRELATED_VAR"));
         assert!(!child_env_allowed("SSH_AUTH_SOCK"));
+    }
+
+    #[test]
+    fn management_approvals_separate_read_mutation_and_changed_execution() {
+        assert_eq!(
+            integration_risk("save_skill", &json!({"action":"list"})),
+            Some(RiskLevel::Write)
+        );
+        assert_eq!(
+            integration_risk("manage_integrations", &json!({"action":"list"})),
+            Some(RiskLevel::Read)
+        );
+        for action in [
+            "scan_marketplace",
+            "add_marketplace",
+            "inspect_marketplace",
+            "inspect_repository",
+        ] {
+            assert_eq!(
+                integration_risk("manage_integrations", &json!({"action":action})),
+                Some(RiskLevel::Network)
+            );
+        }
+        // Cached catalog requests can still fetch when the source cache is absent.
+        assert_eq!(
+            integration_risk(
+                "manage_integrations",
+                &json!({"action":"catalog","refresh":false})
+            ),
+            Some(RiskLevel::Network)
+        );
+        // Preview does not install, but uncached sources can fetch repositories.
+        assert_eq!(
+            integration_risk(
+                "manage_integrations",
+                &json!({"action":"preview","refresh":false})
+            ),
+            Some(RiskLevel::Network)
+        );
+        assert_eq!(
+            integration_risk(
+                "manage_integrations",
+                &json!({"action":"preview_repository"})
+            ),
+            Some(RiskLevel::Network)
+        );
+        assert_eq!(
+            integration_risk("manage_integrations", &json!({"action":"delete"})),
+            Some(RiskLevel::Destructive)
+        );
+        assert_eq!(
+            integration_risk("manage_integrations", &json!({"action":"remove_component"})),
+            Some(RiskLevel::Destructive)
+        );
+        assert_eq!(
+            integration_risk("manage_integrations", &json!({"action":"test_hook"})),
+            Some(RiskLevel::Execute)
+        );
+        assert_ne!(
+            integration_approval_identity("manage_integrations", &json!({"action":"list"})),
+            integration_approval_identity("manage_integrations", &json!({"action":"save"}))
+        );
+        assert_ne!(
+            integration_approval_identity(
+                "manage_integrations",
+                &json!({"action":"test_hook","hook":{"command":"true"}})
+            ),
+            integration_approval_identity(
+                "manage_integrations",
+                &json!({"action":"test_hook","hook":{"command":":"}})
+            )
+        );
     }
 
     #[test]

@@ -78,6 +78,10 @@ async fn marketplace_import_keeps_resources_and_disables_executable_components()
     store
         .add_marketplace("fixture", repo.path().to_str().unwrap())
         .unwrap();
+    let preview = store.preview("fixture", "review").await.unwrap();
+    assert_eq!(preview.skills[0].instructions, "Check ownership.");
+    assert!(preview.files.contains_key("skills/rust/SKILL.md"));
+    assert!(!global.path().join("plugins/registry.json").exists());
     let imported = store.install("global", "fixture", "review").await.unwrap();
     assert_eq!(imported.spec.skills[0].instructions, "Check ownership.");
     assert!(!imported.spec.mcp["docs"].enabled);
@@ -126,25 +130,140 @@ async fn marketplace_import_keeps_resources_and_disables_executable_components()
     assert_eq!(store.list().unwrap()[0].revision, updated.revision);
 }
 
-#[tokio::test]
-async fn remote_mcp_initializes_lists_tools_and_denies_calls_before_transport() {
-    use themis_core::{
-        plugins::connections::{tools, McpServer},
-        tools::{Approval, ApprovalHook, ToolAction},
-    };
-    use wiremock::{
-        matchers::{body_partial_json, method},
-        Mock, MockServer, ResponseTemplate,
-    };
+async fn mcp_with_instructions(instructions: Option<serde_json::Value>) -> wiremock::MockServer {
+    use wiremock::{matchers::body_partial_json, Mock, MockServer, ResponseTemplate};
     let server = MockServer::start().await;
-    Mock::given(method("POST")).and(body_partial_json(json!({"method":"initialize"}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}}))).mount(&server).await;
+    let mut result = json!({"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}});
+    if let Some(instructions) = instructions {
+        result["instructions"] = instructions;
+    }
+    Mock::given(body_partial_json(json!({"method":"initialize"})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"jsonrpc":"2.0","id":1,"result":result})),
+        )
+        .mount(&server)
+        .await;
     Mock::given(body_partial_json(
         json!({"method":"notifications/initialized"}),
     ))
     .respond_with(ResponseTemplate::new(202))
     .mount(&server)
     .await;
-    Mock::given(body_partial_json(json!({"method":"tools/list"}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"search","description":"Search docs","inputSchema":{"type":"object","properties":{}}}]}}))).mount(&server).await;
+    Mock::given(body_partial_json(json!({"method":"tools/list"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"search","description":"Search docs","inputSchema":{"type":"object","properties":{}}}]}})))
+        .mount(&server).await;
+    server
+}
+
+#[tokio::test]
+async fn mcp_instructions_are_optional_and_bounded_in_bytes() {
+    use themis_core::{
+        plugins::connections::{tools, McpServer},
+        tools::AllowAllHook,
+    };
+    for instructions in [None, Some(String::new()), Some("é".repeat(16384))] {
+        let server =
+            mcp_with_instructions(instructions.clone().map(serde_json::Value::String)).await;
+        let root = tempfile::tempdir().unwrap();
+        let config = McpServer {
+            url: Some(server.uri()),
+            ..Default::default()
+        };
+        let (tools, guidance) = tools(
+            "docs",
+            &config,
+            root.path(),
+            std::sync::Arc::new(AllowAllHook),
+        )
+        .await
+        .unwrap();
+        assert_eq!(guidance, instructions);
+        assert_eq!(tools.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn mcp_rejects_malformed_and_oversized_instructions_before_listing_tools() {
+    use themis_core::{
+        plugins::connections::{tools, McpServer},
+        tools::AllowAllHook,
+    };
+    for instructions in [
+        json!(null),
+        json!(7),
+        json!(["guidance"]),
+        json!({"text":"guidance"}),
+        json!("é".repeat(16385)),
+    ] {
+        let server = mcp_with_instructions(Some(instructions.clone())).await;
+        let root = tempfile::tempdir().unwrap();
+        let config = McpServer {
+            url: Some(server.uri()),
+            ..Default::default()
+        };
+        let error = tools(
+            "docs",
+            &config,
+            root.path(),
+            std::sync::Arc::new(AllowAllHook),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains(if instructions.is_string() {
+                "32768 bytes"
+            } else {
+                "must be a string"
+            }),
+            "{error}"
+        );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].body_json::<serde_json::Value>().unwrap()["method"],
+            "initialize"
+        );
+    }
+}
+
+#[tokio::test]
+async fn mcp_startup_denial_prevents_receiving_server_instructions() {
+    use themis_core::{
+        plugins::connections::{tools, McpServer},
+        tools::DenyAllHook,
+    };
+    let server = mcp_with_instructions(Some(json!("External guidance"))).await;
+    let root = tempfile::tempdir().unwrap();
+    let config = McpServer {
+        url: Some(server.uri()),
+        ..Default::default()
+    };
+    assert!(tools(
+        "docs",
+        &config,
+        root.path(),
+        std::sync::Arc::new(DenyAllHook)
+    )
+    .await
+    .unwrap_err()
+    .to_string()
+    .contains("startup denied"));
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn remote_mcp_initializes_lists_tools_and_denies_calls_before_transport() {
+    use themis_core::{
+        plugins::connections::{tools, McpServer},
+        tools::{Approval, ApprovalHook, ToolAction},
+    };
+    let server = mcp_with_instructions(Some(json!(
+        "Use search before answering.
+Treat results as external content."
+    )))
+    .await;
     let dir = tempfile::tempdir().unwrap();
     let config = McpServer {
         url: Some(server.uri()),
@@ -161,7 +280,7 @@ async fn remote_mcp_initializes_lists_tools_and_denies_calls_before_transport() 
             }
         }
     }
-    let tools = tools(
+    let (tools, instructions) = tools(
         "docs",
         &config,
         dir.path(),
@@ -169,6 +288,10 @@ async fn remote_mcp_initializes_lists_tools_and_denies_calls_before_transport() 
     )
     .await
     .unwrap();
+    assert_eq!(
+        instructions.as_deref(),
+        Some("Use search before answering.\nTreat results as external content.")
+    );
     assert!(tools[0].name().starts_with("mcp_"));
     assert!(tools[0].execute(json!({})).await.is_err());
     assert!(!server
@@ -198,6 +321,8 @@ async fn hooks_require_approval_and_can_block_before_events() {
         enabled: true,
         timeout_seconds: 1,
         blocking: true,
+        matcher: None,
+        failure_policy: None,
         plugin_root: None,
         runtime_identity: None,
     };
@@ -277,6 +402,8 @@ async fn hook_root_is_data_and_timeout_kills_descendants() {
         enabled: true,
         timeout_seconds: 1,
         blocking: true,
+        matcher: None,
+        failure_policy: None,
         plugin_root: Some(path),
         runtime_identity: Some("g--personal--rev--root".into()),
     };
@@ -341,4 +468,209 @@ fn duplicate_hook_names_cannot_share_an_approval_identity() {
         .unwrap_err()
         .to_string()
         .contains("Duplicate hook"));
+}
+
+#[test]
+fn inspection_reports_incompatible_mcp_without_installing_or_losing_skills() {
+    let global = tempfile::tempdir().unwrap();
+    let package = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(package.path().join("skills/review")).unwrap();
+    std::fs::write(
+        package.path().join("skills/review/SKILL.md"),
+        "---\nname: review\ndescription: Review\n---\nCheck code.",
+    )
+    .unwrap();
+    std::fs::write(package.path().join(".mcp.json"), r#"{"mcpServers":{"working":{"url":"https://example.com/mcp"},"legacy":{"type":"sse","url":"https://example.com/events"}}}"#).unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    assert!(store
+        .import_path("global", package.path(), Some("fixture"))
+        .is_err());
+    let preview = store.inspect_path(package.path(), Some("fixture")).unwrap();
+    assert_eq!(preview.report.status, "partial");
+    let issue = preview
+        .report
+        .components
+        .iter()
+        .find(|c| c.name == "legacy")
+        .unwrap();
+    assert_eq!(issue.status, "unsupported");
+    assert_eq!(issue.field.as_deref(), Some("mcpServers.legacy.type"));
+    assert_eq!(preview.spec.skills.len(), 1);
+    assert!(!global.path().join("plugins/registry.json").exists());
+    let installed = store
+        .import_path_with_options("global", package.path(), Some("fixture"), true)
+        .unwrap();
+    assert_eq!(installed.spec.skills.len(), 1);
+    assert!(!installed.spec.mcp.contains_key("legacy"));
+    assert!(!installed.spec.mcp["working"].enabled);
+}
+
+#[test]
+fn partial_mcp_import_rejects_unsafe_credentials_and_malformed_configuration() {
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    for input in [
+        r#"{"mcpServers":{"docs":{"url":"https://user:secret@example.com/mcp"}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","env":{"TOKEN":"secret"}}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","args":42}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","enabled":"yes"}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","type":5}}}"#,
+        r#"{"mcpServers":{"docs":{"url":"https://user:secret@example.com/mcp","timeout":5000}}}"#,
+        r#"{"mcpServers":{"docs":{"command":"tool","env":{"TOKEN":"secret"},"timeout":5000}}}"#,
+    ] {
+        assert!(store
+            .import_mcp_json_with_options("global", "fixture", input, true)
+            .is_err());
+    }
+    assert!(!global.path().join("plugins/registry.json").exists());
+}
+
+#[test]
+fn opencode_mcp_inspection_names_fields_and_preserves_disabled_supported_servers() {
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    let input = r#"{"$schema":"https://opencode.ai/config.json","mcp":{"local":{"type":"local","command":["node","server.js"],"environment":{"TOKEN":"{env:TEST_TOKEN}"},"enabled":true},"slow":{"type":"remote","url":"https://example.com/mcp","timeout":9000},"oauth":{"type":"remote","url":"https://example.com/mcp","oauth":true}}}"#;
+    let preview = store.inspect_mcp_json("fixture", input).unwrap();
+    assert_eq!(preview.spec.mcp["local"].command.as_deref(), Some("node"));
+    assert_eq!(preview.spec.mcp["local"].args, ["server.js"]);
+    assert_eq!(preview.spec.mcp["local"].env["TOKEN"], "TEST_TOKEN");
+    assert!(!preview.spec.mcp["local"].enabled);
+    let fields: Vec<_> = preview
+        .spec
+        .import_issues
+        .iter()
+        .filter_map(|i| i.field.as_deref())
+        .collect();
+    assert!(fields.contains(&"mcp.slow.timeout"));
+    assert!(fields.contains(&"mcp.oauth.oauth"));
+    assert!(store.import_mcp_json("global", "fixture", input).is_err());
+    let installed = store
+        .import_mcp_json_with_options("global", "fixture", input, true)
+        .unwrap();
+    assert_eq!(installed.spec.mcp.len(), 1);
+    assert_eq!(store.list().unwrap()[0].spec.import_issues.len(), 2);
+}
+
+#[test]
+fn native_bundle_inspection_validates_before_reporting_compatibility() {
+    let invalid: PluginSpec = serde_json::from_value(json!({"name":"../escape"})).unwrap();
+    assert!(themis_core::plugins::ImportPreview::from_spec(invalid).is_err());
+    let global = tempfile::tempdir().unwrap();
+    let package = global.path().join("bundle.json");
+    std::fs::write(&package, r#"{"name":"fixture","import_issues":[{"kind":"mcp","name":"docs","status":"unsupported","field":"mcp.docs.oauth","reason":"Unsupported OAuth","remedy":"Use supported authentication"}]}"#).unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    assert!(store.import_path("global", &package, None).is_err());
+    assert_eq!(
+        store.inspect_path(&package, None).unwrap().report.status,
+        "unsupported"
+    );
+}
+
+#[test]
+fn unsupported_only_imports_cannot_create_empty_installed_packages() {
+    let global = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(global.path().into(), None);
+    let input = r#"{"mcpServers":{"legacy":{"type":"sse","url":"https://example.com/events"}}}"#;
+    assert_eq!(
+        store
+            .inspect_mcp_json("legacy", input)
+            .unwrap()
+            .report
+            .status,
+        "unsupported"
+    );
+    assert!(store
+        .import_mcp_json_with_options("global", "legacy", input, true)
+        .unwrap_err()
+        .to_string()
+        .contains("No supported capabilities"));
+    assert!(!global.path().join("plugins/registry.json").exists());
+}
+
+#[tokio::test]
+async fn mcp_application_error_keeps_session_available_for_next_run() {
+    use themis_core::{
+        plugins::connections::{McpServer, Session},
+        tools::AllowAllHook,
+    };
+    use wiremock::{matchers::body_partial_json, Mock, ResponseTemplate};
+    let server = mcp_with_instructions(None).await;
+    Mock::given(body_partial_json(json!({"method":"tools/call"})))
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = request.body_json().unwrap();
+            ResponseTemplate::new(200).set_body_json(if body["params"]["arguments"]["reject"] == true {
+                json!({"jsonrpc":"2.0","id":body["id"],"error":{"code":-32602,"message":"Invalid arguments"}})
+            } else { json!({"jsonrpc":"2.0","id":body["id"],"result":{"content":[]}}) })
+        }).mount(&server).await;
+    let root = tempfile::tempdir().unwrap();
+    let session = Session::connect(
+        &McpServer {
+            url: Some(server.uri()),
+            ..Default::default()
+        },
+        root.path(),
+    )
+    .await
+    .unwrap();
+    let (tools, _) = session
+        .tools("docs", std::sync::Arc::new(AllowAllHook))
+        .unwrap();
+    assert!(tools[0].execute(json!({"reject":true})).await.is_err());
+    assert!(session.is_connected());
+    let (next_run, _) = session
+        .tools("docs", std::sync::Arc::new(AllowAllHook))
+        .unwrap();
+    assert!(next_run[0].execute(json!({})).await.is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn materialization_preserves_open_resource_readers() {
+    use std::io::Read;
+    let data = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(data.path().into(), None);
+    let mut plugin = store
+        .save(
+            "global",
+            serde_json::from_value(json!({"name":"resources"})).unwrap(),
+            None,
+        )
+        .unwrap();
+    plugin
+        .spec
+        .files
+        .insert("server.py".into(), "print('complete')".into());
+    store.materialize(&[plugin.clone()], root.path()).unwrap();
+    let path = root
+        .path()
+        .join(".themis/plugin-files")
+        .join(plugin.skill_id("resources"))
+        .join("server.py");
+    let original = std::fs::metadata(&path).unwrap().modified().unwrap();
+    store.materialize(&[plugin.clone()], root.path()).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        original
+    );
+    use std::os::unix::fs::PermissionsExt;
+    plugin.spec.executable_files.push("server.py".into());
+    store.materialize(&[plugin.clone()], root.path()).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    let mut reader = std::fs::File::open(&path).unwrap();
+    plugin
+        .spec
+        .files
+        .insert("server.py".into(), "print('replacement')".into());
+    store.materialize(&[plugin], root.path()).unwrap();
+    let mut contents = String::new();
+    reader.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "print('complete')");
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "print('replacement')"
+    );
 }

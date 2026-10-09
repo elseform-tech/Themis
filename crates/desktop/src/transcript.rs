@@ -5,16 +5,25 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use themis_core::runtime::{ConversationRole, ConversationTurn};
+use themis_core::runtime::{checkpoint_parts, ChatRole, ConversationRole, ConversationTurn};
 
 use crate::types::{ThreadEvent, ThreadEventEnvelope};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryItem {
-    User { run_id: String, text: String },
-    Event { envelope: ThreadEventEnvelope },
-    Legacy { message: serde_json::Value },
+    User {
+        run_id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<String>,
+    },
+    Event {
+        envelope: ThreadEventEnvelope,
+    },
+    Legacy {
+        message: serde_json::Value,
+    },
 }
 
 pub struct TranscriptStore {
@@ -71,6 +80,19 @@ impl TranscriptStore {
         Ok(Self {
             connection: Mutex::new(connection),
         })
+    }
+
+    /// Durable ordering across conversations, without reading message bodies.
+    pub fn last_activity_seq(&self, thread_id: &str) -> Result<i64, String> {
+        self.connection
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM history WHERE thread_id = ?1",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("read conversation activity: {error}"))
     }
 
     /// Uses the live connection without opening, migrating, or writing a store.
@@ -157,11 +179,22 @@ impl TranscriptStore {
     }
 
     pub fn append_user(&self, thread_id: &str, run_id: &str, text: &str) -> Result<(), String> {
+        self.append_user_with_attachments(thread_id, run_id, text, Vec::new())
+    }
+
+    pub fn append_user_with_attachments(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+        text: &str,
+        attachments: Vec<String>,
+    ) -> Result<(), String> {
         self.append(
             thread_id,
             &HistoryItem::User {
                 run_id: run_id.to_owned(),
                 text: text.to_owned(),
+                attachments,
             },
         )
     }
@@ -298,13 +331,29 @@ impl TranscriptStore {
             requests.extend(first);
             requests.sort_by_key(|request| request.0);
             requests.dedup_by_key(|request| request.0);
-            turns.push(ConversationTurn {
-                role: ConversationRole::Assistant,
-                text: format!(
-                    "Earlier context checkpoint (historical; later user requests take precedence):\n{summary}\nVerbatim first and recent user requests (historical):\n{}",
-                    requests.into_iter().map(|request| request.1).collect::<Vec<_>>().join("\n")
-                ),
+            let (_, recent) = checkpoint_parts(&summary);
+            requests.retain(|(_, text)| {
+                !recent
+                    .iter()
+                    .any(|message| message.role == ChatRole::User && &message.content == text)
             });
+            turns.push(ConversationTurn {
+                role: ConversationRole::Checkpoint,
+                text: summary,
+            });
+            if !requests.is_empty() {
+                turns.push(ConversationTurn {
+                    role: ConversationRole::Assistant,
+                    text: format!(
+                        "Verbatim first and recent user requests (historical):\n{}",
+                        requests
+                            .into_iter()
+                            .map(|request| request.1)
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ),
+                });
+            }
         }
         for row in rows {
             let (role, text) = row.map_err(|e| format!("read context: {e}"))?;
@@ -345,7 +394,7 @@ impl TranscriptStore {
 fn role_name(role: &ConversationRole) -> &'static str {
     match role {
         ConversationRole::User => "user",
-        ConversationRole::Assistant => "assistant",
+        ConversationRole::Assistant | ConversationRole::Checkpoint => "assistant",
     }
 }
 

@@ -52,7 +52,7 @@ Commands:
   thread send ID TEXT [--json|--detach]  Send and stream, or return a run handle
   thread stop ID                Stop a run
   chat ID                       Converse until /quit (TTY required)
-  call METHOD [JSON_ARGS]       Call a backend method with camelCase arguments
+  call METHOD [JSON_ARGS|-]     Call backend; - reads JSON from stdin (max 8 MiB)
   cli install [DIR]             Link the optional CLI into ~/.local/bin or DIR (Unix)
   app launch|quit               Open or close the desktop window
   --help | --version
@@ -83,6 +83,19 @@ pub async fn run() -> Result<(), String> {
     if words == ["--version"] {
         println!("themis {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
+    }
+    let starts_run = match words.as_slice() {
+        [command, ..] if command == "chat" => true,
+        [command, action, ..] => matches!(
+            (command.as_str(), action.as_str()),
+            ("thread", "send")
+                | ("skill", "create")
+                | ("call", "send_message" | "run_automation_now")
+        ),
+        _ => false,
+    };
+    if std::env::var_os("THEMIS_HOOK_ACTIVE").is_some() && starts_run {
+        return Err("Hooks cannot start nested agent runs".into());
     }
     if words.first().is_some_and(|word| {
         matches!(
@@ -268,8 +281,22 @@ pub async fn run() -> Result<(), String> {
                     "use themis providers or desktop Settings to enter a key securely".to_owned(),
                 );
             }
+            let input = if args == "-" {
+                use std::io::Read;
+                let mut input = String::new();
+                std::io::stdin()
+                    .take(crate::server::MAX_FRAME as u64 + 1)
+                    .read_to_string(&mut input)
+                    .map_err(|err| format!("cannot read JSON_ARGS: {err}"))?;
+                if input.len() > crate::server::MAX_FRAME {
+                    return Err("JSON_ARGS exceeds 8 MiB".into());
+                }
+                input
+            } else {
+                args.clone()
+            };
             let args =
-                serde_json::from_str(args).map_err(|err| format!("invalid JSON_ARGS: {err}"))?;
+                serde_json::from_str(&input).map_err(|err| format!("invalid JSON_ARGS: {err}"))?;
             client.call(method, args).await?
         }
         [app, launch] if app == "app" && launch == "launch" => {

@@ -76,6 +76,13 @@ class DashboardMetricsTests(unittest.TestCase):
             "maintainabilitySamples": 2,
         })
 
+    def test_declaration_only_files_have_no_function_maintainability_score(self):
+        from quality_dashboard.dashboard import _ast_complexity_row
+
+        row = _ast_complexity_row("web/src/lib/types.ts", {"metrics": {"mi": {"mi_visual_studio": 0}}, "spaces": []})
+        self.assertIsNone(row["maintainability"])
+        self.assertEqual(row["maintainabilitySamples"], 0)
+
     def test_ast_output_parser_reads_multiple_records(self):
         from quality_dashboard.dashboard import _parse_ast_output
 

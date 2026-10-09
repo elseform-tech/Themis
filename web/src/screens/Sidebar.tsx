@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Badge, Button, Dialog, Input, Tooltip } from "../components";
 import { createProject, getSettings, renameProject, renameThread } from "../lib/tauri";
 import { describeError, toast, useApp, type MainView } from "../state/store";
@@ -8,12 +8,20 @@ import { readSession, writeSession } from "../state/session";
 import { MovingText } from "../components/MovingText";
 import "./Sidebar.css";
 
-const views: Array<[MainView, string]> = [["skills", "Plugins"], ["automations", "Automations"], ["queue", "Review queue"]];
+const views: Array<[MainView, string]> = [["skills", "Integrations"], ["automations", "Automations"], ["queue", "Review queue"]];
 type SidebarIconName = "panel" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search";
 const viewIcons: Record<MainView, SidebarIconName> = { thread: "thread", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
 export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
   const { state, dispatch } = useApp();
+  const [width, setWidth] = useState(() => Math.max(240, Math.min(560, Number(readSession("sidebarWidth", 292)) || 292)));
+  const resizeStart = useRef<{ x: number; width: number } | null>(null);
+  const [resizing, setResizing] = useState(false);
+  function resize(value: number) {
+    const next = Math.round(Math.max(240, Math.min(560, value)));
+    setWidth(next);
+    writeSession("sidebarWidth", next);
+  }
   const openProject = useOpenProject();
   const newThread = useNewThread();
   const [name, setName] = useState("");
@@ -27,6 +35,10 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
   const [editBusy, setEditBusy] = useState(false);
   const [help, setHelp] = useState(false);
   const pending = state.reviews.filter(r => r.status === "pending").length;
+  const recentThreads = state.projects.flatMap(project => (state.threadsByProject[project.root] ?? []).map(thread => ({ project, thread })))
+    .filter(({ thread }) => (thread.last_activity_seq ?? 0) > 0)
+    .sort((a, b) => (b.thread.last_activity_seq ?? 0) - (a.thread.last_activity_seq ?? 0))
+    .slice(0, 8);
   const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(() => readSession("collapsedProjects", {}));
   function setProjectCollapsed(root: string, value: boolean) {
     setCollapsedProjects(previous => { const next = { ...previous, [root]: value }; writeSession("collapsedProjects", next); return next; });
@@ -62,7 +74,7 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
     </button></Tooltip>;
   }
   return <>
-    <div className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""}`}>
+    <div className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
       <nav className="themis-sidebar-rail" aria-label="Utilities">
         {views.map(([view, label]) => nav(view, label))}
         <div className="themis-rail-footer">{companionControl}{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={() => setHelp(true)}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
@@ -76,9 +88,25 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
             <div className="themis-project-heading"><button type="button" className="themis-sidebar-row themis-project-row" title={project.root} aria-expanded={!collapsedProjects[project.root]} onClick={() => setProjectCollapsed(project.root, !collapsedProjects[project.root])}><span aria-hidden="true">{collapsedProjects[project.root] ? "›" : "⌄"}</span><SidebarIcon name="project" /><MovingText>{project.name}</MovingText></button><Button variant="ghost" size="small" aria-label={`Rename ${project.name}`} title="Rename project" onClick={() => { setError(""); setRenaming({ root: project.root, name: project.name }); }}>✎</Button><Button variant="ghost" size="small" aria-label={`New thread in ${project.name}`} title="New thread" onClick={() => { setProjectCollapsed(project.root, false); void newThread(project.root); }}>+</Button></div>
             {!collapsedProjects[project.root] && <ul className="themis-sidebar-list themis-thread-list">{(state.threadsByProject[project.root] ?? []).map(thread => <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={thread.title} aria-label={thread.title} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}><SidebarIcon name="thread" /><MovingText>{thread.title}</MovingText><ThreadStatus thread={thread} /></button><div className="themis-thread-row-actions"><button aria-label={`Edit ${thread.title}`} title="Edit thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => { setEditError(""); setEditing({ ...thread, projectRoot: project.root }); }}>✎</button><button aria-label={`Remove ${thread.title}`} title="Remove thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => setRemoving({ ...thread, projectRoot: project.root })}><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 6v5M9 6v5"/></svg></button></div></li>)}</ul>}
           </li>)}</ul>}
+          <section aria-label="Recent" className="themis-sidebar-recent">
+            <h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="automations" /><span>Recent</span></h2>
+            {recentThreads.length ? <ul className="themis-sidebar-list">{recentThreads.map(({ project, thread }) => <li key={thread.id}>
+              <button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={`${thread.title} · ${project.name}`} aria-label={`Recent: ${thread.title} · ${project.name}`} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}>
+                <SidebarIcon name="thread" /><span className="themis-sidebar-name">{thread.title}</span><ThreadStatus thread={thread} />
+              </button>
+            </li>)}</ul> : <p className="themis-sidebar-note">Your recent chats will appear here.</p>}
+          </section>
         </div>
 
       </aside>
+      {!collapsed && <div className="themis-sidebar-resize" role="separator" aria-label="Resize sidebar" aria-controls="themis-sidebar" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={560} aria-valuenow={width} tabIndex={0}
+        onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.focus(); resizeStart.current = { x: event.clientX, width: event.currentTarget.parentElement!.getBoundingClientRect().width }; event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); }}
+        onPointerMove={event => { if (resizeStart.current) resize(resizeStart.current.width + event.clientX - resizeStart.current.x); }}
+        onLostPointerCapture={() => { resizeStart.current = null; setResizing(false); }}
+        onPointerUp={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); resizeStart.current = null; setResizing(false); }}
+        onPointerCancel={() => { resizeStart.current = null; setResizing(false); }}
+        onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); resize(event.key === "Home" ? 240 : event.key === "End" ? 560 : width + (event.key === "ArrowRight" ? 20 : -20)); } }}
+      />}
     </div>
     <Dialog open={state.projectDialogOpen} title="Create project" onClose={() => { if (!busy) dispatch({ type: "ui/project-dialog", open: false }); }}>
       <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void create(); }}>
@@ -120,7 +148,7 @@ export function SidebarIcon({ name }: { name: SidebarIconName }) {
   return <svg className="themis-sidebar-icon" viewBox={name === "help" || name === "search" ? "0 0 20 20" : "0 0 24 24"} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
     {name === "panel" && <><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /></>}
     {name === "thread" && <><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" /></>}
-    {name === "skills" && <><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" /><path d="M20 2v4M22 4h-4" /><circle cx="4" cy="20" r="2" /></>}
+    {name === "skills" && <><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0ZM12 18v4" /></>}
     {name === "automations" && <><circle cx="12" cy="12" r="10" /><path d="M12 6v6h4" /></>}
     {name === "queue" && <><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M13 6h3a2 2 0 0 1 2 2v7" /><line x1="6" x2="6" y1="9" y2="21" /></>}
     {name === "project" && <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />}

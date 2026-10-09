@@ -5,8 +5,12 @@
 //! one of these plain async methods, which take an [`EventSink`] instead of
 //! touching Tauri — that keeps them directly drivable from headless tests.
 
+mod attachments;
 mod automation;
 mod changes;
+pub(crate) mod configuration;
+mod integration_tools;
+mod mcp;
 mod plugins;
 mod preferences;
 mod projects;
@@ -66,6 +70,7 @@ struct ThreadRecord {
     provider: ProviderKind,
     model: String,
     reasoning_effort: Option<String>,
+    approval_mode: themis_core::configuration::ApprovalMode,
     running: bool,
     titled: bool,
     preexisting: HashSet<String>,
@@ -98,7 +103,8 @@ struct RunSnapshot {
     reasoning_effort: Option<String>,
     history: Vec<ConversationTurn>,
     approval_timeout_seconds: u32,
-    confirm_reads: bool,
+    approval_mode: themis_core::configuration::ApprovalMode,
+    runtime_configuration: themis_core::configuration::RuntimeConfig,
     /// Tool sandbox root: the shared project checkout.
     work_root: PathBuf,
     is_git: bool,
@@ -109,6 +115,7 @@ struct RunSnapshot {
     /// follows a hand-edited store file).
     skills: Vec<themis_core::skills::Skill>,
     plugins: Vec<themis_core::plugins::Plugin>,
+    skill_catalog: Vec<themis_core::skills::Skill>,
 }
 
 /// One automation run in flight: the completion registry entry that lets the
@@ -137,6 +144,8 @@ pub(crate) struct RegistryEntry {
     #[serde(default)]
     was_running: bool,
     #[serde(default)]
+    approval_mode: themis_core::configuration::ApprovalMode,
+    #[serde(default)]
     pub(crate) skill_ids: Vec<String>,
 }
 
@@ -155,6 +164,7 @@ impl RegistryEntry {
             provider: record.provider,
             model: record.model.clone(),
             reasoning_effort: record.reasoning_effort.clone(),
+            approval_mode: record.approval_mode,
             was_running: record.running,
             skill_ids: record.skill_ids.clone(),
         }
@@ -167,8 +177,10 @@ struct AppStateInner {
     default_project_init: tokio::sync::Mutex<()>,
     threads: tokio::sync::RwLock<HashMap<String, ThreadRecord>>,
     pending: PendingMap,
+    mcp: std::sync::Mutex<mcp::Connections>,
     settings: SettingsStore,
     transcript: TranscriptStore,
+    diagnostics: Arc<themis_core::diagnostics::DiagnosticLog>,
     secrets: Arc<dyn SecretStore>,
     go_base_url_override: std::sync::Mutex<Option<String>>,
     go_catalog: tokio::sync::RwLock<Vec<themis_core::providers::GoModel>>,
@@ -287,6 +299,14 @@ impl AppState {
         let skills = load_store_file(&skills_path, "skill", &mut report);
         let automations = load_automations_file(&automations_path, &mut report);
         let reviews = load_store_file(&reviews_path, "review item", &mut report);
+        let diagnostics = Arc::new(themis_core::diagnostics::DiagnosticLog::new(
+            themis_core::diagnostics::directory_for(&app_dir),
+        ));
+        if let Ok(content) = std::fs::read_to_string(app_dir.join("runtime.jsonc")) {
+            if let Ok(config) = themis_core::configuration::resolve(Some(&content), None, None) {
+                diagnostics.set_level(&config.config.logging.level);
+            }
+        }
         Self {
             inner: Arc::new(AppStateInner {
                 stop_flags: std::sync::Mutex::new(HashMap::new()),
@@ -294,8 +314,10 @@ impl AppState {
                 default_project_init: tokio::sync::Mutex::new(()),
                 threads: tokio::sync::RwLock::new(threads),
                 pending: PendingMap::default(),
+                mcp: std::sync::Mutex::new(HashMap::new()),
                 settings: SettingsStore::load_with_projects_root(settings_path, projects_root),
                 transcript,
+                diagnostics,
                 secrets,
                 go_base_url_override: std::sync::Mutex::new(None),
                 go_catalog: tokio::sync::RwLock::new(Vec::new()),
@@ -368,6 +390,12 @@ impl AppState {
     /// the `record_cmd!` helper in [`crate::commands`], attributing its own
     /// command name.
     pub fn record_error(&self, command: &str, message: String) {
+        let _ = self.inner.diagnostics.append(
+            "server",
+            "command_failed",
+            "error",
+            serde_json::json!({"method": command}),
+        );
         let entry = DiagnosticsError {
             at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
             command: command.to_owned(),
@@ -486,6 +514,16 @@ impl AppState {
         Ok(entry)
     }
 
+    pub fn pending_approvals(&self) -> Vec<crate::types::ApprovalRequest> {
+        self.inner
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .map(|entry| entry.request.clone())
+            .collect()
+    }
+
     /// Delivers a UI decision to a pending approval dialog.
     pub async fn approve_action(
         &self,
@@ -537,20 +575,22 @@ impl AppState {
     }
 }
 
-fn thread_info(record: &ThreadRecord) -> ThreadInfo {
-    ThreadInfo {
+fn thread_info(record: &ThreadRecord, transcript: &TranscriptStore) -> Result<ThreadInfo, String> {
+    Ok(ThreadInfo {
+        last_activity_seq: transcript.last_activity_seq(&record.id)?,
         id: record.id.clone(),
         title: record.title.clone(),
         provider: record.provider,
         model: record.model.clone(),
         reasoning_effort: record.reasoning_effort.clone(),
+        approval_mode: record.approval_mode,
         running: record.running,
         worktree_path: None,
         branch: None,
         base_branch: None,
         recovered: record.recovered,
         skill_ids: record.skill_ids.clone(),
-    }
+    })
 }
 
 /// App data dir holding the settings file (`.` when the path has no parent).
@@ -730,6 +770,7 @@ fn load_and_reconcile(
                 provider: entry.provider,
                 model: entry.model.clone(),
                 reasoning_effort: entry.reasoning_effort.clone(),
+                approval_mode: entry.approval_mode,
                 running: false,
                 // The persisted title stands; never retitle a restored thread.
                 titled: true,
@@ -1327,6 +1368,7 @@ mod tests {
             target_thread_id: None,
             skill_ids: Vec::new(),
             interval_mins: 60,
+            schedule: None,
             task: "Check health.".to_owned(),
             enabled: true,
         }
@@ -1997,6 +2039,7 @@ mod tests {
             target_thread_id: None,
             skill_ids: Vec::new(),
             interval_mins: 30,
+            schedule: None,
             task: "t".to_owned(),
             enabled: true,
             last_run_at: None,

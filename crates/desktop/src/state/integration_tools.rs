@@ -1,0 +1,297 @@
+//! Agent-facing management uses the same validated state APIs as the UI and CLI.
+use super::{AppState, AutomationInput, PathBuf};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use themis_core::tools::{
+    async_trait, ApprovalHook, ToolAction, ToolCallError, ToolRuntime, ToolT,
+};
+
+impl AppState {
+    pub(super) fn integration_management_tools(
+        &self,
+        approvals: Arc<dyn ApprovalHook>,
+        project: PathBuf,
+        thread_id: String,
+    ) -> Vec<Box<dyn ToolT>> {
+        [
+            "list_plugins",
+            "save_skill",
+            "manage_integrations",
+            "manage_automations",
+        ]
+        .into_iter()
+        .map(|name| {
+            Box::new(ManagementTool {
+                name,
+                state: self.clone(),
+                approvals: approvals.clone(),
+                project: project.clone(),
+                thread_id: thread_id.clone(),
+            }) as Box<dyn ToolT>
+        })
+        .collect()
+    }
+}
+
+struct ManagementTool {
+    name: &'static str,
+    state: AppState,
+    approvals: Arc<dyn ApprovalHook>,
+    project: PathBuf,
+    thread_id: String,
+}
+impl std::fmt::Debug for ManagementTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ManagementTool").field(&self.name).finish()
+    }
+}
+#[async_trait]
+impl ToolRuntime for ManagementTool {
+    async fn execute(&self, mut args: Value) -> Result<Value, ToolCallError> {
+        if !args.is_object() {
+            return Err(error("Management arguments must be an object"));
+        }
+        if self.name == "list_plugins" {
+            args["action"] = "list".into();
+        }
+        if self.name == "save_skill" {
+            args["action"] = "save_skill".into();
+        }
+        themis_core::tools::check_approval_permitted(
+            self.approvals.as_ref(),
+            &ToolAction {
+                tool: themis_core::tools::integration_approval_identity(self.name, &args),
+                summary: format!(
+                    "{} {}",
+                    self.name,
+                    args["action"].as_str().unwrap_or("list")
+                ),
+                risk: themis_core::tools::integration_risk(self.name, &args)
+                    .expect("known management tool"),
+            },
+        )?;
+        if self.name == "manage_automations" {
+            return self.automation_action(args).await.map_err(error);
+        }
+        if args.get("projectRoot").is_none() {
+            args["projectRoot"] = self.project.to_string_lossy().as_ref().into();
+        }
+        if args.get("scope").is_none() {
+            args["scope"] = "global".into();
+        }
+        self.state.plugin_action(args).await.map_err(error)
+    }
+}
+impl ManagementTool {
+    async fn automation_action(&self, args: Value) -> Result<Value, String> {
+        let action = args["action"].as_str().unwrap_or("list");
+        let all = self.state.list_automations().await;
+        if action == "list" {
+            return serde_json::to_value(all).map_err(|e| e.to_string());
+        }
+        let id = args["id"].as_str().unwrap_or_default().to_owned();
+        match action {
+            "enable" | "disable" => serde_json::to_value(
+                self.state
+                    .set_automation_enabled(id, action == "enable")
+                    .await?,
+            )
+            .map_err(|e| e.to_string()),
+            "delete" => {
+                self.state.delete_automation(id).await?;
+                Ok(Value::Null)
+            }
+            "create" | "update" => {
+                let mut input = if action == "update" {
+                    serde_json::to_value(
+                        all.iter()
+                            .find(|item| item.id == id)
+                            .ok_or("Unknown automation")?,
+                    )
+                    .map_err(|e| e.to_string())?
+                } else {
+                    json!({"project_root":self.project,"target_thread_id":self.thread_id,"provider":"go","model":"","skill_ids":[],"interval_mins":60,"enabled":true})
+                };
+                let patch = args
+                    .get("input")
+                    .unwrap_or(&args)
+                    .as_object()
+                    .ok_or("Automation input must be an object")?;
+                for (key, value) in patch {
+                    input[key] = value.clone();
+                }
+                let input: AutomationInput =
+                    serde_json::from_value(input).map_err(|e| e.to_string())?;
+                let saved = if action == "create" {
+                    self.state.create_automation(input).await?
+                } else {
+                    self.state.update_automation(id, input).await?
+                };
+                serde_json::to_value(saved).map_err(|e| e.to_string())
+            }
+            _ => Err("Unknown automation action".into()),
+        }
+    }
+}
+fn error(message: impl ToString) -> ToolCallError {
+    ToolCallError::RuntimeError(message.to_string().into())
+}
+impl ToolT for ManagementTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        match self.name {
+            "list_plugins" => "Inspect installed plugins, bundled skills, MCP connections and hooks in the current project and user scope.",
+            "save_skill" => "Create or update a personal skill through the shared registry. Supply skill, plugin, scope and expectedRevision when updating.",
+            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list, save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, scan_marketplace, catalog, preview, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. preview takes marketplace and name to inspect supported package contents without installing; it reuses the completed marketplace scan. scan_marketplace returns saved status and starts or resumes background work; refresh requests a new scan. test_mcp takes server configuration; test_hook takes hook configuration. New integrations default to global scope, available across projects; preserve the existing scope when editing. Executable operations require approval.",
+            _ => "Manage recurring tasks. Actions: list, create, update, enable, disable, delete. Supply id for existing tasks; input contains name/task and optional calendar schedule {repeat,time,timezone,weekday}. Creation defaults to current project/chat. Updates merge input with saved fields. Calendar timezone is IANA; time HH:MM; weekday 0=Monday. Uses normal runtime approvals.",
+        }
+    }
+    fn args_schema(&self) -> Value {
+        json!({"type":"object","properties":{"action":{"type":"string"},"scope":{"type":"string","enum":["local","global"]},"projectRoot":{"type":"string"},"name":{"type":"string"},"plugin":{"type":"string"},"expectedRevision":{"type":"string"},"skill":{"type":"object"},"spec":{"type":"object"},"id":{"type":"string"},"path":{"type":"string"},"source":{"type":"string"},"url":{"type":"string"},"reference":{"type":"string"},"subdirectory":{"type":"string"},"content":{"type":"string"},"kind":{"type":"string","enum":["skill","mcp","hook"]},"marketplace":{"type":"string"},"refresh":{"type":"boolean"},"server":{"type":"object"},"hook":{"type":"object"},"enabled":{"type":"boolean"},"input":{"type":"object"}},"additionalProperties":true})
+    }
+    fn output_schema(&self) -> Option<Value> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use themis_core::tools::{AllowAllHook, DenyAllHook};
+
+    #[tokio::test]
+    async fn advertised_import_and_component_arguments_use_shared_api() {
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let tools = state.integration_management_tools(
+            Arc::new(AllowAllHook),
+            project.path().into(),
+            "chat".into(),
+        );
+        let manager = tools
+            .iter()
+            .find(|tool| tool.name() == "manage_integrations")
+            .unwrap();
+        for field in [
+            "content",
+            "url",
+            "reference",
+            "subdirectory",
+            "kind",
+            "server",
+            "hook",
+        ] {
+            assert!(manager.args_schema()["properties"].get(field).is_some());
+        }
+        let content = json!({"name":"imported","mcp":{"example":{"command":"missing-server","enabled":false}}}).to_string();
+        manager
+            .execute(json!({"action":"import_json","content":content}))
+            .await
+            .unwrap();
+        manager.execute(json!({"action":"set_component_enabled","name":"imported","kind":"mcp","id":"example","enabled":true})).await.unwrap();
+        let listed = manager.execute(json!({"action":"list"})).await.unwrap();
+        let imported = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|plugin| plugin["spec"]["name"] == "imported")
+            .unwrap();
+        assert_eq!(imported["spec"]["mcp"]["example"]["enabled"], true);
+    }
+
+    #[tokio::test]
+    async fn agent_automation_creation_uses_current_chat_and_update_preserves_fields() {
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let thread = state
+            .create_thread(
+                project.path().to_string_lossy().into(),
+                super::super::ProviderKind::Go,
+                Some("model".into()),
+            )
+            .await
+            .unwrap();
+        let tools = state.integration_management_tools(
+            Arc::new(AllowAllHook),
+            project.path().into(),
+            thread.id.clone(),
+        );
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name() == "manage_automations")
+            .unwrap();
+        let created = tool.execute(json!({"action":"create","input":{"name":"Review daily","task":"Review recent changes","schedule":{"repeat":"daily","time":"19:00","timezone":"Europe/Berlin"}}})).await.unwrap();
+        assert_eq!(created["target_thread_id"], thread.id);
+        let updated = tool
+            .execute(
+                json!({"action":"update","id":created["id"],"input":{"name":"Evening review"}}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated["task"], "Review recent changes");
+        assert_eq!(updated["schedule"], created["schedule"]);
+        let restarted = AppState::new_for_test(data.path().join("settings.json"));
+        assert_eq!(restarted.list_automations().await[0].name, "Evening review");
+    }
+
+    #[tokio::test]
+    async fn agent_management_is_approval_gated_and_uses_shared_storage() {
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let args = json!({"plugin":"personal","skill":{"id":"review","name":"Review","description":"Review changes","instructions":"Inspect source","allowedTools":[],"scripts":[]}});
+        let denied = state.integration_management_tools(
+            Arc::new(DenyAllHook),
+            project.path().into(),
+            "chat".into(),
+        );
+        assert!(denied
+            .iter()
+            .find(|t| t.name() == "save_skill")
+            .unwrap()
+            .execute(args.clone())
+            .await
+            .is_err());
+        assert!(state
+            .plugin_store(Some(project.path().into()))
+            .list()
+            .unwrap()
+            .iter()
+            .all(|plugin| plugin.spec.name != "personal"));
+        let allowed = state.integration_management_tools(
+            Arc::new(AllowAllHook),
+            project.path().into(),
+            "chat".into(),
+        );
+        allowed
+            .iter()
+            .find(|t| t.name() == "save_skill")
+            .unwrap()
+            .execute(args)
+            .await
+            .unwrap();
+        let saved = state
+            .plugin_action(json!({"action":"list","projectRoot":project.path()}))
+            .await
+            .unwrap();
+        assert_eq!(saved[0]["spec"]["skills"][0]["id"], "review");
+        assert_eq!(saved[0]["scope"], "global");
+        assert!(state
+            .plugin_store(None)
+            .available_skills()
+            .unwrap()
+            .iter()
+            .any(|skill| skill.name == "Review"));
+        let restarted = AppState::new_for_test(data.path().join("settings.json"));
+        assert!(restarted
+            .prompt_skills(Some(project.path().to_string_lossy().into()))
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.name == "Review"));
+    }
+}

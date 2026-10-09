@@ -21,7 +21,72 @@ fn has_finished(events: &[RunEvent]) -> bool {
 }
 
 #[tokio::test]
-async fn checkpoint_continues_same_request_after_segment_limit() {
+async fn context_within_budget_keeps_exact_tool_result() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("read_1", "read_file", json!({"file_path":"note.txt"})),
+            common::final_text_body("Answered from the original evidence"),
+            common::final_text_body("Answered after a lossy checkpoint"),
+        ],
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let original = "The letter was WRITTEN September 6 and DELIVERED September 8, after the death.";
+    std::fs::write(dir.path().join("note.txt"), original).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let tools = boxed_tools(dir.path(), Arc::clone(&approvals)).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let answer = run_task_with_policy(
+        llm,
+        tools,
+        "When did the letter arrive?".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 3,
+            context_token_budget: 200000,
+            recent_messages: 1,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    let events = common::drain(&mut rx).await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })),
+        "context within budget must not be summarized solely because a segment ended: {events:?}"
+    );
+    assert_eq!(answer, "Answered from the original evidence");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    let request: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert!(request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| {
+            message["role"] == "tool"
+                && message["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(original))
+        }));
+    assert!(has_finished(&events));
+}
+
+#[tokio::test]
+async fn checkpoint_continues_same_request_after_token_pressure() {
     let server = MockServer::start().await;
     common::mount_script(
         &server,
@@ -33,7 +98,7 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
     )
     .await;
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
+    std::fs::write(dir.path().join("note.txt"), "hello".repeat(3000)).unwrap();
     let llm = resolve(
         &ProviderConfig::new(ProviderKind::Go, "test-key")
             .with_model("test-model")
@@ -51,9 +116,8 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 1,
             total_turns: 3,
-            context_token_budget: 16000,
+            context_token_budget: 2000,
             recent_messages: 4,
         },
         tx,
@@ -73,6 +137,275 @@ async fn checkpoint_continues_same_request_after_segment_limit() {
         .unwrap()
         .iter()
         .any(|message| message["role"] == "user" && message["content"] == "Read the note"));
+    let messages = final_request["messages"].as_array().unwrap();
+    let request = messages
+        .iter()
+        .position(|message| message["role"] == "user" && message["content"] == "Read the note")
+        .unwrap();
+    let checkpoint = messages
+        .iter()
+        .position(|message| {
+            message["content"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("Earlier context checkpoint"))
+        })
+        .unwrap();
+    assert!(request < checkpoint, "completed work must follow the active request, so it is not presented as a new request to repeat");
+}
+
+#[tokio::test]
+async fn tool_evidence_survives_completed_runs_without_compaction() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body(
+                "observed_1",
+                "read_file",
+                json!({"file_path":"observation.txt"}),
+            ),
+            common::final_text_body("READY"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    let original = format!(
+        "{}historical receipt: copper-753",
+        "observed source line\n".repeat(5000)
+    );
+    std::fs::write(project.path().join("observation.txt"), &original).unwrap();
+    let evidence = project.path().join("evidence");
+    std::fs::create_dir(&evidence).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Read observation.txt then reply only READY".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, "READY");
+    let events = common::drain(&mut rx).await;
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })));
+    assert!(events.iter().any(|event| matches!(event, RunEvent::ToolCallFinished { output, .. } if output.ends_with("[Output truncated]") && !output.contains("copper-753"))));
+    std::fs::write(
+        project.path().join("observation.txt"),
+        "current receipt: silver-864",
+    )
+    .unwrap();
+    let snapshots: Vec<_> = std::fs::read_dir(&evidence)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "completed tool evidence must survive even without a checkpoint"
+    );
+    let records: Vec<serde_json::Value> = std::fs::read_to_string(&snapshots[0])
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(records[0]["message_type"]["ToolUse"][0]["id"], "observed_1");
+    let output = records[1]["message_type"]["ToolResult"][0]["function"]["arguments"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(output).unwrap()["content"],
+        original
+    );
+}
+
+#[tokio::test]
+async fn failed_tool_evidence_save_stops_before_model_continuation() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("read_1", "read_file", json!({"file_path":"note.txt"})),
+            common::final_text_body("Must not continue"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("note.txt"), "historical evidence").unwrap();
+    let evidence = project.path().join("evidence");
+    std::fs::write(&evidence, "a file cannot hold snapshots").unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Read note.txt".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await;
+    assert!(result.is_err());
+    let events = common::drain(&mut rx).await;
+    assert!(events.iter().any(|event| matches!(event, RunEvent::Failed { error } if error.starts_with("Tool evidence failed:"))));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, RunEvent::ToolCallFinished { ok: true, .. })),
+        "the completed read must be reported even when saving fails"
+    );
+    assert!(!has_finished(&events));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("read_1", "read_file", json!({"file_path":"note.txt"})),
+            common::final_text_body("Read notes; originals remain recoverable."),
+            common::tool_call_body("read_2", "read_file", json!({"file_path":"other.txt"})),
+            common::final_text_body("Continue with the pending task."),
+            common::final_text_body("Done"),
+        ],
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let evidence = dir.path().join("evidence");
+    std::fs::create_dir(&evidence).unwrap();
+    std::fs::write(
+        dir.path().join("note.txt"),
+        format!("original tool evidence: red-753 {}", "x".repeat(12000)),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("other.txt"),
+        format!("second tool evidence: blue-864 {}", "x".repeat(12000)),
+    )
+    .unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(dir.path(), approvals.clone()).unwrap(),
+        "Read both notes".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 3,
+            context_token_budget: 2000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence.clone()),
+    )
+    .await
+    .unwrap();
+    let mut snapshots: Vec<_> = std::fs::read_dir(&evidence)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            std::fs::read_to_string(path)
+                .unwrap()
+                .contains("\"role\":\"Tool\"")
+        })
+        .collect();
+    snapshots.sort();
+    assert_eq!(
+        snapshots.len(),
+        4,
+        "two completed calls and two checkpoints"
+    );
+    let events = common::drain(&mut rx).await;
+    let checkpoints: Vec<_> = events
+        .iter()
+        .filter_map(|event| {
+            if let RunEvent::ContextCheckpoint { summary } = event {
+                Some(summary)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(checkpoints.len(), 2);
+    assert!(
+        checkpoints[1].contains(serde_json::to_string(&evidence).unwrap().trim_matches('"')),
+        "later checkpoints must preserve the directory for all older evidence"
+    );
+    assert!(checkpoints[1].contains(&serde_json::to_string(&snapshots[3]).unwrap()));
+    assert!(
+        std::fs::read_to_string(&snapshots[3])
+            .unwrap()
+            .lines()
+            .any(|line| {
+                let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                record["content"].as_str().is_some_and(|content| {
+                    content.contains(&serde_json::to_string(&snapshots[1]).unwrap())
+                })
+            }),
+        "the latest original must retain the earlier checkpoint reference"
+    );
+    for (path, fact) in snapshots
+        .iter()
+        .zip(["red-753", "red-753", "blue-864", "blue-864"])
+    {
+        let text = std::fs::read_to_string(path).unwrap();
+        let records: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(
+            records
+                .iter()
+                .any(|record| record["role"] == "Tool" && record.to_string().contains(fact)),
+            "full original tool result must survive: {text}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -113,7 +446,6 @@ async fn hard_cap_returns_natural_handoff_without_failing() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 1,
             total_turns: 1,
             context_token_budget: 2000,
             recent_messages: 4,
@@ -177,7 +509,6 @@ async fn empty_handoff_does_not_claim_the_task_was_completed() {
         vec![],
         approvals,
         RunPolicy {
-            segment_turns: 1,
             total_turns: 1,
             context_token_budget: 2000,
             recent_messages: 4,
@@ -344,4 +675,295 @@ async fn live_go_chat_completions_run() {
     let events = common::drain(&mut events_rx).await;
     assert!(has_finished(&events), "events: {events:?}");
     assert!(!result.trim().is_empty(), "events: {events:?}");
+}
+
+#[tokio::test]
+async fn skill_catalog_reaches_system_request_without_body() {
+    let server = MockServer::start().await;
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let skill = themis_core::skills::Skill {
+        id: "review".into(),
+        name: "Review".into(),
+        description: "Inspect changes".into(),
+        instructions: "BODY_MUST_REMAIN_LAZY".into(),
+        allowed_tools: vec![],
+        scripts: vec![],
+    };
+    let catalog =
+        themis_core::skills::materialize_catalog(&[skill], root.path(), "catalog-run").unwrap();
+    let entries: serde_json::Value = serde_json::from_str(
+        catalog
+            .split("Available skills (metadata only): ")
+            .nth(1)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    let path = entries[0]["path"].as_str().unwrap().to_owned();
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("read_skill", "read_file", json!({"file_path": path})),
+            common::final_text_body("Done"),
+        ],
+    )
+    .await;
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    themis_core::runtime::run_task_with_policy_and_catalog(
+        llm,
+        boxed_tools(root.path(), Arc::new(AllowAllHook)).unwrap(),
+        "Inspect changes".into(),
+        vec![],
+        Arc::new(AllowAllHook),
+        RunPolicy {
+            total_turns: 2,
+            context_token_budget: usize::MAX,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        catalog,
+    )
+    .await
+    .unwrap();
+    common::drain(&mut rx).await;
+    let requests = server.received_requests().await.unwrap();
+    let request: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let system = request["messages"][0]["content"].as_str().unwrap();
+    assert_eq!(request["messages"][0]["role"], "system");
+    assert!(system.contains("Inspect changes"));
+    assert!(system.contains(&serde_json::to_string(&path).unwrap()));
+    assert!(std::path::Path::new(&path).ends_with(std::path::Path::new("review").join("SKILL.md")));
+    let followup: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert!(followup["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["role"] == "tool"
+            && message["content"]
+                .as_str()
+                .unwrap_or("")
+                .contains("BODY_MUST_REMAIN_LAZY")));
+    assert!(!system.contains("BODY_MUST_REMAIN_LAZY"));
+}
+
+async fn stopped_provider_request_finishes(compacting: bool) {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+    use themis_core::runtime::{ConversationRole, ConversationTurn};
+    use wiremock::{matchers::method, Mock, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_secs(30))
+                .set_body_json(common::final_text_body("Too late")),
+        )
+        .mount(&server)
+        .await;
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+    let history = if compacting {
+        vec![ConversationTurn {
+            role: ConversationRole::User,
+            text: "old context ".repeat(500),
+        }]
+    } else {
+        vec![]
+    };
+    let run = tokio::spawn(run_task_with_policy(
+        llm,
+        vec![],
+        "Continue".into(),
+        history,
+        Arc::new(AllowAllHook),
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: if compacting { 64 } else { usize::MAX },
+            recent_messages: 4,
+        },
+        tx,
+        stopped.clone(),
+    ));
+    let mut events = Vec::new();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let ready = if compacting {
+            matches!(event, RunEvent::ContextCompacting)
+        } else {
+            matches!(event, RunEvent::Started { .. })
+        };
+        events.push(event);
+        if ready {
+            break;
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while server.received_requests().await.unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    stopped.store(true, Ordering::SeqCst);
+    let result = tokio::time::timeout(Duration::from_millis(500), run)
+        .await
+        .expect("Stop must preempt a stalled provider request")
+        .unwrap();
+    assert!(result.unwrap_err().to_string().contains("Stopped by you"));
+    events.extend(common::drain(&mut rx).await);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::Failed { .. }))
+            .count(),
+        1,
+        "{events:?}"
+    );
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        RunEvent::ContextCheckpoint { .. } | RunEvent::Finished { .. }
+    )));
+}
+
+#[tokio::test]
+async fn stop_cancels_stalled_compaction_provider_request() {
+    stopped_provider_request_finishes(true).await;
+}
+
+#[tokio::test]
+async fn stop_cancels_stalled_answer_provider_request() {
+    stopped_provider_request_finishes(false).await;
+}
+
+#[tokio::test]
+async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
+    use wiremock::{matchers::method, Mock, Request, ResponseTemplate};
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            let messages = body["messages"].as_array().unwrap();
+            let summary_request = messages.iter().any(|message| {
+                message["content"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("CONVERSATION TO SUMMARIZE"))
+            });
+            let answer = if summary_request {
+                common::final_text_body("Read completed. Reply READY next; no implementation yet.")
+            } else if messages.len() == 2 {
+                common::tool_call_body("read_1", "read_file", json!({"file_path":"repository.txt"}))
+            } else {
+                common::final_text_body("READY")
+            };
+            ResponseTemplate::new(200).set_body_json(answer)
+        })
+        .mount(&server)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let source = "Observed repository evidence. ".repeat(32_000);
+    std::fs::write(project.path().join("repository.txt"), &source).unwrap();
+    let evidence = project.path().join("evidence");
+    std::fs::create_dir(&evidence).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, _rx) = tokio::sync::mpsc::channel(1024);
+    let answer = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Read repository.txt once, then reply READY without editing.".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 4,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "READY");
+    let requests = server.received_requests().await.unwrap();
+    let final_request: serde_json::Value =
+        serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    let messages = final_request["messages"].as_array().unwrap();
+    let system = messages[0]["content"].as_str().unwrap();
+    assert!(system.contains(
+        "Checkpoints and Assistant section notes are navigation, never original evidence"
+    ));
+    assert!(system.contains("Assistant navigation is not citable proof"));
+    assert!(system.contains("Respect the current request's tool restrictions"));
+    assert!(system.contains("/content contains original User/attachment text"));
+    assert!(system.contains("Bounded reads include record_role"));
+    assert!(system.contains("If bounded searches do not recover the needed evidence"));
+    assert!(system.contains("let task-aware compaction focus it on the current request"));
+    assert!(!system.contains("Do not read whole archives into the model again"));
+    assert!(system.contains("Use section notes to locate originals"));
+    assert!(system.contains("truncated tool output is incomplete evidence"));
+    assert!(system.contains("Sampling the first matches does not establish absence"));
+    assert!(system.contains("actual events versus plans or allegations"));
+    let result = messages
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .expect("completed tool result must remain in the continuation wire request");
+    assert_eq!(result["tool_call_id"], "read_1");
+    assert!(
+        messages.iter().any(
+            |message| message["tool_calls"].as_array().is_some_and(|calls| calls
+                .iter()
+                .any(|call| call["id"] == "read_1" && call["function"]["name"] == "read_file"))
+        ),
+        "offloaded results must preserve their matching invocation"
+    );
+    let receipt: serde_json::Value =
+        serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+    assert_eq!(receipt["result_offloaded"], true);
+    assert_eq!(receipt["success"], true);
+    let path = std::path::Path::new(receipt["original_snapshot"].as_str().unwrap());
+    assert!(path.starts_with(&evidence));
+    let originals: Vec<serde_json::Value> = std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let raw = originals
+        .iter()
+        .find(|message| message["role"] == "Tool")
+        .unwrap()["message_type"]["ToolResult"][0]["function"]["arguments"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(raw).unwrap()["content"],
+        source
+    );
+    assert!(serde_json::to_vec(&final_request).unwrap().len() < 100_000);
 }

@@ -3,7 +3,6 @@ import { Badge, Button, EmptyState, Input } from "../components";
 import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
 import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 import type {
-  Diagnostics,
   GoModel,
   SecretStatus,
   Settings,
@@ -12,14 +11,12 @@ import type {
 import {
   checkForUpdates,
   clearSecret,
-  getDiagnostics,
   getSecretStatus,
   setSecret,
   updateSettings,
   listGoModels,
 } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
-import { copyDiagnostics } from "./diagnostics";
 import "./Settings.css";
 import { AppearanceSettings } from "./Appearance";
 
@@ -102,8 +99,6 @@ export function SettingsScreen() {
   const [error, setError] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
-  const [copying, setCopying] = useState(false);
 
   useEffect(() => {
     setForm(state.settings);
@@ -175,21 +170,6 @@ export function SettingsScreen() {
     }
   }
 
-  async function copyDiagnosticsToClipboard() {
-    if (copying) return;
-    setCopying(true);
-    try {
-      const loaded = await copyDiagnostics({
-        load: getDiagnostics,
-        writeClipboard: (text) => navigator.clipboard.writeText(text),
-        notify: (message, tone) => toast(dispatch, message, tone),
-      });
-      if (loaded !== null) setDiagnostics(loaded);
-    } finally {
-      setCopying(false);
-    }
-  }
-
   async function clearKey(provider: (typeof SECRET_PROVIDERS)[number]) {
     setKeyBusy(provider);
     try {
@@ -223,7 +203,7 @@ export function SettingsScreen() {
 
         </section>
         <section className="themis-settings-section" aria-label="Automations"><h3 className="themis-settings-subtitle">Automations</h3><label className="themis-settings-check"><input type="checkbox" checked={form.automations_enabled} onChange={event => void save({ automations_enabled: event.target.checked })} />Scheduled runs</label><p className="themis-settings-hint">Manage in Automations.</p></section>
-        <details className="themis-settings-section"><summary>Updates</summary><UpdateStatusView status={update} /><div><Button variant="ghost" size="small" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check updates"}</Button><Button variant="ghost" size="small" disabled={copying} onClick={() => void copyDiagnosticsToClipboard()}>{copying ? "Copying…" : "Copy diagnostics"}</Button></div><p className="themis-settings-hint">Manual checks · Diagnostics exclude keys.</p>{diagnostics && <p className="themis-settings-hint">{diagnostics.app_version} · {diagnostics.os}</p>}</details>
+        <details className="themis-settings-section"><summary>Updates</summary><UpdateStatusView status={update} /><div><Button variant="ghost" size="small" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check updates"}</Button></div></details>
       </>}
       {section === "Appearance" && <>
         <AppearanceSettings settings={state.settings} save={save} />
@@ -245,17 +225,16 @@ export function SettingsScreen() {
           <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div>{provider === "go" && <p className="themis-settings-hint">Forgetting a saved key does not remove OPENCODE_KEY from your environment.</p>}</details></div>)}
         </section>
       </>}
-      {section === "Permissions" && <section className="themis-settings-section" aria-label="Permissions"><h3 className="themis-settings-subtitle">Approvals</h3><label className="themis-settings-check"><input type="checkbox" checked={form.confirm_reads} onChange={event => void save({ confirm_reads: event.target.checked })} />Confirm reads</label><dl className="themis-permissions"><dt>File access</dt><dd>File tools stay inside the thread’s project or worktree.</dd><dt>Changes and commands</dt><dd>Writes, shell commands, network and destructive tool calls pause for approval.</dd><dt>Approval duration</dt><dd>“Always” remembers a tool decision for the current run only.</dd></dl></section>}
+      {section === "Permissions" && <section className="themis-settings-section" aria-label="Permissions"><h3 className="themis-settings-subtitle">Composer shield</h3><dl className="themis-permissions"><dt>YOLO</dt><dd>No harness restrictions or approval prompts. Operating-system and service permissions still apply.</dd><dt>Custom</dt><dd>Uses the configured allow, ask and deny rules.</dd><dt>When changes apply</dt><dd>Each run captures its permission mode and configuration at startup.</dd></dl></section>}
       {section === "Advanced" && <section className="themis-settings-section" aria-label="Advanced settings">
         <h3 className="themis-settings-subtitle">Run limits</h3>
-        <Input id="themis-max-turns" label="Checkpoint turns" type="number" min={1} max={200} value={form.max_turns} onChange={event => setForm(f => ({ ...f, max_turns: Number(event.target.value) }))} onBlur={() => { if (form.max_turns !== state.settings.max_turns) void save({ max_turns: form.max_turns }); }} />
         <Input id="themis-total-turns" label="Turn limit" type="number" min={1} max={2000} value={form.max_total_turns} onChange={event => setForm(f => ({ ...f, max_total_turns: Number(event.target.value) }))} onBlur={() => { if (form.max_total_turns !== state.settings.max_total_turns) void save({ max_total_turns: form.max_total_turns }); }} />
         <Input id="themis-context-budget" label="Context tokens" type="number" min={2000} max={200000} value={form.context_token_budget} onChange={event => setForm(f => ({ ...f, context_token_budget: Number(event.target.value) }))} onBlur={() => { if (form.context_token_budget !== state.settings.context_token_budget) void save({ context_token_budget: form.context_token_budget }); }} />
         <Input id="themis-context-messages" label="Recent messages" type="number" min={1} max={100} value={form.context_messages} onChange={event => setForm(f => ({ ...f, context_messages: Number(event.target.value) }))} onBlur={() => { if (form.context_messages !== state.settings.context_messages) void save({ context_messages: form.context_messages }); }} />
         <Input id="themis-concurrency" label="Parallel runs" type="number" min={1} max={16} value={form.concurrency_limit} onChange={event => setForm(f => ({ ...f, concurrency_limit: Number(event.target.value) }))} onBlur={() => { if (form.concurrency_limit !== state.settings.concurrency_limit) void save({ concurrency_limit: form.concurrency_limit }); }} />
         <Input id="themis-approval-timeout" label="Approval timeout" type="number" min={30} max={600} value={form.approval_timeout_seconds} onChange={event => setForm(f => ({ ...f, approval_timeout_seconds: Number(event.target.value) }))} onBlur={() => { if (form.approval_timeout_seconds !== state.settings.approval_timeout_seconds) void save({ approval_timeout_seconds: form.approval_timeout_seconds }); }} />
-        <details><summary>Details</summary><p className="themis-settings-hint">Checkpoints summarize older context and continue the run. The turn limit saves a handoff and stops. Token counts are estimates. Limits apply to new runs; approval timeout uses seconds.</p></details>
-        <div><Button variant="ghost" size="small" onClick={() => void save({ max_turns: 20, max_total_turns: 200, context_token_budget: 16000, context_messages: 20, concurrency_limit: 3, approval_timeout_seconds: 300 })}>Reset limits</Button></div>
+        <details><summary>Details</summary><p className="themis-settings-hint">When context exceeds the token budget, checkpoints summarize older context and continue the run. The turn limit saves a handoff and stops. Token counts are estimates. Limits apply to new runs; approval timeout uses seconds.</p></details>
+        <div><Button variant="ghost" size="small" onClick={() => void save({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3, approval_timeout_seconds: 300 })}>Reset limits</Button></div>
       </section>}
       </fieldset>
     </div>

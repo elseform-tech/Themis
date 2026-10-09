@@ -38,6 +38,75 @@ async fn backend_command(
 }
 
 #[tauri::command]
+async fn attachment_file(
+    app: tauri::AppHandle,
+    backend: State<'_, server::Client>,
+    thread_id: String,
+    path: String,
+) -> Result<String, String> {
+    let value = backend
+        .call(
+            "attachment_path",
+            serde_json::json!({"threadId":thread_id,"path":path}),
+        )
+        .await?;
+    let path = value.as_str().ok_or("Invalid attachment path")?.to_owned();
+    #[cfg(target_os = "macos")]
+    let path = if std::path::Path::new(&path)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+    {
+        tokio::task::spawn_blocking(move || pdf_thumbnail(&path))
+            .await
+            .map_err(|e| e.to_string())??
+    } else {
+        path
+    };
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+// ponytail: cache the first page per staged PDF; invalidate it if attachment editing needs live previews.
+#[cfg(target_os = "macos")]
+fn pdf_thumbnail(path: &str) -> Result<String, String> {
+    let source = Path::new(path).canonicalize().map_err(|e| e.to_string())?;
+    let parent = source.parent().ok_or("Invalid attachment path")?;
+    let directory = parent.join(".preview");
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let directory = directory.canonicalize().map_err(|e| e.to_string())?;
+    if !directory.starts_with(parent) {
+        return Err("Invalid preview directory".into());
+    }
+    let thumbnail = directory.join(format!(
+        "{}.png",
+        source
+            .file_name()
+            .ok_or("Invalid filename")?
+            .to_string_lossy()
+    ));
+    if !thumbnail.exists()
+        && !std::process::Command::new("qlmanage")
+            .args(["-t", "-s", "512", "-o"])
+            .arg(&directory)
+            .arg(&source)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| e.to_string())?
+            .success()
+    {
+        return Err("PDF preview unavailable".into());
+    }
+    let thumbnail = thumbnail.canonicalize().map_err(|e| e.to_string())?;
+    if !thumbnail.starts_with(&directory) {
+        return Err("Invalid PDF preview".into());
+    }
+    Ok(thumbnail.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn completion_haptic(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     return app
@@ -63,14 +132,20 @@ fn forward_remote_events(app: tauri::AppHandle, client: server::Client) {
     tauri::async_runtime::spawn(async move {
         loop {
             if let Ok(mut stream) = client.subscribe().await {
+                let _ = app.emit("backend-resync", ());
                 while let Ok(event) = server::Client::next_event(&mut stream).await {
                     if let (Some(name), Some(payload)) = (
                         event.get("name").and_then(Value::as_str),
                         event.get("payload"),
                     ) {
-                        if name != "lagged" {
-                            let _ = app.emit(name, payload.clone());
-                        }
+                        let _ = app.emit(
+                            if name == "lagged" {
+                                "backend-resync"
+                            } else {
+                                name
+                            },
+                            payload.clone(),
+                        );
                     }
                 }
             }
@@ -186,9 +261,30 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             backend_command,
+            attachment_file,
             completion_haptic,
             commands::check_for_updates,
         ])
         .run(context)
         .expect("error while running tauri application");
+}
+
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn pdf_thumbnail_renders_and_rejects_escaped_cache() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("document.pdf");
+    std::fs::write(&source, include_bytes!("../tests/fixtures/preview.pdf")).unwrap();
+    let thumbnail = pdf_thumbnail(source.to_str().unwrap()).unwrap();
+    assert!(std::fs::read(&thumbnail)
+        .unwrap()
+        .starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert_eq!(pdf_thumbnail(source.to_str().unwrap()).unwrap(), thumbnail);
+    let other = tempfile::tempdir().unwrap();
+    let source = other.path().join("document.pdf");
+    std::fs::write(&source, include_bytes!("../tests/fixtures/preview.pdf")).unwrap();
+    std::os::unix::fs::symlink(directory.path(), other.path().join(".preview")).unwrap();
+    assert!(pdf_thumbnail(source.to_str().unwrap())
+        .unwrap_err()
+        .contains("Invalid preview directory"));
 }

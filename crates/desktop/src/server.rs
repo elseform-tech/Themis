@@ -15,7 +15,7 @@ use crate::sink::EventSink;
 use crate::state::AppState;
 use crate::types::{ApprovalRequest, ReviewItem, ThreadEventEnvelope};
 
-const MAX_FRAME: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
 const DISCOVERY_FILE: &str = "server.json";
 
 #[derive(Serialize, Deserialize)]
@@ -184,6 +184,7 @@ impl Server {
     }
 
     pub async fn run(self) -> Result<(), String> {
+        self.state.log_server_event("started");
         let mut stopped = self.shutdown.subscribe();
         loop {
             let (stream, _) = tokio::select! {
@@ -207,6 +208,7 @@ impl Server {
         {
             std::fs::remove_file(path).map_err(|err| err.to_string())?;
         }
+        self.state.log_server_event("stopped");
         Ok(())
     }
 }
@@ -357,6 +359,19 @@ pub async fn dispatch(
         }};
     }
     match method {
+        "get_runtime_configuration" => state.get_runtime_configuration(arg(&args, "projectRoot")?),
+        "save_runtime_configuration" => state.save_runtime_configuration(
+            &arg::<String>(&args, "scope")?,
+            arg(&args, "projectRoot")?,
+            &arg::<String>(&args, "json")?,
+        ),
+        "query_diagnostic_logs" => output!(state
+            .query_diagnostic_logs(serde_json::from_value(args).map_err(|e| e.to_string())?)?),
+        "set_thread_approval_mode" => output!(
+            state
+                .set_thread_approval_mode(arg(&args, "threadId")?, arg(&args, "mode")?)
+                .await?
+        ),
         "plugin_action" => output!(state.plugin_action(args).await?),
         "list_prompt_skills" => output!(state.prompt_skills(arg(&args, "projectRoot")?).await?),
         "ping" => output!(state.ping().await),
@@ -402,16 +417,36 @@ pub async fn dispatch(
                 )
                 .await
         ),
+        "get_pending_approvals" => output!(state.pending_approvals()),
         "list_threads" => output!(state.list_threads(arg(&args, "projectRoot")?).await?),
         "merge_thread" => output!(state.merge_thread(arg(&args, "threadId")?).await?),
         "discard_thread" => done!(state.discard_thread(arg(&args, "threadId")?).await),
-        "send_message" => output!(
+        "attachment_path" => output!(
             state
-                .send_message_with_effort(
-                    sink,
-                    arg(&args, "threadId")?,
-                    arg(&args, "text")?,
-                    arg(&args, "reasoningEffort")?
+                .attachment_path(arg(&args, "threadId")?, arg(&args, "path")?)
+                .await?
+        ),
+        "attach_files" => output!(
+            state
+                .attach_files(arg(&args, "threadId")?, arg(&args, "paths")?)
+                .await?
+        ),
+        "send_message" => output!(
+            crate::state::configuration::RUN_OVERRIDE
+                .scope(
+                    arg(&args, "runtimeConfiguration")?,
+                    state.send_message_with_attachments(
+                        sink,
+                        arg(&args, "threadId")?,
+                        arg(&args, "text")?,
+                        arg(&args, "reasoningEffort")?,
+                        serde_json::from_value(
+                            args.get("attachments")
+                                .cloned()
+                                .unwrap_or_else(|| serde_json::json!([]))
+                        )
+                        .map_err(|e| e.to_string())?
+                    )
                 )
                 .await?
         ),

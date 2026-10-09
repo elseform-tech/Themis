@@ -55,8 +55,8 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use autoagents::llm::{
     chat::{
-        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, StreamChunk,
-        StructuredOutputFormat, Tool, Usage,
+        ChatMessage, ChatProvider, ChatResponse, ChatRole, MessageType, SamplingOverrides,
+        StreamChunk, StructuredOutputFormat, Tool, Usage,
     },
     completion::{CompletionProvider, CompletionRequest, CompletionResponse},
     embedding::EmbeddingProvider,
@@ -483,8 +483,9 @@ impl CompatibleProvider {
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
         stream: bool,
+        sampling: Option<&SamplingOverrides>,
     ) -> Result<reqwest::RequestBuilder, LLMError> {
-        if self.uses_responses() {
+        let mut body = if self.uses_responses() {
             let mut input = Vec::new();
             for message in to_wire_messages(messages)? {
                 if let Some(id) = message.tool_call_id {
@@ -501,29 +502,51 @@ impl CompatibleProvider {
             let mut body =
                 serde_json::json!({"model":self.model,"input":input,"stream":stream,"store":false});
             if let Some(tools) = tools {
-                body["tools"] = tools.iter().map(|tool| serde_json::json!({"type":"function","name":tool.function.name,"description":tool.function.description,"parameters":tool.function.parameters})).collect();
+                body["tools"] = tools.iter().map(|tool| serde_json::json!({"type":"function","name":tool.function.name,"description":tool.function.description,"parameters":tool.function.parameters,"strict":false})).collect();
             }
             if let Some(effort) = &self.reasoning_effort {
                 body["reasoning"] = serde_json::json!({"effort":effort});
             }
-            return Ok(self.post("responses").json(&body));
+            body
+        } else if self.uses_messages() {
+            messages_body(&self.model, messages, tools, stream)?
+        } else {
+            serde_json::to_value(WireChatRequest {
+                model: &self.model,
+                messages: to_wire_messages(messages)?,
+                stream,
+                reasoning_effort: self.reasoning_effort.as_deref(),
+                max_tokens: None,
+                temperature: None,
+                tools,
+            })?
+        };
+        if let Some(sampling) = sampling {
+            if let Some(limit) = sampling.max_tokens {
+                let key = if self.uses_responses() {
+                    "max_output_tokens"
+                } else {
+                    "max_tokens"
+                };
+                body[key] = limit.into();
+            }
+            if let Some(temperature) = sampling.temperature {
+                body["temperature"] = temperature.into();
+            }
+            if let Some(top_p) = sampling.top_p {
+                body["top_p"] = top_p.into();
+            }
         }
-        if self.uses_messages() {
-            return Ok(self
-                .post("messages")
+        let request = if self.uses_responses() {
+            self.post("responses")
+        } else if self.uses_messages() {
+            self.post("messages")
                 .header("anthropic-version", "2023-06-01")
                 .header("x-api-key", &self.api_key)
-                .json(&messages_body(&self.model, messages, tools, stream)?));
-        }
-        Ok(self.post(CHAT_COMPLETIONS_PATH).json(&WireChatRequest {
-            model: &self.model,
-            messages: to_wire_messages(messages)?,
-            stream,
-            reasoning_effort: self.reasoning_effort.as_deref(),
-            max_tokens: None,
-            temperature: None,
-            tools,
-        }))
+        } else {
+            self.post(CHAT_COMPLETIONS_PATH)
+        };
+        Ok(request.json(&body))
     }
 
     /// POST builder for `{base}/{path}` with auth, Themis user agent, and extras.
@@ -545,7 +568,14 @@ impl CompatibleProvider {
 /// (Needed because themis-core's reqwest 0.12 error type differs from the reqwest
 /// 0.13 error the SDK's `From` impl targets.)
 fn transport_error(context: &str, err: reqwest::Error) -> LLMError {
-    LLMError::HttpError(format!("{context}: {err}"))
+    let category = if err.is_timeout() {
+        "request timed out: "
+    } else if err.is_connect() {
+        "connection failed: "
+    } else {
+        ""
+    };
+    LLMError::HttpError(format!("{category}{context}: {err}"))
 }
 
 /// Maps non-2xx responses to typed `LLMError`s (auth / rate-limit / generic).
@@ -588,7 +618,18 @@ impl ChatProvider for CompatibleProvider {
         &self,
         messages: &[ChatMessage],
         tools: Option<&[Tool]>,
+        json_schema: Option<StructuredOutputFormat>,
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        self.chat_with_tools_and_sampling(messages, tools, json_schema, None)
+            .await
+    }
+
+    async fn chat_with_tools_and_sampling(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
         _json_schema: Option<StructuredOutputFormat>,
+        sampling: Option<&SamplingOverrides>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
         if self.api_key.is_empty() {
             return Err(LLMError::missing_api_key(format!(
@@ -597,7 +638,7 @@ impl ChatProvider for CompatibleProvider {
             )));
         }
         let response = self
-            .chat_request(messages, tools, false)?
+            .chat_request(messages, tools, false, sampling)?
             .send()
             .await
             .map_err(|err| transport_error("chat request failed", err))?;
@@ -628,6 +669,9 @@ impl ChatProvider for CompatibleProvider {
                     message: format!("{} returned no choices", self.provider_name),
                     raw_response: String::new(),
                 })?;
+        if choice.finish_reason.as_deref() == Some("length") {
+            return Err(LLMError::Generic("Provider response was truncated".into()));
+        }
         Ok(Box::new(CompatibleChatResponse {
             text: choice.message.content,
             tool_calls: choice.message.tool_calls,
@@ -644,7 +688,7 @@ impl ChatProvider for CompatibleProvider {
         let messages_api = self.uses_messages();
         let responses_api = self.uses_responses();
         let response = self
-            .chat_request(messages, tools, true)?
+            .chat_request(messages, tools, true, None)?
             .send()
             .await
             .map_err(|error| transport_error("stream request failed", error))?;
@@ -974,6 +1018,45 @@ mod tests {
     /// reads them, and process env is global across test threads).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    #[tokio::test]
+    async fn transport_failures_keep_native_retry_classification() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(1)))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(20))
+            .build()
+            .unwrap();
+        let timeout = client.get(server.uri()).send().await.unwrap_err();
+        assert!(
+            transport_error("chat request failed", timeout).is_retryable(),
+            "native timeout must reach the summarization retry predicate"
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let connect = client
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            transport_error("chat request failed", connect).is_retryable(),
+            "native connection failure must remain retryable"
+        );
+        let malformed = reqwest::Client::new()
+            .get("://invalid")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            !transport_error("chat request failed", malformed).is_retryable(),
+            "invalid URLs are not transient failures"
+        );
+    }
+
     fn user_message(content: &str) -> ChatMessage {
         ChatMessage {
             role: ChatRole::User,
@@ -1061,6 +1144,136 @@ mod tests {
                 server.received_requests().await.unwrap()[0].headers[GO_SESSION_HEADER],
                 "thread-123"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn sampling_output_limit_reaches_each_protocol_without_changing_defaults() {
+        use autoagents::llm::chat::SamplingOverrides;
+        for (model, endpoint, key, response, default_limit) in [
+            (
+                "mimo-v2.6-flash",
+                "/chat/completions",
+                "max_tokens",
+                json!({"choices":[{"message":{"content":"State"},"finish_reason":"stop"}]}),
+                None,
+            ),
+            (
+                "muse-spark-1.3-contributor",
+                "/responses",
+                "max_output_tokens",
+                json!({"output":[{"type":"message","content":[{"type":"output_text","text":"State"}]}]}),
+                None,
+            ),
+            (
+                "claude-haiku-4-5",
+                "/messages",
+                "max_tokens",
+                json!({"content":[{"type":"text","text":"State"}],"stop_reason":"end_turn"}),
+                Some(16384),
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path(endpoint))
+                .respond_with(ResponseTemplate::new(200).set_body_json(response))
+                .expect(2)
+                .mount(&server)
+                .await;
+            let provider: Arc<dyn LLMProvider> = Arc::new(CompatibleProvider::go(
+                "synthetic".into(),
+                model.into(),
+                Some(server.uri()),
+                Some("summary-test".into()),
+            ));
+            let messages = [user_message("Summarize")];
+            provider
+                .chat_and_sampling(
+                    &messages,
+                    None,
+                    Some(&SamplingOverrides::with_max_tokens(4096)),
+                )
+                .await
+                .unwrap();
+            provider.chat(&messages, None).await.unwrap();
+            let requests = server.received_requests().await.unwrap();
+            let bounded: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+            let ordinary: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+            assert_eq!(bounded[key], 4096, "{model}");
+            assert_eq!(ordinary[key].as_u64(), default_limit, "{model}");
+            assert_eq!(requests[0].headers[GO_SESSION_HEADER], "summary-test");
+        }
+    }
+
+    #[tokio::test]
+    async fn providers_identify_output_truncation_without_exposing_response_content() {
+        for (model, response) in [
+            (
+                "mimo-v2.6-flash",
+                json!({"choices":[{"message":{"content":"Partial private state"},"finish_reason":"length"}]}),
+            ),
+            (
+                "muse-spark-1.3-contributor",
+                json!({"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","content":[{"type":"output_text","text":"Partial private state"}]}]}),
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(response))
+                .mount(&server)
+                .await;
+            let provider =
+                CompatibleProvider::go("synthetic".into(), model.into(), Some(server.uri()), None);
+            let result = provider.chat(&[user_message("Summarize")], None).await;
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("partial checkpoint must be rejected"),
+            };
+            assert!(
+                matches!(&error, LLMError::Generic(message) if message == "Provider response was truncated"),
+                "{error}"
+            );
+            assert!(!error.to_string().contains("private state"));
+        }
+    }
+
+    #[test]
+    fn responses_keep_optional_read_arguments_optional() {
+        let root = tempfile::tempdir().unwrap();
+        let tools =
+            crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook)).unwrap();
+        let reader = tools
+            .iter()
+            .find(|tool| tool.name() == "read_file")
+            .unwrap();
+        let mut tool = test_tool();
+        tool.function.parameters = reader.args_schema();
+        assert_eq!(tool.function.parameters["required"], json!(["file_path"]));
+        for model in ["gpt-6-luna", "muse-spark-1.3-contributor"] {
+            let provider = CompatibleProvider::go("synthetic".into(), model.into(), None, None);
+            for stream in [false, true] {
+                let request = provider
+                    .chat_request(
+                        &[user_message("Read source.py")],
+                        Some(std::slice::from_ref(&tool)),
+                        stream,
+                        None,
+                    )
+                    .unwrap()
+                    .build()
+                    .unwrap();
+                let body: Value =
+                    serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+                assert_eq!(
+                    body["tools"][0]["strict"], false,
+                    "optional selectors must remain omittable in Responses"
+                );
+                assert_eq!(
+                    body["tools"][0]["parameters"]["required"],
+                    json!(["file_path"])
+                );
+                assert!(body["tools"][0]["parameters"]["properties"]["jsonl_record"].is_object());
+            }
         }
     }
 
@@ -1304,7 +1517,7 @@ mod tests {
         }
     }
 
-    // Snapshot of GET /zen/go/v1/models, verified against docs/go on 2026-09-23.
+    // Snapshot of GET /zen/go/v1/models, updated against docs/go on 2026-10-07.
     #[tokio::test]
     async fn every_go_catalog_model_uses_its_wire_protocol() {
         let server = MockServer::start().await;
@@ -1341,6 +1554,7 @@ mod tests {
             (
                 "/messages",
                 &[
+                    "claude-haiku-5-5",
                     "minimax-m3",
                     "minimax-m2.7",
                     "minimax-m2.5",
@@ -1407,7 +1621,7 @@ mod tests {
                 assert_eq!(request.body_json::<Value>().unwrap()["model"], *model);
             }
         }
-        assert_eq!(server.received_requests().await.unwrap().len(), 42);
+        assert_eq!(server.received_requests().await.unwrap().len(), 43);
     }
 
     #[test]

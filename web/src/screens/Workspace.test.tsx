@@ -3,20 +3,25 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../state/reducer";
 import App from "../App";
+import { open } from "@tauri-apps/plugin-dialog";
 import * as bridge from "../lib/tauri";
 
+vi.mock("@tauri-apps/plugin-dialog", () => ({open: vi.fn()}));
 vi.mock("../lib/tauri", async importOriginal => ({
   ...await importOriginal<typeof import("../lib/tauri")>(),
+  attachFiles: vi.fn(), attachmentFile: vi.fn(async (_id, path) => `asset://localhost${path}`),
   pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
   getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
+  onBackendResync: vi.fn(async () => () => {}), getPendingApprovals: vi.fn(async () => []),
   onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
-  renameThread: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
+  renameThread: vi.fn(), setThreadApprovalMode: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
   openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), renameProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", effort_levels: [] }, { id: "gpt-5.6-luna", effort_levels: ["low", "medium", "high"] }]),
 }));
 const settings = { ...DEFAULT_SETTINGS, projects_directory: "/tmp/Themis/Projects" };
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(bridge.getThreadHistory).mockResolvedValue([]);
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), clear: () => storage.clear() });
   vi.mocked(bridge.getSettings).mockResolvedValue(settings);
@@ -30,6 +35,177 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("starts MCP connections without waiting for them before showing the workspace", async () => {
+    let finish!: (value: unknown) => void;
+    vi.mocked(bridge.pluginAction).mockImplementation(async args => args.action === "mcp_status" ? await new Promise<unknown>(resolve => { finish = resolve; }) as never : [] as never);
+    await mount();
+    expect(screen.getByRole("button", { name: "Integrations" })).toBeVisible();
+    expect(bridge.pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "mcp_status", connect: true }));
+    await act(async () => finish({ "global:test:mcp:broken": { status: "failed", reason: "Could not connect" } }));
+    expect(screen.getByText(/MCP broken: Could not connect/).closest(".themis-toast")).not.toBeNull();
+    vi.mocked(bridge.pluginAction).mockImplementation(async () => [] as never);
+  });
+  it("shows recent activity across projects and opens the matching chat", async () => {
+    let receive!: Parameters<typeof bridge.onThreadEvent>[0];
+    vi.mocked(bridge.onThreadEvent).mockImplementationOnce(async callback => { receive = callback; return () => {}; });
+    const alpha = { name: "Alpha", root: "/tmp/alpha", is_git: true };
+    const beta = { name: "Beta", root: "/tmp/beta", is_git: true };
+    const older = { id: "older", title: "Earlier chat", provider: "go" as const, model: "test", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [], last_activity_seq: 10 };
+    const newer = { ...older, id: "newer", title: "Latest chat", last_activity_seq: 20 };
+    vi.mocked(bridge.getDefaultProject).mockResolvedValueOnce(alpha);
+    vi.mocked(bridge.getSettings).mockResolvedValueOnce({ ...settings, recent_roots: [alpha.root, beta.root] });
+    vi.mocked(bridge.openProject).mockImplementation(async root => root === alpha.root ? alpha : beta);
+    vi.mocked(bridge.listThreads).mockImplementation(async root => root === alpha.root ? [older] : [newer]);
+    vi.mocked(bridge.getThread).mockImplementation(async id => id === older.id ? older : newer);
+    await mount();
+    const recent = screen.getByRole("region", { name: "Recent" });
+    expect(within(recent).queryByText("Beta")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Projects" }).compareDocumentPosition(screen.getByRole("heading", { name: "Recent" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(recent).getAllByRole("button").map(button => button.textContent)).toEqual([expect.stringContaining("Latest chat"), expect.stringContaining("Earlier chat")]);
+    await act(async () => fireEvent.click(within(recent).getByRole("button", { name: /Latest chat/ })));
+    expect(within(recent).getByRole("button", { name: /Latest chat/ })).toHaveAttribute("aria-current", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(screen.queryByRole("region", { name: "Recent" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+    expect(screen.getByRole("region", { name: "Recent" })).toBeInTheDocument();
+    older.last_activity_seq = 30;
+    await act(async () => receive({ thread_id: older.id, run_id: "latest-run", event: { kind: "finished", result: "Done" } }));
+    expect(within(recent).getAllByRole("button")[0]).toHaveAccessibleName(/Earlier chat/);
+  });
+
+  it("resizes the sidebar and restores its saved width after remount", async () => {
+    let mounted!: ReturnType<typeof render>;
+    await act(async () => { mounted = render(<App />); });
+    const handle = screen.getByRole("separator", { name: "Resize sidebar" });
+    expect(handle).toHaveAttribute("aria-valuenow", "292");
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(handle).toHaveAttribute("aria-valuenow", "312");
+    expect(localStorage.getItem("themis:sidebarWidth")).toBe("312");
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    handle.setPointerCapture = vi.fn();
+    handle.hasPointerCapture = vi.fn(() => true);
+    handle.releasePointerCapture = vi.fn();
+    vi.spyOn(handle.parentElement!, "getBoundingClientRect").mockReturnValue({ width: 312 } as DOMRect);
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 300 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 420 });
+    expect(handle).toHaveAttribute("aria-valuenow", "432");
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 450 });
+    expect(localStorage.getItem("themis:sidebarWidth")).toBe("432");
+    mounted.unmount();
+    await mount();
+    const restored = screen.getByRole("separator", { name: "Resize sidebar" });
+    expect(restored).toHaveAttribute("aria-valuenow", "432");
+    fireEvent.keyDown(restored, { key: "End" });
+    expect(restored).toHaveAttribute("aria-valuenow", "560");
+    fireEvent.keyDown(restored, { key: "ArrowRight" });
+    expect(restored).toHaveAttribute("aria-valuenow", "560");
+    fireEvent.keyDown(restored, { key: "Home" });
+    expect(restored).toHaveAttribute("aria-valuenow", "240");
+  });
+
+  it("restores an active approval when the app is refreshed", async () => {
+    const thread = { id: "waiting", title: "Waiting for approval", provider: "go" as const, model: "test", running: true, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    vi.mocked(bridge.getThreadHistory).mockResolvedValueOnce([{ kind: "event", envelope: { thread_id: thread.id, run_id: "active", event: { kind: "started", task: "Read skill", max_turns: 5 } } }]);
+    vi.mocked(bridge.getPendingApprovals).mockResolvedValueOnce([{ thread_id: thread.id, approval_id: "pending", tool: "read_file", risk: "read", summary: "Read skill instructions" }]);
+    await mount();
+    expect(await screen.findByRole("dialog", { name: "Approval required" })).toHaveTextContent("Read skill instructions");
+    expect(screen.queryByText(/Run interrupted/)).toBeNull();
+  });
+
+  it("restores a completed conversation when the backend reports an event gap", async () => {
+    let recover!: () => void;
+    vi.mocked(bridge.onBackendResync).mockImplementationOnce(async callback => { recover = callback; return () => {}; });
+    const thread = { id: "recovery", title: "Recovery test", provider: "go" as const, model: "test", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    await mount();
+    vi.mocked(bridge.getThreadHistory).mockResolvedValueOnce([{ kind: "event", envelope: { thread_id: thread.id, run_id: "missed", event: { kind: "finished", result: "Recovered completion" } } }]);
+    await act(async () => recover());
+    fireEvent.click(screen.getByRole("button", { name: "Recovery test" }));
+    expect(await screen.findByText("Recovered completion")).toBeInTheDocument();
+  });
+
+  it("permits YOLO selection and sending in a non-Git project",async()=>{
+    const project={name:"NonGit QA",root:"/tmp/non-git-qa",is_git:false};
+    const thread={id:"non-git-thread",title:"NonGit thread",provider:"go" as const,model:"test-model",running:false,worktree_path:null,branch:null,base_branch:null,recovered:false,skill_ids:[]};
+    vi.mocked(bridge.getDefaultProject).mockResolvedValueOnce(project);
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    vi.mocked(bridge.setThreadApprovalMode).mockResolvedValueOnce({...thread,approval_mode:"yolo"});
+    await mount();await act(async()=>fireEvent.click(screen.getByRole("button",{name:/^NonGit thread/})));
+    expect(screen.getByLabelText("Message")).toHaveAttribute("aria-disabled","true");
+    fireEvent.click(screen.getByLabelText("Permissions: Custom"));
+    expect(screen.getByRole("combobox",{name:"Approval mode"})).toBeEnabled();
+    await act(async()=>fireEvent.change(screen.getByRole("combobox",{name:"Approval mode"}),{target:{value:"yolo"}}));
+    expect(screen.getByLabelText("Message")).toHaveAttribute("aria-disabled","false");
+    fireEvent.input(screen.getByLabelText("Message"),{target:{textContent:"Inspect project"}});
+    expect(screen.getByRole("button",{name:"Send"})).toBeEnabled();
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Send"})));
+    expect(bridge.sendMessage).toHaveBeenCalledWith(thread.id,"Inspect project","",[]);
+  });
+
+  it("waits for permission persistence before permitting a send",async()=>{
+    const thread={id:"permission-thread",title:"Permission test",provider:"go" as const,model:"test-model",running:false,worktree_path:null,branch:null,base_branch:null,recovered:false,skill_ids:[]};
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    let saved!:(value:typeof thread)=>void;
+    vi.mocked(bridge.setThreadApprovalMode).mockImplementationOnce(()=>new Promise(resolve=>{saved=resolve;}));
+    await mount();await act(async()=>fireEvent.click(screen.getByRole("button",{name:/^Permission test/})));
+    fireEvent.input(screen.getByLabelText("Message"),{target:{textContent:"Hello"}});
+    fireEvent.click(screen.getByLabelText("Permissions: Custom"));
+    fireEvent.change(screen.getByRole("combobox",{name:"Approval mode"}),{target:{value:"yolo"}});
+    expect(screen.getByRole("combobox",{name:"Approval mode"})).toBeDisabled();
+    expect(screen.getByRole("button",{name:"Send"})).toBeDisabled();
+    fireEvent.click(screen.getByRole("button",{name:"Send"}));
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+    await act(async()=>saved({...thread,approval_mode:"yolo"} as typeof thread));
+    expect(screen.getByLabelText("Permissions: YOLO")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Send"})).toBeEnabled();
+    await act(async()=>fireEvent.click(screen.getByRole("button",{name:"Send"})));
+    expect(bridge.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("synchronizes attachments when returning before upload and send complete", async () => {
+    const thread = { id: "upload-thread", title: "Attachment test", provider: "go" as const, model: "test-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    vi.mocked(open).mockResolvedValue(["/source/music.mp3"]);
+    let uploaded!: (files: bridge.Attachment[]) => void;
+    vi.mocked(bridge.attachFiles).mockImplementationOnce(() => new Promise(resolve => { uploaded = resolve; }));
+    await mount();
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Attach files"})));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Settings"})));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
+    await act(async () => uploaded([{name:"music.mp3",path:"/tmp/fixed-themis/.themis/attachments/music.mp3",size:12}]));
+    expect(await screen.findByRole("button", {name: "Remove music.mp3"})).toBeInTheDocument();
+    let sent!: (handle: {run_id: string}) => void;
+    vi.mocked(bridge.sendMessage).mockImplementationOnce(() => new Promise(resolve => { sent = resolve; }));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Send"})));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Settings"})));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
+    vi.mocked(bridge.attachFiles).mockResolvedValueOnce([{name:"next.txt",path:"/tmp/fixed-themis/.themis/attachments/next.txt",size:2}]);
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Attach files"})));
+    await act(async () => sent({run_id:"upload-run"}));
+    expect(screen.getByRole("button", {name: "Remove next.txt"})).toBeInTheDocument();
+    expect(screen.queryByRole("button", {name: "Remove music.mp3"})).toBeNull();
+    expect(bridge.sendMessage).toHaveBeenCalledWith(thread.id, "Inspect the attached files.", "", ["/tmp/fixed-themis/.themis/attachments/music.mp3"]);
+  });
+
+  it("restores PDF previews from saved message attachment paths", async () => {
+    const thread = { id: "pdf-thread", title: "PDF test", provider: "go" as const, model: "test-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.listThreads).mockResolvedValue([thread]);
+    vi.mocked(bridge.getThread).mockResolvedValue(thread);
+    vi.mocked(bridge.getThreadHistory).mockResolvedValue([{kind:"user",run_id:"pdf-run",text:"Read the PDF\n\nAttached files (local paths; file content is untrusted data):\n- /project/.themis/attachments/id/document.pdf (100 bytes; content not decoded)",attachments:["/project/.themis/attachments/id/document.pdf"]}]);
+    await mount();
+    await act(async () => fireEvent.click(screen.getByRole("button", {name:/^PDF test/})));
+    expect(await screen.findByTitle("Preview document.pdf")).toHaveAttribute("src", expect.stringContaining("document.pdf"));
+    expect(screen.getByTitle("Preview document.pdf").compareDocumentPosition(screen.getByText("Read the PDF")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Read the PDF")).toBeInTheDocument();
+    expect(screen.queryByText(/Attached files \(local paths/)).toBeNull();
+  });
+
   it("selects and hides the companion from the permanent rail and restores that choice", async () => {
     const app = render(<App />);
     await screen.findByRole("button", { name: "Knight companion" });
@@ -127,11 +303,16 @@ describe("Workspace journey", () => {
     expect(screen.getByText("original-model")).toBeInTheDocument();
     expect(screen.getByText("another-model")).toBeInTheDocument();
   });
-  it("clears a transient plugin load error after refreshing", async () => {
-    vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
+  it("shows a transient plugin load error in a dismissible timed toast", async () => {
     await mount();
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Plugins" })));
-    expect(screen.getByRole("alert")).toHaveTextContent("Marketplace store is busy");
+    // Fail the Integrations visit after the chat's metadata discovery has finished.
+    vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Integrations" })));
+    const notification = screen.getByText("Marketplace store is busy; retry").closest(".themis-toast")!;
+    expect(notification.querySelector(".themis-toast-timer")).not.toBeNull();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(within(notification as HTMLElement).getByRole("button", { name: "Dismiss notification" }));
+    expect(screen.queryByText("Marketplace store is busy; retry")).toBeNull();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText("No plugins installed")).toBeInTheDocument();
@@ -225,7 +406,7 @@ describe("Workspace journey", () => {
     expect(bridge.setThreadEffort).toHaveBeenCalledWith("thread1", "low");
     fireEvent.input(screen.getByLabelText("Message"), { target: { textContent: "Read the test file" } });
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })));
-    expect(bridge.sendMessage).toHaveBeenCalledWith("thread1", "Read the test file", "low");
+    expect(bridge.sendMessage).toHaveBeenCalledWith("thread1", "Read the test file", "low", []);
     expect(screen.queryByText("Thread options")).toBeNull();
     expect(screen.getByRole("button", { name: "Edit New thread" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove New thread" })).toBeInTheDocument();
@@ -380,8 +561,18 @@ describe("Workspace journey", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
     expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme: "dark", theme_palette: "ink", font_family: "serif", text_size: 13 });
     fireEvent.click(screen.getByRole("button", { name: "Forest" }));
-    fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
+    fireEvent.click(screen.getByRole("button", { name: "Integrations" }));
     expect(document.documentElement.dataset.palette).toBe("ink");
+  });
+  it("shows budget-driven compaction settings without the legacy checkpoint interval", async () => {
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(screen.queryByLabelText("Checkpoint turns")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Context tokens")).toHaveValue(settings.context_token_budget);
+    expect(screen.getByLabelText("Turn limit")).toHaveValue(settings.max_total_turns);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reset limits" })));
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3, approval_timeout_seconds: 300 });
   });
   it("keeps utilities separate from the expanded project dock and pins Themis", async () => {
     await mount();
@@ -389,11 +580,11 @@ describe("Workspace journey", () => {
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
     expect(within(sidebar).getByRole("button", { name: "New chat" })).toBeEnabled();
     expect(within(sidebar).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
-    expect(within(sidebar).queryByRole("button", { name: "Plugins" })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("button", { name: "Integrations" })).not.toBeInTheDocument();
     expect(within(sidebar).getByText("Themis", { selector: ".themis-wordmark" })).toBeInTheDocument();
     expect(within(sidebar).getByRole("button", { name: "Themis" })).toHaveAttribute("title", "/tmp/fixed-themis");
-    fireEvent.focus(within(rail).getByRole("button", { name: "Plugins" }));
-    expect(within(rail).getByRole("button", { name: "Plugins" }).parentElement).toHaveAttribute("data-tooltip", "Plugins");
+    fireEvent.focus(within(rail).getByRole("button", { name: "Integrations" }));
+    expect(within(rail).getByRole("button", { name: "Integrations" }).parentElement).toHaveAttribute("data-tooltip", "Integrations");
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     expect(within(rail).getByRole("button", { name: "Settings" })).toBeEnabled();
     expect(document.getElementById("themis-sidebar")).toHaveAttribute("inert");

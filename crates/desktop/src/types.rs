@@ -105,12 +105,17 @@ pub struct ProjectInfo {
 /// A conversation thread (`ThreadInfo` in types.ts).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadInfo {
+    /// Last persisted conversation event; zero means no activity yet.
+    #[serde(default)]
+    pub last_activity_seq: i64,
     pub id: String,
     pub title: String,
     pub provider: ProviderKind,
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub approval_mode: themis_core::configuration::ApprovalMode,
     pub running: bool,
     /// Worktree backing this thread (`None` for non-git read-only threads).
     pub worktree_path: Option<String>,
@@ -353,10 +358,30 @@ pub struct SkillInput {
     pub scripts: Vec<SkillScript>,
 }
 
+/// Calendar recurrence evaluated in an IANA time zone, including DST.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutomationRepeat {
+    Daily,
+    Weekdays,
+    Weekly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutomationSchedule {
+    pub repeat: AutomationRepeat,
+    /// Local wall-clock time, strictly HH:MM.
+    pub time: String,
+    pub timezone: String,
+    /// Monday = 0 through Sunday = 6; used only for weekly schedules.
+    #[serde(default)]
+    pub weekday: u8,
+}
+
 /// A scheduled automation (`Automation` in types.ts).
 ///
-/// Timestamps are RFC3339 strings; `interval_mins` is a fixed interval in
-/// minutes (`>= 1`).
+/// Timestamps are RFC3339 strings. `schedule` uses local calendar time;
+/// when absent, `interval_mins` retains the legacy fixed-minute recurrence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Automation {
     pub id: String,
@@ -370,6 +395,8 @@ pub struct Automation {
     pub reasoning_effort: Option<String>,
     pub skill_ids: Vec<String>,
     pub interval_mins: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<AutomationSchedule>,
     pub task: String,
     pub enabled: bool,
     pub last_run_at: Option<String>,
@@ -393,6 +420,8 @@ pub struct AutomationInput {
     pub reasoning_effort: Option<String>,
     pub skill_ids: Vec<String>,
     pub interval_mins: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<AutomationSchedule>,
     pub task: String,
     pub enabled: bool,
 }
@@ -459,6 +488,7 @@ pub struct Settings {
     pub theme: ThemeMode,
     pub default_provider: ProviderKind,
     pub default_model: String,
+    /// Legacy checkpoint interval, retained for settings/API compatibility; no runtime effect.
     pub max_turns: u32,
     #[serde(default = "default_max_total_turns")]
     pub max_total_turns: u32,
@@ -521,7 +551,7 @@ pub const fn default_max_total_turns() -> u32 {
     200
 }
 pub const fn default_context_token_budget() -> u32 {
-    16_000
+    200_000
 }
 
 pub const fn default_approval_timeout_seconds() -> u32 {
@@ -571,6 +601,7 @@ pub struct SettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Legacy checkpoint interval; accepted for compatibility, no runtime effect.
     pub max_turns: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_total_turns: Option<i64>,
@@ -954,11 +985,13 @@ mod tests {
     #[test]
     fn thread_info_and_merge_result_match_ts() {
         let info = ThreadInfo {
+            last_activity_seq: 42,
             id: "t".to_owned(),
             title: "hi".to_owned(),
             provider: ProviderKind::Go,
             model: "m".to_owned(),
             reasoning_effort: None,
+            approval_mode: Default::default(),
             running: false,
             worktree_path: Some("/tmp/wt".to_owned()),
             branch: Some("themis/abc".to_owned()),
@@ -969,10 +1002,12 @@ mod tests {
         assert_eq!(
             to_value(&info),
             json!({
+                "last_activity_seq": 42,
                 "id": "t",
                 "title": "hi",
                 "provider": "go",
                 "model": "m",
+                "approval_mode": "custom",
                 "running": false,
                 "worktree_path": "/tmp/wt",
                 "branch": "themis/abc",
@@ -1041,7 +1076,7 @@ mod tests {
                 "default_model": "muse-spark-1.3-contributor",
                 "max_turns": 20,
                 "max_total_turns": 200,
-                "context_token_budget": 16000,
+                "context_token_budget": 200000,
                 "context_messages": 20,
                 "approval_timeout_seconds": 300,
                 "confirm_reads": false,
@@ -1146,6 +1181,7 @@ mod tests {
             target_thread_id: None,
             skill_ids: vec!["s".to_owned()],
             interval_mins: 60,
+            schedule: None,
             task: "check health".to_owned(),
             enabled: true,
             last_run_at: None,

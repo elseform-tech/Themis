@@ -14,8 +14,8 @@ def verify(path):
             if entry.is_symlink():
                 raise ValueError("skill directory must not contain symlinks")
         path = path / "SKILL.md"
-    if path.stat().st_size > 131072:
-        raise ValueError("draft exceeds 128 KiB")
+    if path.stat().st_size > 2 * 1024 * 1024:
+        raise ValueError("draft exceeds 2 MiB")
     text = path.read_text(encoding="utf-8")
     if path.name == "SKILL.md":
         match = re.match(r"\A---\r?\n(.*?)\r?\n---\r?\n(.*)\Z", text, re.S)
@@ -42,8 +42,8 @@ def verify(path):
             raise ValueError(f"{key} must be nonempty text")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}", skill["id"]) or "--" in skill["id"]:
         raise ValueError("id must be a safe single name without --")
-    if len(skill["instructions"].encode()) > 32768:
-        raise ValueError("instructions exceed 32 KiB")
+    if len(skill["instructions"].encode()) > 256 * 1024:
+        raise ValueError("instructions exceed 256 KiB")
     tools = skill.get("allowedTools", skill.get("allowed_tools", []))
     if not isinstance(tools, list) or any(not isinstance(t, str) or t not in TOOLS for t in tools):
         raise ValueError("allowedTools contains an unknown tool")

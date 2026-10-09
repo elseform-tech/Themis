@@ -20,10 +20,13 @@ export interface ProjectInfo {
 }
 
 export interface ThreadInfo {
+  /** Durable conversation activity order; absent on older servers. */
+  last_activity_seq?: number;
   id: string;
   title: string;
   provider: ProviderKind;
   model: string;
+  approval_mode?: "custom" | "yolo";
   reasoning_effort?: string | null;
   running: boolean;
   /** Worktree backing this thread (null for non-git read-only threads). */
@@ -66,14 +69,34 @@ export interface SkillInput {
 }
 
 export interface PluginSpec {
+  import_issues?: Array<{kind:string;name:string;status:string;field?:string|null;reason?:string|null;remedy?:string|null}>;
+  package_kind?: "plugin" | "skill" | "mcp" | "hook" | null;
+  icon?: string | null;
+  disabled_skills?: string[];
+  manual_skills?: string[];
+  origin?: { kind: string; location: string; reference?: string | null; subdirectory?: string | null } | null;
+  skill_paths?: Record<string, string>;
+  executable_files?: string[];
   name: string; description: string; version: string;
   skills: Array<{ id: string; name: string; description: string; instructions: string; allowedTools: string[]; scripts: SkillScript[] }>;
   mcp: Record<string, { command?: string | null; args: string[]; url?: string | null; env: Record<string,string>; bearer_env?: string | null; enabled: boolean }>;
   hooks: Array<{name:string;event:string;command:string;enabled:boolean;timeout_seconds:number;blocking:boolean}>;
   files: Record<string,string>; unsupported: string[];
 }
+export interface ImportPreview {
+  spec: PluginSpec;
+  report: { status: "supported" | "partial" | "unsupported"; components: NonNullable<PluginSpec["import_issues"]> };
+}
 export interface Plugin { scope: "local"|"global"; revision: string; enabled: boolean; source: string|null; spec: PluginSpec }
 export interface Marketplace { name: string; source: string }
+
+export interface AutomationSchedule {
+  repeat: "daily" | "weekdays" | "weekly";
+  time: string;
+  timezone: string;
+  /** Monday = 0 through Sunday = 6. */
+  weekday: number;
+}
 
 export interface Automation {
   id: string;
@@ -86,6 +109,7 @@ export interface Automation {
   skill_ids: string[];
   /** Fixed interval in minutes, >= 1. */
   interval_mins: number;
+  schedule?: AutomationSchedule | null;
   task: string;
   enabled: boolean;
   last_run_at: string | null;
@@ -102,6 +126,7 @@ export interface AutomationInput {
   reasoning_effort?: string | null;
   skill_ids: string[];
   interval_mins: number;
+  schedule?: AutomationSchedule | null;
   task: string;
   enabled: boolean;
 }
@@ -170,6 +195,7 @@ export interface PersistedMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
+  attachments?: string[];
   runId?: string;
   final?: boolean;
   model?: string;
@@ -179,7 +205,7 @@ export interface PersistedMessage {
 }
 
 export type HistoryItem =
-  | { kind: "user"; run_id: string; text: string }
+  | { kind: "user"; run_id: string; text: string; attachments?: string[] }
   | { kind: "event"; envelope: ThreadEventEnvelope }
   | { kind: "legacy"; message: PersistedMessage };
 
@@ -234,6 +260,7 @@ export interface Settings {
   theme: ThemeMode;
   default_provider: ProviderKind;
   default_model: string;
+  /** Legacy checkpoint interval; retained for compatibility, no runtime effect. */
   max_turns: number;
   max_total_turns: number;
   context_token_budget: number;
@@ -257,3 +284,5 @@ export interface SecretStatus {
 export const THREAD_EVENT_NAME = 'thread-event';
 export const APPROVAL_REQUEST_NAME = 'approval-request';
 export const REVIEW_ITEM_NAME = 'review-item-added';
+
+export type McpConnections = Record<string, { status: "connecting" | "connected" | "failed"; reason?: string }>;

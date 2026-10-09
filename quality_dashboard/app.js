@@ -197,8 +197,9 @@ function renderComplexity(data) {
   const files = complexity.files.filter((item) => item.path.toLowerCase().includes(query));
   if (sort === "loc-asc") files.sort((a, b) => a.loc - b.loc || a.path.localeCompare(b.path));
   else if (sort === "loc-desc") files.sort((a, b) => b.loc - a.loc || a.path.localeCompare(b.path));
-  else files.sort((a, b) => a.maintainability - b.maintainability || b.cognitive - a.cognitive).splice(25);
+  else files.sort((a, b) => (a.maintainability ?? Infinity) - (b.maintainability ?? Infinity) || b.cognitive - a.cognitive).splice(25);
   const rows = files.map((item) => {
+    if (item.maintainability == null) return `<tr><td class="path-cell">${esc(item.path)}</td><td>${number(item.loc)}</td><td>${Number(item.cyclomatic).toFixed(2)}</td><td>${Number(item.cognitive).toFixed(2)}</td><td>N/A · no functions</td><td>—</td></tr>`;
     const miClass = item.maintainability < 45 ? "low" : item.maintainability < 70 ? "mid" : "high";
     return `<tr><td class="path-cell">${esc(item.path)}</td><td>${number(item.loc)}</td><td>${Number(item.cyclomatic).toFixed(2)}</td><td>${Number(item.cognitive).toFixed(2)}</td><td><span class="mi-value ${miClass}">${Number(item.maintainability).toFixed(1)}</span></td><td><span class="complexity-bar" aria-label="Maintainability ${Number(item.maintainability).toFixed(1)} out of 100"><i style="width:${Math.max(0, Math.min(100, item.maintainability))}%"></i></span></td></tr>`;
   });

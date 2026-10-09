@@ -610,3 +610,10 @@ describe("extended fixtures", () => {
     expect(bare.recovered).toBe(true);
   });
 });
+
+it("recovers stale running flags after a missed terminal event", () => {
+  const running = applyThreadEvent(withThread(), envelope({ kind: "started", task: "work", max_turns: 1 }));
+  const recovered = reducer(running, { type: "thread/running-loaded", threadId: THREAD.id, running: false });
+  expect(recovered.running[THREAD.id]).toBe(false);
+  expect(recovered.threadsByProject[PROJECT.root][0].running).toBe(false);
+});

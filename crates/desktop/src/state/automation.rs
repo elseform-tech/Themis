@@ -1,4 +1,7 @@
 use super::*;
+use crate::types::{AutomationRepeat, AutomationSchedule};
+use chrono::{Datelike, NaiveTime, TimeZone};
+use chrono_tz::Tz;
 
 impl AppState {
     pub async fn list_automations(&self) -> Vec<Automation> {
@@ -10,17 +13,22 @@ impl AppState {
 
     /// Creates an automation after validating the input. The project root
     /// must exist (stored canonicalized) and `next_run_at` starts at
-    /// now + `interval_mins`.
+    /// the next calendar occurrence or now + the legacy interval.
     pub async fn create_automation(&self, input: AutomationInput) -> Result<Automation, String> {
         self.check_automation_input(&input).await?;
         let root = canonical_project_dir(&input.project_root)?;
         let now = Utc::now();
-        let interval_mins = u32::try_from(input.interval_mins).map_err(|_| {
-            format!(
-                "interval_mins is out of range (got {})",
-                input.interval_mins
-            )
-        })?;
+        let interval_mins = if input.schedule.is_some() {
+            60 // Calendar schedules do not use the legacy interval field.
+        } else {
+            u32::try_from(input.interval_mins).map_err(|_| {
+                format!(
+                    "interval_mins is out of range (got {})",
+                    input.interval_mins
+                )
+            })?
+        };
+        let next_run_at = next_automation_run(input.schedule.as_ref(), interval_mins, now)?;
         let automation = Automation {
             id: uuid::Uuid::new_v4().to_string(),
             name: input.name,
@@ -43,10 +51,11 @@ impl AppState {
                 dedup_ids(input.skill_ids)
             },
             interval_mins,
+            schedule: input.schedule,
             task: input.task,
             enabled: input.enabled,
             last_run_at: None,
-            next_run_at: rfc3339_plus_minutes(now, i64::from(interval_mins)),
+            next_run_at,
             run_count: 0,
         };
         self.inner
@@ -60,7 +69,7 @@ impl AppState {
 
     /// Replaces the automation `automation_id` with `input`, keeping its id,
     /// history (`last_run_at`, `run_count`), and rescheduling `next_run_at`
-    /// to now + the new interval.
+    /// to the next calendar occurrence or new interval.
     pub async fn update_automation(
         &self,
         automation_id: String,
@@ -68,13 +77,18 @@ impl AppState {
     ) -> Result<Automation, String> {
         self.check_automation_input(&input).await?;
         let root = canonical_project_dir(&input.project_root)?;
-        let interval_mins = u32::try_from(input.interval_mins).map_err(|_| {
-            format!(
-                "interval_mins is out of range (got {})",
-                input.interval_mins
-            )
-        })?;
+        let interval_mins = if input.schedule.is_some() {
+            60 // Calendar schedules do not use the legacy interval field.
+        } else {
+            u32::try_from(input.interval_mins).map_err(|_| {
+                format!(
+                    "interval_mins is out of range (got {})",
+                    input.interval_mins
+                )
+            })?
+        };
         let now = Utc::now();
+        let next_run_at = next_automation_run(input.schedule.as_ref(), interval_mins, now)?;
         let mut automations = self.inner.automations.write().await;
         let automation = automations
             .get_mut(&automation_id)
@@ -99,9 +113,10 @@ impl AppState {
             dedup_ids(input.skill_ids)
         };
         automation.interval_mins = interval_mins;
+        automation.schedule = input.schedule;
         automation.task = input.task;
         automation.enabled = input.enabled;
-        automation.next_run_at = rfc3339_plus_minutes(now, i64::from(interval_mins));
+        automation.next_run_at = next_run_at;
         let updated = automation.clone();
         drop(automations);
         self.persist_automations().await;
@@ -121,7 +136,7 @@ impl AppState {
     }
 
     /// Flips an automation's `enabled` flag. Enabling reschedules
-    /// `next_run_at` to now + the interval.
+    /// `next_run_at` to its next scheduled occurrence.
     pub async fn set_automation_enabled(
         &self,
         automation_id: String,
@@ -132,10 +147,11 @@ impl AppState {
         let automation = automations
             .get_mut(&automation_id)
             .ok_or_else(|| format!("unknown automation '{automation_id}'"))?;
-        automation.enabled = enabled;
         if enabled {
-            automation.next_run_at = rfc3339_plus_minutes(now, i64::from(automation.interval_mins));
+            automation.next_run_at =
+                next_automation_run(automation.schedule.as_ref(), automation.interval_mins, now)?;
         }
+        automation.enabled = enabled;
         let updated = automation.clone();
         drop(automations);
         self.persist_automations().await;
@@ -152,11 +168,14 @@ impl AppState {
         if input.task.trim().is_empty() {
             return Err("automation task must not be empty".to_owned());
         }
-        if input.interval_mins < 1 {
+        if input.schedule.is_none() && input.interval_mins < 1 {
             return Err(format!(
                 "interval_mins must be at least 1 (got {})",
                 input.interval_mins
             ));
+        }
+        if let Some(schedule) = &input.schedule {
+            next_calendar_run(schedule, Utc::now())?;
         }
         let root = canonical_project_dir(&input.project_root)?;
         let legacy: Vec<_> = self
@@ -383,6 +402,7 @@ impl AppState {
                 ),
                 run_id.clone(),
                 effort,
+                Vec::new(),
             )
             .await
         {
@@ -415,8 +435,7 @@ impl AppState {
             let mut automations = self.inner.automations.write().await;
             if let Some(automation) = automations.get_mut(automation_id) {
                 automation.last_run_at = Some(now.to_rfc3339_opts(SecondsFormat::Secs, true));
-                automation.next_run_at =
-                    rfc3339_plus_minutes(now, i64::from(automation.interval_mins));
+                advance_automation_schedule(automation, now);
                 automation.run_count += 1;
             }
         }
@@ -481,12 +500,161 @@ impl AppState {
             let mut automations = self.inner.automations.write().await;
             if let Some(automation) = automations.get_mut(&context.automation_id) {
                 automation.last_run_at = Some(now.to_rfc3339_opts(SecondsFormat::Secs, true));
-                automation.next_run_at =
-                    rfc3339_plus_minutes(now, i64::from(automation.interval_mins));
+                advance_automation_schedule(automation, now);
                 automation.run_count += 1;
             }
         }
         self.persist_automations().await;
         sink.emit_review_item(&item);
+    }
+}
+
+/// Select the next local calendar occurrence strictly after `after`.
+/// A DST gap moves to the first valid minute; a fold uses the earlier instant
+/// once, so a completed occurrence is never repeated within that local day.
+fn next_calendar_run(
+    schedule: &AutomationSchedule,
+    after: DateTime<Utc>,
+) -> Result<String, String> {
+    let zone: Tz = schedule
+        .timezone
+        .parse()
+        .map_err(|_| "Choose a valid IANA time zone.".to_owned())?;
+    let time = NaiveTime::parse_from_str(&schedule.time, "%H:%M")
+        .ok()
+        .filter(|time| time.format("%H:%M").to_string() == schedule.time)
+        .ok_or_else(|| "Choose a time in HH:MM format.".to_owned())?;
+    if schedule.repeat == AutomationRepeat::Weekly && schedule.weekday > 6 {
+        return Err("Choose a weekday from Monday (0) through Sunday (6).".to_owned());
+    }
+    let first_date = after.with_timezone(&zone).date_naive();
+    for offset in 0..=8 {
+        let date = first_date + chrono::Duration::days(offset);
+        let day = date.weekday().num_days_from_monday();
+        let matches = match schedule.repeat {
+            AutomationRepeat::Daily => true,
+            AutomationRepeat::Weekdays => day < 5,
+            AutomationRepeat::Weekly => day == u32::from(schedule.weekday),
+        };
+        if !matches {
+            continue;
+        }
+        let mut local = date.and_time(time);
+        // Zone transitions can skip a whole date. Bound the search to this
+        // calendar day; in that case select the next matching date instead.
+        while local.date() == date {
+            if let Some(candidate) = zone.from_local_datetime(&local).earliest() {
+                if candidate.with_timezone(&Utc) > after {
+                    return Ok(candidate
+                        .with_timezone(&Utc)
+                        .to_rfc3339_opts(SecondsFormat::Secs, true));
+                }
+                break;
+            }
+            local += chrono::Duration::minutes(1);
+        }
+    }
+    Err("No upcoming occurrence in this time zone; choose another schedule.".to_owned())
+}
+
+fn next_automation_run(
+    schedule: Option<&AutomationSchedule>,
+    interval_mins: u32,
+    after: DateTime<Utc>,
+) -> Result<String, String> {
+    match schedule {
+        Some(schedule) => next_calendar_run(schedule, after),
+        None => Ok(rfc3339_plus_minutes(after, i64::from(interval_mins))),
+    }
+}
+
+fn advance_automation_schedule(automation: &mut Automation, after: DateTime<Utc>) {
+    match next_automation_run(
+        automation.schedule.as_ref(),
+        automation.interval_mins,
+        after,
+    ) {
+        Ok(next) => automation.next_run_at = next,
+        Err(error) => {
+            automation.enabled = false;
+            eprintln!("automation {} disabled: {error}", automation.id);
+        }
+    }
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+
+    fn schedule(repeat: AutomationRepeat, time: &str) -> AutomationSchedule {
+        AutomationSchedule {
+            repeat,
+            time: time.into(),
+            timezone: "Europe/Berlin".into(),
+            weekday: 0,
+        }
+    }
+    fn next(schedule: &AutomationSchedule, after: &str) -> String {
+        next_calendar_run(
+            schedule,
+            DateTime::parse_from_rfc3339(after)
+                .unwrap()
+                .with_timezone(&Utc),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn daily_uses_local_clock_and_is_strictly_future() {
+        let daily = schedule(AutomationRepeat::Daily, "09:00");
+        assert_eq!(next(&daily, "2026-10-06T06:59:00Z"), "2026-10-06T07:00:00Z");
+        assert_eq!(next(&daily, "2026-10-06T07:00:00Z"), "2026-10-07T07:00:00Z");
+    }
+    #[test]
+    fn weekdays_and_weekly_skip_non_matching_days() {
+        assert_eq!(
+            next(
+                &schedule(AutomationRepeat::Weekdays, "09:00"),
+                "2026-10-09T08:00:00Z"
+            ),
+            "2026-10-12T07:00:00Z"
+        );
+        let mut weekly = schedule(AutomationRepeat::Weekly, "09:00");
+        weekly.weekday = 4;
+        assert_eq!(
+            next(&weekly, "2026-10-09T08:00:00Z"),
+            "2026-10-16T07:00:00Z"
+        );
+    }
+    #[test]
+    fn daylight_saving_changes_preserve_local_hour() {
+        let daily = schedule(AutomationRepeat::Daily, "09:00");
+        assert_eq!(next(&daily, "2026-03-28T08:00:00Z"), "2026-03-29T07:00:00Z");
+        assert_eq!(next(&daily, "2026-10-24T07:00:00Z"), "2026-10-25T08:00:00Z");
+    }
+    #[test]
+    fn daylight_saving_gap_moves_forward_and_fold_runs_once() {
+        let daily = schedule(AutomationRepeat::Daily, "02:30");
+        assert_eq!(next(&daily, "2026-03-28T02:00:00Z"), "2026-03-29T01:00:00Z");
+        assert_eq!(next(&daily, "2026-10-24T02:00:00Z"), "2026-10-25T00:30:00Z");
+        assert_eq!(next(&daily, "2026-10-25T00:31:00Z"), "2026-10-26T01:30:00Z");
+    }
+    #[test]
+    fn invalid_calendar_settings_are_actionable_errors() {
+        let mut daily = schedule(AutomationRepeat::Daily, "24:00");
+        assert!(next_calendar_run(&daily, Utc::now())
+            .unwrap_err()
+            .contains("HH:MM"));
+        daily.time = "09:00".into();
+        daily.timezone = "not-a-zone".into();
+        assert!(next_calendar_run(&daily, Utc::now())
+            .unwrap_err()
+            .contains("time zone"));
+        daily.timezone = "Europe/Berlin".into();
+        daily.repeat = AutomationRepeat::Weekly;
+        daily.weekday = 7;
+        assert!(next_calendar_run(&daily, Utc::now())
+            .unwrap_err()
+            .contains("weekday"));
     }
 }

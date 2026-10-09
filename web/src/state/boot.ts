@@ -85,7 +85,7 @@ async function restoreThreadHistory(
       history = await context.api.getThreadHistory(thread.id);
     }
     if (!context.isCancelled()) {
-      context.dispatch({ type: "thread/history-loaded", threadId: thread.id, history });
+      context.dispatch({ type: "thread/history-loaded", threadId: thread.id, history, ...(thread.running ? { running: true } : {}) });
     }
   } catch (error: unknown) {
     if (!context.isCancelled()) {

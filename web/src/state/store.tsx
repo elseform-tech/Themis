@@ -15,9 +15,12 @@ import {
 import type { ToastTone } from "../components";
 import { invoke } from "@tauri-apps/api/core";
 import { playCompletionSound, prepareCompletionSound } from "../lib/completionSound";
-import type { PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
+import type { McpConnections, PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
 import {
+  pluginAction,
   getSecretStatus,
+  getPendingApprovals,
+  onBackendResync,
   getSettings,
   getDefaultProject,
   getThread,
@@ -106,6 +109,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const legacyMessages = useRef(readSession<Record<string, PersistedMessage[]>>("messages", {}));
   const restoredSession = useRef(false);
   const savedSelection = useRef(readSession<{ root: string; threadId: string } | null>("selection", null));
+  const currentState = useRef(state);
+  currentState.current = state;
+  const recoverState = useRef<() => void>(() => {});
+  useEffect(() => { if (startup === null) recoverState.current(); }, [startup]);
   const manualRuns = useRef(new Set<string>());
   const settings = useRef(state.settings);
   settings.current = state.settings;
@@ -122,12 +129,70 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     let unlistens: Array<() => void> = [];
+    let eventVersion = 0;
+    const metadataRequests = new Map<string, number>();
+    let recovering = false;
+    let recoveryRequested = false;
+    let recoveryWarning = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    async function recover() {
+      if (cancelled) return;
+      if (recovering) { recoveryRequested = true; return; }
+      recovering = true;
+      let pending = false;
+      try {
+        for (const project of currentState.current.projects) {
+          const listVersion = eventVersion;
+          const threads = await listThreads(project.root);
+          if (cancelled) return;
+          if (listVersion !== eventVersion) { pending = true; continue; }
+          for (const thread of threads) {
+            const version = eventVersion;
+            if (thread.running) {
+              dispatch({ type: "thread/synced", projectRoot: project.root, thread });
+              dispatch({ type: "thread/running-loaded", threadId: thread.id, running: true });
+              pending = true; continue;
+            }
+            const history = await getThreadHistory(thread.id);
+            const latest = await getThread(thread.id);
+            if (cancelled) return;
+            if (version !== eventVersion || latest.running) { pending = true; continue; }
+            dispatch({ type: "thread/synced", projectRoot: project.root, thread: latest });
+            dispatch({ type: "thread/history-loaded", threadId: thread.id, history });
+            dispatch({ type: "thread/running-loaded", threadId: thread.id, running: false });
+          }
+        }
+        const version = eventVersion;
+        const requests = await getPendingApprovals();
+        if (!cancelled && version === eventVersion) dispatch({ type: "approval/loaded", requests });
+        else pending = true;
+        if (!cancelled) await loadPhase4Lists(action => { if (!cancelled) dispatch(action); }, { listSkills, listAutomations, listReviewItems });
+      } catch (error) {
+        pending = true;
+        if (!cancelled && !recoveryWarning) toast(dispatch, `Connection recovery failed; retrying: ${describeError(error)}`, "warning");
+        recoveryWarning = true;
+      } finally {
+        recovering = false;
+        // Active streams keep their live text; reconcile durable history when they finish.
+        if ((pending || recoveryRequested) && !cancelled) retry = setTimeout(() => void recover(), 2000);
+        recoveryRequested = false;
+      }
+    }
     (async () => {
       try {
         const offThread = await onThreadEvent((envelope) => {
           if (cancelled) return;
+          eventVersion++;
           dispatch({ type: "thread/event", envelope });
           const { kind } = envelope.event;
+          if (kind === "started" || kind === "finished" || kind === "incomplete" || kind === "failed") {
+            const version = eventVersion;
+            metadataRequests.set(envelope.thread_id, version);
+            const projectRoot = Object.keys(currentState.current.threadsByProject).find(root => currentState.current.threadsByProject[root].some(thread => thread.id === envelope.thread_id));
+            if (projectRoot) void getThread(envelope.thread_id).then(thread => {
+              if (!cancelled && thread?.id === envelope.thread_id && metadataRequests.get(envelope.thread_id) === version) dispatch({ type: "thread/synced", projectRoot, thread });
+            }).catch(() => {});
+          }
           if (kind === "finished" || kind === "incomplete" || kind === "failed") {
             const manual = manualRuns.current.delete(envelope.thread_id);
             if (manual && kind === "finished") {
@@ -138,6 +203,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
         const offApproval = await onApprovalRequest((request) => {
           if (cancelled) return;
+          eventVersion++;
           dispatch({ type: "approval/enqueued", request });
         });
         const offReview = await onReviewItemAdded((item) => {
@@ -153,12 +219,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (!cancelled) dispatch({ type: "thread/synced", projectRoot, thread });
           }).catch(() => {});
         });
+        const offRecovery = await onBackendResync(() => { clearTimeout(retry); window.dispatchEvent(new Event("themis-mcp-reconnect")); void recover(); });
         if (cancelled) {
+          offRecovery();
           offThread();
           offApproval();
           offReview();
         } else {
-          unlistens = [offThread, offApproval, offReview];
+          unlistens = [offThread, offApproval, offReview, offRecovery];
+          recoverState.current = () => { clearTimeout(retry); void recover(); };
+          if (restoredSession.current) recoverState.current();
         }
       } catch (error: unknown) {
         if (!cancelled) {
@@ -172,6 +242,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })();
     return () => {
       cancelled = true;
+      recoverState.current = () => {};
+      clearTimeout(retry);
       for (const off of unlistens) off();
     };
   }, []);
@@ -239,6 +311,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // state.settings is the compiled default on first mount; intentionally once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const root = state.activeProjectRoot;
+    if (!root || startup !== null) return;
+    let cancelled = false, generation = 0, unavailable = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let previous: McpConnections = {};
+    dispatch({ type: "mcp/status", connections: {} });
+    async function refresh(connect = false, retry = false) {
+      clearTimeout(timer);
+      const request = ++generation;
+      try {
+        const connections = await pluginAction<McpConnections>({ action: "mcp_status", projectRoot: root, connect, retry });
+        if (cancelled || request !== generation) return;
+        for (const [key, value] of Object.entries(connections)) {
+          if (value.status === "failed" && previous[key]?.status !== "failed") toast(dispatch, `MCP ${key.split(":mcp:")[1]}: ${value.reason}`, "warning");
+        }
+        previous = connections;
+        unavailable = false;
+        dispatch({ type: "mcp/status", connections });
+      } catch (error) {
+        if (!cancelled && request === generation && !unavailable) toast(dispatch, `MCP status unavailable: ${describeError(error)}`, "warning");
+        unavailable = true;
+      } finally {
+        if (!cancelled && request === generation) timer = setTimeout(() => void refresh(unavailable), 3000);
+      }
+    }
+    const changed = () => void refresh(true);
+    const reconnect = () => void refresh(true, true);
+    window.addEventListener("themis-plugins-changed", changed);
+    window.addEventListener("themis-mcp-reconnect", reconnect);
+    void refresh(true, true);
+    return () => { cancelled = true; clearTimeout(timer); window.removeEventListener("themis-plugins-changed", changed); window.removeEventListener("themis-mcp-reconnect", reconnect); };
+  }, [state.activeProjectRoot, startup]);
 
   const value = useMemo(() => ({ state, startup, dispatch, armManualRun, cancelManualRun }), [state, startup]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

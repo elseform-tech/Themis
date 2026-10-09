@@ -1,20 +1,36 @@
 //! Shared, revisioned plugin storage. App and CLI mutations use the same server.
 pub mod connections;
+mod discovery;
 pub mod hooks;
 mod marketplace;
+mod scans;
+pub use scans::MarketplaceScan;
 
 use crate::skills::Skill;
 use anyhow::{bail, Context};
 pub use connections::McpServer;
 pub use hooks::Hook;
-pub use marketplace::Marketplace;
+pub use marketplace::{ImportComponent, ImportPreview, ImportReport, Marketplace};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PluginSpec {
+    #[serde(default)]
+    pub package_kind: Option<String>,
+    #[serde(default)]
+    pub disabled_skills: Vec<String>,
+    #[serde(default)]
+    pub manual_skills: Vec<String>,
+    #[serde(default)]
+    pub origin: Option<PluginOrigin>,
+    #[serde(default)]
+    pub skill_paths: BTreeMap<String, String>,
+    #[serde(default)]
+    pub icon: Option<String>,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -32,6 +48,18 @@ pub struct PluginSpec {
     pub executable_files: Vec<String>,
     #[serde(default)]
     pub unsupported: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub import_issues: Vec<ImportComponent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginOrigin {
+    pub kind: String,
+    pub location: String,
+    #[serde(default)]
+    pub reference: Option<String>,
+    #[serde(default)]
+    pub subdirectory: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +72,15 @@ pub struct Plugin {
 }
 
 impl Plugin {
+    /// Stable capability identity; saved legacy revision IDs still resolve their snapshots.
+    pub fn capability_id(&self, skill: &str) -> String {
+        format!(
+            "{}--{}--{}",
+            if self.scope == "local" { "l" } else { "g" },
+            self.spec.name,
+            skill
+        )
+    }
     pub fn skill_id(&self, skill: &str) -> String {
         format!(
             "{}--{}--{}--{}",
@@ -69,17 +106,30 @@ pub struct AvailableSkill {
 struct Registry {
     current: BTreeMap<String, Plugin>,
     revisions: BTreeMap<String, Plugin>,
+    #[serde(default)]
+    discovery_disabled: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone)]
 pub struct PluginStore {
+    skill_paths: Vec<String>,
     pub global: PathBuf,
     pub project: Option<PathBuf>,
 }
 
 impl PluginStore {
     pub fn new(global: PathBuf, project: Option<PathBuf>) -> Self {
-        Self { global, project }
+        Self {
+            global,
+            project,
+            skill_paths: crate::configuration::SkillConfig::default().paths,
+        }
+    }
+    /// Override project-local skill directories; global discovery retains conventional roots.
+    pub fn with_skill_paths(mut self, paths: Vec<String>) -> anyhow::Result<Self> {
+        crate::configuration::validate_relative_paths(&paths)?;
+        self.skill_paths = paths;
+        Ok(self)
     }
     fn directory(&self, scope: &str) -> anyhow::Result<PathBuf> {
         match scope {
@@ -93,7 +143,54 @@ impl PluginStore {
         }
     }
     fn registry(&self, scope: &str) -> anyhow::Result<Registry> {
-        read_json(&self.directory(scope)?.join("registry.json"))
+        let mut registry: Registry = read_json(&self.directory(scope)?.join("registry.json"))?;
+        // Normalize historical snapshots too, without changing revision identities
+        // or writing during reads. The next ordinary mutation persists cleanup.
+        for plugin in registry
+            .current
+            .values_mut()
+            .chain(registry.revisions.values_mut())
+        {
+            let imported = plugin
+                .source
+                .as_ref()
+                .is_some_and(|source| source != "discovered")
+                || plugin.spec.origin.as_ref().is_some_and(|origin| {
+                    matches!(origin.kind.as_str(), "local" | "repository" | "marketplace")
+                });
+            let spec = &mut plugin.spec;
+            if !imported
+                || spec.skill_paths.contains_key("connect")
+                || spec
+                    .files
+                    .keys()
+                    .any(|path| path == "SKILL.md" || path.ends_with("/SKILL.md"))
+                || ![
+                    ".mcp.json",
+                    ".claude-plugin/plugin.json",
+                    "hooks/hooks.json",
+                ]
+                .iter()
+                .any(|path| spec.files.contains_key(*path))
+            {
+                continue;
+            }
+            let before = spec.skills.len();
+            spec.skills.retain(|skill| {
+                !(skill.id == "connect"
+                    && skill.name.starts_with("Use ")
+                    && skill.description == "Use this plugin's connected tools and hooks"
+                    && skill.instructions
+                        == "Use the plugin tools to complete the task. Respect Themis approvals."
+                    && skill.allowed_tools.is_empty()
+                    && skill.scripts.is_empty())
+            });
+            if spec.skills.len() != before {
+                spec.disabled_skills.retain(|id| id != "connect");
+                spec.manual_skills.retain(|id| id != "connect");
+            }
+        }
+        Ok(registry)
     }
     fn mutate<T>(
         &self,
@@ -140,12 +237,48 @@ impl PluginStore {
         if self.project.is_some() {
             result.extend(self.registry("local")?.current.into_values());
         }
+        result.extend(
+            self.discovered_plugins()?
+                .into_iter()
+                .filter(|plugin| {
+                    !result.iter().any(|stored| {
+                        stored.scope == plugin.scope && stored.spec.name == plugin.spec.name
+                    })
+                })
+                .collect::<Vec<_>>(),
+        );
+        for plugin in &mut result {
+            if plugin.spec.package_kind.is_none() {
+                plugin.spec.package_kind = Some(
+                    if plugin.source.is_some() {
+                        "plugin"
+                    } else if plugin.spec.files.contains_key("SKILL.md")
+                        && !plugin.spec.files.contains_key(".claude-plugin/plugin.json")
+                    {
+                        "skill"
+                    } else if plugin.spec.skills.is_empty()
+                        && plugin.spec.hooks.is_empty()
+                        && !plugin.spec.mcp.is_empty()
+                    {
+                        "mcp"
+                    } else if plugin.spec.skills.is_empty()
+                        && plugin.spec.mcp.is_empty()
+                        && !plugin.spec.hooks.is_empty()
+                    {
+                        "hook"
+                    } else {
+                        "plugin"
+                    }
+                    .into(),
+                );
+            }
+        }
         Ok(result)
     }
     pub fn save(
         &self,
         scope: &str,
-        spec: PluginSpec,
+        mut spec: PluginSpec,
         expected: Option<&str>,
     ) -> anyhow::Result<Plugin> {
         validate(&spec)?;
@@ -158,6 +291,42 @@ impl PluginStore {
             }
             if previous.map(|p| p.revision.as_str()) != expected {
                 bail!("Plugin changed since it was opened; reload before saving");
+            }
+            if let Some(previous) = previous {
+                for skill in &spec.skills {
+                    let Some(old) = previous.spec.skills.iter().find(|old| old.id == skill.id)
+                    else {
+                        continue;
+                    };
+                    if old.name == skill.name
+                        && old.description == skill.description
+                        && old.instructions == skill.instructions
+                    {
+                        continue;
+                    }
+                    let Some(path) = spec
+                        .skill_paths
+                        .get(&skill.id)
+                        .or_else(|| previous.spec.skill_paths.get(&skill.id))
+                        .cloned()
+                        .or_else(|| {
+                            (previous.spec.skills.len() == 1
+                                && previous.spec.files.contains_key("SKILL.md"))
+                            .then(|| "SKILL.md".to_owned())
+                        })
+                    else {
+                        continue;
+                    };
+                    let Some(original) = previous.spec.files.get(&path) else {
+                        continue;
+                    };
+                    // Explicit source edits take precedence over editing parsed fields.
+                    if spec.files.get(&path) == Some(original) {
+                        spec.files
+                            .insert(path.clone(), edited_skill_source(original, old, skill));
+                    }
+                }
+                validate(&spec)?;
             }
             let plugin = Plugin {
                 scope: scope.into(),
@@ -177,12 +346,126 @@ impl PluginStore {
         })
     }
     pub fn set_enabled(&self, scope: &str, name: &str, enabled: bool) -> anyhow::Result<()> {
+        let discovered = self
+            .discovered_plugins()?
+            .into_iter()
+            .find(|p| p.scope == scope && p.spec.name == name);
+        if enabled
+            && discovered
+                .as_ref()
+                .is_some_and(|plugin| plugin.spec.skills.is_empty())
+        {
+            bail!("Cannot enable an invalid discovered skill; fix the source file first");
+        }
         self.mutate(scope, |registry| {
-            registry
-                .current
-                .get_mut(name)
-                .context("Unknown plugin")?
-                .enabled = enabled;
+            if let Some(plugin) = registry.current.get_mut(name) {
+                plugin.enabled = enabled;
+            } else if discovered.is_some() {
+                if enabled {
+                    registry.discovery_disabled.remove(name);
+                } else {
+                    registry.discovery_disabled.insert(name.into());
+                }
+            } else {
+                bail!("Unknown plugin");
+            }
+            Ok(())
+        })
+    }
+    pub fn set_component_enabled(
+        &self,
+        scope: &str,
+        name: &str,
+        kind: &str,
+        id: &str,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        if let Some(plugin) = self
+            .discovered_plugins()?
+            .into_iter()
+            .find(|p| p.scope == scope && p.spec.name == name)
+        {
+            if kind != "skill" || !plugin.spec.skills.iter().any(|skill| skill.id == id) {
+                bail!("Unknown discovered component");
+            }
+            return self.set_enabled(scope, name, enabled);
+        }
+        self.mutate(scope, |registry| {
+            let plugin = registry.current.get_mut(name).context("Unknown plugin")?;
+            match kind {
+                "skill" => {
+                    if !plugin.spec.skills.iter().any(|s| s.id == id) {
+                        bail!("Unknown skill");
+                    }
+                    plugin.spec.disabled_skills.retain(|s| s != id);
+                    if !enabled {
+                        plugin.spec.disabled_skills.push(id.into());
+                    }
+                }
+                "mcp" | "connection" => {
+                    plugin
+                        .spec
+                        .mcp
+                        .get_mut(id)
+                        .context("Unknown connection")?
+                        .enabled = enabled
+                }
+                "hook" => {
+                    plugin
+                        .spec
+                        .hooks
+                        .iter_mut()
+                        .find(|h| h.name == id)
+                        .context("Unknown hook")?
+                        .enabled = enabled
+                }
+                _ => bail!("Component kind must be skill, mcp, connection, or hook"),
+            }
+            // Flags change the current activation policy, not pinned instruction snapshots.
+            Ok(())
+        })
+    }
+    pub fn remove_component(
+        &self,
+        scope: &str,
+        name: &str,
+        kind: &str,
+        id: &str,
+    ) -> anyhow::Result<()> {
+        if self
+            .discovered_plugins()?
+            .iter()
+            .any(|p| p.scope == scope && p.spec.name == name)
+        {
+            bail!("Discovered skills are read-only; disable them or remove the source file");
+        }
+        self.mutate(scope, |registry| {
+            let plugin = registry.current.get_mut(name).context("Unknown plugin")?;
+            let removed = match kind {
+                "skill" => {
+                    let old_len = plugin.spec.skills.len();
+                    plugin.spec.skills.retain(|skill| skill.id != id);
+                    plugin.spec.disabled_skills.retain(|skill| skill != id);
+                    plugin.spec.manual_skills.retain(|skill| skill != id);
+                    plugin.spec.skill_paths.remove(id);
+                    old_len != plugin.spec.skills.len()
+                }
+                "mcp" | "connection" => plugin.spec.mcp.remove(id).is_some(),
+                "hook" => {
+                    let old_len = plugin.spec.hooks.len();
+                    plugin.spec.hooks.retain(|hook| hook.name != id);
+                    old_len != plugin.spec.hooks.len()
+                }
+                _ => bail!("Component kind must be skill, mcp, connection, or hook"),
+            };
+            if !removed {
+                bail!("Unknown component");
+            }
+            plugin.revision = revision();
+            registry.revisions.insert(
+                format!("{}--{}", plugin.spec.name, plugin.revision),
+                plugin.clone(),
+            );
             Ok(())
         })
     }
@@ -194,24 +477,43 @@ impl PluginStore {
         })
     }
     pub fn available_skills(&self) -> anyhow::Result<Vec<AvailableSkill>> {
-        let mut result = vec![AvailableSkill {
-            id: "create-skill".into(),
-            name: "Create skill".into(),
-            description: "Ask the agent to design and save a local or global skill".into(),
-            plugin: "Themis".into(),
-            scope: "built-in".into(),
-            retired: false,
-        }];
+        let mut result = self
+            .builtin_skills()
+            .into_iter()
+            .map(|skill| AvailableSkill {
+                id: skill.id,
+                name: skill.name,
+                description: skill.description,
+                plugin: "Themis".into(),
+                scope: "built-in".into(),
+                retired: false,
+            })
+            .collect::<Vec<_>>();
         for plugin in self.list()?.into_iter().filter(|p| p.enabled) {
-            for skill in &plugin.spec.skills {
+            for skill in plugin
+                .spec
+                .skills
+                .iter()
+                .filter(|s| !plugin.spec.disabled_skills.contains(&s.id))
+            {
                 result.push(AvailableSkill {
-                    id: plugin.skill_id(&skill.id),
+                    id: plugin.capability_id(&skill.id),
                     name: skill.name.clone(),
                     description: skill.description.clone(),
                     plugin: plugin.spec.name.clone(),
                     scope: plugin.scope.clone(),
                     retired: false,
                 });
+                if plugin.source.as_deref() != Some("discovered") {
+                    result.push(AvailableSkill {
+                        id: plugin.skill_id(&skill.id),
+                        name: skill.name.clone(),
+                        description: skill.description.clone(),
+                        plugin: plugin.spec.name.clone(),
+                        scope: plugin.scope.clone(),
+                        retired: true,
+                    });
+                }
             }
         }
         for scope in ["global", "local"] {
@@ -244,22 +546,72 @@ impl PluginStore {
         prompt: &str,
         legacy: &[Skill],
     ) -> anyhow::Result<(String, Vec<Skill>, Vec<Plugin>)> {
+        let mut available = None;
+        let builtins = self.builtin_skills();
+        let mut registries = std::collections::HashMap::new();
         let mut text = String::new();
         let mut skills = Vec::new();
         let mut plugins = Vec::new();
         let mut rest = prompt;
-        while let Some(start) = rest.find("[[skill:") {
+        while let Some((start, plugin_reference)) = [
+            rest.find("[[skill:").map(|start| (start, false)),
+            rest.find("[[plugin:").map(|start| (start, true)),
+        ]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(start, _)| *start)
+        {
             text.push_str(&rest[..start]);
-            let tail = &rest[start + 8..];
-            let end = tail.find("]]").context("Unfinished skill reference")?;
+            let tail = &rest[start + if plugin_reference { 9 } else { 8 }..];
+            let end = tail.find("]]").context("Unfinished capability reference")?;
             let id = &tail[..end];
-            let (skill, plugin) = if id == "create-skill" {
-                (self.creator(), None)
+            if plugin_reference {
+                let (scope, name) = id.split_once("--").context("Invalid plugin reference")?;
+                let scope = match scope {
+                    "g" => "global",
+                    "l" => "local",
+                    _ => bail!("Invalid plugin scope"),
+                };
+                if available.is_none() {
+                    available = Some(self.list()?);
+                }
+                let plugin = available
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .find(|plugin| {
+                        plugin.scope == scope && plugin.spec.name == name && plugin.enabled
+                    })
+                    .context("Plugin is missing or disabled")?
+                    .clone();
+                text.push('@');
+                text.push_str(if plugin.source.as_deref() == Some("discovered") {
+                    plugin
+                        .spec
+                        .skills
+                        .first()
+                        .map(|skill| skill.name.as_str())
+                        .unwrap_or(name)
+                } else {
+                    name
+                });
+                if !plugins
+                    .iter()
+                    .any(|known: &Plugin| known.scope == scope && known.spec.name == name)
+                {
+                    plugins.push(plugin);
+                }
+                rest = &tail[end + 2..];
+                continue;
+            }
+            let (skill, plugin) = if let Some(skill) = builtins.iter().find(|s| s.id == id).cloned()
+            {
+                (skill, None)
             } else if let Some(skill) = legacy.iter().find(|s| s.id == id) {
                 (skill.clone(), None)
             } else {
                 let parts: Vec<_> = id.split("--").collect();
-                if parts.len() != 4 {
+                if !matches!(parts.len(), 3 | 4) {
                     bail!("Unavailable skill '{id}'");
                 }
                 let scope = match parts[0] {
@@ -267,20 +619,62 @@ impl PluginStore {
                     "l" => "local",
                     _ => bail!("Invalid skill scope"),
                 };
-                let registry = self.registry(scope)?;
-                if !registry.current.get(parts[1]).is_some_and(|p| p.enabled) {
-                    bail!("Plugin '{}' is missing or disabled", parts[1]);
+
+                if available.is_none() {
+                    available = Some(self.list()?);
                 }
-                let plugin = registry
-                    .revisions
-                    .get(&format!("{}--{}", parts[1], parts[2]))
-                    .context("Plugin revision is unavailable; replace the skill reference")?
-                    .clone();
+                let current = available
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .find(|p| p.scope == scope && p.spec.name == parts[1] && p.enabled)
+                    .context("Plugin is missing or disabled")?;
+                let skill_name = parts[parts.len() - 1];
+                if !current
+                    .spec
+                    .skills
+                    .iter()
+                    .any(|skill| skill.id == skill_name)
+                {
+                    bail!("Skill '{skill_name}' has been removed");
+                }
+                if current
+                    .spec
+                    .disabled_skills
+                    .iter()
+                    .any(|id| id == skill_name)
+                {
+                    bail!("Skill '{skill_name}' is disabled");
+                }
+                let mut plugin = if parts.len() == 3 {
+                    current.clone()
+                } else {
+                    if !registries.contains_key(scope) {
+                        registries.insert(scope, self.registry(scope)?);
+                    }
+                    registries[scope]
+                        .revisions
+                        .get(&format!("{}--{}", parts[1], parts[2]))
+                        .context("Plugin revision is unavailable; replace the skill reference")?
+                        .clone()
+                };
+                // Current activation controls also apply to saved revision references.
+                for (name, server) in &mut plugin.spec.mcp {
+                    server.enabled &= current.spec.mcp.get(name).is_some_and(|s| s.enabled);
+                }
+                for hook in &mut plugin.spec.hooks {
+                    hook.enabled &= current
+                        .spec
+                        .hooks
+                        .iter()
+                        .find(|h| h.name == hook.name)
+                        .is_some_and(|h| h.enabled);
+                }
                 let mut skill = plugin
                     .spec
                     .skills
                     .iter()
-                    .find(|s| s.id == parts[3])
+                    .find(|s| s.id == skill_name)
                     .context("Skill is unavailable")?
                     .clone();
                 skill.id = id.into();
@@ -310,6 +704,50 @@ impl PluginStore {
         text.push_str(rest);
         Ok((text, skills, plugins))
     }
+    fn builtin_skills(&self) -> Vec<Skill> {
+        let mut skills = vec![self.creator()];
+        for (id, name, instructions) in [
+            (
+                "manage-plugins",
+                "Manage plugins",
+                include_str!("../builtins/manage-plugins/SKILL.md"),
+            ),
+            (
+                "manage-skills",
+                "Manage skills",
+                include_str!("../builtins/manage-skills/SKILL.md"),
+            ),
+            (
+                "manage-mcp",
+                "Manage MCP",
+                include_str!("../builtins/manage-mcp/SKILL.md"),
+            ),
+            (
+                "manage-hooks",
+                "Manage hooks",
+                include_str!("../builtins/manage-hooks/SKILL.md"),
+            ),
+            (
+                "manage-automations",
+                "Manage automations",
+                include_str!("../builtins/manage-automations/SKILL.md"),
+            ),
+        ] {
+            skills.push(Skill {
+                id: id.into(),
+                name: name.into(),
+                description: instructions
+                    .lines()
+                    .find_map(|line| line.strip_prefix("description: "))
+                    .unwrap_or(name)
+                    .into(),
+                instructions: instructions.into(),
+                allowed_tools: vec![],
+                scripts: vec![],
+            });
+        }
+        skills
+    }
     fn creator(&self) -> Skill {
         Skill {
             id: "create-skill".into(),
@@ -337,6 +775,7 @@ impl PluginStore {
             .map(|p| p.spec.clone())
             .unwrap_or(PluginSpec {
                 name: plugin_name.into(),
+                package_kind: Some("skill".into()),
                 ..Default::default()
             });
         spec.skills.retain(|s| s.id != skill.id);
@@ -358,7 +797,14 @@ impl PluginStore {
                 {
                     bail!("Symlink resource target rejected");
                 }
-                fs::write(&path, content)?;
+                // Persistent MCP processes may be reading this revision concurrently.
+                if !fs::read(&path).is_ok_and(|bytes| bytes == content.as_bytes()) {
+                    write_bytes(
+                        &path,
+                        content.as_bytes(),
+                        plugin.spec.executable_files.contains(relative),
+                    )?;
+                }
                 #[cfg(unix)]
                 if plugin.spec.executable_files.contains(relative) {
                     use std::os::unix::fs::PermissionsExt;
@@ -386,7 +832,83 @@ pub fn safe_relative(path: &str) -> bool {
             .all(|c| matches!(c, std::path::Component::Normal(_)))
         && !path.contains('\\')
 }
+// Retain unrelated frontmatter verbatim; literal blocks safely quote edited metadata.
+fn edited_skill_source(original: &str, old: &Skill, skill: &Skill) -> String {
+    let lines: Vec<_> = original.split_inclusive('\n').collect();
+    let has_header = lines
+        .first()
+        .is_some_and(|line| line.trim_end_matches(['\r', '\n']) == "---");
+    let closing = has_header
+        .then(|| {
+            lines
+                .iter()
+                .skip(1)
+                .position(|line| line.trim_end_matches(['\r', '\n']) == "---")
+        })
+        .flatten()
+        .map(|index| index + 1);
+    let body = closing
+        .map(|end| lines[end + 1..].concat())
+        .unwrap_or_else(|| original.into());
+    let metadata_changed = old.name != skill.name || old.description != skill.description;
+    let header = if !metadata_changed {
+        closing
+            .map(|end| lines[..=end].concat())
+            .unwrap_or_default()
+    } else {
+        let newline = if original.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        let mut header = format!("---{newline}");
+        let mut skip = false;
+        if let Some(end) = closing {
+            for line in &lines[1..end] {
+                if !line.starts_with([' ', '\t']) && !line.trim().is_empty() {
+                    skip = line.split_once(':').is_some_and(|(key, _)| {
+                        (key == "name" && old.name != skill.name)
+                            || (key == "description" && old.description != skill.description)
+                    });
+                }
+                if !skip {
+                    header.push_str(line);
+                }
+            }
+        }
+        for (key, value, changed) in [
+            ("name", &skill.name, old.name != skill.name),
+            (
+                "description",
+                &skill.description,
+                old.description != skill.description,
+            ),
+        ] {
+            if changed || closing.is_none() {
+                header.push_str(&format!("{key}: |-{newline}"));
+                for line in value.lines() {
+                    header.push_str(&format!("  {line}{newline}"));
+                }
+            }
+        }
+        header.push_str(&format!("---{newline}"));
+        header
+    };
+    if old.instructions == skill.instructions {
+        format!("{header}{body}")
+    } else {
+        format!("{header}{}\n", skill.instructions)
+    }
+}
+
 fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
+    if spec
+        .package_kind
+        .as_deref()
+        .is_some_and(|kind| !matches!(kind, "plugin" | "skill" | "mcp" | "hook"))
+    {
+        bail!("Package kind must be plugin, skill, mcp, or hook");
+    }
     if !safe_name(&spec.name) {
         bail!("Plugin name must be a safe single path segment without '--'");
     }
@@ -401,6 +923,28 @@ fn validate(spec: &PluginSpec) -> anyhow::Result<()> {
             &skill.allowed_tools,
             &skill.scripts,
         )?;
+    }
+    if spec
+        .disabled_skills
+        .iter()
+        .chain(spec.manual_skills.iter())
+        .any(|id| !ids.contains(id))
+    {
+        bail!("Disabled skill must refer to an existing skill");
+    }
+    if let Some(icon) = &spec.icon {
+        let remote = reqwest::Url::parse(icon).is_ok_and(|url| {
+            url.scheme() == "https"
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        });
+        if !remote
+            && !(safe_relative(icon) && icon.ends_with(".svg") && spec.files.contains_key(icon))
+        {
+            bail!("Plugin icon must be an HTTPS URL or bundled SVG resource");
+        }
     }
     if spec.files.keys().any(|p| !safe_relative(p))
         || spec.files.values().map(String::len).sum::<usize>() > 8 * 1024 * 1024
@@ -474,6 +1018,11 @@ pub(super) fn write_json(path: &Path, value: &impl Serialize) -> anyhow::Result<
         bail!("Plugin registry exceeds 32 MiB; previous data was preserved");
     }
     fs::create_dir_all(path.parent().context("Missing store directory")?)?;
+    write_bytes(path, &bytes, false)
+}
+fn write_bytes(path: &Path, bytes: &[u8], executable: bool) -> anyhow::Result<()> {
+    #[cfg(not(unix))]
+    let _ = executable;
     let temp = path.with_extension(format!("{}.tmp", revision()));
     let result = (|| {
         use std::io::Write;
@@ -482,10 +1031,15 @@ pub(super) fn write_json(path: &Path, value: &impl Serialize) -> anyhow::Result<
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+            options.mode(if executable { 0o700 } else { 0o600 });
         }
         let mut file = options.open(&temp)?;
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
+        #[cfg(unix)]
+        if executable {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o700))?;
+        }
         file.sync_all()?;
         fs::rename(&temp, path)?;
         Ok(())

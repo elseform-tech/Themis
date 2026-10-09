@@ -49,6 +49,7 @@ fn automation_input(project_root: &str, task: &str) -> AutomationInput {
         target_thread_id: None,
         skill_ids: Vec::new(),
         interval_mins: 60,
+        schedule: None,
         task: task.to_owned(),
         enabled: true,
     }
@@ -173,7 +174,7 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
         Some(ThreadEvent::Finished { result, .. }) if result == "done, skillfully"
     ));
 
-    // The tools schema sent to the model carries only the granted tool...
+    // Skill grants restrict file tools; independently gated management remains available.
     let requests = server.received_requests().await.expect("captured");
     assert!(!requests.is_empty());
     let first: Value = serde_json::from_slice(&requests[0].body).expect("json body");
@@ -188,7 +189,16 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
                 .to_owned()
         })
         .collect();
-    assert_eq!(tool_names, vec!["read_file".to_owned()]);
+    assert_eq!(
+        tool_names,
+        vec![
+            "read_file",
+            "list_plugins",
+            "save_skill",
+            "manage_integrations",
+            "manage_automations"
+        ]
+    );
     // ... and the skill instructions reached the model in the prompt.
     let body_text = serde_json::to_string(&first).expect("json");
     assert!(body_text.contains("## Skill: Reader"), "{body_text}");

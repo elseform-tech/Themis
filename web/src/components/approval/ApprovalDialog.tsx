@@ -41,16 +41,17 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
     >
       <div className="themis-approval">
         <div className="themis-approval-row">
-          <span className="themis-approval-tool">{request.tool}</span>
+          <span className="themis-approval-tool">{request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : request.tool}</span>
           <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
         </div>
         <p className="themis-approval-summary">{request.summary}</p>
+        <p className="themis-thread-hint">Run-wide permission applies to this tool and risk level until this run ends.</p>
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>
             Allow once (1)
           </Button>
           <Button variant="ghost" onClick={() => onDecide("always")}>
-            Always (2)
+            Allow for this run (2)
           </Button>
           <Button variant="danger" onClick={() => onDecide("deny")}>
             Deny (3)

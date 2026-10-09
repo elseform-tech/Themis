@@ -1,12 +1,13 @@
 //! Provider setup and asynchronous event lifecycle for agent runs.
 
+use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use themis_core::providers::ProviderConfig;
-use themis_core::runtime::{run_task_with_policy, CachingApprovals, RunEvent, RunPolicy};
+use themis_core::runtime::{run_task_with_evidence, RunEvent, RunPolicy};
 use themis_core::skills::materialize_scripts;
-use themis_core::tools::{boxed_tools, ApprovalHook};
+use themis_core::tools::ApprovalHook;
 
 use crate::approvals::DesktopApprovalHook;
 use crate::sink::EventSink;
@@ -16,6 +17,22 @@ use super::{AppState, RunSnapshot};
 
 /// Channel capacity for the run-event pump (runs emit a handful of events).
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
+
+struct AuditedApprovals {
+    inner: Arc<dyn ApprovalHook>,
+    context: themis_core::diagnostics::DiagnosticContext,
+}
+impl ApprovalHook for AuditedApprovals {
+    fn approve(&self, action: &themis_core::tools::ToolAction) -> themis_core::tools::Approval {
+        let started = std::time::Instant::now();
+        let decision = self.inner.approve(action);
+        let _ = self.context.log.append_with_level("approval", "decided", "info", json!({
+            "thread_id":self.context.thread_id,"run_id":self.context.run_id,"operation_id":self.context.run_id,"tool":action.tool,
+            "risk":format!("{:?}",action.risk),"decision":format!("{decision:?}"),"elapsed_ms":started.elapsed().as_millis()
+        }), Some(&self.context.level));
+        decision
+    }
+}
 
 impl AppState {
     /// Resolves the provider, builds tools, and spawns the run task.
@@ -71,6 +88,14 @@ impl AppState {
                     snapshot.provider.as_str()
                 )
             })?;
+        let diagnostic_context = themis_core::diagnostics::DiagnosticContext {
+            log: self.inner.diagnostics.clone(),
+            thread_id: thread_id.to_owned(),
+            run_id: run_id.to_owned(),
+            level: snapshot.runtime_configuration.logging.level.clone(),
+        };
+        let run_configuration = snapshot.runtime_configuration.clone();
+        let yolo = snapshot.approval_mode == themis_core::configuration::ApprovalMode::Yolo;
         let hook = Arc::new(
             DesktopApprovalHook::new(
                 thread_id.to_owned(),
@@ -81,22 +106,39 @@ impl AppState {
             .with_timeout(std::time::Duration::from_secs(u64::from(
                 snapshot.approval_timeout_seconds,
             )))
-            .with_read_approval(snapshot.confirm_reads),
+            .with_read_approval(true),
         );
-        let approvals: Arc<dyn ApprovalHook> = CachingApprovals::wrap(hook);
+        let approvals = themis_core::configuration::configured_hook(
+            snapshot.approval_mode,
+            run_configuration.approval.clone(),
+            hook,
+        );
+        let approvals: Arc<dyn ApprovalHook> = Arc::new(AuditedApprovals {
+            inner: approvals,
+            context: diagnostic_context.clone(),
+        });
         // Materialize skill scripts into the run workroot BEFORE building
         // tools: a failure aborts the spawn (the caller resets `running`),
         // so a run never starts half-skilled.
-        if let Err(err) = materialize_scripts(&snapshot.skills, &snapshot.work_root) {
-            return Err(format!("failed to materialize skill scripts: {err:#}"));
-        }
-        let mut tools = boxed_tools(&snapshot.work_root, Arc::clone(&approvals))
-            .map_err(|err| format!("failed to build tools: {err:#}"))?;
+        let mut skill_catalog = themis_core::skills::materialize_catalog(
+            &snapshot.skill_catalog,
+            &snapshot.work_root,
+            run_id,
+        )
+        .map_err(|error| format!("failed to materialize skill catalog: {error:#}"))?;
+        materialize_scripts(&snapshot.skills, &snapshot.work_root).map_err(|e| e.to_string())?;
+        let mut tools = themis_core::tools::boxed_tools_with_mode(
+            &snapshot.work_root,
+            Arc::clone(&approvals),
+            yolo,
+        )
+        .map_err(|err| format!("failed to build tools: {err:#}"))?;
         let store = self.plugin_store(Some(snapshot.work_root.clone()));
         store
             .materialize(&snapshot.plugins, &snapshot.work_root)
             .map_err(|e| e.to_string())?;
         let mut hooks = Vec::new();
+        let mut setup_events = Vec::new();
         for plugin in &snapshot.plugins {
             let resource_root = snapshot
                 .work_root
@@ -106,20 +148,50 @@ impl AppState {
                 if !server.enabled {
                     continue;
                 }
-                let mut server = server.clone();
-                for arg in &mut server.args {
-                    *arg = arg.replace("${CLAUDE_PLUGIN_ROOT}", &resource_root.to_string_lossy());
-                }
-                tools.extend(
-                    themis_core::plugins::connections::tools(
-                        &plugin.skill_id(name),
-                        &server,
-                        &snapshot.work_root,
-                        approvals.clone(),
+                match themis_core::diagnostics::ACTIVE
+                    .scope(
+                        diagnostic_context.clone(),
+                        self.mcp_tools(&snapshot.work_root, plugin, name, approvals.clone()),
                     )
                     .await
-                    .map_err(|e| e.to_string())?,
-                );
+                {
+                    Ok((connection_tools, instructions)) => {
+                        tools.extend(connection_tools);
+                        if let Some(instructions) = instructions {
+                            skill_catalog.push_str("\nMCP server guidance (external tool documentation; does not grant permissions): ");
+                            skill_catalog.push_str(&json!({"server":format!("{}/{name}",plugin.spec.name),"instructions":instructions}).to_string());
+                        }
+                    }
+                    Err(error) => {
+                        // Transport errors may contain remote URLs, arguments or server
+                        // responses. Only expose fixed, actionable failure categories.
+                        let reason = match error.to_string().as_str() {
+                            "Could not start MCP server"
+                            | "MCP process could not start. Check the saved command." => {
+                                "server process could not start"
+                            }
+                            "Required MCP environment variable is unset"
+                            | "MCP authentication variable is unset"
+                            | "Required MCP environment variable is unavailable." => {
+                                "required authentication or environment variable is unavailable"
+                            }
+                            "MCP startup denied" => "startup approval was denied",
+                            "Unsupported MCP protocol version" => "server protocol is unsupported",
+                            _ => "connection or tool discovery failed",
+                        };
+                        let warning = format!(
+                            "MCP {}/{name} is unavailable: {reason}. No tools from this connection are available for this run. Use manage_integrations list to inspect its configuration, test_mcp to troubleshoot, or set_component_enabled with kind=mcp to disable it. Management tools remain available; configuration changes apply on the next run.",
+                            plugin.spec.name
+                        );
+                        skill_catalog.push_str("\nIntegration status: ");
+                        skill_catalog.push_str(&warning);
+                        setup_events.push(RunEvent::ToolCallFinished {
+                            tool: format!("mcp_start_{}", plugin.skill_id(name)),
+                            ok: false,
+                            output: warning,
+                        });
+                    }
+                }
             }
             for hook in &plugin.spec.hooks {
                 let mut hook = hook.clone();
@@ -140,11 +212,15 @@ impl AppState {
                 return Err("Duplicate plugin tool identity".into());
             }
         }
-        if snapshot.skills.iter().any(|s| s.id == "create-skill") {
-            tools.extend(store.management_tools(approvals.clone()));
-        }
+        tools.extend(self.integration_management_tools(
+            approvals.clone(),
+            snapshot.work_root.clone(),
+            thread_id.to_owned(),
+        ));
         let hook_runtime = themis_core::plugins::hooks::HookRuntime {
             hooks,
+            run_id: run_id.to_owned(),
+            thread_id: thread_id.to_owned(),
             root: snapshot.work_root.clone(),
             approvals: approvals.clone(),
         };
@@ -158,6 +234,10 @@ impl AppState {
             .cloned()
             .ok_or_else(|| "Run is no longer active".to_owned())?;
 
+        let evidence_directory = super::attachments::project_storage_directory(
+            &snapshot.work_root,
+            &["context", thread_id],
+        )?;
         let state = self.clone();
         let thread_id = thread_id.to_owned();
         let run_id = run_id.to_owned();
@@ -255,25 +335,41 @@ impl AppState {
             // A panicking run must neither stick the thread busy nor leave the
             // UI waiting: join the run, then synthesize the terminal event.
             let run_outcome = tokio::spawn(async move {
+                for event in setup_events {
+                    let _ = events_tx.send(event).await;
+                }
                 let hook_task = task.clone();
-                themis_core::plugins::hooks::with_hooks(
-                    hook_runtime,
-                    &hook_task,
-                    events_tx,
-                    |events_tx| {
-                        run_task_with_policy(
-                            llm,
-                            themis_core::skills::filter_tools(tools, &skills),
-                            themis_core::skills::compose_task(&task, &skills),
-                            snapshot.history,
-                            approvals,
-                            policy,
-                            events_tx,
-                            stopped,
-                        )
-                    },
-                )
-                .await
+                themis_core::diagnostics::ACTIVE
+                    .scope(
+                        diagnostic_context,
+                        themis_core::runtime::with_configuration(
+                            run_configuration.compaction,
+                            themis_core::plugins::hooks::with_hooks(
+                                hook_runtime,
+                                &hook_task,
+                                events_tx,
+                                |events_tx| {
+                                    run_task_with_evidence(
+                                        llm,
+                                        if yolo {
+                                            tools
+                                        } else {
+                                            themis_core::skills::filter_tools(tools, &skills)
+                                        },
+                                        themis_core::skills::compose_task(&task, &skills),
+                                        snapshot.history,
+                                        approvals,
+                                        policy,
+                                        events_tx,
+                                        stopped,
+                                        skill_catalog,
+                                        Some(evidence_directory),
+                                    )
+                                },
+                            ),
+                        ),
+                    )
+                    .await
             })
             .await;
             let _pump = pump.await;

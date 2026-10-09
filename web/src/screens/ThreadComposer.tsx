@@ -1,5 +1,8 @@
+import { AttachmentPreview } from "./AttachmentPreview";
 import { PromptInput } from "../components/PromptInput";
-import type { PromptSkill } from "../lib/prompt";
+import { useEffect, useRef } from "react";
+import type { Attachment } from "../lib/tauri";
+import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
 import type { GoModel, ThreadInfo } from "../lib/types";
 // Official OpenCode theme assets: https://github.com/anomalyco/opencode/tree/dev/packages/console/app/src/asset
@@ -9,7 +12,11 @@ import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 interface ThreadComposerProps {
   thread: ThreadInfo;
   draft: string;
+  attachments?: Attachment[];
+  onAttach?: () => void;
+  onRemoveAttachment?: (path: string) => void;
   skills?: PromptSkill[];
+  plugins?: PromptPlugin[];
   history?: string[];
   models: GoModel[];
   effortLevels: string[];
@@ -29,12 +36,18 @@ interface ThreadComposerProps {
   onProviderChange: (model: string) => void;
   onEffortChange: (effort: string) => void;
   onOpenSettings: () => void;
+  permissionSaving?: boolean;
+  onApprovalModeChange?: (mode: "custom" | "yolo") => void;
 }
 
 export function ThreadComposer({
   thread,
   draft,
+  attachments = [],
+  onAttach,
+  onRemoveAttachment,
   skills = [],
+  plugins = [],
   history = [],
   models,
   effortLevels,
@@ -50,11 +63,31 @@ export function ThreadComposer({
   onDraftChange,
   onSend,
   onStop,
-  onNewThread,
   onProviderChange,
   onEffortChange,
   onOpenSettings,
+  permissionSaving = false,
+  onApprovalModeChange,
 }: ThreadComposerProps) {
+  const stopAction = useRef(onStop);
+  stopAction.current = onStop;
+  useEffect(() => {
+    if (!running || stopping) return;
+    let firstEscape: number | null = null;
+    let requested = false;
+    function stopShortcut(event: KeyboardEvent) {
+      if (event.isComposing || event.repeat || requested) return;
+      if (event.key !== "Escape") { firstEscape = null; return; }
+      const now = Date.now();
+      if (firstEscape !== null && now - firstEscape <= 500) {
+        event.preventDefault();
+        requested = true;
+        stopAction.current();
+      } else firstEscape = now;
+    }
+    window.addEventListener("keydown", stopShortcut, true);
+    return () => window.removeEventListener("keydown", stopShortcut, true);
+  }, [running, stopping, thread.id]);
   const choices = ["", ...effortLevels];
   const effortIndex = Math.max(0, choices.indexOf(effort));
   return (
@@ -67,18 +100,28 @@ export function ThreadComposer({
             <Button variant="ghost" size="small" onClick={onOpenSettings}>Open settings</Button>
           </p>
         )}
-        <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} history={history} disabled={composerDisabled}
-          placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Message Themis… / for skills"}
+        {attachments.length > 0 && <ul className="themis-composer-attachments" aria-label="Attached files">
+          {attachments.map(file => <li key={file.path} title={`${file.name} · ${file.size.toLocaleString()} bytes`}>
+            <AttachmentPreview threadId={thread.id} path={file.path} />
+            <button type="button" aria-label={`Remove ${file.name}`} disabled={composerDisabled} onClick={() => onRemoveAttachment?.(file.path)}>×</button>
+          </li>)}
+        </ul>}
+        <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} history={history} disabled={composerDisabled}
+          placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Message Themis… @ for plugins, / for skills"}
           onChange={onDraftChange} onSubmit={onSend} />
         <div className="themis-thread-composer-actions">
-          <Button
-            variant="ghost"
-            size="small"
-            aria-label="New thread"
-            title="New thread (⌘/Ctrl+Shift+O)"
-            onClick={onNewThread}
-          >+
+          <Button variant="ghost" size="small" aria-label="Attach files" title="Attach files" disabled={composerDisabled} onClick={onAttach}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2" /></svg>
           </Button>
+          <details className="themis-composer-permissions" data-mode={thread.approval_mode ?? "custom"}>
+            <summary aria-label={`Permissions: ${thread.approval_mode === "yolo" ? "YOLO" : "Custom"}`} title={thread.approval_mode === "yolo" ? "YOLO bypasses harness tool restrictions for the next run" : "Custom applies your rules and asks for tool approvals"}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7Z" /></svg>
+              <span>{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>
+            </summary>
+            <div className="themis-permissions-panel"><p>{thread.approval_mode === "yolo" ? "Bypass harness tool restrictions." : "Apply your rules and ask for tool approvals."} Changes apply to the next run.</p>
+              <label><select aria-label="Approval mode" value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
+            </div>
+          </details>
           <div className="themis-composer-selectors">
             <div className="themis-composer-model-picker">
               <span className="themis-composer-model-provider" aria-label="OpenCode Go">
@@ -121,7 +164,7 @@ export function ThreadComposer({
               className="themis-send"
               variant="ghost"
               aria-label={stopping ? "Stopping" : "Stop"}
-              title={stopping ? "Stopping after current action" : "Stop"}
+              title={stopping ? "Stopping…" : "Stop (Esc twice)"}
               disabled={stopping}
               onClick={onStop}
             >
@@ -135,7 +178,7 @@ export function ThreadComposer({
               variant="primary"
               aria-label="Send"
               title="Send (Enter)"
-              disabled={composerDisabled || draft.trim() === ""}
+              disabled={composerDisabled || (draft.trim() === "" && attachments.length === 0)}
               onClick={onSend}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">

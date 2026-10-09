@@ -8,10 +8,10 @@ import { readSession, writeSession } from "../state/session";
 export function useDesktopCompanion(preferences: CompanionPreferences, mood: KnightMood, ready: boolean, onError: (error: unknown) => void): boolean {
   const native = isTauri();
   const placed = useRef(false);
+  useEffect(() => { if (native) writeSession("companion-mood", mood); }, [native, mood]);
   useEffect(() => {
     if (!native) return;
     let cancelled = false;
-    writeSession("companion-mood", mood);
     const pet = new NativeWindow("companion");
     void (async () => {
       if (!preferences.enabled || !ready) { await pet.hide(); return; }
@@ -28,12 +28,17 @@ export function useDesktopCompanion(preferences: CompanionPreferences, mood: Kni
         }
         placed.current = true;
       }
-      if (!cancelled) await pet.show();
+      if (!cancelled && !await pet.isVisible()) {
+        const main = getCurrentWindow();
+        const restoreFocus = await main.isFocused();
+        await pet.show();
+        if (restoreFocus) await main.setFocus();
+      }
     })().catch(error => { if (!cancelled) onError(error); });
     return () => { cancelled = true; };
     // onError only reports native failures; preference changes drive synchronization.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [native, preferences, mood, ready]);
+  }, [native, preferences.enabled, preferences.size, ready]);
   return native;
 }
 

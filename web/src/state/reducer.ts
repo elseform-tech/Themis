@@ -1,6 +1,7 @@
 // Pure state model for the Themis app shell. No Tauri/DOM imports —
 // safe to load in node-based unit tests.
 import type {
+  McpConnections,
   ApprovalRequest,
   Automation,
   DiffState,
@@ -76,6 +77,7 @@ export function trackRecentRoot(roots: string[], root: string): string[] {
 }
 
 export interface AppState {
+  mcpConnections: McpConnections;
   projects: ProjectInfo[];
   threadsByProject: Record<string, ThreadInfo[]>;
   activeProjectRoot: string | null;
@@ -109,9 +111,12 @@ export interface AppState {
 }
 
 export type AppAction =
+  | { type: "mcp/status"; connections: McpConnections }
   | { type: "project/opened"; project: ProjectInfo; select?: boolean }
   | { type: "project/selected"; root: string }
   | { type: "thread/created"; projectRoot: string; thread: ThreadInfo }
+  | { type: "thread/running-loaded"; threadId: string; running: boolean }
+  | { type: "approval/loaded"; requests: ApprovalRequest[] }
   | { type: "thread/synced"; projectRoot: string; thread: ThreadInfo }
   | { type: "thread/selected"; projectRoot: string; threadId: string }
   | { type: "thread/updated"; projectRoot: string; thread: ThreadInfo }
@@ -126,7 +131,7 @@ export type AppAction =
       threadsByProject: Record<string, ThreadInfo[]>;
     }
   | { type: "thread/event"; envelope: ThreadEventEnvelope }
-  | { type: "thread/history-loaded"; threadId: string; history: HistoryItem[] }
+  | { type: "thread/history-loaded"; threadId: string; history: HistoryItem[]; running?: boolean }
   | { type: "message/append"; threadId: string; message: ChatMessage }
   | { type: "diff/set"; threadId: string; diff: DiffState | null }
   | { type: "comment/added"; threadId: string; comment: ThreadComment }
@@ -165,7 +170,7 @@ export const DEFAULT_SETTINGS: Settings = {
   default_model: "muse-spark-1.3-contributor",
   max_turns: 20,
   max_total_turns: 200,
-  context_token_budget: 16000,
+  context_token_budget: 200000,
   context_messages: 20,
   approval_timeout_seconds: 300,
   confirm_reads: false,
@@ -182,6 +187,7 @@ export const DEFAULT_SECRET_STATUS: SecretStatus = {
 };
 
 export const initialState: AppState = {
+  mcpConnections: {},
   projects: [],
   threadsByProject: {},
   activeProjectRoot: null,
@@ -428,6 +434,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
   const uiState = reduceUiActions(state, action);
   if (uiState !== null) return uiState;
   switch (action.type) {
+    case "mcp/status": return { ...state, mcpConnections: action.connections };
     case "project/opened": {
       const exists = state.projects.some((p) => p.root === action.project.root);
       return {
@@ -471,6 +478,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
         mainView: "thread",
       };
     }
+    case "thread/running-loaded": return setThreadRunning(state, action.threadId, action.running);
+    case "approval/loaded": return { ...state, approvals: action.requests };
     case "thread/synced": {
       const threads = state.threadsByProject[action.projectRoot] ?? [];
       return {
@@ -613,11 +622,11 @@ export function reducer(state: AppState, action: AppAction): AppState {
         traces: { ...state.traces, [action.threadId]: [] },
       };
       for (const item of action.history) {
-        if (item.kind === "user") next = appendMessage(next, action.threadId, { id: newId("msg"), role: "user", text: item.text, runId: item.run_id });
+        if (item.kind === "user") next = appendMessage(next, action.threadId, { id: newId("msg"), role: "user", text: item.text, attachments: item.attachments, runId: item.run_id });
         else if (item.kind === "legacy") next = appendMessage(next, action.threadId, item.message);
         else next = applyThreadEvent(next, item.envelope, false);
       }
-      if (next.running[action.threadId]) {
+      if (next.running[action.threadId] && !action.running) {
         next = appendMessage(next, action.threadId, { id: newId("msg"), role: "system", text: "Run interrupted. Review any changes, then send a follow-up to continue." });
         next = setThreadRunning(next, action.threadId, false);
       }

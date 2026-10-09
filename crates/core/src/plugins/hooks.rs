@@ -7,14 +7,30 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub const EVENTS: [&str; 6] = [
+pub const EVENTS: [&str; 5] = [
     "RunStart",
-    "BeforeToolCall",
-    "AfterToolCall",
-    "ToolCallFailed",
-    "RunFinished",
+    "BeforeTool",
+    "AfterTool",
     "BeforeCompaction",
+    "RunEnd",
 ];
+
+fn canonical_event(event: &str) -> &str {
+    match event {
+        "BeforeToolCall" => "BeforeTool",
+        "AfterToolCall" | "ToolCallFailed" => "AfterTool",
+        "RunFinished" => "RunEnd",
+        _ => event,
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookFailurePolicy {
+    Ignore,
+    Abort,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hook {
     pub name: String,
@@ -26,6 +42,10 @@ pub struct Hook {
     pub timeout_seconds: u64,
     #[serde(default)]
     pub blocking: bool,
+    #[serde(default)]
+    pub matcher: Option<String>,
+    #[serde(default)]
+    pub failure_policy: Option<HookFailurePolicy>,
     #[serde(skip)]
     pub plugin_root: Option<std::path::PathBuf>,
     #[serde(skip)]
@@ -37,7 +57,7 @@ fn timeout() -> u64 {
 impl Hook {
     pub fn validate(&self) -> anyhow::Result<()> {
         if !super::safe_name(&self.name)
-            || !EVENTS.contains(&self.event.as_str())
+            || !EVENTS.contains(&canonical_event(&self.event))
             || self.command.trim().is_empty()
             || !(1..=60).contains(&self.timeout_seconds)
         {
@@ -54,10 +74,14 @@ pub async fn run(
     approvals: &Arc<dyn ApprovalHook>,
 ) -> anyhow::Result<Value> {
     hook.validate()?;
+    use std::hash::{Hash, Hasher};
+    let mut definition = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(hook)?.hash(&mut definition);
     let action = ToolAction {
         tool: format!(
-            "hook_{}",
-            hook.runtime_identity.as_ref().unwrap_or(&hook.name)
+            "hook_{}_{:016x}",
+            hook.runtime_identity.as_ref().unwrap_or(&hook.name),
+            definition.finish()
         ),
         summary: format!("{}: {}", hook.event, hook.command),
         risk: RiskLevel::Execute,
@@ -83,9 +107,10 @@ pub async fn run(
         .current_dir(root)
         .env_clear()
         .kill_on_drop(true)
+        .env("THEMIS_HOOK_ACTIVE", "1")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::piped());
     for name in ["PATH", "HOME", "SYSTEMROOT", "TMPDIR"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
@@ -97,6 +122,9 @@ pub async fn run(
     #[cfg(unix)]
     command.process_group(0);
     let mut child = command.spawn()?;
+    if let Some(stderr) = child.stderr.take() {
+        crate::diagnostics::capture_stderr(stderr, "hook", Vec::new());
+    }
     let _group = ProcessGroup(child.id());
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(hook.timeout_seconds),
@@ -153,15 +181,20 @@ pub async fn run(
 #[derive(Clone)]
 pub struct HookRuntime {
     pub hooks: Vec<Hook>,
+    pub run_id: String,
+    pub thread_id: String,
     pub root: std::path::PathBuf,
     pub approvals: Arc<dyn ApprovalHook>,
 }
-tokio::task_local! { pub static ACTIVE: HookRuntime; }
+tokio::task_local! { pub static ACTIVE: HookRuntime; static IN_HOOK: bool; }
 pub async fn emit_current(
     event: &str,
     payload: Value,
     events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
 ) -> anyhow::Result<()> {
+    if IN_HOOK.try_with(|running| *running).unwrap_or(false) {
+        return Ok(());
+    }
     if let Ok(runtime) = ACTIVE.try_with(Clone::clone) {
         runtime.emit(event, payload, events).await?;
     }
@@ -174,8 +207,25 @@ impl HookRuntime {
         payload: Value,
         events: &tokio::sync::mpsc::Sender<crate::runtime::RunEvent>,
     ) -> anyhow::Result<()> {
-        for hook in self.hooks.iter().filter(|h| h.enabled && h.event == event) {
-            let outcome = run(hook, &self.root, &payload, &self.approvals).await;
+        let event = canonical_event(event);
+        let mut payload = payload;
+        payload["event"] = event.into();
+        payload["run_id"] = self.run_id.clone().into();
+        payload["thread_id"] = self.thread_id.clone().into();
+        payload["project_root"] = self.root.to_string_lossy().as_ref().into();
+        for hook in self.hooks.iter().filter(|h| {
+            h.enabled
+                && canonical_event(&h.event) == event
+                && (h.event != "ToolCallFailed" || payload["ok"] == false)
+                && h.matcher.as_ref().is_none_or(|matcher| {
+                    matcher
+                        .split('|')
+                        .any(|pattern| pattern == "*" || payload["tool"].as_str() == Some(pattern))
+                })
+        }) {
+            let outcome = IN_HOOK
+                .scope(true, run(hook, &self.root, &payload, &self.approvals))
+                .await;
             events
                 .send(crate::runtime::RunEvent::ToolCallFinished {
                     tool: format!(
@@ -190,8 +240,9 @@ impl HookRuntime {
                 })
                 .await
                 .ok();
-            if hook.blocking && matches!(event, "RunStart" | "BeforeToolCall" | "BeforeCompaction")
-            {
+            let abort = hook.failure_policy == Some(HookFailurePolicy::Abort)
+                || (hook.failure_policy.is_none() && hook.blocking);
+            if abort && matches!(event, "RunStart" | "BeforeTool" | "BeforeCompaction") {
                 outcome?;
             }
         }
@@ -216,8 +267,8 @@ where
     {
         runtime
             .emit(
-                "RunFinished",
-                json!({"event":"RunFinished","ok":false,"error":error.to_string()}),
+                "RunEnd",
+                json!({"event":"RunEnd","status":"failed","ok":false,"error":error.to_string()}),
                 &events,
             )
             .await
@@ -244,8 +295,8 @@ where
                 seen.store(true, std::sync::atomic::Ordering::SeqCst);
                 pump_runtime
                     .emit(
-                        "RunFinished",
-                        json!({"event":"RunFinished","result":event}),
+                        "RunEnd",
+                        json!({"event":"RunEnd","status":match &event { RunEvent::Failed { error } if error == "Stopped by you" => "cancelled", RunEvent::Failed { .. } => "failed", RunEvent::Incomplete { .. } => "incomplete", _ => "completed" },"result":event}),
                         &outgoing,
                     )
                     .await
@@ -259,8 +310,8 @@ where
     if !terminal.load(std::sync::atomic::Ordering::SeqCst) {
         runtime
             .emit(
-                "RunFinished",
-                json!({"event":"RunFinished","ok":result.is_ok()}),
+                "RunEnd",
+                json!({"event":"RunEnd","status": if result.is_ok() {"completed"} else {"failed"},"ok":result.is_ok(),"error":result.as_ref().err().map(ToString::to_string)}),
                 &events,
             )
             .await
@@ -288,5 +339,110 @@ impl Drop for ProcessGroup {
                 libc::kill(-(id as i32), libc::SIGKILL);
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::tools::{AllowAllHook, FnHook};
+    use std::sync::Mutex;
+
+    fn hook(event: &str, command: &str) -> Hook {
+        Hook {
+            name: "test".into(),
+            event: event.into(),
+            command: command.into(),
+            enabled: true,
+            timeout_seconds: 1,
+            blocking: false,
+            matcher: None,
+            failure_policy: None,
+            plugin_root: None,
+            runtime_identity: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn changed_hook_definition_requires_new_approval() {
+        let root = tempfile::tempdir().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let capture = seen.clone();
+        let approvals = crate::runtime::CachingApprovals::wrap(Arc::new(FnHook::new(
+            move |action: &ToolAction| {
+                capture.lock().unwrap().push(action.tool.clone());
+                Approval::AllowAlways
+            },
+        )));
+        let approvals: Arc<dyn ApprovalHook> = approvals;
+        run(
+            &hook("RunStart", "true"),
+            root.path(),
+            &json!({}),
+            &approvals,
+        )
+        .await
+        .unwrap();
+        run(
+            &hook("RunStart", "true"),
+            root.path(),
+            &json!({}),
+            &approvals,
+        )
+        .await
+        .unwrap();
+        run(&hook("RunStart", ":"), root.path(), &json!({}), &approvals)
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_ne!(seen[0], seen[1]);
+    }
+
+    #[tokio::test]
+    async fn matcher_and_cancelled_runend_use_fixed_payload() {
+        let root = tempfile::tempdir().unwrap();
+        let mut matched = hook("BeforeTool", "cat > matched.json");
+        matched.matcher = Some("read_file".into());
+        let runtime = HookRuntime {
+            hooks: vec![matched, hook("RunEnd", "cat > ended.json")],
+            root: root.path().into(),
+            approvals: Arc::new(AllowAllHook),
+            run_id: "run".into(),
+            thread_id: "thread".into(),
+        };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+        runtime
+            .emit("BeforeTool", json!({"tool":"shell"}), &tx)
+            .await
+            .unwrap();
+        assert!(!root.path().join("matched.json").exists());
+        runtime
+            .emit("BeforeTool", json!({"tool":"read_file"}), &tx)
+            .await
+            .unwrap();
+        let matched: Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("matched.json")).unwrap())
+                .unwrap();
+        assert_eq!(matched["event"], "BeforeTool");
+        assert_eq!(matched["run_id"], "run");
+        with_hooks(runtime, "task", tx, |events| async move {
+            events
+                .send(crate::runtime::RunEvent::Failed {
+                    error: "Stopped by you".into(),
+                })
+                .await
+                .unwrap();
+            Err(anyhow::anyhow!("Stopped by you"))
+        })
+        .await
+        .unwrap_err();
+        while rx.try_recv().is_ok() {}
+        let ended: Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("ended.json")).unwrap())
+                .unwrap();
+        assert_eq!(ended["event"], "RunEnd");
+        assert_eq!(ended["status"], "cancelled");
+        assert_eq!(ended["thread_id"], "thread");
     }
 }
