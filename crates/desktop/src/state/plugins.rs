@@ -102,6 +102,7 @@ impl AppState {
         let outcome = themis_core::diagnostics::ACTIVE.scope(context,async {
             Ok::<_, anyhow::Error>(match action {
                 "list" => serde_json::to_value(store.list()?)?,
+                "inventory" => store.list_metadata(&args)?,
                 "inspect_path" => serde_json::to_value(store.inspect_path(Path::new(args["path"].as_str().unwrap_or_default()),args["name"].as_str())?)?,
                 "inspect_json" => {
                     let content = args["content"].as_str().unwrap_or_default();
