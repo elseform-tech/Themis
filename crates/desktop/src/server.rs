@@ -15,7 +15,7 @@ use crate::sink::EventSink;
 use crate::state::AppState;
 use crate::types::{ApprovalRequest, ReviewItem, ThreadEventEnvelope};
 
-const MAX_FRAME: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
 const DISCOVERY_FILE: &str = "server.json";
 
 #[derive(Serialize, Deserialize)]

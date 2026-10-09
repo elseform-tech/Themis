@@ -27,7 +27,7 @@ fn cli(directory: &Path, method: &str, args: Value) -> Value {
 
 #[test]
 fn documented_configuration_examples_use_the_runtime_resolver() {
-    let guide = include_str!("../../../docs/configuration.md");
+    let guide = include_str!("../../../docs/configuration.md").replace("\r\n", "\n");
     let examples: Vec<_> = guide
         .split("```jsonc\n")
         .skip(1)

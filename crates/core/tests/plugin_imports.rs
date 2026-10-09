@@ -396,8 +396,10 @@ async fn repository_import_infers_name_without_override() {
             )
             .unwrap();
         }
+        fs::write(source.join(".gitattributes"), "* -text\n").unwrap();
         for args in [
             vec!["init", "-q"],
+            vec!["config", "core.autocrlf", "false"],
             vec!["add", "."],
             vec![
                 "-c",

@@ -10,13 +10,31 @@ use themis_desktop::state::AppState;
 mod common;
 
 fn cli(data_dir: &Path, words: &[&str]) -> Value {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_themis"));
+    command
         .arg("--data-dir")
         .arg(data_dir)
-        .args(words)
-        .env_remove("OPENCODE_KEY")
-        .output()
-        .expect("run CLI");
+        .env_remove("OPENCODE_KEY");
+    let output = if let ["call", method, args] = words {
+        let mut child = command
+            .args(["call", method, "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run CLI");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(args.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    } else {
+        command.args(words).output().expect("run CLI")
+    };
     assert!(
         output.status.success(),
         "CLI {words:?} failed: {}",
@@ -809,4 +827,38 @@ async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
         .await
         .unwrap();
     serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_stdin_rejects_invalid_oversized_and_secret_requests() {
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    for (method, input, error) in [
+        ("get_settings", "{broken".to_owned(), "invalid JSON_ARGS"),
+        (
+            "get_settings",
+            " ".repeat(8 * 1024 * 1024 + 1),
+            "exceeds 8 MiB",
+        ),
+        ("set_secret", "{}".to_owned(), "enter a key securely"),
+    ] {
+        let path = data.path().join("request.json");
+        std::fs::write(&path, input).unwrap();
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(data.path())
+            .args(["call", method, "-"])
+            .stdin(std::fs::File::open(path).unwrap())
+            .env_remove("OPENCODE_KEY")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(error),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    task.abort();
 }

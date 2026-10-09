@@ -216,8 +216,10 @@ async fn repository_preview_preserves_full_skill_without_installing_then_imports
         "Preserve this supporting resource.\n",
     )
     .unwrap();
+    std::fs::write(repository.path().join(".gitattributes"), "* -text\n").unwrap();
     for args in [
         vec!["init", "-q"],
+        vec!["config", "core.autocrlf", "false"],
         vec!["add", "."],
         vec![
             "-c",

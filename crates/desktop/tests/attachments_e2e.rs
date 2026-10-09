@@ -10,13 +10,25 @@ use themis_desktop::{
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
 fn cli(dir: &Path, command: &str, args: Value) -> Value {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
         .arg("--data-dir")
         .arg(dir)
-        .args(["call", command, &args.to_string()])
+        .args(["call", command, "-"])
         .env_remove("OPENCODE_KEY")
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(args.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -674,12 +686,16 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         })
         .next()
         .unwrap();
-    assert!(
-        checkpoint_text.contains(
-            serde_json::to_string(&original_path)
-                .unwrap()
-                .trim_matches('"')
-        ),
+    let referenced: std::path::PathBuf = serde_json::Deserializer::from_str(
+        checkpoint_text.split("Latest snapshot: ").nth(1).unwrap(),
+    )
+    .into_iter()
+    .next()
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        referenced.canonicalize().unwrap(),
+        original_path.canonicalize().unwrap(),
         "evidence reference must be saved in the checkpoint"
     );
     assert!(std::process::Command::new("git")
@@ -1036,7 +1052,8 @@ async fn cli_completed_tool_original_survives_restart_without_compaction() {
             json!({"role":"assistant","content":"copper-753"})
         } else {
             assert!(!body.to_string().contains("copper-753"), "display/context must not leak the historical receipt");
-            assert!(body["messages"][0]["content"].as_str().unwrap().contains(serde_json::to_string(archive.parent().unwrap()).unwrap().trim_matches('"')), "the restarted model must receive the journal directory without needing a checkpoint");
+            let directory: std::path::PathBuf = serde_json::Deserializer::from_str(body["messages"][0]["content"].as_str().unwrap().split("Recoverable evidence directory: ").nth(1).unwrap()).into_iter().next().unwrap().unwrap();
+            assert_eq!(directory.canonicalize().unwrap(), archive.parent().unwrap().canonicalize().unwrap(), "the restarted model must receive the journal directory without needing a checkpoint");
             let script = "import json,sys; r=[json.loads(x) for x in open(sys.argv[1])]; v=json.loads(r[1]['message_type']['ToolResult'][0]['function']['arguments']); print(v['content'].split('historical receipt: ')[1])";
             json!({"role":"assistant","content":null,"tool_calls":[{"id":"recover","type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",script,archive],"cwd":""}).to_string()}}]})
         };

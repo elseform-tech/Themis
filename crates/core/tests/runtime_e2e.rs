@@ -708,7 +708,7 @@ async fn skill_catalog_reaches_system_request_without_body() {
             .unwrap(),
     )
     .unwrap();
-    let path = entries[0]["path"].as_str().unwrap();
+    let path = entries[0]["path"].as_str().unwrap().to_owned();
     common::mount_script(
         &server,
         vec![
@@ -741,19 +741,8 @@ async fn skill_catalog_reaches_system_request_without_body() {
     let system = request["messages"][0]["content"].as_str().unwrap();
     assert_eq!(request["messages"][0]["role"], "system");
     assert!(system.contains("Inspect changes"));
-    assert!(system.contains(
-        serde_json::to_string(
-            &std::path::Path::new(".themis")
-                .join("skill-catalogs")
-                .join("catalog-run")
-                .join(".themis")
-                .join("skills")
-                .join("review")
-                .join("SKILL.md")
-        )
-        .unwrap()
-        .trim_matches('"')
-    ));
+    assert!(system.contains(&serde_json::to_string(&path).unwrap()));
+    assert!(std::path::Path::new(&path).ends_with(std::path::Path::new("review").join("SKILL.md")));
     let followup: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
     assert!(followup["messages"]
         .as_array()
