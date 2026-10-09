@@ -377,6 +377,9 @@ async fn cli_reopens_completed_navigation_after_a_section_failure() {
         }
         let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
         assert!(context.contains("Working summary unavailable"));
+        assert!(context.contains("Continue from the retained current request"));
+        assert!(context.contains("Retrieve only missing facts needed for the next unresolved action"));
+        assert!(!context.contains("using approved tools before substantive continuation"));
         assert!(!context.contains("NAV_KEEP_753"));
         let Some(line) = context.lines().find(|line| line.starts_with("Partial section notes")) else {
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"No completed navigation saved."},"finish_reason":"stop"}]}));

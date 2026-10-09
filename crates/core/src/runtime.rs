@@ -1199,7 +1199,7 @@ async fn compact_context_with_evidence(
                     .map(checkpoint_task_state)
                     .filter(|state| !state.is_empty())
                     .map_or(String::new(), |state| format!("Previous task state retained unchanged as historical context; the current update is unavailable:\n{state}\n\n"));
-                let summary = format!("{previous}Working summary unavailable: {reason}. The complete originals are saved below. If the current request permits tool retrieval, retrieve the relevant original goals, constraints, decisions, evidence and unresolved work using approved tools before substantive continuation. If tools are forbidden, continue only from retained state and state the missing context explicitly. Do not treat this checkpoint as an exhaustive summary or invent missing facts.\n{evidence}");
+                let summary = format!("{previous}Working summary unavailable: {reason}. The complete originals are saved below. Continue from the retained current request, task state, completed action record and bounded reads. These records may be incomplete. Retrieve only missing facts needed for the next unresolved action using approved tools when permitted. Do not restart inspection or repeat completed work merely because summarization failed; address a retained tool failure or take the next unresolved step. If tools are forbidden, continue only from retained state and state the missing context explicitly. Do not treat this checkpoint as an exhaustive summary or invent missing facts.\n{evidence}");
                 let result =
                     replace_context(messages, policy, split, summary, events, Some(&path)).await;
                 crate::diagnostics::emit(
