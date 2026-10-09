@@ -330,7 +330,7 @@ impl ToolT for GatedTool {
 
     fn description(&self) -> &str {
         if self.inner.name() == "read_file" {
-            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record searches decoded original User/Tool fields when present, without falling back to Assistant navigation. For secondary navigation in a mixed snapshot, explicitly select its jsonl_record; Assistant-only notes remain searchable and carry a navigation warning. Continue using the returned jsonl_record and next_offset. Every read returns at most 4000 content characters with provenance and next_offset, including reads without options. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. For complete-file analysis use approved local shell/Python processing and return selected facts."
+            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record prefers original User/Tool fields and excludes records marked evidence_kind=recovery; recovery-only snapshots require explicit record selection. For Tool arguments set decode_tool_payload=true to search decoded envelope values rather than escaped JSON; preserve that flag for subsequent offsets. For secondary navigation in a mixed snapshot, explicitly select its jsonl_record; Assistant-only notes remain searchable and carry a navigation warning. Continue using the returned jsonl_record and next_offset. Every read returns at most 4000 content characters with provenance and next_offset, including reads without options. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. For complete-file analysis use approved local shell/Python processing and return selected facts."
         } else {
             self.inner.description()
         }
@@ -341,6 +341,7 @@ impl ToolT for GatedTool {
         if self.inner.name() == "read_file" {
             schema["properties"]["jsonl_record"] = serde_json::json!({"type":"integer","minimum":1,"description":"One-based JSONL record; decode it before reading"});
             schema["properties"]["json_pointer"] = serde_json::json!({"type":"string","description":"String field within selected JSONL record; default /content, e.g. /message_type/ToolResult/0/function/arguments"});
+            schema["properties"]["decode_tool_payload"] = serde_json::json!({"type":"boolean","default":false,"description":"For archived Tool arguments, decode the JSON envelope once and page/search labeled leaf values (e.g. stdout/content) instead of escaped JSON. Return this same flag on subsequent offsets. Default false preserves the exact raw field."});
             schema["properties"]["offset"] = serde_json::json!({"type":"integer","minimum":0,"description":"Start character for paging or searching; use returned next_offset to continue"});
             schema["properties"]["find"] = serde_json::json!({"type":"string","minLength":1,"description":"Exact case-sensitive literal; returns surrounding text and next_offset for the next match"});
         }
@@ -388,6 +389,63 @@ impl ToolRuntime for GatedTool {
     }
 }
 
+pub(crate) fn context_recovery_call(name: &str, arguments: &str) -> bool {
+    matches!(name, "read_file" | "list_dir" | "shell" | "search_file")
+        && arguments.replace('\\', "/").contains(".themis/context/")
+}
+
+fn archive_field_kind<'a>(record: &'a Value, pointer: &str) -> &'a str {
+    pointer
+        .strip_prefix("/message_type/ToolResult/")
+        .and_then(|tail| tail.split('/').next()?.parse::<usize>().ok())
+        .and_then(|index| record["message_type"]["ToolResult"][index]["evidence_kind"].as_str())
+        .or_else(|| record["evidence_kind"].as_str())
+        .unwrap_or("legacy")
+}
+
+fn decoded_archive_field(
+    record: &Value,
+    pointer: &str,
+    decode_tool_payload: bool,
+) -> Option<String> {
+    let text = record.pointer(pointer)?.as_str()?;
+    if !decode_tool_payload || record["role"] != "Tool" || !pointer.ends_with("/function/arguments")
+    {
+        return Some(text.to_owned());
+    }
+    fn leaves(value: &Value, path: &str, output: &mut String) {
+        match value {
+            Value::Object(fields) => {
+                for (key, value) in fields {
+                    leaves(value, &format!("{path}/{key}"), output);
+                }
+            }
+            Value::Array(items) => {
+                for (index, value) in items.iter().enumerate() {
+                    leaves(value, &format!("{path}/{index}"), output);
+                }
+            }
+            _ => {
+                output.push_str(&format!(
+                    "{path}:\n{}\n",
+                    value
+                        .as_str()
+                        .map_or_else(|| value.to_string(), str::to_owned)
+                ));
+            }
+        }
+    }
+    // Decode the tool envelope once. Nested JSON-looking source text is still source text.
+    match serde_json::from_str::<Value>(text) {
+        Ok(value) => {
+            let mut output = String::new();
+            leaves(&value, "", &mut output);
+            Some(output)
+        }
+        Err(_) => Some(text.to_owned()),
+    }
+}
+
 /// Bound existing authorized reads; path resolution stays in the filesystem tool.
 // ponytail: the underlying tool still loads the whole file; stream records if archive memory use becomes a problem.
 fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCallError> {
@@ -406,6 +464,12 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
         .ok_or_else(|| invalid("File content is not text"))?
         .to_owned();
     let offset = number("offset", 0)?;
+    let decode_tool_payload = match args.get("decode_tool_payload") {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| invalid("decode_tool_payload must be boolean"))?,
+    };
     let needle = args
         .get("find")
         .map(|value| {
@@ -438,22 +502,26 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
             .map(serde_json::from_str::<Value>)
             .collect::<Result<Vec<_>, _>>()?;
         result["total_records"] = records.len().into();
-        let originals = records.iter().any(|record| {
+        let original = |record: &Value| {
             matches!(record["role"].as_str(), Some("User" | "Tool"))
+                && archive_field_kind(record, pointer) != "recovery"
                 && record.pointer(pointer).is_some_and(Value::is_string)
-        });
+        };
+        let originals = records.iter().any(original);
+        let recovery = records
+            .iter()
+            .any(|record| archive_field_kind(record, pointer) == "recovery");
         let matched = records.iter().enumerate().find(|(_, record)| {
-            (!originals || matches!(record["role"].as_str(), Some("User" | "Tool")))
-                && record
-                    .pointer(pointer)
-                    .and_then(Value::as_str)
-                    .is_some_and(|field| {
+            (original(record) || (!originals && !recovery))
+                && decoded_archive_field(record, pointer, decode_tool_payload).is_some_and(
+                    |field| {
                         let byte = field
                             .char_indices()
                             .nth(offset)
                             .map_or(field.len(), |(n, _)| n);
                         field[byte..].contains(needle)
-                    })
+                    },
+                )
         });
         if let Some((index, _)) = matched {
             Some(index + 1)
@@ -461,7 +529,7 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
             result["content"] = "".into();
             result["found"] = false.into();
             result["next_offset"] = Value::Null;
-            let scope = if originals {
+            let scope = if originals || recovery {
                 "Original User/Tool"
             } else {
                 "All"
@@ -489,14 +557,16 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
                 invalid(&format!("JSONL record {record} does not exist (record numbers start at 1). Total records: {}. First up to 8 records: {}. Retry with an available record, or omit jsonl_record and use find to search decoded records; Assistant records are navigation, not original evidence.", text.lines().count(), serde_json::json!(available)))
             })?;
         let decoded: Value = serde_json::from_str(line)?;
-        text = decoded
-            .pointer(pointer)
-            .and_then(Value::as_str)
-            .ok_or_else(|| invalid("Selected JSONL field is missing or is not a string"))?
-            .to_owned();
+        text = decoded_archive_field(&decoded, pointer, decode_tool_payload)
+            .ok_or_else(|| invalid("Selected JSONL field is missing or is not a string"))?;
         result["jsonl_record"] = record.into();
         result["json_pointer"] = pointer.into();
         result["record_role"] = decoded["role"].clone();
+        result["evidence_kind"] = archive_field_kind(&decoded, pointer).into();
+        result["decode_tool_payload"] = decode_tool_payload.into();
+        if archive_field_kind(&decoded, pointer) == "recovery" {
+            result["evidence_warning"] = "Generated archive-recovery output, not an independent original source. Follow the original source coordinates; do not recursively search copies of earlier recovery results.".into();
+        }
         if decoded["role"] == "Assistant" {
             result["evidence_warning"] = "Assistant navigation, not original evidence. Follow source references and verify claims in User/Tool records before citing.".into();
             result["navigation_header"] = text
@@ -1619,6 +1689,80 @@ mod tests {
         );
         assert!(!error.contains(r#"{"record":9"#));
         assert!(!error.contains("UNTRUSTED_ROLE") && !error.contains("PRIVATE_BODY"));
+    }
+
+    #[tokio::test]
+    async fn archive_search_skips_recovery_outputs_and_decodes_tool_payloads() {
+        let (_tmp, root) = rooted_case();
+        let payload =
+            json!({"stdout":"Original 🔎 passage\nquoted text", "exit_code":0}).to_string();
+        let records = [
+            json!({"role":"Tool","evidence_kind":"recovery","message_type":{"ToolResult":[{"function":{"arguments":json!({"stdout":"Original 🔎 copied search result"}).to_string()}}]}}),
+            json!({"role":"Tool","evidence_kind":"original","message_type":{"ToolResult":[{"function":{"arguments":payload}}]}}),
+        ];
+        fs::write(
+            root.join("observations.jsonl"),
+            records
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let tools = boxed_tools(&root, Arc::new(RecordingHook::new(Approval::AllowOnce))).unwrap();
+        let tool = find_tool(&tools, "read_file");
+        let result = tool.execute(json!({"file_path":"observations.jsonl","json_pointer":"/message_type/ToolResult/0/function/arguments","find":"Original 🔎","decode_tool_payload":true})).await.unwrap();
+        assert_eq!(
+            result["jsonl_record"], 2,
+            "generated recovery results must not outrank originals"
+        );
+        assert!(
+            result["content"]
+                .as_str()
+                .unwrap()
+                .contains("passage\nquoted text"),
+            "search decoded tool strings, not escaped argument JSON"
+        );
+        assert_eq!(result["evidence_kind"], "original");
+        let raw = tool.execute(json!({"file_path":"observations.jsonl","jsonl_record":2,"json_pointer":"/message_type/ToolResult/0/function/arguments"})).await.unwrap();
+        assert_eq!(
+            raw["content"], payload,
+            "existing raw receipt reads must remain compatible"
+        );
+        let recovery = tool.execute(json!({"file_path":"observations.jsonl","jsonl_record":1,"json_pointer":"/message_type/ToolResult/0/function/arguments"})).await.unwrap();
+        assert_eq!(recovery["evidence_kind"], "recovery");
+        assert!(recovery["evidence_warning"]
+            .as_str()
+            .unwrap()
+            .contains("original"));
+        fs::write(root.join("recovery-only.jsonl"), records[0].to_string()).unwrap();
+        let absent = tool.execute(json!({"file_path":"recovery-only.jsonl","find":"copied search result","json_pointer":"/message_type/ToolResult/0/function/arguments"})).await.unwrap();
+        assert_eq!(
+            absent["found"], false,
+            "recovery-only archives must not silently become originals"
+        );
+        let mixed = json!({"role":"Tool","evidence_kind":"mixed","message_type":{"ToolResult":[
+            {"evidence_kind":"recovery","function":{"arguments":"copied recovery passage"}},
+            {"evidence_kind":"original","function":{"arguments":"independent original passage"}}
+        ]}});
+        fs::write(root.join("mixed.jsonl"), mixed.to_string()).unwrap();
+        let secondary = tool.execute(json!({"file_path":"mixed.jsonl","find":"passage","json_pointer":"/message_type/ToolResult/0/function/arguments"})).await.unwrap();
+        assert_eq!(
+            secondary["found"], false,
+            "skip only the recovery entry in a mixed batch"
+        );
+        let independent = tool.execute(json!({"file_path":"mixed.jsonl","find":"passage","json_pointer":"/message_type/ToolResult/1/function/arguments"})).await.unwrap();
+        assert_eq!(independent["content"], "independent original passage");
+        assert_eq!(independent["evidence_kind"], "original");
+    }
+
+    #[test]
+    fn generic_jsonl_search_still_finds_untyped_records() {
+        let result = bounded_read_result(&json!({"find":"needle"}), json!({"path":"events.jsonl","content":json!({"event":"done","content":"needle"}).to_string()})).unwrap();
+        assert_eq!(
+            result["found"], true,
+            "ordinary non-chat JSONL remains searchable"
+        );
     }
 
     #[tokio::test]

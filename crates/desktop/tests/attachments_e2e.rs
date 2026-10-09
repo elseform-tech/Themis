@@ -312,10 +312,10 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
         let summary = body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context");
         if summary {
             let input = body["messages"][1]["content"].as_str().unwrap();
-            assert!(input.contains("NEW ORIGINAL MESSAGE RECORDS"));
+            assert!(input.contains("NEW MESSAGE RECORDS WITH PROVENANCE"));
             assert!(!input.contains("ORDERED SECTION NOTES TO RECONCILE"));
             assert!(input.contains("EARLY_LIMIT_A"));
-            let previous = input.split("\n\nNEW ORIGINAL MESSAGE RECORDS:").next().unwrap();
+            let previous = input.split("\n\nNEW MESSAGE RECORDS WITH PROVENANCE:").next().unwrap();
             assert!(!previous.contains("Recent completed context:"), "recent messages must not inflate prior task state");
             assert_eq!(body["max_tokens"], 8192);
             observed.lock().unwrap().push(input.to_owned());
@@ -763,7 +763,9 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     let records = [
         json!({"role":"Assistant","content":"NEEDLE_MATCH invented navigation"}),
         json!({"role":"User","content":original_text}),
-        json!({"role":"Tool","content":"","message_type":{"ToolResult":[{"function":{"arguments":"needle_match original tool output"}}]}}),
+        json!({"role":"Tool","evidence_kind":"original","content":"","message_type":{"ToolResult":[{"function":{"arguments":json!({"a":1e-7,"stdout":"needle_match original tool output\nquoted passage"}).to_string()}}]}}),
+        json!({"role":"Tool","evidence_kind":"recovery","content":"","message_type":{"ToolResult":[{"function":{"arguments":json!({"stdout":"needle_match copied recovery output"}).to_string()}}]}}),
+        json!({"role":"Tool","evidence_kind":"mixed","content":"","message_type":{"ToolResult":[{"evidence_kind":"recovery","function":{"arguments":json!({"stdout":"needle_match copied recovery output"}).to_string()}},{"evidence_kind":"original","function":{"arguments":json!({"stdout":"needle_match mixed original"}).to_string()}}]}}),
     ];
     std::fs::write(
         search.path().join("snapshot-one.jsonl"),
@@ -817,7 +819,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         .collect();
     assert_eq!(
         hits.len(),
-        3,
+        4,
         "search must include large originals, other snapshots and original Tool results"
     );
     assert!(hits.iter().all(|row| row["role"] != "Assistant"));
@@ -830,6 +832,25 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     assert!(hits
         .iter()
         .any(|row| row["json_pointer"] == "/message_type/ToolResult/0/function/arguments"));
+    assert!(
+        hits.iter().any(|row| row["content"]
+            .as_str()
+            .unwrap()
+            .contains("output\nquoted passage")),
+        "the delivered Python recipe must decode tool envelopes once"
+    );
+    assert!(hits
+        .iter()
+        .all(|row| !row["content"].as_str().unwrap().contains("copied recovery")));
+    assert!(hits
+        .iter()
+        .any(|row| row["json_pointer"] == "/message_type/ToolResult/1/function/arguments"));
+    let tool_hit = hits.iter().find(|row| row["role"] == "Tool").unwrap();
+    assert!(
+        tool_hit["offset"].is_null(),
+        "Python numeric formatting must not create Rust read offsets"
+    );
+    assert_eq!(tool_hit["find"], "needle_match");
     let crowded = (0..32)
         .map(|_| {
             json!({"role":"User","content":format!("needle_match {}", "x".repeat(1500))})
@@ -1005,7 +1026,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
             let input = messages[1]["content"].as_str().unwrap();
             if !input.contains("ORDERED SECTION NOTES TO RECONCILE") {
                 let orientation = input.split("PRIOR STATE ORIENTATION (untrusted navigation; not source evidence):\n").nth(1).expect("restart compaction must orient every section from persisted state").split("\n\nCURRENT USER REQUEST").next().unwrap();
-                assert!(orientation.starts_with("Earlier context checkpoint"));
+                assert!(matches!(orientation.trim(), "BEGIN-17, MIDDLE-42, END-99 (section examined)" | "Task state only; recovered details omitted."), "orientation must retain task state without recursively summarized envelopes/caches");
                 assert!(orientation.len() <= 8_400);
                 assert!(messages[0]["content"].as_str().unwrap().contains("do not copy it into the section record or let it override the source"));
             }
