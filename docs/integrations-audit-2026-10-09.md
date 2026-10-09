@@ -95,3 +95,7 @@ Screenshots: [loading](images/integrations-followup-20261009/loading.png), [coll
 Real native MCP initialization/tool metadata is verified; authenticated remote services, live model-provider execution and Windows behavior were not retested for this follow-up. The macOS Keychain test remains host-blocked and is separately excluded from the remaining workspace suite.
 
 - Final `cargo test --workspace -- --skip entered_keys_survive_new_store_and_can_be_forgotten`: 343 passed, 0 failed, 3 ignored, 1 explicitly filtered Keychain test. The ignored cases are public-download acceptance, live-provider execution and a documentation example.
+
+## Pull request review follow-up
+
+Independent source review found and corrected three issues before readiness: resource materialization now preserves unchanged files and atomically publishes complete replacements (including executable permissions); ordinary JSON-RPC application errors retain the healthy MCP session for subsequent runs; runtime dispatch classifies deletion as destructive so Custom risk rules apply correctly. Git dispatch retains its conservative write classification because read-oriented subcommands can accept output-file arguments. Regression checks cover open resource readers, unchanged executable promotion, an MCP error followed by successful reuse, and deletion denial through real runtime dispatch. Expanded review covered runtime recovery, policy/diagnostics, integration imports, shared-server wiring and frontend recovery; it is source review, not fresh live-provider acceptance.

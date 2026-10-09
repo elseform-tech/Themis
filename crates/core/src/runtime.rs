@@ -216,6 +216,7 @@ fn risk_for(tool: &str) -> RiskLevel {
     match tool {
         "read_file" | "list_dir" | "search_file" => RiskLevel::Read,
         "shell" => RiskLevel::Execute,
+        "delete_file" => RiskLevel::Destructive,
         _ => RiskLevel::Write,
     }
 }
@@ -3355,6 +3356,43 @@ mod tests {
                 assert!(events.iter().any(|event| matches!(event, RunEvent::Failed { error } if error.starts_with("Tool evidence failed:"))));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn dispatch_respects_destructive_policy() {
+        use crate::configuration::{
+            configured_hook, ApprovalMode, ApprovalPolicy, ApprovalRule, PolicyAction,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let victim = root.path().join("keep.txt");
+        std::fs::write(&victim, "keep").unwrap();
+        let hook = configured_hook(
+            ApprovalMode::Custom,
+            ApprovalPolicy {
+                default: PolicyAction::Allow,
+                rules: vec![ApprovalRule {
+                    tool: "*".into(),
+                    action: PolicyAction::Deny,
+                    risk: Some("destructive".into()),
+                }],
+            },
+            Arc::new(crate::tools::AllowAllHook),
+        );
+        let tools = crate::tools::boxed_tools(root.path(), hook.clone()).unwrap();
+        let caching = CachingApprovals::wrap(hook);
+        let (events, _) = tokio::sync::mpsc::channel(16);
+        let result = execute_call(
+            &tools,
+            &caching,
+            "delete_file",
+            &serde_json::json!({"path":"keep.txt"}).to_string(),
+            "delete",
+            &events,
+            &AtomicBool::new(false),
+        )
+        .await;
+        assert!(result.unwrap_err().contains("approval denied"));
+        assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep");
     }
 
     #[tokio::test]
