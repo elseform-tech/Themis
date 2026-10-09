@@ -2400,8 +2400,13 @@ mod tests {
             } else {
                 response
             };
+            let request_started = Arc::new(AtomicBool::new(false));
+            let observed = request_started.clone();
             Mock::given(method("POST"))
-                .respond_with(response)
+                .respond_with(move |_: &wiremock::Request| {
+                    observed.store(true, Ordering::SeqCst);
+                    response.clone()
+                })
                 .mount(&server)
                 .await;
             let llm = crate::providers::resolve(
@@ -2430,7 +2435,10 @@ mod tests {
             if cancel {
                 let stopped = stopped.clone();
                 tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    // Cancel after the summary request starts: originals are then durable.
+                    while !request_started.load(Ordering::SeqCst) {
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    }
                     stopped.store(true, Ordering::SeqCst);
                 });
             }
@@ -2445,7 +2453,7 @@ mod tests {
                 },
                 &tx,
                 &stopped,
-                std::time::Duration::from_millis(100),
+                std::time::Duration::from_secs(5),
                 Some(evidence.path().to_owned()),
             )
             .await;
@@ -2851,7 +2859,7 @@ mod tests {
                 },
                 &tx,
                 &AtomicBool::new(false),
-                std::time::Duration::from_millis(300),
+                std::time::Duration::from_secs(5),
                 Some(directory.path().to_owned()),
             )
             .await
@@ -2930,7 +2938,7 @@ mod tests {
                 },
                 &tx,
                 &AtomicBool::new(false),
-                std::time::Duration::from_millis(300),
+                std::time::Duration::from_secs(5),
                 Some(directory.path().to_owned()),
             )
             .await
