@@ -586,3 +586,91 @@ fn unsupported_only_imports_cannot_create_empty_installed_packages() {
         .contains("No supported capabilities"));
     assert!(!global.path().join("plugins/registry.json").exists());
 }
+
+#[tokio::test]
+async fn mcp_application_error_keeps_session_available_for_next_run() {
+    use themis_core::{
+        plugins::connections::{McpServer, Session},
+        tools::AllowAllHook,
+    };
+    use wiremock::{matchers::body_partial_json, Mock, ResponseTemplate};
+    let server = mcp_with_instructions(None).await;
+    Mock::given(body_partial_json(json!({"method":"tools/call"})))
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = request.body_json().unwrap();
+            ResponseTemplate::new(200).set_body_json(if body["params"]["arguments"]["reject"] == true {
+                json!({"jsonrpc":"2.0","id":body["id"],"error":{"code":-32602,"message":"Invalid arguments"}})
+            } else { json!({"jsonrpc":"2.0","id":body["id"],"result":{"content":[]}}) })
+        }).mount(&server).await;
+    let root = tempfile::tempdir().unwrap();
+    let session = Session::connect(
+        &McpServer {
+            url: Some(server.uri()),
+            ..Default::default()
+        },
+        root.path(),
+    )
+    .await
+    .unwrap();
+    let (tools, _) = session
+        .tools("docs", std::sync::Arc::new(AllowAllHook))
+        .unwrap();
+    assert!(tools[0].execute(json!({"reject":true})).await.is_err());
+    assert!(session.is_connected());
+    let (next_run, _) = session
+        .tools("docs", std::sync::Arc::new(AllowAllHook))
+        .unwrap();
+    assert!(next_run[0].execute(json!({})).await.is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn materialization_preserves_open_resource_readers() {
+    use std::io::Read;
+    let data = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let store = PluginStore::new(data.path().into(), None);
+    let mut plugin = store
+        .save(
+            "global",
+            serde_json::from_value(json!({"name":"resources"})).unwrap(),
+            None,
+        )
+        .unwrap();
+    plugin
+        .spec
+        .files
+        .insert("server.py".into(), "print('complete')".into());
+    store.materialize(&[plugin.clone()], root.path()).unwrap();
+    let path = root
+        .path()
+        .join(".themis/plugin-files")
+        .join(plugin.skill_id("resources"))
+        .join("server.py");
+    let original = std::fs::metadata(&path).unwrap().modified().unwrap();
+    store.materialize(&[plugin.clone()], root.path()).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        original
+    );
+    use std::os::unix::fs::PermissionsExt;
+    plugin.spec.executable_files.push("server.py".into());
+    store.materialize(&[plugin.clone()], root.path()).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    let mut reader = std::fs::File::open(&path).unwrap();
+    plugin
+        .spec
+        .files
+        .insert("server.py".into(), "print('replacement')".into());
+    store.materialize(&[plugin], root.path()).unwrap();
+    let mut contents = String::new();
+    reader.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "print('complete')");
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "print('replacement')"
+    );
+}

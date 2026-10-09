@@ -797,7 +797,14 @@ impl PluginStore {
                 {
                     bail!("Symlink resource target rejected");
                 }
-                fs::write(&path, content)?;
+                // Persistent MCP processes may be reading this revision concurrently.
+                if !fs::read(&path).is_ok_and(|bytes| bytes == content.as_bytes()) {
+                    write_bytes(
+                        &path,
+                        content.as_bytes(),
+                        plugin.spec.executable_files.contains(relative),
+                    )?;
+                }
                 #[cfg(unix)]
                 if plugin.spec.executable_files.contains(relative) {
                     use std::os::unix::fs::PermissionsExt;
@@ -1011,6 +1018,11 @@ pub(super) fn write_json(path: &Path, value: &impl Serialize) -> anyhow::Result<
         bail!("Plugin registry exceeds 32 MiB; previous data was preserved");
     }
     fs::create_dir_all(path.parent().context("Missing store directory")?)?;
+    write_bytes(path, &bytes, false)
+}
+fn write_bytes(path: &Path, bytes: &[u8], executable: bool) -> anyhow::Result<()> {
+    #[cfg(not(unix))]
+    let _ = executable;
     let temp = path.with_extension(format!("{}.tmp", revision()));
     let result = (|| {
         use std::io::Write;
@@ -1019,10 +1031,15 @@ pub(super) fn write_json(path: &Path, value: &impl Serialize) -> anyhow::Result<
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+            options.mode(if executable { 0o700 } else { 0o600 });
         }
         let mut file = options.open(&temp)?;
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
+        #[cfg(unix)]
+        if executable {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o700))?;
+        }
         file.sync_all()?;
         fs::rename(&temp, path)?;
         Ok(())

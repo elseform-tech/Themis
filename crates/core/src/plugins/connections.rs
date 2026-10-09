@@ -8,6 +8,15 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
+#[derive(Debug)]
+struct RequestRejected;
+impl std::fmt::Display for RequestRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MCP request failed")
+    }
+}
+impl std::error::Error for RequestRejected {}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct McpServer {
@@ -306,7 +315,7 @@ impl Connection {
                 bail!("Mismatched MCP response id");
             }
             if response.get("error").is_some() {
-                bail!("MCP request failed");
+                return Err(RequestRejected.into());
             }
             response
                 .get("result")
@@ -402,8 +411,10 @@ impl ToolRuntime for McpTool {
             .request("tools/call", json!({"name":self.remote,"arguments":args}))
             .await
             .map_err(|e| {
-                self.healthy
-                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                if !e.is::<RequestRejected>() {
+                    self.healthy
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                }
                 ToolCallError::RuntimeError(e.to_string().into())
             })?;
         if result["isError"] == true {
