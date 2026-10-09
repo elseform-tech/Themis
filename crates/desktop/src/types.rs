@@ -105,6 +105,9 @@ pub struct ProjectInfo {
 /// A conversation thread (`ThreadInfo` in types.ts).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadInfo {
+    /// Last persisted conversation event; zero means no activity yet.
+    #[serde(default)]
+    pub last_activity_seq: i64,
     pub id: String,
     pub title: String,
     pub provider: ProviderKind,
@@ -982,6 +985,7 @@ mod tests {
     #[test]
     fn thread_info_and_merge_result_match_ts() {
         let info = ThreadInfo {
+            last_activity_seq: 42,
             id: "t".to_owned(),
             title: "hi".to_owned(),
             provider: ProviderKind::Go,
@@ -998,6 +1002,7 @@ mod tests {
         assert_eq!(
             to_value(&info),
             json!({
+                "last_activity_seq": 42,
                 "id": "t",
                 "title": "hi",
                 "provider": "go",

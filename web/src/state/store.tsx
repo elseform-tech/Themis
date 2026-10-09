@@ -129,6 +129,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     let unlistens: Array<() => void> = [];
     let eventVersion = 0;
+    const metadataRequests = new Map<string, number>();
     let recovering = false;
     let recoveryRequested = false;
     let recoveryWarning = false;
@@ -183,6 +184,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           eventVersion++;
           dispatch({ type: "thread/event", envelope });
           const { kind } = envelope.event;
+          if (kind === "started" || kind === "finished" || kind === "incomplete" || kind === "failed") {
+            const version = eventVersion;
+            metadataRequests.set(envelope.thread_id, version);
+            const projectRoot = Object.keys(currentState.current.threadsByProject).find(root => currentState.current.threadsByProject[root].some(thread => thread.id === envelope.thread_id));
+            if (projectRoot) void getThread(envelope.thread_id).then(thread => {
+              if (!cancelled && thread?.id === envelope.thread_id && metadataRequests.get(envelope.thread_id) === version) dispatch({ type: "thread/synced", projectRoot, thread });
+            }).catch(() => {});
+          }
           if (kind === "finished" || kind === "incomplete" || kind === "failed") {
             const manual = manualRuns.current.delete(envelope.thread_id);
             if (manual && kind === "finished") {

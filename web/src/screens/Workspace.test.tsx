@@ -35,6 +35,32 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("shows recent activity across projects and opens the matching chat", async () => {
+    let receive!: Parameters<typeof bridge.onThreadEvent>[0];
+    vi.mocked(bridge.onThreadEvent).mockImplementationOnce(async callback => { receive = callback; return () => {}; });
+    const alpha = { name: "Alpha", root: "/tmp/alpha", is_git: true };
+    const beta = { name: "Beta", root: "/tmp/beta", is_git: true };
+    const older = { id: "older", title: "Earlier chat", provider: "go" as const, model: "test", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [], last_activity_seq: 10 };
+    const newer = { ...older, id: "newer", title: "Latest chat", last_activity_seq: 20 };
+    vi.mocked(bridge.getDefaultProject).mockResolvedValueOnce(alpha);
+    vi.mocked(bridge.getSettings).mockResolvedValueOnce({ ...settings, recent_roots: [alpha.root, beta.root] });
+    vi.mocked(bridge.openProject).mockImplementation(async root => root === alpha.root ? alpha : beta);
+    vi.mocked(bridge.listThreads).mockImplementation(async root => root === alpha.root ? [older] : [newer]);
+    vi.mocked(bridge.getThread).mockImplementation(async id => id === older.id ? older : newer);
+    await mount();
+    const recent = screen.getByRole("region", { name: "Recent" });
+    expect(within(recent).getAllByRole("button").map(button => button.textContent)).toEqual([expect.stringContaining("Latest chat"), expect.stringContaining("Earlier chat")]);
+    await act(async () => fireEvent.click(within(recent).getByRole("button", { name: /Latest chat/ })));
+    expect(within(recent).getByRole("button", { name: /Latest chat/ })).toHaveAttribute("aria-current", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(screen.queryByRole("region", { name: "Recent" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+    expect(screen.getByRole("region", { name: "Recent" })).toBeInTheDocument();
+    older.last_activity_seq = 30;
+    await act(async () => receive({ thread_id: older.id, run_id: "latest-run", event: { kind: "finished", result: "Done" } }));
+    expect(within(recent).getAllByRole("button")[0]).toHaveAccessibleName(/Earlier chat/);
+  });
+
   it("restores an active approval when the app is refreshed", async () => {
     const thread = { id: "waiting", title: "Waiting for approval", provider: "go" as const, model: "test", running: true, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
     vi.mocked(bridge.listThreads).mockResolvedValue([thread]);

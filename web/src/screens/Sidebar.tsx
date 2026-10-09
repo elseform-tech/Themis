@@ -27,6 +27,10 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
   const [editBusy, setEditBusy] = useState(false);
   const [help, setHelp] = useState(false);
   const pending = state.reviews.filter(r => r.status === "pending").length;
+  const recentThreads = state.projects.flatMap(project => (state.threadsByProject[project.root] ?? []).map(thread => ({ project, thread })))
+    .filter(({ thread }) => (thread.last_activity_seq ?? 0) > 0)
+    .sort((a, b) => (b.thread.last_activity_seq ?? 0) - (a.thread.last_activity_seq ?? 0))
+    .slice(0, 8);
   const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(() => readSession("collapsedProjects", {}));
   function setProjectCollapsed(root: string, value: boolean) {
     setCollapsedProjects(previous => { const next = { ...previous, [root]: value }; writeSession("collapsedProjects", next); return next; });
@@ -71,6 +75,14 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
         <div className="themis-brand"><span className="themis-wordmark">Themis</span></div>
         <div className="themis-sidebar-nav"><button type="button" className="themis-sidebar-row" disabled={!state.activeProjectRoot} onClick={() => void newThread()}><SidebarIcon name="thread" /><span>New chat</span></button></div>
         <div className="themis-sidebar-projects">
+          <section aria-label="Recent" className="themis-sidebar-recent">
+            <h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="automations" /><span>Recent</span></h2>
+            {recentThreads.length ? <ul className="themis-sidebar-list">{recentThreads.map(({ project, thread }) => <li key={thread.id}>
+              <button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={`${thread.title} · ${project.name}`} aria-label={`Recent: ${thread.title} · ${project.name}`} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}>
+                <span className="themis-recent-label"><MovingText>{thread.title}</MovingText><small>{project.name}</small></span><ThreadStatus thread={thread} />
+              </button>
+            </li>)}</ul> : <p className="themis-sidebar-note">Your recent chats will appear here.</p>}
+          </section>
           <div className="themis-sidebar-head"><h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="project" /><span>Projects</span></h2><div className="themis-project-actions"><Button size="small" variant="ghost" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>+</Button><details><summary aria-label="Project actions" title="Project actions">···</summary><div className="themis-project-menu"><Button variant="ghost" size="small" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open folder</Button></div></details></div></div>
           {state.projects.length === 0 ? <p className="themis-sidebar-note">No projects</p> : <ul className="themis-sidebar-list">{[...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default)).map(project => <li className="themis-project" key={project.root}>
             <div className="themis-project-heading"><button type="button" className="themis-sidebar-row themis-project-row" title={project.root} aria-expanded={!collapsedProjects[project.root]} onClick={() => setProjectCollapsed(project.root, !collapsedProjects[project.root])}><span aria-hidden="true">{collapsedProjects[project.root] ? "›" : "⌄"}</span><SidebarIcon name="project" /><MovingText>{project.name}</MovingText></button><Button variant="ghost" size="small" aria-label={`Rename ${project.name}`} title="Rename project" onClick={() => { setError(""); setRenaming({ root: project.root, name: project.name }); }}>✎</Button><Button variant="ghost" size="small" aria-label={`New thread in ${project.name}`} title="New thread" onClick={() => { setProjectCollapsed(project.root, false); void newThread(project.root); }}>+</Button></div>

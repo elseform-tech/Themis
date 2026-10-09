@@ -279,3 +279,5 @@ Discover cards show purpose, origin and compatibility. Install directly from a t
 Automation editors keep destination, timezone and enabled/paused status visible above Advanced. Custom permissions explain their next-run scope; approval dialogs label reusable grants Allow for this run. The companion updates its mood without re-showing its native window. Keyboard focus includes editable instructions.
 
 After a backend event gap or reconnect, Themis reloads completed histories and pending approvals. Active streams keep their current live text and reconcile durable history when the run finishes; missed streaming fragments can remain absent until then. Failed recovery displays a warning and retries. Recovery preserves the selected conversation and local drafts.
+
+The collapsible sidebar includes **Recent**, showing the eight most recently active chats across open projects. Each row names its project and shows its current status. Ordering uses saved conversation events and survives app restarts; opening a chat alone does not change its position, and empty chats remain in their project until they have activity.

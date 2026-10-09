@@ -20,6 +20,8 @@ export interface ProjectInfo {
 }
 
 export interface ThreadInfo {
+  /** Durable conversation activity order; absent on older servers. */
+  last_activity_seq?: number;
   id: string;
   title: string;
   provider: ProviderKind;

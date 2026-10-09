@@ -572,8 +572,9 @@ impl AppState {
     }
 }
 
-fn thread_info(record: &ThreadRecord) -> ThreadInfo {
-    ThreadInfo {
+fn thread_info(record: &ThreadRecord, transcript: &TranscriptStore) -> Result<ThreadInfo, String> {
+    Ok(ThreadInfo {
+        last_activity_seq: transcript.last_activity_seq(&record.id)?,
         id: record.id.clone(),
         title: record.title.clone(),
         provider: record.provider,
@@ -586,7 +587,7 @@ fn thread_info(record: &ThreadRecord) -> ThreadInfo {
         base_branch: None,
         recovered: record.recovered,
         skill_ids: record.skill_ids.clone(),
-    }
+    })
 }
 
 /// App data dir holding the settings file (`.` when the path has no parent).

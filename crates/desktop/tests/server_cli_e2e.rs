@@ -62,6 +62,12 @@ fn headless_desktop_process_persists_cli_created_threads() {
         &["thread", "create", project.path().to_str().unwrap()],
     );
     let id = thread["id"].as_str().unwrap().to_owned();
+    let args = json!({"threadId": id, "messages": [{"id":"recent", "role":"user", "text":"Recent conversation"}]}).to_string();
+    cli(data_dir.path(), &["call", "import_legacy_history", &args]);
+    let activity = cli(data_dir.path(), &["thread", "get", &id])["last_activity_seq"]
+        .as_i64()
+        .unwrap();
+    assert!(activity > 0);
     assert_eq!(cli(data_dir.path(), &["server", "stop"]), Value::Null);
     first.wait().expect("reap first server");
     assert!(!data_dir.path().join("server.json").exists());
@@ -69,6 +75,11 @@ fn headless_desktop_process_persists_cli_created_threads() {
     let mut second = start();
     ready();
     assert_eq!(cli(data_dir.path(), &["thread", "get", &id])["id"], id);
+    let listed = cli(
+        data_dir.path(),
+        &["thread", "list", project.path().to_str().unwrap()],
+    );
+    assert_eq!(listed[0]["last_activity_seq"], activity);
     assert_eq!(cli(data_dir.path(), &["server", "stop"]), Value::Null);
     second.wait().expect("reap second server");
 }

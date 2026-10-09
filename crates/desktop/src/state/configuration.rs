@@ -201,7 +201,7 @@ impl AppState {
                 .get_mut(&thread_id)
                 .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
             record.approval_mode = mode;
-            thread_info(record)
+            thread_info(record, &self.inner.transcript)?
         };
         self.persist_registry().await;
         let _ = self.inner.diagnostics.append(

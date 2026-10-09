@@ -41,7 +41,7 @@ impl AppState {
             broken: false,
             skill_ids: Vec::new(),
         };
-        let info = thread_info(&record);
+        let info = thread_info(&record, &self.inner.transcript)?;
         self.inner
             .threads
             .write()
@@ -70,8 +70,8 @@ impl AppState {
         let threads = self.inner.threads.read().await;
         threads
             .get(thread_id)
-            .map(thread_info)
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))
+            .and_then(|record| thread_info(record, &self.inner.transcript))
     }
 
     pub async fn get_thread_history(&self, thread_id: &str) -> Result<Vec<HistoryItem>, String> {
@@ -95,8 +95,8 @@ impl AppState {
         let mut infos: Vec<ThreadInfo> = threads
             .values()
             .filter(|record| record.project_root == root)
-            .map(thread_info)
-            .collect();
+            .map(|record| thread_info(record, &self.inner.transcript))
+            .collect::<Result<_, _>>()?;
         infos.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(infos)
     }
@@ -427,7 +427,7 @@ impl AppState {
                 .ok_or_else(|| "Thread not found".to_owned())?;
             record.title = title.to_owned();
             record.titled = true;
-            thread_info(record)
+            thread_info(record, &self.inner.transcript)?
         };
         self.persist_registry().await;
         Ok(info)
@@ -502,7 +502,7 @@ impl AppState {
             record.provider = provider;
             record.model = model.unwrap_or_default();
             record.reasoning_effort = None;
-            thread_info(record)
+            thread_info(record, &self.inner.transcript)?
         };
         self.persist_registry().await;
         Ok(info)
@@ -538,7 +538,7 @@ impl AppState {
                 }
             }
             record.reasoning_effort = effort;
-            thread_info(record)
+            thread_info(record, &self.inner.transcript)?
         };
         self.persist_registry().await;
         Ok(info)

@@ -82,6 +82,19 @@ impl TranscriptStore {
         })
     }
 
+    /// Durable ordering across conversations, without reading message bodies.
+    pub fn last_activity_seq(&self, thread_id: &str) -> Result<i64, String> {
+        self.connection
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM history WHERE thread_id = ?1",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("read conversation activity: {error}"))
+    }
+
     /// Uses the live connection without opening, migrating, or writing a store.
     pub fn diagnostics(
         &self,
