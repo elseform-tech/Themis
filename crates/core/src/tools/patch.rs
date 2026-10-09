@@ -76,6 +76,10 @@ pub(super) fn plan_patch(root: &Path, patch: &str) -> anyhow::Result<Vec<Planned
             i += 1;
         }
     }
+    anyhow::ensure!(
+        patch.trim().is_empty() || !plan.is_empty(),
+        "unsupported patch format: expected ---/+++ file headers and numbered @@ hunks"
+    );
     Ok(plan)
 }
 
@@ -138,7 +142,7 @@ pub(super) fn parse_hunk(lines: &[&str], at: usize) -> anyhow::Result<(Hunk, usi
         .count();
     if old_seen != old_count || new_seen != new_count {
         anyhow::bail!(
-            "malformed patch: hunk header '{header}' does not match its body ({old_seen}/{old_count}, {new_seen}/{new_count})"
+            "malformed patch: hunk header '{header}' does not match its body: old side has {old_seen} lines, declared {old_count}; new side has {new_seen} lines, declared {new_count}. Count context plus removals for old_count and context plus additions for new_count"
         );
     }
     Ok((

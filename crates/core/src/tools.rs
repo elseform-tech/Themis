@@ -1088,7 +1088,9 @@ impl ToolRuntime for ShellTool {
 #[derive(Debug, Clone, Serialize, Deserialize, ToolInput)]
 pub struct ApplyPatchArgs {
     /// Unified diff to apply; `a/`/`b/` prefixes accepted.
-    #[input(description = "Unified diff to apply (git-style a/ b/ prefixes accepted)")]
+    #[input(
+        description = "Exact unified diff with ---/+++ paths and numbered @@ ranges. Example: --- a/file.txt\n+++ b/file.txt\n@@ -1,2 +1,2 @@\n old context\n-old value\n+new value\n. Count context+removed lines on the old side and context+added lines on the new side. Every body line needs a space, - or + prefix, including blank lines. Do not use *** Begin Patch / *** End Patch. For generated or large edits, use approved Python/bash and print selected verification facts."
+    )]
     pub patch: String,
 }
 
@@ -1138,7 +1140,7 @@ impl ToolRuntime for ApplyPatchTool {
         let ApplyPatchArgs { patch } = serde_json::from_value(args)?;
         // Plan first (validates every path and hunk), approve, then commit.
         let plan = plan_tool_patch(&self.root, &patch, self.unrestricted)
-            .map_err(|e| tool_error(format!("apply_patch: {e}")))?;
+            .map_err(|e| tool_error(format!("apply_patch: {e}. No files were changed. Use --- a/path, +++ b/path and numbered @@ -old_start,old_count +new_start,new_count @@ hunks; prefix every body line. Count context on both sides. Do not use *** Begin Patch markers. For larger edits, generate a unified diff locally with Python difflib or edit with approved Python/bash.")))?;
         let summary = if plan.is_empty() {
             "apply empty patch (no changes)".to_string()
         } else {
@@ -2238,6 +2240,19 @@ mod tests {
             fs::read_to_string(root.join("new.txt")).unwrap(),
             "one\ntwo\n"
         );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_rejects_unsupported_syntax_without_claiming_success() {
+        let (_tmp, root) = rooted_case();
+        fs::write(root.join("file.txt"), "old\n").unwrap();
+        let tool = ApplyPatchTool::new(root.clone(), allow_all());
+        let result = tool.execute(json!({"patch":"*** Begin Patch\n*** Update File: file.txt\n@@\n-old\n+new\n*** End Patch\n"})).await;
+        assert!(
+            result.is_err(),
+            "unsupported patch must not report an empty successful edit"
+        );
+        assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "old\n");
     }
 
     #[test]

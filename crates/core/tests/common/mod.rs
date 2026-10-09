@@ -56,12 +56,31 @@ pub fn tool_call_body(id: &str, name: &str, args: Value) -> Value {
 /// call models a stubborn agent without hanging the run (bounded by
 /// `max_turns`). Deterministic: no sleeps, no randomness.
 pub async fn mount_script(server: &MockServer, bodies: Vec<Value>) {
+    mount_script_with_summary(server, bodies, None).await;
+}
+
+/// Compaction can issue any number of section/merge requests without advancing the task script.
+pub async fn mount_script_with_summary(
+    server: &MockServer,
+    bodies: Vec<Value>,
+    summary: Option<&str>,
+) {
     assert!(!bodies.is_empty(), "script needs at least one response");
     let bodies = Arc::new(bodies);
     let count = Arc::new(AtomicUsize::new(0));
+    let summary = summary.map(str::to_owned);
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .respond_with(move |_: &wiremock::Request| {
+        .respond_with(move |request: &wiremock::Request| {
+            if let Some(summary) = &summary {
+                let input: Value = request.body_json().unwrap();
+                if input["messages"][0]["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("You summarize agent context"))
+                {
+                    return ResponseTemplate::new(200).set_body_json(final_text_body(summary));
+                }
+            }
             let index = count.fetch_add(1, Ordering::SeqCst);
             let body = bodies
                 .get(index)

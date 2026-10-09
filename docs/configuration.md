@@ -118,7 +118,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 the compaction algorithm. It resolves within the directory of the configuration
 that declares it. Explicit run overrides resolve prompt references within the
 user configuration directory. Built-in prompts are in
-`crates/core/builtins/prompts/`. Section requests, reconciliation, and retries
+`crates/core/builtins/prompts/`. Configured section/summary token values are ceilings; the runtime scales them down to leave continuation space and divides the section allowance across large inputs. A truncation retry may request twice the initial allowance. See [context checkpoints](context-and-attachments.md) for the formula. Section requests, reconciliation, and retries
 share the summarization deadline; recovery checkpoint writes can add time
 outside that deadline. Original evidence
 and recoverable checkpoints remain separate from the model's summary; this

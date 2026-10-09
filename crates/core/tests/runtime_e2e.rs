@@ -21,6 +21,82 @@ fn has_finished(events: &[RunEvent]) -> bool {
 }
 
 #[tokio::test]
+async fn unchanged_ordinary_reads_get_a_reminder_but_changed_files_do_not() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("first", "read_file", json!({"file_path":"source.txt"})),
+            common::tool_call_body("again", "read_file", json!({"file_path":"source.txt"})),
+            common::tool_call_body(
+                "edit",
+                "write_file",
+                json!({"file_path":"source.txt","content":"changed","append":false}),
+            ),
+            common::tool_call_body("changed", "read_file", json!({"file_path":"source.txt"})),
+            common::final_text_body("Finished from the updated observation"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("source.txt"), "original").unwrap();
+    let evidence = project.path().join(".themis/context/repeats");
+    std::fs::create_dir_all(&evidence).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, _rx) = tokio::sync::mpsc::channel(128);
+    themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Inspect, edit, and inspect".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 8,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await
+    .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let tool_output = |index: usize, id: &str| -> String {
+        let body: serde_json::Value = requests[index].body_json().unwrap();
+        body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["tool_call_id"] == id)
+            .unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .into()
+    };
+    let repeated = tool_output(2, "again");
+    assert!(repeated.contains("repeated_unchanged"));
+    assert!(repeated.contains("original"));
+    let receipt: serde_json::Value = serde_json::from_str(&repeated).unwrap();
+    assert_eq!(
+        receipt["found"], true,
+        "reread reminders retain native read coordinates and content"
+    );
+    assert_eq!(receipt["content"], "original");
+    let changed = tool_output(4, "changed");
+    assert!(!changed.contains("repeated_unchanged"));
+    assert!(changed.contains("changed"));
+}
+
+#[tokio::test]
 async fn oversized_tool_schema_is_rejected_before_provider_request() {
     #[derive(Debug)]
     struct HugeSchema;
@@ -278,7 +354,7 @@ async fn context_within_budget_keeps_exact_tool_result() {
 #[tokio::test]
 async fn checkpoint_continues_same_request_after_token_pressure() {
     let server = MockServer::start().await;
-    common::mount_script(
+    common::mount_script_with_summary(
         &server,
         vec![
             {
@@ -288,9 +364,9 @@ async fn checkpoint_continues_same_request_after_token_pressure() {
                     "progress narration ".repeat(2600).into();
                 call
             },
-            common::final_text_body("Read note.txt; answer the original request next."),
             common::final_text_body("Done after checkpoint"),
         ],
+        Some("Read note.txt; answer the original request next."),
     )
     .await;
     let dir = tempfile::tempdir().unwrap();
@@ -491,7 +567,7 @@ async fn failed_tool_evidence_save_stops_before_model_continuation() {
 #[tokio::test]
 async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
     let server = MockServer::start().await;
-    common::mount_script(
+    common::mount_script_with_summary(
         &server,
         vec![
             {
@@ -501,7 +577,6 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
                     "progress narration ".repeat(2600).into();
                 call
             },
-            common::final_text_body("Read notes; originals remain recoverable."),
             {
                 let mut call =
                     common::tool_call_body("read_2", "read_file", json!({"file_path":"other.txt"}));
@@ -509,9 +584,9 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
                     "progress narration ".repeat(2600).into();
                 call
             },
-            common::final_text_body("Continue with the pending task."),
             common::final_text_body("Done"),
         ],
+        Some("Read notes; originals remain recoverable."),
     )
     .await;
     let dir = tempfile::tempdir().unwrap();
@@ -990,7 +1065,7 @@ async fn stopped_provider_request_finishes(compacting: bool) {
     let history = if compacting {
         vec![ConversationTurn {
             role: ConversationRole::User,
-            text: "old context ".repeat(500),
+            text: "old context ".repeat(5000),
         }]
     } else {
         vec![]
@@ -1003,7 +1078,7 @@ async fn stopped_provider_request_finishes(compacting: bool) {
         Arc::new(AllowAllHook),
         RunPolicy {
             total_turns: 5,
-            context_token_budget: if compacting { 64 } else { usize::MAX },
+            context_token_budget: if compacting { 16_000 } else { usize::MAX },
             recent_messages: 4,
         },
         tx,
