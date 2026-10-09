@@ -772,11 +772,10 @@ async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
     cli(
         data.path(),
         &[
-            "thread",
-            "send",
-            id,
-            &"Original task ".repeat(3000),
-            "--detach",
+            "call",
+            "send_message",
+            &json!({"threadId":id,"text":"Original task ".repeat(3000),"reasoningEffort":null})
+                .to_string(),
         ],
     );
     tokio::time::timeout(Duration::from_secs(3), async {

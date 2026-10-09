@@ -313,8 +313,8 @@ impl PluginStore {
                     spec.skills[0].id.clone()
                 } else {
                     source
-                        .trim_end_matches('/')
-                        .rsplit('/')
+                        .trim_end_matches(['/', '\\'])
+                        .rsplit(['/', '\\'])
                         .next()
                         .unwrap_or_default()
                         .trim_end_matches(".git")
