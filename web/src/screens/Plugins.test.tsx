@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "../state/store";
 import { Plugins } from "./Plugins";
 import { initialState } from "../state/reducer";
 import type { ImportPreview, Plugin } from "../lib/types";
 import { pluginAction } from "../lib/tauri";
 
+const dispatch = vi.fn();
 let installed: Plugin[];
 let projectRoot: string | null;
-vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), useApp: () => ({ state: { ...initialState, activeProjectRoot: projectRoot }, dispatch: vi.fn() }) }));
+vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), toast: vi.fn(), useApp: () => ({ state: { ...initialState, activeProjectRoot: projectRoot }, dispatch }) }));
 vi.mock("../lib/tauri", () => ({ pluginAction: vi.fn() }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => {
@@ -46,6 +48,54 @@ function expectNoConfiguration() {
   expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["list", "marketplaces", "scan_marketplace", "catalog", "inspect_marketplace", "inspect_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
 }
 describe("Integration browsing and lifecycle", () => {
+  it("keeps Installed and Discover search and filters independent", async () => {
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "docs" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Source" }), { target: { value: "personal" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "enabled" } });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
+    expect(screen.getByRole("searchbox")).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("all");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "missing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Installed" }));
+    expect(screen.getByRole("searchbox")).toHaveValue("docs");
+    expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("personal");
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveValue("enabled");
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
+    expect(screen.getByRole("searchbox")).toHaveValue("missing");
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(screen.getByRole("button", { name: "View public-docs" })).toBeVisible();
+  });
+  it("shows rejected local skills with their reason and no activation control", async () => {
+    installed.push({ ...installed[0], source: "discovered", enabled: false, spec: { ...installed[0].spec, name: "discovered-invalid", package_kind: "skill", origin: { kind: "discovered", location: "/skills/invalid" }, skills: [], mcp: {}, hooks: [], unsupported: ["Missing description"] } });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "Skills" }));
+    const row = screen.getByRole("button", { name: "View invalid" }).closest("li")!;
+    const warning = row.querySelector("details")!;
+    expect(warning).not.toBeNull();
+    expect(warning).not.toHaveAttribute("open");
+    fireEvent.click(within(warning).getByText(/Compatibility details/));
+    expect(within(warning).getByText(/Missing description/)).toBeVisible();
+    expect(row).toHaveTextContent("Unavailable");
+    expect(within(row).queryByRole("switch")).toBeNull();
+  });
+  it("shows actual scan percentage with an interactive companion", async () => {
+    vi.useFakeTimers();
+    try {
+      const previous = vi.mocked(pluginAction).getMockImplementation()!;
+      vi.mocked(pluginAction).mockImplementation(async args => args.action === "scan_marketplace" ? { revision: "scan", status: "scanning", completed: 3, total: 12, catalog: { plugins: [] }, checks: {}, errors: {} } as never : previous(args) as never);
+      await act(async () => { render(<Plugins />); });
+      await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
+      expect(screen.getByRole("progressbar", { name: "Marketplace compatibility" })).toHaveAttribute("aria-valuenow", "25");
+      expect(screen.getByText("25%")).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: /Wake/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Installed" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(screen.queryByRole("progressbar")).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
   it("explains partial support before allowing installation and hides unsupported packages", async () => {
     const previous = vi.mocked(pluginAction).getMockImplementation()!;
     vi.mocked(pluginAction).mockImplementation(async args => {
@@ -75,7 +125,10 @@ describe("Integration browsing and lifecycle", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "unsupported" } });
     expect(screen.getByRole("button", { name: "View legacy" })).toBeVisible();
     const reason = within(screen.getByRole("button", { name: "View legacy" }).closest("li")!).getByText("Language servers aren’t supported yet.");
-    expect(reason.closest(".themis-compatibility-reason")).toHaveAttribute("tabindex", "0");
+    const warning = reason.closest("details")!;
+    expect(warning).not.toHaveAttribute("open");
+    fireEvent.click(within(warning).getByText(/Compatibility details/));
+    expect(warning).toHaveAttribute("open");
     expect(screen.queryByRole("button", { name: "View mixed" })).toBeNull();
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "partial" } });
     expect(screen.getByRole("button", { name: "View mixed" })).toBeVisible();
@@ -142,6 +195,7 @@ describe("Integration browsing and lifecycle", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "failed" } });
     expect(screen.getByRole("button", { name: "View missing" })).toBeVisible();
+    fireEvent.click(screen.getByText(/Compatibility details/));
     expect(screen.getByText("Plugin files are missing. Refresh to retry.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Install" })).toBeDisabled();
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "supported" } });
@@ -182,6 +236,8 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     await act(async () => finish());
     expect(screen.getByRole("button", { name: "✓ Installed" })).toBeDisabled();
+    expect(toast).toHaveBeenCalledExactlyOnceWith(dispatch, "public-docs installed.", "success");
+    expect(screen.queryByText("public-docs installed.")).toBeNull();
     expect(vi.mocked(pluginAction).mock.calls.filter(([args]) => args.action === "install")).toHaveLength(1);
   });
   it("shows complete captured Markdown after selecting a bundled skill", async () => {
@@ -269,8 +325,8 @@ describe("Integration browsing and lifecycle", () => {
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Name" }), { target: { value: "personal" } });
     fireEvent.change(within(dialog).getByRole("textbox", { name: "URL or local path" }), { target: { value: "/missing" } });
     await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Add" })));
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("Marketplace source could not be read");
-    expect(within(dialog).getByRole("alert")).not.toHaveTextContent("Diagnostic operation");
+    expect(toast).toHaveBeenCalledWith(expect.any(Function), "Marketplace source could not be read", "danger");
+    expect(within(dialog).queryByRole("alert")).toBeNull();
     expect(within(dialog).getByRole("textbox", { name: "URL or local path" })).toHaveValue("/missing");
     expect(within(dialog).getByRole("button", { name: "Add" })).toBeEnabled();
     expect(pluginAction).not.toHaveBeenCalledWith(expect.objectContaining({ action: "install" }));
@@ -310,13 +366,14 @@ describe("Integration browsing and lifecycle", () => {
     expectNoConfiguration();
   });
   it("shows useful MCP and hook summaries without configuration or execution", async () => {
+    installed[0].spec.mcp.filesystem.args = ["-y", "@example/server", "/a path/it's here", ""];
     installed[0].spec.mcp.remote = { url: "https://example.com/mcp", args: [], env: {}, enabled: false };
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     fireEvent.click(screen.getByRole("button", { name: "MCP" }));
     fireEvent.click(screen.getByRole("button", { name: "View filesystem" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Local process");
-    expect(screen.getByRole("dialog")).toHaveTextContent("node");
+    expect(screen.getByRole("dialog")).toHaveTextContent(`node -y @example/server '/a path/it'"'"'s here' ''`);
     expect(screen.getByRole("dialog")).not.toHaveTextContent("hidden-secret");
     expectNoConfiguration();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));

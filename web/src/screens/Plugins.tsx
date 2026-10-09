@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog, EmptyState } from "../components";
-import { MovingText } from "../components/MovingText";
+import { KnightLoading, readCompanionPreferences } from "../components/KnightCompanion";
 import { ResponseBody } from "../components/ResponseBody";
 import { pluginAction } from "../lib/tauri";
 import { isPluginPackage } from "../lib/integrations";
 import type { ImportPreview, Marketplace, Plugin, PluginSpec } from "../lib/types";
-import { describeError, useApp } from "../state/store";
+import { describeError, toast, useApp } from "../state/store";
 import "./Plugins.css";
 
 function integrationError(error: unknown): string {
@@ -13,12 +13,15 @@ function integrationError(error: unknown): string {
 }
 
 type Category = "Plugins" | "Skills" | "MCP" | "Hooks";
-type Item = { key: string; name: string; plugin: Plugin; kind: "plugin" | "skill" | "mcp" | "hook"; id: string; enabled: boolean };
+type Item = { key: string; name: string; plugin: Plugin; kind: "plugin" | "skill" | "mcp" | "hook"; id: string; enabled: boolean; unavailable?: boolean };
 type Panel = { item: Item; marketplace?: string; report?: ImportPreview["report"]; install?: boolean; scan?: string };
 const categories: Category[] = ["Plugins", "Skills", "MCP", "Hooks"];
-type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye" | "trash" | "plus" | "back";
+type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye" | "trash" | "plus" | "back" | "warning";
 const skillGlyph = (id: string): Glyph => ["pdf", "docx", "xlsx"].includes(id) ? id as Glyph : "file";
 const emptySpec = (): PluginSpec => ({ name: "personal", description: "", version: "", skills: [], mcp: {}, hooks: [], files: {}, unsupported: [] });
+function mcpCommand(server: PluginSpec["mcp"][string]) {
+  return server.url ?? [server.command ?? "", ...server.args].map(part => /^[\w@%+=:,./-]+$/.test(part) ? part : `'${part.replace(/'/g, `'"'"'`)}'`).join(" ");
+}
 function pluginDisplayName(plugin: Plugin) {
   return plugin.source === "discovered" || plugin.spec.origin?.kind === "discovered" ? plugin.spec.skills[0]?.name ?? plugin.spec.origin?.location.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "Unavailable skill" : plugin.spec.name;
 }
@@ -26,6 +29,7 @@ function items(plugins: Plugin[], category: Category): Item[] {
   return plugins.flatMap<Item>(plugin => {
     const base = { plugin, key: `${plugin.scope}:${plugin.spec.name}` };
     if (category === "Plugins") return isPluginPackage(plugin) ? [{ ...base, name: pluginDisplayName(plugin), kind: "plugin" as const, id: plugin.spec.name, enabled: plugin.enabled }] : [];
+    if (category === "Skills" && !plugin.spec.skills.length && (plugin.source === "discovered" || plugin.spec.origin?.kind === "discovered")) return [{ ...base, name: pluginDisplayName(plugin), kind: "skill", id: plugin.spec.name, enabled: false, unavailable: true }];
     if (category === "Skills") return plugin.spec.skills.map(skill => ({ ...base, key: `${base.key}:skill:${skill.id}`, name: skill.name, id: skill.id, kind: "skill" as const, enabled: plugin.enabled && !(plugin.spec.disabled_skills ?? []).includes(skill.id) }));
     if (category === "MCP") return Object.entries(plugin.spec.mcp).map(([id, server]) => ({ ...base, key: `${base.key}:mcp:${id}`, name: id, id, kind: "mcp" as const, enabled: plugin.enabled && server.enabled }));
     return plugin.spec.hooks.map(hook => ({ ...base, key: `${base.key}:hook:${hook.name}`, name: hook.name, id: hook.name, kind: "hook" as const, enabled: plugin.enabled && hook.enabled }));
@@ -42,6 +46,7 @@ function markdown(plugin: Plugin, id: string) {
 }
 function Icon({ name }: { name: Glyph }) {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+    {name === "warning" && <><path d="m12 3 10 18H2Z" /><path d="M12 9v5m0 3v1" /></>}
     {name === "plus" && <path d="M12 5v14M5 12h14" />}
     {name === "back" && <path d="m14 5-7 7 7 7" />}
     {name === "trash" && <path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7" />}
@@ -66,23 +71,30 @@ function capabilitySummary(spec: PluginSpec) {
 }
 const compatibilityLabels = { supported: "Compatible", partial: "Partially supported", unsupported: "Unsupported" };
 function compatibilityReasons(spec: PluginSpec) {
-  return [...new Set([...(spec.import_issues ?? []).map(issue => [issue.name, issue.reason].filter(Boolean).join(": ")), ...spec.unsupported.map(feature => feature === "lspServers" ? "Language servers aren’t supported yet." : "This package needs features that aren’t supported yet.")])];
+  return [...new Set([...(spec.import_issues ?? []).map(issue => [issue.field || issue.name, issue.reason, issue.remedy].filter(Boolean).join(": ")), ...spec.unsupported.map(feature => feature === "lspServers" ? "Language servers aren’t supported yet." : `Unsupported: ${feature}`)])];
+}
+function CompatibilityWarning({ reasons }: { reasons: string[] }) {
+  return reasons.length ? <details className="themis-compatibility-reason">
+    <summary><Icon name="warning" /><span>Compatibility details ({reasons.length})</span></summary>
+    <ul>{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
+  </details> : null;
 }
 function Compatibility({ spec, report }: { spec: PluginSpec; report?: ImportPreview["report"] }) {
   return <div className="themis-compatibility">
     {report && <strong className={`themis-compatibility-badge ${report.status}`} title="Import format checked; runtime not tested">{compatibilityLabels[report.status]}</strong>}
-    {compatibilityReasons(spec).map(issue => <p key={issue}>{issue}</p>)}
+    <CompatibilityWarning reasons={compatibilityReasons(spec)} />
     {(Object.keys(spec.mcp).length > 0 || spec.hooks.length > 0) && <p>Connections and hooks install disabled.</p>}
   </div>;
 }
 export function Plugins() {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const root = state.activeProjectRoot;
   const activeRoot = useRef(root);
   activeRoot.current = root;
   const loadRequest = useRef(0), catalogRequest = useRef(0);
   const [plugins, setPlugins] = useState<Plugin[]>([]), [markets, setMarkets] = useState<Marketplace[]>([]);
-  const [originFilter, setOriginFilter] = useState("all");
+  const [installedSearch, setInstalledSearch] = useState(""), [catalogSearch, setCatalogSearch] = useState("");
+  const [installedOrigin, setInstalledOrigin] = useState("all"), [catalogOrigin, setCatalogOrigin] = useState("all");
   const [installing, setInstalling] = useState("");
   const mutationPending = useRef(false);
   const [mutating, setMutating] = useState(false);
@@ -93,43 +105,46 @@ export function Plugins() {
   const [checking, setChecking] = useState<Record<string, boolean>>({});
   const [checks, setChecks] = useState<Record<string, ImportPreview>>({});
   const [catalogStatus, setCatalogStatus] = useState("available"), [installedStatus, setInstalledStatus] = useState("all");
-  const [notice, setNotice] = useState("");
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [scanProgress, setScanProgress] = useState("");
+  const [scanPercent, setScanPercent] = useState<number>();
   const [scanRevision, setScanRevision] = useState("");
-  const [error, setError] = useState(""), [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [file, setFile] = useState("");
   const [addingMarket, setAddingMarket] = useState(false), [marketName, setMarketName] = useState(""), [marketSource, setMarketSource] = useState("");
   const previewRequest = useRef(0);
-  const [search, setSearch] = useState("");
+  const search = publicView ? catalogSearch : installedSearch;
+  const setSearch = publicView ? setCatalogSearch : setInstalledSearch;
+  const originFilter = publicView ? catalogOrigin : installedOrigin;
+  const setOriginFilter = publicView ? setCatalogOrigin : setInstalledOrigin;
   const [catalog, setCatalog] = useState<Array<{ name: string; description?: string; icon?: string; source?: unknown }>>([]), [market, setMarket] = useState("");
   const load = useCallback(async () => {
     if (root !== activeRoot.current) return;
     const request = ++loadRequest.current;
     const [installed, sources] = await Promise.all([pluginAction<Plugin[]>({ action: "list", projectRoot: root }), pluginAction<Marketplace[]>({ action: "marketplaces" })]);
-    if (request === loadRequest.current && root === activeRoot.current) { setPlugins(installed); setMarkets(sources); setError(""); }
+    if (request === loadRequest.current && root === activeRoot.current) { setPlugins(installed); setMarkets(sources); }
   }, [root]);
   useEffect(() => {
     let cancelled = false;
-    setPlugins([]); inspection.current.clear(); setChecks({}); setChecking({}); setCheckErrors({}); setNotice(""); setInstalling(""); setAddingMarket(false); setPanel(null); setRemoving(null); setCatalog([]); setPublicView(false); catalogRequest.current++; previewRequest.current++; setBusy(false);
-    void load().catch(error => { if (!cancelled) setError(integrationError(error)); });
+    setPlugins([]); inspection.current.clear(); setChecks({}); setChecking({}); setCheckErrors({}); setInstalling(""); setAddingMarket(false); setPanel(null); setRemoving(null); setCatalog([]); setPublicView(false); catalogRequest.current++; previewRequest.current++; setBusy(false);
+    void load().catch(error => { if (!cancelled) toast(dispatch, integrationError(error), "danger"); });
     const invalidate = () => { catalogRequest.current++; previewRequest.current++; };
     return () => { cancelled = true; invalidate(); };
-  }, [load, root]);
+  }, [dispatch, load, root]);
   useEffect(() => {
-    const refresh = () => void load().catch(error => setError(integrationError(error)));
+    const refresh = () => void load().catch(error => toast(dispatch, integrationError(error), "danger"));
     window.addEventListener("themis-plugins-changed", refresh);
     return () => window.removeEventListener("themis-plugins-changed", refresh);
-  }, [load]);
+  }, [dispatch, load]);
   async function action(args: Record<string, unknown>) {
     if (mutationPending.current) throw new Error("Another integration change is still running.");
     mutationPending.current = true; setMutating(true);
-    setBusy(true); setError("");
+    setBusy(true);
     try {
       await pluginAction({ projectRoot: root, ...args });
       await load();
       window.dispatchEvent(new Event("themis-plugins-changed"));
-    } catch (error) { setError(integrationError(error)); throw error; }
+    } catch (error) { toast(dispatch, integrationError(error), "danger"); throw error; }
     finally { mutationPending.current = false; setMutating(false); setBusy(false); }
   }
   async function toggle(item: Item) {
@@ -139,14 +154,14 @@ export function Plugins() {
   }
   function open(item: Item) {
     previewRequest.current++;
-    setBusy(false); setError(""); setPanel({ item });
+    setBusy(false); setPanel({ item });
     setFile(item.kind === "plugin" ? "" : item.id);
   }
   async function browse(selected: string, refresh = false) {
     const request = ++catalogRequest.current;
     previewRequest.current++;
-    setPanel(null); setBusy(false); setInstalling(""); setScanRevision(""); setScanProgress("Checking marketplace…");
-    setMarket(selected); setCatalog([]); inspection.current.clear(); setChecks({}); setChecking({}); setCheckErrors({}); setCatalogLoading(true); setError("");
+    setPanel(null); setBusy(false); setInstalling(""); setScanRevision(""); setScanProgress("Checking marketplace…"); setScanPercent(undefined);
+    setMarket(selected); setCatalog([]); inspection.current.clear(); setChecks({}); setChecking({}); setCheckErrors({}); setCatalogLoading(true);
     try {
       let rescan = refresh;
       while (request === catalogRequest.current && root === activeRoot.current) {
@@ -158,10 +173,11 @@ export function Plugins() {
           setCatalog(value.catalog.plugins); setChecks(value.checks); setCheckErrors(value.errors); setScanRevision(value.revision);
           break;
         }
+        setScanPercent(value.total ? Math.min(100, Math.floor(value.completed / value.total * 100)) : undefined);
         setScanProgress(value.total ? `Checking marketplace… ${value.completed}/${value.total}` : "Checking marketplace…");
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
-    } catch (error) { if (request === catalogRequest.current) setError(integrationError(error)); }
+    } catch (error) { if (request === catalogRequest.current) toast(dispatch, integrationError(error), "danger"); }
     finally { if (request === catalogRequest.current) setCatalogLoading(false); }
   }
   const inspect = useCallback((key: string): Promise<ImportPreview> => {
@@ -185,7 +201,7 @@ export function Plugins() {
     const spec = { ...emptySpec(), name, icon };
     const plugin: Plugin = { scope: "global", revision: "preview", enabled: false, source: marketplace, spec };
     const previewItem: Item = { key: `preview:${marketplace}:${name}`, name, id: name, kind: "plugin", enabled: false, plugin };
-    if (install) { previewRequest.current++; setInstalling(name); setError(""); } else { open(previewItem); setPanel({ item: previewItem, marketplace, scan: scanRevision }); }
+    if (install) { previewRequest.current++; setInstalling(name); } else { open(previewItem); setPanel({ item: previewItem, marketplace, scan: scanRevision }); }
     const request = previewRequest.current;
     setBusy(true);
     try {
@@ -194,20 +210,19 @@ export function Plugins() {
       if (request !== previewRequest.current || root !== activeRoot.current) return;
       setChecks(current => ({ ...current, [name]: checked }));
       if (install && checked.report.status === "supported") {
-        await action({ action: "install", name, marketplace, scope: "global", allowPartial: false, expectedScan: scanRevision });
-        setNotice(`${name} installed.`);
+        await action({ action: "install", name, marketplace, scope: "global", allowPartial: false, expectedScan: scanRevision }).then(() => toast(dispatch, `${name} installed.`, "success")).catch(() => {});
       } else setPanel({ marketplace, install, scan: scanRevision, report: checked.report, item: { ...previewItem, plugin: { ...plugin, spec: { ...value, icon: value.icon ?? icon } } } });
       setFile("");
-    } catch (error) { if (request === previewRequest.current) setError(integrationError(error)); } finally { if (request === previewRequest.current) { setBusy(false); setInstalling(""); } }
+    } catch (error) { if (request === previewRequest.current) toast(dispatch, integrationError(error), "danger"); } finally { if (request === previewRequest.current) { setBusy(false); setInstalling(""); } }
   }
   async function installPreview() {
     if (!panel?.report || !panel.marketplace || panel.report.status === "unsupported") return;
     const name = panel.item.plugin.spec.name;
     try {
       await action({ action: "install", name, marketplace: panel.marketplace, expectedScan: panel.scan, scope: "global", allowPartial: panel.report.status === "partial" });
-      setNotice(`${name} installed.`);
+      toast(dispatch, `${name} installed.`, "success");
       setPanel(null);
-    } catch { /* The dialog retains the actionable error and retry action. */ }
+    } catch { /* The error toast is shown; keep the dialog available for retry. */ }
   }
   const item = panel?.item;
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -218,12 +233,14 @@ export function Plugins() {
   const matchesOrigin = (publicItem: boolean) => originFilter === "all" || (publicItem ? "public" : "personal") === originFilter;
   const catalogInstalled = (name: string) => plugins.some(plugin => plugin.scope === "global" && plugin.source === market && plugin.spec.name === name);
   const rows = items(plugins, category).filter(row => matchesOrigin(isPublic(row.plugin)) && (installedStatus === "all" || (row.enabled ? "enabled" : "disabled") === installedStatus)).filter(row => matches([row.name, pluginDisplayName(row.plugin), row.plugin.source, row.plugin.spec.origin?.location, row.plugin.spec.description, ...row.plugin.spec.skills.map(skill => skill.description)]));
-  const matchesStatus = (key: string, installed: boolean) => catalogStatus === "installed" ? installed : catalogStatus === "all" || (catalogStatus === "available" ? checks[key]?.report.status !== "unsupported" : (checks[key]?.report.status ?? (checkErrors[key] ? "failed" : "unchecked")) === catalogStatus);
+  const matchesStatus = (key: string, installed: boolean) => catalogStatus === "installed" ? installed : catalogStatus === "all" || (catalogStatus === "available" ? ["supported", "partial"].includes(checks[key]?.report.status) : (checks[key]?.report.status ?? (checkErrors[key] ? "failed" : "unchecked")) === catalogStatus);
   const catalogRows = catalog.filter(entry => matchesOrigin(marketplaceIsPublic(market)) && matchesStatus(entry.name, catalogInstalled(entry.name))).filter(entry => matches([entry.name, entry.description, JSON.stringify(entry.source), market, markets.find(source => source.name === market)?.source]));
+  const resultCount = publicView ? catalogRows.length : rows.length;
   const reason = (key: string) => {
     const checked = checks[key];
-    const text = checkErrors[key] ? `${integrationError(checkErrors[key])} Refresh to retry.` : checked ? compatibilityReasons(checked.spec).join(" ") || (checked.report.status === "unsupported" ? "No installable skills, connections or hooks." : "") : "";
-    return text ? <p className="themis-compatibility-reason" tabIndex={0} title={text}><MovingText>{text}</MovingText></p> : null;
+    const reasons = checkErrors[key] ? [`${integrationError(checkErrors[key])} Refresh to retry.`] : checked ? compatibilityReasons(checked.spec) : [];
+    if (!reasons.length && checked?.report.status === "unsupported") reasons.push("No installable skills, connections or hooks.");
+    return <CompatibilityWarning reasons={reasons} />;
   };
   const badge = (key: string) => <span className={`themis-compatibility-badge ${checks[key]?.report.status ?? (checkErrors[key] ? "failed" : "unchecked")}`} title={checkErrors[key] ? `${integrationError(checkErrors[key])} Refresh to retry.` : checks[key] ? "Import format checked; runtime not tested" : "Compatibility check pending"} aria-live="polite">{checks[key] ? compatibilityLabels[checks[key].report.status] : checking[key] ? <><span className="themis-install-spinner" aria-hidden="true" />Checking…</> : checkErrors[key] ? "Check failed" : "Not checked"}</span>;
   const text = item ? markdown(item.plugin, file) : "";
@@ -232,19 +249,18 @@ export function Plugins() {
   return <div className="themis-integrations">
     <h2>Integrations</h2>
     <nav className="themis-integrations-tabs" aria-label="Integration categories">{categories.map(value => <button key={value} aria-pressed={category === value} onClick={() => { previewRequest.current++; catalogRequest.current++; setCategory(value); setPublicView(false); setPanel(null); setBusy(false); }}>{value}</button>)}</nav>
-    <div className="themis-integrations-toolbar"><div>{category === "Plugins" && <><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins" && markets[0]) void browse(markets.find(source => source.name === market)?.name ?? markets[0].name); }}>Discover</button></>}</div><div><button aria-label="Refresh" disabled={busy || mutating} onClick={() => { void (publicView && category === "Plugins" ? browse(market, true) : load()).catch(error => setError(integrationError(error))); }}>↻</button></div></div>
+    <div className="themis-integrations-toolbar"><div>{category === "Plugins" && <><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins" && markets[0]) void browse(markets.find(source => source.name === market)?.name ?? markets[0].name); }}>Discover</button></>}</div><div><button aria-label="Refresh" disabled={busy || mutating} onClick={() => { void (publicView && category === "Plugins" ? browse(market, true) : load()).catch(error => toast(dispatch, integrationError(error), "danger")); }}>↻</button></div></div>
     <input className="themis-integrations-search" type="search" aria-label="Search integrations" placeholder={`Search ${category.toLowerCase()}`} value={search} onChange={event => setSearch(event.target.value)} />
     <div className="themis-integration-filters">
-      {publicView && category === "Plugins" && <div className="themis-marketplace-picker"><select aria-label="Marketplace" disabled={busy || mutating} value={market} onChange={event => void browse(event.target.value)}>{markets.map(m => <option key={m.name}>{m.name}</option>)}</select><button aria-label="Add marketplace" title="Add marketplace" disabled={busy || mutating} onClick={() => { setError(""); setMarketName(""); setMarketSource(""); setAddingMarket(true); }}><Icon name="plus" /></button></div>}
+      {publicView && category === "Plugins" && <div className="themis-marketplace-picker"><select aria-label="Marketplace" disabled={busy || mutating} value={market} onChange={event => void browse(event.target.value)}>{markets.map(m => <option key={m.name}>{m.name}</option>)}</select><button aria-label="Add marketplace" title="Add marketplace" disabled={busy || mutating} onClick={() => { setMarketName(""); setMarketSource(""); setAddingMarket(true); }}><Icon name="plus" /></button></div>}
       <select aria-label="Status" value={publicView ? catalogStatus : installedStatus} onChange={event => publicView ? setCatalogStatus(event.target.value) : setInstalledStatus(event.target.value)}>
         {publicView ? <><option value="available">Available</option><option value="all">All statuses</option><option value="installed">Installed</option><option value="supported">Compatible</option><option value="partial">Partially supported</option><option value="unsupported">Unsupported</option><option value="failed">Check failed</option><option value="unchecked">Not checked</option></> : <><option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></>}
       </select>
       <select aria-label="Source" value={originFilter} onChange={event => setOriginFilter(event.target.value)}><option value="all">All sources</option><option value="personal">Personal</option><option value="public">Public</option></select>
     </div>
-    {notice && <p role="status" className="themis-integration-notice">{notice}</p>}
-    {error && !panel && !addingMarket && <p role="alert">{error}</p>}
+    <div className="themis-filter-summary"><span>{publicView && catalogLoading ? "Checking catalog" : `${resultCount} result${resultCount === 1 ? "" : "s"}`}</span><button onClick={() => { setSearch(""); setOriginFilter("all"); if (publicView) setCatalogStatus("available"); else setInstalledStatus("all"); }}>Reset filters</button></div>
     {publicView ? <>
-      {catalogLoading ? <p role="status"><span className="themis-install-spinner" aria-hidden="true" />{scanProgress}</p> : !catalogRows.length && <EmptyState title={search.trim() ? "No matching integrations" : "No plugins to show"} />}
+      {catalogLoading ? <div className="themis-marketplace-loading"><KnightLoading variant={readCompanionPreferences().variant} status={scanProgress} progress={scanPercent} progressLabel="Marketplace compatibility" /></div> : !catalogRows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : "No plugins to show"} />}
       <ul className="themis-integrations-list themis-integration-cards">{catalogRows.map(entry => <li key={entry.name} data-check={entry.name}>
         <div className="themis-card-heading"><PluginIcon plugin={{ ...(checks[entry.name]?.spec ?? emptySpec()), icon: checks[entry.name]?.spec.icon ?? entry.icon }} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy || mutating} onClick={() => void preview(entry.name, entry.icon)}>{entry.name}</button></div>
         <span className="themis-integration-source">{market} · Plugin</span>{entry.description && <p className="themis-integration-description">{entry.description}</p>}
@@ -253,13 +269,14 @@ export function Plugins() {
         <div className="themis-card-footer">{badge(entry.name)}<button aria-live="polite" aria-busy={installing === entry.name} disabled={busy || mutating || !checks[entry.name] || catalogInstalled(entry.name) || checks[entry.name]?.report.status === "unsupported"} onClick={() => void preview(entry.name, entry.icon, true)}>{installing === entry.name ? <><span className="themis-install-spinner" aria-hidden="true" />Installing…</> : catalogInstalled(entry.name) ? "✓ Installed" : "Install"}</button></div>
       </li>)}</ul>
     </> : <>
-      {!rows.length && <EmptyState title={search.trim() ? "No matching integrations" : `No ${category.toLowerCase()} installed`} />}
-      <ul className={`themis-integrations-list ${category === "MCP" ? "themis-integration-cards" : "themis-installed-integrations"}`}>{rows.map(row => <li key={row.key}>
+      {!rows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : `No ${category.toLowerCase()} installed`} />}
+      <ul className="themis-integrations-list themis-installed-integrations">{rows.map(row => <li key={row.key}>
         <PluginIcon plugin={row.plugin.spec} fallback={row.kind === "plugin" ? "folder" : row.kind === "mcp" ? "plug" : row.kind === "hook" ? "hook" : skillGlyph(row.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${row.name}`} onClick={() => open(row)}>{row.name}</button><span className="themis-integration-source">{row.kind === "plugin" ? row.plugin.spec.origin?.kind === "discovered" ? "Discovered" : row.plugin.source ?? row.plugin.spec.origin?.kind ?? "Personal" : pluginDisplayName(row.plugin)} · {row.plugin.scope === "global" ? "User" : "Project"}</span>
-        <p className="themis-integration-description">{row.kind === "skill" ? row.plugin.spec.skills.find(skill => skill.id === row.id)?.description : row.kind === "mcp" ? `${row.plugin.spec.mcp[row.id].url ? "Remote connection" : "Local process"} · Connection not checked` : row.kind === "hook" ? row.plugin.spec.hooks.find(hook => hook.name === row.id)?.event : row.plugin.spec.description || capabilitySummary(row.plugin.spec)}</p>
-        <span className={`themis-integration-status themis-compatibility-badge ${row.enabled ? "supported" : "unchecked"}`}>{row.enabled ? "Enabled" : "Disabled"}</span>
-        <button className="themis-integration-toggle" role="switch" aria-label={`${row.name} enabled`} aria-checked={row.enabled} title={!row.plugin.enabled && row.kind !== "plugin" && isPluginPackage(row.plugin) ? "Enable the parent plugin first" : `Turn ${row.enabled ? "off" : "on"} ${row.name}`} disabled={busy || mutating || row.kind !== "plugin" && !row.plugin.enabled && isPluginPackage(row.plugin)} onClick={() => void toggle(row).catch(() => {})}><span className="themis-toggle-track"><span /></span></button>
-        {row.plugin.source !== "discovered" && row.plugin.spec.origin?.kind !== "discovered" && <button aria-label={`Uninstall ${row.name}`} title={`Uninstall ${row.name}`} disabled={busy || mutating} onClick={() => { setError(""); setRemoving(row); }}><Icon name="trash" /></button>}
+        <p className="themis-integration-description">{row.kind === "skill" ? row.plugin.spec.skills.find(skill => skill.id === row.id)?.description : row.kind === "mcp" ? <><code>{mcpCommand(row.plugin.spec.mcp[row.id])}</code><br />Connection not checked</> : row.kind === "hook" ? row.plugin.spec.hooks.find(hook => hook.name === row.id)?.event : row.plugin.spec.description || capabilitySummary(row.plugin.spec)}</p>
+        {row.unavailable && <CompatibilityWarning reasons={compatibilityReasons(row.plugin.spec)} />}
+        <span className={`themis-integration-status themis-compatibility-badge ${row.enabled ? "supported" : "unchecked"}`}>{row.unavailable ? "Unavailable" : row.enabled ? "Enabled" : "Disabled"}</span>
+        {!row.unavailable && <button className="themis-integration-toggle" role="switch" aria-label={`${row.name} enabled`} aria-checked={row.enabled} title={!row.plugin.enabled && row.kind !== "plugin" && isPluginPackage(row.plugin) ? "Enable the parent plugin first" : `Turn ${row.enabled ? "off" : "on"} ${row.name}`} disabled={busy || mutating || row.kind !== "plugin" && !row.plugin.enabled && isPluginPackage(row.plugin)} onClick={() => void toggle(row).catch(() => {})}><span className="themis-toggle-track"><span /></span></button>}
+        {row.plugin.source !== "discovered" && row.plugin.spec.origin?.kind !== "discovered" && <button aria-label={`Uninstall ${row.name}`} title={`Uninstall ${row.name}`} disabled={busy || mutating} onClick={() => { setRemoving(row); }}><Icon name="trash" /></button>}
       </li>)}</ul>
     </>}
     <Dialog open={panel !== null} title={item?.name} onClose={() => { if (!mutating) { previewRequest.current++; setBusy(false); setPanel(null); } }}>
@@ -267,11 +284,10 @@ export function Plugins() {
         {panel?.marketplace && busy ? <p role="status">Loading skills…</p> : <>
           {item?.kind === "plugin" && !file && !panel?.install && <><ul className="themis-bundled-skills">{item.plugin.spec.skills.map(skill => <li key={skill.id}><button aria-label={`View ${skill.name}`} onClick={() => setFile(skill.id)}><span>{skill.name}</span><Icon name="eye" /></button></li>)}</ul>{!item.plugin.spec.skills.length && <p>No skills</p>}</>}
           {item?.kind === "plugin" && file && <button className="themis-skill-back" aria-label="Back to skills" title="Back to skills" onClick={() => setFile("")}><Icon name="back" /></button>}
-          {server ? <dl className="themis-integration-summary"><dt>Transport</dt><dd>{server.url ? "HTTP" : "Local process"}</dd><dt>{server.url ? "Endpoint" : "Command"}</dt><dd>{server.url ?? server.command}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : hook ? <dl className="themis-integration-summary"><dt>Event</dt><dd>{hook.event}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : text ? <ResponseBody text={text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")} /> : null}
-          {item && panel?.install && <Compatibility spec={item.plugin.spec} report={panel.report} />}
+          {server ? <dl className="themis-integration-summary"><dt>Transport</dt><dd>{server.url ? "HTTP" : "Local process"}</dd><dt>{server.url ? "Endpoint" : "Command"}</dt><dd><code>{mcpCommand(server)}</code></dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : hook ? <dl className="themis-integration-summary"><dt>Event</dt><dd>{hook.event}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : text ? <ResponseBody text={text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")} /> : null}
+          {item && (panel?.install || item.unavailable) && <Compatibility spec={item.plugin.spec} report={panel.report} />}
         </>}
       </div>
-      {error && <p role="alert">{error}</p>}
       {panel?.install && panel.report && panel.report.status !== "unsupported" && !catalogInstalled(panel.item.id) && <div className="themis-preview-install"><Button disabled={busy || mutating} onClick={() => void installPreview()}>{panel.report.status === "partial" ? "Install supported parts" : "Install"}</Button></div>}
       <Button variant="ghost" disabled={mutating} onClick={() => { previewRequest.current++; setBusy(false); setPanel(null); }}>Close</Button>
     </Dialog>
@@ -283,13 +299,11 @@ export function Plugins() {
       }}>
         <label>Name<input value={marketName} onChange={event => setMarketName(event.target.value)} required disabled={busy || mutating} /></label>
         <label>URL or local path<input value={marketSource} onChange={event => setMarketSource(event.target.value)} required disabled={busy || mutating} /></label>
-        {error && <p role="alert">{error}</p>}
         <div><Button type="button" variant="ghost" disabled={busy || mutating} onClick={() => setAddingMarket(false)}>Cancel</Button><Button type="submit" disabled={busy || mutating || !marketName.trim() || !marketSource.trim()}>Add</Button></div>
       </form>
     </Dialog>
     <Dialog open={removing !== null} title={`Uninstall ${removing?.name ?? ""}?`} onClose={() => { if (!busy) setRemoving(null); }}>
       <p>{removing?.kind === "plugin" ? "Remove this plugin and its bundled capabilities?" : `Remove this ${removing?.kind} from ${removing?.plugin.spec.name}? Other capabilities remain installed.`}</p>
-      {error && <p role="alert">{error}</p>}
       <Button variant="ghost" disabled={busy || mutating} onClick={() => setRemoving(null)}>Cancel</Button>
       <Button variant="danger" disabled={busy || mutating} onClick={() => { if (removing) void action({ action: removing.kind === "plugin" ? "delete" : "remove_component", kind: removing.kind, id: removing.id, name: removing.plugin.spec.name, scope: removing.plugin.scope }).then(() => setRemoving(null)).catch(() => {}); }}>Uninstall</Button>
     </Dialog>

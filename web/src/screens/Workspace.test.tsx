@@ -293,12 +293,16 @@ describe("Workspace journey", () => {
     expect(screen.getByText("original-model")).toBeInTheDocument();
     expect(screen.getByText("another-model")).toBeInTheDocument();
   });
-  it("clears a transient plugin load error after refreshing", async () => {
+  it("shows a transient plugin load error in a dismissible timed toast", async () => {
     await mount();
     // Fail the Integrations visit after the chat's metadata discovery has finished.
     vi.mocked(bridge.pluginAction).mockRejectedValueOnce(new Error("Marketplace store is busy; retry"));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Integrations" })));
-    expect(screen.getByRole("alert")).toHaveTextContent("Marketplace store is busy");
+    const notification = screen.getByText("Marketplace store is busy; retry").closest(".themis-toast")!;
+    expect(notification.querySelector(".themis-toast-timer")).not.toBeNull();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(within(notification as HTMLElement).getByRole("button", { name: "Dismiss notification" }));
+    expect(screen.queryByText("Marketplace store is busy; retry")).toBeNull();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Refresh" })));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText("No plugins installed")).toBeInTheDocument();

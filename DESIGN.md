@@ -29,7 +29,7 @@ Make the work, its state, and the next useful action obvious. Keep the interface
 - A container must group a meaningful unit. Avoid nested cards, boxed headings, decorative panels, and a separate box for every sentence or status.
 - Tiles are useful for browsing comparable integrations: recognizable icon, name, concise purpose, compatibility, and direct action. Keep repeated fields aligned.
 - Use lists for compact sequential content such as a plugin's skills. Do not turn each skill into a dashboard card.
-- Group related dropdowns in one filter row. Search belongs with the collection it filters; filters use the same terms as visible labels.
+- Group related dropdowns in one filter row. Installed and Discover keep independent search and filter selections. Search belongs with the collection it filters; filters use the same terms as visible labels.
 - Keep content readable at narrow widths and at all supported text sizes. Wrap descriptions and controls rather than clipping actions or creating page-wide horizontal scrolling.
 - Preserve the continuous frame → sidebar → canvas layers, with descending brightness. Avoid bright frame outlines and gutters.
 
@@ -49,7 +49,7 @@ Make the work, its state, and the next useful action obvious. Keep the interface
 - Complete marketplace compatibility checks in the background before publishing its tiles. Save results across visits; manual views reuse them. Bound background work and ignore stale responses after source changes.
 - Compatibility means the import format is supported. It does not prove credentials, external services, or runtime execution work.
 - Use **Compatible**, **Partially supported**, **Unsupported**, **Checking…**, or **Check failed** honestly. Do not silently turn failure into success.
-- Show compatibility reasons on the tile. Long reasons reveal from start to end on hover or keyboard focus, using the existing moving-text behavior; reduced motion wraps the complete text. Avoid perpetual marquees.
+- Show compatibility reasons on the tile. Collapse warnings by default to a summary with an icon and detail count. Expand to wrapped full reasons, offending fields and remedies when available; use amber emphasis. Do not require hover or motion to read them.
 - Render full skill instructions in a restrained inset reading surface, with distinct Markdown headings, lists, inline code, and syntax-highlighted code blocks. Do not flatten the document into a monotone paragraph or add decorative editor controls.
 - Keep Install on the tile. New UI installations are global; preserve existing project installations and their scope.
 - Opening a plugin shows its skill list and View actions. Viewing a skill opens the full instructions with a way back. A package with no skills gets only a concise empty state.
@@ -112,4 +112,6 @@ Before calling a UI change complete:
 
 These rules guide implementation and review. They do not replace actual runtime verification or authorize changing unrelated workflows.
 
-Compatibility scans belong to the backend. Save and reuse results across visits. Show one compact progress indicator while a marketplace is checked, keep navigation usable, and expose its tiles only after the entire scan completes. Manual previews and installs reuse that snapshot. A refresh must invalidate older pending views and installation approvals, and duplicate clicks must never create duplicate operations.
+Compatibility scans belong to the backend. Save and reuse results across visits. Show the interactive companion centered in the content area with a surrounding progress ring and actual completed/total percentage while a marketplace is checked (indeterminate before the total is known), keep navigation usable, and expose its tiles only after the entire scan completes. Manual previews and installs reuse that snapshot. A refresh must invalidate older pending views and installation approvals, and duplicate clicks must never create duplicate operations.
+
+- Transient integration errors and confirmations use the shared timed side toast, never loose inline notices. Persistent compatibility limitations stay in collapsible item details. MCP uses compact installed rows with aligned status/actions and the complete saved command.

@@ -63,7 +63,6 @@
 .themis-compatibility { font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }
 .themis-preview-install { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-top: 1rem; border-top: 1px solid var(--themis-border); font-size: .8rem; overflow-wrap: anywhere; }
 .themis-preview-install button { flex-shrink: 0; }
-.themis-integration-notice { font-size: .85rem; overflow-wrap: anywhere; }
 .themis-integrations .themis-installed-integrations > li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto auto auto; column-gap: .75rem; padding: .65rem .25rem; }
 .themis-installed-integrations .themis-integration-source { grid-row: 2; grid-column: 2; }
 .themis-installed-integrations .themis-integration-description { grid-row: 3; grid-column: 2 / -1; }
@@ -74,11 +73,6 @@
 .themis-skill-viewer .themis-response h2 { color: var(--themis-accent); font-size: 1rem; margin-top: 1.5em; }
 .themis-skill-viewer .themis-response h1 { font-size: 1.3rem; }
 .themis-skill-viewer .themis-response li::marker { color: var(--themis-accent); }
-.themis-compatibility-reason { min-width: 0; margin: .25rem 0; color: var(--themis-text-2); font-size: .8rem; line-height: 1.6; }
-.themis-compatibility-reason:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 2px; }
-.themis-compatibility-reason:hover .is-overflowing .themis-moving-text,
-.themis-compatibility-reason:focus-visible .is-overflowing .themis-moving-text { animation: themis-title-reveal var(--title-duration) linear .6s 1 both; }
-@media (prefers-reduced-motion: reduce) { .themis-compatibility-reason .themis-moving-text { animation: none !important; transform: none; } }
 @media (max-width: 650px) { .themis-integrations .themis-integration-source { display: block; } .themis-preview-install { flex-wrap: wrap; } }
 
 .themis-integration-filters { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding-bottom: .75rem; }
@@ -90,3 +84,19 @@
 .themis-install-spinner { display: inline-block; vertical-align: middle; width: .85rem; height: .85rem; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: themis-install-spin .7s linear infinite; }
 @keyframes themis-install-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .themis-install-spinner { animation: none; } }
+
+.themis-integrations-toolbar button[aria-pressed="true"] { border-bottom: 2px solid var(--themis-accent); font-weight: 600; background: linear-gradient(110deg, var(--themis-accent), var(--themis-text), var(--themis-accent)); background-size: 240% 100%; background-clip: text; color: transparent; animation: themis-selected-glint 2s ease-in-out 1; }
+.themis-compatibility-reason { min-width: 0; margin: .25rem 0; font-size: .8rem; line-height: 1.6; color: light-dark(#795009, #f3cc7c); border-left: 3px solid currentColor; background: color-mix(in srgb, currentColor 7%, transparent); border-radius: .25rem; overflow-wrap: anywhere; }
+.themis-integrations .themis-compatibility-reason summary { display: flex; align-items: center; gap: .5rem; color: inherit; font-size: inherit; min-height: 0; padding: .5rem; cursor: pointer; }
+.themis-compatibility-reason summary::after { content: "⌄"; margin-left: auto; }
+.themis-compatibility-reason[open] summary::after { content: "⌃"; }
+.themis-compatibility-reason summary > svg { flex-shrink: 0; }
+.themis-compatibility-reason summary:focus-visible { outline: 2px solid var(--themis-accent); }
+.themis-compatibility-reason ul { padding: 0 .75rem .5rem 1.75rem; margin: 0; }
+.themis-compatibility-reason li + li { margin-top: .5rem; }
+.themis-installed-integrations .themis-compatibility-reason { grid-column: 2 / -1; }
+.themis-filter-summary { display: flex; align-items: center; justify-content: space-between; font-size: .75rem; color: var(--themis-text-2); }
+.themis-marketplace-loading { flex: 1; min-height: 260px; display: grid; place-items: center; }
+.themis-marketplace-loading .themis-knight-loading { height: auto; background: transparent; }
+.themis-marketplace-loading + .themis-integrations-list:empty { flex: 0; }
+@media (prefers-reduced-motion: reduce) { .themis-integrations-toolbar button[aria-pressed="true"] { animation: none; color: var(--themis-accent); background: none; } }
