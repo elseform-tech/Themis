@@ -1,6 +1,6 @@
 # Integrations audit — 9 October 2026
 
-Scope: native macOS app, shared server/CLI, current source, and isolated integration tests. The original seven-point request was an audit. Subsequent requests explicitly authorized increasing the skill instruction limit, removing Skills Discover, and adding Recent to the sidebar. Other recommendations below remain unimplemented.
+Scope: native macOS app, shared server/CLI, current source, and isolated integration tests. The original seven-point request was an audit. Subsequent requests explicitly authorized increasing the skill instruction limit, removing Skills Discover, and adding Recent to the sidebar. The later authorized follow-up is delivered below; the original findings are retained as historical observations.
 
 ## Journey and findings
 
@@ -70,3 +70,28 @@ Repository copies of the key screenshots: [original selection](images/integratio
 - During development, an appearance test exceeded its 5-second timeout while Rust compilation was running; a fresh full web run subsequently passed without a code change for that timeout. Intermediate Rust runs included deliberate failing Recent assertions while the backend field was not yet implemented; final totals above supersede those runs.
 
 Final dashboard averages across 106 product files: cyclomatic 2.56, cognitive 2.25, maintainability 73.4. `web/src/screens/Sidebar.tsx`: 176 LOC, cyclomatic 2.41, cognitive 2.49, maintainability 82.1. `web/src/state/store.tsx`: 316 LOC, cyclomatic 2.35, cognitive 3.79, maintainability 74.0. The event subscription gained a small amount of complexity to refresh activity ordering and reject stale responses; this is retained to preserve correctness.
+
+## Authorized follow-up delivery
+
+Installed and Discover now have a persistent selected treatment with shimmer, independent search/source/status filters, result counts and reset. Marketplace checking uses four concurrent workers and shows the companion, progress ring and actual completed percentage. Compatibility and connection warnings are collapsed by default and expose the full reason when expanded. Rejected local skills remain visible as unavailable. Integration notifications use the existing six-second side toast.
+
+MCP rows show the complete quoted command and arguments, with status, enable switch and delete aligned. Enabled MCP connections start independently in the background on project entry, with a 30-second startup bound; failure does not block the app or other servers. Runs reuse the shared transport while retaining per-run tool approvals. Disabled imports remain disabled. MCP details lists cached tool names and descriptions after connection.
+
+Native macOS proof: a fresh app entry connected Playwright without opening a chat or pressing Refresh. Opening its details showed **25 tools**, including browser_close and browser_navigate with descriptions. A failing browser-use connection did not prevent Playwright or navigation from working. The latest backend was rebuilt and restarted; this is a development app wrapper using current frontend assets, not a signed release package. Sidebar pointer resizing, keyboard bounds and width retention after relaunch were also verified.
+
+The real 315-entry marketplace observation completed with 227 reports and 88 check failures (205 available entries). This was a resumed/cache-assisted observation, not a controlled speed benchmark. The isolated concurrency regression proves overlapping inspections bounded at four. Native checks verified separate searches, expandable warnings, the full MCP command and timed notification expiry.
+
+Screenshots: [loading](images/integrations-followup-20261009/loading.png), [collapsed compatibility](images/integrations-followup-20261009/warnings-final.png), [MCP connection](images/integrations-followup-20261009/mcp-connected.png), [MCP tools](images/integrations-followup-20261009/mcp-tools.png), [timed toast](images/integrations-followup-20261009/toast.png).
+
+### Follow-up verification
+
+- `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `cargo build -p themis-desktop --bins`: passed.
+- `cargo test -p themis-desktop --test plugins_e2e mcp_startup_is_background_isolated_and_reuses_connections`: passed. Covers healthy/failed/disabled servers, background return, shared CLI metadata, reuse, policy denial and persisted configuration after restart, using isolated mock HTTP.
+- `npm --prefix web run lint`, `npm --prefix web test`, `npm --prefix web run build`: passed; 306 tests across 29 files. Existing Vite large-chunk warning remains.
+- `python3 -m unittest quality_dashboard.test_dashboard`: 14 passed; `ruff check quality_dashboard`: passed.
+- The dashboard was refreshed after the changes. AST analysis covers 107 product files: average cyclomatic 2.56, cognitive 2.24, maintainability 73.5. Inline Rust tests remain in source metrics. Touched modules (cyclomatic/cognitive/maintainability): connections.rs 3.65/3.54/65.5; state/mcp.rs 1.94/0.55/78.5; store.tsx 2.44/3.75/74.0; Plugins.tsx 3.06/3.26/81.3. Plugins increased from 2.89/2.91/81.3 before the follow-up because of connection/filter branches; no score-driven refactoring was introduced.
+- Available Rust coverage is historical (8 October): 88.2%, 18,575/21,060 lines; it is not coverage of this patch. Fresh frontend coverage is unavailable.
+
+Real native MCP initialization/tool metadata is verified; authenticated remote services, live model-provider execution and Windows behavior were not retested for this follow-up. The macOS Keychain test remains host-blocked and is separately excluded from the remaining workspace suite.
+
+- Final `cargo test --workspace -- --skip entered_keys_survive_new_store_and_can_be_forgotten`: 343 passed, 0 failed, 3 ignored, 1 explicitly filtered Keychain test. The ignored cases are public-download acceptance, live-provider execution and a documentation example.
