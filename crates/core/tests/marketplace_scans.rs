@@ -211,3 +211,26 @@ async fn previous_instruction_limit_snapshot_is_rechecked() {
     assert_ne!(before.revision, after.revision);
     assert_eq!(after.status, "ready");
 }
+
+#[tokio::test]
+async fn failed_scan_reports_the_underlying_reason_not_just_the_component() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    fixture(source.path());
+    fs::write(
+        source.path().join("good/.mcp.json"),
+        r#"{"mcpServers":{"example":{"command":"node","env":{"TOKEN":"synthetic-literal"}}}}"#,
+    )
+    .unwrap();
+    let store = PluginStore::new(data.path().into(), None);
+    store
+        .add_marketplace("reasons", source.path().to_str().unwrap())
+        .unwrap();
+    let scan = store.wait_marketplace_scan("reasons", false).await.unwrap();
+    assert!(
+        scan.errors["good"].contains("literal values are unsupported"),
+        "{}",
+        scan.errors["good"]
+    );
+    assert!(!scan.errors["good"].contains("synthetic-literal"));
+}

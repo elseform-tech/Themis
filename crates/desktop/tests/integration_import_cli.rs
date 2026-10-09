@@ -308,7 +308,15 @@ async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
     .unwrap();
     std::fs::write(
         source.path().join(".claude-plugin/marketplace.json"),
-        json!({"plugins":[{"name":"review","source":"./review"}]}).to_string(),
+        json!({"plugins":[
+            {"name":"review","source":"./review"},
+            {"name":"second","source":"./review"},
+            {"name":"third","source":"./review"},
+            {"name":"fourth","source":"./review"},
+            {"name":"fifth","source":"./review"},
+            {"name":"broken","source":"./missing"}
+        ]})
+        .to_string(),
     )
     .unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
@@ -343,6 +351,9 @@ async fn marketplace_cli_reuses_checked_contents_and_rejects_stale_install() {
             r#"{"action":"scan_marketplace","name":"saved"}"#,
         ],
     );
+    assert_eq!(before["completed"], 6);
+    assert_eq!(before["checks"].as_object().unwrap().len(), 5);
+    assert!(before["errors"]["broken"].is_string());
     std::fs::remove_file(source.path().join("review/SKILL.md")).unwrap();
     let second = cli(
         data.path(),

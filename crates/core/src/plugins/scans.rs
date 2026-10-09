@@ -1,5 +1,6 @@
 //! Derived compatibility snapshots, never an integration registry or runtime health check.
 use super::*;
+use futures_util::{stream, StreamExt};
 use serde_json::Value;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -92,11 +93,11 @@ impl PluginStore {
         };
         let mut state = self.scan_state(name).unwrap_or_default();
         let source_changed = state.source != source;
-        if refresh || source_changed || state.version != 2 {
+        if refresh || source_changed || state.version != 3 {
             state = MarketplaceScan {
                 revision: revision(),
                 source,
-                version: 2,
+                version: 3,
                 refresh: refresh || source_changed,
                 ..Default::default()
             };
@@ -114,7 +115,7 @@ impl PluginStore {
             let outcome = store.run_marketplace_scan(&name, &mut state).await;
             if let Err(error) = outcome {
                 state.status = "failed".into();
-                state.error = Some(error.to_string());
+                state.error = Some(format!("{error:#}"));
                 let _ = write_json(
                     &store.scan_directory(&name).unwrap().join("scan.json"),
                     &state,
@@ -158,12 +159,20 @@ impl PluginStore {
         }
         state.total = names.len();
         write_json(&directory.join("scan.json"), state)?;
-        // ponytail: one clone at a time per marketplace; use a bounded pool if measured scan latency warrants it.
-        for plugin in names {
-            if state.checks.contains_key(&plugin) || state.errors.contains_key(&plugin) {
-                continue;
-            }
-            match self.inspect_for_scan(name, &plugin).await {
+        let pending: Vec<_> = names
+            .into_iter()
+            .filter(|plugin| {
+                !state.checks.contains_key(plugin) && !state.errors.contains_key(plugin)
+            })
+            .collect();
+        let mut checks = stream::iter(pending)
+            .map(|plugin| async move {
+                let result = self.inspect_for_scan(name, &plugin).await;
+                (plugin, result)
+            })
+            .buffer_unordered(4);
+        while let Some((plugin, result)) = checks.next().await {
+            match result {
                 Ok(mut preview) => {
                     write_json(
                         &directory.join("previews").join(preview_file(&plugin)),
@@ -177,7 +186,7 @@ impl PluginStore {
                     state.checks.insert(plugin, preview);
                 }
                 Err(error) => {
-                    state.errors.insert(plugin, error.to_string());
+                    state.errors.insert(plugin, format!("{error:#}"));
                 }
             }
             state.completed = state.checks.len() + state.errors.len();
@@ -216,7 +225,7 @@ impl PluginStore {
             .context("Unknown marketplace")?
             .source;
         let state = self.scan_state(marketplace)?;
-        if state.status != "ready" || state.source != source || state.version != 2 {
+        if state.status != "ready" || state.source != source || state.version != 3 {
             bail!("Marketplace is not ready; finish its compatibility scan first");
         }
         Ok(state)
