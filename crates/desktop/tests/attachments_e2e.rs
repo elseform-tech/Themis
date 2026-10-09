@@ -38,6 +38,99 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_compaction_resumes_prepared_action_with_public_intent() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"schema_version":1,"context_token_budget":24000,"recent_messages":2,"total_turns":10}"#,
+    )
+    .unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            // A lossy summarizer must not erase the latest action/intent at the request boundary.
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Goal: repair and verify. No edits yet; inspect requirements."},"finish_reason":"stop"}]}));
+        }
+        let last = messages.last().unwrap();
+        if last["tool_call_id"] == "execute" {
+            let result: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
+            assert_eq!(result["exit_code"],0);
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Prepared action executed and verified."},"finish_reason":"stop"}]}));
+        }
+        let (id,name,args,text) = if last["tool_call_id"] == "prepare" {
+            let intent = messages[messages.len()-2]["content"].as_str().unwrap_or("");
+            if !intent.starts_with("Prepared repair.py; next execute it and verify result.txt.") || intent.len()>2048 {
+                return ResponseTemplate::new(422).set_body_string("completed action lost its bounded continuation intent");
+            }
+            let receipt: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
+            assert_eq!(receipt["result_offloaded"],true,"the prepared action must cross actual compaction");
+            assert_eq!(receipt["success"],true);
+            ("execute","shell",json!({"command":"python3","args":["repair.py"],"cwd":""}),String::new())
+        } else {
+            ("prepare","write_file",json!({"file_path":"repair.py","content":"from pathlib import Path\nPath('result.txt').write_text('verified')\n","append":false}),format!("Prepared repair.py; next execute it and verify result.txt. {}", "old narration ".repeat(8000)))
+        };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":text,"tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}]},"finish_reason":"tool_calls"}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Repair then execute and verify."}),
+    );
+    let mut compactions = 0;
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let event = Client::next_event(&mut events).await.unwrap();
+            if event["name"] != "thread-event" || event["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = &event["payload"]["event"];
+            compactions += usize::from(event["kind"] == "context_compacting");
+            if event["kind"] == "finished" || event["kind"] == "failed" {
+                break event.clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        terminal["result"], "Prepared action executed and verified.",
+        "{terminal}"
+    );
+    assert_eq!(compactions, 1);
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("result.txt")).unwrap(),
+        "verified"
+    );
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
     let data = tempfile::tempdir().unwrap();
     let project_parent = tempfile::tempdir().unwrap();
