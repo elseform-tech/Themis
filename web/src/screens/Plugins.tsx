@@ -15,6 +15,7 @@ function integrationError(error: unknown): string {
 type Category = "Plugins" | "Skills" | "MCP" | "Hooks";
 type Item = { key: string; name: string; plugin: Plugin; kind: "plugin" | "skill" | "mcp" | "hook"; id: string; enabled: boolean; unavailable?: boolean };
 type Panel = { item: Item; marketplace?: string; report?: ImportPreview["report"]; install?: boolean; scan?: string };
+const connectionLabels = { connecting: "Connecting…", connected: "Connected", failed: "Failed" };
 const categories: Category[] = ["Plugins", "Skills", "MCP", "Hooks"];
 type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye" | "trash" | "plus" | "back" | "warning";
 const skillGlyph = (id: string): Glyph => ["pdf", "docx", "xlsx"].includes(id) ? id as Glyph : "file";
@@ -73,9 +74,9 @@ const compatibilityLabels = { supported: "Compatible", partial: "Partially suppo
 function compatibilityReasons(spec: PluginSpec) {
   return [...new Set([...(spec.import_issues ?? []).map(issue => [issue.field || issue.name, issue.reason, issue.remedy].filter(Boolean).join(": ")), ...spec.unsupported.map(feature => feature === "lspServers" ? "Language servers aren’t supported yet." : `Unsupported: ${feature}`)])];
 }
-function CompatibilityWarning({ reasons }: { reasons: string[] }) {
+function CompatibilityWarning({ reasons, label = "Compatibility details" }: { reasons: string[]; label?: string }) {
   return reasons.length ? <details className="themis-compatibility-reason">
-    <summary><Icon name="warning" /><span>Compatibility details ({reasons.length})</span></summary>
+    <summary><Icon name="warning" /><span>{label} ({reasons.length})</span></summary>
     <ul>{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
   </details> : null;
 }
@@ -111,6 +112,7 @@ export function Plugins() {
   const [scanRevision, setScanRevision] = useState("");
   const [busy, setBusy] = useState(false);
   const [file, setFile] = useState("");
+  const [mcpTools, setMcpTools] = useState<Array<{ name: string; description: string }> | null>();
   const [addingMarket, setAddingMarket] = useState(false), [marketName, setMarketName] = useState(""), [marketSource, setMarketSource] = useState("");
   const previewRequest = useRef(0);
   const search = publicView ? catalogSearch : installedSearch;
@@ -136,6 +138,17 @@ export function Plugins() {
     window.addEventListener("themis-plugins-changed", refresh);
     return () => window.removeEventListener("themis-plugins-changed", refresh);
   }, [dispatch, load]);
+  const mcpItem = panel?.item.kind === "mcp" ? panel.item : undefined;
+  const mcpStatus = mcpItem && state.mcpConnections[mcpItem.key]?.status;
+  useEffect(() => {
+    if (!mcpItem || mcpStatus !== "connected") return;
+    let cancelled = false;
+    setMcpTools(undefined);
+    void pluginAction<Array<{ name: string; description: string }>>({ action: "mcp_tools", projectRoot: root, scope: mcpItem.plugin.scope, name: mcpItem.plugin.spec.name, id: mcpItem.id })
+      .then(tools => { if (!cancelled) setMcpTools(tools); })
+      .catch(error => { if (!cancelled) { setMcpTools(null); toast(dispatch, integrationError(error), "danger"); } });
+    return () => { cancelled = true; };
+  }, [dispatch, mcpItem, mcpStatus, root]);
   async function action(args: Record<string, unknown>) {
     if (mutationPending.current) throw new Error("Another integration change is still running.");
     mutationPending.current = true; setMutating(true);
@@ -154,7 +167,7 @@ export function Plugins() {
   }
   function open(item: Item) {
     previewRequest.current++;
-    setBusy(false); setPanel({ item });
+    setBusy(false); setMcpTools(undefined); setPanel({ item });
     setFile(item.kind === "plugin" ? "" : item.id);
   }
   async function browse(selected: string, refresh = false) {
@@ -249,7 +262,7 @@ export function Plugins() {
   return <div className="themis-integrations">
     <h2>Integrations</h2>
     <nav className="themis-integrations-tabs" aria-label="Integration categories">{categories.map(value => <button key={value} aria-pressed={category === value} onClick={() => { previewRequest.current++; catalogRequest.current++; setCategory(value); setPublicView(false); setPanel(null); setBusy(false); }}>{value}</button>)}</nav>
-    <div className="themis-integrations-toolbar"><div>{category === "Plugins" && <><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins" && markets[0]) void browse(markets.find(source => source.name === market)?.name ?? markets[0].name); }}>Discover</button></>}</div><div><button aria-label="Refresh" disabled={busy || mutating} onClick={() => { void (publicView && category === "Plugins" ? browse(market, true) : load()).catch(error => toast(dispatch, integrationError(error), "danger")); }}>↻</button></div></div>
+    <div className="themis-integrations-toolbar"><div>{category === "Plugins" && <><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins" && markets[0]) void browse(markets.find(source => source.name === market)?.name ?? markets[0].name); }}>Discover</button></>}</div><div><button aria-label="Refresh" disabled={busy || mutating} onClick={() => { if (category === "MCP") window.dispatchEvent(new Event("themis-mcp-reconnect")); void (publicView && category === "Plugins" ? browse(market, true) : load()).catch(error => toast(dispatch, integrationError(error), "danger")); }}>↻</button></div></div>
     <input className="themis-integrations-search" type="search" aria-label="Search integrations" placeholder={`Search ${category.toLowerCase()}`} value={search} onChange={event => setSearch(event.target.value)} />
     <div className="themis-integration-filters">
       {publicView && category === "Plugins" && <div className="themis-marketplace-picker"><select aria-label="Marketplace" disabled={busy || mutating} value={market} onChange={event => void browse(event.target.value)}>{markets.map(m => <option key={m.name}>{m.name}</option>)}</select><button aria-label="Add marketplace" title="Add marketplace" disabled={busy || mutating} onClick={() => { setMarketName(""); setMarketSource(""); setAddingMarket(true); }}><Icon name="plus" /></button></div>}
@@ -272,9 +285,10 @@ export function Plugins() {
       {!rows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : `No ${category.toLowerCase()} installed`} />}
       <ul className="themis-integrations-list themis-installed-integrations">{rows.map(row => <li key={row.key}>
         <PluginIcon plugin={row.plugin.spec} fallback={row.kind === "plugin" ? "folder" : row.kind === "mcp" ? "plug" : row.kind === "hook" ? "hook" : skillGlyph(row.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${row.name}`} onClick={() => open(row)}>{row.name}</button><span className="themis-integration-source">{row.kind === "plugin" ? row.plugin.spec.origin?.kind === "discovered" ? "Discovered" : row.plugin.source ?? row.plugin.spec.origin?.kind ?? "Personal" : pluginDisplayName(row.plugin)} · {row.plugin.scope === "global" ? "User" : "Project"}</span>
-        <p className="themis-integration-description">{row.kind === "skill" ? row.plugin.spec.skills.find(skill => skill.id === row.id)?.description : row.kind === "mcp" ? <><code>{mcpCommand(row.plugin.spec.mcp[row.id])}</code><br />Connection not checked</> : row.kind === "hook" ? row.plugin.spec.hooks.find(hook => hook.name === row.id)?.event : row.plugin.spec.description || capabilitySummary(row.plugin.spec)}</p>
+        <p className="themis-integration-description">{row.kind === "skill" ? row.plugin.spec.skills.find(skill => skill.id === row.id)?.description : row.kind === "mcp" ? <code>{mcpCommand(row.plugin.spec.mcp[row.id])}</code> : row.kind === "hook" ? row.plugin.spec.hooks.find(hook => hook.name === row.id)?.event : row.plugin.spec.description || capabilitySummary(row.plugin.spec)}</p>
         {row.unavailable && <CompatibilityWarning reasons={compatibilityReasons(row.plugin.spec)} />}
-        <span className={`themis-integration-status themis-compatibility-badge ${row.enabled ? "supported" : "unchecked"}`}>{row.unavailable ? "Unavailable" : row.enabled ? "Enabled" : "Disabled"}</span>
+        {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.reason && <CompatibilityWarning label="Connection details" reasons={[state.mcpConnections[row.key].reason!]} />}
+        <span className={`themis-integration-status themis-compatibility-badge ${row.kind === "mcp" && row.enabled ? state.mcpConnections[row.key]?.status === "connected" ? "supported" : state.mcpConnections[row.key]?.status === "failed" ? "failed" : "unchecked" : row.enabled ? "supported" : "unchecked"}`}>{row.unavailable ? "Unavailable" : row.kind === "mcp" && row.enabled ? connectionLabels[state.mcpConnections[row.key]?.status ?? "connecting"] : row.enabled ? "Enabled" : "Disabled"}</span>
         {!row.unavailable && <button className="themis-integration-toggle" role="switch" aria-label={`${row.name} enabled`} aria-checked={row.enabled} title={!row.plugin.enabled && row.kind !== "plugin" && isPluginPackage(row.plugin) ? "Enable the parent plugin first" : `Turn ${row.enabled ? "off" : "on"} ${row.name}`} disabled={busy || mutating || row.kind !== "plugin" && !row.plugin.enabled && isPluginPackage(row.plugin)} onClick={() => void toggle(row).catch(() => {})}><span className="themis-toggle-track"><span /></span></button>}
         {row.plugin.source !== "discovered" && row.plugin.spec.origin?.kind !== "discovered" && <button aria-label={`Uninstall ${row.name}`} title={`Uninstall ${row.name}`} disabled={busy || mutating} onClick={() => { setRemoving(row); }}><Icon name="trash" /></button>}
       </li>)}</ul>
@@ -284,7 +298,8 @@ export function Plugins() {
         {panel?.marketplace && busy ? <p role="status">Loading skills…</p> : <>
           {item?.kind === "plugin" && !file && !panel?.install && <><ul className="themis-bundled-skills">{item.plugin.spec.skills.map(skill => <li key={skill.id}><button aria-label={`View ${skill.name}`} onClick={() => setFile(skill.id)}><span>{skill.name}</span><Icon name="eye" /></button></li>)}</ul>{!item.plugin.spec.skills.length && <p>No skills</p>}</>}
           {item?.kind === "plugin" && file && <button className="themis-skill-back" aria-label="Back to skills" title="Back to skills" onClick={() => setFile("")}><Icon name="back" /></button>}
-          {server ? <dl className="themis-integration-summary"><dt>Transport</dt><dd>{server.url ? "HTTP" : "Local process"}</dd><dt>{server.url ? "Endpoint" : "Command"}</dt><dd><code>{mcpCommand(server)}</code></dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : hook ? <dl className="themis-integration-summary"><dt>Event</dt><dd>{hook.event}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : text ? <ResponseBody text={text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")} /> : null}
+          {server ? <dl className="themis-integration-summary"><dt>Transport</dt><dd>{server.url ? "HTTP" : "Local process"}</dd><dt>{server.url ? "Endpoint" : "Command"}</dt><dd><code>{mcpCommand(server)}</code></dd><dt>Status</dt><dd>{item?.enabled ? connectionLabels[state.mcpConnections[item.key]?.status ?? "connecting"] : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : hook ? <dl className="themis-integration-summary"><dt>Event</dt><dd>{hook.event}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : text ? <ResponseBody text={text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")} /> : null}
+          {server && <section className="themis-mcp-tools" aria-label="MCP tools"><h3>Tools{mcpStatus === "connected" && mcpTools ? ` (${mcpTools.length})` : ""}</h3>{mcpStatus !== "connected" ? <p>Tools appear when connected.</p> : mcpTools === undefined ? <p role="status">Loading tools…</p> : mcpTools && (mcpTools.length ? <dl>{mcpTools.map(tool => <div key={tool.name}><dt><code>{tool.name}</code></dt><dd>{tool.description}</dd></div>)}</dl> : <p>No tools exposed.</p>)}</section>}
           {item && (panel?.install || item.unavailable) && <Compatibility spec={item.plugin.spec} report={panel.report} />}
         </>}
       </div>

@@ -148,19 +148,10 @@ impl AppState {
                 if !server.enabled {
                     continue;
                 }
-                let mut server = server.clone();
-                for arg in &mut server.args {
-                    *arg = arg.replace("${CLAUDE_PLUGIN_ROOT}", &resource_root.to_string_lossy());
-                }
                 match themis_core::diagnostics::ACTIVE
                     .scope(
                         diagnostic_context.clone(),
-                        themis_core::plugins::connections::tools(
-                            &plugin.skill_id(name),
-                            &server,
-                            &snapshot.work_root,
-                            approvals.clone(),
-                        ),
+                        self.mcp_tools(&snapshot.work_root, plugin, name, approvals.clone()),
                     )
                     .await
                 {
@@ -175,9 +166,13 @@ impl AppState {
                         // Transport errors may contain remote URLs, arguments or server
                         // responses. Only expose fixed, actionable failure categories.
                         let reason = match error.to_string().as_str() {
-                            "Could not start MCP server" => "server process could not start",
+                            "Could not start MCP server"
+                            | "MCP process could not start. Check the saved command." => {
+                                "server process could not start"
+                            }
                             "Required MCP environment variable is unset"
-                            | "MCP authentication variable is unset" => {
+                            | "MCP authentication variable is unset"
+                            | "Required MCP environment variable is unavailable." => {
                                 "required authentication or environment variable is unavailable"
                             }
                             "MCP startup denied" => "startup approval was denied",

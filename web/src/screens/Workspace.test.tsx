@@ -35,6 +35,16 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function mount() { await act(async () => { render(<App />); }); }
 
 describe("Workspace journey", () => {
+  it("starts MCP connections without waiting for them before showing the workspace", async () => {
+    let finish!: (value: unknown) => void;
+    vi.mocked(bridge.pluginAction).mockImplementation(async args => args.action === "mcp_status" ? await new Promise<unknown>(resolve => { finish = resolve; }) as never : [] as never);
+    await mount();
+    expect(screen.getByRole("button", { name: "Integrations" })).toBeVisible();
+    expect(bridge.pluginAction).toHaveBeenCalledWith(expect.objectContaining({ action: "mcp_status", connect: true }));
+    await act(async () => finish({ "global:test:mcp:broken": { status: "failed", reason: "Could not connect" } }));
+    expect(screen.getByText(/MCP broken: Could not connect/).closest(".themis-toast")).not.toBeNull();
+    vi.mocked(bridge.pluginAction).mockImplementation(async () => [] as never);
+  });
   it("shows recent activity across projects and opens the matching chat", async () => {
     let receive!: Parameters<typeof bridge.onThreadEvent>[0];
     vi.mocked(bridge.onThreadEvent).mockImplementationOnce(async callback => { receive = callback; return () => {}; });

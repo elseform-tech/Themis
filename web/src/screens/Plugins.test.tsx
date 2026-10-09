@@ -10,14 +10,17 @@ import { pluginAction } from "../lib/tauri";
 const dispatch = vi.fn();
 let installed: Plugin[];
 let projectRoot: string | null;
-vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), toast: vi.fn(), useApp: () => ({ state: { ...initialState, activeProjectRoot: projectRoot }, dispatch }) }));
+let mcpConnections = initialState.mcpConnections;
+vi.mock("../state/store", async original => ({ ...await original<typeof import("../state/store")>(), toast: vi.fn(), useApp: () => ({ state: { ...initialState, mcpConnections, activeProjectRoot: projectRoot }, dispatch }) }));
 vi.mock("../lib/tauri", () => ({ pluginAction: vi.fn() }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => {
   vi.clearAllMocks();
   projectRoot = "/project";
+  mcpConnections = {};
   installed = [{ scope: "global", revision: "v1", enabled: true, source: null, spec: { name: "docs", description: "Documents", version: "1", skills: [{ id: "draft", name: "Draft", description: "Draft a document", instructions: "Read the sources before drafting.", allowedTools: [], scripts: [] }], mcp: { filesystem: { command: "node", args: [], env: { SECRET: "hidden-secret" }, enabled: true } }, hooks: [{ name: "startup-check", event: "RunStart", command: "printf '{}'", enabled: false, blocking: false, timeout_seconds: 10 }], files: {}, unsupported: [] } }];
   vi.mocked(pluginAction).mockImplementation(async args => {
+    if (args.action === "mcp_tools") return [{ name: "lookup", description: "Find a document" }] as never;
     if (args.action === "list") return structuredClone(installed) as never;
     if (args.action === "marketplaces") return [{ name: "official", source: "official-source" }] as never;
     if (args.action === "scan_marketplace") {
@@ -45,9 +48,26 @@ beforeEach(() => {
 function expectNoConfiguration() {
   expect(screen.queryByRole("button", { name: /^(Add (plugin|skill|MCP|hook)|Import|Configure|Update|Test|Run test|Save|More actions|Ask Themis)( |$)/ })).toBeNull();
   expect(screen.queryByRole("textbox", { name: "Configuration" })).toBeNull();
-  expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["list", "marketplaces", "scan_marketplace", "catalog", "inspect_marketplace", "inspect_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
+  expect(vi.mocked(pluginAction).mock.calls.every(([args]) => ["mcp_tools", "list", "marketplaces", "scan_marketplace", "catalog", "inspect_marketplace", "inspect_repository", "enable", "disable", "set_component_enabled", "install", "import_repository", "delete", "remove_component"].includes(String(args.action)))).toBe(true);
 }
 describe("Integration browsing and lifecycle", () => {
+  it("shows actual MCP connection state separately from its activation switch", async () => {
+    mcpConnections = { "global:docs:mcp:filesystem": { status: "failed", reason: "Process could not start" } };
+    const view = render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("Failed")).toBeVisible();
+    expect(screen.getByText("Process could not start").closest("details")).not.toHaveAttribute("open");
+    mcpConnections = { "global:docs:mcp:filesystem": { status: "connected" } };
+    view.rerender(<Plugins />);
+    expect(screen.getByText("Connected")).toBeVisible();
+    expect(screen.queryByText("Failed")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "View filesystem" }));
+    expect(await screen.findByText("lookup")).toBeVisible();
+    expect(screen.getByRole("region", { name: "MCP tools" })).toHaveTextContent("Find a document");
+    expect(pluginAction).toHaveBeenCalledWith({ action: "mcp_tools", projectRoot: "/project", scope: "global", name: "docs", id: "filesystem" });
+  });
   it("keeps Installed and Discover search and filters independent", async () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
@@ -439,10 +459,10 @@ describe("Integration browsing and lifecycle", () => {
     fireEvent.click(screen.getByRole("button", { name: category }));
     const control = screen.getByRole("switch");
     const wasEnabled = control.getAttribute("aria-checked") === "true";
-    expect(control.closest("li")).toHaveTextContent(wasEnabled ? "Enabled" : "Disabled");
+    expect(control.closest("li")).toHaveTextContent(wasEnabled ? category === "MCP" ? "Connecting…" : "Enabled" : "Disabled");
     await act(async () => fireEvent.click(control));
     expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", String(!wasEnabled));
-    expect(screen.getByRole("switch").closest("li")).toHaveTextContent(wasEnabled ? "Disabled" : "Enabled");
+    expect(screen.getByRole("switch").closest("li")).toHaveTextContent(wasEnabled ? "Disabled" : category === "MCP" ? "Connecting…" : "Enabled");
     expectNoConfiguration();
   });
   it("keeps disabled bundle children gated but reenables disabled discovered standalone skills", async () => {

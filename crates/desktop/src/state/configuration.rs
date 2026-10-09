@@ -177,6 +177,7 @@ impl AppState {
             self.inner
                 .diagnostics
                 .append("configuration", "saved", "info", json!({"scope":scope}));
+        self.refresh_mcp_connections();
         self.get_runtime_configuration(project_root)
     }
 

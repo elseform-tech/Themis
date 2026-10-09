@@ -15,8 +15,9 @@ import {
 import type { ToastTone } from "../components";
 import { invoke } from "@tauri-apps/api/core";
 import { playCompletionSound, prepareCompletionSound } from "../lib/completionSound";
-import type { PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
+import type { McpConnections, PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
 import {
+  pluginAction,
   getSecretStatus,
   getPendingApprovals,
   onBackendResync,
@@ -218,7 +219,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (!cancelled) dispatch({ type: "thread/synced", projectRoot, thread });
           }).catch(() => {});
         });
-        const offRecovery = await onBackendResync(() => { clearTimeout(retry); void recover(); });
+        const offRecovery = await onBackendResync(() => { clearTimeout(retry); window.dispatchEvent(new Event("themis-mcp-reconnect")); void recover(); });
         if (cancelled) {
           offRecovery();
           offThread();
@@ -310,6 +311,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // state.settings is the compiled default on first mount; intentionally once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const root = state.activeProjectRoot;
+    if (!root || startup !== null) return;
+    let cancelled = false, generation = 0, unavailable = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let previous: McpConnections = {};
+    dispatch({ type: "mcp/status", connections: {} });
+    async function refresh(connect = false, retry = false) {
+      clearTimeout(timer);
+      const request = ++generation;
+      try {
+        const connections = await pluginAction<McpConnections>({ action: "mcp_status", projectRoot: root, connect, retry });
+        if (cancelled || request !== generation) return;
+        for (const [key, value] of Object.entries(connections)) {
+          if (value.status === "failed" && previous[key]?.status !== "failed") toast(dispatch, `MCP ${key.split(":mcp:")[1]}: ${value.reason}`, "warning");
+        }
+        previous = connections;
+        unavailable = false;
+        dispatch({ type: "mcp/status", connections });
+      } catch (error) {
+        if (!cancelled && request === generation && !unavailable) toast(dispatch, `MCP status unavailable: ${describeError(error)}`, "warning");
+        unavailable = true;
+      } finally {
+        if (!cancelled && request === generation) timer = setTimeout(() => void refresh(unavailable), 3000);
+      }
+    }
+    const changed = () => void refresh(true);
+    const reconnect = () => void refresh(true, true);
+    window.addEventListener("themis-plugins-changed", changed);
+    window.addEventListener("themis-mcp-reconnect", reconnect);
+    void refresh(true, true);
+    return () => { cancelled = true; clearTimeout(timer); window.removeEventListener("themis-plugins-changed", changed); window.removeEventListener("themis-mcp-reconnect", reconnect); };
+  }, [state.activeProjectRoot, startup]);
 
   const value = useMemo(() => ({ state, startup, dispatch, armManualRun, cancelManualRun }), [state, startup]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

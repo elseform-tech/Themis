@@ -196,3 +196,9 @@ the composer, Integrations, and bridge.
 Automated tests prove their exercised paths. Native verification, third-party
 network acceptance, and model retention benchmarks are separate evidence;
 previous benchmark results are dated reports, not automatic runtime audits.
+
+## Background MCP connections
+
+The app starts enabled global and selected-project MCP connections asynchronously on entry. Enabling a connection authorizes initialization and tool discovery; imported connections still start disabled. Explicit user/project approval denials prevent background startup. Calls from a chat continue to use that run's captured approval policy and approval mode, including when they reuse an existing transport. Startup has a 30-second deadline per server and failures are isolated. Definitions remain in the existing integration registry; transports and observed status are ephemeral shared-server state. Changing or disabling a definition releases its idle connection while active runs retain their immutable snapshot.
+
+The shared `plugin_action` API accepts `mcp_status` with `projectRoot`. `connect: true` reconciles enabled definitions and starts missing connections without waiting; `retry: true` also retries failed connections. Without those flags it only reads observed status. This supports CLI verification through `themis call plugin_action`. App entry, project selection and server reconnection trigger initialization automatically.

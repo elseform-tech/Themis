@@ -284,3 +284,5 @@ export interface SecretStatus {
 export const THREAD_EVENT_NAME = 'thread-event';
 export const APPROVAL_REQUEST_NAME = 'approval-request';
 export const REVIEW_ITEM_NAME = 'review-item-added';
+
+export type McpConnections = Record<string, { status: "connecting" | "connected" | "failed"; reason?: string }>;

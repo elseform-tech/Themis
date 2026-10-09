@@ -1,6 +1,7 @@
 // Pure state model for the Themis app shell. No Tauri/DOM imports —
 // safe to load in node-based unit tests.
 import type {
+  McpConnections,
   ApprovalRequest,
   Automation,
   DiffState,
@@ -76,6 +77,7 @@ export function trackRecentRoot(roots: string[], root: string): string[] {
 }
 
 export interface AppState {
+  mcpConnections: McpConnections;
   projects: ProjectInfo[];
   threadsByProject: Record<string, ThreadInfo[]>;
   activeProjectRoot: string | null;
@@ -109,6 +111,7 @@ export interface AppState {
 }
 
 export type AppAction =
+  | { type: "mcp/status"; connections: McpConnections }
   | { type: "project/opened"; project: ProjectInfo; select?: boolean }
   | { type: "project/selected"; root: string }
   | { type: "thread/created"; projectRoot: string; thread: ThreadInfo }
@@ -184,6 +187,7 @@ export const DEFAULT_SECRET_STATUS: SecretStatus = {
 };
 
 export const initialState: AppState = {
+  mcpConnections: {},
   projects: [],
   threadsByProject: {},
   activeProjectRoot: null,
@@ -430,6 +434,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
   const uiState = reduceUiActions(state, action);
   if (uiState !== null) return uiState;
   switch (action.type) {
+    case "mcp/status": return { ...state, mcpConnections: action.connections };
     case "project/opened": {
       const exists = state.projects.some((p) => p.root === action.project.root);
       return {

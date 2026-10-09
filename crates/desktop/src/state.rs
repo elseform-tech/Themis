@@ -10,6 +10,7 @@ mod automation;
 mod changes;
 pub(crate) mod configuration;
 mod integration_tools;
+mod mcp;
 mod plugins;
 mod preferences;
 mod projects;
@@ -176,6 +177,7 @@ struct AppStateInner {
     default_project_init: tokio::sync::Mutex<()>,
     threads: tokio::sync::RwLock<HashMap<String, ThreadRecord>>,
     pending: PendingMap,
+    mcp: std::sync::Mutex<mcp::Connections>,
     settings: SettingsStore,
     transcript: TranscriptStore,
     diagnostics: Arc<themis_core::diagnostics::DiagnosticLog>,
@@ -312,6 +314,7 @@ impl AppState {
                 default_project_init: tokio::sync::Mutex::new(()),
                 threads: tokio::sync::RwLock::new(threads),
                 pending: PendingMap::default(),
+                mcp: std::sync::Mutex::new(HashMap::new()),
                 settings: SettingsStore::load_with_projects_root(settings_path, projects_root),
                 transcript,
                 diagnostics,

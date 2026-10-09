@@ -57,6 +57,30 @@ impl AppState {
         let scope = args["scope"].as_str().unwrap_or("global");
         let name = args["name"].as_str().unwrap_or_default();
         let action = args["action"].as_str().unwrap_or("list");
+        if action == "mcp_tools" {
+            let root = project
+                .as_deref()
+                .ok_or("Choose a project for MCP connections")?;
+            return self.mcp_tool_summaries(
+                root,
+                &format!(
+                    "{scope}:{name}:mcp:{}",
+                    args["id"].as_str().unwrap_or_default()
+                ),
+            );
+        }
+        if action == "mcp_status" {
+            let root = project
+                .as_deref()
+                .ok_or("Choose a project for MCP connections")?;
+            return if args["connect"].as_bool().unwrap_or(false)
+                || args["retry"].as_bool().unwrap_or(false)
+            {
+                self.mcp_status(root, args["retry"].as_bool().unwrap_or(false))
+            } else {
+                Ok(self.mcp_snapshot(root))
+            };
+        }
         // Active runs retain their immutable snapshot; changes apply to the next run.
         let started = std::time::Instant::now();
         let operation_id = uuid::Uuid::new_v4().to_string();
@@ -273,6 +297,24 @@ impl AppState {
             if outcome.is_ok() { "info" } else { "error" },
             details,
         );
+        if outcome.is_ok()
+            && matches!(
+                action,
+                "save"
+                    | "delete"
+                    | "enable"
+                    | "disable"
+                    | "set_component_enabled"
+                    | "remove_component"
+                    | "install"
+                    | "update"
+                    | "import_path"
+                    | "import_json"
+                    | "import_repository"
+            )
+        {
+            self.refresh_mcp_connections();
+        }
         outcome.map_err(|e| format!("{e:#}\nDiagnostic operation: {operation_id}"))
     }
 }

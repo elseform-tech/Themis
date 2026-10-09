@@ -376,6 +376,7 @@ struct McpTool {
     description: String,
     schema: Value,
     connection: Arc<tokio::sync::Mutex<Connection>>,
+    healthy: Arc<std::sync::atomic::AtomicBool>,
     approvals: Arc<dyn ApprovalHook>,
 }
 impl std::fmt::Debug for McpTool {
@@ -400,7 +401,11 @@ impl ToolRuntime for McpTool {
             .await
             .request("tools/call", json!({"name":self.remote,"arguments":args}))
             .await
-            .map_err(|e| ToolCallError::RuntimeError(e.to_string().into()))?;
+            .map_err(|e| {
+                self.healthy
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                ToolCallError::RuntimeError(e.to_string().into())
+            })?;
         if result["isError"] == true {
             return Err(ToolCallError::RuntimeError(
                 "MCP tool reported an error".into(),
@@ -423,13 +428,20 @@ impl ToolT for McpTool {
         None
     }
 }
+pub type McpTools = (Vec<Box<dyn ToolT>>, Option<String>);
+
 pub async fn tools(
     name: &str,
     server: &McpServer,
     root: &Path,
     approvals: Arc<dyn ApprovalHook>,
-) -> anyhow::Result<(Vec<Box<dyn ToolT>>, Option<String>)> {
-    let action = ToolAction {
+) -> anyhow::Result<McpTools> {
+    authorize_start(name, server, approvals.as_ref())?;
+    Session::connect(server, root).await?.tools(name, approvals)
+}
+
+pub fn startup_action(name: &str, server: &McpServer) -> anyhow::Result<ToolAction> {
+    Ok(ToolAction {
         tool: format!("mcp_start_{name}"),
         summary: format!(
             "Connect MCP server: {} {:?}",
@@ -445,42 +457,99 @@ pub async fn tools(
         } else {
             RiskLevel::Network
         },
-    };
+    })
+}
+
+pub fn authorize_start(
+    name: &str,
+    server: &McpServer,
+    approvals: &dyn ApprovalHook,
+) -> anyhow::Result<()> {
+    let action = startup_action(name, server)?;
     if approvals.approve(&action) == crate::tools::Approval::Deny {
         crate::diagnostics::emit("mcp", "startup_denied", "warn", json!({"server":name}));
         bail!("MCP startup denied");
     }
-    crate::diagnostics::emit("mcp", "setup_started", "info", json!({"server":name}));
-    let mut connection = Connection::connect(server, root).await.inspect_err(|error| {
-        crate::diagnostics::emit("mcp","setup_failed","warn",json!({"server":name,"stage":"initialization","error_category":connection_error_category(error)}));
-    })?;
-    let instructions = connection.instructions.clone();
-    let metadata = connection.tools().await.inspect_err(|error| {
-        crate::diagnostics::emit("mcp","setup_failed","warn",json!({"server":name,"stage":"tool_discovery","error_category":connection_error_category(error)}));
-    })?;
-    let connection = Arc::new(tokio::sync::Mutex::new(connection));
-    let mut result: Vec<Box<dyn ToolT>> = vec![];
-    for tool in metadata {
-        let remote = tool["name"].as_str().context("MCP tool has no name")?;
-        if !super::safe_name(remote) {
-            bail!("Unsupported MCP tool name");
+    Ok(())
+}
+
+/// A reusable transport; tool approval hooks remain specific to each run.
+pub struct Session {
+    connection: Arc<tokio::sync::Mutex<Connection>>,
+    metadata: Vec<Value>,
+    instructions: Option<String>,
+    healthy: Arc<std::sync::atomic::AtomicBool>,
+}
+impl Session {
+    pub async fn connect(server: &McpServer, root: &Path) -> anyhow::Result<Self> {
+        crate::diagnostics::emit("mcp", "setup_started", "info", json!({}));
+        let mut connection = Connection::connect(server, root).await.inspect_err(|error| {
+            crate::diagnostics::emit("mcp", "setup_failed", "warn", json!({"stage":"initialization","error_category":connection_error_category(error)}));
+        })?;
+        let metadata = connection.tools().await.inspect_err(|error| {
+            crate::diagnostics::emit(
+                "mcp",
+                "setup_failed",
+                "warn",
+                json!({"stage":"tool_discovery","error_category":connection_error_category(error)}),
+            );
+        })?;
+        for tool in &metadata {
+            if !tool["name"].as_str().is_some_and(super::safe_name) {
+                bail!("Unsupported MCP tool name");
+            }
         }
-        result.push(Box::new(McpTool {
-            name: format!("mcp_{}", tool_identity(name, remote)),
-            remote: remote.into(),
-            description: tool["description"].as_str().unwrap_or("MCP tool").into(),
-            schema: tool["inputSchema"].clone(),
-            connection: connection.clone(),
-            approvals: approvals.clone(),
-        }));
+        crate::diagnostics::emit(
+            "mcp",
+            "setup_completed",
+            "info",
+            json!({"tool_count":metadata.len()}),
+        );
+        Ok(Self {
+            instructions: connection.instructions.clone(),
+            connection: Arc::new(tokio::sync::Mutex::new(connection)),
+            metadata,
+            healthy: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        })
     }
-    crate::diagnostics::emit(
-        "mcp",
-        "setup_completed",
-        "info",
-        json!({"server":name,"tool_count":result.len()}),
-    );
-    Ok((result, instructions))
+    pub fn tool_summaries(&self) -> Vec<Value> {
+        self.metadata.iter().map(|tool| json!({"name":tool["name"], "description":tool["description"].as_str().unwrap_or("")})).collect()
+    }
+    pub fn is_connected(&self) -> bool {
+        if let Ok(mut connection) = self.connection.try_lock() {
+            if let Transport::Stdio { child, .. } = &mut connection.transport {
+                if !matches!(child.try_wait(), Ok(None)) {
+                    self.healthy
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+        self.healthy.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    /// Caller must authorize startup before obtaining the session. Calls still
+    /// consult the supplied run's approval hook individually.
+    pub fn tools(&self, name: &str, approvals: Arc<dyn ApprovalHook>) -> anyhow::Result<McpTools> {
+        if !self.is_connected() {
+            bail!("MCP connection closed; reconnect it from Integrations");
+        }
+        let tools = self
+            .metadata
+            .iter()
+            .map(|tool| {
+                let remote = tool["name"].as_str().expect("validated tool name");
+                Box::new(McpTool {
+                    name: format!("mcp_{}", tool_identity(name, remote)),
+                    remote: remote.into(),
+                    description: tool["description"].as_str().unwrap_or("MCP tool").into(),
+                    schema: tool["inputSchema"].clone(),
+                    connection: self.connection.clone(),
+                    healthy: self.healthy.clone(),
+                    approvals: approvals.clone(),
+                }) as Box<dyn ToolT>
+            })
+            .collect();
+        Ok((tools, self.instructions.clone()))
+    }
 }
 
 fn connection_error_category(error: &anyhow::Error) -> &'static str {

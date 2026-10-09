@@ -132,6 +132,10 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
     );
     let id = created["id"].as_str().unwrap().to_owned();
     let mut events = Client::new(data.path().into()).subscribe().await.unwrap();
+    state
+        .plugin_action(json!({"action":"mcp_status","projectRoot":project.path(),"connect":true}))
+        .await
+        .unwrap();
     for (description, pinned, mentioned) in [
         ("Initial description", false, false),
         ("Updated description", false, false),
@@ -169,6 +173,21 @@ async fn plain_cli_prompt_loads_catalog_mcp_hooks_and_refreshes_next_turn() {
             }
         }).await.unwrap();
         send.await.unwrap();
+        if description == "Initial description" && !pinned {
+            let initializes = mcp
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|r| {
+                    serde_json::from_slice::<Value>(&r.body).unwrap()["method"] == "initialize"
+                })
+                .count();
+            assert_eq!(
+                initializes, 2,
+                "each of the two background connections must be reused by the run"
+            );
+        }
         let requests = llm.received_requests().await.unwrap();
         let request: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
         let system = request["messages"][0]["content"].as_str().unwrap();
@@ -457,4 +476,152 @@ async fn agent_marketplace_management_dispatches_approvals_and_refreshes_catalog
         .await
         .unwrap();
     serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_startup_is_background_isolated_and_reuses_connections() {
+    use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let mcp = MockServer::start().await;
+    Mock::given(method("POST")).respond_with(|request: &Request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let result = match body["method"].as_str().unwrap() {
+            "initialize" => json!({"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test","version":"1"}}),
+            "tools/list" => json!({"tools":[{"name":"lookup","description":"Find a document","inputSchema":{"type":"object"}}]}),
+            _ => json!({}),
+        };
+        ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(150)).set_body_json(json!({"jsonrpc":"2.0","id":body["id"],"result":result}))
+    }).mount(&mcp).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .plugin_action(
+            json!({"action":"save","scope":"global","spec":{"name":"startup","mcp":{
+                "healthy":{"url":mcp.uri(),"enabled":true},
+                "broken":{"command":"/nonexistent/themis-mcp-fixture","enabled":true},
+                "disabled":{"url":mcp.uri(),"enabled":false}
+            }}}),
+        )
+        .await
+        .unwrap();
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let request = json!({"action":"mcp_status","projectRoot":project.path()});
+    let first = tokio::time::timeout(
+        std::time::Duration::from_millis(300),
+        state.plugin_action(
+            json!({"action":"mcp_status","projectRoot":project.path(),"connect":true}),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(first["global:startup:mcp:healthy"]["status"], "connecting");
+    assert!(first.get("global:startup:mcp:disabled").is_none());
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let value = state.plugin_action(request.clone()).await.unwrap();
+            assert_ne!(
+                value["global:startup:mcp:healthy"]["status"], "failed",
+                "{value}"
+            );
+            if value["global:startup:mcp:healthy"]["status"] == "connected"
+                && value["global:startup:mcp:broken"]["status"] == "failed"
+            {
+                break value;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(ready["global:startup:mcp:broken"]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("start"));
+    let from_cli = cli(
+        data.path(),
+        &["call", "plugin_action", &request.to_string()],
+    );
+    assert_eq!(from_cli, ready);
+    let tools = cli(data.path(), &["call", "plugin_action", &json!({"action":"mcp_tools","projectRoot":project.path(),"scope":"global","name":"startup","id":"healthy"}).to_string()]);
+    assert_eq!(
+        tools,
+        json!([{"name":"lookup","description":"Find a document"}])
+    );
+    assert_eq!(
+        mcp.received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| serde_json::from_slice::<Value>(&r.body).unwrap()["method"] == "initialize")
+            .count(),
+        1
+    );
+    state
+        .plugin_action(json!({"action":"disable","scope":"global","name":"startup"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        state.plugin_action(request.clone()).await.unwrap(),
+        json!({})
+    );
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"approval":{"rules":[{"tool":"mcp_start_*","action":"deny"}]}}"#,
+    )
+    .unwrap();
+    state
+        .plugin_action(json!({"action":"enable","scope":"global","name":"startup"}))
+        .await
+        .unwrap();
+    state
+        .plugin_action(json!({"action":"mcp_status","projectRoot":project.path(),"connect":true}))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let denied = state.plugin_action(request.clone()).await.unwrap();
+    assert_eq!(denied["global:startup:mcp:healthy"]["status"], "failed");
+    assert!(denied["global:startup:mcp:healthy"]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("policy"));
+    assert_eq!(
+        mcp.received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| serde_json::from_slice::<Value>(&r.body).unwrap()["method"] == "initialize")
+            .count(),
+        1
+    );
+    task.abort();
+    let _ = task.await;
+    drop(state);
+    std::fs::remove_file(project.path().join(".themis/config.jsonc")).unwrap();
+    let reopened = AppState::new_for_test(data.path().join("settings.json"));
+    reopened
+        .plugin_action(json!({"action":"mcp_status","projectRoot":project.path(),"connect":true}))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while reopened.plugin_action(request.clone()).await.unwrap()["global:startup:mcp:healthy"]
+            ["status"]
+            != "connected"
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        mcp.received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| serde_json::from_slice::<Value>(&r.body).unwrap()["method"] == "initialize")
+            .count(),
+        2
+    );
 }

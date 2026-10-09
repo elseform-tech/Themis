@@ -100,3 +100,9 @@
 .themis-marketplace-loading .themis-knight-loading { height: auto; background: transparent; }
 .themis-marketplace-loading + .themis-integrations-list:empty { flex: 0; }
 @media (prefers-reduced-motion: reduce) { .themis-integrations-toolbar button[aria-pressed="true"] { animation: none; color: var(--themis-accent); background: none; } }
+
+.themis-mcp-tools { border-top: 1px solid var(--themis-border-subtle); margin-top: 1rem; padding-top: .75rem; }
+.themis-mcp-tools h3 { font-size: 1rem; font-weight: 500; }
+.themis-mcp-tools dl { margin: 0; }
+.themis-mcp-tools dl > div { padding: .65rem 0; border-bottom: 1px solid var(--themis-border-subtle); overflow-wrap: anywhere; }
+.themis-mcp-tools dd { margin: .25rem 0 0; color: var(--themis-text-2); font-size: .85rem; line-height: 1.5; }
