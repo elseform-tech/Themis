@@ -41,7 +41,7 @@ The CLI end-to-end fixture uses the real `themis` binary, shared app server, run
 
 Core regressions cover serialized Unicode/escaping and batch limits, unchanged small results, rejected oversized writes, oversized tool definitions, repeated archive reads, failed evidence saves, Stop boundaries, actual context pressure and checkpoint persistence. Older whole-file-read fixtures now use large assistant narration to cause real context pressure; archived narration is summarized rather than restored wholesale with a completed invocation.
 
-Native UI and autonomous live-model choices are unverified for this patch. No UI code changed. Automated recovery benchmarks and ignored public/provider acceptance tests remain separate audits, not runtime guarantees.
+The initial scripted checks did not verify native UI or autonomous live-model choices. The [live follow-up audit](bounded-context-live-2026-10-09.md) records native/live results, including a failed low-budget multi-file stress run and provider quota limits. No UI code changed. Automated recovery benchmarks and ignored public/provider acceptance tests remain separate audits, not runtime guarantees.
 
 ## Commands and results
 
