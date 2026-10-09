@@ -58,7 +58,8 @@ fn headless_desktop_process_persists_cli_created_threads() {
             .expect("start headless desktop server")
     };
     let ready = || {
-        for _ in 0..50 {
+        // Allow cold instrumented startup while other suites run.
+        for _ in 0..300 {
             if std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
                 .arg("--data-dir")
                 .arg(data_dir.path())
@@ -742,7 +743,8 @@ async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
         .update_settings(themis_desktop::types::SettingsPatch {
-            context_token_budget: Some(2000),
+            // Leave room for tool schemas; the oversized active request still triggers compaction.
+            context_token_budget: Some(10000),
             ..Default::default()
         })
         .await
