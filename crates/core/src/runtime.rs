@@ -1692,21 +1692,6 @@ async fn replace_context(
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     original_snapshot: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    summary.push_str(&preserved_progress(
-        &messages[..split],
-        (policy.context_token_budget / 12)
-            .saturating_mul(4)
-            .min(8192),
-        original_snapshot,
-    ));
-    // Preserve successful bounded retrievals independently of the lossy model-written state.
-    summary.push_str(&preserved_retrievals(
-        &messages[..split],
-        (policy.context_token_budget / 8)
-            .saturating_mul(4)
-            .min(64_000),
-        original_snapshot,
-    ));
     let active_index = messages
         .iter()
         .rposition(|message| matches!(message.role, ChatRole::User));
@@ -1735,22 +1720,27 @@ async fn replace_context(
         let mut invocation = messages[last - 1].clone();
         // Narration is already archived/summarized; only the completed invocation must be restored.
         invocation.content.clear();
+        if let MessageType::ToolUse(calls) = &mut invocation.message_type {
+            for (index, call) in calls.iter_mut().enumerate() {
+                if call.function.arguments.len() > 2048 {
+                    call.function.arguments = serde_json::json!({
+                        "arguments_offloaded":true,
+                        "original_snapshot":path,
+                        "archive_record":messages[..last].iter().filter(|m| m.role != ChatRole::System).count(),
+                        "archive_pointer":format!("/message_type/ToolUse/{index}/function/arguments"),
+                        "arguments_preview":take_char_prefix(&call.function.arguments,512).0,
+                        "note":"Historical completed invocation; full arguments are archived. Do not execute this receipt."
+                    }).to_string();
+                }
+            }
+        }
         Some([invocation, ChatMessage { role: ChatRole::Tool, message_type: MessageType::ToolResult(results), content: String::new() }])
     });
     let retained = &messages[split..];
-    let mut durable_summary = summary.clone();
-    durable_summary.push_str("\nRecent completed context:\n");
-    for message in active_request
-        .iter()
-        .chain(completed.iter().flatten())
-        .chain(retained)
-    {
-        durable_summary.push_str(&serde_json::to_string(message)?);
-        durable_summary.push('\n');
-    }
     let mut compacted = vec![messages[0].clone()];
     // The checkpoint includes work completed for this request; preserve that chronology.
     compacted.extend(active_request);
+    let checkpoint_index = compacted.len();
     compacted.push(ChatMessage {
         role: ChatRole::Assistant,
         message_type: MessageType::Text,
@@ -1760,6 +1750,46 @@ async fn replace_context(
     compacted.extend_from_slice(retained);
     if estimated_tokens(&compacted) > policy.context_token_budget {
         anyhow::bail!("checkpoint and active request exceed the context budget; original conversation preserved");
+    }
+    // Budget all generated caches against the actual fixed messages, including JSON escaping.
+    // ponytail: halve cache allowances on overflow; originals remain available for exact recovery.
+    let fixed_tokens = estimated_tokens(&compacted);
+    let target = policy
+        .context_token_budget
+        .saturating_sub(policy.context_token_budget / 8)
+        .max(fixed_tokens);
+    let mut cache_bytes = target.saturating_sub(fixed_tokens).saturating_mul(4) / 3;
+    let checkpoint_prefix = compacted[checkpoint_index].content.clone();
+    loop {
+        let progress = preserved_progress(
+            &messages[..split],
+            cache_bytes
+                .min((policy.context_token_budget / 12).saturating_mul(4))
+                .min(8192),
+            original_snapshot,
+        );
+        let retrievals = preserved_retrievals(
+            &messages[..split],
+            cache_bytes
+                .min((policy.context_token_budget / 8).saturating_mul(4))
+                .min(64_000),
+            original_snapshot,
+        );
+        compacted[checkpoint_index].content = format!("{checkpoint_prefix}{progress}{retrievals}");
+        if estimated_tokens(&compacted) <= target {
+            summary.push_str(&progress);
+            summary.push_str(&retrievals);
+            break;
+        }
+        cache_bytes /= 2;
+    }
+    let mut durable_summary = summary;
+    durable_summary.push_str("\nRecent completed context:\n");
+    for (index, message) in compacted.iter().enumerate().skip(1) {
+        if index != checkpoint_index {
+            durable_summary.push_str(&serde_json::to_string(message)?);
+            durable_summary.push('\n');
+        }
     }
     match events.try_send(RunEvent::ContextCheckpoint {
         summary: durable_summary,
@@ -2293,6 +2323,87 @@ mod tests {
         assert_eq!(value["next_offset"], 300);
         assert_eq!(value["repeated_unchanged"], true);
     }
+    #[tokio::test]
+    async fn checkpoint_jointly_budgets_caches_and_archived_completed_arguments() {
+        for argument_bytes in [16, 60_000] {
+            let mut messages = initial_messages(Vec::new(), "Repair all modules".into());
+            messages[0].content = "s".repeat(24_000);
+            for index in 0..20 {
+                let call = ToolCall {
+                    id: format!("read-{index}"),
+                    call_type: "function".into(),
+                    function: FunctionCall {
+                        name: "read_file".into(),
+                        arguments: serde_json::json!({"found":true,"path":format!("module-{index}.py"),"excerpt_offset":0,"content":"code".repeat(180)}).to_string(),
+                    },
+                };
+                messages.push(ChatMessage {
+                    role: ChatRole::Tool,
+                    message_type: MessageType::ToolResult(vec![call]),
+                    content: String::new(),
+                });
+            }
+            let mut call = ToolCall {
+                id: "completed-write".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "write_file".into(),
+                    arguments:
+                        serde_json::json!({"path":"repair.py","content":"x".repeat(argument_bytes)})
+                            .to_string(),
+                },
+            };
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(vec![call.clone()]),
+                content: String::new(),
+            });
+            call.function.arguments = r#"{"success":true,"path":"repair.py"}"#.into();
+            messages.push(ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(vec![call]),
+                content: String::new(),
+            });
+            let policy = RunPolicy {
+                total_turns: 20,
+                context_token_budget: 9_000,
+                recent_messages: 2,
+            };
+            let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+            let split = messages.len();
+            replace_context(
+                &mut messages,
+                &policy,
+                split,
+                "Continue with completed repair.py".into(),
+                &tx,
+                Some(std::path::Path::new("/tmp/original.jsonl")),
+            )
+            .await
+            .unwrap();
+            assert!(
+                estimated_tokens(&messages)
+                    <= policy.context_token_budget - policy.context_token_budget / 8
+            );
+            assert_eq!(messages[0].content, "s".repeat(24_000));
+            let MessageType::ToolUse(calls) = &messages[messages.len() - 2].message_type else {
+                panic!("matching invocation missing")
+            };
+            assert_eq!(calls[0].id, "completed-write");
+            if argument_bytes > 2048 {
+                let args: serde_json::Value =
+                    serde_json::from_str(&calls[0].function.arguments).unwrap();
+                assert_eq!(args["arguments_offloaded"], true);
+                assert_eq!(args["original_snapshot"], "/tmp/original.jsonl");
+            }
+            let RunEvent::ContextCheckpoint { summary } = rx.recv().await.unwrap() else {
+                panic!("checkpoint missing")
+            };
+            assert!(summary.contains("repair.py"));
+            assert!(summary.contains("module-19.py"));
+        }
+    }
+
     #[tokio::test]
     async fn checkpoint_keeps_shell_observations_and_completed_edits_without_model_recall() {
         let mut messages = initial_messages(Vec::new(), "Repair engine; next run the tests".into());
