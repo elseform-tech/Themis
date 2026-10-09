@@ -14,15 +14,8 @@ function integrationError(error: unknown): string {
 
 type Category = "Plugins" | "Skills" | "MCP" | "Hooks";
 type Item = { key: string; name: string; plugin: Plugin; kind: "plugin" | "skill" | "mcp" | "hook"; id: string; enabled: boolean };
-type Panel = { item: Item; marketplace?: string; skillSource?: string; report?: ImportPreview["report"]; install?: boolean; scan?: string };
+type Panel = { item: Item; marketplace?: string; report?: ImportPreview["report"]; install?: boolean; scan?: string };
 const categories: Category[] = ["Plugins", "Skills", "MCP", "Hooks"];
-const skillRepository = "https://github.com/anthropics/skills.git";
-const skillReference = "683bc88e56f3e09ba94f7055977f3d3aa499f202";
-const publicSkills = [
-  { id: "pdf", name: "PDF", description: "Read, create, and work with PDF documents." },
-  { id: "docx", name: "Word documents", description: "Create and edit Word documents." },
-  { id: "xlsx", name: "Spreadsheets", description: "Create, edit, and analyze spreadsheets." },
-];
 type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye" | "trash" | "plus" | "back";
 const skillGlyph = (id: string): Glyph => ["pdf", "docx", "xlsx"].includes(id) ? id as Glyph : "file";
 const emptySpec = (): PluginSpec => ({ name: "personal", description: "", version: "", skills: [], mcp: {}, hooks: [], files: {}, unsupported: [] });
@@ -95,9 +88,7 @@ export function Plugins() {
   const [mutating, setMutating] = useState(false);
   const [category, setCategory] = useState<Category>("Plugins"), [publicView, setPublicView] = useState(false);
   const [panel, setPanel] = useState<Panel | null>(null), [removing, setRemoving] = useState<Item | null>(null);
-  const cards = useRef<HTMLUListElement>(null);
   const inspection = useRef(new Map<string, Promise<ImportPreview>>());
-  const [checkRevision, setCheckRevision] = useState(0);
   const [checkErrors, setCheckErrors] = useState<Record<string, string>>({});
   const [checking, setChecking] = useState<Record<string, boolean>>({});
   const [checks, setChecks] = useState<Record<string, ImportPreview>>({});
@@ -177,11 +168,8 @@ export function Plugins() {
     const existing = inspection.current.get(key);
     if (existing) return existing;
     const generation = catalogRequest.current;
-    const skill = key.startsWith("skill:") ? key.slice(6) : null;
     setChecking(current => ({ ...current, [key]: true }));
-    const pending = pluginAction<ImportPreview>(skill
-      ? { action: "inspect_repository", url: skillRepository, name: skill, reference: skillReference, subdirectory: `skills/${skill}`, projectRoot: root }
-      : { action: "inspect_marketplace", marketplace: market, name: key, projectRoot: root });
+    const pending = pluginAction<ImportPreview>({ action: "inspect_marketplace", marketplace: market, name: key, projectRoot: root });
     inspection.current.set(key, pending);
     void pending.then(value => {
       if (generation === catalogRequest.current && root === activeRoot.current) setChecks(current => ({ ...current, [key]: value }));
@@ -212,31 +200,11 @@ export function Plugins() {
       setFile("");
     } catch (error) { if (request === previewRequest.current) setError(integrationError(error)); } finally { if (request === previewRequest.current) { setBusy(false); setInstalling(""); } }
   }
-  async function previewSkill(skill: typeof publicSkills[number], install = false) {
-    const skillSource = `https://github.com/anthropics/skills/blob/${skillReference}/skills/${skill.id}/SKILL.md`;
-    const spec = { ...emptySpec(), name: skill.id, package_kind: "skill" as const };
-    const plugin: Plugin = { scope: "global", revision: "preview", enabled: false, source: null, spec };
-    const previewItem: Item = { key: `public-skill:${skill.id}`, name: skill.name, id: skill.id, kind: "skill", enabled: false, plugin };
-    if (install) { previewRequest.current++; setInstalling(`skill:${skill.id}`); setError(""); } else { open(previewItem); setPanel({ item: previewItem, skillSource }); }
-    const request = previewRequest.current;
-    setBusy(true);
-    try {
-      const checked = await inspect(`skill:${skill.id}`);
-      const value = checked.spec;
-      if (request !== previewRequest.current || root !== activeRoot.current) return;
-      setChecks(current => ({ ...current, [`skill:${skill.id}`]: checked }));
-      if (install && checked.report.status === "supported") {
-        await action({ action: "import_repository", url: skillRepository, reference: skillReference, subdirectory: `skills/${skill.id}`, name: skill.id, scope: "global", allowPartial: false });
-        setNotice(`${skill.name} installed.`);
-      } else setPanel({ skillSource, install, report: checked.report, item: { ...previewItem, id: value.skills[0]?.id ?? skill.id, plugin: { ...plugin, spec: value } } });
-      setFile(value.skills[0]?.id ?? "");
-    } catch (error) { if (request === previewRequest.current) setError(integrationError(error)); } finally { if (request === previewRequest.current) { setBusy(false); setInstalling(""); } }
-  }
   async function installPreview() {
-    if (!panel?.report || panel.report.status === "unsupported") return;
+    if (!panel?.report || !panel.marketplace || panel.report.status === "unsupported") return;
     const name = panel.item.plugin.spec.name;
     try {
-      await action(panel.marketplace ? { action: "install", name, marketplace: panel.marketplace, expectedScan: panel.scan, scope: "global", allowPartial: panel.report.status === "partial" } : { action: "import_repository", url: skillRepository, reference: skillReference, subdirectory: `skills/${name}`, name, scope: "global", allowPartial: panel.report.status === "partial" });
+      await action({ action: "install", name, marketplace: panel.marketplace, expectedScan: panel.scan, scope: "global", allowPartial: panel.report.status === "partial" });
       setNotice(`${name} installed.`);
       setPanel(null);
     } catch { /* The dialog retains the actionable error and retry action. */ }
@@ -249,39 +217,9 @@ export function Plugins() {
   const isPublic = (plugin: Plugin) => publicSource(plugin.spec.origin?.location) || marketplaceIsPublic(plugin.source ?? plugin.spec.origin?.location ?? "");
   const matchesOrigin = (publicItem: boolean) => originFilter === "all" || (publicItem ? "public" : "personal") === originFilter;
   const catalogInstalled = (name: string) => plugins.some(plugin => plugin.scope === "global" && plugin.source === market && plugin.spec.name === name);
-  const skillInstalled = (id: string) => plugins.some(plugin => plugin.scope === "global" && plugin.spec.skills.length > 0 && (plugin.spec.origin
-    ? plugin.spec.origin.location.replace(/\.git$/, "") === skillRepository.replace(/\.git$/, "") && plugin.spec.origin.subdirectory === `skills/${id}`
-    : plugin.spec.package_kind === "skill" && plugin.spec.skills.some(existing => existing.id === id)));
   const rows = items(plugins, category).filter(row => matchesOrigin(isPublic(row.plugin)) && (installedStatus === "all" || (row.enabled ? "enabled" : "disabled") === installedStatus)).filter(row => matches([row.name, pluginDisplayName(row.plugin), row.plugin.source, row.plugin.spec.origin?.location, row.plugin.spec.description, ...row.plugin.spec.skills.map(skill => skill.description)]));
   const matchesStatus = (key: string, installed: boolean) => catalogStatus === "installed" ? installed : catalogStatus === "all" || (catalogStatus === "available" ? checks[key]?.report.status !== "unsupported" : (checks[key]?.report.status ?? (checkErrors[key] ? "failed" : "unchecked")) === catalogStatus);
   const catalogRows = catalog.filter(entry => matchesOrigin(marketplaceIsPublic(market)) && matchesStatus(entry.name, catalogInstalled(entry.name))).filter(entry => matches([entry.name, entry.description, JSON.stringify(entry.source), market, markets.find(source => source.name === market)?.source]));
-  const skillRows = publicSkills.filter(skill => matchesOrigin(true) && matchesStatus(`skill:${skill.id}`, skillInstalled(skill.id)) && matches([skill.id, skill.name, skill.description, "Anthropic", skillRepository]));
-  const visibleKeys = (category === "Plugins" ? catalogRows.map(entry => entry.name) : skillRows.map(skill => `skill:${skill.id}`)).join("\n");
-  useEffect(() => {
-    if (!publicView || category !== "Skills" || !cards.current || typeof IntersectionObserver === "undefined") return;
-    let cancelled = false, running = false;
-    const queue = new Set<string>();
-    const drain = async () => {
-      if (running) return;
-      running = true;
-      // Inspect visible packages serially; catalog browsing must not launch hundreds of clones.
-      while (!cancelled && queue.size) {
-        const key = queue.values().next().value!;
-        queue.delete(key);
-        try { await inspect(key); } catch { /* The tile exposes the failure; Refresh retries. */ }
-      }
-      running = false;
-    };
-    const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) {
-        const key = (entry.target as HTMLElement).dataset.check;
-        if (key && entry.isIntersecting) { queue.add(key); observer.unobserve(entry.target); }
-      }
-      void drain();
-    });
-    cards.current.querySelectorAll("[data-check]").forEach(tile => observer.observe(tile));
-    return () => { cancelled = true; observer.disconnect(); };
-  }, [category, publicView, visibleKeys, inspect, checkRevision]);
   const reason = (key: string) => {
     const checked = checks[key];
     const text = checkErrors[key] ? `${integrationError(checkErrors[key])} Refresh to retry.` : checked ? compatibilityReasons(checked.spec).join(" ") || (checked.report.status === "unsupported" ? "No installable skills, connections or hooks." : "") : "";
@@ -294,7 +232,7 @@ export function Plugins() {
   return <div className="themis-integrations">
     <h2>Integrations</h2>
     <nav className="themis-integrations-tabs" aria-label="Integration categories">{categories.map(value => <button key={value} aria-pressed={category === value} onClick={() => { previewRequest.current++; catalogRequest.current++; setCategory(value); setPublicView(false); setPanel(null); setBusy(false); }}>{value}</button>)}</nav>
-    <div className="themis-integrations-toolbar"><div>{(category === "Plugins" || category === "Skills") && <><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins" && markets[0]) void browse(markets.find(source => source.name === market)?.name ?? markets[0].name); }}>Discover</button></>}</div><div><button aria-label="Refresh" disabled={busy || mutating} onClick={() => { if (publicView && category === "Skills") { catalogRequest.current++; inspection.current.clear(); setChecks({}); setChecking({}); setCheckErrors({}); setCheckRevision(value => value + 1); } void (publicView && category === "Plugins" ? browse(market, true) : load()).catch(error => setError(integrationError(error))); }}>↻</button></div></div>
+    <div className="themis-integrations-toolbar"><div>{category === "Plugins" && <><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins" && markets[0]) void browse(markets.find(source => source.name === market)?.name ?? markets[0].name); }}>Discover</button></>}</div><div><button aria-label="Refresh" disabled={busy || mutating} onClick={() => { void (publicView && category === "Plugins" ? browse(market, true) : load()).catch(error => setError(integrationError(error))); }}>↻</button></div></div>
     <input className="themis-integrations-search" type="search" aria-label="Search integrations" placeholder={`Search ${category.toLowerCase()}`} value={search} onChange={event => setSearch(event.target.value)} />
     <div className="themis-integration-filters">
       {publicView && category === "Plugins" && <div className="themis-marketplace-picker"><select aria-label="Marketplace" disabled={busy || mutating} value={market} onChange={event => void browse(event.target.value)}>{markets.map(m => <option key={m.name}>{m.name}</option>)}</select><button aria-label="Add marketplace" title="Add marketplace" disabled={busy || mutating} onClick={() => { setError(""); setMarketName(""); setMarketSource(""); setAddingMarket(true); }}><Icon name="plus" /></button></div>}
@@ -305,17 +243,9 @@ export function Plugins() {
     </div>
     {notice && <p role="status" className="themis-integration-notice">{notice}</p>}
     {error && !panel && !addingMarket && <p role="alert">{error}</p>}
-    {publicView && category === "Skills" ? <>
-      {!skillRows.length && <EmptyState title="No matching skills" />}
-      <ul ref={cards} className="themis-integrations-list themis-integration-cards">{skillRows.map(skill => <li key={skill.id} data-check={`skill:${skill.id}`}>
-        <div className="themis-card-heading"><Icon name={skillGlyph(skill.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${skill.name}`} disabled={busy || mutating} onClick={() => void previewSkill(skill)}>{skill.name}</button></div>
-        <span className="themis-integration-source">Anthropic · Skill</span><p className="themis-integration-description">{skill.description}</p>
-        {reason(`skill:${skill.id}`)}
-        <div className="themis-card-footer">{badge(`skill:${skill.id}`)}<button aria-live="polite" aria-busy={installing === `skill:${skill.id}`} disabled={busy || mutating || skillInstalled(skill.id) || checks[`skill:${skill.id}`]?.report.status === "unsupported"} onClick={() => void previewSkill(skill, true)}>{installing === `skill:${skill.id}` ? <><span className="themis-install-spinner" aria-hidden="true" />Installing…</> : skillInstalled(skill.id) ? "✓ Installed" : "Install"}</button></div>
-      </li>)}</ul>
-    </> : publicView ? <>
+    {publicView ? <>
       {catalogLoading ? <p role="status"><span className="themis-install-spinner" aria-hidden="true" />{scanProgress}</p> : !catalogRows.length && <EmptyState title={search.trim() ? "No matching integrations" : "No plugins to show"} />}
-      <ul ref={cards} className="themis-integrations-list themis-integration-cards">{catalogRows.map(entry => <li key={entry.name} data-check={entry.name}>
+      <ul className="themis-integrations-list themis-integration-cards">{catalogRows.map(entry => <li key={entry.name} data-check={entry.name}>
         <div className="themis-card-heading"><PluginIcon plugin={{ ...(checks[entry.name]?.spec ?? emptySpec()), icon: checks[entry.name]?.spec.icon ?? entry.icon }} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy || mutating} onClick={() => void preview(entry.name, entry.icon)}>{entry.name}</button></div>
         <span className="themis-integration-source">{market} · Plugin</span>{entry.description && <p className="themis-integration-description">{entry.description}</p>}
         {checks[entry.name] && <p className="themis-integration-capabilities">{capabilitySummary(checks[entry.name].spec)}</p>}
@@ -334,7 +264,7 @@ export function Plugins() {
     </>}
     <Dialog open={panel !== null} title={item?.name} onClose={() => { if (!mutating) { previewRequest.current++; setBusy(false); setPanel(null); } }}>
       <div className="themis-skill-viewer" key={`${item?.key}:${file}`}>
-        {(panel?.marketplace || panel?.skillSource) && busy ? <p role="status">{panel?.marketplace ? "Loading skills…" : "Loading skill…"}</p> : <>
+        {panel?.marketplace && busy ? <p role="status">Loading skills…</p> : <>
           {item?.kind === "plugin" && !file && !panel?.install && <><ul className="themis-bundled-skills">{item.plugin.spec.skills.map(skill => <li key={skill.id}><button aria-label={`View ${skill.name}`} onClick={() => setFile(skill.id)}><span>{skill.name}</span><Icon name="eye" /></button></li>)}</ul>{!item.plugin.spec.skills.length && <p>No skills</p>}</>}
           {item?.kind === "plugin" && file && <button className="themis-skill-back" aria-label="Back to skills" title="Back to skills" onClick={() => setFile("")}><Icon name="back" /></button>}
           {server ? <dl className="themis-integration-summary"><dt>Transport</dt><dd>{server.url ? "HTTP" : "Local process"}</dd><dt>{server.url ? "Endpoint" : "Command"}</dt><dd>{server.url ?? server.command}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : hook ? <dl className="themis-integration-summary"><dt>Event</dt><dd>{hook.event}</dd><dt>Status</dt><dd>{item?.enabled ? "Enabled" : "Disabled"}</dd><dt>Source</dt><dd>{item && pluginDisplayName(item.plugin)}</dd></dl> : text ? <ResponseBody text={text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")} /> : null}
@@ -342,7 +272,7 @@ export function Plugins() {
         </>}
       </div>
       {error && <p role="alert">{error}</p>}
-      {panel?.install && panel.report && panel.report.status !== "unsupported" && !(panel.marketplace ? catalogInstalled(panel.item.id) : skillInstalled(panel.item.plugin.spec.name)) && <div className="themis-preview-install"><Button disabled={busy || mutating} onClick={() => void installPreview()}>{panel.report.status === "partial" ? "Install supported parts" : "Install"}</Button></div>}
+      {panel?.install && panel.report && panel.report.status !== "unsupported" && !catalogInstalled(panel.item.id) && <div className="themis-preview-install"><Button disabled={busy || mutating} onClick={() => void installPreview()}>{panel.report.status === "partial" ? "Install supported parts" : "Install"}</Button></div>}
       <Button variant="ghost" disabled={mutating} onClick={() => { previewRequest.current++; setBusy(false); setPanel(null); }}>Close</Button>
     </Dialog>
     <Dialog open={addingMarket} title="Add marketplace" onClose={() => { if (!busy) setAddingMarket(false); }}>

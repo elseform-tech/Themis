@@ -106,7 +106,9 @@ and [sandbox](sandbox.md) for the enforcement boundary.
 
 The **Skills** tab holds reusable instruction bundles: a name, description,
 instructions injected into runs, an optional tool allowlist, and helper
-scripts. Attach skills to a thread to scope what it may use.
+scripts. Attach skills to a thread to scope what it may use. The list includes plugin-bundled skills and skills discovered from local folders. Browse new packages in **Plugins → Discover**; Skills has no separate discovery catalog. Standalone imports remain available through chat or the CLI.
+
+Skill instructions can contain up to 256 KiB of UTF-8 text without truncation.
 
 - An empty allowlist means "all tools".
 - Unknown tool names are rejected. The valid names are exactly:

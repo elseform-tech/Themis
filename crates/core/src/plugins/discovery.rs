@@ -76,9 +76,6 @@ fn discover_scope(
                     )?;
                     spec.executable_files.clear(); // Discovery never grants execute permissions to resources.
                     let content = fs::read_to_string(&skill_file)?;
-                    if content.len() > crate::skills::MAX_INSTRUCTIONS_BYTES {
-                        bail!("Discovered skill exceeds instruction limit");
-                    }
                     let (metadata, instructions) = super::marketplace::parse_skill(&content)?;
                     let name = metadata.get("name").map(String::as_str).unwrap_or(fallback);
                     let id = if safe_name(name) { name } else { fallback };

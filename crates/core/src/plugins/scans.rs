@@ -92,11 +92,11 @@ impl PluginStore {
         };
         let mut state = self.scan_state(name).unwrap_or_default();
         let source_changed = state.source != source;
-        if refresh || source_changed || state.version != 1 {
+        if refresh || source_changed || state.version != 2 {
             state = MarketplaceScan {
                 revision: revision(),
                 source,
-                version: 1,
+                version: 2,
                 refresh: refresh || source_changed,
                 ..Default::default()
             };
@@ -216,7 +216,7 @@ impl PluginStore {
             .context("Unknown marketplace")?
             .source;
         let state = self.scan_state(marketplace)?;
-        if state.status != "ready" || state.source != source || state.version != 1 {
+        if state.status != "ready" || state.source != source || state.version != 2 {
             bail!("Marketplace is not ready; finish its compatibility scan first");
         }
         Ok(state)

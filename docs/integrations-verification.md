@@ -20,7 +20,7 @@ Result: one acceptance test passed. Each source is pinned:
 | Superpowers hook | Same pinned Superpowers revision | Reviewed upstream script executed through an explicit native RunStart adapter; returned parseable JSON |
 | [Official filesystem MCP server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) | npm `@modelcontextprotocol/server-filesystem@2026.8.31` | Imported MCP JSON, initialized server, discovered 14 tools, read a synthetic marker file |
 
-The upstream skill-creator instructions are 32,805 bytes, exceeding the existing 32,768-byte cap; the test confirms explicit rejection. Claude context injection from hook stdout and unsupported event/matcher semantics are not claimed to work. See [plugins.md](plugins.md) for compatibility and import limits, including unsupported archives, JSONC, and OAuth flows.
+This historical run rejected the 32,805-byte upstream skill-creator under the former 32 KiB limit. The limit is now 256 KiB, and the pinned acceptance test expects the complete instructions to import. Claude context injection from hook stdout and unsupported event/matcher semantics are not claimed to work. See [plugins.md](plugins.md) for compatibility and import limits, including unsupported archives, JSONC, and OAuth flows.
 
 ## Automated checks
 

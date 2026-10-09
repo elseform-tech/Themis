@@ -54,3 +54,31 @@ fn creator_bundle_is_resolved_and_materializes_its_verifier() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn creator_verifier_accepts_large_utf8_instructions_and_rejects_overflow() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("skill.json");
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/builtins/create-skill/scripts/verify.py"
+    );
+    for (instructions, accepted) in [
+        ("é".repeat(128 * 1024), true),
+        ("x".repeat(256 * 1024 + 1), false),
+    ] {
+        let draft = serde_json::json!({"id":"review", "name":"Review", "description":"Review", "instructions":instructions, "allowedTools":[], "scripts":[]});
+        std::fs::write(&path, draft.to_string()).unwrap();
+        let result = Command::new("python3")
+            .arg(script)
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.success(),
+            accepted,
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+}

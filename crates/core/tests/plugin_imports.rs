@@ -12,6 +12,43 @@ fn skill(directory: &Path, instructions: &str) {
 }
 
 #[test]
+fn large_skill_import_discovery_and_restart_preserve_complete_instructions() {
+    let global = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let source = project.path().join(".agents/skills/review");
+    let instructions = "é".repeat(128 * 1024);
+    skill(&source, &instructions);
+    let store = PluginStore::new(global.path().into(), Some(project.path().into()));
+    let imported = store
+        .import_path("global", &source, Some("large-review"))
+        .unwrap();
+    assert_eq!(imported.spec.skills[0].instructions, instructions);
+    let restarted = PluginStore::new(global.path().into(), Some(project.path().into()));
+    let loaded = restarted.list().unwrap();
+    assert_eq!(
+        loaded
+            .iter()
+            .find(|p| p.spec.name == "large-review")
+            .unwrap()
+            .spec
+            .skills[0]
+            .instructions,
+        instructions
+    );
+    let discovered = loaded
+        .iter()
+        .find(|p| {
+            p.scope == "local"
+                && p.spec
+                    .origin
+                    .as_ref()
+                    .is_some_and(|o| o.kind == "discovered")
+        })
+        .unwrap();
+    assert_eq!(discovered.spec.skills[0].instructions, instructions);
+}
+
+#[test]
 fn standalone_imports_are_distinct_from_real_plugin_packages() {
     let global = tempfile::tempdir().unwrap();
     let source = tempfile::tempdir().unwrap();
@@ -460,18 +497,18 @@ async fn real_public_plugin_and_skill_import_acceptance() {
         .any(|s| s.id == "using-superpowers"));
     assert!(superpowers.spec.hooks.iter().all(|h| !h.enabled));
     println!("superpowers @ 8ca22dba9a94f28898bbce59f2537ff4d87c747d: {} skills, {} disabled hooks, {} compatibility notices", superpowers.spec.skills.len(), superpowers.spec.hooks.len(), superpowers.spec.unsupported.len());
-    let oversized = store
+    let creator = store
         .import_repository(
             "global",
-            "oversized-creator",
+            "upstream-creator",
             "https://github.com/anthropics/skills.git",
             Some("683bc88e56f3e09ba94f7055977f3d3aa499f202"),
             Some("skills/skill-creator"),
         )
         .await
-        .unwrap_err();
-    assert!(oversized.to_string().contains("32768-byte cap"));
-    println!("upstream skill-creator rejected explicitly: {oversized}");
+        .unwrap();
+    assert_eq!(creator.spec.skills[0].instructions.len(), 32805);
+    println!("upstream skill-creator imported without truncation: 32805 bytes");
     let pdf = store
         .import_repository(
             "global",

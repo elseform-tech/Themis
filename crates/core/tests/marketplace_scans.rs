@@ -191,3 +191,23 @@ async fn concurrent_manual_previews_join_the_scan_without_transient_busy_failure
         assert_eq!(status, "supported");
     }
 }
+
+#[tokio::test]
+async fn previous_instruction_limit_snapshot_is_rechecked() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    fixture(source.path());
+    let store = PluginStore::new(data.path().into(), None);
+    store
+        .add_marketplace("limits", source.path().to_str().unwrap())
+        .unwrap();
+    let before = store.wait_marketplace_scan("limits", false).await.unwrap();
+    let path = data.path().join("compatibility-cache/limits/scan.json");
+    let mut old: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    old["version"] = 1.into();
+    std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+    let after = store.wait_marketplace_scan("limits", false).await.unwrap();
+    assert_ne!(before.revision, after.revision);
+    assert_eq!(after.status, "ready");
+}

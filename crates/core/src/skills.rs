@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::tools::ToolT;
 
 /// Maximum accepted `instructions` size per skill, in bytes.
-pub const MAX_INSTRUCTIONS_BYTES: usize = 32768;
+pub const MAX_INSTRUCTIONS_BYTES: usize = 256 * 1024;
 
 /// Maximum accepted total script content size per skill, in bytes.
 pub const MAX_SCRIPTS_TOTAL_BYTES: usize = 65536;
@@ -352,10 +352,10 @@ mod tests {
 
     #[test]
     fn validation_rejects_oversize_instructions() {
-        let big = "x".repeat(MAX_INSTRUCTIONS_BYTES + 1);
+        let big = "x".repeat(256 * 1024 + 1);
         let err = validate_skill_input("Big", &big, &[], &[]).unwrap_err();
-        assert!(err.to_string().contains("32768"), "{err}");
-        let capped = "x".repeat(MAX_INSTRUCTIONS_BYTES);
+        assert!(err.to_string().contains("262144"), "{err}");
+        let capped = "x".repeat(256 * 1024);
         validate_skill_input("Capped", &capped, &[], &[]).unwrap();
     }
 

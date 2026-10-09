@@ -30,17 +30,19 @@ async fn imports_skill_folder_and_mcp_json_then_toggles_and_uninstalls() {
     let task = tokio::spawn(server.run());
     let folder = project.path().join("review");
     std::fs::create_dir(&folder).unwrap();
-    std::fs::write(folder.join("SKILL.md"), "---\nname: review\ndescription: Inspect changes\n---\nInspect ownership and report evidence.\n").unwrap();
+    let instructions = format!("Inspect ownership. {} FULL_TAIL", "é".repeat(32 * 1024));
+    std::fs::write(
+        folder.join("SKILL.md"),
+        format!("---\nname: review\ndescription: Inspect changes\n---\n{instructions}"),
+    )
+    .unwrap();
     let imported = cli(
         data.path(),
         &["skill", "import", folder.to_str().unwrap(), "reviews"],
     );
     assert_eq!(imported["spec"]["package_kind"], "skill");
     assert_eq!(imported["spec"]["skills"][0]["id"], "review");
-    assert!(imported["spec"]["skills"][0]["instructions"]
-        .as_str()
-        .unwrap()
-        .contains("Inspect ownership"));
+    assert_eq!(imported["spec"]["skills"][0]["instructions"], instructions);
     cli(data.path(), &["skill", "disable", "reviews", "review"]);
     assert!(!state
         .prompt_skills(None)
