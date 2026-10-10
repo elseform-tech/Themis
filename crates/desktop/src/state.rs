@@ -1168,14 +1168,20 @@ mod tests {
             .unwrap();
         let copy = state.clone();
         let id = thread.id.clone();
-        let sending = tokio::spawn(async move {
+        let mut sending = tokio::spawn(async move {
             let (sink, _) = crate::sink::ChannelSink::channel();
             copy.send_message_with_effort(Arc::new(sink), id, "hello".into(), Some("low".into()))
                 .await
         });
-        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        // Admission includes filesystem skill discovery; parallel suite load must
+        // not consume the separate, strict catalog-cancellation allowance below.
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
             while server.received_requests().await.unwrap().is_empty() {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                tokio::select! {
+                    biased;
+                    result = &mut sending => panic!("send ended before the catalog request: {result:?}"),
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {},
+                }
             }
         })
         .await
