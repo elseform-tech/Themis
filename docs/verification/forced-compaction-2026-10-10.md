@@ -76,3 +76,12 @@ not resupplied at recall. Ordered phase records include budget, thread/run IDs,
 latency, requests and tool calls. Warm document reuse is distinguished from
 initial preparation, and evolving history prevents a clean efficiency comparison
 across budgets without a matched successful baseline.
+
+Fresh checks for workspace-context commit `e7f3168`: unfiltered
+`cargo test --workspace --no-fail-fast` passed 434 tests, with zero failures and
+three ignored cases (pinned public-plugin acceptance, opt-in live-provider test,
+and a documentation example). The Keychain persistence test passed. Workspace
+Clippy, formatting, Ruff and all 14 dashboard tests passed. The development
+binaries rebuilt and the signed bundle's fresh native window was observed.
+These local checks do not complete the live mixed-chat acceptance matrix; fresh
+line coverage was not collected.
