@@ -1236,7 +1236,9 @@ async fn compact_context_inner(
             .map_or("", |message| message.content.as_str()),
     );
     let (request, coverage, sampled) = prepare_compaction(
-        older,
+        // Retaining recent messages verbatim must not hide their outcomes from the
+        // state update, or its next-step plan can contradict already completed work.
+        &messages[1..],
         &current_request,
         policy.context_token_budget,
         summary_tokens,
@@ -3274,7 +3276,7 @@ mod tests {
     #[tokio::test]
     async fn fitting_compaction_updates_full_prior_task_state_once() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        for padding in [0, 6_000] {
+        for (budget, padding) in [(24_000, 0), (200_000, 0), (200_000, 6_000)] {
             let expected = format!(
                 "EARLY_LIMIT_A remains required. {} EARLY_LIMIT_B remains required.",
                 "old é🙂 context ".repeat(padding)
@@ -3322,13 +3324,33 @@ mod tests {
                     },
                 );
             }
+            let call = ToolCall {
+                id: "latest-test".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "shell".into(),
+                    arguments: r#"{"command":"python3","args":["-m","unittest"]}"#.into(),
+                },
+            };
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(vec![call.clone()]),
+                content: "Changes saved; run the tests before edge checks.".into(),
+            });
+            let mut result = call;
+            result.function.arguments = r#"{"exit_code":0,"output":"LATEST_TEST_16_OK"}"#.into();
+            messages.push(ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(vec![result]),
+                content: String::new(),
+            });
             let (tx, _) = tokio::sync::mpsc::channel(16);
             compact_context_with_timeout(
                 &llm,
                 &mut messages,
                 &RunPolicy {
                     total_turns: 200,
-                    context_token_budget: 200_000,
+                    context_token_budget: budget,
                     recent_messages: 4,
                 },
                 &tx,
@@ -3357,7 +3379,18 @@ mod tests {
                 "previous checkpoint must be supplied only once"
             );
             assert!(input.contains("NEW_OBSERVATION_42"));
-            assert_eq!(body["max_tokens"], 8192);
+            assert!(
+                input.contains("LATEST_TEST_16_OK"),
+                "the summary must reconcile the newest retained observations, not produce a stale plan"
+            );
+            assert!(matches!(
+                messages.last().unwrap().message_type,
+                MessageType::ToolResult(_)
+            ));
+            assert_eq!(
+                body["max_tokens"],
+                if budget == 24_000 { 3000 } else { 8192 }
+            );
         }
     }
 

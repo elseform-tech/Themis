@@ -441,6 +441,10 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
             assert!(input.contains("NEW MESSAGE RECORDS WITH PROVENANCE"));
             assert!(!input.contains("ORDERED SECTION NOTES TO RECONCILE"));
             assert!(input.contains("EARLY_LIMIT_A"));
+            if observed.lock().unwrap().is_empty() {
+                let records = input.split("NEW MESSAGE RECORDS WITH PROVENANCE:\n").nth(1).unwrap().split("\n\nCURRENT USER REQUEST").next().unwrap();
+                assert!(records.contains("Record 6;"), "the newest retained record must also inform the summary");
+            }
             let previous = input.split("\n\nNEW MESSAGE RECORDS WITH PROVENANCE:").next().unwrap();
             assert!(!previous.contains("Recent completed context:"), "recent messages must not inflate prior task state");
             assert_eq!(body["max_tokens"], 8192);
