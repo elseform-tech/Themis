@@ -38,6 +38,119 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_recovers_from_malformed_shell_arguments_after_compaction() {
+    for budget in [24_000, 200_000] {
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir(project.path().join(".themis")).unwrap();
+        std::fs::write(
+            project.path().join(".themis/config.jsonc"),
+            json!({"context_token_budget":budget,"recent_messages":2,"total_turns":8}).to_string(),
+        )
+        .unwrap();
+        let malformed = r#"{"command":"python3","args":["-c","from pathlib import Path; Path(\'unsafe.txt\').write_text(\'unsafe\')"]}"#;
+        let provider = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(move |request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            let messages = body["messages"].as_array().unwrap();
+            if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
+                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Goal: reject malformed call, then run corrected script."},"finish_reason":"stop"}]}));
+            }
+            // Reproduce the provider's refusal to parse malformed historical arguments.
+            for call in messages.iter().flat_map(|m| m["tool_calls"].as_array().into_iter().flatten()) {
+                if serde_json::from_str::<Value>(call["function"]["arguments"].as_str().unwrap()).is_err() {
+                    return ResponseTemplate::new(500).set_body_string("function_call arguments JSON parse error");
+                }
+            }
+            let last = messages.last().unwrap();
+            if last["tool_call_id"] == "corrected" {
+                let result: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
+                assert_eq!(result["exit_code"],0);
+                assert_eq!(result["output"],"verified\n");
+                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Corrected script verified."},"finish_reason":"stop"}]}));
+            }
+            let (id,args) = if last["tool_call_id"] == "malformed" {
+                assert!(last["content"].as_str().unwrap().contains("invalid arguments"));
+                ("corrected",json!({"command":"python3","args":["-c",r#"from pathlib import Path
+assert not Path('unsafe.txt').exists()
+Path('result.txt').write_text("apostrophe: ' and backslash: \\")
+print('verified')"#],"cwd":""}).to_string())
+            } else { ("malformed",malformed.to_string()) };
+            ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"tool_calls":[{"id":id,"type":"function","function":{"name":"shell","arguments":args}}]},"finish_reason":"tool_calls"}]}))
+        }).mount(&provider).await;
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        state
+            .set_secret("go".into(), "test-key".into())
+            .await
+            .unwrap();
+        state.set_go_base_url_override(Some(provider.uri()));
+        let server = Server::bind(state, data.path()).await.unwrap();
+        let serving = tokio::spawn(server.run());
+        let client = Client::new(data.path().into());
+        let mut events = client.subscribe().await.unwrap();
+        let thread = cli(
+            data.path(),
+            "create_thread",
+            json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+        );
+        let id = thread["id"].as_str().unwrap();
+        cli(
+            data.path(),
+            "set_thread_approval_mode",
+            json!({"threadId":id,"mode":"yolo"}),
+        );
+        let source = project.path().join("large.txt");
+        std::fs::write(&source, "old data ".repeat(110_000)).unwrap();
+        let staged = cli(
+            data.path(),
+            "attach_files",
+            json!({"threadId":id,"paths":[source]}),
+        );
+        cli(
+            data.path(),
+            "send_message",
+            json!({"threadId":id,"text":"Run the script.","attachments":[staged[0]["path"]]}),
+        );
+        let mut compactions = 0;
+        let terminal = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                let event = Client::next_event(&mut events).await.unwrap();
+                if event["name"] != "thread-event" || event["payload"]["thread_id"] != id {
+                    continue;
+                }
+                let event = &event["payload"]["event"];
+                compactions += usize::from(event["kind"] == "context_compacting");
+                if event["kind"] == "finished" || event["kind"] == "failed" {
+                    break event.clone();
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            terminal["result"], "Corrected script verified.",
+            "{terminal}"
+        );
+        assert!(compactions > 0);
+        assert!(!project.path().join("unsafe.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("result.txt")).unwrap(),
+            "apostrophe: ' and backslash: \\"
+        );
+        let originals: String = std::fs::read_dir(project.path().join(".themis/context").join(id))
+            .unwrap()
+            .map(|p| std::fs::read_to_string(p.unwrap().path()).unwrap())
+            .collect();
+        assert!(
+            originals.contains(&serde_json::to_string(malformed).unwrap()),
+            "raw rejected arguments survive on disk"
+        );
+        client.call("shutdown", json!({})).await.unwrap();
+        serving.await.unwrap().unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_compaction_resumes_prepared_action_with_public_intent() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

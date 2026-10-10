@@ -1884,6 +1884,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejected_tool_arguments_do_not_poison_history_in_any_protocol() {
+        for model in [
+            "mimo-v2.6-flash",
+            "muse-spark-1.3-contributor",
+            "claude-haiku-4-5",
+        ] {
+            for raw in [
+                r#"{"command":"python3","args":["-c","print(\'x\')"]}"#,
+                "[]",
+            ] {
+                let call = ToolCall {
+                    id: "bad-call".into(),
+                    call_type: "function".into(),
+                    function: FunctionCall {
+                        name: "shell".into(),
+                        arguments: raw.into(),
+                    },
+                };
+                let messages = [
+                    ChatMessage {
+                        role: ChatRole::Assistant,
+                        message_type: MessageType::ToolUse(vec![call]),
+                        content: String::new(),
+                    },
+                    ChatMessage {
+                        role: ChatRole::Tool,
+                        message_type: MessageType::ToolResult(vec![ToolCall {
+                            id: "bad-call".into(),
+                            call_type: "function".into(),
+                            function: FunctionCall {
+                                name: "shell".into(),
+                                arguments: "Arguments rejected; nothing executed".into(),
+                            },
+                        }]),
+                        content: String::new(),
+                    },
+                ];
+                let provider = CompatibleProvider::go("synthetic".into(), model.into(), None, None);
+                let request = provider
+                    .chat_request(&messages, None, true, None)
+                    .unwrap()
+                    .build()
+                    .unwrap();
+                let body: Value =
+                    serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+                let input = if provider.uses_responses() {
+                    serde_json::from_str::<Value>(body["input"][0]["arguments"].as_str().unwrap())
+                        .unwrap()
+                } else if provider.uses_messages() {
+                    body["messages"][0]["content"][0]["input"].clone()
+                } else {
+                    serde_json::from_str::<Value>(
+                        body["messages"][0]["tool_calls"][0]["function"]["arguments"]
+                            .as_str()
+                            .unwrap(),
+                    )
+                    .unwrap()
+                };
+                assert_eq!(input["_themis_rejected_tool_arguments"], raw);
+                if let MessageType::ToolUse(calls) = &messages[0].message_type {
+                    assert_eq!(
+                        calls[0].function.arguments, raw,
+                        "original history stays exact"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn tool_use_and_result_messages_reach_wire() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var(GO_MODEL_ENV_VAR);

@@ -84,7 +84,26 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                 } else {
                     Some(message.content.clone())
                 },
-                tool_calls: Some(calls.clone()),
+                tool_calls: Some(
+                    calls
+                        .iter()
+                        .cloned()
+                        .map(|mut call| {
+                            // Rejected calls remain exact in stored history. Only their outgoing
+                            // representation changes: replaying invalid JSON poisons the next
+                            // request (including Messages' local conversion). Never repair/execute it.
+                            if !serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                                .is_ok_and(|args| args.is_object())
+                            {
+                                call.function.arguments = serde_json::json!({
+                                    "_themis_rejected_tool_arguments": call.function.arguments
+                                })
+                                .to_string();
+                            }
+                            call
+                        })
+                        .collect(),
+                ),
                 tool_call_id: None,
             }),
             MessageType::ToolResult(results) => {
