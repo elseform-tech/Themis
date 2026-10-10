@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 
 mod maintenance;
 mod pending;
+mod summary_evidence;
 mod summary_job;
 
 use crate::skills::{compose_task, filter_tools, Skill};
@@ -1080,6 +1081,12 @@ async fn execute_tool_calls(
                 }
             }
         }
+        if !arguments_rejected
+            && original_snapshot.is_some()
+            && serde_json::to_vec(&result)?.len() > allowance
+        {
+            summary_evidence::bound_delivery(call, &mut result, allowance)?;
+        }
         if arguments_rejected || serde_json::to_vec(&result)?.len() > allowance {
             let Some(path) = original_snapshot else {
                 let error = "tool result exceeds the delivery allowance and no evidence directory is available; completed action must not be repeated";
@@ -1500,40 +1507,7 @@ fn prepare_compaction(
     let previous = prior_checkpoint(older)
         .map(checkpoint_task_state)
         .unwrap_or("");
-    let mut last_record = None;
-    let mut records = Vec::new();
-    let mut skipped = 0;
-    for (index, (record, message)) in evidence_records(older)?.into_iter().zip(older).enumerate() {
-        if message.role == ChatRole::Assistant
-            && message.content.starts_with("Earlier context checkpoint")
-        {
-            continue;
-        }
-        let mut record: serde_json::Value = serde_json::from_str(&record)?;
-        if record["evidence_kind"] == "recovery" {
-            skipped += 1;
-            continue;
-        }
-        if let Some(results) = record["message_type"]
-            .get_mut("ToolResult")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            results.retain(|result| result["evidence_kind"] != "recovery");
-        }
-        let key = record.to_string();
-        // Only adjacent duplicate Assistant text is redundant; user corrections and
-        // invocation/result pairs must retain their identity and source order.
-        let duplicate = message.role == ChatRole::Assistant
-            && matches!(message.message_type, MessageType::Text)
-            && last_record.as_ref() == Some(&key);
-        last_record = Some(key);
-        if duplicate {
-            skipped += 1;
-            continue;
-        }
-        record["source_record"] = (index + 1).into();
-        records.push(record);
-    }
+    let (records, skipped) = summary_evidence::records(older)?;
     let build = |limit: usize| {
         let mut sampled = false;
         let mut projected = records.clone();
@@ -1954,11 +1928,17 @@ fn offload_completed_arguments(
     results: &[ToolCall],
     snapshot: &std::path::Path,
     record: usize,
+    preserve_source_selectors: bool,
 ) {
     if let MessageType::ToolUse(calls) = &mut invocation.message_type {
         for (index, call) in calls.iter_mut().enumerate() {
             if call.function.arguments.len() > 2048
                 && results.iter().any(|result| result.id == call.id)
+                && !(preserve_source_selectors
+                    && results.iter().any(|result| {
+                        result.id == call.id
+                            && summary_evidence::original_excerpt(call, result).is_some()
+                    }))
             {
                 call.function.arguments = serde_json::json!({
                     "arguments_offloaded":true,
@@ -1996,7 +1976,7 @@ async fn replace_context(
         let mut invocation = messages[last - 1].clone();
         // Preserve public intent beside the observed outcome; a lossy summary can leave the next step stale.
         invocation.content = take_char_prefix(&invocation.content,512).0;
-        offload_completed_arguments(&mut invocation, results, path, messages[..last].iter().filter(|m| m.role != ChatRole::System).count());
+        offload_completed_arguments(&mut invocation, results, path, messages[..last].iter().filter(|m| m.role != ChatRole::System).count(), false);
         let results = results.iter().map(|result| {
             let mut receipt = serde_json::json!({"result_offloaded":true,"original_snapshot":path,"original_result_bytes":result.function.arguments.len(),"note":"This tool call has already returned; its full original output is archived. Completion does not imply success. Continue from completed work, retrieving bounded relevant excerpts if needed; do not repeat a full read merely because its output was compacted."});
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&result.function.arguments) {
@@ -2021,7 +2001,7 @@ async fn replace_context(
                     .iter()
                     .filter(|message| message.role != ChatRole::System)
                     .count();
-                offload_completed_arguments(&mut earlier[index], results, snapshot, record);
+                offload_completed_arguments(&mut earlier[index], results, snapshot, record, true);
             }
         }
     }
@@ -3779,6 +3759,330 @@ mod tests {
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
+    async fn recovered_original_excerpt_fixture() -> (tempfile::TempDir, Vec<ChatMessage>) {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join(".themis/context/test");
+        std::fs::create_dir_all(&folder).unwrap();
+        let source = folder.join("snapshot-original.jsonl");
+        let records = [
+            serde_json::json!({"role":"Tool","evidence_kind":"original","message_type":{"ToolResult":[{"evidence_kind":"original","function":{"arguments":serde_json::json!({"exit_code":1,"stdout":format!("FAIL: RETAIN_PENDING_ASSERTION. Newer pending must suppress older posted. {}", "x".repeat(3000))}).to_string()}}]}}),
+            serde_json::json!({"role":"Tool","evidence_kind":"recovery","message_type":{"ToolResult":[{"evidence_kind":"recovery","function":{"arguments":serde_json::json!({"stdout":format!("RECURSIVE_COPY_MUST_BE_EXCLUDED {}", "r".repeat(3000))}).to_string()}}]}}),
+            serde_json::json!({"role":"Assistant","evidence_kind":"navigation","content":"NAVIGATION_COPY_MUST_BE_EXCLUDED"}),
+        ];
+        std::fs::write(
+            &source,
+            records.iter().map(|r| format!("{r}\n")).collect::<String>(),
+        )
+        .unwrap();
+        let tools =
+            crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook)).unwrap();
+        let reader = tools
+            .iter()
+            .find(|tool| tool.name() == "read_file")
+            .unwrap();
+        let mut messages = Vec::new();
+        for (id, record, pointer) in [
+            (
+                "original",
+                1,
+                "/message_type/ToolResult/0/function/arguments",
+            ),
+            (
+                "duplicate",
+                1,
+                "/message_type/ToolResult/0/function/arguments",
+            ),
+            (
+                "recursive",
+                2,
+                "/message_type/ToolResult/0/function/arguments",
+            ),
+            ("navigation", 3, "/content"),
+        ] {
+            let mut args = serde_json::json!({"file_path":".themis/context/test/snapshot-original.jsonl","jsonl_record":record,"json_pointer":pointer,"decode_tool_payload":true});
+            if record == 1 {
+                args["find"] = "x".repeat(2100).into();
+            }
+            let output = reader.execute(args.clone()).await.unwrap();
+            let call = ToolCall {
+                id: id.into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "read_file".into(),
+                    arguments: args.to_string(),
+                },
+            };
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(vec![call.clone()]),
+                content: String::new(),
+            });
+            let mut result = call;
+            result.function.arguments = output.to_string();
+            messages.push(ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(vec![result]),
+                content: String::new(),
+            });
+        }
+        (root, messages)
+    }
+
+    #[tokio::test]
+    async fn original_derived_reads_survive_maintenance_until_summary() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let (root, mut messages) = recovered_original_excerpt_fixture().await;
+        messages.insert(
+            0,
+            ChatMessage {
+                role: ChatRole::System,
+                message_type: MessageType::Text,
+                content: "System".into(),
+            },
+        );
+        messages.insert(
+            1,
+            ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: "Continue repair".into(),
+            },
+        );
+        let ordinary = ToolCall {
+            id: "ordinary".into(),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: "shell".into(),
+                arguments: "{}".into(),
+            },
+        };
+        messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(vec![ordinary.clone()]),
+            content: String::new(),
+        });
+        let mut output = ordinary;
+        output.function.arguments =
+            serde_json::json!({"stdout":"old observation ".repeat(1000)}).to_string();
+        messages.push(ChatMessage {
+            role: ChatRole::Tool,
+            message_type: MessageType::ToolResult(vec![output]),
+            content: String::new(),
+        });
+        for index in 0..4 {
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: format!("Recent action {index}"),
+            });
+        }
+        let policy = RunPolicy {
+            context_token_budget: 24_000,
+            recent_messages: 4,
+            total_turns: 10,
+        };
+        messages[2].content = "Public intent ".repeat(500);
+        let mut evidence = root.path().join(".themis/context/test");
+        for index in 0..6 {
+            evidence.push(format!("{index}{}", "p".repeat(99)));
+        }
+        std::fs::create_dir_all(&evidence).unwrap();
+        let before = estimated_tokens(&messages);
+        assert!(
+            maintenance::maintain(&mut messages, &policy, Some(&evidence))
+                .await
+                .unwrap()
+        );
+        assert!(
+            estimated_tokens(&messages) < before,
+            "other old observations still reduce without a model call"
+        );
+        let recursive = messages
+            .iter()
+            .filter_map(|m| match &m.message_type {
+                MessageType::ToolResult(items) => items.iter().find(|r| r.id == "recursive"),
+                _ => None,
+            })
+            .next()
+            .unwrap();
+        assert!(
+            recursive.function.arguments.contains("maintenance_receipt"),
+            "recursive recovery copies remain reducible"
+        );
+        let saved = std::fs::read_dir(&evidence).unwrap().count();
+        assert!(
+            !maintenance::maintain(&mut messages, &policy, Some(&evidence))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            std::fs::read_dir(&evidence).unwrap().count(),
+            saved,
+            "protected-only maintenance must not save duplicate snapshots"
+        );
+        assert!(preserved_retrievals(&messages, 0, None).is_empty());
+        let (request, _, _) =
+            prepare_compaction(&messages, "Continue repair", 24_000, 1024).unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: check failed. Completed changes/tests: failed test. Unresolved work: fix. Next action: repair."},"finish_reason":"stop"}]}))).mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        compaction_chat(&llm, &request, 1024).await.unwrap();
+        let captured = server.received_requests().await.unwrap();
+        let body: serde_json::Value = captured[0].body_json().unwrap();
+        let input = body["messages"][1]["content"].as_str().unwrap();
+        assert_eq!(
+            input.matches("RETAIN_PENDING_ASSERTION").count(),
+            1,
+            "maintenance must not erase acquired original-derived facts before summary preparation"
+        );
+        assert!(input.contains("source_sha256"));
+    }
+
+    #[tokio::test]
+    async fn original_derived_unsummarized_tail_survives_the_next_checkpoint() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let (root, observations) = recovered_original_excerpt_fixture().await;
+        let mut messages = vec![
+            ChatMessage {
+                role: ChatRole::System,
+                message_type: MessageType::Text,
+                content: "System".into(),
+            },
+            ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: "Continue repair".into(),
+            },
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: "Earlier work".into(),
+            },
+        ];
+        messages.extend(observations);
+        let policy = RunPolicy {
+            context_token_budget: 24_000,
+            recent_messages: 4,
+            total_turns: 10,
+        };
+        let (_, snapshot) =
+            archive_context(&root.path().join(".themis/context/test"), &messages).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
+        replace_context(&mut messages, &policy, 3, "Goal/constraints: preserve. Confirmed findings: earlier work. Completed changes/tests: none. Unresolved work: repair. Next action: inspect.".into(), &tx, Some(&snapshot)).await.unwrap();
+        for index in 0..4 {
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: format!("Recent work {index}"),
+            });
+        }
+        let split = context_split(&messages, &policy);
+        let (request, _, _) =
+            prepare_compaction(&messages[..split], "Continue repair", 24_000, 1024).unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: check failed. Completed changes/tests: failed test. Unresolved work: fix. Next action: repair."},"finish_reason":"stop"}]}))).mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        compaction_chat(&llm, &request, 1024).await.unwrap();
+        let captured = server.received_requests().await.unwrap();
+        let body: serde_json::Value = captured[0].body_json().unwrap();
+        let input = body["messages"][1]["content"].as_str().unwrap();
+        assert_eq!(input.matches("RETAIN_PENDING_ASSERTION").count(), 1, "the first checkpoint must not strip unsummarized tail read selectors needed by the next checkpoint");
+        assert!(input.contains("source_sha256"));
+        assert!(evidence_records(&messages)
+            .unwrap()
+            .iter()
+            .any(|r| r.contains("\"evidence_kind\":\"recovery\"")));
+    }
+
+    #[tokio::test]
+    async fn fitting_summary_receives_original_derived_failures_without_optional_caches() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let (_root, messages) = recovered_original_excerpt_fixture().await;
+        let before = serde_json::to_value(&messages).unwrap();
+        assert!(preserved_retrievals(&messages, 0, None).is_empty());
+        let (request, _, sampled) =
+            prepare_compaction(&messages, "Continue repair", 24_000, 1024).unwrap();
+        assert!(!sampled);
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: check failed. Completed changes/tests: failed test. Unresolved work: fix. Next action: repair."},"finish_reason":"stop"}]}))).mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        compaction_chat(&llm, &request, 1024).await.unwrap();
+        let captured = server.received_requests().await.unwrap();
+        let body: serde_json::Value = captured[0].body_json().unwrap();
+        let input = body["messages"][1]["content"].as_str().unwrap();
+        assert_eq!(
+            input.matches("RETAIN_PENDING_ASSERTION").count(),
+            1,
+            "exact original-derived failure must reach the actual summary request once"
+        );
+        assert!(input.contains("original_derived_excerpt"));
+        assert!(input.contains("source_sha256"));
+        assert!(input.contains("snapshot-original.jsonl"));
+        assert!(!input.contains("RECURSIVE_COPY_MUST_BE_EXCLUDED"));
+        assert!(!input.contains("NAVIGATION_COPY_MUST_BE_EXCLUDED"));
+        assert_eq!(
+            serde_json::to_value(&messages).unwrap(),
+            before,
+            "summary projection must not reclassify or modify stored recovery observations"
+        );
+    }
+
+    #[tokio::test]
+    async fn staged_summary_receives_the_same_original_derived_failures() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let (root, messages) = recovered_original_excerpt_fixture().await;
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: check failed. Completed changes/tests: failed test. Unresolved work: fix. Next action: repair."},"finish_reason":"stop"}]}))).mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        summary_job::summarize(
+            &llm,
+            &messages,
+            "Continue repair",
+            24_000,
+            1024,
+            &root.path().join(".themis/context/test"),
+        )
+        .await
+        .unwrap();
+        let captured = server.received_requests().await.unwrap();
+        assert!(
+            captured.len() >= 2,
+            "source stage and consolidation must both dispatch"
+        );
+        let body: serde_json::Value = captured[0].body_json().unwrap();
+        let input = body["messages"][1]["content"].as_str().unwrap();
+        assert_eq!(input.matches("RETAIN_PENDING_ASSERTION").count(), 1);
+        assert!(input.contains("original_derived_excerpt"));
+        assert!(input.contains("source_sha256"));
+        assert!(input.contains("snapshot-original.jsonl"));
+        assert!(!input.contains("RECURSIVE_COPY_MUST_BE_EXCLUDED"));
+        assert!(!input.contains("NAVIGATION_COPY_MUST_BE_EXCLUDED"));
+    }
+
     #[tokio::test]
     async fn archived_recovery_results_retain_distinct_provenance() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
@@ -5046,6 +5350,114 @@ mod tests {
 
         fn args_schema(&self) -> serde_json::Value {
             serde_json::json!({})
+        }
+    }
+
+    #[tokio::test]
+    async fn original_derived_excerpts_survive_real_bounded_tool_delivery() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join(".themis/context/test");
+        std::fs::create_dir_all(&folder).unwrap();
+        let padding = "🔎\"\\\n".repeat(2000);
+        let source_text = format!("FAIL_DELIVERY_KEEP\n{padding}MATCH_DELIVERY_KEEP{padding}");
+        let source =
+            serde_json::json!({"role":"User","evidence_kind":"original","content":source_text});
+        std::fs::write(folder.join("source.jsonl"), format!("{source}\n")).unwrap();
+        let tools =
+            crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook)).unwrap();
+        let approvals =
+            CachingApprovals::wrap(Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)));
+        for (batch_bytes, count, find) in [
+            (4096, 1, None),
+            (8192, 4, None),
+            (2048, 1, Some("MATCH_DELIVERY_KEEP")),
+        ] {
+            let calls: Vec<_> = (0..count).map(|index| ToolCall {
+                id:format!("read-{index}"), call_type:"function".into(),
+                function:FunctionCall { name:"read_file".into(), arguments: {
+                    let mut args = serde_json::json!({"file_path":".themis/context/test/source.jsonl", "jsonl_record":1});
+                    if let Some(needle) = find { args["find"] = needle.into(); }
+                    args.to_string()
+                } }
+            }).collect();
+            let (tx, _rx) = tokio::sync::mpsc::channel(64);
+            let evidence = folder.join(format!("delivery-{batch_bytes}-{count}"));
+            std::fs::create_dir(&evidence).unwrap();
+            let results = execute_tool_calls(
+                &tools,
+                &approvals,
+                &calls,
+                &tx,
+                &AtomicBool::new(false),
+                Some(&evidence),
+                "",
+                batch_bytes,
+            )
+            .await
+            .unwrap();
+            assert!(serde_json::to_vec(&results).unwrap().len() <= batch_bytes);
+            let messages = [
+                ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::ToolUse(calls),
+                    content: String::new(),
+                },
+                ChatMessage {
+                    role: ChatRole::Tool,
+                    message_type: MessageType::ToolResult(results.clone()),
+                    content: String::new(),
+                },
+            ];
+            let (projected, _) = summary_evidence::records(&messages).unwrap();
+            let excerpts: Vec<_> = projected
+                .iter()
+                .filter(|v| v["evidence_kind"] == "original_derived_excerpt")
+                .collect();
+            assert_eq!(
+                excerpts.len(),
+                1,
+                "actual delivery must retain one deduplicated bounded original-derived excerpt"
+            );
+            assert!(excerpts[0]["content"]
+                .as_str()
+                .unwrap()
+                .starts_with(find.unwrap_or("FAIL_DELIVERY_KEEP")));
+            for result in results {
+                let delivered: serde_json::Value =
+                    serde_json::from_str(&result.function.arguments).unwrap();
+                let length = delivered["content"].as_str().unwrap().chars().count();
+                assert!(length > 0 && length < 4000);
+                if let Some(needle) = find {
+                    assert_eq!(delivered["excerpt_offset"], delivered["match_offset"]);
+                    assert_eq!(
+                        delivered["next_offset"].as_u64().unwrap(),
+                        delivered["match_offset"].as_u64().unwrap() + needle.chars().count() as u64
+                    );
+                    assert!(delivered["content"].as_str().unwrap().contains(needle));
+                } else {
+                    assert_eq!(delivered["next_offset"], length);
+                }
+                assert_eq!(delivered["truncated"], true);
+            }
+            let saved: Vec<_> = std::fs::read_dir(&evidence).unwrap().collect();
+            assert_eq!(saved.len(), count);
+            for entry in saved {
+                let snapshot = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+                let record: serde_json::Value =
+                    serde_json::from_str(snapshot.lines().nth(1).unwrap()).unwrap();
+                assert_eq!(record["evidence_kind"], "recovery");
+                let output: serde_json::Value = serde_json::from_str(
+                    record["message_type"]["ToolResult"][0]["function"]["arguments"]
+                        .as_str()
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    output["content"].as_str().unwrap().chars().count(),
+                    4000,
+                    "full authorized result is saved before delivery shrinks it"
+                );
+            }
         }
     }
 

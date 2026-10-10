@@ -10,12 +10,22 @@ pub(super) async fn maintain(
         return Ok(false);
     };
     let split = context_split(messages, policy);
+    let protected = summary_evidence::protected_entries(messages);
     let candidates: Vec<usize> = (1..split)
         .filter(|&i| {
-            matches!(
-                messages[i].message_type,
-                MessageType::ToolUse(_) | MessageType::ToolResult(_)
-            ) && serde_json::to_vec(&messages[i]).is_ok_and(|v| v.len() > 2048)
+            let calls = match &messages[i].message_type {
+                MessageType::ToolUse(calls) | MessageType::ToolResult(calls) => calls,
+                _ => return false,
+            };
+            serde_json::to_vec(&messages[i]).is_ok_and(|v| v.len() > 2048)
+                && (messages[i].content.len() > 1024
+                    || calls.iter().enumerate().any(|(j, call)| {
+                        !protected.contains(&(i, j))
+                            && !call
+                                .function
+                                .arguments
+                                .contains("\"maintenance_receipt\":true")
+                    }))
         })
         .collect();
     if candidates.is_empty() {
@@ -31,10 +41,11 @@ pub(super) async fn maintain(
             _ => continue,
         };
         for (call_index, call) in calls.iter_mut().enumerate() {
-            if call
-                .function
-                .arguments
-                .contains("\"maintenance_receipt\":true")
+            if protected.contains(&(index, call_index))
+                || call
+                    .function
+                    .arguments
+                    .contains("\"maintenance_receipt\":true")
             {
                 continue;
             }
@@ -48,10 +59,16 @@ pub(super) async fn maintain(
                 "instruction":"Reopen the immutable original for missing facts; do not execute the tool again to recover output."}).to_string();
         }
         if next[index].content.len() > 1024 {
-            next[index].content = format!(
-                "{}\nPublic intent excerpt only; original record {index} /content in {}",
-                utf8_prefix(&next[index].content, 768),
+            let mut note = format!(
+                "\nPublic intent excerpt only; original record {index} /content in {}",
                 path.display()
+            );
+            if note.len() > 1024 {
+                note = format!("\nPublic intent excerpt only; original record {index} /content in saved evidence file {}", path.file_name().unwrap_or_default().to_string_lossy());
+            }
+            next[index].content = format!(
+                "{}{note}",
+                utf8_prefix(&next[index].content, 1024usize.saturating_sub(note.len()))
             );
         }
     }

@@ -59,6 +59,109 @@ async fn import_pressure(client: &Client, id: &str, text: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_original_derived_reads_reach_summary_after_delivery_and_maintenance() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let folder = project.path().join(".themis/context/source");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":24000,"recent_messages":4,"total_turns":24}"#,
+    )
+    .unwrap();
+    let source = json!({"role":"User","evidence_kind":"original","content":format!("ACQUIRED_ORIGINAL_FAILURE\n{}", "source observation ".repeat(4000))}).to_string();
+    std::fs::write(folder.join("original.jsonl"), &source).unwrap();
+    let provider = MockServer::start().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let ordinary_calls = calls.clone();
+    let supplied = Arc::new(AtomicBool::new(false));
+    let observed = supplied.clone();
+    Mock::given(method("POST")).respond_with(move |request:&Request| {
+        let body:Value = request.body_json().unwrap();
+        if body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            let input = body["messages"][1]["content"].as_str().unwrap();
+            if input.contains("ACQUIRED_ORIGINAL_FAILURE") && input.contains("original_derived_excerpt") && input.contains("source_sha256") {
+                observed.store(true, Ordering::SeqCst);
+            }
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: observed original failure. Completed changes/tests: reads completed. Unresolved work: finish. Next action: continue."},"finish_reason":"stop"}]}));
+        }
+        let index = ordinary_calls.fetch_add(1, Ordering::SeqCst);
+        let message = if index < 12 {
+            json!({"tool_calls":[{"id":format!("source-{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":".themis/context/source/original.jsonl","jsonl_record":1,"offset":index*4000}).to_string()}}]})
+        } else { json!({"content":"Completed source inspection"}) };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if index<12 {"tool_calls"} else {"stop"}}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Inspect successive original source ranges, then finish."}),
+    );
+    let mut checkpoints = 0;
+    let mut started = 0;
+    let mut finished = 0;
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = &item["payload"]["event"];
+            checkpoints += usize::from(event["kind"] == "context_checkpoint");
+            started += usize::from(event["kind"] == "tool_started");
+            finished += usize::from(event["kind"] == "tool_finished");
+            if event["kind"] == "finished" || event["kind"] == "failed" {
+                break event.clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(terminal["kind"], "finished", "{terminal}");
+    assert_eq!(calls.load(Ordering::SeqCst), 13);
+    assert_eq!(
+        (started, finished),
+        (12, 12),
+        "completed reads must not be replayed across compaction"
+    );
+    assert!(
+        checkpoints > 0,
+        "acquired original ranges must create actual semantic pressure"
+    );
+    assert!(
+        supplied.load(Ordering::SeqCst),
+        "the actual summary request must include the acquired original excerpt with provenance"
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.join("original.jsonl")).unwrap(),
+        source
+    );
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_answer_retries_empty_and_transient_responses_without_replaying_completed_tools() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

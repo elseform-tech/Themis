@@ -1,7 +1,7 @@
 //! Sequential, resumable summaries. Checkpoints are installed only by the caller.
 use super::*;
 
-const VERSION: &str = "adaptive-context-v1";
+const VERSION: &str = "adaptive-context-excerpts-v2";
 
 fn fingerprint(bytes: &[u8]) -> String {
     let mut hash = std::collections::hash_map::DefaultHasher::new();
@@ -13,30 +13,8 @@ fn fragments(messages: &[ChatMessage], bytes: usize) -> anyhow::Result<Vec<Strin
     let mut fragments = Vec::new();
     let mut packet = String::new();
     anyhow::ensure!(bytes >= 512, "source packet budget is too small");
-    for (index, (record, message)) in evidence_records(messages)?
-        .into_iter()
-        .zip(
-            messages
-                .iter()
-                .filter(|message| message.role != ChatRole::System),
-        )
-        .enumerate()
-    {
-        if message.role == ChatRole::Assistant
-            && message.content.starts_with("Earlier context checkpoint")
-        {
-            continue;
-        }
-        let mut value: serde_json::Value = serde_json::from_str(&record)?;
-        if value["evidence_kind"] == "recovery" {
-            continue;
-        }
-        if let Some(results) = value["message_type"]
-            .get_mut("ToolResult")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            results.retain(|result| result["evidence_kind"] != "recovery");
-        }
+    for value in summary_evidence::records(messages)?.0 {
+        let source_record = value["source_record"].clone();
         let record = value.to_string();
         let mut offset = 0;
         while offset < record.len() {
@@ -44,8 +22,8 @@ fn fragments(messages: &[ChatMessage], bytes: usize) -> anyhow::Result<Vec<Strin
             while !record.is_char_boundary(end) {
                 end -= 1;
             }
-            let fragment = serde_json::json!({"source_record": index+1, "serialized_byte_start":offset,
-                "serialized_byte_end":end, "serialized_total_bytes":record.len(), "original_record_fragment": &record[offset..end]}).to_string();
+            let fragment = serde_json::json!({"source_record": source_record, "serialized_byte_start":offset,
+                "serialized_byte_end":end, "serialized_total_bytes":record.len(), "prepared_record_fragment": &record[offset..end]}).to_string();
             anyhow::ensure!(
                 fragment.len() <= bytes,
                 "encoded source fragment exceeds budget"

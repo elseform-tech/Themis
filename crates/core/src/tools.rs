@@ -543,6 +543,10 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
         None
     };
     if let Some(record) = record {
+        // Identify the complete authorized source before selecting or decoding a field.
+        // This is provenance for a secondary excerpt, not proof that its content is true.
+        use sha2::Digest;
+        result["source_sha256"] = format!("{:x}", sha2::Sha256::digest(text.as_bytes())).into();
         result["total_records"] = text.lines().count().into();
         let line = record
             .checked_sub(1)
@@ -1733,7 +1737,17 @@ mod tests {
             "search decoded tool strings, not escaped argument JSON"
         );
         assert_eq!(result["evidence_kind"], "original");
+        use sha2::Digest;
+        let complete = fs::read(root.join("observations.jsonl")).unwrap();
+        assert_eq!(
+            result["source_sha256"],
+            format!("{:x}", sha2::Sha256::digest(&complete))
+        );
         let raw = tool.execute(json!({"file_path":"observations.jsonl","jsonl_record":2,"json_pointer":"/message_type/ToolResult/0/function/arguments"})).await.unwrap();
+        assert_eq!(
+            raw["source_sha256"], result["source_sha256"],
+            "raw and decoded excerpts identify the same full source version"
+        );
         assert_eq!(
             raw["content"], payload,
             "existing raw receipt reads must remain compatible"
@@ -1763,6 +1777,24 @@ mod tests {
         let independent = tool.execute(json!({"file_path":"mixed.jsonl","find":"passage","json_pointer":"/message_type/ToolResult/1/function/arguments"})).await.unwrap();
         assert_eq!(independent["content"], "independent original passage");
         assert_eq!(independent["evidence_kind"], "original");
+        let mut updated = records;
+        updated[0]["message_type"]["ToolResult"][0]["function"]["arguments"] =
+            "changed other record".into();
+        fs::write(
+            root.join("observations.jsonl"),
+            updated
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let changed = tool.execute(json!({"file_path":"observations.jsonl","jsonl_record":2,"json_pointer":"/message_type/ToolResult/0/function/arguments"})).await.unwrap();
+        assert_eq!(changed["content"], raw["content"]);
+        assert_ne!(
+            changed["source_sha256"], raw["source_sha256"],
+            "source version covers the full file, including records outside the excerpt"
+        );
     }
 
     #[test]
