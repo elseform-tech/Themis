@@ -66,7 +66,13 @@ impl AppState {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
             } => return Err("Stopped by you".to_owned()),
-            key = self.api_key_for(snapshot.provider) => key?,
+            key = async {
+                let key = self.api_key_for(snapshot.provider).await?;
+                if snapshot.reasoning_effort.is_some() {
+                    self.ensure_go_catalog().await?;
+                }
+                Ok::<_, String>(key)
+            } => key?,
         };
         if let Some(effort) = &snapshot.reasoning_effort {
             let catalog = self.inner.go_catalog.read().await;

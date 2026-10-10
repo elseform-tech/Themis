@@ -494,6 +494,14 @@ impl AppState {
         Ok(models)
     }
 
+    async fn ensure_go_catalog(&self) -> Result<(), String> {
+        let unloaded = self.inner.go_catalog.read().await.is_empty();
+        if unloaded {
+            self.list_go_models().await?;
+        }
+        Ok(())
+    }
+
     /// Stores a comment pinned to `path` and returns it.
     pub async fn add_comment(
         &self,
@@ -1076,6 +1084,110 @@ mod tests {
         assert!(!info.running);
         assert!(!info.recovered);
         assert!(rebooted.reconcile_report().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cold_effort_validation_loads_catalog_before_rejecting_support() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+        for setting in [true, false] {
+            let (state, dir) = test_state();
+            state
+                .set_secret("go".into(), "synthetic-test-key".into())
+                .await
+                .unwrap();
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/models"))
+                .respond_with(ResponseTemplate::new(503))
+                .expect(1)
+                .mount(&server)
+                .await;
+            state.set_go_base_url_override(Some(server.uri()));
+            let thread = state
+                .create_thread(
+                    dir.path().to_string_lossy().into_owned(),
+                    ProviderKind::Go,
+                    Some("model-a".into()),
+                )
+                .await
+                .unwrap();
+            let error = if setting {
+                state
+                    .set_thread_effort(thread.id.clone(), Some("low".into()))
+                    .await
+                    .unwrap_err()
+            } else {
+                let (sink, _) = crate::sink::ChannelSink::channel();
+                state
+                    .send_message_with_effort(
+                        Arc::new(sink),
+                        thread.id.clone(),
+                        "hello".into(),
+                        Some("low".into()),
+                    )
+                    .await
+                    .unwrap_err()
+            };
+            assert!(
+                error.contains("Could not load OpenCode Go models"),
+                "an unloaded catalog is not evidence of unsupported effort: {error}"
+            );
+            assert!(!state.get_thread(&thread.id).await.unwrap().running);
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_cancels_cold_catalog_load_without_holding_thread_locks() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+        let (state, dir) = test_state();
+        state
+            .set_secret("go".into(), "synthetic-test-key".into())
+            .await
+            .unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(503).set_delay(std::time::Duration::from_secs(30)))
+            .mount(&server)
+            .await;
+        state.set_go_base_url_override(Some(server.uri()));
+        let thread = state
+            .create_thread(
+                dir.path().to_string_lossy().into_owned(),
+                ProviderKind::Go,
+                Some("model-a".into()),
+            )
+            .await
+            .unwrap();
+        let copy = state.clone();
+        let id = thread.id.clone();
+        let sending = tokio::spawn(async move {
+            let (sink, _) = crate::sink::ChannelSink::channel();
+            copy.send_message_with_effort(Arc::new(sink), id, "hello".into(), Some("low".into()))
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            while server.received_requests().await.unwrap().is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("catalog fetch started after run preparation");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            assert!(state.get_thread(&thread.id).await.unwrap().running);
+            state.stop_thread(thread.id.clone()).await.unwrap();
+            let error = sending.await.unwrap().unwrap_err();
+            assert!(error.contains("Stopped by you"), "{error}");
+            assert!(!state.get_thread(&thread.id).await.unwrap().running);
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

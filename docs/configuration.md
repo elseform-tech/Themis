@@ -141,7 +141,7 @@ and GPT 5.6/6 Luna with `reasoning.effort: "none"`. Other or unknown models use
 credentials and session. This conservative fallback includes models whose off
 control has not been verified; it is not a claim that all of them require reasoning.
 If the summary provider fails, the existing bounded retry/durable fallback applies.
-Ordinary answers retain the selected model and configured reasoning behavior.
+Ordinary answers retain the selected model and configured reasoning behavior. Effort validation loads the Go catalog on first use after restart, before deciding whether an effort is supported. Catalog-loading failures remain explicit loading errors; Stop can cancel that fetch during run setup.
 Summary diagnostics identify the effective model without logging response text.
 There is no section scheduler or reconciliation pass; `section_max_tokens` is
 accepted for existing files but no longer affects behavior. See [context checkpoints](context-and-attachments.md)

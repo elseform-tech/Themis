@@ -515,6 +515,9 @@ impl AppState {
         effort: Option<String>,
     ) -> Result<ThreadInfo, String> {
         let effort = effort.filter(|value| !value.is_empty());
+        if effort.is_some() {
+            self.ensure_go_catalog().await?;
+        }
         let info = {
             let mut threads = self.inner.threads.write().await;
             let record = threads

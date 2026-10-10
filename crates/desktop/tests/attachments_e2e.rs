@@ -420,6 +420,63 @@ async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_cold_effort_validation_reports_catalog_load_failure() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(2)
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"model-a"}),
+    );
+    for (method, args) in [
+        (
+            "set_thread_effort",
+            json!({"threadId":thread["id"],"effort":"low"}),
+        ),
+        (
+            "send_message",
+            json!({"threadId":thread["id"],"text":"hello","reasoningEffort":"low"}),
+        ),
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(data.path())
+            .args(["call", method])
+            .arg(args.to_string())
+            .env_remove("OPENCODE_KEY")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("Could not load OpenCode Go models"),
+            "{error}"
+        );
+        assert_eq!(
+            cli(data.path(), "get_thread", json!({"threadId":thread["id"]}))["running"],
+            false
+        );
+    }
+    let client = Client::new(data.path().into());
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
