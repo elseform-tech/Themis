@@ -135,6 +135,11 @@ pub fn configured_hook(
 #[serde(default, deny_unknown_fields)]
 pub struct CompactionConfig {
     pub timeout_seconds: u64,
+    pub request_timeout_seconds: u64,
+    pub maintenance_threshold_ratio: f64,
+    pub semantic_threshold_ratio: f64,
+    pub target_headroom_interactions: usize,
+    pub max_stages: usize,
     pub retry_limit: u8,
     pub section_max_tokens: u32,
     pub summary_max_tokens: u32,
@@ -148,6 +153,11 @@ impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
             timeout_seconds: 300,
+            request_timeout_seconds: 300,
+            maintenance_threshold_ratio: 0.83,
+            semantic_threshold_ratio: 0.93,
+            target_headroom_interactions: 6,
+            max_stages: 32,
             retry_limit: 1,
             section_max_tokens: 4096,
             summary_max_tokens: 8192,
@@ -160,11 +170,22 @@ impl Default for CompactionConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct LoggingConfig {
     pub level: String,
+    pub context_metrics: ContextMetricsLevel,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextMetricsLevel {
+    Off,
+    #[default]
+    Summary,
+    Detailed,
 }
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             level: "info".into(),
+            context_metrics: ContextMetricsLevel::Summary,
         }
     }
 }
@@ -439,8 +460,29 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         "unsupported schema_version; expected 1"
     );
     ensure!(
-        (1..=300).contains(&config.compaction.timeout_seconds),
-        "compaction.timeout_seconds must be 1..300"
+        (1..=600).contains(&config.compaction.timeout_seconds),
+        "compaction.timeout_seconds must be 1..600"
+    );
+    let compaction = &config.compaction;
+    ensure!(
+        (1..=300).contains(&compaction.request_timeout_seconds),
+        "compaction.request_timeout_seconds must be 1..300"
+    );
+    ensure!(
+        compaction.maintenance_threshold_ratio.is_finite()
+            && compaction.semantic_threshold_ratio.is_finite()
+            && (0.5..=0.95).contains(&compaction.maintenance_threshold_ratio)
+            && compaction.semantic_threshold_ratio > compaction.maintenance_threshold_ratio
+            && compaction.semantic_threshold_ratio <= 0.97,
+        "compaction thresholds require 0.5 <= maintenance < semantic <= 0.97"
+    );
+    ensure!(
+        (1..=20).contains(&compaction.target_headroom_interactions),
+        "compaction.target_headroom_interactions must be 1..20"
+    );
+    ensure!(
+        (1..=128).contains(&compaction.max_stages),
+        "compaction.max_stages must be 1..128"
     );
     ensure!(
         config.compaction.retry_limit <= 1,
@@ -460,7 +502,7 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
             "context_token_budget",
             config.context_token_budget,
             2000,
-            200000,
+            256000,
         ),
         ("recent_messages", config.recent_messages, 2, 200),
         ("total_turns", config.total_turns, 1, 2000),
@@ -555,9 +597,9 @@ pub fn schema() -> Value {
         "properties":{
             "skills":{"type":"object","additionalProperties":false,"properties":{"paths":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024},"default":[".agents/skills",".codex/skills",".claude/skills"]}}},
             "instructions":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024}},
-            "logging":{"type":"object","additionalProperties":false,"properties":{"level":{"enum":["debug","info","warn","error"],"default":"info"}}},
+            "logging":{"type":"object","additionalProperties":false,"properties":{"level":{"enum":["debug","info","warn","error"],"default":"info"},"context_metrics":{"enum":["off","summary","detailed"],"default":"summary"}}},
         "$schema":{"type":"string"},"schema_version":{"const":1,"default":1},
-            "context_token_budget":{"type":"integer","minimum":2000,"maximum":200000},
+            "context_token_budget":{"type":"integer","minimum":2000,"maximum":256000},
             "recent_messages":{"type":"integer","minimum":2,"maximum":200},
             "total_turns":{"type":"integer","minimum":1,"maximum":2000},
             "approval":{"type":"object","additionalProperties":false,"properties":{
@@ -569,7 +611,12 @@ pub fn schema() -> Value {
                 }}}
             }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
-                "timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"default":300},
+                "timeout_seconds":{"type":"integer","minimum":1,"maximum":600,"default":300},
+                "request_timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"default":300},
+                "maintenance_threshold_ratio":{"type":"number","minimum":0.5,"maximum":0.95,"default":0.83},
+                "semantic_threshold_ratio":{"type":"number","exclusiveMinimum":0.5,"maximum":0.97,"default":0.93},
+                "target_headroom_interactions":{"type":"integer","minimum":1,"maximum":20,"default":6},
+                "max_stages":{"type":"integer","minimum":1,"maximum":128,"default":32},
                 "retry_limit":{"type":"integer","minimum":0,"maximum":1,"default":1},
                 "section_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":4096},
                 "summary_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":8192},
@@ -583,7 +630,27 @@ pub fn schema() -> Value {
 mod tests {
     use super::*;
     #[test]
-    fn five_minute_compaction_default_and_ceiling_agree_with_schema() {
+    fn adaptive_context_configuration_accepts_256k_and_validates_shared_controls() {
+        let source = r#"{"context_token_budget":256000,"compaction":{"maintenance_threshold_ratio":0.83,"semantic_threshold_ratio":0.93,"target_headroom_interactions":6,"timeout_seconds":600,"request_timeout_seconds":300},"logging":{"context_metrics":"detailed"}}"#;
+        let resolved = resolve(Some(source), None, None).unwrap();
+        assert_eq!(resolved.config.context_token_budget, Some(256000));
+        assert_eq!(
+            resolved.provenance["compaction.request_timeout_seconds"],
+            "user"
+        );
+        assert!(resolve(Some(r#"{"context_token_budget":256001}"#), None, None).is_err());
+        for source in [
+            r#"{"compaction":{"maintenance_threshold_ratio":0.96,"semantic_threshold_ratio":0.93}}"#,
+            r#"{"compaction":{"semantic_threshold_ratio":1.0}}"#,
+            r#"{"compaction":{"target_headroom_interactions":0}}"#,
+            r#"{"compaction":{"request_timeout_seconds":0}}"#,
+            r#"{"logging":{"context_metrics":"payloads"}}"#,
+        ] {
+            assert!(resolve(Some(source), None, None).is_err(), "{source}");
+        }
+    }
+    #[test]
+    fn legacy_five_minute_default_and_extended_ceiling_agree_with_schema() {
         assert_eq!(
             resolve(None, None, None)
                 .unwrap()
@@ -599,7 +666,7 @@ mod tests {
         )
         .is_ok());
         assert!(resolve(
-            Some(r#"{"compaction":{"timeout_seconds":301}}"#),
+            Some(r#"{"compaction":{"timeout_seconds":601}}"#),
             None,
             None
         )
@@ -607,7 +674,7 @@ mod tests {
         assert!(resolve(Some(r#"{"compaction":{"timeout_seconds":0}}"#), None, None).is_err());
         let field = &schema()["properties"]["compaction"]["properties"]["timeout_seconds"];
         assert_eq!(field["default"], 300);
-        assert_eq!(field["maximum"], 300);
+        assert_eq!(field["maximum"], 600);
     }
     #[test]
     fn jsonc_layers_and_validation() {
