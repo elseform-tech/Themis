@@ -862,8 +862,8 @@ async fn request_answer_with_timeout(
 ) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
     until_stopped(
         tokio::time::timeout(
-            timeout,
-            request_answer_inner(llm, messages, llm_tools, events, stopped),
+            timeout.saturating_mul(3),
+            request_answer_inner(llm, messages, llm_tools, events, stopped, timeout),
         ),
         stopped,
         events,
@@ -897,6 +897,7 @@ async fn request_answer_inner(
     llm_tools: &[Tool],
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     stopped: &AtomicBool,
+    attempt_timeout: std::time::Duration,
 ) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
     const EMPTY_ANSWER: &str = "Provider returned no public answer or tool calls";
     let mut retries = 0;
@@ -904,42 +905,54 @@ async fn request_answer_inner(
         let mut published = false;
         let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> =
             crate::context_metrics::with_attempt(retries as usize, async {
-                match llm
-                    .chat_stream_with_tools(messages, Some(llm_tools), None)
-                    .await
-                {
-                    Ok(mut stream) => {
-                        let mut text = String::new();
-                        let mut calls = Vec::new();
-                        while let Some(chunk) = stream.next().await {
-                            check_stopped(stopped, events).await?;
-                            match chunk? {
-                                StreamChunk::Text(delta) => {
-                                    published |= !delta.is_empty();
-                                    text.push_str(&delta);
-                                    events.send(RunEvent::AssistantText(delta)).await.ok();
-                                }
-                                StreamChunk::ToolUseComplete { tool_call, .. } => {
-                                    calls.push(tool_call)
-                                }
-                                _ => {} // Reasoning content is private; only public narration reaches the UI.
-                            }
-                        }
-                        Ok(((!text.is_empty()).then_some(text), calls))
-                    }
-                    Err(autoagents::llm::error::LLMError::Generic(message))
-                        if message == "Streaming with tools not supported for this provider" =>
+                // Bound handshake, complete stream and non-streaming fallback together.
+                // The published flag survives cancellation so partial text cannot be replayed.
+                tokio::time::timeout(attempt_timeout, async {
+                    match llm
+                        .chat_stream_with_tools(messages, Some(llm_tools), None)
+                        .await
                     {
-                        let response = llm.chat_with_tools(messages, Some(llm_tools), None).await?;
-                        let text = response.text().filter(|text| !text.is_empty());
-                        if let Some(text) = text.clone() {
-                            published = true;
-                            events.send(RunEvent::AssistantText(text)).await.ok();
+                        Ok(mut stream) => {
+                            let mut text = String::new();
+                            let mut calls = Vec::new();
+                            while let Some(chunk) = stream.next().await {
+                                check_stopped(stopped, events).await?;
+                                match chunk? {
+                                    StreamChunk::Text(delta) => {
+                                        published |= !delta.is_empty();
+                                        text.push_str(&delta);
+                                        events.send(RunEvent::AssistantText(delta)).await.ok();
+                                    }
+                                    StreamChunk::ToolUseComplete { tool_call, .. } => {
+                                        calls.push(tool_call)
+                                    }
+                                    _ => {} // Reasoning content is private; only public narration reaches the UI.
+                                }
+                            }
+                            Ok(((!text.is_empty()).then_some(text), calls))
                         }
-                        Ok((text, response.tool_calls().unwrap_or_default()))
+                        Err(autoagents::llm::error::LLMError::Generic(message))
+                            if message
+                                == "Streaming with tools not supported for this provider" =>
+                        {
+                            let response =
+                                llm.chat_with_tools(messages, Some(llm_tools), None).await?;
+                            let text = response.text().filter(|text| !text.is_empty());
+                            if let Some(text) = text.clone() {
+                                published = true;
+                                events.send(RunEvent::AssistantText(text)).await.ok();
+                            }
+                            Ok((text, response.tool_calls().unwrap_or_default()))
+                        }
+                        Err(error) => Err(error.into()),
                     }
-                    Err(error) => Err(error.into()),
-                }
+                })
+                .await
+                .map_err(|_| {
+                    autoagents::llm::error::LLMError::HttpError(
+                        "request timed out: ordinary attempt deadline exceeded".into(),
+                    )
+                })?
             })
             .await
             .and_then(|(text, calls)| {
@@ -3308,6 +3321,7 @@ mod tests {
             calls: AtomicUsize,
             public: bool,
             persistent: bool,
+            stall: bool,
         }
         impl LLMProvider for Interrupted {}
         impl ModelsProvider for Interrupted {}
@@ -3354,6 +3368,12 @@ mod tests {
                     if self.public {
                         chunks.push(Ok(StreamChunk::Text("Visible once".into())));
                     }
+                    if self.stall {
+                        return Ok(Box::pin(
+                            futures_util::stream::iter(chunks)
+                                .chain(futures_util::stream::pending()),
+                        ));
+                    }
                     chunks.push(Err(LLMError::HttpError(
                         "request timed out: stream interrupted".into(),
                     )));
@@ -3363,17 +3383,42 @@ mod tests {
                 Ok(Box::pin(futures_util::stream::iter(chunks)))
             }
         }
-        for (public, persistent, expected_calls) in
-            [(false, false, 2), (true, false, 1), (false, true, 3)]
-        {
+        for (public, persistent, stall, expected_calls) in [
+            (false, false, false, 2),
+            (true, false, false, 1),
+            (false, true, false, 3),
+            (false, false, true, 2),
+            (true, false, true, 1),
+            (false, true, true, 2),
+        ] {
             let provider = Arc::new(Interrupted {
                 calls: AtomicUsize::new(0),
                 public,
                 persistent,
+                stall,
             });
             let llm: Arc<dyn LLMProvider> = provider.clone();
             let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-            let result = request_answer(&llm, &[], &[], &tx, &AtomicBool::new(false)).await;
+            let started = std::time::Instant::now();
+            let result = request_answer_with_timeout(
+                &llm,
+                &[],
+                &[],
+                &tx,
+                &AtomicBool::new(false),
+                std::time::Duration::from_millis(if stall { 1500 } else { 5000 }),
+            )
+            .await;
+            if stall {
+                assert!(started.elapsed() < std::time::Duration::from_secs(5));
+                if persistent {
+                    assert!(result
+                        .as_ref()
+                        .unwrap_err()
+                        .to_string()
+                        .contains("deadline exceeded"));
+                }
+            }
             assert_eq!(provider.calls.load(Ordering::SeqCst), expected_calls);
             if !public && !persistent {
                 assert_eq!(result.unwrap().0.as_deref(), Some("Recovered"));
@@ -3401,6 +3446,7 @@ mod tests {
             calls: AtomicUsize::new(0),
             public: false,
             persistent: true,
+            stall: true,
         });
         let llm: Arc<dyn LLMProvider> = provider.clone();
         let stopped = AtomicBool::new(false);
@@ -3565,6 +3611,48 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn slow_truncated_attempt_does_not_spend_the_retry_deadline() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
+            let first = observed.fetch_add(1, Ordering::SeqCst)==0;
+            ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(600))
+                .set_body_json(serde_json::json!({"choices":[{"message":{"content":if first {serde_json::Value::Null} else {serde_json::json!("Recovered after a slow attempt")}},"finish_reason":if first {"length"} else {"stop"}}]}))
+        }).mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let result = request_answer_with_timeout(
+            &llm,
+            &[],
+            &[],
+            &tx,
+            &AtomicBool::new(false),
+            std::time::Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(
+            result.unwrap().0.as_deref(),
+            Some("Recovered after a slow attempt")
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let mut public = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let RunEvent::AssistantText(text) = event {
+                public.push(text);
+            }
+        }
+        assert_eq!(public, vec!["Recovered after a slow attempt"]);
     }
 
     #[tokio::test]

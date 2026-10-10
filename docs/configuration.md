@@ -148,8 +148,10 @@ Summary diagnostics identify the effective model without logging response text.
 Each ordinary answer request allows at most two retries
 before public text, with exponential base delays of one then two seconds and
 randomized jitter of 0–500 ms then 0–1,000 ms. A longer `Retry-After` is a minimum;
-the jitter is added above it. All ordinary attempts and backoffs share a
-five-minute deadline. Authentication and invalid-request failures do not retry.
+the jitter is added above it. Each ordinary attempt has up to five minutes, including
+the handshake, stream and fallback. All attempts and backoffs share a fifteen-minute
+overall deadline, which may shorten the final attempt. An attempt timeout may retry
+only before public text. Authentication and invalid-request failures do not retry.
 An answer with neither nonblank public text nor tool calls is never accepted as
 completion. Empty answers may retry within the same attempt/deadline bound when
 no public text was emitted; persistent emptiness fails explicitly. Truncated JSON

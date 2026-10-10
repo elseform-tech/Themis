@@ -28,14 +28,32 @@ and provider usage availability. There is no imported history, artificially
 lowered budget, or manual retry-compaction command in that live case.
 
 Ordinary unpublished output-limit failures now share the existing maximum of two
-retries with empty/transient failures, under one 300-second answer deadline.
+retries with empty/transient failures. Each attempt has up to 300 seconds, under
+one 900-second overall answer deadline including waits. The overall deadline may
+shorten the final attempt.
 Model, reasoning settings and output cap stay unchanged. Public text prevents
 retry; failed-attempt tool calls never execute. Per-attempt metadata distinguishes
 retries in context telemetry. Compaction stages already have automatic retries;
 this change addresses ordinary generation before or after compaction.
 
-Fresh local results: 182 core unit tests passed; 25 runtime integration tests
+Local results for commit `2d7b93b`: 182 core unit tests passed; 25 runtime integration tests
 passed, with one opt-in live-provider test ignored. Workspace Clippy, formatting,
 and 14 dashboard tests passed. Dedicated live forced-pressure acceptance remains
 pending; an earlier natural 200k coding trial failed on ordinary provider output
 truncation before any compaction, and its failure evidence was preserved.
+
+The following live 200k coding trial confirmed retry starvation before compaction:
+a truncated attempt took 169 seconds, then its retry was canceled after 130 seconds
+because all attempts shared 300 seconds. The allocation regression reproduces this
+with two 600 ms responses and a one-second attempt allowance; it failed before the
+fix and passes with independent attempt allowances. Additional cases cover a
+stalled attempt followed by success, public text followed by a stall with no retry,
+persistent stalls bounded by the overall deadline, and Stop during a stalled
+request. Fast persistent failures still allow exactly three attempts. No live
+compaction acceptance is implied by these local timeout checks.
+
+After the allocation fix, fresh checks passed: 183 core unit tests; 25 runtime
+integration tests (one opt-in live test ignored); six configuration/diagnostic
+checks; 13 shared-server/CLI checks; workspace Clippy and formatting; Ruff and
+14 dashboard tests. The development desktop binaries rebuilt successfully.
+No full unfiltered workspace/Keychain suite or fresh line coverage was run.
