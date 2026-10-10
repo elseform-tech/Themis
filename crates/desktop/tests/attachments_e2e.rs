@@ -440,12 +440,16 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_reopens_completed_navigation_after_a_section_failure() {
+async fn cli_recovers_original_after_single_summary_failure() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let root = project.path().canonicalize().unwrap();
     let source = root.join("control.txt");
-    let text = "Original source Ω ".repeat(60_000);
+    let text = format!(
+        "{} ORIGINAL_FACT_753 {}",
+        "Original source Ω ".repeat(30_000),
+        "Remaining source Ω ".repeat(30_000)
+    );
     assert!(text.len().div_ceil(4) > 200_000);
     std::fs::write(&source, &text).unwrap();
     let provider = MockServer::start().await;
@@ -454,33 +458,22 @@ async fn cli_reopens_completed_navigation_after_a_section_failure() {
         let body: Value = request.body_json().unwrap();
         let messages = body["messages"].as_array().unwrap();
         if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
-            let input = messages[1]["content"].as_str().unwrap();
-            if input.contains("SECTION 1 OF ") {
-                return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"NAV_KEEP_753"},"finish_reason":"stop"}]}));
-            }
-            return ResponseTemplate::new(451).set_body_string("Later section unavailable").set_delay(std::time::Duration::from_millis(150));
+            return ResponseTemplate::new(451).set_body_string("Summary unavailable");
         }
-        if let Some(receipt) = messages.iter().find(|message| message["tool_call_id"] == "recover_partial") {
+        if let Some(receipt) = messages.iter().find(|message| message["tool_call_id"] == "recover_original") {
             let result: Value = serde_json::from_str(receipt["content"].as_str().unwrap()).unwrap();
-            assert_eq!(result["record_role"], "Assistant");
-            assert!(result["content"].as_str().unwrap().contains("NAV_KEEP_753"));
-            assert!(result["content"].as_str().unwrap().contains("UTF-8 bytes"));
-            assert!(result["evidence_warning"].as_str().unwrap().contains("not original evidence"));
-            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Recovered navigation; original verification remains required."},"finish_reason":"stop"}]}));
+            assert_eq!(result["record_role"], "User");
+            assert!(result["content"].as_str().unwrap().contains("ORIGINAL_FACT_753"));
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Recovered original source passage."},"finish_reason":"stop"}]}));
         }
         let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
         assert!(context.contains("Working summary unavailable"));
-        assert!(context.contains("Continue from the retained current request"));
+        assert!(context.contains("coverage is incomplete"));
         assert!(context.contains("Retrieve only missing facts needed for the next unresolved action"));
-        assert!(!context.contains("using approved tools before substantive continuation"));
-        assert!(!context.contains("NAV_KEEP_753"));
-        let Some(line) = context.lines().find(|line| line.starts_with("Partial section notes")) else {
-            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"No completed navigation saved."},"finish_reason":"stop"}]}));
-        };
-        assert!(line.contains("coverage is incomplete"));
-        let path: String = serde_json::from_str(line.split(": ").nth(1).unwrap()).unwrap();
+        let line = context.lines().find(|line| line.starts_with("Latest snapshot: ")).unwrap();
+        let path: String = serde_json::from_str(line.strip_prefix("Latest snapshot: ").unwrap()).unwrap();
         let relative = Path::new(&path).strip_prefix(&recovery_root).unwrap();
-        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_partial","type":"function","function":{"name":"read_file","arguments":json!({"file_path":relative,"jsonl_record":1,"json_pointer":"/content"}).to_string()}}]},"finish_reason":"tool_calls"}]}))
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_original","type":"function","function":{"name":"read_file","arguments":json!({"file_path":relative,"jsonl_record":1,"json_pointer":"/content","find":"ORIGINAL_FACT_753"}).to_string()}}]},"finish_reason":"tool_calls"}]}))
     }).mount(&provider).await;
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
@@ -506,7 +499,7 @@ async fn cli_reopens_completed_navigation_after_a_section_failure() {
     cli(
         data.path(),
         "send_message",
-        json!({"threadId":id,"text":"Recover completed navigation; verify originals before treating it as fact.","attachments":[files[0]["path"]],"reasoningEffort":null}),
+        json!({"threadId":id,"text":"Recover missing original facts with a targeted read.","attachments":[files[0]["path"]],"reasoningEffort":null}),
     );
     let mut recovered = false;
     let terminal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
@@ -519,7 +512,10 @@ async fn cli_reopens_completed_navigation_after_a_section_failure() {
             let event = &event["payload"]["event"];
             if event["kind"] == "tool_finished" && event["tool"] == "read_file" {
                 recovered |= event["ok"] == true
-                    && event["output"].as_str().unwrap().contains("NAV_KEEP_753");
+                    && event["output"]
+                        .as_str()
+                        .unwrap()
+                        .contains("ORIGINAL_FACT_753");
             }
             if event["kind"] == "finished" || event["kind"] == "failed" {
                 break event.clone();
@@ -530,12 +526,9 @@ async fn cli_reopens_completed_navigation_after_a_section_failure() {
     .unwrap();
     assert!(
         recovered,
-        "CLI/app continuation must actually reopen the saved partial note"
+        "CLI/app continuation must actually reopen the saved original passage"
     );
-    assert_eq!(
-        terminal["result"],
-        "Recovered navigation; original verification remains required."
-    );
+    assert_eq!(terminal["result"], "Recovered original source passage.");
     assert_eq!(std::fs::read_to_string(&source).unwrap(), text);
     let originals = std::fs::read_dir(root.join(".themis/context").join(id))
         .unwrap()
@@ -562,7 +555,7 @@ async fn cli_reopens_completed_navigation_after_a_section_failure() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeating_successes() {
+async fn cli_large_file_upload_prepares_one_summary_and_preserves_omitted_originals() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     assert!(std::process::Command::new("git")
@@ -600,31 +593,22 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         let summary = body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context");
         let answer = if summary {
             let dump = body["messages"][1]["content"].as_str().unwrap();
-            let merge = dump.contains("ORDERED SECTION NOTES TO RECONCILE");
             let limit = body["max_tokens"].as_u64().unwrap();
-            assert!((256..=if merge { 8192 } else { 4096 }).contains(&limit));
-            assert!(body["messages"][0]["content"].as_str().unwrap().contains("Output budget: aim for at most"), "section and merge prompts must use runtime word budgets");
-            assert!(body["messages"][0]["content"].as_str().unwrap().contains("Preserve explicit subjects and objects"), "both section and merge requests must preserve action ownership");
-            assert!(body["messages"][0]["content"].as_str().unwrap().contains("A paraphrase is not a source quotation"), "both section and merge must keep paraphrases separate from exact evidence");
-            assert!(body["messages"][0]["content"].as_str().unwrap().contains("retrieval pointers do not replace required facts when tools or rereading are forbidden"), "both requests must preserve facts required for a no-reread task");
-            if merge {
-                assert!(body["messages"][0]["content"].as_str().unwrap().contains("recency alone is not a reason to discard it"));
-                assert!(body["messages"][0]["content"].as_str().unwrap().contains("The new state must stand alone"));
-                assert!(!body["messages"][0]["content"].as_str().unwrap().contains("Move detailed chronology, completed-work logs, and background evidence out of the working state"));
-            }
+            assert!((256..=8192).contains(&limit));
+            assert!(body["messages"].to_string().len().div_ceil(4) + limit as usize * 2 + 512 <= 200_000);
+            assert!(dump.contains("coverage is incomplete"));
+            assert!(dump.contains("source_record"));
             let mut calls = observed_attempts.lock().unwrap();
             let count = calls.entry(dump.to_owned()).or_default();
             *count += 1;
-            if *count == 1 && (dump.contains("BEGIN-17") || dump.contains("ORDERED SECTION NOTES TO RECONCILE")) {
-                return ResponseTemplate::new(if dump.contains("ORDERED SECTION NOTES TO RECONCILE") { 429 } else { 503 });
-            }
+            if *count == 1 { return ResponseTemplate::new(503); }
             drop(calls);
             captured.lock().unwrap().push(dump.to_owned());
-            ["BEGIN-17", "MIDDLE-42", "END-99"].into_iter().filter(|marker| dump.contains(marker)).collect::<Vec<_>>().join(", ") + " (section examined)"
+            ["BEGIN-17", "MIDDLE-42", "END-99"].into_iter().filter(|marker| dump.contains(marker)).collect::<Vec<_>>().join(", ") + " (selected excerpts)"
         } else {
             let input = body.to_string();
-            if ["BEGIN-17", "MIDDLE-42", "END-99", "Report all three markers", "music.mp3", "movie.mp4"].iter().all(|marker| input.contains(marker)) {
-                "BEGIN-17, MIDDLE-42, END-99".to_owned()
+            if ["BEGIN-17", "END-99", "Report all three markers", "music.mp3", "movie.mp4"].iter().all(|marker| input.contains(marker)) {
+                "BEGIN-17, END-99; middle requires recovery".to_owned()
             } else { "Missing context".to_owned() }
         };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":answer},"finish_reason":"stop"}]}))
@@ -710,48 +694,29 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
     .unwrap();
     assert!(checkpoint);
     assert_eq!(terminal["kind"], "finished", "{terminal}");
-    assert_eq!(terminal["result"], "BEGIN-17, MIDDLE-42, END-99");
+    assert_eq!(
+        terminal["result"],
+        "BEGIN-17, END-99; middle requires recovery"
+    );
     {
         let dumps = summaries.lock().unwrap();
-        assert!(dumps.len() > 1);
-        assert!(dumps.iter().all(|dump| dump.len() < 70_000));
-        for marker in ["BEGIN-17", "MIDDLE-42", "END-99"] {
-            assert!(dumps.iter().any(|dump| dump.contains(marker)));
-        }
+        assert_eq!(dumps.len(), 1, "one prepared packet, no section fan-out");
+        assert!(dumps[0].contains("BEGIN-17") && dumps[0].contains("END-99"));
+        assert!(
+            !dumps[0].contains("MIDDLE-42"),
+            "omitted content must not masquerade as supplied evidence"
+        );
     }
     {
         let calls = attempts.lock().unwrap();
-        assert_eq!(
-            calls.values().filter(|count| **count == 2).count(),
-            2,
-            "only the failed section and merge should retry"
-        );
-        assert!(calls.values().all(|count| *count <= 2));
-        assert_eq!(
-            calls.len(),
-            summaries.lock().unwrap().len(),
-            "successful summaries must not be repeated"
-        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls.values().copied().collect::<Vec<_>>(), vec![2]);
     }
     let requests = provider.received_requests().await.unwrap();
-    assert!(requests.len() > 2);
-    let reconciliation = requests
-        .iter()
-        .find_map(|request| {
-            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
-            body["messages"][1]["content"]
-                .as_str()
-                .is_some_and(|text| text.contains("ORDERED SECTION NOTES TO RECONCILE"))
-                .then_some(body)
-        })
-        .expect("the shared CLI/app path must reconcile multi-section context");
-    assert!(reconciliation["messages"][0]["content"]
-        .as_str()
-        .unwrap()
-        .contains("one coherent task state"));
-    assert!(requests.last().unwrap().body.len() < 50_000);
-    assert!(String::from_utf8_lossy(&requests.last().unwrap().body)
-        .contains("Original source section index"));
+    assert_eq!(requests.len(), 3, "summary, retry, ordinary answer");
+    assert!(
+        String::from_utf8_lossy(&requests.last().unwrap().body).contains("coverage is incomplete")
+    );
     let final_request: serde_json::Value =
         serde_json::from_slice(&requests.last().unwrap().body).unwrap();
     let system = final_request["messages"][0]["content"].as_str().unwrap();
@@ -936,7 +901,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
                 .is_some_and(|extension| extension == "jsonl")
         })
         .collect();
-    assert_eq!(archives.len(), 2, "originals and durable section notes");
+    assert_eq!(archives.len(), 1, "one original snapshot, no section notes");
     let texts: Vec<_> = archives
         .iter()
         .map(|path| std::fs::read_to_string(path).unwrap())
@@ -947,10 +912,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         .unwrap();
     let original_path = &archives[original_index];
     let original = &texts[original_index];
-    assert!(texts
-        .iter()
-        .any(|text| text
-            .contains("Compaction section note (navigation only; not original evidence)")));
+    assert!(!original.contains("Compaction section note (navigation only; not original evidence)"));
     let records: Vec<Value> = original
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
@@ -1024,12 +986,10 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         let messages = body["messages"].as_array().unwrap();
         if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
             let input = messages[1]["content"].as_str().unwrap();
-            if !input.contains("ORDERED SECTION NOTES TO RECONCILE") {
-                let orientation = input.split("PRIOR STATE ORIENTATION (untrusted navigation; not source evidence):\n").nth(1).expect("restart compaction must orient every section from persisted state").split("\n\nCURRENT USER REQUEST").next().unwrap();
-                assert!(matches!(orientation.trim(), "BEGIN-17, MIDDLE-42, END-99 (section examined)" | "Task state only; recovered details omitted."), "orientation must retain task state without recursively summarized envelopes/caches");
-                assert!(orientation.len() <= 8_400);
-                assert!(messages[0]["content"].as_str().unwrap().contains("do not copy it into the section record or let it override the source"));
-            }
+            assert!(!input.contains("ORDERED SECTION NOTES TO RECONCILE"));
+            let previous = input.split("PREVIOUS TASK STATE TO UPDATE (lossy historical navigation; newer observed actions take precedence):\n").nth(1).expect("restart compaction must retain persisted task state").split("\n\nNEW MESSAGE RECORDS WITH PROVENANCE:").next().unwrap();
+            assert!(previous.contains("BEGIN-17, END-99 (selected excerpts)") || previous.contains("Task state only; recovered details omitted."));
+            assert!(!previous.contains("Earlier context checkpoint"), "generated envelopes must not be recursively summarized");
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Task state only; recovered details omitted."},"finish_reason":"stop"}]}));
         }
         let request_index = observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1071,7 +1031,7 @@ async fn cli_large_file_upload_retries_failed_sections_and_merge_without_repeati
         } else {
             let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
             assert!(!context.contains("ARCHIVE-SECRET-753"));
-            assert!(context.contains("Saved section notes (Assistant navigation only; verify facts against original sources):"));
+            assert!(context.contains("Prepared input coverage:"));
             let path: String = serde_json::from_str(context.split("Latest snapshot: ").nth(1).unwrap().lines().next().unwrap()).unwrap();
             let relative = if stage == 0 {
                 let relative = Path::new(&path).strip_prefix(&recovery_root).unwrap().to_string_lossy().into_owned();

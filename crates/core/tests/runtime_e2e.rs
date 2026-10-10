@@ -287,6 +287,111 @@ async fn repeated_archive_reads_stop_without_another_compaction() {
 }
 
 #[tokio::test]
+async fn repeated_ordinary_reads_stop_even_without_archive_paths() {
+    let server = MockServer::start().await;
+    let args = json!({"file_path":"story.jsonl","jsonl_record":1});
+    let mut script = (0..5)
+        .map(|i| common::tool_call_body(&format!("read-{i}"), "read_file", args.clone()))
+        .collect::<Vec<_>>();
+    script.push(common::final_text_body("Repeated the same evidence"));
+    common::mount_script(&server, script).await;
+    let project = tempfile::tempdir().unwrap();
+    let evidence = project.path().join(".themis/context/source");
+    std::fs::create_dir_all(&evidence).unwrap();
+    std::fs::write(
+        project.path().join("story.jsonl"),
+        json!({"role":"User","content":"Original fact: 17."}).to_string(),
+    )
+    .unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Recover the original fact".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 20,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "repeated identical ordinary reads must not cycle until the normal turn limit"
+    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Repeated unchanged tool"));
+    let events = common::drain(&mut rx).await;
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RunEvent::ContextCompacting)));
+    assert!(events.iter().any(
+        |e| matches!(e, RunEvent::Failed { error } if error.contains("Repeated unchanged tool"))
+    ));
+    assert!(server.received_requests().await.unwrap().len() <= 4);
+}
+
+#[tokio::test]
+async fn alternating_observations_do_not_count_as_consecutive_unchanged_results() {
+    let server = MockServer::start().await;
+    let mut script = (0..5)
+        .map(|i| {
+            common::tool_call_body(
+                &format!("read-{i}"),
+                "read_file",
+                json!({"file_path":if i % 2 == 0 {"a.txt"} else {"b.txt"}}),
+            )
+        })
+        .collect::<Vec<_>>();
+    script.push(common::final_text_body("Finished alternating observations"));
+    common::mount_script(&server, script).await;
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("a.txt"), "A").unwrap();
+    std::fs::write(project.path().join("b.txt"), "B").unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, _rx) = tokio::sync::mpsc::channel(128);
+    let result = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Inspect both files".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 20,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await;
+    assert_eq!(result.unwrap(), "Finished alternating observations");
+}
+
+#[tokio::test]
 async fn context_within_budget_keeps_exact_tool_result() {
     let server = MockServer::start().await;
     common::mount_script(
@@ -381,7 +486,8 @@ async fn checkpoint_continues_same_request_after_token_pressure() {
     let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
     let tools = boxed_tools(dir.path(), Arc::clone(&approvals)).unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
-    let answer = run_task_with_policy(
+    std::fs::create_dir_all(dir.path().join(".themis/context/test")).unwrap();
+    let answer = themis_core::runtime::run_task_with_evidence(
         llm,
         tools,
         "Read the note".into(),
@@ -394,6 +500,8 @@ async fn checkpoint_continues_same_request_after_token_pressure() {
         },
         tx,
         Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(dir.path().join(".themis/context/test")),
     )
     .await
     .unwrap();
@@ -1070,7 +1178,8 @@ async fn stopped_provider_request_finishes(compacting: bool) {
     } else {
         vec![]
     };
-    let run = tokio::spawn(run_task_with_policy(
+    let archive = tempfile::tempdir().unwrap();
+    let run = tokio::spawn(themis_core::runtime::run_task_with_evidence(
         llm,
         vec![],
         "Continue".into(),
@@ -1083,6 +1192,8 @@ async fn stopped_provider_request_finishes(compacting: bool) {
         },
         tx,
         stopped.clone(),
+        String::new(),
+        Some(archive.path().to_owned()),
     ));
     let mut events = Vec::new();
     loop {

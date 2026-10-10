@@ -109,7 +109,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `logging.level` | `debug`, `info` (default), `warn`, `error` |
 | `compaction.timeout_seconds` | 1–240; default 240 for the shared summarization deadline |
 | `compaction.retry_limit` | 0 or 1; default 1 |
-| `compaction.section_max_tokens` | 256–16,384; default 4,096 |
+| `compaction.section_max_tokens` | Legacy compatibility field, 256–16,384; ignored by the single-summary pipeline |
 | `compaction.summary_max_tokens` | 256–16,384; default 8,192 |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
 | `approval.rules` | At most 256 ordered rules |
@@ -118,11 +118,16 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 the compaction algorithm. It resolves within the directory of the configuration
 that declares it. Explicit run overrides resolve prompt references within the
 user configuration directory. Built-in prompts are in
-`crates/core/builtins/prompts/`. Configured section/summary token values are ceilings; the runtime scales them down to leave continuation space and divides the section allowance across large inputs. A truncation retry may request twice the initial allowance. See [context checkpoints](context-and-attachments.md) for the formula. Section requests, reconciliation, and retries
-share the summarization deadline; recovery checkpoint writes can add time
-outside that deadline. Original evidence
-and recoverable checkpoints remain separate from the model's summary; this
-configuration change does not add compaction UI or guarantee lossless recall.
+`crates/core/builtins/prompts/`. The runtime prepares one bounded packet locally and uses
+`summary_max_tokens` as a ceiling scaled down to leave continuation space. It makes
+one summary call and at most one retry for transient errors, truncation or empty
+text. Truncation/empty-output retries may request twice the initial allowance.
+There is no section scheduler or reconciliation pass; `section_max_tokens` is
+accepted for existing files but no longer affects behavior. See [context checkpoints](context-and-attachments.md)
+for packet selection, estimates and omissions. Both calls share the summarization
+deadline; recovery checkpoint writes can add time outside it. Originals, prior
+usable state and deterministic action/read receipts remain separate from the
+model summary. This does not add compaction UI or guarantee lossless recall.
 
 ## Composer permissions
 
