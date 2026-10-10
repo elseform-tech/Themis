@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -761,12 +761,54 @@ async fn request_answer(
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     stopped: &AtomicBool,
 ) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
+    request_answer_with_timeout(
+        llm,
+        messages,
+        llm_tools,
+        events,
+        stopped,
+        std::time::Duration::from_secs(300),
+    )
+    .await
+}
+
+async fn request_answer_with_timeout(
+    llm: &Arc<dyn LLMProvider>,
+    messages: &[ChatMessage],
+    llm_tools: &[Tool],
+    events: &tokio::sync::mpsc::Sender<RunEvent>,
+    stopped: &AtomicBool,
+    timeout: std::time::Duration,
+) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
     until_stopped(
-        request_answer_inner(llm, messages, llm_tools, events, stopped),
+        tokio::time::timeout(
+            timeout,
+            request_answer_inner(llm, messages, llm_tools, events, stopped),
+        ),
         stopped,
         events,
     )
     .await?
+    .map_err(|_| anyhow!("LLM answer deadline exceeded"))?
+}
+
+// Retry-After is a floor, never shortened by jitter. Separate randomized states
+// keep simultaneous clients from retrying in lockstep; no provider data is hashed.
+fn request_retry_delay(
+    error: &autoagents::llm::error::LLMError,
+    retry: u32,
+) -> std::time::Duration {
+    use autoagents::llm::error::LLMError;
+    use std::time::Duration;
+    let base = Duration::from_secs(1_u64 << retry.min(6));
+    let hint = match error {
+        LLMError::RateLimitError { retry_after, .. }
+        | LLMError::HttpStatusError { retry_after, .. } => retry_after.unwrap_or_default(),
+        _ => Duration::ZERO,
+    };
+    let jitter = std::collections::hash_map::RandomState::new().hash_one(retry)
+        % (base.as_millis() as u64 / 2 + 1);
+    base.max(hint).saturating_add(Duration::from_millis(jitter))
 }
 
 async fn request_answer_inner(
@@ -776,7 +818,7 @@ async fn request_answer_inner(
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     stopped: &AtomicBool,
 ) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
-    let mut retried = false;
+    let mut retries = 0;
     loop {
         let mut published = false;
         let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> = async {
@@ -816,18 +858,31 @@ async fn request_answer_inner(
             }
         }
         .await;
-        let retryable = result
+        let error = result
             .as_ref()
             .err()
-            .and_then(|error| error.downcast_ref::<autoagents::llm::error::LLMError>())
-            .is_some_and(|error| error.is_retryable());
-        if retried || published || !retryable {
+            .and_then(|error| error.downcast_ref::<autoagents::llm::error::LLMError>());
+        if retries == 2 || published || error.is_none_or(|error| !error.is_retryable()) {
             return result;
         }
         // Calls from an interrupted response have not been executed; completed tools are already in messages.
-        retried = true;
-        eprintln!("answer transient failure before public output; retry=1");
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let error = error.expect("only typed retryable errors reach backoff");
+        let delay = request_retry_delay(error, retries);
+        retries += 1;
+        crate::diagnostics::emit(
+            "answer",
+            "request_retry",
+            "warn",
+            serde_json::json!({
+                "retry": retries, "status": error.http_status_code(), "backoff_ms": delay.as_millis(),
+            }),
+        );
+        eprintln!(
+            "answer retry={retries} status={:?} backoff_ms={}",
+            error.http_status_code(),
+            delay.as_millis()
+        );
+        tokio::time::sleep(delay).await;
     }
 }
 
@@ -2004,13 +2059,7 @@ async fn compaction_chat(
             llm.chat_and_sampling(messages, None, Some(&headroom)).await
         }
         Err(error) if error.is_retryable() && compaction_config().retry_limit > 0 => {
-            let delay = match &error {
-                autoagents::llm::error::LLMError::RateLimitError { retry_after, .. }
-                | autoagents::llm::error::LLMError::HttpStatusError { retry_after, .. } => {
-                    retry_after.unwrap_or(std::time::Duration::from_secs(1))
-                }
-                _ => std::time::Duration::from_secs(1),
-            };
+            let delay = request_retry_delay(&error, 0);
             eprintln!(
                 "compaction retry=1 status={:?} backoff_ms={}",
                 error.http_status_code(),
@@ -2942,7 +2991,7 @@ mod tests {
             }
         }
         for (public, persistent, expected_calls) in
-            [(false, false, 2), (true, false, 1), (false, true, 2)]
+            [(false, false, 2), (true, false, 1), (false, true, 3)]
         {
             let provider = Arc::new(Interrupted {
                 calls: AtomicUsize::new(0),
@@ -2995,6 +3044,87 @@ mod tests {
         .unwrap();
         assert!(result.is_err());
         assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn retry_jitter_stays_above_backoff_and_server_minimum() {
+        use autoagents::llm::error::LLMError;
+        use std::time::Duration;
+        for retry in 0..2 {
+            let base = Duration::from_secs(1 << retry);
+            for hint in [Duration::ZERO, Duration::from_secs(45)] {
+                let error = LLMError::RateLimitError {
+                    status_code: 429,
+                    message: "synthetic rate limit".into(),
+                    response_body: "".into(),
+                    retry_after: Some(hint),
+                    provider_code: None,
+                };
+                for _ in 0..100 {
+                    let delay = request_retry_delay(&error, retry);
+                    assert!(delay >= base.max(hint));
+                    assert!(delay <= base.max(hint) + base / 2);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn answer_deadline_and_stop_cancel_server_backoff_and_permanent_errors_do_not_retry() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        for (status, cancel) in [(503, false), (503, true), (401, false), (400, false)] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(status).insert_header("Retry-After", "45"))
+                .mount(&server)
+                .await;
+            let llm = crate::providers::resolve(
+                &crate::providers::ProviderConfig::new(
+                    crate::providers::ProviderKind::Go,
+                    "test-key",
+                )
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+            )
+            .await
+            .unwrap();
+            let stopped = AtomicBool::new(false);
+            let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+            let request = request_answer_with_timeout(
+                &llm,
+                &[],
+                &[],
+                &tx,
+                &stopped,
+                std::time::Duration::from_millis(if cancel { 5000 } else { 150 }),
+            );
+            let stop = async {
+                if cancel {
+                    while server.received_requests().await.unwrap().is_empty() {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    stopped.store(true, Ordering::SeqCst);
+                }
+            };
+            let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                tokio::join!(request, stop)
+            })
+            .await
+            .unwrap();
+            let error = result.unwrap_err();
+            if status == 503 && !cancel {
+                assert!(error.to_string().contains("deadline exceeded"));
+            }
+            assert_eq!(server.received_requests().await.unwrap().len(), 1);
+            let mut stopped_events = 0;
+            while let Ok(event) = rx.try_recv() {
+                stopped_events += usize::from(
+                    matches!(event, RunEvent::Failed { error } if error.starts_with("Stopped by you")),
+                );
+            }
+            assert_eq!(stopped_events, usize::from(cancel));
+        }
     }
 
     #[tokio::test]

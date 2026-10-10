@@ -38,6 +38,109 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_answer_backoff_honors_retry_after_without_replaying_completed_tools() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":10}"#,
+    )
+    .unwrap();
+    let provider = MockServer::start().await;
+    let times = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = times.clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        if body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Append once, then finish."},"finish_reason":"stop"}]}));
+        }
+        let mut times = observed.lock().unwrap();
+        let index = times.len();
+        times.push(std::time::Instant::now());
+        match index {
+            0 => ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"tool_calls":[{"id":"append-once","type":"function","function":{"name":"write_file","arguments":json!({"file_path":"result.txt","content":"x","append":true}).to_string()}}]},"finish_reason":"tool_calls"}]})),
+            1 => ResponseTemplate::new(429).insert_header("Retry-After","2"),
+            2 => ResponseTemplate::new(503),
+            _ => ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Completed without replay"},"finish_reason":"stop"}]})),
+        }
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    let source = project.path().join("large.txt");
+    std::fs::write(&source, "old data ".repeat(110_000)).unwrap();
+    let staged = cli(
+        data.path(),
+        "attach_files",
+        json!({"threadId":id,"paths":[source]}),
+    );
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Append once and finish","attachments":[staged[0]["path"]]}),
+    );
+    let mut compactions = 0;
+    let mut completed = 0;
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = &item["payload"]["event"];
+            compactions += usize::from(event["kind"] == "context_compacting");
+            completed += usize::from(event["kind"] == "tool_finished");
+            if event["kind"] == "finished" || event["kind"] == "failed" {
+                break event.clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(terminal["kind"], "finished", "{terminal}");
+    assert_eq!(terminal["result"], "Completed without replay");
+    assert_eq!(compactions, 1);
+    assert_eq!(completed, 1);
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("result.txt")).unwrap(),
+        "x"
+    );
+    {
+        let times = times.lock().unwrap();
+        assert_eq!(times.len(), 4);
+        assert!(
+            times[2].duration_since(times[1]) >= std::time::Duration::from_secs(2),
+            "Retry-After is a minimum"
+        );
+        assert!(
+            times[3].duration_since(times[2]) >= std::time::Duration::from_secs(2),
+            "The second backoff increases"
+        );
+    }
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_stops_alternating_unchanged_reads_after_compaction() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

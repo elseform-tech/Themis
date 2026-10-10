@@ -129,8 +129,8 @@ user configuration directory. Built-in prompts are in
 one summary call and at most one retry for transient errors, truncation or empty
 text. Truncation/empty-output retries may request twice the initial allowance.
 Transient summary retries honor the provider's `Retry-After` header (seconds or
-HTTP date), defaulting to one second when absent or invalid. The shared deadline
-also bounds this backoff.
+HTTP date) as a minimum, with a one-second base and 0–500 ms randomized jitter.
+The shared deadline also bounds this backoff.
 Chat Completions summary/truncation diagnostics retain reported token counts
 and text size; failed summary requests retain error categories. Neither record contains
 response text.
@@ -147,8 +147,13 @@ There is no section scheduler or reconciliation pass; `section_max_tokens` is
 accepted for existing files but no longer affects behavior. See [context checkpoints](context-and-attachments.md)
 for packet selection, estimates and omissions. Both calls share the summarization
 deadline (five minutes by default); each provider HTTP request also has a
-five-minute timeout. Ordinary answers retain one retry before public text, so a
-turn can exceed five minutes. Stop can cancel either wait. Recovery checkpoint
+five-minute timeout. Each ordinary answer request allows at most two retries
+before public text, with exponential base delays of one then two seconds and
+randomized jitter of 0–500 ms then 0–1,000 ms. A longer `Retry-After` is a minimum;
+the jitter is added above it. All ordinary attempts and backoffs share a
+five-minute deadline. Authentication and invalid-request failures do not retry.
+Completed tools are not replayed. Metadata diagnostics record retry number,
+HTTP status and delay, without provider bodies. Stop can cancel either wait. Recovery checkpoint
 writes can add time outside the shared deadline. Originals, prior
 usable state and deterministic action/read receipts remain separate from the
 model summary. This does not add compaction UI or guarantee lossless recall.
