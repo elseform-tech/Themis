@@ -466,6 +466,107 @@ async fn cli_compaction_resumes_prepared_action_with_public_intent() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_recent_script_receipt_survives_stale_summary_without_replaying_edits() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    // Force the existing end-of-run handoff after one admitted write, regardless of input size.
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":1}"#,
+    )
+    .unwrap();
+    let provider = MockServer::start().await;
+    let script = format!(
+        "# {}\nfrom pathlib import Path\nPath('result.txt').write_text('x')\nprint('written')",
+        "padding".repeat(600)
+    );
+    let original_args = json!({"command":"python3","args":["-c",script],"cwd":""}).to_string();
+    let expected_args = original_args.clone();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = calls.clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Completed Changes: None yet. Inspect requirements."},"finish_reason":"stop"}]}));
+        }
+        let index = observed.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+        if index == 0 {
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Patch complete; next verify result.txt.","tool_calls":[{"id":"completed-script","type":"function","function":{"name":"shell","arguments":original_args}}]},"finish_reason":"tool_calls"}]}));
+        }
+        assert_eq!(index,1,"completed edit must not be replayed");
+        let context=messages.iter().filter_map(|m|m["content"].as_str()).collect::<Vec<_>>().join("\n");
+        assert!(context.contains("Completed Changes: None yet."));
+        assert!(context.contains("Completed action record"));
+        assert!(context.contains("Patch complete; next verify result.txt."));
+        assert!(context.contains("written"));
+        assert!(context.contains("completed tool observations take precedence"));
+        let invocation=messages.iter().find(|m|m["tool_calls"][0]["id"]=="completed-script").unwrap();
+        let arguments=invocation["tool_calls"][0]["function"]["arguments"].as_str().unwrap();
+        assert!(arguments.len()<2048);
+        let receipt:Value=serde_json::from_str(arguments).unwrap();
+        assert_eq!(receipt["arguments_offloaded"],true);
+        let original=std::fs::read_to_string(receipt["original_snapshot"].as_str().unwrap()).unwrap();
+        let record:Value=serde_json::from_str(original.lines().nth(receipt["archive_record"].as_u64().unwrap() as usize-1).unwrap()).unwrap();
+        assert_eq!(record.pointer(receipt["archive_pointer"].as_str().unwrap()).unwrap(),&json!(expected_args));
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Verified edits survived."},"finish_reason":"stop"}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Patch and verify."}),
+    );
+    let mut compactions = 0;
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = &item["payload"]["event"];
+            compactions += usize::from(event["kind"] == "context_compacting");
+            if event["kind"] == "incomplete" || event["kind"] == "failed" {
+                break event.clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(terminal["result"], "Verified edits survived.", "{terminal}");
+    assert_eq!(terminal["kind"], "incomplete");
+    assert_eq!(compactions, 1);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("result.txt")).unwrap(),
+        "x"
+    );
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_mcp_inventory_and_large_response_use_bounded_context() {
     let data = tempfile::tempdir().unwrap();
     let project_parent = tempfile::tempdir().unwrap();

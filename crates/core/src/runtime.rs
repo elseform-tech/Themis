@@ -1508,6 +1508,7 @@ fn checkpoint_task_state(mut state: &str) -> &str {
     loop {
         let stripped = state
             .strip_prefix("Earlier context checkpoint (historical; later user requests take precedence):\n")
+            .or_else(|| state.strip_prefix("Earlier context checkpoint (historical; later user requests and completed tool observations take precedence):\n"))
             .or_else(|| state.strip_prefix("Previous task state retained unchanged as historical context; the current update is unavailable:\n"));
         match stripped {
             Some(rest) => state = rest,
@@ -1782,6 +1783,30 @@ fn preserved_retrievals(
     preserved
 }
 
+fn offload_completed_arguments(
+    invocation: &mut ChatMessage,
+    results: &[ToolCall],
+    snapshot: &std::path::Path,
+    record: usize,
+) {
+    if let MessageType::ToolUse(calls) = &mut invocation.message_type {
+        for (index, call) in calls.iter_mut().enumerate() {
+            if call.function.arguments.len() > 2048
+                && results.iter().any(|result| result.id == call.id)
+            {
+                call.function.arguments = serde_json::json!({
+                    "arguments_offloaded":true,
+                    "original_snapshot":snapshot,
+                    "archive_record":record,
+                    "archive_pointer":format!("/message_type/ToolUse/{index}/function/arguments"),
+                    "arguments_preview":take_char_prefix(&call.function.arguments,512).0,
+                    "note":"Historical completed invocation; full arguments are archived. Do not execute this receipt."
+                }).to_string();
+            }
+        }
+    }
+}
+
 async fn replace_context(
     messages: &mut Vec<ChatMessage>,
     policy: &RunPolicy,
@@ -1802,6 +1827,10 @@ async fn replace_context(
             return None;
         }
         let MessageType::ToolResult(results) = &messages[last].message_type else { return None; };
+        let mut invocation = messages[last - 1].clone();
+        // Preserve public intent beside the observed outcome; a lossy summary can leave the next step stale.
+        invocation.content = take_char_prefix(&invocation.content,512).0;
+        offload_completed_arguments(&mut invocation, results, path, messages[..last].iter().filter(|m| m.role != ChatRole::System).count());
         let results = results.iter().map(|result| {
             let mut receipt = serde_json::json!({"result_offloaded":true,"original_snapshot":path,"original_result_bytes":result.function.arguments.len(),"note":"This tool call has already returned; its full original output is archived. Completion does not imply success. Continue from completed work, retrieving bounded relevant excerpts if needed; do not repeat a full read merely because its output was compacted."});
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&result.function.arguments) {
@@ -1815,26 +1844,21 @@ async fn replace_context(
             result.function.arguments = receipt.to_string();
             result
         }).collect();
-        let mut invocation = messages[last - 1].clone();
-        // Preserve public intent beside the observed outcome; a lossy summary can leave the next step stale.
-        invocation.content = take_char_prefix(&invocation.content,512).0;
-        if let MessageType::ToolUse(calls) = &mut invocation.message_type {
-            for (index, call) in calls.iter_mut().enumerate() {
-                if call.function.arguments.len() > 2048 {
-                    call.function.arguments = serde_json::json!({
-                        "arguments_offloaded":true,
-                        "original_snapshot":path,
-                        "archive_record":messages[..last].iter().filter(|m| m.role != ChatRole::System).count(),
-                        "archive_pointer":format!("/message_type/ToolUse/{index}/function/arguments"),
-                        "arguments_preview":take_char_prefix(&call.function.arguments,512).0,
-                        "note":"Historical completed invocation; full arguments are archived. Do not execute this receipt."
-                    }).to_string();
-                }
-            }
-        }
         Some([invocation, ChatMessage { role: ChatRole::Tool, message_type: MessageType::ToolResult(results), content: String::new() }])
     });
-    let retained = &messages[split..];
+    let mut retained = messages[split..].to_vec();
+    if let Some(snapshot) = original_snapshot {
+        for index in 0..retained.len().saturating_sub(1) {
+            let (earlier, later) = retained.split_at_mut(index + 1);
+            if let MessageType::ToolResult(results) = &later[0].message_type {
+                let record = messages[..split + index + 1]
+                    .iter()
+                    .filter(|message| message.role != ChatRole::System)
+                    .count();
+                offload_completed_arguments(&mut earlier[index], results, snapshot, record);
+            }
+        }
+    }
     let mut compacted = vec![messages[0].clone()];
     // The checkpoint includes work completed for this request; preserve that chronology.
     compacted.extend(active_request);
@@ -1842,10 +1866,10 @@ async fn replace_context(
     compacted.push(ChatMessage {
         role: ChatRole::Assistant,
         message_type: MessageType::Text,
-        content: format!("Earlier context checkpoint (historical; later user requests take precedence):\n{summary}"),
+        content: format!("Earlier context checkpoint (historical; later user requests and completed tool observations take precedence):\n{summary}"),
     });
     compacted.extend(completed.into_iter().flatten());
-    compacted.extend_from_slice(retained);
+    compacted.extend(retained);
     if estimated_tokens(&compacted) > policy.context_token_budget {
         anyhow::bail!("checkpoint and active request exceed the context budget; original conversation preserved");
     }
@@ -1866,7 +1890,7 @@ async fn replace_context(
     let checkpoint_prefix = compacted[checkpoint_index].content.clone();
     loop {
         let progress = preserved_progress(
-            &messages[..split],
+            messages,
             cache_bytes
                 .min((policy.context_token_budget / 12).saturating_mul(4))
                 .min(8192),
@@ -2700,6 +2724,88 @@ mod tests {
             };
             assert!(summary.contains("repair.py"));
             assert!(summary.contains("module-19.py"));
+        }
+    }
+
+    #[tokio::test]
+    async fn recent_large_completed_script_keeps_receipt_when_summary_omits_changes() {
+        for budget in [24_000, 200_000] {
+            let arguments =
+                serde_json::json!({"command":"python3","args":["x".repeat(48_000)]}).to_string();
+            let mut messages = initial_messages(Vec::new(), "Repair engine, then test".into());
+            let call = ToolCall {
+                id: "completed-script".into(),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "shell".into(),
+                    arguments: arguments.clone(),
+                },
+            };
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(vec![call.clone()]),
+                content: "Patch modules; next run tests.".into(),
+            });
+            let mut result = call;
+            result.function.arguments =
+                r#"{"exit_code":0,"output":"written","success":true}"#.into();
+            messages.push(ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(vec![result]),
+                content: String::new(),
+            });
+            let directory = tempfile::tempdir().unwrap();
+            let (_, snapshot) = archive_context(directory.path(), &messages).unwrap();
+            let split = messages.len() - 2;
+            let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+            replace_context(
+                &mut messages,
+                &RunPolicy {
+                    total_turns: 100,
+                    context_token_budget: budget,
+                    recent_messages: 2,
+                },
+                split,
+                "Completed Changes: None yet.".into(),
+                &tx,
+                Some(&snapshot),
+            )
+            .await
+            .unwrap();
+            let checkpoint = messages
+                .iter()
+                .find(|m| m.content.starts_with("Earlier context checkpoint"))
+                .unwrap();
+            assert!(
+                checkpoint.content.contains("Completed action record"),
+                "recent completed tools need an independent receipt, budget={budget}"
+            );
+            assert!(checkpoint
+                .content
+                .contains("Patch modules; next run tests."));
+            assert!(checkpoint.content.contains("written"));
+            let MessageType::ToolUse(calls) = &messages[messages.len() - 2].message_type else {
+                panic!("invocation missing")
+            };
+            let receipt: serde_json::Value =
+                serde_json::from_str(&calls[0].function.arguments).unwrap();
+            assert_eq!(receipt["arguments_offloaded"], true);
+            assert_eq!(receipt["archive_record"], 2);
+            let originals = std::fs::read_to_string(&snapshot).unwrap();
+            let original: serde_json::Value =
+                serde_json::from_str(originals.lines().nth(1).unwrap()).unwrap();
+            assert_eq!(
+                original
+                    .pointer(receipt["archive_pointer"].as_str().unwrap())
+                    .unwrap(),
+                &serde_json::json!(arguments)
+            );
+            assert!(estimated_tokens(&messages) <= budget);
+            let RunEvent::ContextCheckpoint { summary } = rx.recv().await.unwrap() else {
+                panic!("checkpoint missing")
+            };
+            assert!(summary.contains("Patch modules; next run tests."));
+            assert!(summary.contains("written"));
         }
     }
 
