@@ -330,7 +330,7 @@ impl ToolT for GatedTool {
 
     fn description(&self) -> &str {
         if self.inner.name() == "read_file" {
-            "Read a project file. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record prefers original User/Tool fields and excludes records marked evidence_kind=recovery; recovery-only snapshots require explicit record selection. For Tool arguments set decode_tool_payload=true to search decoded envelope values rather than escaped JSON; preserve that flag for subsequent offsets. For secondary navigation in a mixed snapshot, explicitly select its jsonl_record; Assistant-only notes remain searchable and carry a navigation warning. Continue using the returned jsonl_record and next_offset. Every read returns at most 4000 content characters with provenance and next_offset, including reads without options. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. For complete-file analysis use approved local shell/Python processing and return selected facts."
+            "Read a project file. For ordinary source/text files use file_path with optional offset/find; omit JSONL selectors. Example: {\"file_path\":\"tests/test_example.py\"}. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record prefers original User/Tool fields and excludes records marked evidence_kind=recovery; recovery-only snapshots require explicit record selection. For Tool arguments set decode_tool_payload=true to search decoded envelope values rather than escaped JSON; preserve that flag for subsequent offsets. For secondary navigation in a mixed snapshot, explicitly select its jsonl_record; Assistant-only notes remain searchable and carry a navigation warning. Continue using the returned jsonl_record and next_offset. Every read returns at most 4000 content characters with provenance and next_offset, including reads without options. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. For complete-file analysis use approved local shell/Python processing and return selected facts."
         } else {
             self.inner.description()
         }
@@ -339,8 +339,8 @@ impl ToolT for GatedTool {
     fn args_schema(&self) -> Value {
         let mut schema = self.inner.args_schema();
         if self.inner.name() == "read_file" {
-            schema["properties"]["jsonl_record"] = serde_json::json!({"type":"integer","minimum":1,"description":"One-based JSONL record; decode it before reading"});
-            schema["properties"]["json_pointer"] = serde_json::json!({"type":"string","description":"String field within selected JSONL record; default /content, e.g. /message_type/ToolResult/0/function/arguments"});
+            schema["properties"]["jsonl_record"] = serde_json::json!({"type":"integer","minimum":1,"description":"Only for JSONL content, never ordinary source/text files. One-based record; omit for a plain file read"});
+            schema["properties"]["json_pointer"] = serde_json::json!({"type":"string","description":"Only for a selected JSONL record, never ordinary source/text files; default /content, e.g. /message_type/ToolResult/0/function/arguments"});
             schema["properties"]["decode_tool_payload"] = serde_json::json!({"type":"boolean","default":false,"description":"For archived Tool arguments, decode the JSON envelope once and page/search labeled leaf values (e.g. stdout/content) instead of escaped JSON. Return this same flag on subsequent offsets. Default false preserves the exact raw field."});
             schema["properties"]["offset"] = serde_json::json!({"type":"integer","minimum":0,"description":"Start character for paging or searching; use returned next_offset to continue"});
             schema["properties"]["find"] = serde_json::json!({"type":"string","minLength":1,"description":"Exact case-sensitive literal; returns surrounding text and next_offset for the next match"});
@@ -557,7 +557,13 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
                 }).collect::<Vec<_>>();
                 invalid(&format!("JSONL record {record} does not exist (record numbers start at 1). Total records: {}. First up to 8 records: {}. Retry with an available record, or omit jsonl_record and use find to search decoded records; Assistant original_exchange records are historical exchanges; other Assistant records are navigation.", text.lines().count(), serde_json::json!(available)))
             })?;
-        let decoded: Value = serde_json::from_str(line)?;
+        let decoded: Value = serde_json::from_str(line).map_err(|_| {
+            if result["path"].as_str().is_some_and(|path| path.ends_with(".jsonl")) {
+                invalid("Selected JSONL record is malformed; JSONL selectors require a valid JSON value per record. Verify the file format and record number; no source field was selected.")
+            } else {
+                invalid("JSONL selectors require JSONL content. For ordinary source/text files omit jsonl_record and json_pointer, and omit decode_tool_payload; read using file_path with optional offset/find. No source field was selected.")
+            }
+        })?;
         text = decoded_archive_field(&decoded, pointer, decode_tool_payload)
             .ok_or_else(|| invalid("Selected JSONL field is missing or is not a string"))?;
         result["jsonl_record"] = record.into();
@@ -1777,6 +1783,51 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("untrusted"));
+    }
+
+    #[test]
+    fn jsonl_selectors_on_plain_source_explain_how_to_read_it() {
+        let source = "import unittest\nclass TestSettlement(unittest.TestCase):\n    pass\n";
+        let error = bounded_read_result(
+            &json!({"jsonl_record":1,"json_pointer":"/content"}),
+            json!({"path":"tests/test_settlement.py","content":source}),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("JSONL"), "{error}");
+        assert!(
+            error.contains("omit jsonl_record and json_pointer"),
+            "{error}"
+        );
+        assert!(
+            !error.contains(source),
+            "source content is not an error diagnostic"
+        );
+        let result = bounded_read_result(
+            &json!({}),
+            json!({"path":"tests/test_settlement.py","content":source}),
+        )
+        .unwrap();
+        assert_eq!(result["content"], source);
+    }
+
+    #[test]
+    fn jsonl_selection_preserves_content_based_semantics() {
+        let args = json!({"jsonl_record":1,"json_pointer":"/content"});
+        let valid = bounded_read_result(&args, json!({"path":"notes.txt","content":json!({"role":"User","content":"Original fact"}).to_string()})).unwrap();
+        assert_eq!(valid["content"], "Original fact");
+        assert_eq!(valid["jsonl_record"], 1);
+        let error = bounded_read_result(
+            &args,
+            json!({"path":"broken.jsonl","content":"private malformed source"}),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("Selected JSONL record is malformed"),
+            "{error}"
+        );
+        assert!(!error.contains("private malformed source"));
     }
 
     #[test]

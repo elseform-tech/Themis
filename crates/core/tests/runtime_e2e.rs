@@ -21,6 +21,101 @@ fn has_finished(events: &[RunEvent]) -> bool {
 }
 
 #[tokio::test]
+async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body(
+                "wrong-format",
+                "read_file",
+                json!({"file_path":"source.py","jsonl_record":1,"json_pointer":"/content"}),
+            ),
+            common::tool_call_body("plain-read", "read_file", json!({"file_path":"source.py"})),
+            common::final_text_body("Read the source after correcting the selector"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("source.py"),
+        format!("import unittest\n{}", "# source detail\n".repeat(1000)),
+    )
+    .unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let answer = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Inspect source.py".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "Read the source after correcting the selector");
+    let events = common::drain(&mut rx).await;
+    let results = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::ToolCallFinished { ok, output, .. } => Some((*ok, output)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert!(!results[0].0);
+    assert!(results[0].1.contains("omit jsonl_record and json_pointer"));
+    assert!(results[1].0);
+    let text: serde_json::Value = serde_json::from_str(results[1].1).unwrap();
+    assert!(text["content"]
+        .as_str()
+        .unwrap()
+        .starts_with("import unittest"));
+    assert!(text["content"].as_str().unwrap().chars().count() <= 4000);
+    assert!(text["next_offset"].is_number());
+    assert!(has_finished(&events));
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 3);
+    let correction: serde_json::Value = requests[1].body_json().unwrap();
+    assert!(serde_json::to_string(&correction["messages"])
+        .unwrap()
+        .contains("omit jsonl_record and json_pointer"));
+    let continuation: serde_json::Value = requests[2].body_json().unwrap();
+    assert!(serde_json::to_string(&continuation["messages"])
+        .unwrap()
+        .contains("import unittest"));
+    let body: serde_json::Value = requests[0].body_json().unwrap();
+    assert!(body["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("JSONL selectors apply only to JSONL records, not Python source lines"));
+    let read = body["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "read_file")
+        .unwrap();
+    assert!(read["function"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("For ordinary source/text files"));
+}
+
+#[tokio::test]
 async fn retired_compaction_command_does_not_intercept_user_instructions() {
     let server = MockServer::start().await;
     common::mount_script(&server, vec![common::final_text_body("Ordinary answer")]).await;
