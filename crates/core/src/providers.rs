@@ -67,6 +67,10 @@ use autoagents::llm::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+// The SDK sampling overrides do not carry request purpose; keep this task-local
+// so internal summary settings cannot leak into concurrent answer requests.
+tokio::task_local! { pub(crate) static COMPACTION_REQUEST: (); }
+
 /// Canonical provider name reported for OpenCode Go in errors and diagnostics.
 ///
 /// This mirrors the `PROVIDER_NAME = "OpenCode Go"` value the plan assigned to a
@@ -521,6 +525,9 @@ impl CompatibleProvider {
                 tools,
             })?
         };
+        if self.model.starts_with("longcat-2.5-") && COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
+            body["thinking"] = serde_json::json!({"type":"disabled"});
+        }
         if let Some(sampling) = sampling {
             if let Some(limit) = sampling.max_tokens {
                 let key = if self.uses_responses() {
@@ -686,12 +693,17 @@ impl ChatProvider for CompatibleProvider {
                     message: format!("{} returned no choices", self.provider_name),
                     raw_response: String::new(),
                 })?;
-        if choice.finish_reason.as_deref() == Some("length") {
+        let truncated = choice.finish_reason.as_deref() == Some("length");
+        if truncated || COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
             let usage = parsed.usage.as_ref();
             crate::diagnostics::emit(
                 "provider",
-                "output_truncated",
-                "warn",
+                if truncated {
+                    "output_truncated"
+                } else {
+                    "summary_usage"
+                },
+                if truncated { "warn" } else { "info" },
                 serde_json::json!({
                     "output_limit_tokens": sampling.and_then(|sampling| sampling.max_tokens),
                     "completion_tokens": usage.map(|usage| usage.completion_tokens),
@@ -699,6 +711,8 @@ impl ChatProvider for CompatibleProvider {
                     "public_text_chars": choice.message.content.as_ref().map_or(0, |text| text.chars().count()),
                 }),
             );
+        }
+        if truncated {
             return Err(LLMError::Generic("Provider response was truncated".into()));
         }
         Ok(Box::new(CompatibleChatResponse {
@@ -1275,6 +1289,62 @@ mod tests {
             assert_eq!(bounded[key], 4096, "{model}");
             assert_eq!(ordinary[key].as_u64(), default_limit, "{model}");
             assert_eq!(requests[0].headers[GO_SESSION_HEADER], "summary-test");
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_disables_supported_thinking_without_changing_answer_requests() {
+        for model in ["longcat-2.5-preview-free", "mimo-v2.6-flash"] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "choices":[{"message":{"content":"checkpoint"},"finish_reason":"stop"}],
+                    "usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"completion_tokens_details":{"reasoning_tokens":0}}
+                })))
+                .mount(&server)
+                .await;
+            let provider =
+                CompatibleProvider::go("synthetic".into(), model.into(), Some(server.uri()), None);
+            let messages = [user_message("summarize")];
+            let sampling = SamplingOverrides::with_max_tokens(1654);
+            let dir = tempfile::tempdir().unwrap();
+            let log = Arc::new(crate::diagnostics::DiagnosticLog::new(dir.path().into()));
+            crate::diagnostics::ACTIVE
+                .scope(
+                    crate::diagnostics::DiagnosticContext {
+                        log: Arc::clone(&log),
+                        thread_id: "thread".into(),
+                        run_id: "run".into(),
+                        level: "info".into(),
+                    },
+                    COMPACTION_REQUEST.scope(
+                        (),
+                        provider.chat_and_sampling(&messages, None, Some(&sampling)),
+                    ),
+                )
+                .await
+                .unwrap();
+            provider
+                .chat_and_sampling(&messages, None, None)
+                .await
+                .unwrap();
+            let records = log
+                .query(&crate::diagnostics::DiagnosticFilter::default())
+                .unwrap();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].event, "summary_usage");
+            assert_eq!(records[0].details["reasoning_tokens"], 0);
+            let requests = server.received_requests().await.unwrap();
+            let summary: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+            let answer: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+            assert_eq!(summary["max_tokens"], 1654);
+            if model.starts_with("longcat-2.5-") {
+                assert_eq!(summary["thinking"], json!({"type":"disabled"}));
+            } else {
+                assert!(summary.get("thinking").is_none());
+            }
+            assert!(answer.get("thinking").is_none());
+            assert!(answer.get("max_tokens").is_none());
         }
     }
 

@@ -1254,7 +1254,9 @@ async fn compact_context_inner(
             "context_token_budget":policy.context_token_budget,
         }),
     );
-    let mut summary = compaction_chat(llm, &request, summary_tokens).await?;
+    let mut summary = crate::providers::COMPACTION_REQUEST
+        .scope((), compaction_chat(llm, &request, summary_tokens))
+        .await?;
     summary.push_str("\n\n");
     summary.push_str(&coverage);
     if let Some((navigation, _)) = evidence {
