@@ -147,7 +147,7 @@ pub struct CompactionConfig {
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            timeout_seconds: 240,
+            timeout_seconds: 300,
             retry_limit: 1,
             section_max_tokens: 4096,
             summary_max_tokens: 8192,
@@ -439,8 +439,8 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         "unsupported schema_version; expected 1"
     );
     ensure!(
-        (1..=240).contains(&config.compaction.timeout_seconds),
-        "compaction.timeout_seconds must be 1..240"
+        (1..=300).contains(&config.compaction.timeout_seconds),
+        "compaction.timeout_seconds must be 1..300"
     );
     ensure!(
         config.compaction.retry_limit <= 1,
@@ -569,7 +569,7 @@ pub fn schema() -> Value {
                 }}}
             }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
-                "timeout_seconds":{"type":"integer","minimum":1,"maximum":240,"default":240},
+                "timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"default":300},
                 "retry_limit":{"type":"integer","minimum":0,"maximum":1,"default":1},
                 "section_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":4096},
                 "summary_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":8192},
@@ -582,6 +582,33 @@ pub fn schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn five_minute_compaction_default_and_ceiling_agree_with_schema() {
+        assert_eq!(
+            resolve(None, None, None)
+                .unwrap()
+                .config
+                .compaction
+                .timeout_seconds,
+            300
+        );
+        assert!(resolve(
+            Some(r#"{"compaction":{"timeout_seconds":300}}"#),
+            None,
+            None
+        )
+        .is_ok());
+        assert!(resolve(
+            Some(r#"{"compaction":{"timeout_seconds":301}}"#),
+            None,
+            None
+        )
+        .is_err());
+        assert!(resolve(Some(r#"{"compaction":{"timeout_seconds":0}}"#), None, None).is_err());
+        let field = &schema()["properties"]["compaction"]["properties"]["timeout_seconds"];
+        assert_eq!(field["default"], 300);
+        assert_eq!(field["maximum"], 300);
+    }
     #[test]
     fn jsonc_layers_and_validation() {
         let c=resolve(Some("{\"compaction\":{\"timeout_seconds\":90,},//comment\n\"context_token_budget\":10000}"),Some("{\"context_token_budget\":12000}"),None).unwrap();

@@ -45,7 +45,7 @@ async fn cli_recovers_from_malformed_shell_arguments_after_compaction() {
         std::fs::create_dir(project.path().join(".themis")).unwrap();
         std::fs::write(
             project.path().join(".themis/config.jsonc"),
-            json!({"context_token_budget":budget,"recent_messages":2,"total_turns":8}).to_string(),
+            json!({"context_token_budget":budget,"recent_messages":2,"total_turns":8,"compaction":{"timeout_seconds":300}}).to_string(),
         )
         .unwrap();
         let malformed = r#"{"command":"python3","args":["-c","from pathlib import Path; Path(\'unsafe.txt\').write_text(\'unsafe\')"]}"#;
@@ -94,6 +94,12 @@ print('verified')"#],"cwd":""}).to_string())
             json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
         );
         let id = thread["id"].as_str().unwrap();
+        let config = cli(
+            data.path(),
+            "get_runtime_configuration",
+            json!({"projectRoot":project.path()}),
+        );
+        assert_eq!(config["config"]["compaction"]["timeout_seconds"], 300);
         cli(
             data.path(),
             "set_thread_approval_mode",

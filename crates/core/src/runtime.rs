@@ -2778,7 +2778,7 @@ mod tests {
             assert!(estimated_tokens(&messages) > 0);
         })
         .await;
-        assert_eq!(compaction_config().timeout_seconds, 240);
+        assert_eq!(compaction_config().timeout_seconds, 300);
     }
 
     #[test]

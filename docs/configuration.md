@@ -72,7 +72,7 @@ Example user `runtime.jsonc`:
     ]
   },
   "compaction": {
-    "timeout_seconds": 240,
+    "timeout_seconds": 300,
     "retry_limit": 1,
     "section_max_tokens": 4096,
     "summary_max_tokens": 8192
@@ -107,7 +107,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `recent_messages` | 2–200; omitted uses Settings |
 | `total_turns` | 1–2,000; omitted uses Settings |
 | `logging.level` | `debug`, `info` (default), `warn`, `error` |
-| `compaction.timeout_seconds` | 1–240; default 240 for the shared summarization deadline |
+| `compaction.timeout_seconds` | 1–300; default 300 for the shared summarization deadline |
 | `compaction.retry_limit` | 0 or 1; default 1 |
 | `compaction.section_max_tokens` | Legacy compatibility field, 256–16,384; ignored by the single-summary pipeline |
 | `compaction.summary_max_tokens` | 256–16,384; default 8,192 |
@@ -125,7 +125,10 @@ text. Truncation/empty-output retries may request twice the initial allowance.
 There is no section scheduler or reconciliation pass; `section_max_tokens` is
 accepted for existing files but no longer affects behavior. See [context checkpoints](context-and-attachments.md)
 for packet selection, estimates and omissions. Both calls share the summarization
-deadline; recovery checkpoint writes can add time outside it. Originals, prior
+deadline (five minutes by default); each provider HTTP request also has a
+five-minute timeout. Ordinary answers retain one retry before public text, so a
+turn can exceed five minutes. Stop can cancel either wait. Recovery checkpoint
+writes can add time outside the shared deadline. Originals, prior
 usable state and deterministic action/read receipts remain separate from the
 model summary. This does not add compaction UI or guarantee lossless recall.
 

@@ -195,10 +195,10 @@ impl ProviderConfig {
     }
 }
 
-/// HTTP client for one provider (120s default timeout, matching the SDK default).
+/// HTTP client for provider requests, including streamed answers and summaries (five minutes).
 fn http_client() -> Client {
     Client::builder()
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(300))
         .build()
         .unwrap_or_else(|_| Client::new())
 }
