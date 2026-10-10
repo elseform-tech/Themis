@@ -1069,10 +1069,18 @@ async fn cli_suspends_after_required_summary_failure_without_degraded_continuati
     assert!(terminal["error"]
         .as_str()
         .unwrap()
+        .contains("Originals saved on disk"));
+    assert!(!terminal["error"]
+        .as_str()
+        .unwrap()
         .contains("/retry-compaction"));
     assert_eq!(std::fs::read_to_string(&source).unwrap(), text);
     let evidence = root.join(".themis/context").join(id);
-    assert!(evidence.join("pending-compaction.json").is_file());
+    assert!(std::fs::read_dir(&evidence).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with("pending-job-")));
     assert!(std::fs::read_dir(&evidence)
         .unwrap()
         .map(|entry| entry.unwrap().path())

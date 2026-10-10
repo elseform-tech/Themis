@@ -21,6 +21,140 @@ fn has_finished(events: &[RunEvent]) -> bool {
 }
 
 #[tokio::test]
+async fn retired_compaction_command_does_not_intercept_user_instructions() {
+    let server = MockServer::start().await;
+    common::mount_script(&server, vec![common::final_text_body("Ordinary answer")]).await;
+    let project = tempfile::tempdir().unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, _rx) = tokio::sync::mpsc::channel(128);
+    let text = "/retry-compaction explain this previously discussed command";
+    let answer = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        text.into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "Ordinary answer");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let body: serde_json::Value = requests[0].body_json().unwrap();
+    assert_eq!(
+        body["messages"].as_array().unwrap().last().unwrap()["content"],
+        text
+    );
+}
+
+#[tokio::test]
+async fn automatic_summary_retries_do_not_repeat_a_completed_write() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wiremock::{matchers::method, Mock, ResponseTemplate};
+    let server = MockServer::start().await;
+    let project = tempfile::tempdir().unwrap();
+    let receipt = project.path().join("receipt.txt");
+    let summaries_follow_write = Arc::new(AtomicBool::new(true));
+    let order = summaries_follow_write.clone();
+    let ordinary = Arc::new(AtomicUsize::new(0));
+    let summaries = Arc::new(AtomicUsize::new(0));
+    let ordinary_count = ordinary.clone();
+    let summary_count = summaries.clone();
+    Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
+        let body: serde_json::Value = request.body_json().unwrap();
+        if body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            order.fetch_and(ordinary_count.load(Ordering::SeqCst) == 1 && std::fs::read_to_string(&receipt).is_ok_and(|text| text == "once\n"), Ordering::SeqCst);
+            if summary_count.fetch_add(1, Ordering::SeqCst) < 2 {
+                return ResponseTemplate::new(503);
+            }
+            return ResponseTemplate::new(200).set_body_json(common::final_text_body("Goal/constraints: finish. Confirmed findings: write saved. Completed changes/tests: appended once to receipt.txt. Unresolved work: report completion. Next action: answer without repeating the write."));
+        }
+        let response = if ordinary_count.fetch_add(1, Ordering::SeqCst) == 0 {
+            let mut call = common::tool_call_body("append-once", "write_file", json!({"file_path":"receipt.txt","content":"once\n","append":true}));
+            call["choices"][0]["message"]["content"] = "progress narration ".repeat(50).into();
+            call
+        } else { common::final_text_body("Completed once") };
+        ResponseTemplate::new(200).set_body_json(response)
+    }).mount(&server).await;
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let evidence = project.path().join(".themis/context/check");
+    std::fs::create_dir_all(&evidence).unwrap();
+    let answer = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Append once and finish".into(),
+        vec![themis_core::runtime::ConversationTurn {
+            role: themis_core::runtime::ConversationRole::Assistant,
+            text: "Historical semantic state ".repeat(2300),
+        }],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 24_000,
+            recent_messages: 2,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "Completed once");
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("receipt.txt")).unwrap(),
+        "once\n"
+    );
+    assert_eq!(ordinary.load(Ordering::SeqCst), 2);
+    assert_eq!(summaries.load(Ordering::SeqCst), 3);
+    assert!(
+        summaries_follow_write.load(Ordering::SeqCst),
+        "all summary attempts must follow the completed append"
+    );
+    let events = common::drain(&mut rx).await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::ToolCallStarted { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::ContextCheckpoint { .. }))
+            .count(),
+        1
+    );
+    assert!(has_finished(&events));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { .. })));
+}
+
+#[tokio::test]
 async fn unchanged_ordinary_reads_get_a_reminder_but_changed_files_do_not() {
     let server = MockServer::start().await;
     common::mount_script(

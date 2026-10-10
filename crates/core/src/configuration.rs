@@ -152,13 +152,13 @@ pub struct CompactionConfig {
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            timeout_seconds: 300,
+            timeout_seconds: 900,
             request_timeout_seconds: 300,
             maintenance_threshold_ratio: 0.83,
             semantic_threshold_ratio: 0.93,
             target_headroom_interactions: 6,
             max_stages: 32,
-            retry_limit: 1,
+            retry_limit: 2,
             section_max_tokens: 4096,
             summary_max_tokens: 8192,
             prompt_file: None,
@@ -460,8 +460,8 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         "unsupported schema_version; expected 1"
     );
     ensure!(
-        (1..=600).contains(&config.compaction.timeout_seconds),
-        "compaction.timeout_seconds must be 1..600"
+        (1..=1800).contains(&config.compaction.timeout_seconds),
+        "compaction.timeout_seconds must be 1..1800"
     );
     let compaction = &config.compaction;
     ensure!(
@@ -485,8 +485,8 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         "compaction.max_stages must be 1..128"
     );
     ensure!(
-        config.compaction.retry_limit <= 1,
-        "compaction.retry_limit must be 0 or 1"
+        config.compaction.retry_limit <= 2,
+        "compaction.retry_limit must be 0..2"
     );
     for (name, tokens) in [
         ("section_max_tokens", config.compaction.section_max_tokens),
@@ -611,13 +611,13 @@ pub fn schema() -> Value {
                 }}}
             }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
-                "timeout_seconds":{"type":"integer","minimum":1,"maximum":600,"default":300},
+                "timeout_seconds":{"type":"integer","minimum":1,"maximum":1800,"default":900},
                 "request_timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"default":300},
                 "maintenance_threshold_ratio":{"type":"number","minimum":0.5,"maximum":0.95,"default":0.83},
                 "semantic_threshold_ratio":{"type":"number","exclusiveMinimum":0.5,"maximum":0.97,"default":0.93},
                 "target_headroom_interactions":{"type":"integer","minimum":1,"maximum":20,"default":6},
                 "max_stages":{"type":"integer","minimum":1,"maximum":128,"default":32},
-                "retry_limit":{"type":"integer","minimum":0,"maximum":1,"default":1},
+                "retry_limit":{"type":"integer","minimum":0,"maximum":2,"default":2},
                 "section_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":4096},
                 "summary_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":8192},
                 "prompt_file":{"type":"string"}
@@ -650,14 +650,14 @@ mod tests {
         }
     }
     #[test]
-    fn legacy_five_minute_default_and_extended_ceiling_agree_with_schema() {
+    fn longer_compaction_defaults_preserve_explicit_legacy_timeouts_and_match_schema() {
         assert_eq!(
             resolve(None, None, None)
                 .unwrap()
                 .config
                 .compaction
                 .timeout_seconds,
-            300
+            900
         );
         assert!(resolve(
             Some(r#"{"compaction":{"timeout_seconds":300}}"#),
@@ -666,15 +666,48 @@ mod tests {
         )
         .is_ok());
         assert!(resolve(
-            Some(r#"{"compaction":{"timeout_seconds":601}}"#),
+            Some(r#"{"compaction":{"timeout_seconds":1801}}"#),
             None,
             None
         )
         .is_err());
         assert!(resolve(Some(r#"{"compaction":{"timeout_seconds":0}}"#), None, None).is_err());
+        let defaults = resolve(None, None, None).unwrap().config.compaction;
+        assert_eq!(defaults.retry_limit, 2);
+        assert_eq!(defaults.request_timeout_seconds, 300);
+        for limit in 0..=2 {
+            assert!(resolve(
+                Some(&format!(r#"{{"compaction":{{"retry_limit":{limit}}}}}"#)),
+                None,
+                None
+            )
+            .is_ok());
+        }
+        assert!(resolve(Some(r#"{"compaction":{"retry_limit":3}}"#), None, None).is_err());
+        assert_eq!(
+            resolve(
+                Some(r#"{"compaction":{"timeout_seconds":300,"retry_limit":1}}"#),
+                None,
+                None
+            )
+            .unwrap()
+            .config
+            .compaction
+            .timeout_seconds,
+            300
+        );
+        assert!(resolve(
+            Some(r#"{"compaction":{"timeout_seconds":1800}}"#),
+            None,
+            None
+        )
+        .is_ok());
+        let retry = &schema()["properties"]["compaction"]["properties"]["retry_limit"];
+        assert_eq!(retry["default"], 2);
+        assert_eq!(retry["maximum"], 2);
         let field = &schema()["properties"]["compaction"]["properties"]["timeout_seconds"];
-        assert_eq!(field["default"], 300);
-        assert_eq!(field["maximum"], 600);
+        assert_eq!(field["default"], 900);
+        assert_eq!(field["maximum"], 1800);
     }
     #[test]
     fn jsonc_layers_and_validation() {

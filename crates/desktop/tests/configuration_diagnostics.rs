@@ -350,7 +350,7 @@ async fn cli_catalog_inspection_distinguishes_partial_and_unsupported() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_resumes_durable_required_summary_after_failure_and_exposes_usage() {
+async fn cli_retries_required_summary_automatically_and_exposes_usage() {
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -360,14 +360,14 @@ async fn cli_resumes_durable_required_summary_after_failure_and_exposes_usage() 
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::create_dir(project.path().join(".themis")).unwrap();
-    std::fs::write(project.path().join(".themis/config.jsonc"), r#"{"context_token_budget":24000,"recent_messages":4,"compaction":{"timeout_seconds":120,"request_timeout_seconds":60,"max_stages":64,"retry_limit":0},"logging":{"context_metrics":"detailed"}}"#).unwrap();
+    std::fs::write(project.path().join(".themis/config.jsonc"), r#"{"context_token_budget":24000,"recent_messages":4,"compaction":{"timeout_seconds":120,"request_timeout_seconds":60,"max_stages":64},"logging":{"context_metrics":"detailed"}}"#).unwrap();
     let provider = MockServer::start().await;
     let summaries = Arc::new(AtomicUsize::new(0));
     let counter = summaries.clone();
     Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let summary = body["messages"][0]["content"].as_str().unwrap_or("").contains("You summarize agent context");
-        if summary && counter.fetch_add(1, Ordering::SeqCst) == 1 { return ResponseTemplate::new(400); }
+        if summary && matches!(counter.fetch_add(1, Ordering::SeqCst), 1 | 2) { return ResponseTemplate::new(503); }
         let text = if summary { "Goal/constraints: preserve task. Confirmed findings: originals supplied. Completed changes/tests: none. Unresolved work: continue the task. Next action: answer once." } else { "Resumed without repeating completed actions." };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":text},"finish_reason":"stop"}],"usage":{"prompt_tokens":123,"completion_tokens":45,"total_tokens":168}}))
     }).mount(&provider).await;
@@ -392,47 +392,33 @@ async fn cli_resumes_durable_required_summary_after_failure_and_exposes_usage() 
         }
         panic!("run did not finish");
     };
-    cli(
+    let run = cli(
         data.path(),
         "send_message",
         json!({"threadId":id,"text":"Continue original task"}),
     );
     wait().await;
-    let pending = project
-        .path()
-        .join(".themis/context")
-        .join(id)
-        .join("pending-compaction.json");
+    let evidence = project.path().join(".themis/context").join(id);
+    let history = state.get_thread_history(id).await.unwrap();
+    let history = serde_json::to_value(history).unwrap();
     assert!(
-        pending.is_file(),
-        "failure must retain a resumable manifest"
-    );
-    assert_eq!(
-        summaries.load(Ordering::SeqCst),
-        2,
-        "first run must reach the intended second-stage HTTP failure; history={:?}",
-        state
-            .get_thread_history(id)
-            .await
+        history
+            .as_array()
             .unwrap()
             .iter()
-            .filter_map(|item| {
-                let value = serde_json::to_value(item).ok()?;
-                (value["envelope"]["event"]["kind"] == "failed")
-                    .then(|| value["envelope"]["event"].clone())
-            })
-            .collect::<Vec<_>>()
+            .any(|item| item["envelope"]["event"]["kind"] == "finished"),
+        "{history}"
     );
+    assert!(!history.to_string().contains("/retry-compaction"));
+    assert!(summaries.load(Ordering::SeqCst) > 3);
     let requests = provider.received_requests().await.unwrap();
     let first: Value = serde_json::from_slice(&requests[0].body).unwrap();
-    let retry = cli(
-        data.path(),
-        "send_message",
-        json!({"threadId":id,"text":"/retry-compaction"}),
-    );
-    wait().await;
     assert!(
-        !pending.exists(),
+        !std::fs::read_dir(&evidence).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("pending-job-")),
         "successful installation clears the suspended job"
     );
     let requests = provider.received_requests().await.unwrap();
@@ -445,15 +431,21 @@ async fn cli_resumes_durable_required_summary_after_failure_and_exposes_usage() 
             )
             .count(),
         1,
-        "completed first stage is reused across independent server runs"
+        "automatic retries must not repeat a completed first stage"
     );
     let metrics = cli(
         data.path(),
         "get_context_usage",
-        json!({"threadId":id,"runId":retry["run_id"]}),
+        json!({"threadId":id,"runId":run["run_id"]}),
     );
     assert!(metrics["total_requests"].as_u64().unwrap() > 1);
-    assert_eq!(metrics["requests_missing_input_usage"], 0);
+    // The two HTTP 503 responses supplied no usage; missing must remain unknown.
+    assert_eq!(metrics["requests_missing_input_usage"], 2);
+    assert_eq!(metrics["failed_or_cancelled_requests"], 2);
+    let attempts = metrics["recent_requests"].as_array().unwrap();
+    assert!(attempts
+        .iter()
+        .any(|request| request["purpose"] == "summarization" && request["attempt"] == 2));
     cli(data.path(), "shutdown", Value::Null);
     host.await.unwrap().unwrap();
 }

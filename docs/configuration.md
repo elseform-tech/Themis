@@ -78,8 +78,8 @@ Example user `runtime.jsonc`:
     ]
   },
   "compaction": {
-    "timeout_seconds": 300,
-    "retry_limit": 1,
+    "timeout_seconds": 900,
+    "retry_limit": 2,
     "section_max_tokens": 4096,
     "summary_max_tokens": 8192
   }
@@ -113,14 +113,14 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `recent_messages` | 2–200; omitted uses Settings |
 | `total_turns` | 1–2,000; omitted uses Settings |
 | `logging.level` | `debug`, `info` (default), `warn`, `error` |
-| `compaction.timeout_seconds` | 1–600; legacy/default 300 for the entire summary job, including retries and consolidation |
+| `compaction.timeout_seconds` | 1–1800; default 900 for the entire summary job, including retries and consolidation; explicit existing values are preserved |
 | `logging.context_metrics` | `off`, `summary` (default), `detailed`; controls content-free accounting, never safety guards |
 | `compaction.request_timeout_seconds` | 1–300; default 300; additionally limited by the remaining job/stage allocation |
 | `compaction.maintenance_threshold_ratio` | 0.50–0.95; default 0.83 of usable message allowance |
 | `compaction.semantic_threshold_ratio` | Above maintenance and at most 0.97; default 0.93 |
 | `compaction.target_headroom_interactions` | 1–20; default 6; recent observed growth adjusts the trigger within a bounded reserve |
 | `compaction.max_stages` | 1–128; default 32, including consolidation |
-| `compaction.retry_limit` | 0 or 1; default 1 |
+| `compaction.retry_limit` | 0–2; default 2 (up to three attempts per failed stage) |
 | `compaction.section_max_tokens` | Legacy compatibility field, 256–16,384; retained for file compatibility; stage output is computed from consolidation capacity |
 | `compaction.summary_max_tokens` | 256–16,384; default 8,192 |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
@@ -132,9 +132,11 @@ that declares it. Explicit run overrides resolve prompt references within the
 user configuration directory. Built-in prompts are in
 `crates/core/builtins/prompts/`. The shared adaptive pipeline first performs reversible maintenance of old completed tool observations. It summarizes only under working-context pressure, after accounting for schemas, the actual output allowance and a safety margin. Archive size and reaching a tool-turn milestone do not themselves trigger summarization.
 
-A fitting packet needs one summary call. When complete eligible records cannot fit, the runtime splits originals into ordered, UTF-8-safe source fragments, summarizes them sequentially, then consolidates bounded notes once. It never silently substitutes sampled head/tail text for complete processing. All stages must finish and pass the required ordered, nonempty state-section checks before a checkpoint is installed. This validates structure, not factual correctness. Stage notes are lossy even with complete processing coverage. Completed stages persist under the evidence directory's `summary-jobs/` and are reused on an explicit retry with matching source, prompt, model and output policy. Ordered short records share bounded source packets rather than creating one request per message. A configured stage-count or packet-size overflow suspends the run before it can install incomplete state.
+A fitting packet needs one summary call. When complete eligible records cannot fit, the runtime splits originals into ordered, UTF-8-safe source fragments, summarizes them sequentially, then consolidates bounded notes once. It never silently substitutes sampled head/tail text for complete processing. All stages must finish and pass the required ordered, nonempty state-section checks before a checkpoint is installed. This validates structure, not factual correctness. Stage notes are lossy even with complete processing coverage. Completed stages persist under the evidence directory's `summary-jobs/` and can be reused internally for matching source, prompt, model and output policy; automatic request retries do not restart completed stages. Ordered short records share bounded source packets rather than creating one request per message. A configured stage-count or packet-size overflow suspends the run before it can install incomplete state.
 
-Each stage has at most one retry for transient errors, timeout, truncation or empty text. Retry output headroom is reserved before dispatch. Retry-After remains a floor with exponential backoff and jitter. The overall job deadline includes archiving, requests, retries, waits and consolidation; an absolute deadline shared by each stage and its retry reserves a downstream consolidation opportunity. Unused hypothetical retries are not reserved for every stage. Exhausted stage time suspends the job. Set `compaction.timeout_seconds` to 600 for the extended ten-minute job, with individual requests at most 300 seconds. Existing files retain their 300-second default. Failure or cancellation keeps the working context unchanged, emits no fallback checkpoint and stops the current run. Before summarization, the runtime saves original evidence and the exact non-system messages in a pending job manifest. Failure messages report whether originals and a resumable job were saved; a storage failure does not imply durable recovery. Send `/retry-compaction` to resume the latest saved job or `/retry-compaction JOB_ID` from its failure message to resume an older suspended task. An explicit job ID remains usable if only publication of the latest-job pointer failed. Diagnostics distinguish `originals_saved` and `pending_job_saved`. New instructions and attachments are rejected with this command; send those as ordinary messages. Successful unrelated tasks do not delete older pending jobs. There is no automatic recovery-to-compaction continuation loop.
+Each failed stage automatically retries up to twice for transient transport/provider errors, request timeout, incomplete/truncated output, empty text or a malformed required checkpoint. Healthy stages use one call. Every attempt must pass structural validation. Permanent provider errors, storage failures and impossible budget/stage plans fail immediately. Output limits are base, twice base, twice base; preparation reserves the maximum before dispatch. Retry-After remains a floor with exponential backoff and jitter for every retry. The absolute job/stage deadlines include requests and waits: three attempts are a maximum, and the final attempt may have less time. Completed stages and tools are never replayed as part of a request retry. The default overall job deadline is fifteen minutes (900 seconds), configurable up to thirty minutes (1800), while each request remains limited to five minutes (300). Explicit existing timeout and retry overrides are preserved. No new summarization calls are made after success.
+
+Failure or cancellation keeps the working context unchanged, emits no fallback checkpoint and stops the current run. Before summarization, the runtime saves original evidence and exact job inputs internally. Failure messages report whether originals were saved; a storage failure does not imply durable recovery. Metadata diagnostics distinguish `originals_saved` and `pending_job_saved` and record retry reason, attempt, backoff and remaining time without content. There is no user-facing compaction retry command and no automatic recovery-to-compaction continuation loop.
 
 Internal summaries disable reasoning independently of the selected answer effort. Known off controls retain LongCat 2.5 with thinking disabled and GPT 5.6/6 Luna with reasoning effort none. Other models use `longcat-2.5-preview-free` with thinking disabled for summaries, through the existing Go credentials and session. This routing is independent of the selected ordinary model. Diagnostics identify the effective model without recording response text.
 

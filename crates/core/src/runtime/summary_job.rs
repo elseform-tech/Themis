@@ -375,7 +375,8 @@ mod tests {
             .unwrap()
             .unwrap_err()
             .to_string()
-            .contains("stage timed out"));
+            // The request-loop and stage guards share a deadline; either can fire first.
+            .contains("timed out"));
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
     }

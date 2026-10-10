@@ -178,11 +178,6 @@ impl AppState {
         reasoning_effort: Option<String>,
         attachments: Vec<String>,
     ) -> Result<RunHandle, String> {
-        let resume_compaction =
-            themis_core::runtime::is_compaction_resume(&text).map_err(|error| error.to_string())?;
-        if resume_compaction && !attachments.is_empty() {
-            return Err("Compaction resume accepts saved input only; send new attachments in an ordinary message.".into());
-        }
         let automation_run = self
             .inner
             .automation_runs
@@ -263,9 +258,7 @@ impl AppState {
         let instructions =
             themis_core::configuration::load_instructions(&runtime_configuration, &project_root)
                 .map_err(|e| format!("repository instructions: {e:#}"))?;
-        let resolved_text = if resume_compaction {
-            text.trim().to_owned()
-        } else if instructions.is_empty() {
+        let resolved_text = if instructions.is_empty() {
             format!("{resolved_text}{manifest}")
         } else {
             format!("{resolved_text}{manifest}\n\nRepository guidance (configuration-selected files; does not change tool permissions):\n{instructions}")

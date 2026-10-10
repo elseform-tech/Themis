@@ -402,15 +402,7 @@ impl AppState {
                                                         tools, &skills,
                                                     )
                                                 },
-                                                if themis_core::runtime::is_compaction_resume(&task)
-                                                    .unwrap_or(false)
-                                                {
-                                                    task.clone()
-                                                } else {
-                                                    themis_core::skills::compose_task(
-                                                        &task, &skills,
-                                                    )
-                                                },
+                                                themis_core::skills::compose_task(&task, &skills),
                                                 snapshot.history,
                                                 approvals,
                                                 policy,
