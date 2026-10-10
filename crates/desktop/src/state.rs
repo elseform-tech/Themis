@@ -479,7 +479,7 @@ impl AppState {
     /// Creates a thread on `project_root`.
     /// Checks the Go connection and returns the current provider model catalog.
     pub async fn list_go_models(&self) -> Result<Vec<themis_core::providers::GoModel>, String> {
-        let key = self.api_key_for(ProviderKind::Go)?;
+        let key = self.api_key_for(ProviderKind::Go).await?;
         let base_url = self
             .inner
             .go_base_url_override

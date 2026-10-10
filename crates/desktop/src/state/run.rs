@@ -51,7 +51,23 @@ impl AppState {
                     .to_owned(),
             );
         }
-        let api_key = self.api_key_for(snapshot.provider)?;
+        let stopped = self
+            .inner
+            .stop_flags
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+            .cloned()
+            .ok_or_else(|| "Run is no longer active".to_owned())?;
+        let api_key = tokio::select! {
+            biased;
+            _ = async {
+                while !stopped.load(Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            } => return Err("Stopped by you".to_owned()),
+            key = self.api_key_for(snapshot.provider) => key?,
+        };
         if let Some(effort) = &snapshot.reasoning_effort {
             let catalog = self.inner.go_catalog.read().await;
             let supported = catalog
@@ -120,6 +136,9 @@ impl AppState {
         // Materialize skill scripts into the run workroot BEFORE building
         // tools: a failure aborts the spawn (the caller resets `running`),
         // so a run never starts half-skilled.
+        if stopped.load(Ordering::SeqCst) {
+            return Err("Stopped by you".to_owned());
+        }
         let mut skill_catalog = themis_core::skills::materialize_catalog(
             &snapshot.skill_catalog,
             &snapshot.work_root,
@@ -225,14 +244,6 @@ impl AppState {
             approvals: approvals.clone(),
         };
         let skills = snapshot.skills;
-        let stopped = self
-            .inner
-            .stop_flags
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(thread_id)
-            .cloned()
-            .ok_or_else(|| "Run is no longer active".to_owned())?;
 
         let evidence_directory = super::attachments::project_storage_directory(
             &snapshot.work_root,

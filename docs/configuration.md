@@ -32,6 +32,12 @@ separate approval-policy JSONL file. Approval decisions are diagnostic records;
 approval rules live in runtime JSONC. API keys stay in Keychain or the launch
 environment, not these configuration files.
 
+Credential reads run outside the async backend workers and wait at most 30
+seconds, so a blocked read does not freeze other status/Stop requests. Stop
+cancels a run's credential wait before skill/MCP setup. The native OS read may
+finish later; no authentication requirement is bypassed. Credential availability
+reports false when a read fails or times out; the value never reaches the UI.
+
 Integrations → Discover installs into **User (Global)** scope without a destination
 selector. Project-scoped imports remain available through the advanced CLI/shared API.
 Global packages are available across projects; local packages retain their own
