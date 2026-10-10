@@ -50,10 +50,17 @@ async fn cli_answer_retries_empty_and_transient_responses_without_replaying_comp
     let provider = MockServer::start().await;
     let times = Arc::new(std::sync::Mutex::new(Vec::new()));
     let observed = times.clone();
+    let summary_limits = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_limits = summary_limits.clone();
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = request.body_json().unwrap();
         if body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context") {
-            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Append once, then finish."},"finish_reason":"stop"}]}));
+            let mut limits = observed_limits.lock().unwrap();
+            let limit = body["max_tokens"].as_u64().unwrap();
+            limits.push(limit);
+            if limits.len() == 1 { return ResponseTemplate::new(429); }
+            let complete = limit == limits[0] * 2;
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Append once, then finish."},"finish_reason":if complete {"stop"} else {"length"}}]}));
         }
         let mut times = observed.lock().unwrap();
         let index = times.len();
@@ -122,6 +129,11 @@ async fn cli_answer_retries_empty_and_transient_responses_without_replaying_comp
     assert_eq!(terminal["result"], "Completed without replay");
     assert_eq!(compactions, 1);
     assert_eq!(completed, 2);
+    {
+        let limits = summary_limits.lock().unwrap();
+        assert_eq!(limits.len(), 2, "one summary retry, with no third call");
+        assert_eq!(limits[1], limits[0] * 2);
+    }
     assert_eq!(
         std::fs::read_to_string(project.path().join("result.txt")).unwrap(),
         "x"
@@ -695,7 +707,9 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
         if summary {
             assert_eq!(body["model"], "longcat-2.5-preview-free");
             assert_eq!(body["thinking"], json!({"type":"disabled"}));
-            if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            let attempt = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(body["max_tokens"], if attempt == 1 { 16384 } else { 8192 });
+            if attempt == 0 {
                 return ResponseTemplate::new(429).insert_header("Retry-After", "0");
             }
             let input = body["messages"][1]["content"].as_str().unwrap();
@@ -708,7 +722,6 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
             }
             let previous = input.split("\n\nNEW MESSAGE RECORDS WITH PROVENANCE:").next().unwrap();
             assert!(!previous.contains("Recent completed context:"), "recent messages must not inflate prior task state");
-            assert_eq!(body["max_tokens"], 8192);
             observed.lock().unwrap().push(input.to_owned());
         }
         if !summary {
@@ -985,7 +998,9 @@ async fn cli_large_file_upload_prepares_one_summary_and_preserves_omitted_origin
     let provider = MockServer::start().await;
     let summaries = Arc::new(Mutex::new(Vec::new()));
     let captured = summaries.clone();
-    let attempts = Arc::new(Mutex::new(std::collections::HashMap::<String, usize>::new()));
+    let attempts = Arc::new(Mutex::new(
+        std::collections::HashMap::<String, (usize, u64)>::new(),
+    ));
     let observed_attempts = Arc::clone(&attempts);
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -993,13 +1008,15 @@ async fn cli_large_file_upload_prepares_one_summary_and_preserves_omitted_origin
         let answer = if summary {
             let dump = body["messages"][1]["content"].as_str().unwrap();
             let limit = body["max_tokens"].as_u64().unwrap();
-            assert!((256..=8192).contains(&limit));
-            assert!(body["messages"].to_string().len().div_ceil(4) + limit as usize * 2 + 512 <= 200_000);
+            assert!((256..=16384).contains(&limit));
             assert!(dump.contains("coverage is incomplete"));
             assert!(dump.contains("source_record"));
             let mut calls = observed_attempts.lock().unwrap();
-            let count = calls.entry(dump.to_owned()).or_default();
+            let (count, initial_limit) = calls.entry(dump.to_owned()).or_insert((0, limit));
             *count += 1;
+            assert!(*count <= 2);
+            assert_eq!(limit, *initial_limit * *count as u64);
+            assert!(body["messages"].to_string().len().div_ceil(4) + *initial_limit as usize * 2 + 512 <= 200_000);
             if *count == 1 { return ResponseTemplate::new(503); }
             drop(calls);
             captured.lock().unwrap().push(dump.to_owned());
@@ -1109,7 +1126,10 @@ async fn cli_large_file_upload_prepares_one_summary_and_preserves_omitted_origin
     {
         let calls = attempts.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls.values().copied().collect::<Vec<_>>(), vec![2]);
+        assert_eq!(
+            calls.values().map(|(count, _)| *count).collect::<Vec<_>>(),
+            vec![2]
+        );
     }
     let requests = provider.received_requests().await.unwrap();
     assert_eq!(requests.len(), 3, "summary, retry, ordinary answer");

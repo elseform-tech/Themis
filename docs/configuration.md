@@ -127,7 +127,8 @@ user configuration directory. Built-in prompts are in
 `crates/core/builtins/prompts/`. The runtime prepares one bounded packet locally and uses
 `summary_max_tokens` as a ceiling scaled down to leave continuation space. It makes
 one summary call and at most one retry for transient errors, truncation or empty
-text. Truncation/empty-output retries may request twice the initial allowance.
+text. Every permitted retry requests twice the initial output allowance, including
+transient-error retries; preprocessing reserves that headroom before either call.
 Transient summary retries honor the provider's `Retry-After` header (seconds or
 HTTP date) as a minimum, with a one-second base and 0–500 ms randomized jitter.
 The shared deadline also bounds this backoff.

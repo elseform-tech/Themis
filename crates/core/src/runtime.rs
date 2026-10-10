@@ -2049,6 +2049,8 @@ async fn compaction_chat(
     bounded[0].content.push_str(&format!("\nOutput budget: aim for at most {} words. Keep explicit Goal/constraints, Confirmed findings with source pointers, Completed changes/tests, Unresolved work, and Next action. Compress repeated bulk detail into source references; do not reproduce tables or source files. The output budget takes precedence over the default word target.", (max_tokens / 3).clamp(80, 1200)));
     let messages = bounded.as_slice();
     let sampling = SamplingOverrides::with_max_tokens(max_tokens);
+    // Preparation reserves this allowance for the sole retry, regardless of the first failure.
+    let headroom = SamplingOverrides::with_max_tokens(max_tokens.saturating_mul(2));
     let result = llm
         .chat_and_sampling(messages, None, Some(&sampling))
         .await
@@ -2066,7 +2068,6 @@ async fn compaction_chat(
             if (message == "Provider response was truncated" || message == "Summarizer returned empty text") && compaction_config().retry_limit > 0 =>
         {
             crate::diagnostics::emit("compaction","request_retry","warn",serde_json::json!({"retry":1,"reason":if message == "Provider response was truncated" {"output_truncated"} else {"empty_output"},"max_tokens":max_tokens.saturating_mul(2)}));
-            let headroom = SamplingOverrides::with_max_tokens(max_tokens.saturating_mul(2));
             eprintln!("compaction retry=1 output_truncated=true max_tokens={}", max_tokens.saturating_mul(2));
             llm.chat_and_sampling(messages, None, Some(&headroom)).await
         }
@@ -2077,9 +2078,9 @@ async fn compaction_chat(
                 error.http_status_code(),
                 delay.as_millis()
             );
-            crate::diagnostics::emit("compaction","request_retry","warn",serde_json::json!({"retry":1,"status":error.http_status_code(),"backoff_ms":delay.as_millis()}));
+            crate::diagnostics::emit("compaction","request_retry","warn",serde_json::json!({"retry":1,"status":error.http_status_code(),"backoff_ms":delay.as_millis(),"max_tokens":max_tokens.saturating_mul(2)}));
             tokio::time::sleep(delay).await;
-            llm.chat_and_sampling(messages, None, Some(&sampling)).await
+            llm.chat_and_sampling(messages, None, Some(&headroom)).await
         }
         result => result,
     }
@@ -3191,52 +3192,58 @@ mod tests {
     #[tokio::test]
     async fn summarization_retries_transient_errors_once_only() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        for (status, recovers, attempts) in [
-            (429, true, 2),
-            (503, true, 2),
-            (503, false, 2),
-            (401, true, 1),
-            (400, true, 1),
-        ] {
-            let server = MockServer::start().await;
-            let calls = Arc::new(AtomicUsize::new(0));
-            let observed = Arc::clone(&calls);
-            Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
+        for limit in [1654, 8192] {
+            for (status, recovers, attempts) in [
+                (429, true, 2),
+                (503, true, 2),
+                (503, false, 2),
+                (401, true, 1),
+                (400, true, 1),
+            ] {
+                let server = MockServer::start().await;
+                let calls = Arc::new(AtomicUsize::new(0));
+                let observed = Arc::clone(&calls);
+                Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
                 if observed.fetch_add(1, Ordering::SeqCst) == 0 || !recovers {
                     ResponseTemplate::new(status)
                 } else {
-                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Recovered task state"},"finish_reason":"stop"}]}))
+                    // A transient first attempt must not spend the only retry on the smaller allowance.
+                    let body: serde_json::Value = request.body_json().unwrap();
+                    let fits = body["max_tokens"] == limit * 2;
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Recovered task state"},"finish_reason":if fits {"stop"} else {"length"}}]}))
                 }
             }).mount(&server).await;
-            let llm = crate::providers::resolve(
-                &crate::providers::ProviderConfig::new(
-                    crate::providers::ProviderKind::Go,
-                    "test-key",
+                let llm = crate::providers::resolve(
+                    &crate::providers::ProviderConfig::new(
+                        crate::providers::ProviderKind::Go,
+                        "test-key",
+                    )
+                    .with_model("test-model")
+                    .with_base_url(server.uri()),
                 )
-                .with_model("test-model")
-                .with_base_url(server.uri()),
-            )
-            .await
-            .unwrap();
-            let result = compaction_chat(
-                &llm,
-                &context_update_messages("Original state", "", "Continue", true),
-                4096,
-            )
-            .await;
-            if recovers && attempts == 2 {
-                assert_eq!(result.unwrap(), "Recovered task state");
-            } else {
-                assert!(result.is_err());
-            }
-            assert_eq!(
-                calls.load(Ordering::SeqCst),
-                attempts,
-                "HTTP {status}, recovers={recovers}"
-            );
-            for request in server.received_requests().await.unwrap() {
-                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
-                assert_eq!(body["max_tokens"], 4096);
+                .await
+                .unwrap();
+                let result = compaction_chat(
+                    &llm,
+                    &context_update_messages("Original state", "", "Continue", true),
+                    limit,
+                )
+                .await;
+                if recovers && attempts == 2 {
+                    assert_eq!(result.unwrap(), "Recovered task state");
+                } else {
+                    assert!(result.is_err());
+                }
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    attempts,
+                    "HTTP {status}, recovers={recovers}"
+                );
+                for (index, request) in server.received_requests().await.unwrap().iter().enumerate()
+                {
+                    let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                    assert_eq!(body["max_tokens"], limit * (index as u32 + 1));
+                }
             }
         }
     }
