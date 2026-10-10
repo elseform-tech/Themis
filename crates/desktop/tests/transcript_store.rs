@@ -54,6 +54,150 @@ fn transcript_survives_reopen_and_keeps_threads_separate() {
 }
 
 #[test]
+fn request_aware_recall_recovers_old_topics_without_replacing_latest_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sessions.sqlite3");
+    let store = TranscriptStore::open(&path).unwrap();
+    store
+        .append_user(
+            "thread",
+            "old",
+            "Let's discuss amber migration. Proposed key AMBER-794; no implementation yet.",
+        )
+        .unwrap();
+    store
+        .append_event(&ThreadEventEnvelope {
+            thread_id: "thread".into(),
+            run_id: "old".into(),
+            event: ThreadEvent::Finished {
+                model: None,
+                result: "Proposal only: AMBER-794 uses ordered epochs.".into(),
+            },
+        })
+        .unwrap();
+    for i in 0..20 {
+        store
+            .append_user(
+                "thread",
+                &format!("aside-{i}"),
+                &format!("Unrelated question {i}"),
+            )
+            .unwrap();
+    }
+    store
+        .append_user(
+            "thread",
+            "latest",
+            "Latest task: write cobalt narrative. Hero is Mira.",
+        )
+        .unwrap();
+    store
+        .append_event(&ThreadEventEnvelope {
+            thread_id: "thread".into(),
+            run_id: "latest".into(),
+            event: ThreadEvent::Finished {
+                model: None,
+                result: "Mira waits at the cobalt bridge.".into(),
+            },
+        })
+        .unwrap();
+    store
+        .append_event(&ThreadEventEnvelope {
+            thread_id: "thread".into(),
+            run_id: "latest".into(),
+            event: ThreadEvent::ContextCheckpoint {
+                summary: "Chaotic lossy summary with no topic facts.".into(),
+            },
+        })
+        .unwrap();
+    drop(store);
+    let store = TranscriptStore::open(&path).unwrap();
+    let recalled = store
+        .context_for_request("thread", "What did we discuss about amber migration?", 8000)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(recalled.contains("AMBER-794"));
+    assert!(recalled.contains("no implementation yet"));
+    assert!(recalled.contains("source_seq"));
+    let latest = store
+        .context_for_request("thread", "Continue that", 8000)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(latest.contains("Mira waits at the cobalt bridge"));
+    assert!(latest.contains("Latest task"));
+    assert!(
+        !latest.contains("AMBER-794"),
+        "a vague follow-up must not select an older topic"
+    );
+    assert!(latest.len() < 8000);
+}
+
+#[test]
+fn usage_query_survives_restart_and_filters_run_without_returning_content() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("sessions.sqlite3");
+    let store = TranscriptStore::open(&path).unwrap();
+    store
+        .append_user("thread", "first", "PRIVATE-PROMPT-CONTENT")
+        .unwrap();
+    for (run, count) in [("first", 2), ("second", 7)] {
+        store.append_event(&ThreadEventEnvelope{thread_id:"thread".into(),run_id:run.into(),event:ThreadEvent::ContextUsage{metrics:serde_json::json!({"total_requests":count,"provider_input_tokens":null})}}).unwrap();
+    }
+    drop(store);
+    let store = TranscriptStore::open(&path).unwrap();
+    assert_eq!(
+        store.context_usage("thread", None).unwrap()["total_requests"],
+        7
+    );
+    assert_eq!(
+        store.context_usage("thread", Some("first")).unwrap()["total_requests"],
+        2
+    );
+    assert!(store.context_usage("missing", None).unwrap().is_null());
+    assert!(!store
+        .context_usage("thread", None)
+        .unwrap()
+        .to_string()
+        .contains("PRIVATE-PROMPT"));
+}
+
+#[test]
+fn historical_original_exports_are_incremental_and_restart_reuses_segments() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("sessions.sqlite3");
+    let exports = directory.path().join("sources");
+    std::fs::create_dir(&exports).unwrap();
+    let store = TranscriptStore::open(&path).unwrap();
+    let original = "Exact original 中 \" quotation\n".repeat(5000);
+    store.append_user("thread", "first", &original).unwrap();
+    store.publish_context_sources("thread", &exports).unwrap();
+    let first = std::fs::read_dir(&exports)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let bytes = std::fs::read(&first).unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(record["content"], original);
+    assert_eq!(record["role"], "User");
+    store.append_user("thread", "second", "New task").unwrap();
+    store.publish_context_sources("thread", &exports).unwrap();
+    assert_eq!(std::fs::read(&first).unwrap(), bytes);
+    assert_eq!(std::fs::read_dir(&exports).unwrap().count(), 2);
+    drop(store);
+    let store = TranscriptStore::open(&path).unwrap();
+    store.publish_context_sources("thread", &exports).unwrap();
+    assert_eq!(std::fs::read_dir(&exports).unwrap().count(), 2);
+}
+
+#[test]
 fn legacy_display_messages_import_once_into_model_context() {
     let dir = tempfile::tempdir().unwrap();
     let store = TranscriptStore::open(&dir.path().join("sessions.sqlite3")).unwrap();
@@ -166,7 +310,21 @@ async fn followup_after_restart_receives_prior_conversation() {
         .unwrap();
     second.set_go_base_url_override(Some(server.uri()));
     assert_eq!(
-        second.get_thread_history(&thread.id).await.unwrap().len(),
+        second
+            .get_thread_history(&thread.id)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|item| !matches!(
+                item,
+                HistoryItem::Event {
+                    envelope: ThreadEventEnvelope {
+                        event: ThreadEvent::ContextUsage { .. },
+                        ..
+                    }
+                }
+            ))
+            .count(),
         4
     );
     let (sink, mut rx) = ChannelSink::channel();

@@ -109,13 +109,19 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 
 | Field | Range/default |
 | --- | --- |
-| `context_token_budget` | 2,000–200,000; omitted uses Settings |
+| `context_token_budget` | 2,000–256,000; omitted uses Settings (default 200,000) |
 | `recent_messages` | 2–200; omitted uses Settings |
 | `total_turns` | 1–2,000; omitted uses Settings |
 | `logging.level` | `debug`, `info` (default), `warn`, `error` |
-| `compaction.timeout_seconds` | 1–300; default 300 for the shared summarization deadline |
+| `compaction.timeout_seconds` | 1–600; legacy/default 300 for the entire summary job, including retries and consolidation |
+| `logging.context_metrics` | `off`, `summary` (default), `detailed`; controls content-free accounting, never safety guards |
+| `compaction.request_timeout_seconds` | 1–300; default 300; additionally limited by the remaining job/stage allocation |
+| `compaction.maintenance_threshold_ratio` | 0.50–0.95; default 0.83 of usable message allowance |
+| `compaction.semantic_threshold_ratio` | Above maintenance and at most 0.97; default 0.93 |
+| `compaction.target_headroom_interactions` | 1–20; default 6; recent observed growth adjusts the trigger within a bounded reserve |
+| `compaction.max_stages` | 1–128; default 32, including consolidation |
 | `compaction.retry_limit` | 0 or 1; default 1 |
-| `compaction.section_max_tokens` | Legacy compatibility field, 256–16,384; ignored by the single-summary pipeline |
+| `compaction.section_max_tokens` | Legacy compatibility field, 256–16,384; retained for file compatibility; stage output is computed from consolidation capacity |
 | `compaction.summary_max_tokens` | 256–16,384; default 8,192 |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
 | `approval.rules` | At most 256 ordered rules |
@@ -124,31 +130,17 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 the compaction algorithm. It resolves within the directory of the configuration
 that declares it. Explicit run overrides resolve prompt references within the
 user configuration directory. Built-in prompts are in
-`crates/core/builtins/prompts/`. The runtime prepares one bounded packet locally and uses
-`summary_max_tokens` as a ceiling scaled down to leave continuation space. It makes
-one summary call and at most one retry for transient errors, truncation or empty
-text. Every permitted retry requests twice the initial output allowance, including
-transient-error retries; preprocessing reserves that headroom before either call.
-Transient summary retries honor the provider's `Retry-After` header (seconds or
-HTTP date) as a minimum, with a one-second base and 0–500 ms randomized jitter.
-The shared deadline also bounds this backoff.
-Chat Completions summary/truncation diagnostics retain reported token counts
-and text size; failed summary requests retain error categories. Neither record contains
-response text.
-Internal summaries disable reasoning independently of the selected answer effort.
-Known off controls currently retain LongCat 2.5 with `thinking: {"type":"disabled"}`
-and GPT 5.6/6 Luna with `reasoning.effort: "none"`. Other or unknown models use
-`longcat-2.5-preview-free` with thinking disabled for summaries, reusing the same Go
-credentials and session. This conservative fallback includes models whose off
-control has not been verified; it is not a claim that all of them require reasoning.
-If the summary provider fails, the existing bounded retry/durable fallback applies.
+`crates/core/builtins/prompts/`. The shared adaptive pipeline first performs reversible maintenance of old completed tool observations. It summarizes only under working-context pressure, after accounting for schemas, the actual output allowance and a safety margin. Archive size and reaching a tool-turn milestone do not themselves trigger summarization.
+
+A fitting packet needs one summary call. When complete eligible records cannot fit, the runtime splits originals into ordered, UTF-8-safe source fragments, summarizes them sequentially, then consolidates bounded notes once. It never silently substitutes sampled head/tail text for complete processing. All stages must finish and pass the required ordered, nonempty state-section checks before a checkpoint is installed. This validates structure, not factual correctness. Stage notes are lossy even with complete processing coverage. Completed stages persist under the evidence directory's `summary-jobs/` and are reused on an explicit retry with matching source, prompt, model and output policy. Ordered short records share bounded source packets rather than creating one request per message. A configured stage-count or packet-size overflow suspends the run before it can install incomplete state.
+
+Each stage has at most one retry for transient errors, timeout, truncation or empty text. Retry output headroom is reserved before dispatch. Retry-After remains a floor with exponential backoff and jitter. The overall job deadline includes archiving, requests, retries, waits and consolidation; an absolute deadline shared by each stage and its retry reserves a downstream consolidation opportunity. Unused hypothetical retries are not reserved for every stage. Exhausted stage time suspends the job. Set `compaction.timeout_seconds` to 600 for the extended ten-minute job, with individual requests at most 300 seconds. Existing files retain their 300-second default. Failure or cancellation keeps the original working context and durable originals unchanged, emits no fallback checkpoint and stops the current run. A failure retains the exact non-system messages in a pending job manifest. Send `/retry-compaction` to resume the latest saved job or `/retry-compaction JOB_ID` from its failure message to resume an older suspended task. New instructions and attachments are rejected with this command; send those as ordinary messages. Successful unrelated tasks do not delete older pending jobs. There is no automatic recovery-to-compaction continuation loop.
+
+Internal summaries disable reasoning independently of the selected answer effort. Known off controls retain LongCat 2.5 with thinking disabled and GPT 5.6/6 Luna with reasoning effort none. Other models use `longcat-2.5-preview-free` with thinking disabled for summaries, through the existing Go credentials and session. This routing is independent of the selected ordinary model. Diagnostics identify the effective model without recording response text.
+
 Ordinary answers retain the selected model and configured reasoning behavior. Effort validation loads the Go catalog on first use after restart, before deciding whether an effort is supported. Catalog-loading failures remain explicit loading errors; Stop can cancel that fetch during run setup.
 Summary diagnostics identify the effective model without logging response text.
-There is no section scheduler or reconciliation pass; `section_max_tokens` is
-accepted for existing files but no longer affects behavior. See [context checkpoints](context-and-attachments.md)
-for packet selection, estimates and omissions. Both calls share the summarization
-deadline (five minutes by default); each provider HTTP request also has a
-five-minute timeout. Each ordinary answer request allows at most two retries
+Each ordinary answer request allows at most two retries
 before public text, with exponential base delays of one then two seconds and
 randomized jitter of 0–500 ms then 0–1,000 ms. A longer `Retry-After` is a minimum;
 the jitter is added above it. All ordinary attempts and backoffs share a
@@ -158,8 +150,7 @@ completion. Empty answers may retry within the same attempt/deadline bound when
 no public text was emitted; persistent emptiness fails explicitly. Truncated JSON
 responses are rejected even when the provider returns JSON for a streaming request.
 Completed tools are not replayed. Metadata diagnostics record retry number,
-HTTP status and delay, without provider bodies. Stop can cancel either wait. Recovery checkpoint
-writes can add time outside the shared deadline. Originals, prior
+HTTP status and delay, without provider bodies. Stop can cancel either wait. Originals, prior
 usable state and deterministic action/read receipts remain separate from the
 model summary. This does not add compaction UI or guarantee lossless recall.
 
@@ -243,3 +234,17 @@ The app starts enabled global and selected-project MCP connections asynchronousl
 The shared `plugin_action` API accepts `mcp_status` with `projectRoot`. `connect: true` reconciles enabled definitions and starts missing connections without waiting; `retry: true` also retries failed connections. Without those flags it only reads observed status. This supports CLI verification through `themis call plugin_action`. App entry, project selection and server reconnection trigger initialization automatically.
 
 Agent delivery limits (16 KiB per result, 48 KiB per batch, 64 KiB per serialized tool call, each reduced for small context budgets) are runtime safeguards rather than new configuration fields. The context estimate includes tool schemas and an answer reserve. Reads default to 4,000 content characters, and repeated archive recovery is bounded within each run. See [context limits and recovery](context-and-attachments.md) for offloading, errors, and the distinction between model delivery and source/tool capture limits.
+
+## Context accounting API
+
+`logging.context_metrics` is captured once per run. `off` disables optional request accounting; bounds, evidence saves and loop guards remain active. `summary` retains aggregate counts and the latest request; `detailed` also retains the last 32 request records with mutually exclusive role and purpose distributions. These are alternative views of the same message bytes, never additive. Estimates use serialized bytes and message overhead, not a verified model tokenizer. The live catalog is joined to models.dev context/output limits. Ordinary requests clamp to the selected model's published capacity; internal summaries separately clamp to the effective nonthinking summary model. Unknown production capacity uses a conservative 24k admission limit and is labeled unknown. Published metadata is not proof of successful live requests at that capacity.
+
+Every actual provider attempt, including internal summaries and retries, contributes to request counts and latency. Reported input/output totals remain separate from cached-input and reasoning-output subcounts, which are included in normalized parent counts. Anthropic uncached input, cache reads and cache creation are combined once; OpenAI cache detail is already included in input. Missing usage is null/unavailable, with missing-request counts; it is never reported as zero. Partial streams retain reported usage when available, and cancelled/failed requests remain in accounting. Streaming Chat Completions requests ask for usage and consume trailing usage frames. Token cost is unavailable unless a verified price source is supplied.
+
+Metadata snapshots persist as context_usage events in the existing sessions database. The final accounting snapshot can follow the terminal event so cancelled request cleanup is included. Query without reading conversation payloads:
+
+```sh
+themis call get_context_usage '{"threadId":"THREAD","runId":"RUN"}'
+```
+
+Omit runId for the latest snapshot; no available snapshot returns null. Diagnostic JSONL remains bounded and rotating as documented below. It records correlation IDs, pipeline/job/stage/attempt, model, sizes, estimates, provider usage, timing and outcome categories. It excludes prompts, filenames, arguments, results, document passages, provider bodies and credentials. Historical source excerpts and stage notes belong only in transcript/evidence storage. This provides backend data for a future dashboard; no raw-log viewer or new dashboard UI is added. Usage and runtime events are observations, not automatic judgments of narrative or coding correctness.

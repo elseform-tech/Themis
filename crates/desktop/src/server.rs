@@ -404,6 +404,14 @@ pub async fn dispatch(
                 .await?
         ),
         "get_thread" => output!(state.get_thread(&arg::<String>(&args, "threadId")?).await?),
+        "get_context_usage" => output!(
+            state
+                .get_context_usage(
+                    &arg::<String>(&args, "threadId")?,
+                    arg::<Option<String>>(&args, "runId")?.as_deref()
+                )
+                .await?
+        ),
         "get_thread_history" => output!(
             state
                 .get_thread_history(&arg::<String>(&args, "threadId")?)

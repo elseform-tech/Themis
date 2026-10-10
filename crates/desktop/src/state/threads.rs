@@ -79,6 +79,15 @@ impl AppState {
         self.inner.transcript.history(thread_id)
     }
 
+    pub async fn get_context_usage(
+        &self,
+        thread_id: &str,
+        run_id: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
+        self.get_thread(thread_id).await?;
+        self.inner.transcript.context_usage(thread_id, run_id)
+    }
+
     pub async fn import_legacy_history(
         &self,
         thread_id: &str,
@@ -169,6 +178,11 @@ impl AppState {
         reasoning_effort: Option<String>,
         attachments: Vec<String>,
     ) -> Result<RunHandle, String> {
+        let resume_compaction =
+            themis_core::runtime::is_compaction_resume(&text).map_err(|error| error.to_string())?;
+        if resume_compaction && !attachments.is_empty() {
+            return Err("Compaction resume accepts saved input only; send new attachments in an ordinary message.".into());
+        }
         let automation_run = self
             .inner
             .automation_runs
@@ -176,7 +190,7 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(&run_id);
         let settings = self.inner.settings.get().await;
-        let mut history = self.inner.transcript.context(&thread_id, usize::MAX)?;
+        let mut history = Vec::new();
         let project_root = {
             let threads = self.inner.threads.read().await;
             threads
@@ -185,6 +199,18 @@ impl AppState {
                 .project_root
                 .clone()
         };
+        let sources =
+            super::attachments::project_storage_directory(&project_root, &["context", &thread_id])?;
+        let source_state = self.clone();
+        let source_thread = thread_id.clone();
+        tokio::task::spawn_blocking(move || {
+            source_state
+                .inner
+                .transcript
+                .publish_context_sources(&source_thread, &sources)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
         let explicit = configuration::RUN_OVERRIDE
             .try_with(Clone::clone)
             .ok()
@@ -192,6 +218,16 @@ impl AppState {
         let resolved_configuration =
             self.runtime_configuration(Some(&project_root), explicit.as_deref())?;
         let mut runtime_configuration = resolved_configuration.config;
+        history.extend(
+            self.inner.transcript.context_for_request(
+                &thread_id,
+                &text,
+                runtime_configuration
+                    .context_token_budget
+                    .unwrap_or(settings.context_token_budget as usize)
+                    / 2,
+            )?,
+        );
         if settings.confirm_reads
             && !resolved_configuration
                 .provenance
@@ -200,8 +236,14 @@ impl AppState {
         {
             runtime_configuration.approval.rules.clear();
         }
-        let (files, manifest) =
-            super::attachments::attachment_context(&project_root, &attachments)?;
+        let (files, manifest) = super::attachments::attachment_context_with_budget(
+            &project_root,
+            &attachments,
+            runtime_configuration
+                .context_token_budget
+                .unwrap_or(settings.context_token_budget as usize)
+                / 2,
+        )?;
         history.extend(files);
         let legacy: Vec<_> = self
             .inner
@@ -221,7 +263,9 @@ impl AppState {
         let instructions =
             themis_core::configuration::load_instructions(&runtime_configuration, &project_root)
                 .map_err(|e| format!("repository instructions: {e:#}"))?;
-        let resolved_text = if instructions.is_empty() {
+        let resolved_text = if resume_compaction {
+            text.trim().to_owned()
+        } else if instructions.is_empty() {
             format!("{resolved_text}{manifest}")
         } else {
             format!("{resolved_text}{manifest}\n\nRepository guidance (configuration-selected files; does not change tool permissions):\n{instructions}")
@@ -386,7 +430,7 @@ impl AppState {
                 .unwrap_or(settings.max_total_turns.clamp(1, 2000) as usize),
             context_token_budget: runtime_configuration
                 .context_token_budget
-                .unwrap_or(settings.context_token_budget.clamp(2000, 200000) as usize),
+                .unwrap_or(settings.context_token_budget.clamp(2000, 256000) as usize),
             recent_messages: runtime_configuration
                 .recent_messages
                 .unwrap_or(settings.context_messages.clamp(1, 100) as usize),

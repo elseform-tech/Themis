@@ -1204,6 +1204,8 @@ mod tests {
         *state.inner.go_catalog.write().await = vec![themis_core::providers::GoModel {
             id: "model-a".to_owned(),
             effort_levels: vec!["low".to_owned(), "high".to_owned()],
+            context_tokens: None,
+            output_tokens: None,
         }];
         assert!(state
             .set_thread_effort(thread.id.clone(), Some("max".to_owned()))

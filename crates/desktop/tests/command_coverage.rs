@@ -26,11 +26,12 @@ fn server_exposes_all_frontend_backend_commands() {
                 .strip_prefix('"')
                 .and_then(|tail| tail.split('"').next())
         }))
-        // Advanced configuration and logs intentionally have no desktop controls.
+        // Advanced configuration, logs and usage queries have no desktop controls.
         .chain([
             "get_runtime_configuration",
             "save_runtime_configuration",
             "query_diagnostic_logs",
+            "get_context_usage",
         ])
         .collect();
     let handled: BTreeSet<_> = server

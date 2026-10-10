@@ -348,3 +348,112 @@ async fn cli_catalog_inspection_distinguishes_partial_and_unsupported() {
     cli(data.path(), "shutdown", Value::Null);
     host.await.unwrap().unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_resumes_durable_required_summary_after_failure_and_exposes_usage() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use themis_desktop::server::Client;
+    use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(project.path().join(".themis/config.jsonc"), r#"{"context_token_budget":24000,"recent_messages":4,"compaction":{"timeout_seconds":120,"request_timeout_seconds":60,"max_stages":64,"retry_limit":0},"logging":{"context_metrics":"detailed"}}"#).unwrap();
+    let provider = MockServer::start().await;
+    let summaries = Arc::new(AtomicUsize::new(0));
+    let counter = summaries.clone();
+    Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let summary = body["messages"][0]["content"].as_str().unwrap_or("").contains("You summarize agent context");
+        if summary && counter.fetch_add(1, Ordering::SeqCst) == 1 { return ResponseTemplate::new(400); }
+        let text = if summary { "Goal/constraints: preserve task. Confirmed findings: originals supplied. Completed changes/tests: none. Unresolved work: continue the task. Next action: answer once." } else { "Resumed without repeating completed actions." };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":text},"finish_reason":"stop"}],"usage":{"prompt_tokens":123,"completion_tokens":45,"total_tokens":168}}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    common::use_mock_llm(&state, &provider).await;
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let host = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let client = Client::new(data.path().to_path_buf());
+    client.call("import_legacy_history", json!({"threadId":id,"messages":(0..40).map(|i| json!({"id":format!("old-{i}"),"role":"user","text":format!("Original record {i}: {}", "unchanged evidence ".repeat(600))})).collect::<Vec<_>>()})).await.unwrap();
+    let wait = || async {
+        for _ in 0..400 {
+            if !state.get_thread(id).await.unwrap().running {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("run did not finish");
+    };
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Continue original task"}),
+    );
+    wait().await;
+    let pending = project
+        .path()
+        .join(".themis/context")
+        .join(id)
+        .join("pending-compaction.json");
+    assert!(
+        pending.is_file(),
+        "failure must retain a resumable manifest"
+    );
+    assert_eq!(
+        summaries.load(Ordering::SeqCst),
+        2,
+        "first run must reach the intended second-stage HTTP failure; history={:?}",
+        state
+            .get_thread_history(id)
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|item| {
+                let value = serde_json::to_value(item).ok()?;
+                (value["envelope"]["event"]["kind"] == "failed")
+                    .then(|| value["envelope"]["event"].clone())
+            })
+            .collect::<Vec<_>>()
+    );
+    let requests = provider.received_requests().await.unwrap();
+    let first: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let retry = cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"/retry-compaction"}),
+    );
+    wait().await;
+    assert!(
+        !pending.exists(),
+        "successful installation clears the suspended job"
+    );
+    let requests = provider.received_requests().await.unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(
+                |r| serde_json::from_slice::<Value>(&r.body).unwrap()["messages"]
+                    == first["messages"]
+            )
+            .count(),
+        1,
+        "completed first stage is reused across independent server runs"
+    );
+    let metrics = cli(
+        data.path(),
+        "get_context_usage",
+        json!({"threadId":id,"runId":retry["run_id"]}),
+    );
+    assert!(metrics["total_requests"].as_u64().unwrap() > 1);
+    assert_eq!(metrics["requests_missing_input_usage"], 0);
+    cli(data.path(), "shutdown", Value::Null);
+    host.await.unwrap().unwrap();
+}

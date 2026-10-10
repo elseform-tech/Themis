@@ -87,6 +87,7 @@ async fn drive_run(
 fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
     events
         .iter()
+        .filter(|event| !matches!(event, ThreadEvent::ContextUsage { .. }))
         .map(|event| match event {
             ThreadEvent::Started { .. } => "started",
             ThreadEvent::AssistantText { .. } => "assistant_text",
@@ -97,6 +98,7 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::Failed { .. } => "failed",
             ThreadEvent::ContextCheckpoint { .. } => "context_checkpoint",
             ThreadEvent::ContextCompacting => "context_compacting",
+            ThreadEvent::ContextUsage { .. } => unreachable!("metadata filtered above"),
             ThreadEvent::Incomplete { .. } => "incomplete",
         })
         .collect()
@@ -147,6 +149,15 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
     // Exactly one dialog: dispatch consults the hook and the execution-time
     // check consumes the dispatch permit instead of prompting again.
     assert_eq!(run.approvals_answered, 1);
+    assert!(run
+        .events
+        .iter()
+        .any(|event| matches!(event, ThreadEvent::ContextUsage { .. })));
+    let events = run
+        .events
+        .iter()
+        .filter(|event| !matches!(event, ThreadEvent::ContextUsage { .. }))
+        .collect::<Vec<_>>();
     let kinds = event_kinds(&run.events);
     // The final turn emits its text as `assistant_text`, then `finished`.
     assert_eq!(
@@ -161,17 +172,17 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
         ],
         "{kinds:?}"
     );
-    let ThreadEvent::ToolStarted { tool, .. } = &run.events[1] else {
-        panic!("expected tool_started, got {:?}", run.events[1]);
+    let ThreadEvent::ToolStarted { tool, .. } = events[1] else {
+        panic!("expected tool_started, got {:?}", events[1]);
     };
     assert_eq!(tool, "write_file");
-    let ThreadEvent::ApprovalDecided { tool, decision } = &run.events[2] else {
-        panic!("expected approval_decided, got {:?}", run.events[2]);
+    let ThreadEvent::ApprovalDecided { tool, decision } = events[2] else {
+        panic!("expected approval_decided, got {:?}", events[2]);
     };
     assert_eq!(tool, "write_file");
     assert_eq!(*decision, ApprovalDecision::Once);
-    let ThreadEvent::ToolFinished { tool, ok, output } = &run.events[3] else {
-        panic!("expected tool_finished, got {:?}", run.events[3]);
+    let ThreadEvent::ToolFinished { tool, ok, output } = events[3] else {
+        panic!("expected tool_finished, got {:?}", events[3]);
     };
     assert_eq!(tool, "write_file");
     assert!(ok, "tool call succeeded");

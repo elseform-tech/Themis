@@ -373,6 +373,7 @@ export function applyThreadEvent(
         ok: event.decision === "deny" ? false : undefined,
       });
     }
+    case "context_usage": return state;
     case "context_compacting": return { ...state, compacting: { ...state.compacting, [threadId]: true } };
     case "context_checkpoint": return { ...state, compacting: { ...state.compacting, [threadId]: false } };
     case "incomplete":

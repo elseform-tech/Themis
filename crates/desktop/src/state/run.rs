@@ -59,6 +59,12 @@ impl AppState {
             .get(thread_id)
             .cloned()
             .ok_or_else(|| "Run is no longer active".to_owned())?;
+        let endpoint_override = self
+            .inner
+            .go_base_url_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
         let api_key = tokio::select! {
             biased;
             _ = async {
@@ -68,8 +74,11 @@ impl AppState {
             } => return Err("Stopped by you".to_owned()),
             key = async {
                 let key = self.api_key_for(snapshot.provider).await?;
-                if snapshot.reasoning_effort.is_some() {
-                    self.ensure_go_catalog().await?;
+                // Unknown limits remain explicit and use conservative admission.
+                // Effort selection still requires a successfully loaded catalog.
+                if !endpoint_override || snapshot.reasoning_effort.is_some() {
+                    let catalog = self.ensure_go_catalog().await;
+                    if snapshot.reasoning_effort.is_some() {catalog?;}
                 }
                 Ok::<_, String>(key)
             } => key?,
@@ -87,6 +96,15 @@ impl AppState {
                 ));
             }
         }
+        let capacity_catalog = self.inner.go_catalog.read().await.clone();
+        let context_capacity = self
+            .inner
+            .go_catalog
+            .read()
+            .await
+            .iter()
+            .find(|model| model.id == snapshot.model)
+            .and_then(|model| model.context_tokens);
         let mut config = ProviderConfig::new(themis_core::providers::ProviderKind::Go, api_key);
         config.reasoning_effort = snapshot.reasoning_effort;
         config.session_id = Some(thread_id.to_owned());
@@ -356,37 +374,59 @@ impl AppState {
                     let _ = events_tx.send(event).await;
                 }
                 let hook_task = task.clone();
-                themis_core::diagnostics::ACTIVE
-                    .scope(
+                themis_core::providers::with_catalog_limits(
+                    &capacity_catalog,
+                    themis_core::diagnostics::ACTIVE.scope(
                         diagnostic_context,
-                        themis_core::runtime::with_configuration(
-                            run_configuration.compaction,
-                            themis_core::plugins::hooks::with_hooks(
-                                hook_runtime,
-                                &hook_task,
-                                events_tx,
-                                |events_tx| {
-                                    run_task_with_evidence(
-                                        llm,
-                                        if yolo {
-                                            tools
-                                        } else {
-                                            themis_core::skills::filter_tools(tools, &skills)
-                                        },
-                                        themis_core::skills::compose_task(&task, &skills),
-                                        snapshot.history,
-                                        approvals,
-                                        policy,
+                        themis_core::runtime::with_model_context_capacity(
+                            if endpoint_override {
+                                None
+                            } else {
+                                Some(context_capacity)
+                            },
+                            themis_core::context_metrics::with_run_policy(
+                                &run_configuration.clone(),
+                                themis_core::runtime::with_configuration(
+                                    run_configuration.compaction,
+                                    themis_core::plugins::hooks::with_hooks(
+                                        hook_runtime,
+                                        &hook_task,
                                         events_tx,
-                                        stopped,
-                                        skill_catalog,
-                                        Some(evidence_directory),
-                                    )
-                                },
+                                        |events_tx| {
+                                            Box::pin(run_task_with_evidence(
+                                                llm,
+                                                if yolo {
+                                                    tools
+                                                } else {
+                                                    themis_core::skills::filter_tools(
+                                                        tools, &skills,
+                                                    )
+                                                },
+                                                if themis_core::runtime::is_compaction_resume(&task)
+                                                    .unwrap_or(false)
+                                                {
+                                                    task.clone()
+                                                } else {
+                                                    themis_core::skills::compose_task(
+                                                        &task, &skills,
+                                                    )
+                                                },
+                                                snapshot.history,
+                                                approvals,
+                                                policy,
+                                                events_tx,
+                                                stopped,
+                                                skill_catalog,
+                                                Some(evidence_directory),
+                                            ))
+                                        },
+                                    ),
+                                ),
                             ),
                         ),
-                    )
-                    .await
+                    ),
+                )
+                .await
             })
             .await;
             let _pump = pump.await;
