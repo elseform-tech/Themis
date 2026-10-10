@@ -902,50 +902,53 @@ async fn request_answer_inner(
     let mut retries = 0;
     loop {
         let mut published = false;
-        let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> = async {
-            match llm
-                .chat_stream_with_tools(messages, Some(llm_tools), None)
-                .await
-            {
-                Ok(mut stream) => {
-                    let mut text = String::new();
-                    let mut calls = Vec::new();
-                    while let Some(chunk) = stream.next().await {
-                        check_stopped(stopped, events).await?;
-                        match chunk? {
-                            StreamChunk::Text(delta) => {
-                                published |= !delta.is_empty();
-                                text.push_str(&delta);
-                                events.send(RunEvent::AssistantText(delta)).await.ok();
-                            }
-                            StreamChunk::ToolUseComplete { tool_call, .. } => calls.push(tool_call),
-                            _ => {} // Reasoning content is private; only public narration reaches the UI.
-                        }
-                    }
-                    Ok(((!text.is_empty()).then_some(text), calls))
-                }
-                Err(autoagents::llm::error::LLMError::Generic(message))
-                    if message == "Streaming with tools not supported for this provider" =>
+        let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> =
+            crate::context_metrics::with_attempt(retries as usize, async {
+                match llm
+                    .chat_stream_with_tools(messages, Some(llm_tools), None)
+                    .await
                 {
-                    let response = llm.chat_with_tools(messages, Some(llm_tools), None).await?;
-                    let text = response.text().filter(|text| !text.is_empty());
-                    if let Some(text) = text.clone() {
-                        published = true;
-                        events.send(RunEvent::AssistantText(text)).await.ok();
+                    Ok(mut stream) => {
+                        let mut text = String::new();
+                        let mut calls = Vec::new();
+                        while let Some(chunk) = stream.next().await {
+                            check_stopped(stopped, events).await?;
+                            match chunk? {
+                                StreamChunk::Text(delta) => {
+                                    published |= !delta.is_empty();
+                                    text.push_str(&delta);
+                                    events.send(RunEvent::AssistantText(delta)).await.ok();
+                                }
+                                StreamChunk::ToolUseComplete { tool_call, .. } => {
+                                    calls.push(tool_call)
+                                }
+                                _ => {} // Reasoning content is private; only public narration reaches the UI.
+                            }
+                        }
+                        Ok(((!text.is_empty()).then_some(text), calls))
                     }
-                    Ok((text, response.tool_calls().unwrap_or_default()))
+                    Err(autoagents::llm::error::LLMError::Generic(message))
+                        if message == "Streaming with tools not supported for this provider" =>
+                    {
+                        let response = llm.chat_with_tools(messages, Some(llm_tools), None).await?;
+                        let text = response.text().filter(|text| !text.is_empty());
+                        if let Some(text) = text.clone() {
+                            published = true;
+                            events.send(RunEvent::AssistantText(text)).await.ok();
+                        }
+                        Ok((text, response.tool_calls().unwrap_or_default()))
+                    }
+                    Err(error) => Err(error.into()),
                 }
-                Err(error) => Err(error.into()),
-            }
-        }
-        .await
-        .and_then(|(text, calls)| {
-            if calls.is_empty() && text.as_deref().is_none_or(|text| text.trim().is_empty()) {
-                Err(autoagents::llm::error::LLMError::Generic(EMPTY_ANSWER.into()).into())
-            } else {
-                Ok((text, calls))
-            }
-        });
+            })
+            .await
+            .and_then(|(text, calls)| {
+                if calls.is_empty() && text.as_deref().is_none_or(|text| text.trim().is_empty()) {
+                    Err(autoagents::llm::error::LLMError::Generic(EMPTY_ANSWER.into()).into())
+                } else {
+                    Ok((text, calls))
+                }
+            });
         let Some(error) = result
             .as_ref()
             .err()
@@ -954,7 +957,8 @@ async fn request_answer_inner(
             return result;
         };
         let empty_output = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == EMPTY_ANSWER);
-        if retries == 2 || published || (!error.is_retryable() && !empty_output) {
+        let truncated = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == "Provider response was truncated");
+        if retries == 2 || published || (!error.is_retryable() && !empty_output && !truncated) {
             return result;
         }
         // Calls from an interrupted response have not been executed; completed tools are already in messages.
@@ -966,7 +970,7 @@ async fn request_answer_inner(
             "warn",
             serde_json::json!({
                 "retry": retries, "status": error.http_status_code(), "backoff_ms": delay.as_millis(),
-                "reason": if empty_output { "empty_output" } else { "transient" },
+                "reason": if empty_output { "empty_output" } else if truncated { "output_truncated" } else { "transient" },
             }),
         );
         eprintln!(
@@ -3483,6 +3487,82 @@ mod tests {
                     }
                 }
                 assert_eq!(texts, if recovers { vec!["Recovered"] } else { vec![] });
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn unpublished_truncation_retries_without_publishing_discarded_calls() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        for streaming in [false, true] {
+            for (failures, public) in [(1, false), (2, false), (3, false), (1, true)] {
+                let server = MockServer::start().await;
+                let calls = Arc::new(AtomicUsize::new(0));
+                let observed = calls.clone();
+                Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
+                    let truncated = observed.fetch_add(1, Ordering::SeqCst) < failures;
+                    let text = if truncated { if public { "Partial" } else { "" } } else { "Recovered" };
+                    if streaming {
+                        let delta = if truncated { serde_json::json!({"content":text,"reasoning_content":"private discarded reasoning","tool_calls":[{"index":0,"id":"discarded","function":{"name":"write_file","arguments":"{\"file_path\":\"bad.txt\",\"content\":\"bad\"}"}}]}) } else { serde_json::json!({"content":text}) };
+                        ResponseTemplate::new(200).set_body_raw(format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",serde_json::json!({"choices":[{"delta":delta}]}),serde_json::json!({"choices":[{"delta":{},"finish_reason":if truncated {"length"} else {"stop"}}]})),"text/event-stream")
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":text,"reasoning_content":"private discarded reasoning","tool_calls":if truncated {serde_json::json!([{"id":"discarded","type":"function","function":{"name":"write_file","arguments":"{}"}}])} else {serde_json::json!([])}},"finish_reason":if truncated {"length"} else {"stop"}}]}))
+                    }
+                }).mount(&server).await;
+                let llm = crate::providers::resolve(
+                    &crate::providers::ProviderConfig::new(
+                        crate::providers::ProviderKind::Go,
+                        "test-key",
+                    )
+                    .with_model("test-model")
+                    .with_base_url(server.uri()),
+                )
+                .await
+                .unwrap();
+                let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+                let result = crate::providers::OUTPUT_LIMIT
+                    .scope(
+                        8192,
+                        request_answer(&llm, &[], &[], &tx, &AtomicBool::new(false)),
+                    )
+                    .await;
+                // JSON fallback rejects the entire response before any public text is delivered.
+                let published = streaming && public;
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    if published { 1 } else { (failures + 1).min(3) }
+                );
+                if !published && failures < 3 {
+                    let (text, tools) = result.unwrap();
+                    assert_eq!(text.as_deref(), Some("Recovered"));
+                    assert!(
+                        tools.is_empty(),
+                        "discarded attempts must not return tool calls"
+                    );
+                } else {
+                    assert!(result.unwrap_err().to_string().contains("truncated"));
+                }
+                let mut texts = Vec::new();
+                while let Ok(event) = rx.try_recv() {
+                    if let RunEvent::AssistantText(text) = event {
+                        texts.push(text);
+                    }
+                }
+                assert_eq!(
+                    texts,
+                    if published {
+                        vec!["Partial"]
+                    } else if failures < 3 {
+                        vec!["Recovered"]
+                    } else {
+                        vec![]
+                    }
+                );
+                for request in server.received_requests().await.unwrap() {
+                    let body: serde_json::Value = request.body_json().unwrap();
+                    assert_eq!(body["max_tokens"], 8192);
+                    assert_eq!(body["model"], "test-model");
+                }
             }
         }
     }

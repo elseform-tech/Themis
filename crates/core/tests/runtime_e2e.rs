@@ -20,6 +20,177 @@ fn has_finished(events: &[RunEvent]) -> bool {
         .any(|event| matches!(event, RunEvent::Finished { .. }))
 }
 
+/// Deterministic harness proof; the provider is scripted, not a live model quality claim.
+#[tokio::test]
+async fn forced_checkpoint_resumes_task_at_24k_200k_and_256k_without_replaying_writes() {
+    use themis_core::runtime::{ConversationRole, ConversationTurn};
+    for budget in [24_000, 200_000, 256_000] {
+        let server = MockServer::start().await;
+        let mut discarded = common::tool_call_body(
+            "discarded",
+            "write_file",
+            json!({"file_path":"progress.txt","content":"phase1\n","append":true}),
+        );
+        discarded["choices"][0]["finish_reason"] = "length".into();
+        common::mount_script_with_summary(
+            &server,
+            vec![discarded, common::tool_call_body(
+                "remaining", "write_file",
+                json!({"file_path":"progress.txt","content":"phase2\n","append":true}),
+            ), common::final_text_body("Task resumed and completed")],
+            Some("Original task ORDERED-PHASES: phase1 already saved to progress.txt; append only phase2, preserve phase1, then finish."),
+        ).await;
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("progress.txt"), "phase1\n").unwrap();
+        let evidence = project.path().join(".themis/context/forced");
+        std::fs::create_dir_all(&evidence).unwrap();
+        let mut history = vec![ConversationTurn {
+            role: ConversationRole::User,
+            text: "Original task ORDERED-PHASES: append phase1 then phase2 exactly once each, preserving existing progress.".into(),
+        }, ConversationTurn {
+            role: ConversationRole::Assistant,
+            text: "Completed phase1 in progress.txt. Remaining work: phase2 only.".into(),
+        }];
+        // Distinct unrelated historical records exceed the unchanged window. This
+        // bypasses neither the production trigger nor its snapshot/summary pipeline.
+        for index in 0..24 {
+            history.push(ConversationTurn {
+                role: ConversationRole::User,
+                text: format!(
+                    "Unrelated historical packet {index}: {}",
+                    format!("district {index} observation; ").repeat(budget / 100)
+                ),
+            });
+        }
+        let llm = resolve(
+            &ProviderConfig::new(ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2048);
+        let answer = themis_core::runtime::run_task_with_evidence(
+            llm,
+            boxed_tools(project.path(), approvals.clone()).unwrap(),
+            "Resume the original ordered task and finish only the remaining work.".into(),
+            history,
+            approvals,
+            RunPolicy {
+                total_turns: 4,
+                context_token_budget: budget,
+                recent_messages: 4,
+            },
+            tx,
+            Arc::new(AtomicBool::new(false)),
+            String::new(),
+            Some(evidence.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer, "Task resumed and completed");
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("progress.txt")).unwrap(),
+            "phase1\nphase2\n"
+        );
+        let events = common::drain(&mut rx).await;
+        let checkpoint = events
+            .iter()
+            .position(|event| matches!(event, RunEvent::ContextCheckpoint { .. }))
+            .expect("must install a genuine checkpoint");
+        let write = events
+            .iter()
+            .position(|event| matches!(event, RunEvent::ToolCallStarted { .. }))
+            .expect("must perform useful work");
+        assert!(checkpoint < write);
+        assert_eq!(events.iter().filter(|event| matches!(event, RunEvent::ToolCallFinished {tool,ok:true,..} if tool=="write_file")).count(),1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, RunEvent::Finished { .. }))
+                .count(),
+            1
+        );
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, RunEvent::Failed { .. })));
+        let archives = std::fs::read_dir(&evidence)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+            .collect::<Vec<_>>();
+        assert!(
+            !archives.is_empty(),
+            "checkpoint needs durable original evidence"
+        );
+        assert!(
+            archives
+                .iter()
+                .any(
+                    |path| std::fs::read_to_string(path).unwrap().lines().any(|line| {
+                        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                        record["role"] == "User" && record.to_string().contains("ORDERED-PHASES")
+                    })
+                ),
+            "original task must remain on disk"
+        );
+        let requests = server.received_requests().await.unwrap();
+        let bodies = requests
+            .iter()
+            .map(|request| request.body_json::<serde_json::Value>().unwrap())
+            .collect::<Vec<_>>();
+        let summary_packets = bodies
+            .iter()
+            .filter(|body| {
+                body["messages"][0]["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("You summarize agent context"))
+            })
+            .map(|body| body["messages"].to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(summary_packets.contains("ORDERED-PHASES"));
+        assert!(summary_packets.contains("Completed phase1 in progress.txt"));
+        let ordinary_packets = bodies
+            .iter()
+            .filter(|body| {
+                !body["messages"][0]["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("You summarize agent context"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordinary_packets.len(),
+            3,
+            "one discarded attempt, one useful write, one completion"
+        );
+        assert!(
+            ordinary_packets[0]["messages"]
+                .to_string()
+                .contains("phase1 already saved"),
+            "installed checkpoint must reach ordinary generation"
+        );
+        for request in requests {
+            let body: serde_json::Value = request.body_json().unwrap();
+            let message_tokens = body["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m.to_string().len().div_ceil(4) + 16)
+                .sum::<usize>();
+            let schema_tokens = body
+                .get("tools")
+                .map_or(0, |tools| tools.to_string().len().div_ceil(4));
+            assert!(
+                message_tokens + schema_tokens + body["max_tokens"].as_u64().unwrap() as usize
+                    <= budget,
+                "provider request exceeds selected budget"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
     let server = MockServer::start().await;
