@@ -301,9 +301,15 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
         )
     });
     let mut startup_warning = None;
+    // CLI process launch precedes the backend's recovery work and can be slow on macOS.
+    let first_event =
+        tokio::time::timeout(Duration::from_secs(60), Client::next_event(&mut events))
+            .await
+            .expect("CLI dispatch did not produce an event")
+            .unwrap();
     let terminal = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut event = first_event;
         loop {
-            let event = Client::next_event(&mut events).await.unwrap();
             if event["name"] == "approval-request" {
                 Client::new(data.path().into()).call("approve_action",json!({"threadId":id,"approvalId":event["payload"]["approval_id"],"decision":"once"})).await.unwrap();
             }
@@ -313,6 +319,7 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
                 startup_warning = Some(event["payload"]["event"]["output"].as_str().unwrap().to_owned());
             }
             if event["name"] == "thread-event" && matches!(event["payload"]["event"]["kind"].as_str(),Some("finished" | "failed")) { break event; }
+            event = Client::next_event(&mut events).await.unwrap();
         }
     }).await.unwrap();
     assert_eq!(
