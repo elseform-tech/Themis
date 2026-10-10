@@ -463,7 +463,8 @@ for term in q:
     }
 
     let mut recovered = HashSet::new();
-    let mut last_observation = None;
+    let mut observations = HashSet::new();
+    let mut last_shell_observation = None;
     let mut unchanged_results = 0;
     let mut recovery_reads = 0;
     let mut duplicate_reads = 0;
@@ -547,7 +548,7 @@ for term in q:
         )
         .await?;
         for (call, result) in calls.iter().zip(&mut results) {
-            // ponytail: exact call/output repeats only; semantic equivalence needs model judgment.
+            // ponytail: exact observations only; semantic progress needs a separate audit.
             if matches!(
                 call.function.name.as_str(),
                 "read_file" | "list_dir" | "search_file" | "shell"
@@ -557,11 +558,28 @@ for term in q:
                 let fingerprint = value["original_result_fingerprint"]
                     .as_u64()
                     .unwrap_or_else(|| content_fingerprint(&result.function.arguments));
-                let args = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
-                    .unwrap_or_else(|_| call.function.arguments.clone().into());
-                let key = (call.function.name.clone(), args.to_string(), fingerprint);
-                let unchanged = last_observation.as_ref() == Some(&key);
-                last_observation = Some(key);
+                // Canonical read output already identifies the path, range and content.
+                let args = if call.function.name == "read_file" && value["path"].is_string() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                        .unwrap_or_else(|_| call.function.arguments.clone().into())
+                };
+                let key = (
+                    call.function.name.clone(),
+                    content_fingerprint(&args.to_string()),
+                    fingerprint,
+                );
+                let unchanged = if call.function.name == "shell" {
+                    // Shell can mutate files silently; only retain its existing adjacent-call guard.
+                    observations.clear();
+                    let unchanged = last_shell_observation.as_ref() == Some(&key);
+                    last_shell_observation = Some(key);
+                    unchanged
+                } else {
+                    last_shell_observation = None;
+                    !observations.insert(key)
+                };
                 if value["arguments_rejected"] != true && unchanged {
                     unchanged_results += 1;
                     if unchanged_results >= 3 {
@@ -586,7 +604,8 @@ for term in q:
                 }
             } else {
                 unchanged_results = 0;
-                last_observation = None;
+                observations.clear();
+                last_shell_observation = None;
             }
             // Run-local state survives compaction. This bounds retrieval, not semantic correctness.
             if crate::tools::context_recovery_call(&call.function.name, &call.function.arguments) {
@@ -1001,7 +1020,7 @@ fn remind_unchanged_result(
 ) -> anyhow::Result<()> {
     let original = result.function.arguments.clone();
     let value = serde_json::from_str::<serde_json::Value>(&original).unwrap_or_default();
-    let note = "This exact call returned the same observation earlier in this run, including before compaction. Reuse findings and completed actions; take the next unresolved action or explain the missing detail. Changed outputs and different ranges remain available. This reminder is not an execution denial.";
+    let note = "This observation was already returned earlier in this run, including before compaction. Reuse findings and completed actions; take the next unresolved action or explain the missing detail. Changed outputs and different ranges remain available. This reminder is not an execution denial.";
     if value.is_object() {
         let mut annotated = value.clone();
         annotated["repeated_unchanged"] = true.into();

@@ -27,7 +27,8 @@ async fn unchanged_ordinary_reads_get_a_reminder_but_changed_files_do_not() {
         &server,
         vec![
             common::tool_call_body("first", "read_file", json!({"file_path":"source.txt"})),
-            common::tool_call_body("again", "read_file", json!({"file_path":"source.txt"})),
+            common::tool_call_body("other", "read_file", json!({"file_path":"other.txt"})),
+            common::tool_call_body("again", "read_file", json!({"file_path":"./source.txt"})),
             common::tool_call_body(
                 "edit",
                 "write_file",
@@ -40,6 +41,7 @@ async fn unchanged_ordinary_reads_get_a_reminder_but_changed_files_do_not() {
     .await;
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join("source.txt"), "original").unwrap();
+    std::fs::write(project.path().join("other.txt"), "other").unwrap();
     let evidence = project.path().join(".themis/context/repeats");
     std::fs::create_dir_all(&evidence).unwrap();
     let llm = resolve(
@@ -82,7 +84,7 @@ async fn unchanged_ordinary_reads_get_a_reminder_but_changed_files_do_not() {
             .unwrap()
             .into()
     };
-    let repeated = tool_output(2, "again");
+    let repeated = tool_output(3, "again");
     assert!(repeated.contains("repeated_unchanged"));
     assert!(repeated.contains("original"));
     let receipt: serde_json::Value = serde_json::from_str(&repeated).unwrap();
@@ -91,9 +93,64 @@ async fn unchanged_ordinary_reads_get_a_reminder_but_changed_files_do_not() {
         "reread reminders retain native read coordinates and content"
     );
     assert_eq!(receipt["content"], "original");
-    let changed = tool_output(4, "changed");
+    let changed = tool_output(5, "changed");
     assert!(!changed.contains("repeated_unchanged"));
     assert!(changed.contains("changed"));
+}
+
+#[tokio::test]
+async fn alternating_silent_shell_writes_remain_progress() {
+    let server = MockServer::start().await;
+    let mut script = (0..5)
+        .map(|i| {
+            common::tool_call_body(
+                &format!("append-{i}"),
+                "shell",
+                json!({"command":"sh","args":["-c", if i % 2 == 0 {
+                    "printf x >> a.txt"
+                } else {
+                    "printf x >> b.txt"
+                }],"cwd":""}),
+            )
+        })
+        .collect::<Vec<_>>();
+    script.push(common::final_text_body("Five writes completed"));
+    common::mount_script(&server, script).await;
+    let project = tempfile::tempdir().unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Append five items".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 8,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await;
+    assert!(result.is_ok(), "shell writes are actions: {result:?}");
+    assert!(has_finished(&common::drain(&mut rx).await));
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("a.txt")).unwrap(),
+        "xxx"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("b.txt")).unwrap(),
+        "xx"
+    );
 }
 
 #[tokio::test]
@@ -348,47 +405,84 @@ async fn repeated_ordinary_reads_stop_even_without_archive_paths() {
 }
 
 #[tokio::test]
-async fn alternating_observations_do_not_count_as_consecutive_unchanged_results() {
-    let server = MockServer::start().await;
-    let mut script = (0..5)
-        .map(|i| {
-            common::tool_call_body(
-                &format!("read-{i}"),
-                "read_file",
-                json!({"file_path":if i % 2 == 0 {"a.txt"} else {"b.txt"}}),
-            )
-        })
-        .collect::<Vec<_>>();
-    script.push(common::final_text_body("Finished alternating observations"));
-    common::mount_script(&server, script).await;
-    let project = tempfile::tempdir().unwrap();
-    std::fs::write(project.path().join("a.txt"), "A").unwrap();
-    std::fs::write(project.path().join("b.txt"), "B").unwrap();
-    let llm = resolve(
-        &ProviderConfig::new(ProviderKind::Go, "test-key")
-            .with_model("test-model")
-            .with_base_url(server.uri()),
-    )
-    .await
-    .unwrap();
-    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
-    let (tx, _rx) = tokio::sync::mpsc::channel(128);
-    let result = run_task_with_policy(
-        llm,
-        boxed_tools(project.path(), approvals.clone()).unwrap(),
-        "Inspect both files".into(),
-        vec![],
-        approvals,
-        RunPolicy {
-            total_turns: 20,
-            context_token_budget: 200_000,
-            recent_messages: 20,
-        },
-        tx,
-        Arc::new(AtomicBool::new(false)),
-    )
-    .await;
-    assert_eq!(result.unwrap(), "Finished alternating observations");
+async fn alternating_unchanged_reads_stop_after_compaction_at_both_budgets() {
+    for budget in [24_000, 200_000] {
+        let server = MockServer::start().await;
+        let mut script = (0..5)
+            .map(|i| {
+                common::tool_call_body(
+                    &format!("read-{i}"),
+                    "read_file",
+                    json!({"file_path":if i % 2 == 0 {"a.txt"} else {"b.txt"}}),
+                )
+            })
+            .collect::<Vec<_>>();
+        script.push(common::final_text_body("Finished alternating observations"));
+        common::mount_script_with_summary(
+            &server,
+            script,
+            Some("Both sources remain available; inspect them once."),
+        )
+        .await;
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("a.txt"), "A").unwrap();
+        std::fs::write(project.path().join("b.txt"), "B").unwrap();
+        let llm = resolve(
+            &ProviderConfig::new(ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+        let evidence = project.path().join(".themis/context/alternating");
+        std::fs::create_dir_all(&evidence).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+        let result = themis_core::runtime::run_task_with_evidence(
+            llm,
+            boxed_tools(project.path(), approvals.clone()).unwrap(),
+            "Inspect both files".into(),
+            vec![themis_core::runtime::ConversationTurn {
+                role: themis_core::runtime::ConversationRole::User,
+                text: "historical context ".repeat(budget),
+            }],
+            approvals,
+            RunPolicy {
+                total_turns: 20,
+                context_token_budget: budget,
+                recent_messages: 2,
+            },
+            tx,
+            Arc::new(AtomicBool::new(false)),
+            String::new(),
+            Some(evidence),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "alternating unchanged reads must not escape the loop guard at {budget}"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Repeated unchanged tool"));
+        let events = common::drain(&mut rx).await;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, RunEvent::ContextCompacting))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, RunEvent::ToolCallFinished { .. }))
+                .count(),
+            5
+        );
+        assert!(!has_finished(&events));
+    }
 }
 
 #[tokio::test]

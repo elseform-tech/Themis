@@ -38,6 +38,101 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_stops_alternating_unchanged_reads_after_compaction() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":10}"#,
+    )
+    .unwrap();
+    std::fs::write(project.path().join("a.txt"), "A").unwrap();
+    std::fs::write(project.path().join("b.txt"), "B").unwrap();
+    let provider = MockServer::start().await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed_calls = calls.clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        let summary = body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context");
+        let message = if summary {
+            json!({"content":"Read A and B; originals remain available."})
+        } else {
+            let index = observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            json!({"tool_calls":[{"id":format!("read-{index}"),"type":"function","function":{"name":"read_file","arguments":json!({"file_path":if index.is_multiple_of(2) {"a.txt"} else {"b.txt"}}).to_string()}}]})
+        };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if summary {"stop"} else {"tool_calls"}}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    let source = project.path().join("large.txt");
+    std::fs::write(&source, "old data ".repeat(110_000)).unwrap();
+    let staged = cli(
+        data.path(),
+        "attach_files",
+        json!({"threadId":id,"paths":[source]}),
+    );
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Inspect both files","attachments":[staged[0]["path"]]}),
+    );
+    let mut compactions = 0;
+    let mut completed = 0;
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = &item["payload"]["event"];
+            compactions += usize::from(event["kind"] == "context_compacting");
+            completed += usize::from(event["kind"] == "tool_finished");
+            if event["kind"] == "finished" || event["kind"] == "failed" {
+                break event.clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(terminal["kind"], "failed", "{terminal}");
+    assert!(terminal["error"]
+        .as_str()
+        .unwrap()
+        .contains("Repeated unchanged tool"));
+    assert_eq!(compactions, 1);
+    assert_eq!(completed, 5);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 5);
+    assert!(
+        !cli(data.path(), "get_thread", json!({"threadId":id}))["running"]
+            .as_bool()
+            .unwrap()
+    );
+    assert!(project.path().join(".themis/context").join(id).is_dir());
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_recovers_from_malformed_shell_arguments_after_compaction() {
     for budget in [24_000, 200_000] {
         let data = tempfile::tempdir().unwrap();
