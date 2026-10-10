@@ -25,6 +25,22 @@ fn cli(directory: &Path, method: &str, args: Value) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+fn assert_current_project(body: &Value, root: &Path) {
+    let workspace: Vec<Value> = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "system")
+        .flat_map(|message| message["content"].as_str().unwrap().lines())
+        .filter_map(|line| line.strip_prefix("Current run workspace: "))
+        .map(|metadata| serde_json::from_str(metadata).unwrap())
+        .collect();
+    assert_eq!(
+        workspace,
+        vec![json!({"project_root": root.canonicalize().unwrap()})]
+    );
+}
+
 #[test]
 fn documented_configuration_examples_use_the_runtime_resolver() {
     let guide = include_str!("../../../docs/configuration.md").replace("\r\n", "\n");
@@ -214,6 +230,9 @@ async fn configured_policy_and_repository_guidance_reach_the_actual_run() {
     assert!(requests
         .iter()
         .any(|r| String::from_utf8_lossy(&r.body).contains("CONFIG_GUIDANCE_MARKER")));
+    for request in &requests {
+        assert_current_project(&serde_json::from_slice(&request.body).unwrap(), &root);
+    }
     assert!(state
         .query_diagnostic_logs(Default::default())
         .unwrap()
@@ -446,6 +465,30 @@ async fn cli_retries_required_summary_automatically_and_exposes_usage() {
     assert!(attempts
         .iter()
         .any(|request| request["purpose"] == "summarization" && request["attempt"] == 2));
+    // A short follow-up must retain the authoritative workspace even after the
+    // older project instructions have become a lossy checkpoint.
+    let first_run_requests = provider.received_requests().await.unwrap().len();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Continue the remaining work"}),
+    );
+    wait().await;
+    let requests = provider.received_requests().await.unwrap();
+    assert!(requests.len() > first_run_requests);
+    let mut ordinary_requests = 0;
+    for request in requests {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        if !body["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("You summarize agent context")
+        {
+            assert_current_project(&body, project.path());
+            ordinary_requests += 1;
+        }
+    }
+    assert!(ordinary_requests >= 2);
     cli(data.path(), "shutdown", Value::Null);
     host.await.unwrap().unwrap();
 }

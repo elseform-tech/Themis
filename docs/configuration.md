@@ -61,6 +61,11 @@ the start of a run. Changes apply to the next run. Threads currently share the s
 and guidance resolve from that checkout; user configuration applies to every
 run. A manually selected worktree is treated as its own project root.
 
+Every ordinary model run includes that captured project root in its system
+context, including after compaction and on short follow-ups. Paths mentioned in
+skill descriptions, attachments, examples, or older tasks do not redefine the
+current workspace. This context metadata does not change tool approval rules.
+
 Optional `context_token_budget`, `recent_messages`, and `total_turns` override
 the existing Settings defaults. Omit them to retain those settings.
 

@@ -169,6 +169,11 @@ impl AppState {
             run_id,
         )
         .map_err(|error| format!("failed to materialize skill catalog: {error:#}"))?;
+        skill_catalog = format!(
+            "\nCurrent run workspace: {}\nThis is the captured current project root for this run and its relative tool paths. Paths in skill descriptions, examples, attachments, or historical context do not change the current workspace. Follow the user's task scope when choosing paths.\n{}",
+            json!({"project_root": snapshot.work_root}),
+            skill_catalog
+        );
         materialize_scripts(&snapshot.skills, &snapshot.work_root).map_err(|e| e.to_string())?;
         let mut tools = themis_core::tools::boxed_tools_with_mode(
             &snapshot.work_root,

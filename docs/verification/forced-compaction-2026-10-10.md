@@ -57,3 +57,22 @@ integration tests (one opt-in live test ignored); six configuration/diagnostic
 checks; 13 shared-server/CLI checks; workspace Clippy and formatting; Ruff and
 14 dashboard tests. The development desktop binaries rebuilt successfully.
 No full unfiltered workspace/Keychain suite or fresh line coverage was run.
+
+The next live 200k trial completed its partial coding phase and installed a real
+checkpoint in 81.2 seconds, including one automatically recovered HTTP 429.
+Its continuation then read a different project named in a global skill
+description. The trial was stopped and is not accepted. Current project and
+provider-session bindings were correct; this is not evidence of cross-session
+provider leakage. Ordinary requests now include the captured current project
+root in system context. Shared-server request assertions exercise that metadata
+at initial execution, after forced compaction, and on a short follow-up. Live
+path compliance still requires verification.
+
+Further live acceptance uses one durable mixed-workload chat across 200k, 256k,
+and the 24k stress transition. Coding, narrative, unrelated tasks, latest-task
+follow-ups, older-task resumption and topic recall retain the same history.
+Each budget requires a new successful checkpoint. Facts and requirements are
+not resupplied at recall. Ordered phase records include budget, thread/run IDs,
+latency, requests and tool calls. Warm document reuse is distinguished from
+initial preparation, and evolving history prevents a clean efficiency comparison
+across budgets without a matched successful baseline.
