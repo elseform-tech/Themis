@@ -57,6 +57,9 @@ pub async fn with_attempt<F: std::future::Future>(attempt: usize, future: F) -> 
 }
 
 pub async fn collect<F: std::future::Future>(future: F) -> F::Output {
+    if ACTIVE.try_with(|_| ()).is_ok() {
+        return future.await;
+    }
     let level = LEVEL.try_with(|v| *v).unwrap_or_default();
     ACTIVE
         .scope(
@@ -160,6 +163,8 @@ impl RequestTrace {
                 "instructions"
             } else if message.content.starts_with("Earlier context checkpoint") {
                 "checkpoint"
+            } else if message.content.starts_with("Document semantic capsule") {
+                "document_capsule"
             } else if message.content.starts_with("Attached ") {
                 "attachment"
             } else if message.content.starts_with("Original exchange anchors") {
@@ -193,7 +198,17 @@ impl RequestTrace {
                 .clone()
         });
         let stage = STAGE.try_with(Clone::clone).ok();
-        let record = json!({"job_id":stage.as_ref().map(|s|&s.0),"stage":stage.as_ref().map(|s|s.1),"attempt":ATTEMPT.try_with(|a|*a).unwrap_or(0),"run":run,"request_id":ordinal,"request_ordinal":ordinal,"model":model,"purpose":if summary {"summarization"} else {"ordinary"},
+        let summary_kind = summary.then(|| {
+            if messages
+                .first()
+                .is_some_and(|m| m.content.contains("You summarize an attached document"))
+            {
+                "document_capsule"
+            } else {
+                "context_checkpoint"
+            }
+        });
+        let record = json!({"job_id":stage.as_ref().map(|s|&s.0),"stage":stage.as_ref().map(|s|s.1),"attempt":ATTEMPT.try_with(|a|*a).unwrap_or(0),"run":run,"request_id":ordinal,"request_ordinal":ordinal,"model":model,"purpose":if summary {"summarization"} else {"ordinary"},"summary_kind":summary_kind,
             "message_count":messages.len(),"message_bytes":bytes,"schema_bytes":schema,
             "estimated_input_tokens":(bytes+schema).div_ceil(4)+messages.len()*16,
             "estimate_source":"serialized_bytes_div4_plus_message_overhead","status":"failed_or_cancelled",

@@ -369,6 +369,8 @@ impl AppState {
             });
             // A panicking run must neither stick the thread busy nor leave the
             // UI waiting: join the run, then synthesize the terminal event.
+            let document_state = state.clone();
+            let document_thread = thread_id.clone();
             let run_outcome = tokio::spawn(async move {
                 for event in setup_events {
                     let _ = events_tx.send(event).await;
@@ -393,7 +395,28 @@ impl AppState {
                                         &hook_task,
                                         events_tx,
                                         |events_tx| {
-                                            Box::pin(run_task_with_evidence(
+                                            Box::pin(themis_core::context_metrics::collect(async move {
+                                                themis_core::context_metrics::set_run_metadata(serde_json::json!({"thread_id":document_thread,"run_id":themis_core::diagnostics::ACTIVE.try_with(|context|context.run_id.clone()).ok(),"phase":"document_preparation","requested_context_tokens":policy.context_token_budget,"effective_context_tokens":if endpoint_override {policy.context_token_budget} else {policy.context_token_budget.min(context_capacity.unwrap_or(24000))},"provider_capacity_tokens":if endpoint_override {None} else {context_capacity},"capacity_source":if endpoint_override {"test_endpoint_unverified"} else if context_capacity.is_some() {"public_model_catalog"} else {"unknown_conservative_24k"},"configuration_fingerprint":themis_core::context_metrics::config_fingerprint()}));
+                                                let mut history = snapshot.history;
+                                                match themis_core::runtime::documents::prepare(
+                                                    &llm, &snapshot.documents,
+                                                    &evidence_directory, &stopped,
+                                                    |wanted| document_state.inner.transcript.load_document_capsule(&document_thread,wanted).map_err(anyhow::Error::msg),
+                                                    |capsule| document_state.inner.transcript.save_document_capsule(&document_thread,capsule).map_err(anyhow::Error::msg),
+                                                ).await {
+                                                    Ok(capsules) => history.extend(capsules.into_iter().map(|capsule|themis_core::runtime::ConversationTurn {
+                                                        role:themis_core::runtime::ConversationRole::Assistant, text:capsule.context(),
+                                                    })),
+                                                    Err(error) => {
+                                                        if let Some(metrics) = themis_core::context_metrics::snapshot() {
+                                                            let _ = events_tx.send(RunEvent::ContextUsage { metrics }).await;
+                                                        }
+                                                        let failure_message = if stopped.load(Ordering::SeqCst) { "Stopped by you. Completed actions remain available for review.".to_owned() } else {format!("Document preparation failed: {error}; working context unchanged; any completed originals and stages retained")};
+                                                        let _ = events_tx.send(RunEvent::Failed {error:failure_message}).await;
+                                                        return Err(error);
+                                                    }
+                                                }
+                                                run_task_with_evidence(
                                                 llm,
                                                 if yolo {
                                                     tools
@@ -403,14 +426,15 @@ impl AppState {
                                                     )
                                                 },
                                                 themis_core::skills::compose_task(&task, &skills),
-                                                snapshot.history,
+                                                history,
                                                 approvals,
                                                 policy,
                                                 events_tx,
                                                 stopped,
                                                 skill_catalog,
                                                 Some(evidence_directory),
-                                            ))
+                                            ).await
+                                            }))
                                         },
                                     ),
                                 ),

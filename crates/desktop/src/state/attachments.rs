@@ -154,6 +154,48 @@ fn validated_path(root: &Path, path: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+pub(super) fn document_sources(
+    root: &Path,
+    paths: &[String],
+) -> Result<Vec<themis_core::runtime::documents::DocumentSource>, String> {
+    let mut sources = Vec::new();
+    let mut total = 0u64;
+    for path in paths {
+        let path = validated_path(root, path)?;
+        if !path
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| matches!(s.to_ascii_lowercase().as_str(), "txt" | "md"))
+        {
+            continue;
+        }
+        let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
+        total = total.saturating_add(metadata.len());
+        if total > 64 * 1024 * 1024 {
+            return Err("Narrative attachment batch exceeds the 64 MiB preparation bound; split the selection".into());
+        }
+        let mut bytes = Vec::new();
+        File::open(&path)
+            .map_err(|e| e.to_string())?
+            .take(metadata.len() + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() as u64 != metadata.len() {
+            return Err("Narrative attachment changed during preparation".into());
+        }
+        let text = String::from_utf8(bytes)
+            .map_err(|_| "Narrative attachment must be UTF-8".to_owned())?;
+        if text.contains('\0') {
+            return Err("Narrative attachment contains binary data".into());
+        }
+        sources.push(themis_core::runtime::documents::DocumentSource {
+            source_path: path.to_string_lossy().into_owned(),
+            text,
+        });
+    }
+    Ok(sources)
+}
+
 #[cfg(test)]
 pub(super) fn attachment_context(
     root: &Path,

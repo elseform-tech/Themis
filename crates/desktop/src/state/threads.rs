@@ -231,15 +231,44 @@ impl AppState {
         {
             runtime_configuration.approval.rules.clear();
         }
-        let (files, manifest) = super::attachments::attachment_context_with_budget(
+        let source_root = project_root.clone();
+        let source_paths = attachments.clone();
+        let documents = tokio::task::spawn_blocking(move || {
+            super::attachments::document_sources(&source_root, &source_paths)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        let other_attachments = attachments
+            .iter()
+            .filter(|path| !documents.iter().any(|source| &source.source_path == *path))
+            .cloned()
+            .collect::<Vec<_>>();
+        let (files, mut manifest) = super::attachments::attachment_context_with_budget(
             &project_root,
-            &attachments,
+            &other_attachments,
             runtime_configuration
                 .context_token_budget
                 .unwrap_or(settings.context_token_budget as usize)
                 / 2,
         )?;
         history.extend(files);
+        for source in &documents {
+            manifest.push_str(&format!("\n- {} ({} bytes; complete document prepared before generation; original preserved)\n", source.source_path, source.text.len()));
+        }
+        history.extend(
+            self.inner.transcript.document_context(
+                &thread_id,
+                &text,
+                runtime_configuration
+                    .context_token_budget
+                    .unwrap_or(settings.context_token_budget as usize)
+                    / 2,
+                &documents
+                    .iter()
+                    .map(|source| source.source_path.clone())
+                    .collect::<Vec<_>>(),
+            )?,
+        );
         let legacy: Vec<_> = self
             .inner
             .skills
@@ -395,6 +424,7 @@ impl AppState {
             RunSnapshot {
                 reasoning_effort: reasoning_effort.or_else(|| record.reasoning_effort.clone()),
                 history,
+                documents,
                 approval_timeout_seconds: settings.approval_timeout_seconds.clamp(30, 600),
                 approval_mode: record.approval_mode,
                 runtime_configuration: runtime_configuration.clone(),

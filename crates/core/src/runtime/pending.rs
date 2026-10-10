@@ -45,6 +45,23 @@ fn publish(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
     }
     result
 }
+
+pub(super) fn save_document(
+    directory: &std::path::Path,
+    job: &str,
+    capsule: &super::documents::DocumentCapsule,
+    budget: usize,
+    allowance: u32,
+    config: &crate::configuration::CompactionConfig,
+) -> anyhow::Result<()> {
+    publish(
+        &directory.join(format!("pending-job-{job}.json")),
+        &serde_json::to_vec(
+            &serde_json::json!({"version":1,"purpose":"document_preparation","job_id":job,"source":capsule,"effective_context_budget":budget,"output_allowance":allowance,"captured_configuration":config,"summary_pipeline":super::documents::PIPELINE_VERSION}),
+        )?,
+    )
+}
+
 /// Save exact job inputs under a stable ID; no latest-job pointer is required.
 pub(super) fn save_job(
     directory: &std::path::Path,

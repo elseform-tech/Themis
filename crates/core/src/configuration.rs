@@ -136,6 +136,8 @@ pub fn configured_hook(
 pub struct CompactionConfig {
     pub timeout_seconds: u64,
     pub request_timeout_seconds: u64,
+    /// Internal full-document preparation input capacity; ordinary work keeps its own budget.
+    pub document_context_token_budget: usize,
     pub maintenance_threshold_ratio: f64,
     pub semantic_threshold_ratio: f64,
     pub target_headroom_interactions: usize,
@@ -154,6 +156,7 @@ impl Default for CompactionConfig {
         Self {
             timeout_seconds: 900,
             request_timeout_seconds: 300,
+            document_context_token_budget: 200000,
             maintenance_threshold_ratio: 0.83,
             semantic_threshold_ratio: 0.93,
             target_headroom_interactions: 6,
@@ -465,6 +468,10 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
     );
     let compaction = &config.compaction;
     ensure!(
+        (24000..=1000000).contains(&compaction.document_context_token_budget),
+        "compaction.document_context_token_budget must be 24000..1000000"
+    );
+    ensure!(
         (1..=300).contains(&compaction.request_timeout_seconds),
         "compaction.request_timeout_seconds must be 1..300"
     );
@@ -613,6 +620,7 @@ pub fn schema() -> Value {
             "compaction":{"type":"object","additionalProperties":false,"properties":{
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":1800,"default":900},
                 "request_timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"default":300},
+                "document_context_token_budget":{"type":"integer","minimum":24000,"maximum":1000000,"default":200000},
                 "maintenance_threshold_ratio":{"type":"number","minimum":0.5,"maximum":0.95,"default":0.83},
                 "semantic_threshold_ratio":{"type":"number","exclusiveMinimum":0.5,"maximum":0.97,"default":0.93},
                 "target_headroom_interactions":{"type":"integer","minimum":1,"maximum":20,"default":6},
@@ -629,6 +637,27 @@ pub fn schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn document_input_capacity_is_validated_independently_of_ordinary_context() {
+        let mut config = RuntimeConfig {
+            context_token_budget: Some(24000),
+            compaction: CompactionConfig {
+                document_context_token_budget: 1000000,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        validate(&config).unwrap();
+        assert_eq!(config.context_token_budget, Some(24000));
+        config.compaction.document_context_token_budget = 1000001;
+        assert!(validate(&config)
+            .unwrap_err()
+            .to_string()
+            .contains("document_context_token_budget"));
+        config.compaction.document_context_token_budget = 23999;
+        assert!(validate(&config).is_err());
+    }
+
     #[test]
     fn adaptive_context_configuration_accepts_256k_and_validates_shared_controls() {
         let source = r#"{"context_token_budget":256000,"compaction":{"maintenance_threshold_ratio":0.83,"semantic_threshold_ratio":0.93,"target_headroom_interactions":6,"timeout_seconds":600,"request_timeout_seconds":300},"logging":{"context_metrics":"detailed"}}"#;

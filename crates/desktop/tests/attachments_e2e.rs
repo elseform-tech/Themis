@@ -9,6 +9,280 @@ use themis_desktop::{
 };
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_large_narrative_is_semantically_prepared_before_ordinary_generation() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":200000,"compaction":{"max_stages":96}}"#,
+    )
+    .unwrap();
+    let source = project.path().join("story.txt");
+    let text = format!("# Opening\nEARLY_CAPSULE_FACT: Mira repairs the tide clock.\n{}\n# Middle\nMIDDLE_CAPSULE_FACT: The key is counterfeit.\n{}\n# Ending\nLATE_CAPSULE_FACT: The captain survives.\n",
+        "The town observes the changing water and keeps a record of its work.\n".repeat(2400),
+        "The travellers compare their accounts and distinguish plans from completed events.\n".repeat(2400));
+    std::fs::write(&source, &text).unwrap();
+    let small = project.path().join("witness.md");
+    std::fs::write(&small, "Mica is the witness, not the captain.").unwrap();
+    let provider = MockServer::start().await;
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let observed = requests.clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        observed.lock().unwrap().push(body.clone());
+        let prompt = body["messages"][0]["content"].as_str().unwrap();
+        let answer = if prompt.contains("You summarize an attached document") {
+            "Entities/relationships: Mira repairs the tide clock; Mica is a witness. Chronology/causality: The key is counterfeit; the captain survives. Ambiguities: none. Source references: original story opening, middle and ending."
+        } else if prompt.contains("You summarize agent context") {
+            "Goal/constraints: preserve original evidence. Confirmed findings: narrative facts supplied. Completed changes/tests: none. Unresolved work: answer. Next action: answer."
+        } else {
+            "The captain survives; the key is counterfeit."
+        };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":answer},"finish_reason":"stop"}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let files = cli(
+        data.path(),
+        "attach_files",
+        json!({"threadId":id,"paths":[source,small]}),
+    );
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Retell the attached story faithfully, including chronology, motives and final outcomes. No tools.","attachments":[files[0]["path"],files[1]["path"]]}),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = &item["payload"]["event"];
+            assert_ne!(event["kind"], "failed", "{event}");
+            if event["kind"] == "finished" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let usage = cli(data.path(), "get_context_usage", json!({"threadId":id}));
+    assert_eq!(
+        usage["total_requests"].as_u64().unwrap() as usize,
+        requests.lock().unwrap().len(),
+        "document preparation must be counted in the same run"
+    );
+    let captured = requests.lock().unwrap();
+    let document: Vec<_> = captured
+        .iter()
+        .filter(|body| {
+            body["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("You summarize an attached document")
+        })
+        .collect();
+    assert!(!document.is_empty(), "large narrative must be prepared semantically before ordinary generation; maps do not establish semantic coverage");
+    let prepared = serde_json::to_string(&document).unwrap();
+    for marker in [
+        "EARLY_CAPSULE_FACT",
+        "MIDDLE_CAPSULE_FACT",
+        "LATE_CAPSULE_FACT",
+    ] {
+        assert!(
+            prepared.contains(marker),
+            "missing original source range: {marker}"
+        );
+    }
+    let mut fragments = std::collections::BTreeMap::<usize, String>::new();
+    let mut complete = false;
+    for body in &document {
+        for line in body["messages"][1]["content"].as_str().unwrap().lines() {
+            let Ok(record) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if record["content"] == text {
+                complete = true;
+            }
+            if let (Some(start), Some(fragment)) = (
+                record["serialized_byte_start"].as_u64(),
+                record["prepared_record_fragment"].as_str(),
+            ) {
+                fragments.insert(start as usize, fragment.to_owned());
+            }
+        }
+    }
+    if !complete {
+        let mut reconstructed = String::new();
+        for (offset, fragment) in fragments {
+            assert_eq!(
+                offset,
+                reconstructed.len(),
+                "source coverage must be gap-free"
+            );
+            reconstructed.push_str(&fragment);
+        }
+        let record: Value = serde_json::from_str(&reconstructed).unwrap();
+        assert_eq!(
+            record["content"], text,
+            "entire source must be supplied, not only sampled markers"
+        );
+    }
+    let ordinary = captured.last().unwrap().to_string();
+    assert!(ordinary.contains("Document semantic capsule"));
+    assert!(
+        ordinary.contains("Mica is the witness"),
+        "small attachment must remain available"
+    );
+    assert!(
+        !ordinary.contains(&text),
+        "ordinary request must use a bounded capsule"
+    );
+    assert_eq!(std::fs::read_to_string(source).unwrap(), text);
+    assert_eq!(
+        std::fs::read_to_string(files[0]["path"].as_str().unwrap()).unwrap(),
+        text
+    );
+    serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_stop_during_document_preparation_emits_one_terminal_and_allows_next_run() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":200000,"compaction":{"max_stages":96}}"#,
+    )
+    .unwrap();
+    let source = project.path().join("story.txt");
+    let text = format!("# Opening\nEARLY_CAPSULE_FACT: Mira repairs the tide clock.\n{}\n# Middle\nMIDDLE_CAPSULE_FACT: The key is counterfeit.\n{}\n# Ending\nLATE_CAPSULE_FACT: The captain survives.\n",
+        "The town observes the changing water and keeps a record of its work.\n".repeat(2400),
+        "The travellers compare their accounts and distinguish plans from completed events.\n".repeat(2400));
+    std::fs::write(&source, &text).unwrap();
+    let small = project.path().join("witness.md");
+    std::fs::write(&small, "Mica is the witness, not the captain.").unwrap();
+    let provider = MockServer::start().await;
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let observed = requests.clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        observed.lock().unwrap().push(body.clone());
+        let prompt = body["messages"][0]["content"].as_str().unwrap();
+        let answer = if prompt.contains("You summarize an attached document") {
+            "Entities/relationships: Mira repairs the tide clock; Mica is a witness. Chronology/causality: The key is counterfeit; the captain survives. Ambiguities: none. Source references: original story opening, middle and ending."
+        } else if prompt.contains("You summarize agent context") {
+            "Goal/constraints: preserve original evidence. Confirmed findings: narrative facts supplied. Completed changes/tests: none. Unresolved work: answer. Next action: answer."
+        } else {
+            "The captain survives; the key is counterfeit."
+        };
+        let response = ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":answer},"finish_reason":"stop"}]}));
+        if prompt.contains("You summarize an attached document") { response.set_delay(std::time::Duration::from_secs(30)) } else { response }
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let files = cli(
+        data.path(),
+        "attach_files",
+        json!({"threadId":id,"paths":[source,small]}),
+    );
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Retell the attached story faithfully, including chronology, motives and final outcomes. No tools.","attachments":[files[0]["path"],files[1]["path"]]}),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while requests.lock().unwrap().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    cli(data.path(), "stop_thread", json!({"threadId":id}));
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] == "thread-event"
+                && item["payload"]["thread_id"] == id
+                && item["payload"]["event"]["kind"] == "failed"
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    // A terminal followed by a second run must never be misattributed to that run.
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Reply ready. No tools."}),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            assert_ne!(
+                item["payload"]["event"]["kind"], "failed",
+                "duplicate terminal or next-run failure: {item}"
+            );
+            if item["payload"]["event"]["kind"] == "finished" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let history = cli(data.path(), "get_thread_history", json!({"threadId":id}));
+    let failures = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["envelope"]["event"]["kind"] == "failed")
+        .count();
+    assert_eq!(failures, 1, "one terminal for the cancelled run");
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        2,
+        "cancelled document request, then next ordinary request"
+    );
+    serving.abort();
+}
+
 fn cli(dir: &Path, command: &str, args: Value) -> Value {
     use std::io::Write;
     use std::process::Stdio;
@@ -219,7 +493,7 @@ async fn cli_answer_retries_empty_and_transient_responses_without_replaying_comp
         "set_thread_approval_mode",
         json!({"threadId":id,"mode":"yolo"}),
     );
-    let source = project.path().join("large.txt");
+    let source = project.path().join("large.log");
     std::fs::write(&source, "old data ".repeat(110_000)).unwrap();
     let staged = cli(
         data.path(),
@@ -330,7 +604,7 @@ async fn cli_stops_alternating_unchanged_reads_after_compaction() {
         "set_thread_approval_mode",
         json!({"threadId":id,"mode":"yolo"}),
     );
-    let source = project.path().join("large.txt");
+    let source = project.path().join("large.log");
     std::fs::write(&source, "old data ".repeat(110_000)).unwrap();
     let staged = cli(
         data.path(),
@@ -447,7 +721,7 @@ print('verified')"#],"cwd":""}).to_string())
             "set_thread_approval_mode",
             json!({"threadId":id,"mode":"yolo"}),
         );
-        let source = project.path().join("large.txt");
+        let source = project.path().join("large.log");
         std::fs::write(&source, "old data ".repeat(110_000)).unwrap();
         let staged = cli(
             data.path(),
@@ -1099,7 +1373,7 @@ async fn cli_suspends_after_required_summary_failure_without_degraded_continuati
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let root = project.path().canonicalize().unwrap();
-    let source = root.join("control.txt");
+    let source = root.join("control.log");
     let text = format!(
         "{} ORIGINAL_FACT_753 {}",
         "Original source Ω ".repeat(30_000),
@@ -1221,7 +1495,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
         " apple".repeat(105_001)
     );
     assert!(text.len().div_ceil(4) > 200_000);
-    std::fs::write(sources.path().join("control.txt"), &text).unwrap();
+    std::fs::write(sources.path().join("control.log"), &text).unwrap();
     let binary = [0, 255, 128, 1, 2];
     for name in [
         "photo.png",
@@ -1280,7 +1554,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
     );
     let id = thread["id"].as_str().unwrap();
     let paths: Vec<_> = [
-        "control.txt",
+        "control.log",
         "photo.png",
         "music.mp3",
         "movie.mp4",
@@ -1398,7 +1672,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
     );
     assert!(serde_json::to_string(&history)
         .unwrap()
-        .contains("control.txt"));
+        .contains("control.log"));
     let evidence = project.path().join(".themis/context").join(id);
     assert!(
         evidence.is_dir(),

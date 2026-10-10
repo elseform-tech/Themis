@@ -26,6 +26,7 @@ use autoagents::llm::{FunctionCall, LLMProvider, ToolCall};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 
+pub mod documents;
 mod maintenance;
 mod pending;
 mod summary_evidence;
@@ -2234,6 +2235,7 @@ async fn summary_attempt(
     llm: &Arc<dyn LLMProvider>,
     messages: &[ChatMessage],
     max_tokens: u32,
+    purpose: summary_job::Purpose,
 ) -> Result<String, autoagents::llm::error::LLMError> {
     use autoagents::llm::error::LLMError;
     let answer = summary_request(
@@ -2246,7 +2248,8 @@ async fn summary_attempt(
     if text.trim().is_empty() {
         return Err(LLMError::Generic("Summarizer returned empty text".into()));
     }
-    validate_checkpoint(&text)
+    purpose
+        .validate(&text)
         .map_err(|_| LLMError::Generic("Summarizer returned malformed checkpoint".into()))?;
     Ok(text)
 }
@@ -2272,10 +2275,19 @@ async fn compaction_chat(
     messages: &[ChatMessage],
     max_tokens: u32,
 ) -> anyhow::Result<String> {
+    summary_chat(llm, messages, max_tokens, summary_job::Purpose::Context).await
+}
+
+async fn summary_chat(
+    llm: &Arc<dyn LLMProvider>,
+    messages: &[ChatMessage],
+    max_tokens: u32,
+    purpose: summary_job::Purpose,
+) -> anyhow::Result<String> {
     use autoagents::llm::error::LLMError;
     anyhow::ensure!(!messages.is_empty(), "Summary requires source messages");
     let mut bounded = messages.to_vec();
-    bounded[0].content.push_str(&format!("\nOutput budget: aim for at most {} words. Output exactly these five section labels followed by nonempty state: Goal/constraints:, Confirmed findings:, Completed changes/tests:, Unresolved work:, Next action:. Write unknown or none explicitly where appropriate; include source pointers beside findings. Compress repeated bulk detail into source references; do not reproduce tables or source files. The output budget takes precedence over the default word target.", (max_tokens / 3).clamp(80, 1200)));
+    bounded[0].content.push_str(&format!("\nOutput budget: aim for at most {} words. {} The output budget takes precedence over the default word target.", (max_tokens / 3).clamp(80, 1200), purpose.output_guidance()));
     let config = compaction_config();
     let deadline = SUMMARY_DEADLINE
         .try_with(|deadline| *deadline)
@@ -2294,7 +2306,7 @@ async fn compaction_chat(
             // Input preparation reserves 2x output, so later retries must not grow it again.
             let allowance = max_tokens.saturating_mul(if attempt == 0 { 1 } else { 2 });
             let result = crate::context_metrics::with_attempt(
-                attempt as usize, summary_attempt(llm, &bounded, allowance),
+                attempt as usize, summary_attempt(llm, &bounded, allowance, purpose),
             ).await;
             match result {
                 Ok(text) => return Ok(text),
@@ -2326,7 +2338,6 @@ async fn compaction_chat(
 }
 
 fn validate_checkpoint(text: &str) -> anyhow::Result<()> {
-    let normalized = text.to_ascii_lowercase();
     let headings = [
         "goal/constraints:",
         "confirmed findings:",
@@ -2334,6 +2345,11 @@ fn validate_checkpoint(text: &str) -> anyhow::Result<()> {
         "unresolved work:",
         "next action:",
     ];
+    validate_summary_sections(text, &headings)
+}
+
+fn validate_summary_sections(text: &str, headings: &[&str]) -> anyhow::Result<()> {
+    let normalized = text.to_ascii_lowercase();
     let mut positions = Vec::new();
     let mut after = 0;
     for heading in headings {

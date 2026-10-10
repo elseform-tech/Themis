@@ -102,6 +102,7 @@ struct ThreadRecord {
 struct RunSnapshot {
     reasoning_effort: Option<String>,
     history: Vec<ConversationTurn>,
+    documents: Vec<themis_core::runtime::documents::DocumentSource>,
     approval_timeout_seconds: u32,
     approval_mode: themis_core::configuration::ApprovalMode,
     runtime_configuration: themis_core::configuration::RuntimeConfig,

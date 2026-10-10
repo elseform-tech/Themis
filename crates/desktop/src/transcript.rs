@@ -51,6 +51,7 @@ impl TranscriptStore {
             )
             .map_err(|e| format!("initialize sessions: {e}"))?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS context_turns (seq INTEGER PRIMARY KEY, thread_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL); CREATE INDEX IF NOT EXISTS context_turns_thread ON context_turns(thread_id, seq); CREATE TABLE IF NOT EXISTS context_checkpoints (thread_id TEXT PRIMARY KEY, through_seq INTEGER NOT NULL, summary TEXT NOT NULL); CREATE TABLE IF NOT EXISTS context_source_exports (thread_id TEXT NOT NULL,directory TEXT NOT NULL,last_seq INTEGER NOT NULL,last_file TEXT NOT NULL,PRIMARY KEY(thread_id,directory));").map_err(|e| format!("initialize context: {e}"))?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS document_capsules (thread_id TEXT NOT NULL,source_sha256 TEXT NOT NULL,source_path TEXT NOT NULL,capsule TEXT NOT NULL,PRIMARY KEY(thread_id,source_sha256,source_path));").map_err(|e| format!("initialize document capsules: {e}"))?;
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(|e| format!("read session version: {e}"))?;
@@ -95,6 +96,88 @@ impl TranscriptStore {
                 |row| row.get(0),
             )
             .map_err(|error| format!("read conversation activity: {error}"))
+    }
+
+    pub(crate) fn save_document_capsule(
+        &self,
+        thread_id: &str,
+        capsule: &themis_core::runtime::documents::DocumentCapsule,
+    ) -> Result<(), String> {
+        let text = serde_json::to_string(capsule).map_err(|e| e.to_string())?;
+        if text.len() > 1024 * 1024 {
+            return Err("Document capsule exceeds its storage bound".into());
+        }
+        self.connection.lock().unwrap_or_else(|e| e.into_inner()).execute(
+            "INSERT OR REPLACE INTO document_capsules(thread_id,source_sha256,source_path,capsule) VALUES (?1,?2,?3,?4)",
+            params![thread_id,capsule.source_sha256,capsule.source_path,text]).map_err(|e|format!("save document capsule: {e}"))?;
+        Ok(())
+    }
+
+    pub(crate) fn load_document_capsule(
+        &self,
+        thread_id: &str,
+        wanted: &themis_core::runtime::documents::DocumentCapsule,
+    ) -> Result<Option<themis_core::runtime::documents::DocumentCapsule>, String> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let body:Option<String> = connection.query_row("SELECT capsule FROM document_capsules WHERE thread_id=?1 AND source_sha256=?2 AND source_path=?3 AND length(capsule)<=1048576",params![thread_id,wanted.source_sha256,wanted.source_path],|row|row.get(0)).optional().map_err(|e|e.to_string())?;
+        Ok(body
+            .and_then(|body| {
+                serde_json::from_str::<themis_core::runtime::documents::DocumentCapsule>(&body).ok()
+            })
+            .filter(|c| c.compatible_with(wanted)))
+    }
+
+    pub(crate) fn document_context(
+        &self,
+        thread_id: &str,
+        request: &str,
+        max_bytes: usize,
+        current_paths: &[String],
+    ) -> Result<Vec<ConversationTurn>, String> {
+        use themis_core::runtime::documents::DocumentCapsule;
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        // Match names/identities across the entire catalog before the bounded body read.
+        // A source path keeps its latest version; distinct uploads remain distinct associations.
+        let mut statement = connection.prepare("WITH ranked AS (SELECT rowid AS seq,*,row_number() OVER (PARTITION BY source_path ORDER BY rowid DESC) AS newest FROM document_capsules WHERE thread_id=?1 AND length(capsule)<=1048576) SELECT capsule FROM ranked WHERE newest=1 OR instr(?2,source_sha256)>0 OR instr(?2,source_path)>0 ORDER BY (instr(lower(?2),lower(json_extract(capsule,'$.source_name')))>0 OR instr(?2,source_sha256)>0 OR instr(?2,source_path)>0) DESC,seq DESC LIMIT 32").map_err(|e|e.to_string())?;
+        let rows = statement
+            .query_map(params![thread_id, request], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        let capsules = rows
+            .filter_map(|row| match row {
+                Ok(text) => serde_json::from_str::<DocumentCapsule>(&text)
+                    .ok()
+                    .filter(|c| {
+                        c.format_version == 1
+                            && c.pipeline_version
+                                == themis_core::runtime::documents::PIPELINE_VERSION
+                            && !current_paths.contains(&c.source_path)
+                    })
+                    .map(Ok),
+                Err(error) => Some(Err(error.to_string())),
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut remaining = max_bytes;
+        let mut turns = Vec::new();
+        for capsule in capsules {
+            let text = capsule.context();
+            if text.len() <= remaining {
+                remaining -= text.len();
+                turns.push(ConversationTurn {
+                    role: ConversationRole::Assistant,
+                    text,
+                });
+            } else {
+                let inventory = format!("Historical document capsule omitted from this bounded selection. Original source (untrusted): {}",serde_json::json!({"source_path":capsule.source_path,"source_sha256":capsule.source_sha256,"original_snapshot":capsule.original_snapshot,"summary_available_in_transcript":true}));
+                if inventory.len() <= remaining {
+                    remaining -= inventory.len();
+                    turns.push(ConversationTurn {
+                        role: ConversationRole::Assistant,
+                        text: inventory,
+                    });
+                }
+            }
+        }
+        Ok(turns)
     }
 
     /// Uses the live connection without opening, migrating, or writing a store.
@@ -518,6 +601,12 @@ impl TranscriptStore {
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         connection
             .execute(
+                "DELETE FROM document_capsules WHERE thread_id=?1",
+                [thread_id],
+            )
+            .map_err(|e| e.to_string())?;
+        connection
+            .execute(
                 "DELETE FROM context_source_exports WHERE thread_id=?1",
                 [thread_id],
             )
@@ -748,4 +837,121 @@ fn session_checks(
         Ok(checks)
     })();
     result.unwrap_or_else(|detail| vec![Check::new("sessions", Status::Fail, detail, "Back up the data directory and recover the store; no repair or migration was attempted")])
+}
+
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+    use themis_core::runtime::documents::{DocumentCapsule, PIPELINE_VERSION};
+
+    fn capsule(index: usize) -> DocumentCapsule {
+        DocumentCapsule {
+            format_version: 1,
+            pipeline_version: PIPELINE_VERSION.into(),
+            summary_model: "summary-model".into(),
+            policy_sha256: "policy-one".into(),
+            source_name: format!("story-{index}.md"),
+            source_path: format!("/staged/{index}/story-{index}.md"),
+            source_sha256: format!("{index:064x}"),
+            source_bytes: 123,
+            original_snapshot: format!("/evidence/{index}.jsonl").into(),
+            summary: format!("Complete story {index}: approved ending survives."),
+        }
+    }
+
+    #[test]
+    fn capsule_restart_selection_compatibility_and_deletion() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("transcript.sqlite");
+        let store = TranscriptStore::open(&path).unwrap();
+        for index in 0..50 {
+            store
+                .save_document_capsule("thread", &capsule(index))
+                .unwrap();
+        }
+        drop(store);
+        let store = TranscriptStore::open(&path).unwrap();
+        let context = store
+            .document_context("thread", "Resume story-0.md", 4000, &[])
+            .unwrap();
+        assert!(
+            context[0].text.contains("Complete story 0:"),
+            "named older source must rank before catalog limit"
+        );
+        assert!(context.iter().map(|turn| turn.text.len()).sum::<usize>() <= 4000);
+        let wanted = capsule(0);
+        assert!(store
+            .load_document_capsule("thread", &wanted)
+            .unwrap()
+            .is_some());
+        let mut incompatible = wanted.clone();
+        incompatible.policy_sha256 = "policy-two".into();
+        assert!(store
+            .load_document_capsule("thread", &incompatible)
+            .unwrap()
+            .is_none());
+        incompatible = wanted.clone();
+        incompatible.pipeline_version = "obsolete".into();
+        assert!(store
+            .load_document_capsule("thread", &incompatible)
+            .unwrap()
+            .is_none());
+        let mut revised = wanted.clone();
+        revised.source_sha256 = "f".repeat(64);
+        revised.summary = "Revised approved ending".into();
+        store.save_document_capsule("thread", &revised).unwrap();
+        let selected = store
+            .document_context("thread", "Resume story-0.md", 4000, &[])
+            .unwrap();
+        assert!(selected[0].text.contains("Revised approved ending"));
+        assert!(!selected
+            .iter()
+            .any(|t| t.text.contains("Complete story 0:")));
+        let excluded = store
+            .document_context(
+                "thread",
+                "Resume story-0.md",
+                4000,
+                &["/staged/0/story-0.md".into()],
+            )
+            .unwrap();
+        assert!(!excluded
+            .iter()
+            .any(|t| t.text.contains("Revised approved ending")));
+        // Distinct uploaded documents can have the same basename.
+        let mut distinct = revised;
+        distinct.source_path = "/staged/other/story-0.md".into();
+        distinct.summary = "A separate story".into();
+        store.save_document_capsule("thread", &distinct).unwrap();
+        let selected = store
+            .document_context("thread", "Resume story-0.md", 10000, &[])
+            .unwrap();
+        assert!(selected
+            .iter()
+            .any(|t| t.text.contains("Revised approved ending")));
+        assert!(selected.iter().any(|t| t.text.contains("A separate story")));
+        let compare = store
+            .document_context(
+                "thread",
+                "Compare story-0.md",
+                10000,
+                &["/staged/other/story-0.md".into()],
+            )
+            .unwrap();
+        assert!(
+            compare
+                .iter()
+                .any(|t| t.text.contains("Revised approved ending")),
+            "new attachment must not hide a distinct older same-name source"
+        );
+        store.delete_thread("thread").unwrap();
+        assert!(store
+            .document_context("thread", "story-0.md", 10000, &[])
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .load_document_capsule("thread", &wanted)
+            .unwrap()
+            .is_none());
+    }
 }

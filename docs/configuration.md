@@ -122,6 +122,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.max_stages` | 1–128; default 32, including consolidation |
 | `compaction.retry_limit` | 0–2; default 2 (up to three attempts per failed stage) |
 | `compaction.section_max_tokens` | Legacy compatibility field, 256–16,384; retained for file compatibility; stage output is computed from consolidation capacity |
+| `compaction.document_context_token_budget` | Internal full-document preparation input budget, 24,000–1,000,000; default 200,000; clamped to the routed summary model capacity, with conservative 24,000 when unknown. Does not change ordinary context capacity. |
 | `compaction.summary_max_tokens` | 256–16,384; default 8,192 |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
 | `approval.rules` | At most 256 ordered rules |
