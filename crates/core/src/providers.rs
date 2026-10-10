@@ -251,6 +251,7 @@ fn go_session_id() -> String {
 /// Per-conversation Go session IDs (see the module-level spike note) are supported
 /// by passing an explicit `session_id`; `None` falls back to `THEMIS_GO_SESSION`
 /// and then [`GO_DEFAULT_SESSION`].
+#[derive(Clone)]
 pub struct CompatibleProvider {
     provider_name: &'static str,
     api_key: String,
@@ -525,8 +526,12 @@ impl CompatibleProvider {
                 tools,
             })?
         };
-        if self.model.starts_with("longcat-2.5-") && COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
-            body["thinking"] = serde_json::json!({"type":"disabled"});
+        if COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
+            if self.uses_responses() {
+                body["reasoning"] = serde_json::json!({"effort":"none"});
+            } else {
+                body["thinking"] = serde_json::json!({"type":"disabled"});
+            }
         }
         if let Some(sampling) = sampling {
             if let Some(limit) = sampling.max_tokens {
@@ -655,31 +660,45 @@ impl ChatProvider for CompatibleProvider {
         _json_schema: Option<StructuredOutputFormat>,
         sampling: Option<&SamplingOverrides>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        // ponytail: keep only verified off controls; use the known no-thinking Go
+        // summarizer for other models until their disable capability is verified.
+        let summary_provider = COMPACTION_REQUEST.try_with(|_| ()).ok().map(|()| Self {
+            model: if self.model.starts_with("longcat-2.5-")
+                || matches!(self.model.as_str(), "gpt-5.6-luna" | "gpt-6-luna")
+            {
+                self.model.clone()
+            } else {
+                "longcat-2.5-preview-free".into()
+            },
+            reasoning_effort: None,
+            ..self.clone()
+        });
+        let provider = summary_provider.as_ref().unwrap_or(self);
+        if provider.api_key.is_empty() {
             return Err(LLMError::missing_api_key(format!(
                 "Missing {} API key",
-                self.provider_name
+                provider.provider_name
             )));
         }
-        let response = self
+        let response = provider
             .chat_request(messages, tools, false, sampling)?
             .send()
             .await
             .map_err(|err| transport_error("chat request failed", err))?;
-        let response = ensure_success(response, self.provider_name).await?;
+        let response = ensure_success(response, provider.provider_name).await?;
         let raw = response
             .text()
             .await
             .map_err(|err| transport_error("failed to read chat response", err))?;
-        let parsed: WireChatResponse = if self.uses_responses() {
+        let parsed: WireChatResponse = if provider.uses_responses() {
             responses_response(serde_json::from_str(&raw)?)?
-        } else if self.uses_messages() {
+        } else if provider.uses_messages() {
             messages_response(serde_json::from_str(&raw)?)?
         } else {
             serde_json::from_str(&raw).map_err(|err| LLMError::ResponseFormatError {
                 message: format!(
                     "Failed to decode {} API response: {err}",
-                    self.provider_name
+                    provider.provider_name
                 ),
                 raw_response: raw,
             })?
@@ -690,7 +709,7 @@ impl ChatProvider for CompatibleProvider {
                 .into_iter()
                 .next()
                 .ok_or_else(|| LLMError::ResponseFormatError {
-                    message: format!("{} returned no choices", self.provider_name),
+                    message: format!("{} returned no choices", provider.provider_name),
                     raw_response: String::new(),
                 })?;
         let truncated = choice.finish_reason.as_deref() == Some("length");
@@ -705,6 +724,7 @@ impl ChatProvider for CompatibleProvider {
                 },
                 if truncated { "warn" } else { "info" },
                 serde_json::json!({
+                    "model": provider.model,
                     "output_limit_tokens": sampling.and_then(|sampling| sampling.max_tokens),
                     "completion_tokens": usage.map(|usage| usage.completion_tokens),
                     "reasoning_tokens": usage.and_then(|usage| usage.completion_tokens_details.as_ref()).and_then(|details| details.reasoning_tokens),
@@ -1293,18 +1313,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compaction_disables_supported_thinking_without_changing_answer_requests() {
-        for model in ["longcat-2.5-preview-free", "mimo-v2.6-flash"] {
+    async fn compaction_disables_reasoning_or_uses_nonthinking_fallback() {
+        for model in [
+            "longcat-2.5-preview-free",
+            "gpt-5.6-luna",
+            "gpt-6-luna",
+            "mimo-v2.6-flash",
+            "muse-spark-1.3-contributor",
+            "grok-4.7",
+            "qwen3.8-max",
+            "minimax-m3",
+            "claude-haiku-5-5",
+            "unknown-model",
+        ] {
             let server = MockServer::start().await;
             Mock::given(method("POST"))
-                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                    "choices":[{"message":{"content":"checkpoint"},"finish_reason":"stop"}],
-                    "usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"completion_tokens_details":{"reasoning_tokens":0}}
-                })))
-                .mount(&server)
-                .await;
-            let provider =
-                CompatibleProvider::go("synthetic".into(), model.into(), Some(server.uri()), None);
+                .respond_with(|request: &wiremock::Request| {
+                    let response = match request.url.path() {
+                        "/responses" => json!({"output":[{"type":"message","content":[{"type":"output_text","text":"checkpoint"}]}]}),
+                        "/messages" => json!({"content":[{"type":"text","text":"checkpoint"}],"stop_reason":"end_turn"}),
+                        _ => json!({"choices":[{"message":{"content":"checkpoint"},"finish_reason":"stop"}],
+                            "usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"completion_tokens_details":{"reasoning_tokens":0}}}),
+                    };
+                    ResponseTemplate::new(200).set_body_json(response)
+                })
+                .mount(&server).await;
+            let mut provider = CompatibleProvider::go(
+                "synthetic".into(),
+                model.into(),
+                Some(server.uri()),
+                Some("thread-session".into()),
+            );
+            provider.reasoning_effort = Some("high".into());
             let messages = [user_message("summarize")];
             let sampling = SamplingOverrides::with_max_tokens(1654);
             let dir = tempfile::tempdir().unwrap();
@@ -1328,23 +1368,36 @@ mod tests {
                 .chat_and_sampling(&messages, None, None)
                 .await
                 .unwrap();
+            let requests = server.received_requests().await.unwrap();
+            let summary: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+            let answer: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+            if model.starts_with("gpt-") {
+                assert_eq!(summary["model"], model);
+                assert_eq!(summary["reasoning"]["effort"], "none");
+                assert_eq!(summary["max_output_tokens"], 1654);
+            } else {
+                assert_eq!(summary["model"], "longcat-2.5-preview-free");
+                assert_eq!(summary["thinking"], json!({"type":"disabled"}));
+                assert!(summary.get("reasoning_effort").is_none());
+                assert_eq!(summary["max_tokens"], 1654);
+            }
+            assert_eq!(answer["model"], model);
+            assert!(answer.get("thinking").is_none());
+            if provider.uses_responses() {
+                assert_eq!(answer["reasoning"]["effort"], "high");
+            } else if !provider.uses_messages() {
+                assert_eq!(answer["reasoning_effort"], "high");
+            }
+            assert_eq!(requests[0].headers[GO_SESSION_HEADER], "thread-session");
             let records = log
                 .query(&crate::diagnostics::DiagnosticFilter::default())
                 .unwrap();
             assert_eq!(records.len(), 1);
             assert_eq!(records[0].event, "summary_usage");
-            assert_eq!(records[0].details["reasoning_tokens"], 0);
-            let requests = server.received_requests().await.unwrap();
-            let summary: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
-            let answer: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
-            assert_eq!(summary["max_tokens"], 1654);
-            if model.starts_with("longcat-2.5-") {
-                assert_eq!(summary["thinking"], json!({"type":"disabled"}));
-            } else {
-                assert!(summary.get("thinking").is_none());
+            assert_eq!(records[0].details["model"], summary["model"]);
+            if !model.starts_with("gpt-") {
+                assert_eq!(records[0].details["reasoning_tokens"], 0);
             }
-            assert!(answer.get("thinking").is_none());
-            assert!(answer.get("max_tokens").is_none());
         }
     }
 

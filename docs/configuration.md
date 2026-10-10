@@ -134,9 +134,15 @@ also bounds this backoff.
 Chat Completions summary/truncation diagnostics retain reported token counts
 and text size; failed summary requests retain error categories. Neither record contains
 response text.
-LongCat 2.5 internal summaries send `thinking: {"type":"disabled"}` so reasoning
-does not consume the small checkpoint allowance. Ordinary answers retain their
-configured reasoning behavior; other models retain their existing request options.
+Internal summaries disable reasoning independently of the selected answer effort.
+Known off controls currently retain LongCat 2.5 with `thinking: {"type":"disabled"}`
+and GPT 5.6/6 Luna with `reasoning.effort: "none"`. Other or unknown models use
+`longcat-2.5-preview-free` with thinking disabled for summaries, reusing the same Go
+credentials and session. This conservative fallback includes models whose off
+control has not been verified; it is not a claim that all of them require reasoning.
+If the summary provider fails, the existing bounded retry/durable fallback applies.
+Ordinary answers retain the selected model and configured reasoning behavior.
+Summary diagnostics identify the effective model without logging response text.
 There is no section scheduler or reconciliation pass; `section_max_tokens` is
 accepted for existing files but no longer affects behavior. See [context checkpoints](context-and-attachments.md)
 for packet selection, estimates and omissions. Both calls share the summarization

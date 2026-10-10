@@ -432,6 +432,7 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
         let body: Value = request.body_json().unwrap();
         let summary = body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context");
         if summary {
+            assert_eq!(body["model"], "longcat-2.5-preview-free");
             assert_eq!(body["thinking"], json!({"type":"disabled"}));
             if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                 return ResponseTemplate::new(429).insert_header("Retry-After", "0");
@@ -445,7 +446,10 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
             assert_eq!(body["max_tokens"], 8192);
             observed.lock().unwrap().push(input.to_owned());
         }
-        if !summary { assert!(body.get("thinking").is_none()); }
+        if !summary {
+            assert!(body.get("thinking").is_none());
+            assert_eq!(body["model"], "mimo-v2.6-flash");
+        }
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":if summary { "EARLY_LIMIT_A remains required." } else { "READY" }},"finish_reason":"stop"}]}))
     }).mount(&provider).await;
     let state = AppState::new_for_test(data.path().join("settings.json"));
@@ -459,7 +463,7 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
     let thread = cli(
         data.path(),
         "create_thread",
-        json!({"projectRoot":project.path(),"provider":"go","model":"longcat-2.5-preview-free"}),
+        json!({"projectRoot":project.path(),"provider":"go","model":"mimo-v2.6-flash"}),
     );
     let id = thread["id"].as_str().unwrap();
     let client = Client::new(data.path().into());
