@@ -42,13 +42,23 @@ fn publish(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
         .create_new(true)
         .write(true)
         .open(&temporary)?;
-    std::io::Write::write_all(&mut file, bytes)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(temporary, path)?;
-    Ok(())
+    let result = (|| {
+        std::io::Write::write_all(&mut file, bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
+    }
+    result
 }
-pub(super) fn save(directory: &std::path::Path, messages: &[ChatMessage]) -> anyhow::Result<()> {
+/// Publish the stable ID first so it can be resumed independently of the latest pointer.
+pub(super) fn save_job(
+    directory: &std::path::Path,
+    messages: &[ChatMessage],
+) -> anyhow::Result<Vec<u8>> {
     let job_id = id(messages)?;
     let bytes = serde_json::to_vec(&Pending {
         version: 1,
@@ -63,7 +73,17 @@ pub(super) fn save(directory: &std::path::Path, messages: &[ChatMessage]) -> any
         &directory.join(format!("pending-job-{job_id}.json")),
         &bytes,
     )?;
-    publish(&directory.join("pending-compaction.json"), &bytes)
+    Ok(bytes)
+}
+
+pub(super) fn save_latest(directory: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    publish(&directory.join("pending-compaction.json"), bytes)
+}
+
+#[cfg(test)]
+fn save(directory: &std::path::Path, messages: &[ChatMessage]) -> anyhow::Result<()> {
+    let bytes = save_job(directory, messages)?;
+    save_latest(directory, &bytes)
 }
 
 pub(super) fn restore(

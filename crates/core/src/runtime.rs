@@ -592,7 +592,7 @@ async fn run_task_with_evidence_inner(
                 if stopped.load(Ordering::SeqCst) {
                     return Err(error);
                 }
-                let error = format!("Context checkpoint failed: {error}. Originals preserved; send /retry-compaction to resume the saved job.");
+                let error = format!("Context checkpoint failed: {error}");
                 emit(RunEvent::Failed {
                     error: error.clone(),
                 })
@@ -1380,19 +1380,19 @@ async fn compact_context_with_evidence(
         serde_json::json!({"estimated_input_tokens":estimated_tokens(messages),"context_token_budget":policy.context_token_budget,"deadline_ms":timeout.as_millis()}),
     );
     let mut archived = None;
+    let mut pending_saved = false;
     let pending_directory = evidence_directory.clone();
     let pending_id = pending::id(messages)?;
     let result = until_stopped(
         SUMMARY_DEADLINE.scope(
             tokio::time::Instant::now() + timeout,
             tokio::time::timeout(timeout, async {
-                archived = if let Some(directory) = evidence_directory {
-                    let saved = save_evidence(&directory, messages).await?;
-                    pending::save(&directory, messages)?;
-                    Some(saved)
-                } else {
-                    None
-                };
+                if let Some(directory) = evidence_directory {
+                    archived = Some(save_evidence(&directory, messages).await?);
+                    let bytes = pending::save_job(&directory, messages)?;
+                    pending_saved = true;
+                    pending::save_latest(&directory, &bytes)?;
+                }
                 Box::pin(compact_context_inner(
                     llm, messages, policy, events, &archived,
                 ))
@@ -1424,14 +1424,28 @@ async fn compact_context_with_evidence(
                 "compaction",
                 "summary_failed",
                 "warn",
-                serde_json::json!({"duration_ms":started.elapsed().as_millis(),"deadline_exceeded":failure.is_err(),"originals_saved":archived.is_some()}),
+                serde_json::json!({"duration_ms":started.elapsed().as_millis(),"deadline_exceeded":failure.is_err(),"originals_saved":archived.is_some(),"pending_job_saved":pending_saved}),
             );
             check_stopped(stopped, events).await?;
             let result = match failure {
                 Ok(result) => result,
                 Err(_) => Err(anyhow!("Required summarization timed out")),
             };
-            result.map_err(|error| anyhow!("{error}; run suspended and originals preserved. Resume this task with /retry-compaction {pending_id}"))
+            let preservation = if archived.is_some() {
+                "Originals saved on disk."
+            } else {
+                "Originals were not saved on disk."
+            };
+            let recovery = if pending_saved {
+                format!("Resume this task with /retry-compaction {pending_id}")
+            } else {
+                "No resumable job was saved.".into()
+            };
+            result.map_err(|error| {
+                anyhow!(
+                    "{error}; run suspended; working context unchanged. {preservation} {recovery}"
+                )
+            })
         }
     }
 }
@@ -4019,6 +4033,13 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+        assert!(
+            !result
+                .unwrap_err()
+                .to_string()
+                .contains("/retry-compaction"),
+            "a job without an evidence directory is not durably resumable"
+        );
         assert_eq!(
             serde_json::to_value(&messages).unwrap(),
             before,
@@ -4029,6 +4050,84 @@ mod tests {
             RunEvent::ContextCompacting
         ));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn storage_failure_only_offers_a_durable_pending_job() {
+        use wiremock::MockServer;
+        for failure in ["archive", "job", "latest"] {
+            let server = MockServer::start().await;
+            let llm = crate::providers::resolve(
+                &crate::providers::ProviderConfig::new(
+                    crate::providers::ProviderKind::Go,
+                    "test-key",
+                )
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+            )
+            .await
+            .unwrap();
+            let directory = tempfile::tempdir().unwrap();
+            let evidence = directory.path().join("evidence");
+            let mut messages = initial_messages(
+                vec![ConversationTurn {
+                    role: ConversationRole::User,
+                    text: "Original goal and evidence".repeat(500),
+                }],
+                "Continue".into(),
+            );
+            let before = serde_json::to_value(&messages).unwrap();
+            let job_id = pending::id(&messages).unwrap();
+            if failure == "archive" {
+                std::fs::write(&evidence, "cannot hold evidence").unwrap();
+            } else {
+                std::fs::create_dir(&evidence).unwrap();
+                let blocked = if failure == "job" {
+                    format!("pending-job-{job_id}.json")
+                } else {
+                    "pending-compaction.json".into()
+                };
+                std::fs::create_dir(evidence.join(blocked)).unwrap();
+            }
+            let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+            let error = compact_context_with_evidence(
+                &llm,
+                &mut messages,
+                &RunPolicy {
+                    total_turns: 8,
+                    context_token_budget: 24_000,
+                    recent_messages: 2,
+                },
+                &tx,
+                &AtomicBool::new(false),
+                std::time::Duration::from_secs(5),
+                Some(evidence.clone()),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+            assert_eq!(serde_json::to_value(&messages).unwrap(), before);
+            assert!(server.received_requests().await.unwrap().is_empty());
+            assert!(rx.try_recv().is_err());
+            assert!(
+                error.contains("working context unchanged"),
+                "{failure}: {error}"
+            );
+            if failure == "latest" {
+                assert!(error.contains(&format!("/retry-compaction {job_id}")));
+                let restored =
+                    pending::restore(&evidence, messages[0].clone(), Some(&job_id)).unwrap();
+                assert_eq!(serde_json::to_value(restored).unwrap(), before);
+            } else {
+                assert!(!error.contains("/retry-compaction"), "{failure}: {error}");
+                assert!(pending::restore(&evidence, messages[0].clone(), Some(&job_id)).is_err());
+            }
+            assert_eq!(
+                error.contains("Originals saved on disk"),
+                failure != "archive",
+                "{failure}: {error}"
+            );
+        }
     }
 
     #[tokio::test]

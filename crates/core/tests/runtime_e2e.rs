@@ -711,6 +711,53 @@ async fn tool_evidence_survives_completed_runs_without_compaction() {
 }
 
 #[tokio::test]
+async fn failed_checkpoint_archive_does_not_advertise_a_saved_job() {
+    let server = MockServer::start().await;
+    let project = tempfile::tempdir().unwrap();
+    let evidence = project.path().join("evidence");
+    std::fs::write(&evidence, "cannot hold snapshots").unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Continue the task".into(),
+        vec![themis_core::runtime::ConversationTurn {
+            role: themis_core::runtime::ConversationRole::User,
+            text: "Retain the original task constraint. ".repeat(4000),
+        }],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 24_000,
+            recent_messages: 2,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await;
+    let error = result.unwrap_err().to_string();
+    assert!(error.starts_with("Context checkpoint failed:"), "{error}");
+    assert!(!error.contains("/retry-compaction"), "{error}");
+    assert!(!error.contains("Originals preserved"), "{error}");
+    let events = common::drain(&mut rx).await;
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { error: emitted } if emitted == &error)));
+    assert!(!has_finished(&events));
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn failed_tool_evidence_save_stops_before_model_continuation() {
     let server = MockServer::start().await;
     common::mount_script(
