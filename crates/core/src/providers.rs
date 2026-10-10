@@ -687,6 +687,18 @@ impl ChatProvider for CompatibleProvider {
                     raw_response: String::new(),
                 })?;
         if choice.finish_reason.as_deref() == Some("length") {
+            let usage = parsed.usage.as_ref();
+            crate::diagnostics::emit(
+                "provider",
+                "output_truncated",
+                "warn",
+                serde_json::json!({
+                    "output_limit_tokens": sampling.and_then(|sampling| sampling.max_tokens),
+                    "completion_tokens": usage.map(|usage| usage.completion_tokens),
+                    "reasoning_tokens": usage.and_then(|usage| usage.completion_tokens_details.as_ref()).and_then(|details| details.reasoning_tokens),
+                    "public_text_chars": choice.message.content.as_ref().map_or(0, |text| text.chars().count()),
+                }),
+            );
             return Err(LLMError::Generic("Provider response was truncated".into()));
         }
         Ok(Box::new(CompatibleChatResponse {
@@ -1264,6 +1276,60 @@ mod tests {
             assert_eq!(ordinary[key].as_u64(), default_limit, "{model}");
             assert_eq!(requests[0].headers[GO_SESSION_HEADER], "summary-test");
         }
+    }
+
+    #[tokio::test]
+    async fn truncated_output_diagnostics_keep_only_usage_and_size_metadata() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices":[{"message":{"content":null,"reasoning_content":"private reasoning sentinel"},"finish_reason":"length"}],
+                "usage":{"prompt_tokens":100,"completion_tokens":1654,"total_tokens":1754,
+                    "completion_tokens_details":{"reasoning_tokens":1654}}
+            })))
+            .mount(&server).await;
+        let dir = tempfile::tempdir().unwrap();
+        let log = Arc::new(crate::diagnostics::DiagnosticLog::new(dir.path().into()));
+        let provider = CompatibleProvider::go(
+            "synthetic".into(),
+            "mimo-v2.6-flash".into(),
+            Some(server.uri()),
+            None,
+        );
+        crate::diagnostics::ACTIVE
+            .scope(
+                crate::diagnostics::DiagnosticContext {
+                    log: Arc::clone(&log),
+                    thread_id: "thread".into(),
+                    run_id: "run".into(),
+                    level: "info".into(),
+                },
+                async {
+                    assert!(provider
+                        .chat_and_sampling(
+                            &[user_message("private prompt sentinel")],
+                            None,
+                            Some(&SamplingOverrides::with_max_tokens(1654))
+                        )
+                        .await
+                        .is_err());
+                },
+            )
+            .await;
+        let records = log
+            .query(&crate::diagnostics::DiagnosticFilter::default())
+            .unwrap();
+        let record = records
+            .iter()
+            .find(|record| record.event == "output_truncated")
+            .expect("truncation must retain diagnostic metadata");
+        assert_eq!(record.details["completion_tokens"], 1654);
+        assert_eq!(record.details["reasoning_tokens"], 1654);
+        assert_eq!(record.details["public_text_chars"], 0);
+        assert_eq!(record.details["output_limit_tokens"], 1654);
+        assert!(!serde_json::to_string(&records)
+            .unwrap()
+            .contains("sentinel"));
     }
 
     #[tokio::test]

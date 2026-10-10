@@ -1999,9 +1999,25 @@ async fn compaction_chat(
         }
         result => result,
     }
+    .and_then(|answer| {
+        if answer.text().is_none_or(|text| text.trim().is_empty()) {
+            Err(autoagents::llm::error::LLMError::Generic(
+                "Summarizer returned empty text".into(),
+            ))
+        } else {
+            Ok(answer)
+        }
+    })
     .inspect_err(|error| {
         use autoagents::llm::error::LLMError;
         // Log categories only: provider errors may contain private request/response content.
+        crate::diagnostics::emit("compaction", "request_failed", "warn", serde_json::json!({
+            "status": error.http_status_code(),
+            "transport": matches!(error, LLMError::HttpError(_)),
+            "truncation_detected": matches!(error, LLMError::Generic(message) if message == "Provider response was truncated"),
+            "response_incomplete": matches!(error, LLMError::Generic(message) if message == "Provider response failed or was incomplete"),
+            "empty_response": matches!(error, LLMError::Generic(message) if message == "Summarizer returned empty text"),
+        }));
         eprintln!(
             "compaction request failed status={:?} transport={} output_truncated={} response_incomplete={}",
             error.http_status_code(),
