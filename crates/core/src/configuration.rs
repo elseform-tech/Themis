@@ -136,6 +136,10 @@ pub fn configured_hook(
 pub struct CompactionConfig {
     pub timeout_seconds: u64,
     pub request_timeout_seconds: u64,
+    /// Overall attachment preparation bound, independent of each document's job.
+    pub document_batch_timeout_seconds: u64,
+    /// Initial summary HTTP 429 backoff; subsequent retries double this floor.
+    pub rate_limit_backoff_seconds: u64,
     /// Internal full-document preparation input capacity; ordinary work keeps its own budget.
     pub document_context_token_budget: usize,
     pub maintenance_threshold_ratio: f64,
@@ -156,6 +160,8 @@ impl Default for CompactionConfig {
         Self {
             timeout_seconds: 900,
             request_timeout_seconds: 300,
+            document_batch_timeout_seconds: 3600,
+            rate_limit_backoff_seconds: 10,
             document_context_token_budget: 200000,
             maintenance_threshold_ratio: 0.83,
             semantic_threshold_ratio: 0.93,
@@ -468,6 +474,14 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
     );
     let compaction = &config.compaction;
     ensure!(
+        (1..=21600).contains(&compaction.document_batch_timeout_seconds),
+        "compaction.document_batch_timeout_seconds must be 1..21600"
+    );
+    ensure!(
+        (1..=300).contains(&compaction.rate_limit_backoff_seconds),
+        "compaction.rate_limit_backoff_seconds must be 1..300"
+    );
+    ensure!(
         (24000..=1000000).contains(&compaction.document_context_token_budget),
         "compaction.document_context_token_budget must be 24000..1000000"
     );
@@ -620,6 +634,8 @@ pub fn schema() -> Value {
             "compaction":{"type":"object","additionalProperties":false,"properties":{
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":1800,"default":900},
                 "request_timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"default":300},
+                "document_batch_timeout_seconds":{"type":"integer","minimum":1,"maximum":21600,"default":3600},
+                "rate_limit_backoff_seconds":{"type":"integer","minimum":1,"maximum":300,"default":10},
                 "document_context_token_budget":{"type":"integer","minimum":24000,"maximum":1000000,"default":200000},
                 "maintenance_threshold_ratio":{"type":"number","minimum":0.5,"maximum":0.95,"default":0.83},
                 "semantic_threshold_ratio":{"type":"number","exclusiveMinimum":0.5,"maximum":0.97,"default":0.93},
@@ -637,6 +653,40 @@ pub fn schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn document_batch_and_summary_backoff_have_bounded_independent_configuration() {
+        let mut config = RuntimeConfig::default();
+        assert_eq!(config.compaction.document_batch_timeout_seconds, 3600);
+        assert_eq!(config.compaction.rate_limit_backoff_seconds, 10);
+        for invalid in [0, 21601] {
+            config.compaction.document_batch_timeout_seconds = invalid;
+            assert!(validate(&config)
+                .unwrap_err()
+                .to_string()
+                .contains("document_batch_timeout_seconds"));
+        }
+        config.compaction.document_batch_timeout_seconds = 21600;
+        for invalid in [0, 301] {
+            config.compaction.rate_limit_backoff_seconds = invalid;
+            assert!(validate(&config)
+                .unwrap_err()
+                .to_string()
+                .contains("rate_limit_backoff_seconds"));
+        }
+        config.compaction.rate_limit_backoff_seconds = 300;
+        validate(&config).unwrap();
+        let schema = schema();
+        assert_eq!(
+            schema["properties"]["compaction"]["properties"]["document_batch_timeout_seconds"]
+                ["maximum"],
+            21600
+        );
+        assert_eq!(
+            schema["properties"]["compaction"]["properties"]["rate_limit_backoff_seconds"]
+                ["default"],
+            10
+        );
+    }
     #[test]
     fn document_input_capacity_is_validated_independently_of_ordinary_context() {
         let mut config = RuntimeConfig {

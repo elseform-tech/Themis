@@ -878,9 +878,22 @@ fn request_retry_delay(
     error: &autoagents::llm::error::LLMError,
     retry: u32,
 ) -> std::time::Duration {
+    request_retry_delay_with_rate_limit_floor(error, retry, 1)
+}
+
+fn request_retry_delay_with_rate_limit_floor(
+    error: &autoagents::llm::error::LLMError,
+    retry: u32,
+    rate_limit_seconds: u64,
+) -> std::time::Duration {
     use autoagents::llm::error::LLMError;
     use std::time::Duration;
-    let base = Duration::from_secs(1_u64 << retry.min(6));
+    let seconds = if error.http_status_code() == Some(429) {
+        rate_limit_seconds
+    } else {
+        1
+    };
+    let base = Duration::from_secs(seconds.saturating_mul(1_u64 << retry.min(6)));
     let hint = match error {
         LLMError::RateLimitError { retry_after, .. }
         | LLMError::HttpStatusError { retry_after, .. } => retry_after.unwrap_or_default(),
@@ -2332,7 +2345,7 @@ async fn summary_chat(
                     if attempt == config.retry_limit || reason.is_none() {
                         return Err(error);
                     }
-                    let delay = request_retry_delay(&error, attempt as u32);
+                    let delay = request_retry_delay_with_rate_limit_floor(&error, attempt as u32, config.rate_limit_backoff_seconds);
                     crate::diagnostics::emit("compaction", "request_retry", "warn", serde_json::json!({
                         "retry":attempt+1,"reason":reason,"status":error.http_status_code(),
                         "backoff_ms":delay.as_millis(),"max_tokens":max_tokens.saturating_mul(2),
@@ -3485,6 +3498,30 @@ mod tests {
                     assert!(delay <= base.max(hint) + base / 2);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn rate_limit_retry_waits_for_endpoint_recovery_without_changing_transport_backoff() {
+        use autoagents::llm::error::LLMError;
+        use std::time::Duration;
+        let limited = LLMError::RateLimitError {
+            status_code: 429,
+            message: "endpoint unavailable".into(),
+            response_body: "".into(),
+            retry_after: None,
+            provider_code: None,
+        };
+        let transport = LLMError::HttpError("temporary connection reset".into());
+        for retry in 0..2 {
+            assert!(
+                request_retry_delay_with_rate_limit_floor(&limited, retry, 10)
+                    >= Duration::from_secs(10 << retry)
+            );
+            assert!(
+                request_retry_delay_with_rate_limit_floor(&transport, retry, 10)
+                    <= Duration::from_millis(1500 << retry)
+            );
         }
     }
 

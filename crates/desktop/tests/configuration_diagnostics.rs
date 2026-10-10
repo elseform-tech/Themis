@@ -65,12 +65,25 @@ async fn shared_configuration_partial_import_and_diagnostics_survive_restart() {
     let server = Server::bind(state.clone(), directory.path()).await.unwrap();
     let host = tokio::spawn(server.run());
     let root = project.path().to_str().unwrap();
+    let settings = json!({"context_token_budget":200000,"compaction":{"document_batch_timeout_seconds":7200,"rate_limit_backoff_seconds":20},"approval":{"default":"deny","rules":[]}});
     let saved = cli(
         directory.path(),
         "save_runtime_configuration",
-        json!({"scope":"user","projectRoot":root,"json":"{ // team defaults\n\"context_token_budget\":200000,\"approval\":{\"default\":\"deny\",\"rules\":[]}}"}),
+        json!({"scope":"user","projectRoot":root,"json":settings.to_string()}),
     );
     assert_eq!(saved["config"]["context_token_budget"], 200000);
+    assert_eq!(
+        saved["config"]["compaction"]["document_batch_timeout_seconds"],
+        7200
+    );
+    assert_eq!(
+        saved["config"]["compaction"]["rate_limit_backoff_seconds"],
+        20
+    );
+    assert_eq!(
+        saved["provenance"]["compaction.document_batch_timeout_seconds"],
+        "user"
+    );
     let thread = cli(
         directory.path(),
         "create_thread",
@@ -131,6 +144,17 @@ async fn shared_configuration_partial_import_and_diagnostics_survive_restart() {
         .query_diagnostic_logs(Default::default())
         .unwrap()
         .is_empty());
+    let restored_config = restored
+        .get_runtime_configuration(Some(root.into()))
+        .unwrap();
+    assert_eq!(
+        restored_config["config"]["compaction"]["document_batch_timeout_seconds"],
+        7200
+    );
+    assert_eq!(
+        restored_config["config"]["compaction"]["rate_limit_backoff_seconds"],
+        20
+    );
     std::fs::write(directory.path().join("runtime.jsonc"), "{bad").unwrap();
     let broken = restored
         .get_runtime_configuration(Some(root.into()))

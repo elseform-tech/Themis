@@ -3,6 +3,58 @@ use super::*;
 
 pub(super) const VERSION: &str = "adaptive-context-purpose-v3";
 
+/// Exact pre-deadline-split serialization, including declaration order and skips.
+/// This is only for looking up a known legacy key, never for guessing old settings.
+#[derive(serde::Serialize)]
+pub(super) struct LegacyPolicy<'a> {
+    timeout_seconds: u64,
+    request_timeout_seconds: u64,
+    document_context_token_budget: usize,
+    maintenance_threshold_ratio: f64,
+    semantic_threshold_ratio: f64,
+    target_headroom_interactions: usize,
+    max_stages: usize,
+    retry_limit: u8,
+    section_max_tokens: u32,
+    summary_max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_file: &'a Option<String>,
+}
+
+pub(super) fn legacy_policy(config: &crate::configuration::CompactionConfig) -> LegacyPolicy<'_> {
+    LegacyPolicy {
+        timeout_seconds: config.timeout_seconds,
+        request_timeout_seconds: config.request_timeout_seconds,
+        document_context_token_budget: config.document_context_token_budget,
+        maintenance_threshold_ratio: config.maintenance_threshold_ratio,
+        semantic_threshold_ratio: config.semantic_threshold_ratio,
+        target_headroom_interactions: config.target_headroom_interactions,
+        max_stages: config.max_stages,
+        retry_limit: config.retry_limit,
+        section_max_tokens: config.section_max_tokens,
+        summary_max_tokens: config.summary_max_tokens,
+        prompt_file: &config.prompt_file,
+    }
+}
+
+pub(super) fn semantic_policy(
+    config: &crate::configuration::CompactionConfig,
+) -> anyhow::Result<serde_json::Value> {
+    let mut policy = serde_json::to_value(legacy_policy(config))?;
+    let fields = policy
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("Invalid summary policy"))?;
+    for name in ["timeout_seconds", "request_timeout_seconds", "retry_limit"] {
+        fields.remove(name);
+    }
+    // The resolved prompt was skipped by the old serialized configuration.
+    fields.insert(
+        "resolved_prompt".into(),
+        serde_json::to_value(&config.prompt)?,
+    );
+    Ok(policy)
+}
+
 #[derive(Clone, Copy, serde::Serialize)]
 pub(super) enum Purpose {
     Context,
@@ -132,21 +184,13 @@ fn cache_directory(cache: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn stage(
-    llm: &Arc<dyn LLMProvider>,
-    request: &[ChatMessage],
+fn cached_stage(
+    path: &std::path::Path,
+    input: &str,
     allowance: u32,
-    cache: &std::path::Path,
-    job: &str,
-    index: usize,
-    remaining_stages: usize,
     purpose: Purpose,
-) -> anyhow::Result<String> {
-    cache_directory(cache)?;
-    let input = fingerprint(&serde_json::to_vec(request)?);
-    let path = cache.join(format!("{job}-{index}-{input}.json"));
-    match std::fs::symlink_metadata(&path) {
+) -> anyhow::Result<Option<String>> {
+    match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
             // Accepted decoded text is at most allowance * 8 bytes; JSON control escapes can expand sixfold.
             let limit = allowance as u64 * 48 + 4096;
@@ -156,7 +200,7 @@ async fn stage(
             );
             let mut bytes = Vec::new();
             std::io::Read::read_to_end(
-                &mut std::io::Read::take(std::fs::File::open(&path)?, limit + 1),
+                &mut std::io::Read::take(std::fs::File::open(path)?, limit + 1),
                 &mut bytes,
             )?;
             anyhow::ensure!(
@@ -175,16 +219,105 @@ async fn stage(
                 "Saved summary stage does not match its bounded input"
             );
             purpose.validate(text)?;
+            return Ok(Some(text.to_owned()));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(None)
+}
+
+fn publish_stage(
+    path: &std::path::Path,
+    purpose: Purpose,
+    input: &str,
+    summary: &str,
+) -> anyhow::Result<()> {
+    let temporary = path.with_extension(format!(
+        "tmp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    let bytes = serde_json::to_vec(
+        &serde_json::json!({"pipeline":VERSION,"purpose":purpose,"input":input,"summary":summary}),
+    )?;
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)?;
+    let written = std::io::Write::write_all(&mut file, &bytes).and_then(|_| file.sync_all());
+    drop(file);
+    let published = written.and_then(|_| std::fs::hard_link(&temporary, path));
+    let _ = std::fs::remove_file(temporary);
+    published?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn stage(
+    llm: &Arc<dyn LLMProvider>,
+    request: &[ChatMessage],
+    allowance: u32,
+    cache: &std::path::Path,
+    job: &str,
+    index: usize,
+    remaining_stages: usize,
+    purpose: Purpose,
+) -> anyhow::Result<String> {
+    stage_with_legacy(
+        llm,
+        request,
+        allowance,
+        cache,
+        job,
+        None,
+        index,
+        remaining_stages,
+        purpose,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stage_with_legacy(
+    llm: &Arc<dyn LLMProvider>,
+    request: &[ChatMessage],
+    allowance: u32,
+    cache: &std::path::Path,
+    job: &str,
+    legacy_job: Option<&str>,
+    index: usize,
+    remaining_stages: usize,
+    purpose: Purpose,
+) -> anyhow::Result<String> {
+    cache_directory(cache)?;
+    let input = fingerprint(&serde_json::to_vec(request)?);
+    let path = cache.join(format!("{job}-{index}-{input}.json"));
+    if let Some(text) = cached_stage(&path, &input, allowance, purpose)? {
+        crate::diagnostics::emit(
+            "compaction",
+            "stage_reused",
+            "info",
+            serde_json::json!({"job_id":job,"stage":index}),
+        );
+        return Ok(text);
+    }
+    if let Some(legacy) = legacy_job {
+        let old_path = cache.join(format!("{legacy}-{index}-{input}.json"));
+        if let Some(text) = cached_stage(&old_path, &input, allowance, purpose)? {
+            cache_directory(cache)?;
+            publish_stage(&path, purpose, &input, &text)?;
             crate::diagnostics::emit(
                 "compaction",
                 "stage_reused",
                 "info",
-                serde_json::json!({"job_id":job,"stage":index}),
+                serde_json::json!({"job_id":job,"stage":index,"legacy_migrated":true}),
             );
-            return Ok(text.to_owned());
+            return Ok(text);
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
     }
     crate::diagnostics::emit(
         "compaction",
@@ -217,25 +350,7 @@ async fn stage(
         "summary stage exceeded its bounded allowance"
     );
     cache_directory(cache)?;
-    let temporary = path.with_extension(format!(
-        "tmp-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    ));
-    let bytes = serde_json::to_vec(
-        &serde_json::json!({"pipeline":VERSION,"purpose":purpose,"input":input,"summary":summary}),
-    )?;
-    let mut file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temporary)?;
-    let written = std::io::Write::write_all(&mut file, &bytes).and_then(|_| file.sync_all());
-    drop(file);
-    let published = written.and_then(|_| std::fs::hard_link(&temporary, &path));
-    let _ = std::fs::remove_file(temporary);
-    published?;
+    publish_stage(&path, purpose, &input, &summary)?;
     crate::diagnostics::emit(
         "compaction",
         "stage_completed",
@@ -297,10 +412,28 @@ pub(super) async fn summarize_for(
             crate::providers::summary_model(llm.model()),
             allowance,
         ),
-        &config,
+        semantic_policy(&config)?,
         messages,
         current,
     ))?);
+    let legacy_job = if config.prompt.is_none() {
+        Some(fingerprint(&serde_json::to_vec(&(
+            VERSION,
+            purpose,
+            crate::providers::summary_model(llm.model()),
+            budget,
+            allowance,
+            crate::providers::bounded_output_limit(
+                crate::providers::summary_model(llm.model()),
+                allowance,
+            ),
+            legacy_policy(&config),
+            messages,
+            current,
+        ))?))
+    } else {
+        None
+    };
     let cache = evidence
         .parent()
         .ok_or_else(|| anyhow!("missing evidence directory"))?
@@ -315,7 +448,18 @@ pub(super) async fn summarize_for(
             .join("\n");
         let request = purpose.request(&original, "", current, true);
         if estimated_tokens(&request) + allowance as usize * 2 + 1024 <= budget {
-            let mut summary = stage(llm, &request, allowance, &cache, &job, 0, 1, purpose).await?;
+            let mut summary = stage_with_legacy(
+                llm,
+                &request,
+                allowance,
+                &cache,
+                &job,
+                legacy_job.as_deref(),
+                0,
+                1,
+                purpose,
+            )
+            .await?;
             summary.push_str("\nComplete source coverage: all ordered original document records supplied in one request. Processing coverage does not guarantee every fact was retained; quotations require originals.");
             return Ok(summary);
         }
@@ -331,12 +475,13 @@ pub(super) async fn summarize_for(
             estimated_tokens(&request) + stage_allowance as usize * 2 + 1024 <= budget,
             "source stage exceeds request budget"
         );
-        let summary = stage(
+        let summary = stage_with_legacy(
             llm,
             &request,
             stage_allowance,
             &cache,
             &job,
+            legacy_job.as_deref(),
             index,
             fragments.len() + 1 - index,
             purpose,
@@ -354,12 +499,13 @@ pub(super) async fn summarize_for(
         estimated_tokens(&request) + allowance as usize * 2 + 1024 <= budget,
         "consolidated stage notes exceed budget; originals and completed stages preserved"
     );
-    let mut summary = stage(
+    let mut summary = stage_with_legacy(
         llm,
         &request,
         allowance,
         &cache,
         &job,
+        legacy_job.as_deref(),
         fragments.len(),
         1,
         purpose,
@@ -372,6 +518,207 @@ pub(super) async fn summarize_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const OLD_DEFAULT_POLICY: &str = r#"{"timeout_seconds":900,"request_timeout_seconds":300,"document_context_token_budget":200000,"maintenance_threshold_ratio":0.83,"semantic_threshold_ratio":0.93,"target_headroom_interactions":6,"max_stages":32,"retry_limit":2,"section_max_tokens":4096,"summary_max_tokens":8192}"#;
+
+    #[test]
+    fn legacy_policy_preserves_exact_serialization_and_semantic_policy_excludes_execution_settings()
+    {
+        let config = crate::configuration::CompactionConfig::default();
+        assert_eq!(
+            serde_json::to_string(&legacy_policy(&config)).unwrap(),
+            OLD_DEFAULT_POLICY
+        );
+        let semantic = semantic_policy(&config).unwrap();
+        let mut changed = config.clone();
+        changed.timeout_seconds = 1200;
+        changed.request_timeout_seconds = 250;
+        changed.document_batch_timeout_seconds = 7200;
+        changed.retry_limit = 1;
+        changed.rate_limit_backoff_seconds = 30;
+        assert_eq!(semantic_policy(&changed).unwrap(), semantic);
+        changed.prompt = Some("Preserve alternate narrative rules".into());
+        assert_ne!(semantic_policy(&changed).unwrap(), semantic);
+        changed.prompt = None;
+        changed.summary_max_tokens += 1;
+        assert_ne!(semantic_policy(&changed).unwrap(), semantic);
+        changed.summary_max_tokens = config.summary_max_tokens;
+        changed.max_stages += 1;
+        assert_ne!(semantic_policy(&changed).unwrap(), semantic);
+    }
+
+    #[tokio::test]
+    async fn exact_legacy_document_stage_is_promoted_and_survives_execution_setting_changes() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let evidence = root.path().join("source.jsonl");
+        let cache = root.path().join("summary-jobs");
+        cache_directory(&cache).unwrap();
+        let messages = [ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: "Complete source evidence.".into(),
+        }];
+        let current = "source identity";
+        let budget = 24000;
+        let allowance = 256;
+        let mut config = crate::configuration::CompactionConfig::default();
+        // Independently construct the exact old tuple bytes; Value would change field order.
+        let legacy_bytes = format!(
+            "[{},{},{},{},{},{},{},{},{}]",
+            serde_json::to_string(VERSION).unwrap(),
+            serde_json::to_string(&Purpose::Document).unwrap(),
+            serde_json::to_string(crate::providers::summary_model(llm.model())).unwrap(),
+            budget,
+            allowance,
+            serde_json::to_string(&crate::providers::bounded_output_limit(
+                crate::providers::summary_model(llm.model()),
+                allowance
+            ))
+            .unwrap(),
+            OLD_DEFAULT_POLICY,
+            serde_json::to_string(&messages).unwrap(),
+            serde_json::to_string(current).unwrap()
+        );
+        let legacy_job = fingerprint(legacy_bytes.as_bytes());
+        let original = summary_evidence::records(&messages)
+            .unwrap()
+            .0
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let request = with_configuration(config.clone(), async {
+            Purpose::Document.request(&original, "", current, true)
+        })
+        .await;
+        let input = fingerprint(&serde_json::to_vec(&request).unwrap());
+        let legacy_path = cache.join(format!("{legacy_job}-0-{input}.json"));
+        let summary = "Entities/relationships: original people. Chronology/causality: original sequence. Ambiguities: none. Source references: record 1.";
+        publish_stage(&legacy_path, Purpose::Document, &input, summary).unwrap();
+        let legacy_original = std::fs::read(&legacy_path).unwrap();
+        let result = with_configuration(
+            config.clone(),
+            summarize_for(
+                &llm,
+                &messages,
+                current,
+                budget,
+                allowance,
+                &evidence,
+                Purpose::Document,
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(result.starts_with(summary));
+        assert_eq!(
+            std::fs::read_dir(&cache).unwrap().count(),
+            2,
+            "migration publishes a new immutable key"
+        );
+        config.timeout_seconds = 1;
+        config.request_timeout_seconds = 1;
+        config.document_batch_timeout_seconds = 1;
+        config.retry_limit = 0;
+        config.rate_limit_backoff_seconds = 25;
+        assert_eq!(
+            with_configuration(
+                config.clone(),
+                summarize_for(
+                    &llm,
+                    &messages,
+                    current,
+                    budget,
+                    allowance,
+                    &evidence,
+                    Purpose::Document
+                )
+            )
+            .await
+            .unwrap(),
+            result
+        );
+        assert_eq!(std::fs::read(&legacy_path).unwrap(), legacy_original);
+        assert!(server.received_requests().await.unwrap().is_empty());
+        let invalid_legacy = cache.join(format!("invalid-0-{input}.json"));
+        std::fs::write(
+            &invalid_legacy,
+            r#"{"pipeline":"wrong","summary":"untrusted cache"}"#,
+        )
+        .unwrap();
+        assert!(stage_with_legacy(
+            &llm,
+            &request,
+            allowance,
+            &cache,
+            "preferred",
+            Some("invalid"),
+            0,
+            1,
+            Purpose::Document
+        )
+        .await
+        .is_err());
+        let preferred = cache.join(format!("preferred-0-{input}.json"));
+        assert!(
+            !preferred.exists(),
+            "invalid legacy data cannot be promoted"
+        );
+        publish_stage(&preferred, Purpose::Document, &input, summary).unwrap();
+        assert_eq!(
+            stage_with_legacy(
+                &llm,
+                &request,
+                allowance,
+                &cache,
+                "preferred",
+                Some("invalid"),
+                0,
+                1,
+                Purpose::Document
+            )
+            .await
+            .unwrap(),
+            summary
+        );
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "valid new-key cache wins before inspecting invalid legacy data"
+        );
+        config.prompt = Some("Changed resolved prompt".into());
+        assert!(with_configuration(
+            config,
+            summarize_for(
+                &llm,
+                &messages,
+                current,
+                budget,
+                allowance,
+                &evidence,
+                Purpose::Document
+            )
+        )
+        .await
+        .is_err());
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "a changed prompt cannot reuse old results"
+        );
+    }
 
     #[cfg(unix)]
     #[tokio::test]
