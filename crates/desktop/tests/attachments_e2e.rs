@@ -38,7 +38,7 @@ fn cli(dir: &Path, command: &str, args: Value) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_answer_backoff_honors_retry_after_without_replaying_completed_tools() {
+async fn cli_answer_retries_empty_and_transient_responses_without_replaying_completed_tools() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::create_dir(project.path().join(".themis")).unwrap();
@@ -60,8 +60,10 @@ async fn cli_answer_backoff_honors_retry_after_without_replaying_completed_tools
         times.push(std::time::Instant::now());
         match index {
             0 => ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"tool_calls":[{"id":"append-once","type":"function","function":{"name":"write_file","arguments":json!({"file_path":"result.txt","content":"x","append":true}).to_string()}}]},"finish_reason":"tool_calls"}]})),
-            1 => ResponseTemplate::new(429).insert_header("Retry-After","2"),
-            2 => ResponseTemplate::new(503),
+            1 => ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":null,"reasoning_content":"private"},"finish_reason":"stop"}]})),
+            2 => ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"tool_calls":[{"id":"confirm-append","type":"function","function":{"name":"read_file","arguments":json!({"file_path":"result.txt"}).to_string()}}]},"finish_reason":"tool_calls"}]})),
+            3 => ResponseTemplate::new(429).insert_header("Retry-After","2"),
+            4 => ResponseTemplate::new(503),
             _ => ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Completed without replay"},"finish_reason":"stop"}]})),
         }
     }).mount(&provider).await;
@@ -119,20 +121,24 @@ async fn cli_answer_backoff_honors_retry_after_without_replaying_completed_tools
     assert_eq!(terminal["kind"], "finished", "{terminal}");
     assert_eq!(terminal["result"], "Completed without replay");
     assert_eq!(compactions, 1);
-    assert_eq!(completed, 1);
+    assert_eq!(completed, 2);
     assert_eq!(
         std::fs::read_to_string(project.path().join("result.txt")).unwrap(),
         "x"
     );
     {
         let times = times.lock().unwrap();
-        assert_eq!(times.len(), 4);
+        assert_eq!(times.len(), 6);
         assert!(
-            times[2].duration_since(times[1]) >= std::time::Duration::from_secs(2),
+            times[2].duration_since(times[1]) >= std::time::Duration::from_secs(1),
+            "Empty output must recover before claiming completion"
+        );
+        assert!(
+            times[4].duration_since(times[3]) >= std::time::Duration::from_secs(2),
             "Retry-After is a minimum"
         );
         assert!(
-            times[3].duration_since(times[2]) >= std::time::Duration::from_secs(2),
+            times[5].duration_since(times[4]) >= std::time::Duration::from_secs(2),
             "The second backoff increases"
         );
     }

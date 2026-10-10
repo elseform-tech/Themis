@@ -152,6 +152,10 @@ before public text, with exponential base delays of one then two seconds and
 randomized jitter of 0–500 ms then 0–1,000 ms. A longer `Retry-After` is a minimum;
 the jitter is added above it. All ordinary attempts and backoffs share a
 five-minute deadline. Authentication and invalid-request failures do not retry.
+An answer with neither nonblank public text nor tool calls is never accepted as
+completion. Empty answers may retry within the same attempt/deadline bound when
+no public text was emitted; persistent emptiness fails explicitly. Truncated JSON
+responses are rejected even when the provider returns JSON for a streaming request.
 Completed tools are not replayed. Metadata diagnostics record retry number,
 HTTP status and delay, without provider bodies. Stop can cancel either wait. Recovery checkpoint
 writes can add time outside the shared deadline. Originals, prior

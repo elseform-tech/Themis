@@ -780,6 +780,9 @@ impl ChatProvider for CompatibleProvider {
                 .into_iter()
                 .next()
                 .ok_or_else(|| LLMError::Generic("Provider returned no choices".to_owned()))?;
+            if choice.finish_reason.as_deref() == Some("length") {
+                return Err(LLMError::Generic("Provider response was truncated".into()));
+            }
             let mut chunks = Vec::new();
             if let Some(text) = choice.message.content {
                 chunks.push(Ok(StreamChunk::Text(text)));
@@ -1483,6 +1486,14 @@ mod tests {
                 matches!(&error, LLMError::Generic(message) if message == "Provider response was truncated"),
                 "{error}"
             );
+            assert!(!error.to_string().contains("private state"));
+            // stream=true may still return JSON; it must enforce the same stop reason.
+            let error = provider
+                .chat_stream_with_tools(&[user_message("Summarize")], None, None)
+                .await
+                .err()
+                .expect("JSON fallback must reject truncated output before publishing it");
+            assert!(error.to_string().contains("truncated"));
             assert!(!error.to_string().contains("private state"));
         }
     }

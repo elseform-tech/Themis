@@ -818,6 +818,7 @@ async fn request_answer_inner(
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     stopped: &AtomicBool,
 ) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
+    const EMPTY_ANSWER: &str = "Provider returned no public answer or tool calls";
     let mut retries = 0;
     loop {
         let mut published = false;
@@ -857,16 +858,26 @@ async fn request_answer_inner(
                 Err(error) => Err(error.into()),
             }
         }
-        .await;
-        let error = result
+        .await
+        .and_then(|(text, calls)| {
+            if calls.is_empty() && text.as_deref().is_none_or(|text| text.trim().is_empty()) {
+                Err(autoagents::llm::error::LLMError::Generic(EMPTY_ANSWER.into()).into())
+            } else {
+                Ok((text, calls))
+            }
+        });
+        let Some(error) = result
             .as_ref()
             .err()
-            .and_then(|error| error.downcast_ref::<autoagents::llm::error::LLMError>());
-        if retries == 2 || published || error.is_none_or(|error| !error.is_retryable()) {
+            .and_then(|error| error.downcast_ref::<autoagents::llm::error::LLMError>())
+        else {
+            return result;
+        };
+        let empty_output = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == EMPTY_ANSWER);
+        if retries == 2 || published || (!error.is_retryable() && !empty_output) {
             return result;
         }
         // Calls from an interrupted response have not been executed; completed tools are already in messages.
-        let error = error.expect("only typed retryable errors reach backoff");
         let delay = request_retry_delay(error, retries);
         retries += 1;
         crate::diagnostics::emit(
@@ -875,6 +886,7 @@ async fn request_answer_inner(
             "warn",
             serde_json::json!({
                 "retry": retries, "status": error.http_status_code(), "backoff_ms": delay.as_millis(),
+                "reason": if empty_output { "empty_output" } else { "transient" },
             }),
         );
         eprintln!(
@@ -3065,6 +3077,55 @@ mod tests {
                     assert!(delay >= base.max(hint));
                     assert!(delay <= base.max(hint) + base / 2);
                 }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_answers_retry_within_the_same_bound_and_never_finish_silently() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        for streaming in [false, true] {
+            for recovers in [false, true] {
+                let server = MockServer::start().await;
+                let calls = Arc::new(AtomicUsize::new(0));
+                let observed = calls.clone();
+                Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
+                    let recovered = observed.fetch_add(1, Ordering::SeqCst) > 0 && recovers;
+                    if streaming {
+                        let delta = if recovered { serde_json::json!({"content":"Recovered"}) } else { serde_json::json!({"reasoning_content":"private sentinel"}) };
+                        ResponseTemplate::new(200).set_body_raw(format!("data: {}\n\ndata: [DONE]\n\n",serde_json::json!({"choices":[{"delta":delta,"finish_reason":"stop"}]})),"text/event-stream")
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":if recovered {serde_json::json!("Recovered")} else {serde_json::Value::Null},"reasoning_content":"private sentinel"},"finish_reason":"stop"}]}))
+                    }
+                }).mount(&server).await;
+                let llm = crate::providers::resolve(
+                    &crate::providers::ProviderConfig::new(
+                        crate::providers::ProviderKind::Go,
+                        "test-key",
+                    )
+                    .with_model("test-model")
+                    .with_base_url(server.uri()),
+                )
+                .await
+                .unwrap();
+                let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+                let result = request_answer(&llm, &[], &[], &tx, &AtomicBool::new(false)).await;
+                assert_eq!(calls.load(Ordering::SeqCst), if recovers { 2 } else { 3 });
+                if recovers {
+                    assert_eq!(result.unwrap().0.as_deref(), Some("Recovered"));
+                } else {
+                    assert!(result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("no public answer or tool calls"));
+                }
+                let mut texts = Vec::new();
+                while let Ok(event) = rx.try_recv() {
+                    if let RunEvent::AssistantText(text) = event {
+                        texts.push(text);
+                    }
+                }
+                assert_eq!(texts, if recovers { vec!["Recovered"] } else { vec![] });
             }
         }
     }
