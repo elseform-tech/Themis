@@ -121,7 +121,8 @@ async fn stage(
     let path = cache.join(format!("{job}-{index}-{input}.json"));
     match std::fs::symlink_metadata(&path) {
         Ok(metadata) => {
-            let limit = allowance as u64 * 16 + 4096;
+            // Accepted decoded text is at most allowance * 8 bytes; JSON control escapes can expand sixfold.
+            let limit = allowance as u64 * 48 + 4096;
             anyhow::ensure!(
                 metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= limit,
                 "Invalid or oversized saved summary stage"
@@ -294,7 +295,9 @@ mod tests {
     async fn stage_cache_rejects_symlink_escape_and_cannot_truncate_originals() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
-        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: source supplied. Completed changes/tests: none. Unresolved work: continue. Next action: answer."},"finish_reason":"stop"}]}))).mount(&server).await;
+        // Accepted decoded text can expand sixfold when cached as JSON.
+        let summary = format!("Goal/constraints: preserve. Confirmed findings: source supplied. Completed changes/tests: none. Unresolved work: continue. Next action: answer.{}", "\u{0001}".repeat(1700));
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":summary},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
                 .with_model("test-model")
@@ -329,6 +332,14 @@ mod tests {
             "immutable original"
         );
         assert!(cache.is_file());
+        assert!(std::fs::metadata(&cache).unwrap().len() > 256 * 16 + 4096);
+        assert_eq!(
+            stage(&llm, &request, 256, &alias, "test", 0, 1)
+                .await
+                .unwrap(),
+            summary
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[tokio::test]
