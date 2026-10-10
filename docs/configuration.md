@@ -128,6 +128,9 @@ user configuration directory. Built-in prompts are in
 `summary_max_tokens` as a ceiling scaled down to leave continuation space. It makes
 one summary call and at most one retry for transient errors, truncation or empty
 text. Truncation/empty-output retries may request twice the initial allowance.
+Transient summary retries honor the provider's `Retry-After` header (seconds or
+HTTP date), defaulting to one second when absent or invalid. The shared deadline
+also bounds this backoff.
 There is no section scheduler or reconciliation pass; `section_max_tokens` is
 accepted for existing files but no longer affects behavior. See [context checkpoints](context-and-attachments.md)
 for packet selection, estimates and omissions. Both calls share the summarization

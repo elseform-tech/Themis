@@ -426,10 +426,15 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
     let provider = MockServer::start().await;
     let updates = Arc::new(Mutex::new(Vec::new()));
     let observed = Arc::clone(&updates);
+    let summary_attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let attempts = Arc::clone(&summary_attempts);
     Mock::given(method("POST")).respond_with(move |request: &Request| {
         let body: Value = request.body_json().unwrap();
         let summary = body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context");
         if summary {
+            if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                return ResponseTemplate::new(429).insert_header("Retry-After", "0");
+            }
             let input = body["messages"][1]["content"].as_str().unwrap();
             assert!(input.contains("NEW MESSAGE RECORDS WITH PROVENANCE"));
             assert!(!input.contains("ORDERED SECTION NOTES TO RECONCILE"));
@@ -488,6 +493,10 @@ async fn cli_fitting_compaction_uses_one_update_and_keeps_originals() {
         updates.lock().unwrap().len(),
         1,
         "one fitting update replaces the section/merge pipeline"
+    );
+    assert_eq!(
+        summary_attempts.load(std::sync::atomic::Ordering::SeqCst),
+        2
     );
     let files = std::fs::read_dir(project.path().join(".themis/context").join(id))
         .unwrap()

@@ -4581,6 +4581,7 @@ dependencies = [
  "autoagents-derive",
  "autoagents-toolkit",
  "futures-util",
+ "httpdate",
  "libc",
  "reqwest 0.12.28",
  "serde",

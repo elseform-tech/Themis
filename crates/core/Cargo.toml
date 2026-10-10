@@ -8,6 +8,7 @@ rust-version = "1.91"
 anyhow = "1"
 libc = "0.2"
 futures-util = "0.3"
+httpdate = "1"
 autoagents = "0.4"
 autoagents-derive = "0.4"
 autoagents-toolkit = { version = "0.4", features = ["filesystem"] }

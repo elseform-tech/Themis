@@ -587,6 +587,23 @@ async fn ensure_success(
         return Ok(response);
     }
     let status = response.status().as_u16();
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            let value = value.trim();
+            value
+                .parse::<u64>()
+                .ok()
+                .map(Duration::from_secs)
+                .or_else(|| {
+                    httpdate::parse_http_date(value)
+                        .ok()?
+                        .duration_since(std::time::SystemTime::now())
+                        .ok()
+                })
+        });
     let body = response.text().await.unwrap_or_default();
     let message = format!("{provider_name} request failed with HTTP {status}");
     match status {
@@ -599,14 +616,14 @@ async fn ensure_success(
             status_code: status,
             message,
             response_body: body.into(),
-            retry_after: None,
+            retry_after,
             provider_code: None,
         }),
         _ => Err(LLMError::HttpStatusError {
             status_code: status,
             message,
             response_body: body.into(),
-            retry_after: None,
+            retry_after,
             provider_code: None,
         }),
     }
@@ -1017,6 +1034,50 @@ mod tests {
     /// Serializes tests that touch `THEMIS_*` environment variables (`resolve`
     /// reads them, and process env is global across test threads).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn http_errors_preserve_retry_after_headers() {
+        let server = MockServer::start().await;
+        let client = reqwest::Client::new();
+        for (index, (status, header, expected)) in [
+            (429, Some("45"), Some(45)),
+            (503, Some("45"), Some(45)),
+            (429, Some("Thu, 01 Jan 2099 00:00:00 GMT"), None),
+            (429, Some("invalid"), None),
+            (503, Some("Thu, 01 Jan 1970 00:00:00 GMT"), None),
+            (429, None, None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut response = ResponseTemplate::new(status);
+            if let Some(value) = header {
+                response = response.insert_header("Retry-After", value);
+            }
+            let endpoint = format!("/{index}");
+            Mock::given(method("GET"))
+                .and(path(&endpoint))
+                .respond_with(response)
+                .mount(&server)
+                .await;
+            let response = client
+                .get(format!("{}{endpoint}", server.uri()))
+                .send()
+                .await
+                .unwrap();
+            let error = ensure_success(response, "test").await.unwrap_err();
+            let delay = match error {
+                LLMError::RateLimitError { retry_after, .. }
+                | LLMError::HttpStatusError { retry_after, .. } => retry_after,
+                error => panic!("unexpected error: {error}"),
+            };
+            if index == 2 {
+                assert!(delay.is_some_and(|delay| delay.as_secs() > 60));
+            } else {
+                assert_eq!(delay.map(|delay| delay.as_secs()), expected, "{header:?}");
+            }
+        }
+    }
 
     #[tokio::test]
     async fn transport_failures_keep_native_retry_classification() {

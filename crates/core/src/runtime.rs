@@ -3017,7 +3017,7 @@ mod tests {
         for cancel in [false, true] {
             let server = MockServer::start().await;
             Mock::given(method("POST"))
-                .respond_with(ResponseTemplate::new(503))
+                .respond_with(ResponseTemplate::new(503).insert_header("Retry-After", "45"))
                 .mount(&server)
                 .await;
             let llm = crate::providers::resolve(
