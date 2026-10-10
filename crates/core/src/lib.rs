@@ -5,6 +5,7 @@
 //! agent features land.
 
 pub mod configuration;
+pub mod context_metrics;
 pub mod diagnostics;
 pub mod plugins;
 pub mod providers;

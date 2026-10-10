@@ -68,7 +68,7 @@ pub async fn mount_script_with_summary(
     assert!(!bodies.is_empty(), "script needs at least one response");
     let bodies = Arc::new(bodies);
     let count = Arc::new(AtomicUsize::new(0));
-    let summary = summary.map(str::to_owned);
+    let summary = summary.map(|text| format!("Goal/constraints: preserve the request. Confirmed findings: {text} Completed changes/tests: observed actions only. Unresolved work: finish the request. Next action: continue from recorded state."));
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(move |request: &wiremock::Request| {

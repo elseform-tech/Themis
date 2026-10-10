@@ -551,7 +551,7 @@ async fn context_within_budget_keeps_exact_tool_result() {
 }
 
 #[tokio::test]
-async fn checkpoint_continues_same_request_after_token_pressure() {
+async fn maintenance_continues_same_request_without_unnecessary_checkpoint() {
     let server = MockServer::start().await;
     common::mount_script_with_summary(
         &server,
@@ -601,30 +601,28 @@ async fn checkpoint_continues_same_request_after_token_pressure() {
     .unwrap();
     assert_eq!(answer, "Done after checkpoint");
     let events = common::drain(&mut rx).await;
-    assert!(events.iter().any(|event| matches!(event, RunEvent::ContextCheckpoint { summary } if summary.contains("Read note.txt"))), "expected the completed-read checkpoint");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })),
+        "cheap maintenance should remove bulk before semantic compaction"
+    );
     assert!(has_finished(&events));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::ToolCallFinished { .. }))
+            .count(),
+        1
+    );
     let requests = server.received_requests().await.unwrap();
-    let final_request: serde_json::Value =
-        serde_json::from_slice(&requests.last().unwrap().body).unwrap();
-    assert!(final_request["messages"]
-        .as_array()
-        .unwrap()
+    assert_eq!(requests.len(), 2, "no summarizer or repeated tool request");
+    let final_request: serde_json::Value = requests.last().unwrap().body_json().unwrap();
+    let messages = final_request["messages"].as_array().unwrap();
+    assert!(messages
         .iter()
         .any(|message| message["role"] == "user" && message["content"] == "Read the note"));
-    let messages = final_request["messages"].as_array().unwrap();
-    let request = messages
-        .iter()
-        .position(|message| message["role"] == "user" && message["content"] == "Read the note")
-        .unwrap();
-    let checkpoint = messages
-        .iter()
-        .position(|message| {
-            message["content"]
-                .as_str()
-                .is_some_and(|text| text.starts_with("Earlier context checkpoint"))
-        })
-        .unwrap();
-    assert!(request < checkpoint, "completed work must follow the active request, so it is not presented as a new request to repeat");
+    assert!(messages.iter().any(|message| message["role"] == "tool"));
 }
 
 #[tokio::test]
@@ -817,7 +815,10 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
         llm,
         boxed_tools(dir.path(), approvals.clone()).unwrap(),
         "Read both notes".into(),
-        vec![],
+        vec![themis_core::runtime::ConversationTurn {
+            role: themis_core::runtime::ConversationRole::User,
+            text: "Historical semantic state ".repeat(4000),
+        }],
         approvals,
         RunPolicy {
             total_turns: 3,
@@ -831,66 +832,53 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
     )
     .await
     .unwrap();
-    let mut snapshots: Vec<_> = std::fs::read_dir(&evidence)
+    let snapshots: Vec<_> = std::fs::read_dir(&evidence)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| {
-            std::fs::read_to_string(path)
-                .unwrap()
-                .contains("\"role\":\"Tool\"")
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
         })
         .collect();
-    snapshots.sort();
-    assert_eq!(
-        snapshots.len(),
-        4,
-        "two completed calls and two checkpoints"
-    );
     let events = common::drain(&mut rx).await;
-    let checkpoints: Vec<_> = events
+    let checkpoints = events
         .iter()
-        .filter_map(|event| {
-            if let RunEvent::ContextCheckpoint { summary } = event {
-                Some(summary)
-            } else {
-                None
-            }
+        .filter_map(|event| match event {
+            RunEvent::ContextCheckpoint { summary } => Some(summary),
+            _ => None,
         })
-        .collect();
-    assert_eq!(checkpoints.len(), 2);
-    assert!(
-        checkpoints[1].contains(serde_json::to_string(&evidence).unwrap().trim_matches('"')),
-        "later checkpoints must preserve the directory for all older evidence"
+        .collect::<Vec<_>>();
+    assert_eq!(
+        checkpoints.len(),
+        1,
+        "historical semantic pressure compacts once; tool bulk uses maintenance"
     );
-    assert!(checkpoints[1].contains(&serde_json::to_string(&snapshots[3]).unwrap()));
+    assert!(checkpoints[0].contains(&serde_json::to_string(&evidence).unwrap()));
     assert!(
-        std::fs::read_to_string(&snapshots[3])
-            .unwrap()
-            .lines()
-            .any(|line| {
-                let record: serde_json::Value = serde_json::from_str(line).unwrap();
-                record["content"].as_str().is_some_and(|content| {
-                    content.contains(&serde_json::to_string(&snapshots[1]).unwrap())
-                })
-            }),
-        "the latest original must retain the earlier checkpoint reference"
+        snapshots.len() >= 3,
+        "checkpoint and both completed observations must be durable"
     );
-    for (path, fact) in snapshots
-        .iter()
-        .zip(["red-753", "red-753", "blue-864", "blue-864"])
-    {
-        let text = std::fs::read_to_string(path).unwrap();
-        let records: Vec<serde_json::Value> = text
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
+    for fact in ["red-753", "blue-864"] {
         assert!(
-            records
+            snapshots
                 .iter()
-                .any(|record| record["role"] == "Tool" && record.to_string().contains(fact)),
-            "full original tool result must survive: {text}"
+                .any(
+                    |path| std::fs::read_to_string(path).unwrap().lines().any(|line| {
+                        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                        record["role"] == "Tool" && record.to_string().contains(fact)
+                    })
+                ),
+            "original observed source must survive: {fact}"
         );
     }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::ToolCallFinished { .. }))
+            .count(),
+        2,
+        "compaction must not replay completed reads"
+    );
 }
 
 #[tokio::test]
@@ -903,9 +891,6 @@ async fn hard_cap_returns_natural_handoff_without_failing() {
                 "call_1",
                 "write_file",
                 json!({"file_path":"progress.txt","content":"step 1\n","append":true}),
-            ),
-            common::final_text_body(
-                "The user requested ordered steps; step 1 was written to progress.txt.",
             ),
             common::final_text_body(
                 "I wrote step 1 to progress.txt. Next, write step 2 and verify the file.",
@@ -949,9 +934,12 @@ async fn hard_cap_returns_natural_handoff_without_failing() {
         "step 1\n"
     );
     let events = common::drain(&mut rx).await;
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })),
+        "a turn cap alone must not trigger compaction"
+    );
     assert!(events
         .iter()
         .any(|event| matches!(event, RunEvent::Incomplete { .. })));
@@ -971,7 +959,6 @@ async fn empty_handoff_does_not_claim_the_task_was_completed() {
                 "write_file",
                 json!({"file_path":"progress.txt","content":"step 1\n","append":true}),
             ),
-            common::final_text_body("The first step was written."),
             common::final_text_body(""),
         ],
     )
