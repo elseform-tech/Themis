@@ -605,6 +605,134 @@ async fn cli_original_derived_reads_reach_summary_after_delivery_and_maintenance
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_plain_and_shell_evidence_survives_maintenance_and_reaches_summary() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let folder = project.path().join(".themis/context/source");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":30}"#,
+    )
+    .unwrap();
+    let source = format!(
+        "{}The copper key belongs to Mira.{}The violet parcel arrived Tuesday.{}",
+        "a".repeat(3000),
+        "b".repeat(3450),
+        "c".repeat(100000)
+    );
+    let source_path = project.path().join("story.txt");
+    std::fs::write(&source_path, &source).unwrap();
+    let provider = MockServer::start().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let ordinary_calls = calls.clone();
+    let supplied = Arc::new(AtomicUsize::new(0));
+    let observed = supplied.clone();
+    let maintained = Arc::new(AtomicBool::new(false));
+    let maintained_request = maintained.clone();
+    let summary_started = Arc::new(AtomicBool::new(false));
+    let summary_seen = summary_started.clone();
+    Mock::given(method("POST")).respond_with(move |request:&Request| {
+        let body:Value = request.body_json().unwrap();
+        if body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            summary_seen.store(true, Ordering::SeqCst);
+            let input = body["messages"][1]["content"].as_str().unwrap();
+            if input.contains("The copper key belongs to Mira.") { observed.fetch_or(1, Ordering::SeqCst); }
+            if input.contains("The violet parcel arrived Tuesday.") { observed.fetch_or(2, Ordering::SeqCst); }
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: observed original failure. Completed changes/tests: reads completed. Unresolved work: finish. Next action: continue."},"finish_reason":"stop"}]}));
+        }
+        let index = ordinary_calls.fetch_add(1, Ordering::SeqCst);
+        if index >= 2 && observed.load(Ordering::SeqCst) == 0 {
+            let acquired: String = body["messages"].as_array().unwrap().iter().filter(|m| m["role"] == "tool").map(|m| m["content"].as_str().unwrap_or("")).collect();
+            assert!(acquired.contains("The copper key belongs to Mira."), "plain evidence disappeared before any semantic summary");
+            assert!(acquired.contains("The violet parcel arrived Tuesday."), "shell evidence disappeared before any semantic summary");
+        }
+        if !summary_seen.load(Ordering::SeqCst) && body["messages"].as_array().unwrap().iter().any(|m| m["role"] == "assistant" && m["content"].as_str().is_some_and(|c| c.starts_with("Prepared investigation") && c.len() <= 2048)) {
+            maintained_request.store(true, Ordering::SeqCst);
+        }
+        let message = if index < 20 {
+            let (name, args) = if index == 1 {
+                ("shell", json!({"command":"python3","args":["-c","from pathlib import Path; print(Path('story.txt').read_text()[4000:8000])"]}))
+            } else {
+                ("read_file", json!({"file_path":"story.txt","offset":index*4000}))
+            };
+            json!({"content":if index == 0 { format!("Prepared investigation {}", "public intent ".repeat(500)) } else { String::new() },"tool_calls":[{"id":format!("source-{index}"),"type":"function","function":{"name":name,"arguments":args.to_string()}}]})
+        } else { json!({"content":"Completed source inspection"}) };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":message,"finish_reason":if index<20 {"tool_calls"} else {"stop"}}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Inspect successive source ranges, then finish."}),
+    );
+    let mut checkpoints = 0;
+    let mut started = 0;
+    let mut finished = 0;
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = &item["payload"]["event"];
+            checkpoints += usize::from(event["kind"] == "context_checkpoint");
+            started += usize::from(event["kind"] == "tool_started");
+            finished += usize::from(event["kind"] == "tool_finished");
+            if event["kind"] == "finished" || event["kind"] == "failed" {
+                break event.clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(terminal["kind"], "finished", "{terminal}");
+    assert_eq!(calls.load(Ordering::SeqCst), 21);
+    assert_eq!(
+        (started, finished),
+        (20, 20),
+        "completed reads must not be replayed across compaction"
+    );
+    assert!(
+        checkpoints > 0,
+        "acquired plain and shell ranges must create actual semantic pressure"
+    );
+    assert_eq!(
+        supplied.load(Ordering::SeqCst),
+        3,
+        "both acquired facts must reach actual summary requests"
+    );
+    assert!(
+        maintained.load(Ordering::SeqCst),
+        "exercise actual public-intent maintenance before semantic compaction"
+    );
+    assert_eq!(std::fs::read_to_string(source_path).unwrap(), source);
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_answer_retries_empty_and_transient_responses_without_replaying_completed_tools() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

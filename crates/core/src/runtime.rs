@@ -1967,18 +1967,19 @@ fn offload_completed_arguments(
                 && results.iter().any(|result| result.id == call.id)
                 && !(preserve_source_selectors
                     && results.iter().any(|result| {
-                        result.id == call.id
-                            && summary_evidence::original_excerpt(call, result).is_some()
+                        result.id == call.id && summary_evidence::preserve_invocation(call, result)
                     }))
             {
                 call.function.arguments = serde_json::json!({
                     "arguments_offloaded":true,
+                    "original_context_recovery":summary_evidence::recovery_call(call),
                     "original_snapshot":snapshot,
                     "archive_record":record,
                     "archive_pointer":format!("/message_type/ToolUse/{index}/function/arguments"),
                     "arguments_preview":take_char_prefix(&call.function.arguments,512).0,
-                    "note":"Historical completed invocation; full arguments are archived. Do not execute this receipt."
-                }).to_string();
+                    "note":summary_evidence::OFFLOAD_NOTE
+                })
+                .to_string();
             }
         }
     }
@@ -2125,9 +2126,7 @@ fn evidence_records(messages: &[ChatMessage]) -> anyhow::Result<Vec<String>> {
             _ => None,
         })
         .flatten()
-        .filter(|call| {
-            crate::tools::context_recovery_call(&call.function.name, &call.function.arguments)
-        })
+        .filter(|call| summary_evidence::recovery_call(call))
         .map(|call| call.id.as_str())
         .collect::<HashSet<_>>();
 
@@ -4116,7 +4115,7 @@ mod tests {
         );
         assert!(
             estimated_tokens(&messages) < before,
-            "other old observations still reduce without a model call"
+            "old narration and redundant recovery still reduce without a model call"
         );
         let recursive = messages
             .iter()
@@ -4225,6 +4224,81 @@ mod tests {
             .unwrap()
             .iter()
             .any(|r| r.contains("\"evidence_kind\":\"recovery\"")));
+    }
+
+    #[tokio::test]
+    async fn ordinary_unsummarized_tail_reaches_the_next_checkpoint() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let root = tempfile::tempdir().unwrap();
+        let mut messages = initial_messages(Vec::new(), "Analyze the shipping record.".into());
+        messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            content: "Earlier completed work".into(),
+            message_type: MessageType::Text,
+        });
+        let call=ToolCall {id:"selected".into(),call_type:"function".into(),function:FunctionCall {name:"shell".into(),arguments:serde_json::json!({"command":"python3","args":["-c",format!("# {}\nprint('selected passage')","padding ".repeat(400))]}).to_string()}};
+        let mut result = call.clone();
+        result.function.arguments=serde_json::json!({"exit_code":0,"output":format!("{}\nThe parcel arrived on Tuesday, not Monday.","context ".repeat(350))}).to_string();
+        messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            content: String::new(),
+            message_type: MessageType::ToolUse(vec![call]),
+        });
+        messages.push(ChatMessage {
+            role: ChatRole::Tool,
+            content: String::new(),
+            message_type: MessageType::ToolResult(vec![result]),
+        });
+        let policy = RunPolicy {
+            total_turns: 20,
+            context_token_budget: 24000,
+            recent_messages: 2,
+        };
+        let evidence = root.path().join(".themis/context/test");
+        std::fs::create_dir_all(&evidence).unwrap();
+        let (_, snapshot) = archive_context(&evidence, &messages).unwrap();
+        let original = std::fs::read(&snapshot).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
+        replace_context(&mut messages,&policy,3,"Goal/constraints: analyze shipping. Confirmed findings: earlier work. Completed changes/tests: none. Unresolved work: parcel timing. Next action: inspect.".into(),&tx,Some(&snapshot)).await.unwrap();
+        let MessageType::ToolUse(calls) = &messages[messages.len() - 2].message_type else {
+            panic!("retained call missing")
+        };
+        let receipt: serde_json::Value =
+            serde_json::from_str(&calls[0].function.arguments).unwrap();
+        assert_eq!(
+            receipt["arguments_offloaded"], true,
+            "large completed scripts must remain offloadable without hiding their result"
+        );
+        for index in 0..4 {
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                content: format!("Later work {index}"),
+                message_type: MessageType::Text,
+            });
+        }
+        let split = context_split(&messages, &policy);
+        let (request, _, _) =
+            prepare_compaction(&messages[..split], "Analyze shipping", 24000, 1024).unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: analyze. Confirmed findings: parcel arrived Tuesday. Completed changes/tests: none. Unresolved work: report. Next action: answer."},"finish_reason":"stop"}]}))).mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        compaction_chat(&llm, &request, 1024).await.unwrap();
+        let requests = server.received_requests().await.unwrap();
+        let body: serde_json::Value = requests[0].body_json().unwrap();
+        assert!(
+            body["messages"][1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("The parcel arrived on Tuesday, not Monday."),
+            "retained ordinary evidence must not become omitted recovery at the next checkpoint"
+        );
+        assert_eq!(std::fs::read(snapshot).unwrap(), original);
     }
 
     #[tokio::test]

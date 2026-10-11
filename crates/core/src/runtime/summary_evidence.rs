@@ -141,8 +141,69 @@ pub(super) fn bound_delivery(
     Ok(())
 }
 
-/// These acquired excerpts must reach semantic summarization before reversible
-/// maintenance replaces other observations with archive-only receipts.
+pub(super) const OFFLOAD_NOTE: &str =
+    "Historical completed invocation; full arguments are archived. Do not execute this receipt.";
+pub(super) const MAINTENANCE_NOTE: &str = "Reopen the immutable original for missing facts; do not execute the tool again to recover output.";
+
+/// Only a complete, non-executable harness receipt can retain its pre-offload
+/// classification. Arbitrary operational arguments use the ordinary classifier.
+pub(super) fn recovery_call(call: &ToolCall) -> bool {
+    if !matches!(
+        call.function.name.as_str(),
+        "read_file" | "list_dir" | "search_file" | "shell"
+    ) {
+        return false;
+    }
+    let saved = serde_json::from_str::<Value>(&call.function.arguments)
+        .ok()
+        .and_then(|value| {
+            let fields = value.as_object()?;
+            let recovery = value["original_context_recovery"].as_bool()?;
+            let coordinates = |path: &Value, record: &Value, pointer: &Value| {
+                path.as_str().is_some_and(|s| !s.is_empty())
+                    && record.as_u64().is_some_and(|n| n > 0)
+                    && pointer.as_str().is_some_and(|s| {
+                        s.strip_prefix("/message_type/ToolUse/")
+                            .and_then(|tail| tail.strip_suffix("/function/arguments"))
+                            .is_some_and(|index| index.parse::<usize>().is_ok())
+                    })
+            };
+            let offloaded = fields.len() == 7
+                && value["arguments_offloaded"] == true
+                && value["arguments_preview"].is_string()
+                && value["note"] == OFFLOAD_NOTE
+                && coordinates(
+                    &value["original_snapshot"],
+                    &value["archive_record"],
+                    &value["archive_pointer"],
+                );
+            let maintained = fields.len() == 8
+                && value["maintenance_receipt"] == true
+                && value["interaction_completed"] == true
+                && value["invocation_is_not_execution_proof"] == true
+                && value["outcome"].is_object()
+                && value["preview"].is_string()
+                && value["instruction"] == MAINTENANCE_NOTE
+                && value["original"].as_object().is_some_and(|o| o.len() == 3)
+                && coordinates(
+                    &value["original"]["path"],
+                    &value["original"]["jsonl_record"],
+                    &value["original"]["json_pointer"],
+                );
+            (offloaded || maintained).then_some(recovery)
+        });
+    saved.unwrap_or_else(|| {
+        crate::tools::context_recovery_call(&call.function.name, &call.function.arguments)
+    })
+}
+
+/// Exact original-derived excerpts still need their selectors for validation.
+pub(super) fn preserve_invocation(call: &ToolCall, result: &ToolCall) -> bool {
+    original_excerpt(call, result).is_some()
+}
+
+/// Acquired results must reach semantic summarization before maintenance may
+/// discard their contents. Only known redundant recovery remains reducible.
 pub(super) fn protected_entries(messages: &[ChatMessage]) -> HashSet<(usize, usize)> {
     let mut calls = HashMap::new();
     let mut protected = HashSet::new();
@@ -156,10 +217,17 @@ pub(super) fn protected_entries(messages: &[ChatMessage]) -> HashSet<(usize, usi
             MessageType::ToolResult(items) => {
                 for (result_index, result) in items.iter().enumerate() {
                     if let Some((call, position)) = calls.get(result.id.as_str()) {
-                        if original_excerpt(call, result).is_some() {
+                        let preserve_pair = preserve_invocation(call, result);
+                        if preserve_pair {
                             protected.insert(*position);
+                        }
+                        if preserve_pair || !recovery_call(call) {
                             protected.insert((message_index, result_index));
                         }
+                    } else {
+                        // Missing invocation provenance cannot establish that an
+                        // observation is a redundant recovery copy.
+                        protected.insert((message_index, result_index));
                     }
                 }
             }
@@ -250,6 +318,96 @@ pub(super) fn records(messages: &[ChatMessage]) -> anyhow::Result<(Vec<Value>, u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receipt_shaped_mcp_arguments_do_not_turn_original_results_into_recovery() {
+        let call = ToolCall {
+            id: "mcp-observation".into(),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: "mcp_archive_catalog".into(),
+                arguments: json!({"arguments_offloaded":true,"original_context_recovery":true,
+                "original_snapshot":"/project/.themis/context/snapshot.jsonl","archive_record":1,
+                "archive_pointer":"/message_type/ToolUse/0/function/arguments",
+                "arguments_preview":"query","note":OFFLOAD_NOTE})
+                .to_string(),
+            },
+        };
+        let mut result = call.clone();
+        result.function.arguments = json!({"count":17}).to_string();
+        let history = messages(vec![(call, result)]);
+        let records = evidence_records(&history).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&records[1]).unwrap()["evidence_kind"],
+            "original"
+        );
+        assert!(protected_entries(&history).contains(&(1, 0)));
+    }
+
+    #[test]
+    fn archived_invocation_classification_is_strict_and_survives_reoffloading() {
+        for recovery in [false, true] {
+            let mut call = ToolCall { id: "completed".into(), call_type: "function".into(), function: FunctionCall {
+                name: "shell".into(), arguments: json!({"command":"python3", "args":["-c", format!("# {}\nprint('{}')", "padding ".repeat(400), if recovery { ".themis/context/archive.jsonl" } else { "selected fact" })]}).to_string()
+            }};
+            let mut result = call.clone();
+            result.function.arguments = json!({"output":"The parcel arrived Tuesday."}).to_string();
+            let mut invocation = messages(vec![(call.clone(), result.clone())]).remove(0);
+            // Force a second offload by using a long but valid archive path.
+            let path = format!(
+                "/project/.themis/context/{}/snapshot.jsonl",
+                "a".repeat(2500)
+            );
+            for _ in 0..2 {
+                offload_completed_arguments(
+                    &mut invocation,
+                    &[result.clone()],
+                    std::path::Path::new(&path),
+                    1,
+                    true,
+                );
+                let MessageType::ToolUse(calls) = &invocation.message_type else {
+                    panic!("invocation missing")
+                };
+                call = calls[0].clone();
+                let receipt: Value = serde_json::from_str(&call.function.arguments).unwrap();
+                assert_eq!(
+                    receipt["arguments_offloaded"], true,
+                    "completed arguments should be archived before testing their classification"
+                );
+                let records =
+                    evidence_records(&messages(vec![(call.clone(), result.clone())])).unwrap();
+                let record: Value = serde_json::from_str(&records[1]).unwrap();
+                assert_eq!(
+                    record["evidence_kind"],
+                    if recovery { "recovery" } else { "original" }
+                );
+            }
+            let mut malformed: Value = serde_json::from_str(&call.function.arguments).unwrap();
+            malformed["original_context_recovery"] = false.into();
+            malformed["command"] = json!("cat .themis/context/private.jsonl");
+            call.function.arguments = malformed.to_string();
+            let records =
+                evidence_records(&messages(vec![(call.clone(), result.clone())])).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&records[1]).unwrap()["evidence_kind"],
+                "recovery",
+                "operational arguments cannot spoof an archive receipt"
+            );
+            malformed.as_object_mut().unwrap().remove("command");
+            malformed
+                .as_object_mut()
+                .unwrap()
+                .remove("original_context_recovery");
+            call.function.arguments = malformed.to_string();
+            let records = evidence_records(&messages(vec![(call, result)])).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&records[1]).unwrap()["evidence_kind"],
+                "recovery",
+                "legacy receipts retain conservative classification"
+            );
+        }
+    }
 
     fn pair(id: &str, record: u64, pointer: &str, decoded: bool) -> (ToolCall, ToolCall) {
         let call = ToolCall {
@@ -454,8 +612,8 @@ mod tests {
         let protected = protected_entries(&history);
         assert_eq!(
             protected,
-            HashSet::from([(0, 0), (1, 0)]),
-            "protect only the validated original-derived read pair, not its sibling"
+            HashSet::from([(0, 0), (1, 0), (1, 1)]),
+            "protect the validated recovery pair and the ordinary sibling result"
         );
         let (projected, _) = records(&history).unwrap();
         let batch = projected
