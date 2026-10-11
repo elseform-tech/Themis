@@ -77,19 +77,67 @@ impl AppState {
         // ponytail: native calls cannot be interrupted; a timed-out worker may finish later.
         tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            tokio::task::spawn_blocking(move || secrets.get(provider)),
+            tokio::task::spawn_blocking(move || secrets.try_get(provider)),
         )
         .await
         .map_err(|_| {
             "Credential lookup timed out; unlock the OS credential store and retry".to_owned()
         })?
-        .map_err(|_| "Credential lookup worker failed".to_owned())
+        .map_err(|_| "Credential lookup worker failed".to_owned())?
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct UnavailableReadStore;
+    impl crate::secrets::SecretStore for UnavailableReadStore {
+        fn get(&self, _: &str) -> Option<String> {
+            None
+        }
+        fn try_get(&self, _: &str) -> Result<Option<String>, String> {
+            Err("OS credential lookup unavailable".into())
+        }
+        fn has(&self, _: &str) -> bool {
+            false
+        }
+        fn set(&self, _: &str, _: &str) -> Result<(), String> {
+            unreachable!()
+        }
+        fn clear(&self, _: &str) -> Result<(), String> {
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn secret_status_and_admission_preserve_store_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_with_dirs(
+            dir.path().join("settings.json"),
+            dir.path().join("worktrees"),
+            dir.path().join("threads.json"),
+            Arc::new(UnavailableReadStore),
+            dir.path().join("projects"),
+        );
+        let (sink, _) = crate::sink::ChannelSink::channel();
+        let result = crate::server::dispatch(
+            &state,
+            Arc::new(sink),
+            "get_secret_status",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err(),
+            "OS credential lookup unavailable",
+            "an unavailable store must not report a confirmed missing key"
+        );
+        assert_eq!(
+            state.api_key_for(ProviderKind::Go).await.unwrap_err(),
+            "OS credential lookup unavailable"
+        );
+    }
 
     struct SlowReadStore(std::time::Duration);
     impl crate::secrets::SecretStore for SlowReadStore {

@@ -253,6 +253,15 @@ impl AppState {
     /// tests drive [`AppState::tick_automations_once`] directly.
     #[must_use]
     pub fn new_for_test(settings_path: PathBuf) -> Self {
+        Self::new_for_test_with_secret_store(settings_path, Arc::new(MemoryStore::new()))
+    }
+
+    /// Creates isolated headless state with an injected credential-store fixture.
+    #[must_use]
+    pub fn new_for_test_with_secret_store(
+        settings_path: PathBuf,
+        secrets: Arc<dyn SecretStore>,
+    ) -> Self {
         let app_dir = settings_app_dir(&settings_path);
         let worktrees_root = app_dir.join("worktrees");
         let registry_path = app_dir.join("threads.json");
@@ -260,7 +269,7 @@ impl AppState {
             settings_path,
             worktrees_root,
             registry_path,
-            Arc::new(MemoryStore::new()),
+            secrets,
             app_dir.join("projects"),
         )
     }

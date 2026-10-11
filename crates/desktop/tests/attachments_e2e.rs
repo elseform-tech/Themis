@@ -10,6 +10,53 @@ use themis_desktop::{
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_credential_lookup_error_is_not_a_missing_key() {
+    struct UnavailableStore;
+    impl themis_desktop::secrets::SecretStore for UnavailableStore {
+        fn get(&self, _: &str) -> Option<String> {
+            None
+        }
+        fn try_get(&self, _: &str) -> Result<Option<String>, String> {
+            Err("OS credential lookup unavailable".into())
+        }
+        fn has(&self, _: &str) -> bool {
+            false
+        }
+        fn set(&self, _: &str, _: &str) -> Result<(), String> {
+            unreachable!()
+        }
+        fn clear(&self, _: &str) -> Result<(), String> {
+            unreachable!()
+        }
+    }
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test_with_secret_store(
+        data.path().join("settings.json"),
+        Arc::new(UnavailableStore),
+    );
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(data.path())
+        .args(["call", "get_secret_status", "{}"])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    Client::new(data.path().into())
+        .call("shutdown", json!({}))
+        .await
+        .unwrap();
+    serving.await.unwrap().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("OS credential lookup unavailable"));
+    assert!(
+        output.stdout.is_empty(),
+        "failed lookup must not emit confirmed absence"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_summary_override_rejects_unlisted_model_before_preparation() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

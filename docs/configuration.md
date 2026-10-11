@@ -36,13 +36,21 @@ Credential reads run outside the async backend workers and wait at most 30
 seconds, so a blocked read does not freeze other status/Stop requests. Stop
 cancels a run's credential wait before skill/MCP setup. The native OS read may
 finish later; no authentication requirement is bypassed. Credential status reports
-a confirmed missing key as false; a lookup timeout or worker failure returns an
+a confirmed missing key as false; OS access/decoding failures, a lookup timeout or worker failure return an
 error instead of overwriting the last confirmed UI status. The credential value
 never reaches the UI. Presence refreshes on app focus/visibility return, backend
 reconnection and run completion; concurrent refreshes coalesce. Run admission is
 visible before credential lookup or document preparation, with Stop available
 throughout. A running chat hides the connection hint even if the previous presence
 check was unavailable; sending still performs the normal credential lookup.
+
+OS lookup errors are preserved through the shared server and CLI rather than
+reported as a missing credential. Only a missing-entry result means absence.
+macOS errors expose a numeric Keychain status and fixed guidance; other platforms
+use fixed error text, without credential bytes or raw credential-store errors.
+The existing nonblank `OPENCODE_KEY` fallback remains available when the OS store
+has no accessible key. A valid stored key keeps precedence. No authentication is
+bypassed and no credential value is returned to the UI or CLI status command.
 
 Integrations → Discover installs into **User (Global)** scope without a destination
 selector. Project-scoped imports remain available through the advanced CLI/shared API.

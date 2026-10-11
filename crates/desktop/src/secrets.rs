@@ -7,6 +7,25 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+fn credential_with_fallback(
+    stored: Result<Option<String>, String>,
+    fallback: Option<String>,
+) -> Result<Option<String>, String> {
+    match stored {
+        Ok(Some(value)) => Ok(Some(value)),
+        other => match fallback.filter(|value| !value.trim().is_empty()) {
+            Some(value) => Ok(Some(value)),
+            None => other,
+        },
+    }
+}
+
+fn go_environment_key(provider: &str) -> Option<String> {
+    (provider == "go")
+        .then(|| std::env::var("OPENCODE_KEY").ok())
+        .flatten()
+}
+
 #[cfg(target_os = "macos")]
 pub type ProductionSecretStore = KeychainStore;
 #[cfg(not(target_os = "macos"))]
@@ -58,16 +77,18 @@ impl SecretStore for NativeStore {
     }
 
     fn get(&self, provider: &str) -> Option<String> {
-        Self::entry(provider)
-            .ok()
-            .and_then(|entry| entry.get_password().ok())
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| {
-                (provider == "go")
-                    .then(|| std::env::var("OPENCODE_KEY").ok())
-                    .flatten()
-                    .filter(|value| !value.trim().is_empty())
-            })
+        self.try_get(provider).ok().flatten()
+    }
+
+    fn try_get(&self, provider: &str) -> Result<Option<String>, String> {
+        let stored = Self::entry(provider)
+            .map_err(|_| "Could not open the OS credential store".to_owned())
+            .and_then(|entry| match entry.get_password() {
+                Ok(value) => Ok(Some(value).filter(|value| !value.trim().is_empty())),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(_) => Err("OS credential lookup failed; unlock the credential store and allow ThemisCode access".to_owned()),
+            });
+        credential_with_fallback(stored, go_environment_key(provider))
     }
 
     fn set(&self, provider: &str, value: &str) -> Result<(), String> {
@@ -93,17 +114,23 @@ impl KeychainStore {
         Self
     }
 
-    fn keychain_get(provider: &str) -> Option<String> {
-        match security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, provider) {
+    fn decode_lookup(result: Result<Vec<u8>, i32>) -> Result<Option<String>, String> {
+        match result {
             Ok(bytes) => String::from_utf8(bytes)
-                .ok()
-                .filter(|value| !value.trim().is_empty()),
-            Err(error) if error.code() == security_framework_sys::base::errSecItemNotFound => None,
-            Err(error) => {
-                eprintln!("themis: keychain read failed for {provider}: {error}");
-                None
-            }
+                .map(|value| Some(value).filter(|value| !value.trim().is_empty()))
+                .map_err(|_| "Stored credential is not valid UTF-8".to_owned()),
+            Err(code) if code == security_framework_sys::base::errSecItemNotFound => Ok(None),
+            Err(code) => Err(format!(
+                "Credential lookup failed (Keychain status {code}); unlock Keychain and allow ThemisCode access"
+            )),
         }
+    }
+
+    fn keychain_get(provider: &str) -> Result<Option<String>, String> {
+        Self::decode_lookup(
+            security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, provider)
+                .map_err(|error| error.code()),
+        )
     }
 }
 
@@ -121,12 +148,11 @@ impl SecretStore for KeychainStore {
     }
 
     fn get(&self, provider: &str) -> Option<String> {
-        Self::keychain_get(provider).or_else(|| {
-            (provider == "go")
-                .then(|| std::env::var("OPENCODE_KEY").ok())
-                .flatten()
-                .filter(|value| !value.trim().is_empty())
-        })
+        self.try_get(provider).ok().flatten()
+    }
+
+    fn try_get(&self, provider: &str) -> Result<Option<String>, String> {
+        credential_with_fallback(Self::keychain_get(provider), go_environment_key(provider))
     }
 
     fn set(&self, provider: &str, value: &str) -> Result<(), String> {
@@ -157,6 +183,10 @@ pub trait SecretStore: Send + Sync {
     fn has(&self, provider: &str) -> bool;
     /// Returns the stored secret, or `None` when missing.
     fn get(&self, provider: &str) -> Option<String>;
+    /// Fallible application lookup; OS stores distinguish unavailable from absent.
+    fn try_get(&self, provider: &str) -> Result<Option<String>, String> {
+        Ok(self.get(provider))
+    }
     /// Stores `value` for `provider`, overwriting any previous secret.
     fn set(&self, provider: &str, value: &str) -> Result<(), String>;
     /// Deletes the secret for `provider`; missing secrets are a no-op success.
@@ -245,6 +275,42 @@ impl SecretStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credential_fallback_preserves_errors_unless_a_valid_key_is_available() {
+        assert_eq!(credential_with_fallback(Ok(None), None), Ok(None));
+        assert_eq!(
+            credential_with_fallback(Err("unavailable".into()), Some("  ".into())),
+            Err("unavailable".into())
+        );
+        assert_eq!(
+            credential_with_fallback(Err("unavailable".into()), Some("synthetic-env".into())),
+            Ok(Some("synthetic-env".into()))
+        );
+        assert_eq!(
+            credential_with_fallback(
+                Ok(Some("synthetic-stored".into())),
+                Some("synthetic-env".into())
+            ),
+            Ok(Some("synthetic-stored".into()))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn keychain_result_distinguishes_missing_access_failure_and_invalid_data() {
+        assert_eq!(
+            KeychainStore::decode_lookup(Err(security_framework_sys::base::errSecItemNotFound)),
+            Ok(None)
+        );
+        let error = KeychainStore::decode_lookup(Err(-25308)).unwrap_err();
+        assert!(error.contains("Keychain status -25308"));
+        assert!(KeychainStore::decode_lookup(Ok(vec![255])).is_err());
+        assert_eq!(
+            KeychainStore::decode_lookup(Ok(b"synthetic-key".to_vec())),
+            Ok(Some("synthetic-key".into()))
+        );
+    }
 
     #[test]
     fn memory_store_roundtrips() {
