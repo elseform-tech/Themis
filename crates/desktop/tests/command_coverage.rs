@@ -32,6 +32,7 @@ fn server_exposes_all_frontend_backend_commands() {
             "save_runtime_configuration",
             "query_diagnostic_logs",
             "get_context_usage",
+            "get_thread_history_page",
         ])
         .collect();
     let handled: BTreeSet<_> = server

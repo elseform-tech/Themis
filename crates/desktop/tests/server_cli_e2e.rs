@@ -43,6 +43,58 @@ fn cli(data_dir: &Path, words: &[&str]) -> Value {
     serde_json::from_slice(&output.stdout).expect("CLI JSON output")
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn long_history_and_oversized_entry_survive_shared_server_and_cli_reads() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into(),
+            themis_desktop::types::ProviderKind::Go,
+            None,
+        )
+        .await
+        .unwrap();
+    let store =
+        themis_desktop::transcript::TranscriptStore::open(&data.path().join("sessions.sqlite3"))
+            .unwrap();
+    // One record alone exceeds the transport frame; control escapes and Unicode
+    // also exercise wire expansion and splitting at UTF-8 boundaries.
+    let text = "é🌺\n\\\"".repeat(1_000_000);
+    store.append_user(&thread.id, "large", &text).unwrap();
+    store
+        .append_user("another-chat", "private", "not in this history")
+        .unwrap();
+    store
+        .append_user(&thread.id, "tail", "tail survives")
+        .unwrap();
+    let serving = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    let client = Client::new(data.path().into());
+    let history = client
+        .call("get_thread_history", json!({"threadId":thread.id}))
+        .await;
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+    let history = history.expect("large histories must be transported without EOF or truncation");
+    assert_eq!(history.as_array().unwrap().len(), 2);
+    assert_eq!(history[0]["text"], text);
+    assert_eq!(history[1]["text"], "tail survives");
+
+    // A new server reads the same durable records through the real CLI adapter.
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let serving = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    assert_eq!(
+        cli(data.path(), &["thread", "history", &thread.id]),
+        history
+    );
+    Client::new(data.path().into())
+        .call("shutdown", json!({}))
+        .await
+        .unwrap();
+    serving.await.unwrap().unwrap();
+}
+
 #[test]
 fn headless_desktop_process_persists_cli_created_threads() {
     let data_dir = tempfile::tempdir().expect("data dir");

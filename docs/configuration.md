@@ -32,6 +32,30 @@ separate approval-policy JSONL file. Approval decisions are diagnostic records;
 approval rules live in runtime JSONC. API keys stay in Keychain or the launch
 environment, not these configuration files.
 
+## History paging
+
+`get_thread_history_page` accepts `threadId`, optional `cursor` (default
+`{"after_seq":0,"offset":0}`), optional `throughSeq`, and optional `maxBytes`
+(default and maximum 1 MiB; minimum 16 bytes). These are read-request options,
+not runtime JSONC or integration definitions. Each page contains at most 128
+completed records, bounded UTF-8 `jsonl`, a `through_seq` snapshot watermark and
+an optional `next_cursor`. `after_seq` names the last completely delivered
+SQLite row; `offset` counts serialized UTF-8 bytes within the next row for this
+chat. Foreign-chat rows are excluded even when sequence numbers have gaps.
+
+Pass the returned watermark as `throughSeq` and cursor as `cursor` until
+`next_cursor` is null. Chunks can end within a JSON record but never within a
+UTF-8 code point. Preserve the unfinished line between calls; parse complete
+lines as history items. A cursor/watermark can resume after server restart while
+the chat still exists. Rows and originals are never rewritten or truncated.
+Start a fresh snapshot after the prior watermark to retrieve subsequent appends.
+
+SQLite body reads and RPC frames are bounded, including a single oversized
+history entry. Shared desktop/CLI clients transparently reassemble pages for
+the existing `get_thread_history` API, so full-history client memory is not
+bounded. Direct legacy RPC responses above 8 MiB return an actionable error
+instead of EOF; diagnostics record only the method and size-limit failure.
+
 Credential reads run outside the async backend workers and wait at most 30
 seconds, so a blocked read does not freeze other status/Stop requests. Stop
 cancels a run's credential wait before skill/MCP setup. The native OS read may

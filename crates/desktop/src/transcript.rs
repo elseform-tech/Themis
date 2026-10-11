@@ -9,6 +9,7 @@ use themis_core::runtime::{checkpoint_parts, ChatRole, ConversationRole, Convers
 
 use crate::types::{ThreadEvent, ThreadEventEnvelope};
 
+pub mod history_pages;
 mod source_exports;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

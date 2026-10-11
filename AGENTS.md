@@ -51,6 +51,8 @@ Use `rustfmt`, Rust `snake_case`, and `PascalCase` types/components. Frontend us
 
 Exercise backend features through the local app server and `themis` in isolated automated tests. Keep UI and OS verification separate from the dashboard's automated test inventory. Add a focused CLI end-to-end case for a changed backend flow and report any unverified UI behavior explicitly.
 
+For long-chat history diagnostics, prefer `get_thread_history_page` with a byte bound, the returned snapshot watermark and a progressing cursor. Carry unfinished JSONL records between pages and decode only complete lines. Paging preserves exact durable history; the compatibility `get_thread_history` adapter still reassembles the full result in client memory. See `docs/configuration.md` for the shared API contract.
+
 Before considering any task done, run fresh, relevant verification and read the complete output. For UI changes, verify the affected journey in a browser or native app when available; for system-prompt changes, verify the constructed system message and the LLM request path. Report exact commands and results, and label any remaining evidence as unverified.
 
 ## Quality Dashboard

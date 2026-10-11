@@ -290,4 +290,14 @@ Open an MCP connection’s details to see its exposed tool count, names and desc
 
 For large shared-server requests, use `themis call METHOD - < arguments.json`. The CLI reads bounded UTF-8 JSON from stdin (8 MiB maximum), avoiding operating-system command-line length limits. The complete request, including its method and envelope, must fit the shared server’s 8 MiB frame limit. Secret entry still requires the existing secure provider setup flow.
 
+Conversation history can grow beyond that transport limit. The app and
+`themis thread history ID` retrieve it in bounded pages and reconstruct the exact
+records, including individual entries larger than one frame. This preserves the
+existing full-history result; client/UI memory still grows with that result.
+Advanced observers can call `get_thread_history_page` directly to process pages
+incrementally. Its JSONL text may split a record across pages: concatenate chunks
+and decode only complete lines. Keep the returned `through_seq` snapshot and
+`next_cursor` for subsequent requests; a new snapshot includes later appends.
+See [history paging](configuration.md#history-paging) for arguments and bounds.
+
 For long coding tasks, checkpoints retain recent tool findings, completed edits and test observations alongside the working summary and original-source references. Summary size adapts to leave room for further work. An unchanged reread may carry a reminder to reuse prior findings; three consecutive previously seen native observations stop the run even when alternating files. Changed contents return a fresh result, and actions clear native read history. Shell retains its consecutive identical-call check because it can change files silently. For large edits, approved Python/bash can operate on local files and return selected verification facts. `apply_patch` requires numbered unified diffs and reports malformed formats before changing files. These controls reduce repeated work; summaries remain lossy and do not guarantee completion or prevent every loop.

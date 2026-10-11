@@ -79,6 +79,19 @@ impl AppState {
         self.inner.transcript.history(thread_id)
     }
 
+    pub async fn get_thread_history_page(
+        &self,
+        thread_id: &str,
+        cursor: crate::transcript::history_pages::HistoryCursor,
+        through_seq: Option<i64>,
+        max_bytes: usize,
+    ) -> Result<crate::transcript::history_pages::HistoryPage, String> {
+        self.get_thread(thread_id).await?;
+        self.inner
+            .transcript
+            .history_page(thread_id, cursor, through_seq, max_bytes)
+    }
+
     pub async fn get_context_usage(
         &self,
         thread_id: &str,

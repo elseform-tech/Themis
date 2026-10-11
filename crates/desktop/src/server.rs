@@ -13,10 +13,14 @@ use tokio::sync::broadcast;
 
 use crate::sink::EventSink;
 use crate::state::AppState;
+use crate::transcript::history_pages::{HistoryCursor, HistoryPage, MAX_PAGE_BYTES};
 use crate::types::{ApprovalRequest, ReviewItem, ThreadEventEnvelope};
 
 pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
 const DISCOVERY_FILE: &str = "server.json";
+
+#[cfg(test)]
+mod history_transport_tests;
 
 #[derive(Serialize, Deserialize)]
 struct Discovery {
@@ -52,6 +56,48 @@ impl Client {
     }
 
     pub async fn call(&self, method: &str, args: Value) -> Result<Value, String> {
+        if method == "get_thread_history" {
+            return self.history(args).await;
+        }
+        self.call_raw(method, args).await
+    }
+
+    async fn history(&self, args: Value) -> Result<Value, String> {
+        let thread_id = arg::<String>(&args, "threadId")?;
+        let mut cursor = HistoryCursor::default();
+        let mut through_seq = None;
+        let mut pending = String::new();
+        let mut items = Vec::new();
+        loop {
+            let page: HistoryPage = serde_json::from_value(self.call_raw(
+                "get_thread_history_page",
+                json!({"threadId":thread_id,"cursor":cursor,"throughSeq":through_seq,"maxBytes":MAX_PAGE_BYTES}),
+            ).await?).map_err(|e| format!("Invalid history page: {e}"))?;
+            if through_seq.is_some_and(|seq| seq != page.through_seq)
+                || page.next_cursor.is_some_and(|next| next <= cursor)
+            {
+                return Err("History page watermark changed or cursor did not advance".into());
+            }
+            through_seq = Some(page.through_seq);
+            pending.push_str(&page.jsonl);
+            if let Some(end) = pending.rfind('\n') {
+                for line in pending[..end].split('\n') {
+                    items.push(
+                        serde_json::from_str::<Value>(line)
+                            .map_err(|e| format!("Invalid history entry: {e}"))?,
+                    );
+                }
+                pending.drain(..=end);
+            }
+            match page.next_cursor {
+                Some(next) => cursor = next,
+                None if pending.is_empty() => return Ok(Value::Array(items)),
+                None => return Err("History page ended with an incomplete entry".into()),
+            }
+        }
+    }
+
+    async fn call_raw(&self, method: &str, args: Value) -> Result<Value, String> {
         let (mut stream, discovery) = self.connect().await?;
         write_frame(
             &mut stream,
@@ -259,7 +305,16 @@ async fn serve_connection(
         .await?;
         loop {
             match rx.recv().await {
-                Ok(event) => write_frame(&mut stream, &event).await?,
+                Ok(event) => {
+                    let bytes = serde_json::to_vec(&event).map_err(|err| err.to_string())?;
+                    if bytes.len() > MAX_FRAME {
+                        state.record_error("subscribe", "server event exceeds size limit".into());
+                        write_frame(&mut stream, &json!({"name": "lagged", "payload": null}))
+                            .await?;
+                    } else {
+                        write_bytes(&mut stream, &bytes).await?;
+                    }
+                }
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     write_frame(&mut stream, &json!({"name": "lagged", "payload": null})).await?;
                 }
@@ -282,20 +337,29 @@ async fn serve_connection(
             }
         }
     };
-    write_frame(&mut stream, &reply).await
+    let bytes = serde_json::to_vec(&reply).map_err(|err| err.to_string())?;
+    if bytes.len() > MAX_FRAME {
+        state.record_error(&request.method, "server response exceeds size limit".into());
+        return write_frame(&mut stream, &Response {
+            ok: false, value: Value::Null,
+            error: Some("Server response exceeds 8 MiB; use a bounded or paged API (get_thread_history_page for history)".into()),
+        }).await;
+    }
+    write_bytes(&mut stream, &bytes).await
 }
 
 async fn write_frame<T: Serialize>(stream: &mut TcpStream, value: &T) -> Result<(), String> {
     let bytes = serde_json::to_vec(value).map_err(|err| err.to_string())?;
+    write_bytes(stream, &bytes).await
+}
+
+async fn write_bytes(stream: &mut TcpStream, bytes: &[u8]) -> Result<(), String> {
     let len = u32::try_from(bytes.len()).map_err(|err| err.to_string())?;
     if bytes.len() > MAX_FRAME {
         return Err("server frame exceeds size limit".to_owned());
     }
     stream.write_u32(len).await.map_err(|err| err.to_string())?;
-    stream
-        .write_all(&bytes)
-        .await
-        .map_err(|err| err.to_string())
+    stream.write_all(bytes).await.map_err(|err| err.to_string())
 }
 
 async fn read_frame<T: DeserializeOwned>(stream: &mut TcpStream) -> Result<T, String> {
@@ -415,6 +479,16 @@ pub async fn dispatch(
         "get_thread_history" => output!(
             state
                 .get_thread_history(&arg::<String>(&args, "threadId")?)
+                .await?
+        ),
+        "get_thread_history_page" => output!(
+            state
+                .get_thread_history_page(
+                    &arg::<String>(&args, "threadId")?,
+                    arg::<Option<HistoryCursor>>(&args, "cursor")?.unwrap_or_default(),
+                    arg::<Option<i64>>(&args, "throughSeq")?,
+                    arg::<Option<usize>>(&args, "maxBytes")?.unwrap_or(MAX_PAGE_BYTES),
+                )
                 .await?
         ),
         "import_legacy_history" => done!(
