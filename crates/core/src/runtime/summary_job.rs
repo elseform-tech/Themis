@@ -108,33 +108,70 @@ fn fingerprint(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-fn fragments(messages: &[ChatMessage], bytes: usize) -> anyhow::Result<Vec<String>> {
+fn fragments(
+    messages: &[ChatMessage],
+    max_fragment_bytes: usize,
+    fits: impl Fn(&str) -> bool,
+) -> anyhow::Result<Vec<String>> {
     let mut fragments = Vec::new();
     let mut packet = String::new();
-    anyhow::ensure!(bytes >= 512, "source packet budget is too small");
+    anyhow::ensure!(max_fragment_bytes > 0, "source packet budget is too small");
     for value in summary_evidence::records(messages)?.0 {
         let source_record = value["source_record"].clone();
         let record = value.to_string();
         let mut offset = 0;
         while offset < record.len() {
-            let mut end = (offset + bytes.saturating_sub(256) / 2).min(record.len());
+            let candidate = |end| {
+                let fragment = serde_json::json!({"source_record": source_record, "serialized_byte_start":offset,
+                    "serialized_byte_end":end, "serialized_total_bytes":record.len(), "prepared_record_fragment": &record[offset..end]}).to_string();
+                if packet.is_empty() {
+                    fragment
+                } else {
+                    format!("{packet}\n{fragment}")
+                }
+            };
+            let mut end = offset.saturating_add(max_fragment_bytes).min(record.len());
             while !record.is_char_boundary(end) {
                 end -= 1;
             }
-            let fragment = serde_json::json!({"source_record": source_record, "serialized_byte_start":offset,
-                "serialized_byte_end":end, "serialized_total_bytes":record.len(), "prepared_record_fragment": &record[offset..end]}).to_string();
-            anyhow::ensure!(
-                fragment.len() <= bytes,
-                "encoded source fragment exceeds budget"
-            );
-            if !packet.is_empty() && packet.len() + 1 + fragment.len() > bytes {
+            let mut low = offset;
+            let mut high = end;
+            if fits(&candidate(end)) {
+                low = end;
+            } else {
+                // Serialized prefix sizes are monotonic. Search UTF-8 boundaries,
+                // including metadata and every escaping layer in the actual request.
+                while low < high {
+                    let mut middle = low + (high - low).div_ceil(2);
+                    while !record.is_char_boundary(middle) {
+                        middle -= 1;
+                    }
+                    if middle == low {
+                        middle = high;
+                    }
+                    if fits(&candidate(middle)) {
+                        low = middle;
+                    } else {
+                        high = middle - 1;
+                        while !record.is_char_boundary(high) {
+                            high -= 1;
+                        }
+                    }
+                }
+            }
+            if low == offset {
+                anyhow::ensure!(
+                    !packet.is_empty(),
+                    "source fragment cannot fit request budget"
+                );
+                fragments.push(std::mem::take(&mut packet));
+                continue;
+            }
+            packet = candidate(low);
+            offset = low;
+            if offset < record.len() {
                 fragments.push(std::mem::take(&mut packet));
             }
-            if !packet.is_empty() {
-                packet.push('\n');
-            }
-            packet.push_str(&fragment);
-            offset = end;
         }
     }
     if !packet.is_empty() {
@@ -281,6 +318,23 @@ async fn stage(
     .await
 }
 
+fn stage_fingerprint(
+    request: &[ChatMessage],
+    model: &str,
+    allowance: u32,
+    purpose: Purpose,
+) -> anyhow::Result<String> {
+    Ok(fingerprint(&serde_json::to_vec(&(
+        "stage-output-policy-v1",
+        request,
+        purpose.output_guidance(),
+        allowance,
+        model,
+        crate::providers::bounded_output_limit(model, allowance),
+        crate::providers::bounded_output_limit(model, allowance.saturating_mul(2)),
+    ))?))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn stage_with_legacy(
     llm: &Arc<dyn LLMProvider>,
@@ -294,7 +348,8 @@ async fn stage_with_legacy(
     purpose: Purpose,
 ) -> anyhow::Result<String> {
     cache_directory(cache)?;
-    let input = fingerprint(&serde_json::to_vec(request)?);
+    let model = crate::providers::summary_model(llm.model());
+    let input = stage_fingerprint(request, model, allowance, purpose)?;
     let path = cache.join(format!("{job}-{index}-{input}.json"));
     if let Some(text) = cached_stage(&path, &input, allowance, purpose)? {
         crate::diagnostics::emit(
@@ -317,6 +372,26 @@ async fn stage_with_legacy(
                 serde_json::json!({"job_id":job,"stage":index,"legacy_migrated":true}),
             );
             return Ok(text);
+        }
+    }
+    // Old keys omitted the stage allowance. Only a final stage used the root
+    // job's known global allowance; source-stage allowances depended on packing.
+    // Preserve ambiguous partial files without guessing or promoting them.
+    if remaining_stages == 1 {
+        let old_input = fingerprint(&serde_json::to_vec(request)?);
+        for legacy in std::iter::once(job).chain(legacy_job) {
+            let old_path = cache.join(format!("{legacy}-{index}-{old_input}.json"));
+            if let Some(text) = cached_stage(&old_path, &old_input, allowance, purpose)? {
+                cache_directory(cache)?;
+                publish_stage(&path, purpose, &input, &text)?;
+                crate::diagnostics::emit(
+                    "compaction",
+                    "stage_reused",
+                    "info",
+                    serde_json::json!({"job_id":job,"stage":index,"legacy_output_identity_migrated":true}),
+                );
+                return Ok(text);
+            }
         }
     }
     crate::diagnostics::emit(
@@ -400,8 +475,6 @@ pub(super) async fn summarize_for(
         available >= 1024,
         "summary instructions leave no room for original records"
     );
-    // A JSON string may double its serialized size. The margin bounds both encodings.
-    let fragments = fragments(messages, available * 2)?;
     let job = fingerprint(&serde_json::to_vec(&(
         VERSION,
         purpose,
@@ -464,6 +537,14 @@ pub(super) async fn summarize_for(
             return Ok(summary);
         }
     }
+    // Measure the constructed request instead of reserving worst-case escaping twice.
+    // Retry output and the prompt margin remain reserved before any stage is sent.
+    let fragments = fragments(messages, available.saturating_mul(4), |packet| {
+        estimated_tokens(&purpose.request(packet, previous, current, true))
+            + allowance as usize * 2
+            + 2048
+            <= budget
+    })?;
     anyhow::ensure!(!fragments.is_empty() && fragments.len() < config.max_stages,
         "summary requires {} source stages plus consolidation; configured maximum is {}. Originals preserved", fragments.len(), config.max_stages);
     // Reserve the complete consolidation packet before any stage is dispatched.
@@ -545,6 +626,72 @@ mod tests {
         changed.summary_max_tokens = config.summary_max_tokens;
         changed.max_stages += 1;
         assert_ne!(semantic_policy(&changed).unwrap(), semantic);
+    }
+
+    #[tokio::test]
+    async fn stage_cache_binds_output_policy_and_preserves_ambiguous_old_stages() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let summary = "Goal/constraints: preserve. Confirmed findings: original source. Completed changes/tests: none. Unresolved work: continue. Next action: answer.";
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices":[{"message":{"content":summary},"finish_reason":"stop"}]
+            })))
+            .mount(&server)
+            .await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let request = context_update_messages("original source", "", "continue", true);
+        for allowance in [256, 512, 512] {
+            assert_eq!(
+                stage(
+                    &llm,
+                    &request,
+                    allowance,
+                    root.path(),
+                    "same-job",
+                    0,
+                    2,
+                    Purpose::Context
+                )
+                .await
+                .unwrap(),
+                summary
+            );
+        }
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            2,
+            "changed stage output policy cannot reuse earlier generation; matching policy can"
+        );
+        let old_input = fingerprint(&serde_json::to_vec(&request).unwrap());
+        let old_path = root.path().join(format!("ambiguous-0-{old_input}.json"));
+        publish_stage(&old_path, Purpose::Context, &old_input, summary).unwrap();
+        let old_bytes = std::fs::read(&old_path).unwrap();
+        stage(
+            &llm,
+            &request,
+            256,
+            root.path(),
+            "ambiguous",
+            0,
+            2,
+            Purpose::Context,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            3,
+            "old partial-stage keys do not establish their generation allowance"
+        );
+        assert_eq!(std::fs::read(old_path).unwrap(), old_bytes);
     }
 
     #[tokio::test]
@@ -749,7 +896,13 @@ mod tests {
         assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
         std::fs::remove_file(&alias).unwrap();
         std::fs::create_dir(&alias).unwrap();
-        let input = fingerprint(&serde_json::to_vec(&request).unwrap());
+        let input = stage_fingerprint(
+            &request,
+            crate::providers::summary_model(llm.model()),
+            256,
+            Purpose::Context,
+        )
+        .unwrap();
         let cache = alias.join(format!("test-0-{input}.json"));
         let original = root.path().join("snapshot-original.jsonl");
         std::fs::write(&original, "immutable original").unwrap();
@@ -835,6 +988,120 @@ mod tests {
     }
 
     #[test]
+    fn prose_packets_use_the_available_request_capacity_and_preserve_every_byte() {
+        let messages = [ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: "An ordered narrative with names, events and consequences.\n".repeat(15_000),
+        }];
+        let current = "immutable story source";
+        let budget = 200_000;
+        let allowance = 8192;
+        let fixed = estimated_tokens(&Purpose::Document.request("", "", current, true));
+        let available = budget - fixed - allowance * 2 - 2048;
+        let packets = fragments(&messages, available * 4, |packet| {
+            estimated_tokens(&Purpose::Document.request(packet, "", current, true))
+                + allowance * 2
+                + 2048
+                <= budget
+        })
+        .unwrap();
+        assert!(
+            packets.len() <= 2,
+            "ordinary prose should use at most two source requests at 200k; got {}",
+            packets.len()
+        );
+        let original = summary_evidence::records(&messages).unwrap().0[0].to_string();
+        let mut reconstructed = String::new();
+        for packet in &packets {
+            assert!(
+                estimated_tokens(&Purpose::Document.request(packet, "", current, true))
+                    + allowance * 2
+                    + 2048
+                    <= budget,
+                "reserve the maximum retry output and prompt margin"
+            );
+            for line in packet.lines() {
+                let fragment: serde_json::Value = serde_json::from_str(line).unwrap();
+                assert_eq!(fragment["serialized_byte_start"], reconstructed.len());
+                assert_eq!(fragment["serialized_total_bytes"], original.len());
+                reconstructed.push_str(fragment["prepared_record_fragment"].as_str().unwrap());
+                assert_eq!(fragment["serialized_byte_end"], reconstructed.len());
+            }
+        }
+        assert_eq!(reconstructed, original);
+    }
+
+    #[test]
+    fn escaped_unicode_packets_fit_small_and_large_budgets_without_gaps() {
+        let messages = (0..3)
+            .map(|index| ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: format!("record-{index}: {}", "\\\"\n\t\u{0001}é😀".repeat(10_000)),
+            })
+            .collect::<Vec<_>>();
+        let originals = summary_evidence::records(&messages).unwrap().0;
+        for budget in [24_000, 200_000, 256_000] {
+            let allowance = (budget / 8).min(8192);
+            let previous = "Previous source state with a quoted alias: \\\"é😀\\\".";
+            let current = "Continue the latest task, preserving its source coordinates.";
+            let request = |packet: &str| Purpose::Context.request(packet, previous, current, true);
+            let fixed = estimated_tokens(&request(""));
+            let available = budget - fixed - allowance * 2 - 2048;
+            let fits =
+                |packet: &str| estimated_tokens(&request(packet)) + allowance * 2 + 2048 <= budget;
+            let packets = fragments(&messages, available * 4, fits).unwrap();
+            let mut record_index = 0;
+            let mut reconstructed = String::new();
+            for packet in packets {
+                assert!(fits(&packet));
+                for line in packet.lines() {
+                    let fragment: serde_json::Value = serde_json::from_str(line).unwrap();
+                    let original = originals[record_index].to_string();
+                    assert_eq!(
+                        fragment["source_record"],
+                        originals[record_index]["source_record"]
+                    );
+                    assert_eq!(fragment["serialized_byte_start"], reconstructed.len());
+                    assert_eq!(fragment["serialized_total_bytes"], original.len());
+                    let part = fragment["prepared_record_fragment"].as_str().unwrap();
+                    assert!(
+                        !part.is_empty(),
+                        "every iteration must advance the source cursor"
+                    );
+                    reconstructed.push_str(part);
+                    assert_eq!(fragment["serialized_byte_end"], reconstructed.len());
+                    if reconstructed.len() == original.len() {
+                        assert_eq!(reconstructed, original);
+                        reconstructed.clear();
+                        record_index += 1;
+                    }
+                }
+            }
+            assert_eq!(record_index, originals.len());
+            assert!(reconstructed.is_empty());
+        }
+    }
+
+    #[test]
+    fn impossible_source_packet_fails_without_spinning() {
+        let messages = [ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: "é😀".into(),
+        }];
+        let calls = std::cell::Cell::new(0);
+        let result = fragments(&messages, 4096, |_| {
+            calls.set(calls.get() + 1);
+            assert!(calls.get() < 128, "an impossible packet must not spin");
+            false
+        });
+        assert!(result.is_err());
+        assert!(fragments(&messages, 0, |_| true).is_err());
+    }
+
+    #[test]
     fn packs_short_records_without_losing_source_coordinates() {
         let messages = (0..40)
             .map(|index| ChatMessage {
@@ -843,7 +1110,7 @@ mod tests {
                 content: format!("record-{index}: {}", "x".repeat(1800)),
             })
             .collect::<Vec<_>>();
-        let packets = fragments(&messages, 12_000).unwrap();
+        let packets = fragments(&messages, 12_000, |packet| packet.len() <= 12_000).unwrap();
         assert!(packets.len() < 12, "short records must share source stages");
         let joined = packets.join("\n");
         for index in 0..40 {
