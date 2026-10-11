@@ -94,7 +94,7 @@ export function ThreadComposer({
     <>
       {sendError && <p className="themis-thread-senderror" role="alert">{sendError}</p>}
       <div className="themis-thread-composer">
-        {!secretConfigured && (
+        {!secretConfigured && !running && (
           <p className="themis-thread-hint">
             Connect OpenCode Go to send your first message. {" "}
             <Button variant="ghost" size="small" onClick={onOpenSettings}>Open settings</Button>

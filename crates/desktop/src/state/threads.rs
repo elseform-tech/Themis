@@ -458,20 +458,35 @@ impl AppState {
                 .recent_messages
                 .unwrap_or(settings.context_messages.clamp(1, 100) as usize),
         };
+        let started = ThreadEventEnvelope {
+            thread_id: thread_id.clone(),
+            run_id: run_id.clone(),
+            event: ThreadEvent::Started {
+                task: resolved_text.clone(),
+                max_turns: policy.total_turns,
+            },
+        };
+        if let Err(error) = self.inner.transcript.append_event(&started) {
+            self.finish_run(&thread_id).await;
+            return Err(error);
+        }
+        sink.emit_thread_event(&started);
         if let Err(error) = self
             .spawn_run(&sink, &thread_id, &run_id, snapshot, resolved_text, policy)
             .await
         {
-            if let Err(save_error) = self.inner.transcript.append_event(&ThreadEventEnvelope {
+            let failed = ThreadEventEnvelope {
                 thread_id: thread_id.clone(),
                 run_id: run_id.clone(),
                 event: ThreadEvent::Failed {
                     error: error.clone(),
                 },
-            }) {
+            };
+            if let Err(save_error) = self.inner.transcript.append_event(&failed) {
                 self.record_error("save_thread_event", save_error);
             }
             self.finish_run(&thread_id).await;
+            sink.emit_thread_event(&failed);
             return Err(error);
         }
         Ok(RunHandle { run_id })

@@ -512,7 +512,7 @@ pub async fn dispatch(
                 .update_settings(arg::<SettingsPatch>(&args, "patch")?)
                 .await?
         ),
-        "get_secret_status" => output!(state.get_secret_status().await),
+        "get_secret_status" => output!(state.get_secret_status().await?),
         "set_secret" => done!(
             state
                 .set_secret(arg(&args, "provider")?, arg(&args, "value")?)

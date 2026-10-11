@@ -35,8 +35,14 @@ environment, not these configuration files.
 Credential reads run outside the async backend workers and wait at most 30
 seconds, so a blocked read does not freeze other status/Stop requests. Stop
 cancels a run's credential wait before skill/MCP setup. The native OS read may
-finish later; no authentication requirement is bypassed. Credential availability
-reports false when a read fails or times out; the value never reaches the UI.
+finish later; no authentication requirement is bypassed. Credential status reports
+a confirmed missing key as false; a lookup timeout or worker failure returns an
+error instead of overwriting the last confirmed UI status. The credential value
+never reaches the UI. Presence refreshes on app focus/visibility return, backend
+reconnection and run completion; concurrent refreshes coalesce. Run admission is
+visible before credential lookup or document preparation, with Stop available
+throughout. A running chat hides the connection hint even if the previous presence
+check was unavailable; sending still performs the normal credential lookup.
 
 Integrations → Discover installs into **User (Global)** scope without a destination
 selector. Project-scoped imports remain available through the advanced CLI/shared API.

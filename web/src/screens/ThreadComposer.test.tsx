@@ -26,6 +26,15 @@ function composer(running:boolean,draft="",composerDisabled=running) {
 }
 
 describe("ThreadComposer", () => {
+  it("keeps preparation stoppable without showing a stale connect hint", () => {
+    const view = composer(true);
+    view.rerender(<ThreadComposer {...view.props} secretConfigured={false} />);
+    expect(screen.queryByText(/Connect OpenCode Go/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", {name: "Stop"}));
+    expect(view.onStop).toHaveBeenCalledOnce();
+    view.rerender(<ThreadComposer {...view.props} running={false} secretConfigured={false} />);
+    expect(screen.getByText(/Connect OpenCode Go/)).toBeInTheDocument();
+  });
   it("shows only YOLO and Custom and permits next-run changes while running",()=>{
     const view=composer(true),onApprovalModeChange=vi.fn();
     view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);

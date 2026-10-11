@@ -68,6 +68,7 @@ async fn cli_large_narrative_is_semantically_prepared_before_ordinary_generation
         "send_message",
         json!({"threadId":id,"text":"Retell the attached story faithfully, including chronology, motives and final outcomes. No tools.","attachments":[files[0]["path"],files[1]["path"]]}),
     );
+    let mut starts = 0;
     tokio::time::timeout(std::time::Duration::from_secs(60), async {
         loop {
             let item = Client::next_event(&mut events).await.unwrap();
@@ -76,6 +77,9 @@ async fn cli_large_narrative_is_semantically_prepared_before_ordinary_generation
             }
             let event = &item["payload"]["event"];
             assert_ne!(event["kind"], "failed", "{event}");
+            if event["kind"] == "started" {
+                starts += 1;
+            }
             if event["kind"] == "finished" {
                 break;
             }
@@ -83,6 +87,10 @@ async fn cli_large_narrative_is_semantically_prepared_before_ordinary_generation
     })
     .await
     .unwrap();
+    assert_eq!(
+        starts, 1,
+        "preparation and ordinary generation share one run start"
+    );
     let usage = cli(data.path(), "get_context_usage", json!({"threadId":id}));
     assert_eq!(
         usage["total_requests"].as_u64().unwrap() as usize,
@@ -230,6 +238,19 @@ async fn cli_stop_during_document_preparation_emits_one_terminal_and_allows_next
     })
     .await
     .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] == "thread-event"
+                && item["payload"]["thread_id"] == id
+                && item["payload"]["event"]["kind"] == "started"
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("clients need an active, stoppable run while document preparation is pending");
     cli(data.path(), "stop_thread", json!({"threadId":id}));
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {

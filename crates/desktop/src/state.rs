@@ -1245,12 +1245,24 @@ mod tests {
             )
             .await
             .expect("create");
-        let (sink, _rx) = crate::sink::ChannelSink::channel();
+        let (sink, mut events) = crate::sink::ChannelSink::channel();
         let err = state
             .send_message(Arc::new(sink), thread.id.clone(), "hi".to_owned())
             .await
             .expect_err("missing key");
         assert!(err.contains("no API key"), "{err}");
+        let crate::sink::TestEvent::Thread(started) = events.try_recv().expect("run admission")
+        else {
+            panic!("expected run admission event");
+        };
+        assert!(matches!(started.event, ThreadEvent::Started { .. }));
+        let crate::sink::TestEvent::Thread(failed) = events.try_recv().expect("setup failure")
+        else {
+            panic!("expected setup failure event");
+        };
+        assert_eq!(started.run_id, failed.run_id);
+        assert!(matches!(failed.event, ThreadEvent::Failed { .. }));
+        assert!(events.try_recv().is_err(), "one start and one terminal");
         // The failure path resets `running`: a retry fails the same way, not busy.
         let (sink, _rx) = crate::sink::ChannelSink::channel();
         let retry = state
@@ -1396,7 +1408,7 @@ mod tests {
     #[tokio::test]
     async fn secrets_never_surface_values() {
         let (state, _dir) = test_state();
-        let status = state.get_secret_status().await;
+        let status = state.get_secret_status().await.unwrap();
         assert_eq!(status, SecretStatus { go: false });
         assert!(state
             .set_secret("go".to_owned(), String::new())
@@ -1410,13 +1422,13 @@ mod tests {
             .set_secret("go".to_owned(), "sk-test".to_owned())
             .await
             .expect("set");
-        let status = state.get_secret_status().await;
+        let status = state.get_secret_status().await.unwrap();
         assert!(status.go);
         // The status JSON carries presence only.
         let json = serde_json::to_string(&status).expect("json");
         assert!(!json.contains("sk-test"));
         state.clear_secret("go".to_owned()).await.expect("clear");
-        assert!(!state.get_secret_status().await.go);
+        assert!(!state.get_secret_status().await.unwrap().go);
     }
 
     #[tokio::test]

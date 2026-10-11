@@ -38,15 +38,13 @@ impl AppState {
     }
 
     /// Reports whether the Go key is available (the value never leaves the store).
-    pub async fn get_secret_status(&self) -> SecretStatus {
-        SecretStatus {
+    pub async fn get_secret_status(&self) -> Result<SecretStatus, String> {
+        Ok(SecretStatus {
             go: self
                 .read_secret("go")
-                .await
-                .ok()
-                .flatten()
+                .await?
                 .is_some_and(|key| !key.trim().is_empty()),
-        }
+        })
     }
 
     /// Stores the API key for `provider`.
@@ -93,10 +91,10 @@ impl AppState {
 mod tests {
     use super::*;
 
-    struct SlowReadStore;
+    struct SlowReadStore(std::time::Duration);
     impl crate::secrets::SecretStore for SlowReadStore {
         fn get(&self, _: &str) -> Option<String> {
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            std::thread::sleep(self.0);
             Some("synthetic-key".to_owned())
         }
         fn has(&self, provider: &str) -> bool {
@@ -111,13 +109,38 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn secret_status_timeout_is_an_error_not_a_missing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_with_dirs(
+            dir.path().join("settings.json"),
+            dir.path().join("worktrees"),
+            dir.path().join("threads.json"),
+            Arc::new(SlowReadStore(std::time::Duration::from_secs(31))),
+            dir.path().join("projects"),
+        );
+        let (sink, _) = crate::sink::ChannelSink::channel();
+        let result = crate::server::dispatch(
+            &state,
+            Arc::new(sink),
+            "get_secret_status",
+            serde_json::json!({}),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "an unavailable read must not report a confirmed missing key: {result:?}"
+        );
+        assert!(result.unwrap_err().contains("Credential lookup timed out"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn credential_reads_do_not_block_other_backend_requests() {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::new_with_dirs(
             dir.path().join("settings.json"),
             dir.path().join("worktrees"),
             dir.path().join("threads.json"),
-            Arc::new(SlowReadStore),
+            Arc::new(SlowReadStore(std::time::Duration::from_millis(150))),
             dir.path().join("projects"),
         );
         for status in [true, false] {
@@ -125,7 +148,7 @@ mod tests {
                 let state = state.clone();
                 async move {
                     if status {
-                        state.get_secret_status().await.go
+                        state.get_secret_status().await.unwrap().go
                     } else {
                         state.api_key_for(ProviderKind::Go).await.unwrap() == "synthetic-key"
                     }
@@ -148,7 +171,7 @@ mod tests {
             dir.path().join("settings.json"),
             dir.path().join("worktrees"),
             dir.path().join("threads.json"),
-            Arc::new(SlowReadStore),
+            Arc::new(SlowReadStore(std::time::Duration::from_millis(150))),
             dir.path().join("projects"),
         );
         let project = dir.path().join("project");
@@ -161,7 +184,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let (sink, _events) = crate::sink::ChannelSink::channel();
+        let (sink, mut events) = crate::sink::ChannelSink::channel();
         let send = tokio::spawn({
             let state = state.clone();
             let id = thread.id.clone();
@@ -178,8 +201,27 @@ mod tests {
         })
         .await
         .unwrap();
+        let crate::sink::TestEvent::Thread(started) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        else {
+            panic!("expected admission before credential setup");
+        };
+        assert!(matches!(started.event, ThreadEvent::Started { .. }));
+        assert!(
+            !send.is_finished(),
+            "credential admission must remain stoppable"
+        );
         state.stop_thread(thread.id.clone()).await.unwrap();
         assert!(send.await.unwrap().unwrap_err().contains("Stopped by you"));
+        let crate::sink::TestEvent::Thread(failed) = events.try_recv().unwrap() else {
+            panic!("expected cancelled setup terminal");
+        };
+        assert_eq!(started.run_id, failed.run_id);
+        assert!(matches!(failed.event, ThreadEvent::Failed { .. }));
+        assert!(events.try_recv().is_err());
         assert!(!project.join(".themis/skill-catalogs").exists());
         assert!(!state.get_thread(&thread.id).await.unwrap().running);
     }

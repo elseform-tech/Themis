@@ -296,6 +296,11 @@ impl AppState {
             let pump = tokio::spawn(async move {
                 let mut pending_text = String::new();
                 while let Some(event) = events_rx.recv().await {
+                    // Desktop admission already published Started before setup/preparation.
+                    // Keep core's event for standalone callers without resetting live UI state.
+                    if matches!(event, RunEvent::Started { .. }) {
+                        continue;
+                    }
                     if let RunEvent::AssistantText(delta) = &event {
                         pending_text.push_str(delta);
                         pump_sink.emit_thread_event(&ThreadEventEnvelope {
