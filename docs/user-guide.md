@@ -302,6 +302,13 @@ See [history paging](configuration.md#history-paging) for arguments and bounds.
 
 For long coding tasks, checkpoints retain recent tool findings, completed edits and test observations alongside the working summary and original-source references. Summary size adapts to leave room for further work. An unchanged reread may carry a reminder to reuse prior findings; three consecutive previously seen native observations stop the run even when alternating files. Changed contents return a fresh result, and actions clear native read history. Shell retains its consecutive identical-call check because it can change files silently. For large edits, approved Python/bash can operate on local files and return selected verification facts. `apply_patch` requires numbered unified diffs and reports malformed formats before changing files. These controls reduce repeated work; summaries remain lossy and do not guarantee completion or prevent every loop.
 
+If required compaction fails after saving originals and pending inputs, a later
+ordinary request also receives selected historical tool observations and their
+original-source locations, including after restart. This helps avoid repeating
+completed actions; it does not automatically resume work or prove tool success.
+Your latest request chooses the task. Stop retains the existing archive recovery
+behavior. The bounded record is partial, and originals remain available.
+
 For factual and technical work, the agent is instructed to cite inspected sources,
 including current file lines or line ranges for code, and to explain what changed
 or was found, why it addresses the task, and relevant tradeoffs. Test reports

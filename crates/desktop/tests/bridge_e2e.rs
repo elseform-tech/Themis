@@ -97,6 +97,7 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::Finished { .. } => "finished",
             ThreadEvent::Failed { .. } => "failed",
             ThreadEvent::ContextCheckpoint { .. } => "context_checkpoint",
+            ThreadEvent::ContextSuspended { .. } => "context_suspended",
             ThreadEvent::ContextCompacting => "context_compacting",
             ThreadEvent::ContextUsage { .. } => unreachable!("metadata filtered above"),
             ThreadEvent::Incomplete { .. } => "incomplete",

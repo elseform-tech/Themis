@@ -640,6 +640,16 @@ fn role_name(role: &ConversationRole) -> &'static str {
 
 fn context_turn(item: &HistoryItem) -> Option<ConversationTurn> {
     match item {
+        HistoryItem::Event {
+            envelope:
+                ThreadEventEnvelope {
+                    event: ThreadEvent::ContextSuspended { progress },
+                    ..
+                },
+        } => Some(ConversationTurn {
+            role: ConversationRole::Assistant,
+            text: progress.clone(),
+        }),
         HistoryItem::User { text, .. } => Some(ConversationTurn {
             role: ConversationRole::User,
             text: text.clone(),
