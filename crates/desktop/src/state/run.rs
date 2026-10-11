@@ -76,9 +76,11 @@ impl AppState {
                 let key = self.api_key_for(snapshot.provider).await?;
                 // Unknown limits remain explicit and use conservative admission.
                 // Effort selection still requires a successfully loaded catalog.
-                if !endpoint_override || snapshot.reasoning_effort.is_some() {
+                let requires_catalog = snapshot.reasoning_effort.is_some()
+                    || snapshot.runtime_configuration.compaction.summary_model.is_some();
+                if !endpoint_override || requires_catalog {
                     let catalog = self.ensure_go_catalog().await;
-                    if snapshot.reasoning_effort.is_some() {catalog?;}
+                    if requires_catalog {catalog?;}
                 }
                 Ok::<_, String>(key)
             } => key?,
@@ -97,6 +99,17 @@ impl AppState {
             }
         }
         let capacity_catalog = self.inner.go_catalog.read().await.clone();
+        if let Some(model) = snapshot.runtime_configuration.compaction.summary_model {
+            if !capacity_catalog
+                .iter()
+                .any(|entry| entry.id == model.as_str())
+            {
+                return Err(format!(
+                    "Summary model '{}' is unavailable in the loaded OpenCode Go catalog",
+                    model.as_str()
+                ));
+            }
+        }
         let context_capacity = self
             .inner
             .go_catalog

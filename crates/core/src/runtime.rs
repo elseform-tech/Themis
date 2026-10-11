@@ -1328,7 +1328,7 @@ pub async fn with_configuration<F: std::future::Future>(
 ) -> F::Output {
     COMPACTION_CONFIG.scope(config, future).await
 }
-fn compaction_config() -> crate::configuration::CompactionConfig {
+pub(crate) fn compaction_config() -> crate::configuration::CompactionConfig {
     COMPACTION_CONFIG.try_with(Clone::clone).unwrap_or_default()
 }
 

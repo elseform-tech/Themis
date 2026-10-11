@@ -10,6 +10,107 @@ use themis_desktop::{
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_summary_override_rejects_unlisted_model_before_preparation() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"compaction":{"summary_model":"gpt-6-luna"}}"#,
+    )
+    .unwrap();
+    let source = project.path().join("story.txt");
+    std::fs::write(
+        &source,
+        "A fictional archivist records the tide.\n".repeat(6000),
+    )
+    .unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data":[{"id":"model-a"}]})))
+        .expect(1)
+        .mount(&provider)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"model-a"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let files = cli(
+        data.path(),
+        "attach_files",
+        json!({"threadId":id,"paths":[source]}),
+    );
+    let result = client.call("send_message", json!({"threadId":id,"text":"Summarize the attachment","attachments":[files[0]["path"]]})).await;
+    if result.is_ok() {
+        // A failing regression must still clean up its admitted run before teardown.
+        if client
+            .call("get_thread", json!({"threadId":id}))
+            .await
+            .unwrap()["running"]
+            == true
+        {
+            client
+                .call("stop_thread", json!({"threadId":id}))
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            while client
+                .call("get_thread", json!({"threadId":id}))
+                .await
+                .unwrap()["running"]
+                == true
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    let idle = client
+        .call("get_thread", json!({"threadId":id}))
+        .await
+        .unwrap()["running"]
+        == false;
+    let history = client
+        .call("get_thread_history", json!({"threadId":id}))
+        .await
+        .unwrap();
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+    assert!(idle);
+    let error = result.expect_err("unlisted summarizer must fail before preparation");
+    assert!(
+        error.contains("Summary model 'gpt-6-luna' is unavailable"),
+        "{error}"
+    );
+    let events: Vec<_> = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "event")
+        .map(|row| row["envelope"]["event"]["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(events, ["started", "failed"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_large_narrative_is_semantically_prepared_before_ordinary_generation() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

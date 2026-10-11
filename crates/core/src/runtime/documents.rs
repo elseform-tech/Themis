@@ -194,14 +194,15 @@ pub async fn prepare(
                     if stopped.load(Ordering::SeqCst) { return Err(anyhow!("Document preparation stopped")); }
                     saved.policy_sha256 = policy_sha256.clone();
                     publish(&saved)?;
-                    pending::complete(directory, &format!("document-{sha}-{legacy}"))?;
                     crate::diagnostics::emit("documents", "capsule_cache_migrated", "info", serde_json::json!({"source_id":sha}));
                     crate::context_metrics::activity("document_capsule_reused");
                     capsules.push(saved);
                     continue;
                 }
             }
-            let job = format!("document-{sha}-{policy_sha256}");
+            // Equal-content documents and equally sized models still own separate recipes.
+            let identity_sha = format!("{:x}", Sha256::digest(serde_json::to_vec(&(&capsule.summary_model, &capsule.source_path))?));
+            let job = format!("document-{sha}-{policy_sha256}-{identity_sha}");
             pending::save_document(directory,&job,&capsule,budget,allowance,&config)?;
             let document_deadline = deadline.min(tokio::time::Instant::now()
                 + std::time::Duration::from_secs(config.timeout_seconds));
@@ -218,9 +219,7 @@ pub async fn prepare(
             if stopped.load(Ordering::SeqCst) { return Err(anyhow!("Document preparation stopped")); }
             publish(&capsule)?;
             pending::complete(directory,&job)?;
-            if let Some(legacy) = &legacy_policy_sha256 {
-                pending::complete(directory, &format!("document-{sha}-{legacy}"))?;
-            }
+            // Old keys omitted model/path identity. Preserve ambiguous legacy recipes.
             crate::diagnostics::emit("documents", "preparation_completed", "info", serde_json::json!({"source_id":capsule.source_sha256,"source_bytes":capsule.source_bytes,"summary_bytes":capsule.summary.len(),"complete_processing_coverage":true}));
             capsules.push(capsule);
         }
@@ -242,6 +241,153 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
     use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn summary_model_and_source_path_changes_preserve_each_suspended_document_job() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(429))
+            .expect(3)
+            .mount(&server)
+            .await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
+                .with_model("step-5-preview-free")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let mut sources = [DocumentSource {
+            source_path: "/staged/story.md".into(),
+            text: "A fictional archivist records the tide. ".repeat(200),
+        }];
+        let catalog =
+            ["longcat-2.5-preview-free", "gpt-6-luna"].map(|model| crate::providers::GoModel {
+                id: model.into(),
+                effort_levels: vec![],
+                context_tokens: Some(200000),
+                output_tokens: Some(32768),
+            });
+        let directory = tempfile::tempdir().unwrap();
+        let stopped = AtomicBool::new(false);
+        let mut first = None;
+        for (index, (model, path)) in [
+            (None, "/staged/story.md"),
+            (Some("gpt-6-luna"), "/staged/story.md"),
+            (None, "/staged/other.md"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            sources[0].source_path = path.into();
+            let config =
+                serde_json::from_value(serde_json::json!({"retry_limit":0,"summary_model":model}))
+                    .unwrap();
+            let result = crate::providers::with_catalog_limits(
+                &catalog,
+                with_configuration(
+                    config,
+                    prepare(
+                        &llm,
+                        &sources,
+                        directory.path(),
+                        &stopped,
+                        |_| Ok(None),
+                        |_| panic!("failed summary cannot publish"),
+                    ),
+                ),
+            )
+            .await;
+            assert!(result.is_err());
+            let jobs: Vec<_> = std::fs::read_dir(directory.path())
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| {
+                    p.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("pending-job-document-")
+                })
+                .collect();
+            if let Some((path, bytes)) = &first {
+                assert_eq!(
+                    jobs.len(),
+                    index + 1,
+                    "changing model or path must not overwrite older suspended jobs"
+                );
+                assert_eq!(&std::fs::read(path).unwrap(), bytes);
+            } else {
+                assert_eq!(jobs.len(), 1);
+                first = Some((jobs[0].clone(), std::fs::read(&jobs[0]).unwrap()));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn summary_model_override_reuses_only_matching_document_capsules() {
+        let server = MockServer::start().await;
+        let summary="Entities/relationships: archivist. Chronology/causality: records tide. Ambiguities: none. Source references: original record 1.";
+        Mock::given(method("POST")).respond_with(move |request:&wiremock::Request| {
+            let response=if request.url.path()=="/responses" {serde_json::json!({"output":[{"type":"message","content":[{"type":"output_text","text":summary}]}]})} else {serde_json::json!({"choices":[{"message":{"content":summary},"finish_reason":"stop"}]})};
+            ResponseTemplate::new(200).set_body_json(response)
+        }).expect(2).mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
+                .with_model("step-5-preview-free")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let source = [DocumentSource {
+            source_path: "/staged/story.md".into(),
+            text: "A fictional archivist records the tide. ".repeat(200),
+        }];
+        let directory = tempfile::tempdir().unwrap();
+        let stopped = AtomicBool::new(false);
+        let saved = Mutex::new(Vec::<DocumentCapsule>::new());
+        for (model, want) in [
+            (None, "longcat-2.5-preview-free"),
+            (Some("longcat-2.5-preview-free"), "longcat-2.5-preview-free"),
+            (Some("gpt-6-luna"), "gpt-6-luna"),
+            (None, "longcat-2.5-preview-free"),
+        ] {
+            let config =
+                serde_json::from_value(serde_json::json!({"summary_model":model})).unwrap();
+            let capsules = with_configuration(
+                config,
+                prepare(
+                    &llm,
+                    &source,
+                    directory.path(),
+                    &stopped,
+                    |wanted| {
+                        Ok(saved
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .find(|c| c.compatible_with(wanted))
+                            .cloned())
+                    },
+                    |capsule| {
+                        saved.lock().unwrap().push(capsule.clone());
+                        Ok(())
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+            assert_eq!(capsules[0].summary_model, want);
+            assert_eq!(
+                std::fs::read_to_string(&capsules[0].original_snapshot)
+                    .unwrap()
+                    .lines()
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(saved.lock().unwrap().len(), 2);
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    }
 
     #[tokio::test]
     async fn each_document_receives_a_fresh_job_deadline() {
@@ -454,6 +600,23 @@ mod tests {
             original_snapshot: save_original(directory.path(), &sha, &source.text).unwrap(),
             summary: "Preserved complete original capsule.".into(),
         };
+        // The old model-less key can contain another model's suspended recipe.
+        let legacy_job = format!("document-{sha}-{}", legacy.policy_sha256);
+        let mut other_model = legacy.clone();
+        other_model.summary_model = "gpt-6-luna".into();
+        pending::save_document(
+            directory.path(),
+            &legacy_job,
+            &other_model,
+            budget,
+            allowance,
+            &config,
+        )
+        .unwrap();
+        let pending_path = directory
+            .path()
+            .join(format!("pending-job-{legacy_job}.json"));
+        let pending_bytes = std::fs::read(&pending_path).unwrap();
         let saved = Mutex::new(legacy.clone());
         let stopped = AtomicBool::new(false);
         let sources = [source];
@@ -477,6 +640,11 @@ mod tests {
         .unwrap();
         assert_eq!(result[0].summary, legacy.summary);
         assert_ne!(result[0].policy_sha256, legacy.policy_sha256);
+        assert_eq!(
+            std::fs::read(&pending_path).unwrap(),
+            pending_bytes,
+            "a valid capsule does not establish ownership of a model-less pending recipe"
+        );
         let mut changed = config;
         changed.timeout_seconds = 1;
         changed.request_timeout_seconds = 1;

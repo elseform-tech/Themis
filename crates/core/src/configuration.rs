@@ -131,6 +131,26 @@ pub fn configured_hook(
     })
 }
 
+/// Only provider models whose reasoning-off controls are verified by wire tests.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum SummaryModel {
+    #[serde(rename = "longcat-2.5-preview-free")]
+    LongCat,
+    #[serde(rename = "gpt-5.6-luna")]
+    Gpt56Luna,
+    #[serde(rename = "gpt-6-luna")]
+    Gpt6Luna,
+}
+impl SummaryModel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LongCat => "longcat-2.5-preview-free",
+            Self::Gpt56Luna => "gpt-5.6-luna",
+            Self::Gpt6Luna => "gpt-6-luna",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CompactionConfig {
@@ -149,6 +169,9 @@ pub struct CompactionConfig {
     pub retry_limit: u8,
     pub section_max_tokens: u32,
     pub summary_max_tokens: u32,
+    /// Explicit internal routing only; absent retains ordinary-model-based routing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary_model: Option<SummaryModel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_file: Option<String>,
     /// Resolved before a run starts; never accepted from JSON.
@@ -170,6 +193,7 @@ impl Default for CompactionConfig {
             retry_limit: 2,
             section_max_tokens: 4096,
             summary_max_tokens: 8192,
+            summary_model: None,
             prompt_file: None,
             prompt: None,
         }
@@ -644,6 +668,7 @@ pub fn schema() -> Value {
                 "retry_limit":{"type":"integer","minimum":0,"maximum":2,"default":2},
                 "section_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":4096},
                 "summary_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":8192},
+                "summary_model":{"enum":[null,"longcat-2.5-preview-free","gpt-5.6-luna","gpt-6-luna"],"default":null},
                 "prompt_file":{"type":"string"}
             }}
         }
@@ -653,6 +678,38 @@ pub fn schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summary_model_override_follows_precedence_and_can_be_cleared() {
+        let user = r#"{"compaction":{"summary_model":"gpt-5.6-luna"}}"#;
+        let project = r#"{"compaction":{"summary_model":"gpt-6-luna"}}"#;
+        let resolved = resolve(Some(user), Some(project), None).unwrap();
+        assert_eq!(
+            serde_json::to_value(&resolved.config).unwrap()["compaction"]["summary_model"],
+            "gpt-6-luna"
+        );
+        assert_eq!(resolved.provenance["compaction.summary_model"], "project");
+        let cleared = resolve(
+            Some(user),
+            Some(project),
+            Some(r#"{"compaction":{"summary_model":null}}"#),
+        )
+        .unwrap();
+        assert!(
+            serde_json::to_value(cleared.config).unwrap()["compaction"]["summary_model"].is_null()
+        );
+        assert_eq!(cleared.provenance["compaction.summary_model"], "run");
+        for model in ["step-5-preview-free", "unknown-model", "", "longcat-2.0"] {
+            assert!(resolve(
+                Some(&format!(
+                    r#"{{"compaction":{{"summary_model":"{model}"}}}}"#
+                )),
+                None,
+                None
+            )
+            .is_err());
+        }
+    }
     #[test]
     fn document_batch_and_summary_backoff_have_bounded_independent_configuration() {
         let mut config = RuntimeConfig::default();

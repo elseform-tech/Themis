@@ -91,7 +91,9 @@ pub async fn with_catalog_limits<F: std::future::Future>(
 }
 
 pub(crate) fn summary_model(model: &str) -> &str {
-    if model.starts_with("longcat-2.5-") || matches!(model, "gpt-5.6-luna" | "gpt-6-luna") {
+    if let Some(configured) = crate::runtime::compaction_config().summary_model {
+        configured.as_str()
+    } else if model.starts_with("longcat-2.5-") || matches!(model, "gpt-5.6-luna" | "gpt-6-luna") {
         model
     } else {
         "longcat-2.5-preview-free"
@@ -1479,6 +1481,133 @@ mod tests {
             assert_eq!(bounded[key], 4096, "{model}");
             assert_eq!(ordinary[key].as_u64(), default_limit, "{model}");
             assert_eq!(requests[0].headers[GO_SESSION_HEADER], "summary-test");
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_summary_model_routes_without_changing_ordinary_model() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(|request: &wiremock::Request| {
+                let response = if request.url.path() == "/responses" {
+                    json!({"output":[{"type":"message","content":[{"type":"output_text","text":"checkpoint"}]}]})
+                } else {
+                    json!({"choices":[{"message":{"content":"answer"},"finish_reason":"stop"}]})
+                };
+                ResponseTemplate::new(200).set_body_json(response)
+            }).mount(&server).await;
+        let catalog = vec![
+            GoModel {
+                id: "gpt-6-luna".into(),
+                effort_levels: vec!["none".into()],
+                context_tokens: Some(100000),
+                output_tokens: Some(1000),
+            },
+            GoModel {
+                id: "longcat-2.5-preview-free".into(),
+                effort_levels: vec![],
+                context_tokens: Some(200000),
+                output_tokens: Some(8192),
+            },
+        ];
+        let provider = CompatibleProvider::go(
+            "synthetic".into(),
+            "step-5-preview-free".into(),
+            Some(server.uri()),
+            Some("override-run".into()),
+        );
+        let config = serde_json::from_value::<crate::configuration::CompactionConfig>(
+            json!({"summary_model":"gpt-6-luna"}),
+        )
+        .unwrap();
+        let messages = [user_message("Summarize")];
+        with_catalog_limits(
+            &catalog,
+            crate::runtime::with_configuration(config, async {
+                assert_eq!(summary_context_limit("step-5-preview-free"), Some(100000));
+                COMPACTION_REQUEST
+                    .scope(
+                        (),
+                        provider.chat_and_sampling(
+                            &messages,
+                            None,
+                            Some(&SamplingOverrides::with_max_tokens(1654)),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                provider.chat(&messages, None).await.unwrap();
+            }),
+        )
+        .await;
+        COMPACTION_REQUEST
+            .scope((), provider.chat(&messages, None))
+            .await
+            .unwrap();
+        let requests = server.received_requests().await.unwrap();
+        let bodies: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect();
+        assert_eq!(requests[0].url.path(), "/responses");
+        assert_eq!(bodies[0]["model"], "gpt-6-luna");
+        assert_eq!(bodies[0]["reasoning"]["effort"], "none");
+        assert_eq!(bodies[0]["max_output_tokens"], 1000);
+        assert_eq!(bodies[1]["model"], "step-5-preview-free");
+        assert_eq!(bodies[2]["model"], "longcat-2.5-preview-free");
+        assert_eq!(bodies[2]["thinking"], json!({"type":"disabled"}));
+        assert_eq!(requests[0].headers[GO_SESSION_HEADER], "override-run");
+    }
+
+    #[tokio::test]
+    async fn summary_model_overrides_are_isolated_between_concurrent_runs() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(|request:&wiremock::Request| {
+            let response=if request.url.path()=="/responses" {json!({"output":[{"type":"message","content":[{"type":"output_text","text":"summary"}]}]})} else {json!({"choices":[{"message":{"content":"answer"},"finish_reason":"stop"}]})};
+            ResponseTemplate::new(200).set_body_json(response)
+        }).mount(&server).await;
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let issue = |model: &'static str, session: &'static str| {
+            let barrier = barrier.clone();
+            let provider = CompatibleProvider::go(
+                "synthetic".into(),
+                "step-5-preview-free".into(),
+                Some(server.uri()),
+                Some(session.into()),
+            );
+            async move {
+                let config = serde_json::from_value(json!({"summary_model":model})).unwrap();
+                crate::runtime::with_configuration(config, async {
+                    barrier.wait().await;
+                    COMPACTION_REQUEST
+                        .scope((), provider.chat(&[user_message("summarize")], None))
+                        .await
+                        .unwrap();
+                    provider
+                        .chat(&[user_message("continue")], None)
+                        .await
+                        .unwrap();
+                })
+                .await;
+            }
+        };
+        tokio::join!(
+            issue("gpt-6-luna", "luna-run"),
+            issue("longcat-2.5-preview-free", "longcat-run")
+        );
+        let requests = server.received_requests().await.unwrap();
+        for (session, expected) in [
+            ("luna-run", "gpt-6-luna"),
+            ("longcat-run", "longcat-2.5-preview-free"),
+        ] {
+            let bodies: Vec<serde_json::Value> = requests
+                .iter()
+                .filter(|r| r.headers[GO_SESSION_HEADER] == session)
+                .map(|r| serde_json::from_slice(&r.body).unwrap())
+                .collect();
+            assert_eq!(bodies.len(), 2);
+            assert_eq!(bodies[0]["model"], expected);
+            assert_eq!(bodies[1]["model"], "step-5-preview-free");
         }
     }
 
