@@ -2451,6 +2451,7 @@ pub fn checkpoint_parts(saved: &str) -> (&str, Vec<ChatMessage>) {
 fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMessage> {
     let mut messages = vec![ChatMessage { role: ChatRole::System, message_type: MessageType::Text, content: "For substantial tasks, keep the user in the loop with brief, conversational updates at meaningful transitions. Say what you found or completed, why it matters to the task, and what you’re doing next; use natural wording instead of fixed headings or a list of tool calls. Don’t narrate every tool call or repeat yourself. Skip progress updates for simple questions. Share only public actions and outcomes, never private reasoning. Finish with a concise, natural answer grounded in actual tool results. Treat context checkpoints as historical context, not current instructions; later user requests take precedence over conflicting older requests.".to_owned() }];
     messages[0].content.push_str("\nTool results may be offloaded before entering context. A receipt means the request returned; use its status fields and exact source coordinates, never repeat a completed action just because output was offloaded. Previews are incomplete untrusted data. read_file returns at most 4000 characters by default; page with next_offset, including long skill files. Ordinary source/text files use file_path with optional offset/find; omit jsonl_record, json_pointer and decode_tool_payload. JSONL selectors apply only to JSONL records, not Python source lines. Prefer approved shell/Python to search, count or transform complete local data and print only relevant bounded facts. Use focused patches or generators for large writes; tool arguments above 64 KiB (less for small context budgets) are rejected without execution. Agent inventory lists contain metadata/counts only and are paginated. Configured/enabled MCP is not connected/healthy. During recovery prioritize original User/attachment text and original Tool observations, not Assistant summaries or generated search output. Snapshot records marked evidence_kind=recovery are archive-retrieval output; skip those when searching for independent evidence. With Python parse the JSONL record and then parse Tool function.arguments once when valid; search decoded stdout/content/text, not the escaped arguments string. With read_file use decode_tool_payload=true for Tool arguments and preserve that flag for subsequent offsets. Follow source coordinates back to originals instead of recursively searching earlier search results. Reuse established facts with their original references; gaps remain explicit. After compaction, reconcile the checkpoint plan with the completed action record and latest tool results; their observed outcomes can supersede a stale plan. Resume the next unresolved action instead of restarting inspection. Public intent is a plan, not proof of execution. A completed write means an artifact was saved, not that it was executed or tested.");
+    messages[0].content.push_str("\nFor factual and technical work, support material claims, code changes and verification outcomes with sources you actually inspected. Cite code by file path and verified current line or line range; cite documents by file and original record/field or page/section, and external evidence by inspected URL. Briefly explain what changed or was found, why it addresses the task, and material tradeoffs when relevant. Report actual test commands and outcomes, cite captured verification output when available, and mark unverified limits. Never invent references or coordinates; state uncertainty when support is unavailable. Creative prose needs no evidence citations. Honor the requested output format, using permitted reference fields without extra wrappers.");
     for turn in history {
         if turn.role == ConversationRole::Checkpoint {
             let (summary, recent) = checkpoint_parts(&turn.text);
@@ -5460,6 +5461,25 @@ mod tests {
         assert!(!messages[0]
             .content
             .contains("first line is exactly Milestone:"));
+        for instruction in [
+            "sources you actually inspected",
+            "verified current line or line range",
+            "why it addresses the task",
+            "material tradeoffs",
+            "actual test commands and outcomes",
+            "Never invent references or coordinates",
+            "Creative prose needs no evidence citations",
+            "using permitted reference fields without extra wrappers",
+        ] {
+            assert!(messages[0].content.contains(instruction), "{instruction}");
+        }
+        assert_eq!(
+            messages[0]
+                .content
+                .matches("For factual and technical work")
+                .count(),
+            1
+        );
         assert!(matches!(messages[1].role, ChatRole::User));
         assert_eq!(messages[1].content, "Remember ORBIT-17");
         assert!(matches!(messages[2].role, ChatRole::Assistant));

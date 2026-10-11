@@ -509,6 +509,11 @@ async fn cli_retries_required_summary_automatically_and_exposes_usage() {
             .contains("You summarize agent context")
         {
             assert_current_project(&body, project.path());
+            let system = body["messages"][0]["content"].as_str().unwrap();
+            assert_eq!(system.matches("For factual and technical work").count(), 1);
+            assert!(system.contains("verified current line or line range"));
+            assert!(system.contains("why it addresses the task"));
+            assert!(system.contains("using permitted reference fields without extra wrappers"));
             ordinary_requests += 1;
         }
     }

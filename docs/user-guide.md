@@ -301,3 +301,13 @@ and decode only complete lines. Keep the returned `through_seq` snapshot and
 See [history paging](configuration.md#history-paging) for arguments and bounds.
 
 For long coding tasks, checkpoints retain recent tool findings, completed edits and test observations alongside the working summary and original-source references. Summary size adapts to leave room for further work. An unchanged reread may carry a reminder to reuse prior findings; three consecutive previously seen native observations stop the run even when alternating files. Changed contents return a fresh result, and actions clear native read history. Shell retains its consecutive identical-call check because it can change files silently. For large edits, approved Python/bash can operate on local files and return selected verification facts. `apply_patch` requires numbered unified diffs and reports malformed formats before changing files. These controls reduce repeated work; summaries remain lossy and do not guarantee completion or prevent every loop.
+
+For factual and technical work, the agent is instructed to cite inspected sources,
+including current file lines or line ranges for code, and to explain what changed
+or was found, why it addresses the task, and relevant tradeoffs. Test reports
+should give actual commands, outcomes and captured evidence when available;
+unverified claims remain explicit. These instructions apply before and after
+compaction, preserve requested formats such as JSON, and do not require citations
+for creative prose. They guide model responses; they do not automatically certify
+that a citation supports a claim or that reported code locations remain current
+after subsequent edits.
