@@ -257,6 +257,21 @@ pub fn materialize_scripts(skills: &[Skill], work_root: &Path) -> anyhow::Result
     Ok(written)
 }
 
+/// Keeps a Themis-managed folder out of Git (and so out of the project's diff)
+/// with a `*` `.gitignore`. An existing file, or a symlink in its place, is left alone.
+pub(crate) fn ensure_git_excluded(directory: &Path) -> std::io::Result<()> {
+    use std::io::Write;
+    match std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(directory.join(".gitignore"))
+    {
+        Ok(mut file) => file.write_all(b"*\n"),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 /// Per-run copies keep concurrent turns from overwriting lazy skill definitions.
 pub fn materialize_catalog(skills: &[Skill], root: &Path, run_id: &str) -> anyhow::Result<String> {
     if !is_safe_file_name(run_id) {
@@ -272,6 +287,9 @@ pub fn materialize_catalog(skills: &[Skill], root: &Path, run_id: &str) -> anyho
             }
         } else {
             std::fs::create_dir(&directory)?;
+        }
+        if component == "skill-catalogs" {
+            ensure_git_excluded(&directory)?;
         }
     }
     materialize_scripts(skills, &directory)?;
@@ -496,6 +514,31 @@ mod tests {
         assert_eq!(
             filter_tools(tools, &[skill("review", "Review", &["read_file"], vec![])]).len(),
             count
+        );
+    }
+
+    #[test]
+    fn materialized_catalogs_stay_out_of_the_project_diff() {
+        let root = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        materialize_catalog(
+            &[skill("review", "Review", &[], vec![])],
+            root.path(),
+            "run-one",
+        )
+        .unwrap();
+        let status = git(&["status", "--porcelain", "--untracked-files=all"]);
+        assert!(
+            String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+            "managed skill catalogs must not show as project changes"
         );
     }
 
