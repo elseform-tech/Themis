@@ -1,6 +1,7 @@
 // Pure state model for the Themis app shell. No Tauri/DOM imports —
 // safe to load in node-based unit tests.
 import type {
+  ChangedFile,
   ContextBudget,
   McpConnections,
   ApprovalRequest,
@@ -95,6 +96,8 @@ export interface AppState {
   contextBudgets: Record<string, ContextBudget>;
   runStartedAt: Record<string, number>;
   runDurations: Record<string, number>;
+  /** Files a run changed, held until its final message arrives. */
+  runChanges: Record<string, ChangedFile[]>;
   diffs: Record<string, DiffState | null>;
   comments: Record<string, ThreadComment[]>;
   approvals: ApprovalRequest[];
@@ -109,6 +112,8 @@ export interface AppState {
   secretStatus: SecretStatus;
   toasts: ToastItem[];
   diffPanelOpen: boolean;
+  /** A file to show in the Workspace changes view, e.g. from an edited-files list. */
+  diffFocus: { path: string; at: number } | null;
   paletteOpen: boolean;
   projectDialogOpen: boolean;
 }
@@ -159,7 +164,7 @@ export type AppAction =
   | { type: "toast/push"; toast: ToastItem }
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView }
-  | { type: "ui/diff-panel"; open: boolean }
+  | { type: "ui/diff-panel"; open: boolean; focus?: string }
   | { type: "ui/palette"; open: boolean }
   | { type: "ui/project-dialog"; open: boolean };
 
@@ -206,6 +211,7 @@ export const initialState: AppState = {
   contextBudgets: {},
   runStartedAt: {},
   runDurations: {},
+  runChanges: {},
   diffs: {},
   comments: {},
   approvals: [],
@@ -219,6 +225,7 @@ export const initialState: AppState = {
   secretStatus: DEFAULT_SECRET_STATUS,
   toasts: [],
   diffPanelOpen: false,
+  diffFocus: null,
   paletteOpen: false,
   projectDialogOpen: false,
 };
@@ -403,6 +410,8 @@ export function applyThreadEvent(
       });
       return { ...next, compacting: { ...next.compacting, [threadId]: false } };
     }
+    case "files_changed":
+      return { ...state, runChanges: { ...state.runChanges, [runId]: event.files } };
     case "incomplete":
     case "finished": {
       let next = appendMessage(state, threadId, {
@@ -413,6 +422,7 @@ export function applyThreadEvent(
         runId,
         final: true,
         incomplete: event.kind === "incomplete",
+        ...(state.runChanges[runId] ? { changedFiles: state.runChanges[runId] } : {}),
       });
       const startedAt = next.runStartedAt[threadId];
       if (measureDuration && startedAt !== undefined) {
@@ -436,6 +446,7 @@ export function applyThreadEvent(
         role: "system",
         text: stopped ? event.error : `Run failed: ${event.error}`,
         runId,
+        ...(state.runChanges[runId] ? { changedFiles: state.runChanges[runId] } : {}),
       });
       const startedAt = next.runStartedAt[threadId];
       if (measureDuration && startedAt !== undefined) {

@@ -120,6 +120,16 @@ describe("thread lifecycle events", () => {
     expect(last(s).checkpoint).toEqual({ before: 91, after: 31 });
     expect(s.contextBudgets[THREAD.id]?.used_tokens).toBe(4000);
   });
+  it("attaches the files a turn changed to that turn's final reply only", () => {
+    let s = withThread();
+    s = applyThreadEvent(s, envelope({ kind: "started", task: "edit", max_turns: 3 }));
+    s = applyThreadEvent(s, envelope({ kind: "files_changed", files: [{ path: "src/app.py", status: "modified" }, { path: "notes.md", status: "added" }] }));
+    s = applyThreadEvent(s, envelope({ kind: "finished", result: "Done." }));
+    expect(s.messages[THREAD.id]?.slice(-1)[0]?.changedFiles).toEqual([{ path: "src/app.py", status: "modified" }, { path: "notes.md", status: "added" }]);
+    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "next-run", event: { kind: "started", task: "chat", max_turns: 1 } });
+    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "next-run", event: { kind: "finished", result: "No edits." } });
+    expect(s.messages[THREAD.id]?.slice(-1)[0]?.changedFiles).toBeUndefined();
+  });
   it("shows an older incomplete handoff as a normal final reply", () => {
     let s = withThread();
     s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 1 }));

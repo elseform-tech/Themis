@@ -82,8 +82,8 @@ levels are listed.
   warm and a one-time heads-up appears; afterwards a **Context compacted** divider
   shows the before → after usage. Nothing is deleted: originals stay on disk.
 - **Workspace** in a thread's header opens a read-only monitor of the project:
-  **Changes** (changed files and their diff, updating live while the agent
-  works), **Files**, **Branches** and **Pull requests** (needs
+  **Changes** (readable changed files and their wrapped, highlighted diff,
+  updating live while the agent works; binary and generated files are hidden), **Files**, **Branches** and **Pull requests** (needs
   the GitHub CLI signed in). Drag its edge to resize. It never changes files or
   runs Git actions. The composer shows the project folder and current branch.
 
@@ -298,6 +298,8 @@ Automation editors keep destination, timezone and enabled/paused status visible 
 After a backend event gap or reconnect, Themis reloads completed histories and pending approvals. Active streams keep their current live text and reconcile durable history when the run finishes; missed streaming fragments can remain absent until then. Failed recovery displays a warning and retries. Recovery preserves the selected conversation and local drafts.
 
 The collapsible sidebar lists the chosen project's **Chats** (most recent first; older chats behind **Show more**). A small icon marks a chat that is working, waiting for your approval, failed, or finished in the background since you last looked. Projects with live work are marked in the switcher. Drag the sidebar’s right edge to resize it between 240 and 560 px (double-click resets it); the width is remembered. Opening **Workspace** on a smaller window folds the sidebar to its icons until you close Workspace. Focus the edge and use Left/Right arrows or Home/End to resize with the keyboard. Ordering uses saved conversation events and survives app restarts; opening a chat alone does not change its position, and empty chats remain in their project until they have activity.
+
+When a turn ends, its reply lists the files that turn edited; select one to open its diff in **Workspace**.
 
 To delete a project, open the project switcher and choose **Delete project**. After you confirm, Themis moves the project folder to the macOS Trash (recover it from there if needed) and forgets its chats, its automations and its place in recent projects. The built-in **Themis** project, folders outside the projects folder, and projects with a running chat cannot be deleted.
 

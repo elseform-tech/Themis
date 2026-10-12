@@ -184,6 +184,7 @@ export type ThreadEvent =
   | { kind: 'context_budget'; budget: ContextBudget }
   | { kind: 'context_suspended'; progress: string }
   | { kind: 'context_checkpoint'; summary: string }
+  | { kind: 'files_changed'; files: ChangedFile[] }
   | { kind: 'incomplete'; result: string; model?: string }
   | { kind: 'finished'; result: string; model?: string }
   | { kind: 'failed'; error: string };
@@ -208,6 +209,12 @@ export interface ContextBudget {
   breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number };
 }
 
+/** A readable project file one run changed. */
+export interface ChangedFile {
+  path: string;
+  status: DiffStatus;
+}
+
 export interface PersistedMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -221,6 +228,8 @@ export interface PersistedMessage {
   tool?: { name: string; ok?: boolean; output?: string };
   /** Context checkpoint divider; percentages of usable context before and after. */
   checkpoint?: { before?: number; after?: number };
+  /** Files this run changed, shown under its final response. */
+  changedFiles?: ChangedFile[];
 }
 
 export type HistoryItem =

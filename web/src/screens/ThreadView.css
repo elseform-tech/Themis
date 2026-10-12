@@ -190,3 +190,22 @@
 .themis-compaction-notice > span { flex: 1; }
 .themis-compaction-notice button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 1.1rem; cursor: pointer; }
 
+
+/* Files a turn edited: a card under its response; long lists expand into a scrolling list. */
+.themis-edited-files { margin: 14px 0 2px; padding: 10px 8px 8px; border-radius: 14px; background: var(--themis-sidebar-bg); }
+.themis-edited-files header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 6px 6px; }
+.themis-edited-files h3 { margin: 0; color: var(--themis-text); font-size: .8125rem; font-weight: 600; }
+.themis-edited-counts { display: flex; gap: 10px; font-size: .6875rem; }
+.themis-edited-files ul { display: grid; margin: 0; padding: 0; list-style: none; }
+.themis-edited-files ul.is-expanded { max-height: 288px; overflow-y: auto; }
+.themis-edited-files li button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 30px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; }
+.themis-edited-files li button:hover { background: var(--themis-raised); }
+.themis-edited-status { flex: none; width: 12px; font-size: .6875rem; font-weight: 700; text-align: center; }
+.themis-edited-status--added { color: var(--themis-success); }
+.themis-edited-status--modified { color: var(--themis-accent); }
+.themis-edited-status--deleted { color: var(--themis-danger); }
+.themis-edited-status--renamed { color: var(--themis-info); }
+.themis-edited-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; }
+.themis-edited-path > span { color: var(--themis-text-3); }
+.themis-edited-more { margin: 4px 6px 0; padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; cursor: pointer; }
+.themis-edited-more:hover { color: var(--themis-text); }

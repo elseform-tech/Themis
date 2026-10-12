@@ -563,6 +563,37 @@ describe("Workspace journey", () => {
     await act(async () => fireEvent.click(within(sidebar).getByRole("button", { name: "Background chat" })));
     expect(within(sidebar).queryByRole("img", { name: "Done" })).toBeNull();
   });
+  it("lists the files a turn edited under its reply and opens the workspace from them", async () => {
+    const base = { provider: "go" as const, model: "muse-spark-1.3-contributor", worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/one"] });
+    vi.mocked(bridge.openProject).mockResolvedValue({ root: "/tmp/one", name: "One", is_git: true });
+    vi.mocked(bridge.listThreads).mockImplementation(async root => root === "/tmp/fixed-themis" ? [] : [{ ...base, id: "edit", title: "Edit chat", running: false }]);
+    await mount();
+    const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+    fireEvent.click(within(sidebar).getByRole("button", { name: /^One/ }));
+    const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => receive({ thread_id: "edit", run_id: "r", event: { kind: "started", task: "fix", max_turns: 3 } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r", event: { kind: "files_changed", files: [{ path: "src/stats.py", status: "modified" }, { path: "tests/test_stats.py", status: "added" }] } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r", event: { kind: "finished", result: "Fixed the median." } }));
+    const edited = screen.getByRole("region", { name: "Files edited in this turn" });
+    expect(edited).toHaveTextContent("Edited 2 files");
+    expect(edited).toHaveTextContent("src/stats.py");
+    expect(within(edited).getByLabelText("added")).toHaveTextContent("A");
+    await act(async () => fireEvent.click(within(edited).getAllByRole("button")[0]!));
+    expect(screen.getByRole("complementary", { name: "Workspace (read-only)" })).toBeInTheDocument();
+    expect(screen.getByText("Edited 2 files")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+    const many = Array.from({ length: 12 }, (_, index) => ({ path: `src/module_${index}.py`, status: "modified" as const }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r2", event: { kind: "started", task: "big", max_turns: 3 } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r2", event: { kind: "files_changed", files: many } }));
+    await act(async () => receive({ thread_id: "edit", run_id: "r2", event: { kind: "finished", result: "Refactored." } }));
+    const regions = screen.getAllByRole("region", { name: "Files edited in this turn" });
+    const big = regions[regions.length - 1]!;
+    expect(big).toHaveTextContent("12 modified");
+    expect(within(big).getAllByRole("listitem")).toHaveLength(5);
+    fireEvent.click(within(big).getByRole("button", { name: "Show all 12" }));
+    expect(within(big).getAllByRole("listitem")).toHaveLength(12);
+  });
   it("keeps compact navigation without expanding on hover", async () => {
     vi.useFakeTimers(); await mount();
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));

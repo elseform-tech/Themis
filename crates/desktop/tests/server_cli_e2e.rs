@@ -548,6 +548,60 @@ finally:
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn cli_turn_records_the_files_it_edited_in_history() {
+    if !common::git_available() {
+        return;
+    }
+    let (_repo, project) = common::init_repo();
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    let provider = common::mount_scripted_llm().await;
+    common::use_mock_llm(&state, &provider).await;
+    let task = tokio::spawn(Server::bind(state, dir.path()).await.unwrap().run());
+    let thread = cli(
+        dir.path(),
+        &["thread", "create", project.to_str().unwrap(), "test-model"],
+    );
+    let id = thread["id"].as_str().unwrap();
+    let mode = json!({"threadId": id, "mode": "yolo"}).to_string();
+    cli(dir.path(), &["call", "set_thread_approval_mode", &mode]);
+    let sent = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(dir.path())
+        .args(["thread", "send", id, "write hello.txt"])
+        .stdin(std::process::Stdio::null())
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        sent.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sent.stderr)
+    );
+    let history = cli(dir.path(), &["thread", "history", id]);
+    let kinds: Vec<&str> = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["envelope"]["event"]["kind"].as_str())
+        .collect();
+    let changed = kinds.iter().position(|kind| *kind == "files_changed");
+    assert!(
+        changed.is_some() && changed < kinds.iter().position(|kind| *kind == "finished"),
+        "{kinds:?}"
+    );
+    let files = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["envelope"]["event"]["kind"] == "files_changed")
+        .map(|item| item["envelope"]["event"]["files"].clone())
+        .unwrap();
+    assert_eq!(files, json!([{"path": "hello.txt", "status": "added"}]));
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cli_preserves_incomplete_handoff_and_exits_nonzero() {
     let project = tempfile::tempdir().unwrap();
     let dir = tempfile::tempdir().unwrap();

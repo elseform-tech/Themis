@@ -32,6 +32,9 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   // Commit what is visible: CSS keeps room for the conversation, so store the rendered width.
   function finish() { if (drag.current && lastWidth.current !== null) resize(Math.min(lastWidth.current, panel.current?.getBoundingClientRect().width || lastWidth.current)); drag.current = null; lastWidth.current = null; setDragging(false); }
   function choose(next: Tab) { setTab(next); writeSession("workspaceTab", next); }
+  // A request to show a changed file switches to Changes.
+  const focusAt = state.diffFocus?.at;
+  useEffect(() => { if (focusAt) setTab("changes"); }, [focusAt]);
   const diff = state.diffs[threadId];
   const changed = diff?.available ? diff.files.length : 0;
   return (
@@ -77,6 +80,9 @@ function ChangesView({ threadId }: { threadId: string }) {
   const running = state.running[threadId] ?? false;
   const toolsDone = (state.traces[threadId] ?? []).filter(entry => entry.ok !== undefined).length;
   const [selected, setSelected] = useState<string | null>(null);
+  // An edited-files row asks for its file; follow each new request.
+  const focus = state.diffFocus;
+  useEffect(() => { if (focus) setSelected(focus.path); }, [focus]);
   const refresh = useCallback(async () => {
     // A failed refresh keeps the last diff on screen.
     try { dispatch({ type: "diff/set", threadId, diff: await listDiff(threadId) }); } catch { /* keep last */ }

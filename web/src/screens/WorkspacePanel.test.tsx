@@ -58,4 +58,11 @@ describe("WorkspacePanel", () => {
     expect(calls()).toBe(initial + 2);
     vi.useRealTimers();
   });
+  it("opens the file an edited-files row asks for", async () => {
+    const second = { ...diff.files[0]!, path: "docs/guide.md" };
+    appState = { ...appState, diffs: { t1: { ...diff, files: [...diff.files, second] } }, diffFocus: { path: "docs/guide.md", at: 1 } };
+    const { container } = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    await act(async () => {});
+    expect(container.querySelector(".themis-diff-path")).toHaveTextContent("docs/guide.md");
+  });
 });

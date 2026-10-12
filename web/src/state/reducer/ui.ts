@@ -19,7 +19,7 @@ export function reduceUiActions(
         diffPanelOpen: action.view === "thread" && state.diffPanelOpen,
       };
     case "ui/diff-panel":
-      return { ...state, diffPanelOpen: action.open };
+      return { ...state, diffPanelOpen: action.open, ...(action.focus ? { diffFocus: { path: action.focus, at: Date.now() } } : {}) };
     case "ui/palette":
       return { ...state, paletteOpen: action.open };
     case "ui/project-dialog":

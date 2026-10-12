@@ -197,6 +197,11 @@ pub enum ThreadEvent {
         model: Option<String>,
         result: String,
     },
+    /// Readable project files whose content changed during this run, sent
+    /// just before the run's terminal event.
+    FilesChanged {
+        files: Vec<ChangedFile>,
+    },
     Failed {
         error: String,
     },
@@ -275,6 +280,13 @@ pub struct DiffHunk {
     pub new_start: usize,
     pub new_lines: usize,
     pub lines: Vec<DiffLine>,
+}
+
+/// One file a run changed (`ChangedFile` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: DiffStatus,
 }
 
 /// File change status (`DiffStatus` in types.ts).
