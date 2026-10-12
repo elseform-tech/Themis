@@ -54,10 +54,10 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, switc
         </div>
       </details>
       <span className="themis-thread-head-spacer" />
-      {(reviewOpen || (changedFiles ?? 0) > 0) && <button type="button" className={`themis-review-toggle${reviewOpen ? " is-open" : ""}`} aria-pressed={reviewOpen} onClick={onToggleReview}>
+      <button type="button" className={`themis-workspace-toggle${reviewOpen ? " is-open" : ""}`} aria-pressed={reviewOpen} title="Read-only view of changes, files, branches and pull requests" onClick={onToggleReview}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16" /></svg>
-        Review changes{changedFiles ? <span className="themis-review-count">{changedFiles} {changedFiles === 1 ? "file" : "files"}</span> : null}
-      </button>}
+        Workspace{changedFiles ? <span className="themis-review-count">{changedFiles} changed</span> : null}
+      </button>
     </header>
   );
 }

@@ -3,8 +3,8 @@ import type { Attachment } from "../lib/tauri";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components";
-import type { GoModel } from "../lib/types";
-import { attachFiles, getThread, listDiff, listGoModels, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, stopThread } from "../lib/tauri";
+import type { GoModel, WorkspaceInfo } from "../lib/types";
+import { attachFiles, getThread, getWorkspace, listDiff, listGoModels, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, stopThread } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
@@ -12,7 +12,7 @@ import { ThreadComposer } from "./ThreadComposer";
 import { ThreadConversation } from "./ThreadConversation";
 import { ThreadHeader } from "./ThreadHeader";
 import { CompactionNotice } from "./ContextMeter";
-import { DiffReview } from "./DiffReview";
+import { WorkspacePanel } from "./WorkspacePanel";
 import { skillToken } from "../lib/prompt";
 import "./ThreadView.css";
 
@@ -87,6 +87,16 @@ export function ThreadView() {
     document.addEventListener("keydown", shortcut);
     return () => document.removeEventListener("keydown", shortcut);
   }, [newThread]);
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
+  const projectRoot = project?.root;
+  const runningNow = threadId !== undefined && (state.running[threadId] ?? false);
+  // Directory and branch for the composer; refreshed when a run ends.
+  useEffect(() => {
+    if (projectRoot === undefined || runningNow) return;
+    let cancelled = false;
+    getWorkspace(projectRoot).then(info => { if (!cancelled) setWorkspace(info); }).catch(() => { if (!cancelled) setWorkspace(null); });
+    return () => { cancelled = true; };
+  }, [projectRoot, runningNow]);
   const diffKnown = threadId !== undefined && state.diffs[threadId] !== undefined;
   const gitProject = project?.is_git === true;
   useEffect(() => {
@@ -258,6 +268,7 @@ export function ThreadView() {
       onOpenSettings={() => dispatch({ type: "ui/view", view: "settings" })}
       budget={budget}
       compacting={compacting}
+      location={{ name: project.name, root: project.root, branch: workspace?.root === project.root ? workspace.branch : null }}
     />
   );
 
@@ -311,7 +322,7 @@ export function ThreadView() {
         </>
       )}
     </div>
-    {state.diffPanelOpen && <aside className="themis-review-panel" aria-label="Review changes"><DiffReview /></aside>}
+    {state.diffPanelOpen && <WorkspacePanel projectRoot={project.root} threadId={thread.id} workspace={workspace} />}
     </div>
   );
 }

@@ -7,8 +7,9 @@ export interface FileTreeProps {
   files: DiffFile[];
   selectedPath: string | null;
   onSelect: (path: string) => void;
-  onAccept: (path: string) => void;
-  onDiscard: (path: string) => void;
+  /** Omit both for a read-only tree without accept/discard actions. */
+  onAccept?: (path: string) => void;
+  onDiscard?: (path: string) => void;
   disabled?: boolean;
   /** Paths the reviewer marked as viewed; enables the viewed filter and checkboxes. */
   viewed?: ReadonlySet<string>;
@@ -119,6 +120,7 @@ export function FileTree({
                           </span>
                         )}
                       </button>
+                      {onAccept && (
                       <span className="themis-filetree-actions">
                         <button
                           type="button"
@@ -139,11 +141,12 @@ export function FileTree({
                           }
                           className="themis-filetree-btn themis-filetree-btn--discard"
                           disabled={discardDisabled}
-                          onClick={() => onDiscard(file.path)}
+                          onClick={() => onDiscard?.(file.path)}
                         >
                           ✕
                         </button>
                       </span>
+                      )}
                     </li>
                   );
                 })}

@@ -45,32 +45,37 @@ describe("Workspace journey", () => {
     expect(screen.getByText(/MCP broken: Could not connect/).closest(".themis-toast")).not.toBeNull();
     vi.mocked(bridge.pluginAction).mockImplementation(async () => [] as never);
   });
-  it("shows recent activity across projects and opens the matching chat", async () => {
+  it("lists only the chosen project's chats, most recent first, and switches projects", async () => {
     let receive!: Parameters<typeof bridge.onThreadEvent>[0];
     vi.mocked(bridge.onThreadEvent).mockImplementationOnce(async callback => { receive = callback; return () => {}; });
     const alpha = { name: "Alpha", root: "/tmp/alpha", is_git: true };
     const beta = { name: "Beta", root: "/tmp/beta", is_git: true };
     const older = { id: "older", title: "Earlier chat", provider: "go" as const, model: "test", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [], last_activity_seq: 10 };
     const newer = { ...older, id: "newer", title: "Latest chat", last_activity_seq: 20 };
+    const betaChat = { ...older, id: "beta-chat", title: "Beta chat", last_activity_seq: 30 };
     vi.mocked(bridge.getDefaultProject).mockResolvedValueOnce(alpha);
     vi.mocked(bridge.getSettings).mockResolvedValueOnce({ ...settings, recent_roots: [alpha.root, beta.root] });
     vi.mocked(bridge.openProject).mockImplementation(async root => root === alpha.root ? alpha : beta);
-    vi.mocked(bridge.listThreads).mockImplementation(async root => root === alpha.root ? [older] : [newer]);
-    vi.mocked(bridge.getThread).mockImplementation(async id => id === older.id ? older : newer);
+    vi.mocked(bridge.listThreads).mockImplementation(async root => root === alpha.root ? [older, newer] : [betaChat]);
+    vi.mocked(bridge.getThread).mockImplementation(async id => [older, newer, betaChat].find(thread => thread.id === id)!);
     await mount();
-    const recent = screen.getByRole("region", { name: "Recent" });
-    expect(within(recent).queryByText("Beta")).toBeNull();
-    expect(screen.getByRole("heading", { name: "Projects" }).compareDocumentPosition(screen.getByRole("heading", { name: "Recent" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(recent).getAllByRole("button").map(button => button.textContent)).toEqual([expect.stringContaining("Latest chat"), expect.stringContaining("Earlier chat")]);
-    await act(async () => fireEvent.click(within(recent).getByRole("button", { name: /Latest chat/ })));
-    expect(within(recent).getByRole("button", { name: /Latest chat/ })).toHaveAttribute("aria-current", "true");
+    const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+    const chats = () => [...within(sidebar).getByRole("region", { name: "Chats" }).querySelectorAll(".themis-thread-row")].map(button => button.getAttribute("aria-label"));
+    expect(within(sidebar).getByLabelText("Project: Alpha")).toBeInTheDocument();
+    expect(chats()).toEqual(["Latest chat", "Earlier chat"]);
+    expect(within(sidebar).queryByRole("button", { name: "Beta chat" })).toBeNull();
+    expect(within(sidebar).queryByRole("region", { name: "Recent" })).toBeNull();
+    fireEvent.click(within(sidebar).getByRole("button", { name: /^Beta/ }));
+    expect(within(sidebar).getByLabelText("Project: Beta")).toBeInTheDocument();
+    expect(chats()).toEqual(["Beta chat"]);
+    expect(within(sidebar).getByRole("button", { name: "Beta chat" })).toHaveAttribute("aria-current", "true");
+    fireEvent.click(within(sidebar).getByRole("button", { name: /^Alpha/ }));
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    expect(screen.queryByRole("region", { name: "Recent" })).toBeNull();
+    expect(document.getElementById("themis-sidebar")).toHaveAttribute("inert");
     fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
-    expect(screen.getByRole("region", { name: "Recent" })).toBeInTheDocument();
-    older.last_activity_seq = 30;
+    older.last_activity_seq = 40;
     await act(async () => receive({ thread_id: older.id, run_id: "latest-run", event: { kind: "finished", result: "Done" } }));
-    expect(within(recent).getAllByRole("button")[0]).toHaveAccessibleName(/Earlier chat/);
+    expect(chats()).toEqual(["Earlier chat", "Latest chat"]);
   });
 
   it("resizes the sidebar and restores its saved width after remount", async () => {
@@ -277,12 +282,14 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Research", is_git: true });
     vi.mocked(bridge.renameProject).mockResolvedValue({ root, name: "Research notes", is_git: true });
     await mount();
+    fireEvent.click(screen.getByRole("button", { name: /^Themis/ }));
     expect(screen.getByRole("button", { name: "Rename Themis" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Research/ }));
     fireEvent.click(screen.getByRole("button", { name: "Rename Research" }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Research notes" } });
     await act(async () => fireEvent.submit(screen.getByLabelText("Name").closest("form")!));
     expect(bridge.renameProject).toHaveBeenCalledWith(root, "Research notes");
-    expect(screen.getByRole("button", { name: "New thread in Research notes" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Project: Research notes")).toBeInTheDocument();
   });
   it("edits only a thread name and retains response model labels", async () => {
     const thread = { id: "caption-thread", title: "Caption", provider: "go" as const, model: "current-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
@@ -368,7 +375,8 @@ describe("Workspace journey", () => {
       onThread({ thread_id: thread.id, run_id: "run-1", event: { kind: "finished", result: "Completed" } });
     });
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
-    expect(within(within(sidebar).getByRole("button", { name: /^Scheduled check/ })).getByRole("img", { name: "Done" })).toBeInTheDocument();
+    fireEvent.click(within(sidebar).getByRole("button", { name: /^Automation project/ }));
+    expect(within(within(sidebar).getByRole("button", { name: "Scheduled check" })).queryByRole("img")).toBeNull();
     const queueButton = within(screen.getByRole("navigation", { name: "Utilities" })).getByRole("button", { name: /Review queue\s*1/ });
     expect(screen.getAllByRole("button", { name: /Review queue/ })).toHaveLength(1);
     fireEvent.click(queueButton);
@@ -479,23 +487,20 @@ describe("Workspace journey", () => {
     expect(oldReply.querySelector(".themis-shimmer")).toBeNull();
     expect(screen.getByText("I will check one thing.").closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
   });
-  it("collapses projects independently without changing the open conversation", async () => {
+  it("switches projects from the switcher without disturbing the composer", async () => {
     const first = { id: "a", title: "First thread", provider: "go" as const, model: "muse-spark-1.3-contributor", running: false, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/one", "/tmp/two"] });
     vi.mocked(bridge.openProject).mockImplementation(async root => ({ root, name: root.endsWith("one") ? "One" : "Two", is_git: true }));
     vi.mocked(bridge.listThreads).mockImplementation(async root => root === "/tmp/fixed-themis" ? [] : [root.endsWith("one") ? first : { ...first, id: "b", title: "Second thread" }]);
-    const view = await act(async () => render(<App />));
+    await act(async () => render(<App />));
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
-    expect(within(sidebar).getByRole("button", { name: /^Second thread/ })).toBeInTheDocument();
-    fireEvent.click(within(sidebar).getByRole("button", { name: "One" }));
-    expect(within(sidebar).getByRole("button", { name: "One" })).toHaveAttribute("aria-expanded", "false");
-    expect(within(sidebar).queryByRole("button", { name: /^First thread/ })).toBeNull();
+    fireEvent.click(within(sidebar).getByRole("button", { name: /^One/ }));
+    expect(within(sidebar).getByRole("button", { name: "First thread" })).toBeInTheDocument();
+    expect(within(sidebar).queryByRole("button", { name: "Second thread" })).toBeNull();
+    fireEvent.click(within(sidebar).getByRole("button", { name: /^Two/ }));
+    expect(within(sidebar).getByRole("button", { name: "Second thread" })).toHaveAttribute("aria-current", "true");
+    expect(within(sidebar).queryByRole("button", { name: "First thread" })).toBeNull();
     expect(screen.getByLabelText("Message")).toBeEnabled();
-    view.unmount();
-    await mount();
-    expect(screen.getByRole("button", { name: "One" })).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(screen.getByRole("button", { name: "One" }));
-    expect(screen.getByRole("button", { name: /^First thread/ })).toBeInTheDocument();
   });
   it("shows restored running, completed, failed, and stopped thread status", async () => {
     const thread = { id: "status", title: "Status thread", provider: "go" as const, model: "muse-spark-1.3-contributor", running: true, worktree_path: "/tmp/a", branch: "test", base_branch: "main", recovered: false, skill_ids: [] };
@@ -504,20 +509,22 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.listThreads).mockImplementation(async root => root === "/tmp/fixed-themis" ? [] : [thread]);
     await mount();
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
-    expect(within(sidebar).getByRole("img", { name: "Working" })).toBeInTheDocument();
+    fireEvent.click(within(sidebar).getByRole("button", { name: /^One/ }));
+    expect(within(within(sidebar).getByRole("region", { name: "Running" })).getByRole("img", { name: "Working" })).toBeInTheDocument();
     expect(within(sidebar).getByRole("button", { name: "Edit Status thread" })).toBeDisabled();
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => receive({ thread_id: "status", run_id: "r", event: { kind: "finished", result: "Done" } }));
-    expect(within(sidebar).getByRole("img", { name: "Done" })).toBeInTheDocument();
+    expect(within(sidebar).queryByRole("img")).toBeNull();
+    expect(within(sidebar).queryByRole("region", { name: "Running" })).toBeNull();
     await act(async () => receive({ thread_id: "status", run_id: "old", event: { kind: "incomplete", result: "I completed the draft. Next, verify it." } }));
-    expect(within(sidebar).getByRole("img", { name: "Idle" })).toBeInTheDocument();
+    expect(within(sidebar).queryByRole("img")).toBeNull();
     expect(screen.queryByText(/Run activity · Incomplete/)).not.toBeInTheDocument();
     await act(async () => receive({ thread_id: "status", run_id: "r2", event: { kind: "started", task: "retry", max_turns: 3 } }));
     expect(within(sidebar).getByRole("img", { name: "Working" })).toBeInTheDocument();
     await act(async () => receive({ thread_id: "status", run_id: "r2", event: { kind: "failed", error: "HTTP 503" } }));
-    expect(within(sidebar).getByRole("img", { name: "Failed" })).toBeInTheDocument();
+    expect(within(within(sidebar).getByRole("region", { name: "Needs you" })).getByRole("img", { name: "Failed" })).toBeInTheDocument();
     await act(async () => receive({ thread_id: "status", run_id: "r3", event: { kind: "failed", error: "Stopped by you." } }));
-    expect(within(sidebar).getByRole("img", { name: "Stopped" })).toBeInTheDocument();
+    expect(within(sidebar).queryByRole("img")).toBeNull();
   });
   it("keeps compact navigation without expanding on hover", async () => {
     vi.useFakeTimers(); await mount();
@@ -582,7 +589,7 @@ describe("Workspace journey", () => {
     expect(within(sidebar).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole("button", { name: "Integrations" })).not.toBeInTheDocument();
     expect(within(sidebar).getByText("Themis", { selector: ".themis-wordmark" })).toBeInTheDocument();
-    expect(within(sidebar).getByRole("button", { name: "Themis" })).toHaveAttribute("title", "/tmp/fixed-themis");
+    expect(within(sidebar).getByLabelText("Project: Themis")).toHaveAttribute("title", "/tmp/fixed-themis");
     fireEvent.focus(within(rail).getByRole("button", { name: "Integrations" }));
     expect(within(rail).getByRole("button", { name: "Integrations" }).parentElement).toHaveAttribute("data-tooltip", "Integrations");
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));

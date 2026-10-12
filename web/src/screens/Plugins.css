@@ -5,9 +5,9 @@
 .themis-integrations button:hover { background: color-mix(in srgb, var(--themis-text) 4%, transparent); }
 .themis-integrations button:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 2px; }
 .themis-integrations button:disabled { opacity: .5; cursor: default; }
-.themis-integrations-tabs { display: flex; gap: 6px; }
-.themis-integrations-tabs button { min-height: 36px; padding: 0 16px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-surface); color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
-.themis-integrations-tabs button[aria-pressed="true"] { background: var(--themis-text); color: var(--themis-canvas); }
+.themis-integrations-tabs { display: flex; gap: 18px; }
+.themis-integrations-tabs button { padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
+.themis-integrations-tabs button[aria-pressed="true"] { color: var(--themis-text); font-weight: 600; }
 .themis-integrations-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem 0; }
 .themis-integrations-toolbar > div { display: flex; align-items: center; gap: .5rem; }
 .themis-integrations-search { margin: .25rem 0 .75rem; }
@@ -87,7 +87,7 @@
 @media (prefers-reduced-motion: reduce) { .themis-install-spinner { animation: none; } }
 
 .themis-integrations-toolbar button { border-radius: var(--themis-radius-pill); }
-.themis-integrations-toolbar button[aria-pressed="true"] { background: var(--themis-raised); color: var(--themis-text); font-weight: 500; }
+.themis-integrations-toolbar button[aria-pressed="true"] { color: var(--themis-text); font-weight: 600; }
 .themis-compatibility-reason { min-width: 0; margin: .25rem 0; font-size: .8rem; line-height: 1.6; color: light-dark(#795009, #f3cc7c); border-left: 3px solid currentColor; background: color-mix(in srgb, currentColor 7%, transparent); border-radius: .25rem; overflow-wrap: anywhere; }
 .themis-integrations .themis-compatibility-reason summary { display: flex; align-items: center; gap: .5rem; color: inherit; font-size: inherit; min-height: 0; padding: .5rem; cursor: pointer; }
 .themis-compatibility-reason summary::after { content: "⌄"; margin-left: auto; }

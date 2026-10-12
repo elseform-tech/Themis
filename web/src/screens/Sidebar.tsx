@@ -35,14 +35,19 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
   const [editBusy, setEditBusy] = useState(false);
   const [help, setHelp] = useState(false);
   const pending = state.reviews.filter(r => r.status === "pending").length;
-  const recentThreads = state.projects.flatMap(project => (state.threadsByProject[project.root] ?? []).map(thread => ({ project, thread })))
-    .filter(({ thread }) => (thread.last_activity_seq ?? 0) > 0)
-    .sort((a, b) => (b.thread.last_activity_seq ?? 0) - (a.thread.last_activity_seq ?? 0))
-    .slice(0, 8);
-  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(() => readSession("collapsedProjects", {}));
-  function setProjectCollapsed(root: string, value: boolean) {
-    setCollapsedProjects(previous => { const next = { ...previous, [root]: value }; writeSession("collapsedProjects", next); return next; });
-  }
+  const activeRoot = state.activeProjectRoot;
+  const activeProject = state.projects.find(project => project.root === activeRoot) ?? null;
+  const projects = [...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default));
+  const statusOf = (thread: ThreadInfo) => threadStatus(state, thread);
+  const threads = [...(activeRoot ? state.threadsByProject[activeRoot] ?? [] : [])]
+    .sort((a, b) => (b.last_activity_seq ?? 0) - (a.last_activity_seq ?? 0));
+  const needsYou = threads.filter(thread => ["Needs approval", "Failed"].includes(statusOf(thread)));
+  const working = threads.filter(thread => statusOf(thread) === "Working");
+  const others = threads.filter(thread => !needsYou.includes(thread) && !working.includes(thread));
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? others : others.slice(0, 12);
+  const projectBusy = (root: string) => (state.threadsByProject[root] ?? []).some(thread => ["Working", "Needs approval"].includes(statusOf(thread)));
+  const busyElsewhere = projects.some(project => project.root !== activeRoot && projectBusy(project.root));
 
   async function create() {
     if (busy || !name.trim()) return;
@@ -68,6 +73,15 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
     } catch (error) { setEditError(describeError(error)); }
     finally { setEditBusy(false); }
   }
+  function threadRow(thread: ThreadInfo) {
+    const active = thread.id === state.activeThreadId && state.mainView === "thread";
+    const locked = state.running[thread.id] ?? thread.running;
+    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""}`} title={thread.title} aria-label={thread.title} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><MovingText>{thread.title}</MovingText><ThreadStatus status={statusOf(thread)} /></button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
+  }
+  function threadGroup(label: string, threads: ThreadInfo[], empty?: string) {
+    if (threads.length === 0 && !empty) return null;
+    return <section className="themis-thread-group" aria-label={label}><h2 className="themis-sidebar-title">{label}</h2>{threads.length ? <ul className="themis-sidebar-list">{threads.map(threadRow)}</ul> : <p className="themis-sidebar-note">{empty}</p>}</section>;
+  }
   function nav(view: MainView, label: string) {
     return <Tooltip key={view} content={label}><button type="button" className={`themis-sidebar-row ${state.mainView === view ? "themis-sidebar-row--active" : ""}`} aria-label={view === "queue" && pending > 0 ? `${label} ${pending}` : label} aria-current={state.mainView === view ? "page" : undefined} onClick={() => dispatch({ type: "ui/view", view })}>
       <SidebarIcon name={viewIcons[view]} /><span className="themis-sidebar-name">{label}</span>{view === "queue" && pending > 0 && <Badge tone="warning">{pending}</Badge>}
@@ -83,19 +97,34 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
         <div className="themis-brand"><span className="themis-wordmark">Themis</span></div>
         <div className="themis-sidebar-nav"><button type="button" className="themis-new-chat" disabled={!state.activeProjectRoot} onClick={() => void newThread()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New chat</span></button></div>
         <div className="themis-sidebar-projects">
-          <div className="themis-sidebar-head"><h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="project" /><span>Projects</span></h2><div className="themis-project-actions"><Button size="small" variant="ghost" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>+</Button><details><summary aria-label="Project actions" title="Project actions">···</summary><div className="themis-project-menu"><Button variant="ghost" size="small" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open folder</Button></div></details></div></div>
-          {state.projects.length === 0 ? <p className="themis-sidebar-note">No projects</p> : <ul className="themis-sidebar-list">{[...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default)).map(project => <li className="themis-project" key={project.root}>
-            <div className="themis-project-heading"><button type="button" className="themis-sidebar-row themis-project-row" title={project.root} aria-expanded={!collapsedProjects[project.root]} onClick={() => setProjectCollapsed(project.root, !collapsedProjects[project.root])}><span aria-hidden="true">{collapsedProjects[project.root] ? "›" : "⌄"}</span><SidebarIcon name="project" /><MovingText>{project.name}</MovingText></button><Button variant="ghost" size="small" aria-label={`Rename ${project.name}`} title="Rename project" onClick={() => { setError(""); setRenaming({ root: project.root, name: project.name }); }}>✎</Button><Button variant="ghost" size="small" aria-label={`New thread in ${project.name}`} title="New thread" onClick={() => { setProjectCollapsed(project.root, false); void newThread(project.root); }}>+</Button></div>
-            {!collapsedProjects[project.root] && <ul className="themis-sidebar-list themis-thread-list">{(state.threadsByProject[project.root] ?? []).map(thread => <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={thread.title} aria-label={thread.title} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}><SidebarIcon name="thread" /><MovingText>{thread.title}</MovingText><ThreadStatus thread={thread} /></button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={state.running[thread.id] ?? thread.running} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: project.root }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={state.running[thread.id] ?? thread.running} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: project.root }); }}>Remove</button></div></details></li>)}</ul>}
-          </li>)}</ul>}
-          <section aria-label="Recent" className="themis-sidebar-recent">
-            <h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="automations" /><span>Recent</span></h2>
-            {recentThreads.length ? <ul className="themis-sidebar-list">{recentThreads.map(({ project, thread }) => <li key={thread.id}>
-              <button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={`${thread.title} · ${project.name}`} aria-label={`Recent: ${thread.title} · ${project.name}`} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}>
-                <SidebarIcon name="thread" /><span className="themis-sidebar-name">{thread.title}</span><ThreadStatus thread={thread} />
-              </button>
-            </li>)}</ul> : <p className="themis-sidebar-note">Your recent chats will appear here.</p>}
-          </section>
+          <details className="themis-project-switcher">
+            <summary aria-label={`Project: ${activeProject?.name ?? "none"}`} title={activeProject?.root}>
+              <SidebarIcon name="project" /><span className="themis-sidebar-name">{activeProject?.name ?? "Choose a project"}</span>
+              {busyElsewhere && <span className="themis-project-busy" role="img" aria-label="Activity in another project" />}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+            </summary>
+            <div className="themis-project-menu" role="group" aria-label="Projects">
+              {projects.length === 0 && <p className="themis-sidebar-note">No projects</p>}
+              {projects.map(project => (
+                <button key={project.root} type="button" className="themis-project-option" title={project.root} aria-current={project.root === activeRoot ? "true" : undefined}
+                  onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowAll(false); dispatch({ type: "project/selected", root: project.root }); }}>
+                  <span className="themis-sidebar-name">{project.name}</span>
+                  {projectBusy(project.root) && <span className="themis-project-busy" aria-hidden="true" />}
+                  <span className="themis-project-count">{(state.threadsByProject[project.root] ?? []).length}</span>
+                </button>
+              ))}
+              <hr />
+              <button type="button" className="themis-project-option" aria-label="New project" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); dispatch({ type: "ui/project-dialog", open: true }); }}>New project</button>
+              <button type="button" className="themis-project-option" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open folder…</button>
+              {activeProject && <button type="button" className="themis-project-option" aria-label={`Rename ${activeProject.name}`} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setRenaming({ root: activeProject.root, name: activeProject.name }); }}>Rename project</button>}
+            </div>
+          </details>
+          {activeProject && <>
+            {threadGroup("Needs you", needsYou)}
+            {threadGroup("Running", working)}
+            {threadGroup("Chats", shown, threads.length === 0 ? "No chats yet" : undefined)}
+            {others.length > shown.length && <button type="button" className="themis-show-more" onClick={() => setShowAll(true)}>Show {others.length - shown.length} more</button>}
+          </>}
         </div>
 
       </aside>
@@ -158,19 +187,24 @@ export function SidebarIcon({ name }: { name: SidebarIconName }) {
   </svg>;
 }
 
-function ThreadStatus({ thread }: { thread: ThreadInfo }) {
-  const { state } = useApp();
+type ThreadState = "Working" | "Needs approval" | "Failed" | "Stopped" | "Done" | "Idle" | "Interrupted";
+export function threadStatus(state: ReturnType<typeof useApp>["state"], thread: ThreadInfo): ThreadState {
   const messages = state.messages[thread.id] ?? [];
   const last = messages[messages.length - 1];
   const running = state.running[thread.id] ?? thread.running;
-  const status = running
+  return running
     ? state.approvals.some(approval => approval.thread_id === thread.id) ? "Needs approval" : "Working"
     : state.sendErrors[thread.id] || (last?.role === "system" && /^(Run failed:|Send failed:|Send rejected:)/.test(last.text)) ? "Failed"
     : last?.role === "system" && last.text.startsWith("Stopped by you.") ? "Stopped"
     : last?.incomplete ? "Idle"
     : last?.final ? "Done"
     : thread.recovered ? "Interrupted" : "Idle";
+}
+
+/** Only states that need attention or show live work get an indicator. */
+function ThreadStatus({ status }: { status: ThreadState }) {
+  if (status !== "Working" && status !== "Needs approval" && status !== "Failed") return null;
   return <span role="img" aria-label={status} title={status} className={`themis-thread-status themis-thread-status--${status.toLowerCase().replace(/ /g, "-")}`}>
-    {status === "Working" ? <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" /></svg> : status === "Done" ? "✓" : status === "Failed" || status === "Needs approval" ? "!" : status === "Stopped" || status === "Interrupted" ? "■" : "·"}
+    {status === "Working" ? <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" /></svg> : "!"}
   </span>;
 }

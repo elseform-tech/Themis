@@ -52,7 +52,9 @@ levels are listed.
   trace; the selected permission policy governs tool approvals (see below).
 - **⌘/Ctrl+K** opens the command palette: jump to threads and projects, or run
   actions (new thread, open project, toggle theme, open settings). **Esc** closes the topmost layer.
-- Hover or focus a sidebar thread and open its ⋮ menu to rename or remove it.
+- The sidebar shows the chosen project's chats only. Switch projects, create
+  or open one, or rename the current project from the project switcher at the top.
+  Hover or focus a chat and open its ⋮ menu to rename or remove it.
   Open the model pill at the top of the thread to choose a Go model and, when
   that model offers effort levels, the effort slider. A new chat shows a greeting,
   a centred composer and starter suggestions. The composer's **+** menu attaches
@@ -79,9 +81,11 @@ levels are listed.
   tidy-up and auto-compact thresholds. Near auto-compact during a run it turns
   warm and a one-time heads-up appears; afterwards a **Context compacted** divider
   shows the before → after usage. Nothing is deleted: originals stay on disk.
-- When a thread has changed files, **Review changes** in its header opens a side
-  panel: filter the file tree, tick **Viewed** per file to track progress, move
-  with J/K, and accept or discard files.
+- **Workspace** in a thread's header opens a read-only monitor of the project:
+  **Changes** (filterable changed files and their diff; tick **Viewed** to track
+  progress, J/K to move), **Files**, **Branches** and **Pull requests** (needs
+  the GitHub CLI signed in). Drag its edge to resize. It never changes files or
+  runs Git actions. The composer shows the project folder and current branch.
 
 Recent projects are remembered (max 10) and reopened automatically on launch;
 threads that were still running at shutdown are marked **recovered**. The last
@@ -293,7 +297,7 @@ Automation editors keep destination, timezone and enabled/paused status visible 
 
 After a backend event gap or reconnect, Themis reloads completed histories and pending approvals. Active streams keep their current live text and reconcile durable history when the run finishes; missed streaming fragments can remain absent until then. Failed recovery displays a warning and retries. Recovery preserves the selected conversation and local drafts.
 
-The collapsible sidebar includes **Recent**, showing the eight most recently active chats across open projects. It sits below Projects, with one-line chat titles, current status icons, and full titles/project names on hover. Drag the sidebar’s right edge to resize it between 240 and 560 px; the width is remembered. Focus the edge and use Left/Right arrows or Home/End to resize with the keyboard. Ordering uses saved conversation events and survives app restarts; opening a chat alone does not change its position, and empty chats remain in their project until they have activity.
+The collapsible sidebar lists the chosen project's chats, grouped as **Needs you**, **Running** and **Chats** (most recent first; older chats behind **Show more**). Projects with live work are marked in the switcher. Drag the sidebar’s right edge to resize it between 240 and 560 px; the width is remembered. Focus the edge and use Left/Right arrows or Home/End to resize with the keyboard. Ordering uses saved conversation events and survives app restarts; opening a chat alone does not change its position, and empty chats remain in their project until they have activity.
 
 Integrations keeps separate search and filter selections for Installed and Discover. Reset filters affects only the current view. Marketplace checks show the companion and real completed-check percentage, then reveal the checked catalog. Collapsed warnings expand to show compatibility limitations; unavailable local skills remain visible with their validation error.
 

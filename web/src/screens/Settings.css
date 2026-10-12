@@ -145,10 +145,10 @@
 .themis-settings { max-width: 820px; width: 100%; margin: 0 auto; padding: 28px 32px; gap: 24px; }
 .themis-settings-heading { display: flex; align-items: center; justify-content: space-between; }
 .themis-settings-heading h2 { font-size: 1.35rem; margin-bottom: 4px; }
-.themis-settings-tabs { display: flex; gap: 6px; }
-.themis-settings-tabs button { min-height: 36px; padding: 0 16px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-surface); color: var(--themis-text-2); font: inherit; font-size: .8125rem; white-space: nowrap; cursor: pointer; }
-.themis-settings-tabs button:hover { background: var(--themis-raised); color: var(--themis-text); }
-.themis-settings-tabs button[aria-current] { background: var(--themis-text); color: var(--themis-canvas); }
+.themis-settings-tabs { display: flex; gap: 18px; }
+.themis-settings-tabs button { padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; white-space: nowrap; cursor: pointer; }
+.themis-settings-tabs button:hover { color: var(--themis-text); }
+.themis-settings-tabs button[aria-current] { color: var(--themis-text); font-weight: 600; }
 .themis-settings-fields { border: 0; padding: 0; margin: 0; display: grid; gap: 26px; min-width: 0; }
 .themis-settings-section { border: 0; background: var(--themis-sidebar-bg); padding: 20px 22px; border-radius: var(--themis-radius-card); gap: 14px; }
 .themis-settings-subtitle { text-transform: none; letter-spacing: 0; color: var(--themis-text); font-size: .875rem; }

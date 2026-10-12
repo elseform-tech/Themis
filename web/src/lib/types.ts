@@ -263,6 +263,22 @@ export interface DiffState {
   files: DiffFile[];
 }
 
+/** Read-only workspace monitor data (no git writes). */
+export interface BranchInfo { name: string; current: boolean; upstream: string | null; track: string | null; updated: string | null }
+export interface PullRequestInfo { number: number; title: string; branch: string; state: string; draft: boolean; url: string }
+export interface WorkspaceInfo {
+  root: string;
+  name: string;
+  is_git: boolean;
+  branch: string | null;
+  branches: BranchInfo[];
+  pull_requests: PullRequestInfo[];
+  pull_requests_unavailable: string | null;
+}
+export interface DirEntry { name: string; path: string; is_dir: boolean; size: number | null }
+export interface DirListing { path: string; entries: DirEntry[]; truncated: boolean }
+export interface FileView { path: string; content: string | null; size: number; truncated: boolean; binary: boolean }
+
 export interface ThreadComment {
   id: string;
   path: string;

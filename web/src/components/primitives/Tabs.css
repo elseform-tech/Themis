@@ -1,6 +1,6 @@
-/* Pill tabs: the active tab is a filled light pill. */
-.themis-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
-.themis-tab { min-height: 36px; padding: 0 16px; border: 0; border-radius: var(--themis-radius-pill, 999px); background: var(--themis-surface); color: var(--themis-text-2); font-family: inherit; font-size: .8125rem; font-weight: 500; cursor: pointer; }
-.themis-tab:hover:not(:disabled) { color: var(--themis-text); background: var(--themis-raised); }
-.themis-tab--active, .themis-tab--active:hover:not(:disabled) { background: var(--themis-text); color: var(--themis-canvas); }
+/* Unboxed tabs: the active tab is bright and bold. */
+.themis-tabs { display: flex; flex-wrap: wrap; gap: 18px; }
+.themis-tab { padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font-family: inherit; font-size: .8125rem; font-weight: 500; cursor: pointer; }
+.themis-tab:hover:not(:disabled) { color: var(--themis-text); }
+.themis-tab--active, .themis-tab--active:hover:not(:disabled) { color: var(--themis-text); font-weight: 600; }
 .themis-tab:disabled { opacity: .5; cursor: not-allowed; }

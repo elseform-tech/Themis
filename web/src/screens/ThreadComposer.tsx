@@ -30,6 +30,8 @@ interface ThreadComposerProps {
   permissionSaving?: boolean;
   onApprovalModeChange?: (mode: "custom" | "yolo") => void;
   budget?: ContextBudget;
+  /** Project directory and current Git branch shown beside the composer controls. */
+  location?: { name: string; root: string; branch: string | null };
   compacting?: boolean;
   /** Centred, larger composer for an empty conversation. */
   hero?: boolean;
@@ -59,6 +61,7 @@ export function ThreadComposer({
   budget,
   compacting = false,
   hero = false,
+  location,
 }: ThreadComposerProps) {
   const stopAction = useRef(onStop);
   stopAction.current = onStop;
@@ -129,6 +132,7 @@ export function ThreadComposer({
               <label><select aria-label="Approval mode" value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
             </div>
           </details>
+
           <span className="themis-composer-spacer" />
           <ContextMeter budget={budget} compacting={compacting} running={running} />
           {running ? (
@@ -159,6 +163,11 @@ export function ThreadComposer({
             </Button>
           )}
         </div>
+        {location && <div className="themis-composer-location" title={location.root}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
+            <span>{location.name}</span>
+            {location.branch && <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg><span className="themis-composer-branch">{location.branch}</span></>}
+          </div>}
       </div>
     </>
   );

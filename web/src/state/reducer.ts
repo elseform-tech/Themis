@@ -480,7 +480,8 @@ export function reducer(state: AppState, action: AppAction): AppState {
       };
     }
     case "project/selected": {
-      const threads = state.threadsByProject[action.root] ?? [];
+      // Without a selection in this project, open its most recently active chat.
+      const threads = [...(state.threadsByProject[action.root] ?? [])].sort((a, b) => (b.last_activity_seq ?? 0) - (a.last_activity_seq ?? 0));
       return {
         ...state,
         activeProjectRoot: action.root,

@@ -1,11 +1,11 @@
-/* Pill buttons: primary is the accent fill, ghost and danger are quiet until hovered. */
-.themis-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: var(--themis-radius-pill, 999px); font-family: inherit; font-weight: 500; cursor: pointer; transition: background-color 0.12s ease, color 0.12s ease; }
-.themis-button--medium { min-height: 40px; padding: 0 18px; font-size: 0.875rem; }
-.themis-button--small { min-height: 32px; padding: 0 12px; font-size: 0.8125rem; }
-.themis-button--primary { background: var(--themis-accent); color: var(--themis-accent-ink); }
-.themis-button--primary:hover:not(:disabled) { background: var(--themis-accent-hover); }
-.themis-button--ghost { background: transparent; color: var(--themis-text); font-weight: 400; }
-.themis-button--ghost:hover:not(:disabled) { background: var(--themis-nav-hover-bg); }
-.themis-button--danger { background: transparent; color: var(--themis-danger); }
-.themis-button--danger:hover:not(:disabled) { background: color-mix(in srgb, var(--themis-danger) 14%, transparent); }
-.themis-button:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Unboxed buttons: text and icon only. Primary uses the accent color, danger the danger color. */
+.themis-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 8px; background: transparent; font-family: inherit; font-weight: 500; cursor: pointer; transition: color 0.12s ease; }
+.themis-button--medium { min-height: 36px; padding: 0 8px; font-size: 0.875rem; }
+.themis-button--small { min-height: 30px; padding: 0 6px; font-size: 0.8125rem; }
+.themis-button--primary { color: var(--themis-accent); font-weight: 600; }
+.themis-button--primary:hover:not(:disabled) { color: var(--themis-accent-hover); }
+.themis-button--ghost { color: var(--themis-text-2); font-weight: 400; }
+.themis-button--ghost:hover:not(:disabled) { color: var(--themis-text); }
+.themis-button--danger { color: var(--themis-danger); }
+.themis-button--danger:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 4px; }
+.themis-button:disabled { opacity: 0.45; cursor: not-allowed; }
