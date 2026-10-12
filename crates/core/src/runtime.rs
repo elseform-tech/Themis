@@ -2523,6 +2523,67 @@ async fn execute_call(
     outcome
 }
 
+/// Entry points for the `fuzz/` cargo-fuzz targets; not a stable API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// Restores `history` as an earlier assistant turn (possibly a checkpoint
+    /// with ledger blocks), adds one tool call returning `output`, and renders
+    /// the ledger within `total` bytes.
+    pub fn restore_ledger(
+        history: &str,
+        tool: &str,
+        arguments: &str,
+        output: &str,
+        total: usize,
+    ) -> String {
+        let mut messages = initial_messages(
+            vec![ConversationTurn {
+                role: ConversationRole::Assistant,
+                text: history.to_owned(),
+            }],
+            "Continue".to_owned(),
+        );
+        let call = |arguments: &str| ToolCall {
+            id: "fuzz".into(),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: tool.into(),
+                arguments: arguments.into(),
+            },
+        };
+        messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(vec![call(arguments)]),
+            content: String::new(),
+        });
+        messages.push(ChatMessage {
+            role: ChatRole::Tool,
+            message_type: MessageType::ToolResult(vec![call(output)]),
+            content: String::new(),
+        });
+        ledger::render(
+            &messages,
+            messages.len(),
+            ledger::Budget {
+                total,
+                actions: total / 2,
+            },
+            None,
+        )
+    }
+
+    /// Characters kept by the summary truncation helper.
+    pub fn char_prefix(input: &str, limit: usize) -> (String, bool) {
+        take_char_prefix(input, limit)
+    }
+
+    /// The ledger's framing markers.
+    pub const LEDGER_MARKERS: (&str, &str) = (ledger::START, ledger::END);
+}
+
 #[cfg(test)]
 mod tests {
     fn ledger_text(
@@ -3274,6 +3335,25 @@ mod tests {
         }
     }
     use super::*;
+
+    proptest::proptest! {
+        /// Truncation keeps whole characters and reports exactly when text was cut.
+        #[test]
+        fn char_prefix_keeps_whole_characters(input in proptest::prelude::any::<String>(), limit in 0usize..64) {
+            let (prefix, truncated) = take_char_prefix(&input, limit);
+            proptest::prop_assert!(input.starts_with(&prefix));
+            proptest::prop_assert_eq!(prefix.chars().count(), input.chars().count().min(limit));
+            proptest::prop_assert_eq!(truncated, input.chars().count() > limit);
+        }
+
+        /// Tool summaries stay one bounded line for any name and arguments.
+        #[test]
+        fn call_summaries_stay_bounded(name in "[a-z_]{1,20}", args in proptest::prelude::any::<String>()) {
+            let summary = summarize_call(&name, &args);
+            proptest::prop_assert!(summary.chars().count() <= 201);
+            proptest::prop_assert!(!summary.contains('\n'));
+        }
+    }
     use crate::tools::FnHook;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

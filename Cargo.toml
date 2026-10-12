@@ -1,3 +1,5 @@
 [workspace]
 resolver = "2"
 members = ["crates/core", "crates/desktop"]
+# cargo-fuzz targets build separately on nightly.
+exclude = ["fuzz"]

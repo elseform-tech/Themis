@@ -24,7 +24,12 @@ zeroize = "1"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# Exposes internal parsers to the `fuzz/` cargo-fuzz targets; never enabled in releases.
+fuzzing = []
+
 [dev-dependencies]
+proptest = "1"
 tempfile = "3"
 wiremock = "0.6"
 

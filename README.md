@@ -24,7 +24,7 @@ Docs: [user guide](docs/user-guide.md) · [sandbox model](docs/sandbox.md) ·
 [configuration and diagnostics](docs/configuration.md) · [context and attachments](docs/context-and-attachments.md) ·
 [plugins and skills](docs/plugins.md) · [automations](docs/automations.md) ·
 [UI rules](docs/ui-rules.md) · [appearance](docs/appearance.md) ·
-[distribution guide](docs/maintainer-distribution.md). Verification records live in
+[property tests and fuzzing](docs/fuzzing.md) · [distribution guide](docs/maintainer-distribution.md). Verification records live in
 [docs/verification](docs/verification).
 
 ## Layout

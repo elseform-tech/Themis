@@ -1193,6 +1193,68 @@ pub async fn refresh_go_models(base_url: &str, api_key: &str) -> Result<Vec<Stri
     Ok(parsed.data.into_iter().map(|entry| entry.id).collect())
 }
 
+/// Entry points for the `fuzz/` cargo-fuzz targets; not a stable API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// Request bodies (one per wire protocol) for a history whose tool call
+    /// carries `raw` model arguments.
+    pub fn outgoing_bodies(raw: &str) -> Vec<serde_json::Value> {
+        let call = |arguments: &str| autoagents::llm::ToolCall {
+            id: "fuzz".into(),
+            call_type: "function".into(),
+            function: autoagents::llm::FunctionCall {
+                name: "shell".into(),
+                arguments: arguments.into(),
+            },
+        };
+        let messages = [
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(vec![call(raw)]),
+                content: String::new(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(vec![call("result")]),
+                content: String::new(),
+            },
+        ];
+        [
+            "mimo-v2.6-flash",
+            "muse-spark-1.3-contributor",
+            "claude-haiku-4-5",
+        ]
+        .into_iter()
+        .map(|model| {
+            let provider = CompatibleProvider::go("fuzz".into(), model.into(), None, None);
+            let request = provider
+                .chat_request(&messages, None, true, None)
+                .expect("request")
+                .build()
+                .expect("build");
+            serde_json::from_slice(
+                request
+                    .body()
+                    .and_then(|body| body.as_bytes())
+                    .unwrap_or_default(),
+            )
+            .expect("request body is JSON")
+        })
+        .collect()
+    }
+
+    /// Feeds one provider JSON value through every response and stream converter.
+    pub fn convert_provider_json(value: serde_json::Value) {
+        let _ = wire::responses_response(value.clone());
+        let _ = wire::messages_response(value.clone());
+        let _ = wire::responses_stream_event(value.clone());
+        let _ = wire::messages_stream_event(value);
+    }
+}
+
 #[cfg(test)]
 // The env-serializing mutex is deliberately held across awaits: process env is
 // global, so the guard must span the whole test. Test-only, single lock, no
@@ -2438,6 +2500,70 @@ mod tests {
         let requests = server.received_requests().await.unwrap();
         let body: Value = requests[0].body_json().unwrap();
         assert_eq!(body["tools"][0]["function"]["name"], "read_file");
+    }
+
+    /// Builds one request carrying a model tool call with `raw` arguments and
+    /// returns the outgoing tool input, decoded as JSON.
+    fn outgoing_tool_input(model: &str, raw: &str) -> Value {
+        let call = |arguments: &str| ToolCall {
+            id: "call".into(),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: "shell".into(),
+                arguments: arguments.into(),
+            },
+        };
+        let messages = [
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(vec![call(raw)]),
+                content: String::new(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(vec![call("result")]),
+                content: String::new(),
+            },
+        ];
+        let provider = CompatibleProvider::go("synthetic".into(), model.into(), None, None);
+        let request = provider
+            .chat_request(&messages, None, true, None)
+            .unwrap()
+            .build()
+            .unwrap();
+        let body: Value =
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        if provider.uses_responses() {
+            serde_json::from_str(body["input"][0]["arguments"].as_str().unwrap()).unwrap()
+        } else if provider.uses_messages() {
+            body["messages"][0]["content"][0]["input"].clone()
+        } else {
+            serde_json::from_str(
+                body["messages"][0]["tool_calls"][0]["function"]["arguments"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap()
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(128))]
+        /// Whatever a model sends as tool arguments, every protocol's next
+        /// request carries a JSON object: valid objects unchanged, anything
+        /// else wrapped with its exact original text.
+        #[test]
+        fn any_tool_arguments_encode_as_a_json_object(raw in proptest::prelude::any::<String>(), object in proptest::option::of(proptest::collection::btree_map("[a-z]{1,6}", "[ -~]{0,12}", 0..4))) {
+            let raw = object.map_or(raw, |object| serde_json::to_string(&object).unwrap());
+            for model in ["mimo-v2.6-flash", "muse-spark-1.3-contributor", "claude-haiku-4-5"] {
+                let input = outgoing_tool_input(model, &raw);
+                proptest::prop_assert!(input.is_object(), "{model}: {input}");
+                match serde_json::from_str::<Value>(&raw) {
+                    Ok(original) if original.is_object() => proptest::prop_assert_eq!(&input, &original),
+                    _ => proptest::prop_assert_eq!(&input["_themis_rejected_tool_arguments"], &Value::String(raw.clone())),
+                }
+            }
+        }
     }
 
     #[tokio::test]

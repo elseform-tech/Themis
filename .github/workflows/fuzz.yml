@@ -1,0 +1,46 @@
+name: fuzz
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: "300"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Install Linux Tauri dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      # Safe Rust targets look for panics and broken invariants, so no sanitizer.
+      - name: Build fuzz targets
+        run: cargo fuzz build --sanitizer none
+        working-directory: fuzz
+      - name: Run each target
+        if: github.event_name != 'pull_request'
+        working-directory: fuzz
+        run: |
+          for target in $(cargo fuzz list); do
+            cargo fuzz run --sanitizer none "$target" -- \
+              -max_total_time=${{ github.event.inputs.seconds || '300' }} -rss_limit_mb=4096
+          done
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
