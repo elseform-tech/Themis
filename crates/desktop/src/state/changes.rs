@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::diff::{
     git_diff_cached, git_diff_head, git_diff_worktree, git_head, git_untracked, is_git_repo,
-    untracked_diff_file, MAX_DIFF_FILES,
+    is_readable_change, untracked_diff_file, MAX_DIFF_FILES,
 };
 use crate::types::{DiffState, MergeResult};
 use crate::worktree;
@@ -76,13 +76,19 @@ impl AppState {
                 files: Vec::new(),
             });
         }
+        let mut hidden = 0usize;
         let mut files = tracked_diff_files(&root)?;
         let mut seen: HashSet<String> = files.iter().map(|file| file.path.clone()).collect();
         for relative in git_untracked(&root)? {
-            if seen.insert(relative.clone()) {
+            if seen.insert(relative.clone()) && is_readable_change(&root, &relative) {
                 files.push(untracked_diff_file(&root, &relative));
+            } else if !files.iter().any(|file| file.path == relative) {
+                hidden += 1;
             }
         }
+        let before = files.len();
+        files.retain(|file| is_readable_change(&root, &file.path));
+        hidden += before - files.len();
         for file in &mut files {
             file.preexisting = preexisting.contains(&file.path)
                 || file
@@ -91,14 +97,20 @@ impl AppState {
                     .is_some_and(|old| preexisting.contains(old));
         }
         let total = files.len();
-        let reason = if total > MAX_DIFF_FILES {
+        let mut notes = Vec::new();
+        if total > MAX_DIFF_FILES {
             files.truncate(MAX_DIFF_FILES);
-            Some(format!(
+            notes.push(format!(
                 "truncated: showing {MAX_DIFF_FILES} of {total} changed files"
-            ))
-        } else {
-            None
-        };
+            ));
+        }
+        if hidden > 0 {
+            notes.push(format!(
+                "{hidden} binary or generated file{} hidden",
+                if hidden == 1 { "" } else { "s" }
+            ));
+        }
+        let reason = (!notes.is_empty()).then(|| notes.join(" · "));
         Ok(DiffState {
             available: true,
             reason,

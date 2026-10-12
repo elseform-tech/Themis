@@ -1,0 +1,7 @@
+.themis-switch { position: relative; flex: none; width: 34px; height: 20px; margin: 0; border-radius: 10px; background: var(--themis-border); appearance: none; cursor: pointer; transition: background 160ms ease; }
+.themis-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--themis-text); transition: transform 160ms ease; }
+.themis-switch:checked { background: var(--themis-accent); }
+.themis-switch:checked::after { background: var(--themis-accent-ink); transform: translateX(14px); }
+.themis-switch:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 2px; }
+.themis-switch:disabled { opacity: .5; cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) { .themis-switch, .themis-switch::after { transition: none; } }

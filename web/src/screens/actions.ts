@@ -16,7 +16,6 @@ import {
   trackRecentRoot,
   useApp,
 } from "../state/store";
-import { pickProjectDirectory } from "./projectPick";
 
 export { trackRecentRoot };
 
@@ -30,36 +29,6 @@ async function loadThreadsInto(
   } catch (error: unknown) {
     toast(dispatch, `Failed to list threads: ${describeError(error)}`, "warning");
   }
-}
-
-export function useOpenProject(): () => Promise<void> {
-  const { state, dispatch } = useApp();
-  return useCallback(async () => {
-    const picked = await pickProjectDirectory();
-    if (picked.kind === "cancelled") return;
-    if (picked.kind === "unavailable") {
-      toast(dispatch, "The folder picker is unavailable. Please retry opening the desktop app.", "warning");
-      return;
-    }
-    try {
-      const project = await openProject(picked.path);
-      dispatch({ type: "project/opened", project });
-      toast(dispatch, `Opened ${project.name}`, "success");
-      await loadThreadsInto(dispatch, project.root);
-      const recent_roots = trackRecentRoot(
-        state.settings.recent_roots,
-        project.root,
-      );
-      try {
-        const settings = await updateSettings({ recent_roots });
-        dispatch({ type: "settings/patched", settings });
-      } catch {
-        // Non-fatal: the project is open; recents just won't persist.
-      }
-    } catch (error: unknown) {
-      toast(dispatch, `Failed to open project: ${describeError(error)}`, "danger");
-    }
-  }, [state.settings.recent_roots, dispatch]);
 }
 
 /** Reopen a project root directly (recent-roots list, restore flow). */

@@ -43,7 +43,7 @@ const KEYWORDS: Record<string, readonly string[]> = {
   ],
 };
 
-function normalizeLanguage(language: string | undefined): string {
+export function normalizeLanguage(language: string | undefined): string {
   const lang = (language ?? "").trim().toLowerCase();
   if (lang === "js" || lang === "javascript" || lang === "jsx") return "ts";
   if (lang === "ts" || lang === "typescript" || lang === "tsx") return "ts";

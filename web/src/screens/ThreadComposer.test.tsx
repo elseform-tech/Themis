@@ -21,7 +21,7 @@ const thread: ThreadInfo = {
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
 function composer(running:boolean,draft="",composerDisabled=running) {
   const onStop=vi.fn(),onSend=vi.fn();
-  const props={thread,draft,models:[],effortLevels:[],effort:"",composerDisabled,composerBusy:running,readOnly:false,running,stopping:false,switching:false,sendError:undefined,secretConfigured:true,onDraftChange:vi.fn(),onSend,onStop,onNewThread:vi.fn(),onProviderChange:vi.fn(),onEffortChange:vi.fn(),onOpenSettings:vi.fn(),skills:[{id:"review",name:"Review",description:"Review",plugin:"review"}],plugins:[{id:"g--drive",name:"Drive",description:"Drive",origin:"Global",enabled:true}]};
+  const props={thread,draft,composerDisabled,readOnly:false,running,stopping:false,sendError:undefined,secretConfigured:true,onDraftChange:vi.fn(),onSend,onStop,onNewThread:vi.fn(),onOpenSettings:vi.fn(),skills:[{id:"review",name:"Review",description:"Review",plugin:"review"}],plugins:[{id:"g--drive",name:"Drive",description:"Drive",origin:"Global",enabled:true}]};
   return {...render(<ThreadComposer {...props} />),onStop,onSend,props};
 }
 
@@ -120,23 +120,16 @@ describe("ThreadComposer", () => {
       <ThreadComposer
         thread={thread}
         draft="hello"
-        models={[]}
-        effortLevels={["low", "medium", "high"]}
-        effort=""
         composerDisabled={false}
-        composerBusy={false}
         readOnly={false}
         running={false}
         stopping={false}
-        switching={false}
         sendError={undefined}
         secretConfigured
         onDraftChange={vi.fn()}
         onSend={onSend}
         onStop={vi.fn()}
         onNewThread={vi.fn()}
-        onProviderChange={vi.fn()}
-        onEffortChange={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     );

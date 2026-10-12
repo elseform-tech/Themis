@@ -29,6 +29,7 @@ export type {
   ToastsProps,
 } from "./primitives/Toasts";
 export { EmptyState } from "./primitives/EmptyState";
+export { Switch } from "./primitives/Switch";
 export type { EmptyStateProps } from "./primitives/EmptyState";
 export { BudgetMeter } from "./primitives/BudgetMeter";
 export type { BudgetMeterProps } from "./primitives/BudgetMeter";
@@ -37,7 +38,7 @@ export { CodeBlock, tokenizeLine } from "./CodeBlock";
 export type { CodeBlockProps } from "./CodeBlock";
 
 export { DiffView } from "./diff/DiffView";
-export type { DiffMode, DiffViewProps } from "./diff/DiffView";
+export type { DiffViewProps } from "./diff/DiffView";
 export { FileTree } from "./diff/FileTree";
 export type { FileTreeProps } from "./diff/FileTree";
 

@@ -51,6 +51,14 @@ impl AppState {
                     .to_owned(),
             );
         }
+        // What already differs from HEAD before this run, so the end of the run
+        // can report only the files this turn changed.
+        let changes_before = {
+            let root = snapshot.work_root.clone();
+            tokio::task::spawn_blocking(move || crate::diff::change_fingerprint(&root))
+                .await
+                .unwrap_or_default()
+        };
         let stopped = self
             .inner
             .stop_flags
@@ -306,6 +314,7 @@ impl AppState {
             let terminated = Arc::new(AtomicBool::new(false));
             let pump_terminated = Arc::clone(&terminated);
             let run_model = snapshot.model.clone();
+            let pump_root = snapshot.work_root.clone();
             let pump = tokio::spawn(async move {
                 let mut pending_text = String::new();
                 while let Some(event) = events_rx.recv().await {
@@ -351,6 +360,30 @@ impl AppState {
                             | themis_core::runtime::RunEvent::Incomplete { .. }
                             | themis_core::runtime::RunEvent::Failed { .. }
                     );
+                    if terminal {
+                        let root = pump_root.clone();
+                        let before = changes_before.clone();
+                        let files = tokio::task::spawn_blocking(move || {
+                            crate::diff::changed_between(
+                                &root,
+                                &before,
+                                &crate::diff::change_fingerprint(&root),
+                            )
+                        })
+                        .await
+                        .unwrap_or_default();
+                        if !files.is_empty() {
+                            let changed = ThreadEventEnvelope {
+                                thread_id: pump_thread.clone(),
+                                run_id: pump_run.clone(),
+                                event: ThreadEvent::FilesChanged { files },
+                            };
+                            if let Err(error) = pump_state.inner.transcript.append_event(&changed) {
+                                pump_state.record_error("save_thread_event", error);
+                            }
+                            pump_sink.emit_thread_event(&changed);
+                        }
+                    }
                     let mut captured_event = ThreadEvent::from(event.clone());
                     if let ThreadEvent::Finished { model, .. }
                     | ThreadEvent::Incomplete { model, .. } = &mut captured_event

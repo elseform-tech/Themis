@@ -103,6 +103,33 @@ describe("thread lifecycle events", () => {
     s = applyThreadEvent(s, envelope({ kind: "failed", error: "summary failed" }));
     expect(s.compacting[THREAD.id]).toBe(false);
   });
+  const last = (state: AppState) => { const rows = state.messages[THREAD.id]!; return rows[rows.length - 1]!; };
+  it("tracks context budgets and records a checkpoint divider with before and after usage", () => {
+    const budget = (used: number) => ({ budget_tokens: 24000, usable_tokens: 10000, used_tokens: used, tool_definition_tokens: 3000, output_reserve_tokens: 3000, safety_margin_tokens: 480, maintenance_at_tokens: 8300, compaction_at_tokens: 9000, compaction_soon: used > 8500, breakdown: { system: 1000, checkpoint: 0, attachments: 0, conversation: 1000, tool_activity: used - 2000 } });
+    let s = withThread();
+    s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 10 }));
+    s = applyThreadEvent(s, envelope({ kind: "context_budget", budget: budget(9100) }));
+    expect(s.contextBudgets[THREAD.id]?.compaction_soon).toBe(true);
+    s = applyThreadEvent(s, envelope({ kind: "context_compacting" }));
+    s = applyThreadEvent(s, envelope({ kind: "context_checkpoint", summary: "state" }));
+    const divider = last(s);
+    expect(divider.checkpoint).toEqual({ before: 91 });
+    s = applyThreadEvent(s, envelope({ kind: "context_budget", budget: budget(3100) }));
+    expect(last(s).checkpoint).toEqual({ before: 91, after: 31 });
+    s = applyThreadEvent(s, envelope({ kind: "context_budget", budget: budget(4000) }));
+    expect(last(s).checkpoint).toEqual({ before: 91, after: 31 });
+    expect(s.contextBudgets[THREAD.id]?.used_tokens).toBe(4000);
+  });
+  it("attaches the files a turn changed to that turn's final reply only", () => {
+    let s = withThread();
+    s = applyThreadEvent(s, envelope({ kind: "started", task: "edit", max_turns: 3 }));
+    s = applyThreadEvent(s, envelope({ kind: "files_changed", files: [{ path: "src/app.py", status: "modified" }, { path: "notes.md", status: "added" }] }));
+    s = applyThreadEvent(s, envelope({ kind: "finished", result: "Done." }));
+    expect(s.messages[THREAD.id]?.slice(-1)[0]?.changedFiles).toEqual([{ path: "src/app.py", status: "modified" }, { path: "notes.md", status: "added" }]);
+    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "next-run", event: { kind: "started", task: "chat", max_turns: 1 } });
+    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "next-run", event: { kind: "finished", result: "No edits." } });
+    expect(s.messages[THREAD.id]?.slice(-1)[0]?.changedFiles).toBeUndefined();
+  });
   it("shows an older incomplete handoff as a normal final reply", () => {
     let s = withThread();
     s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 1 }));

@@ -12,7 +12,7 @@ export const FONT_OPTIONS = [
 // Frame, canvas, surface, raised, border, text, secondary text, accent.
 // Sidebar sits between the frame and canvas in brightness.
 export const APPEARANCE_PRESETS = [
-  { id: "system", name: "Themis", font: "system", sidebar: "#22262c", colors: ["#343840", "#14171c", "#262830", "#30323b", "#3b3d46", "#e8eaf0", "#a1aaba", "#d9a73e"] },
+  { id: "system", name: "Themis", font: "system", sidebar: "#1c1d20", colors: ["#232427", "#131314", "#1f2023", "#282a2d", "#34363b", "#e6e6e6", "#a8abb2", "#d9a73e"] },
   { id: "github-dark", name: "GitHub Dark", font: "system", sidebar: "#161b22", colors: ["#21262d", "#010409", "#161b22", "#21262d", "#30363d", "#e6edf3", "#9da7b3", "#79c0ff"] },
   { id: "github-dimmed", name: "GitHub Dimmed", font: "system", sidebar: "#2d333b", colors: ["#373e47", "#1c2128", "#2d333b", "#373e47", "#444c56", "#d1d9e0", "#a1acb9", "#8ddbff"] },
   { id: "midnight", name: "Midnight", font: "sans", sidebar: "#121a2d", colors: ["#1c2942", "#0b1020", "#121a2d", "#1c2942", "#33435e", "#e2e9f6", "#a4b3cb", "#a6b9ff"] },

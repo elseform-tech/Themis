@@ -12,7 +12,7 @@ use common::{git, git_available, init_repo, mount_scripted_llm};
 
 use themis_desktop::sink::{ChannelSink, TestEvent};
 use themis_desktop::state::AppState;
-use themis_desktop::types::{ApprovalDecision, ProviderKind, ThreadEvent};
+use themis_desktop::types::{ApprovalDecision, DiffStatus, ProviderKind, ThreadEvent};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Overall deadline for an LLM-driven run (fail fast instead of hanging on
@@ -87,7 +87,12 @@ async fn drive_run(
 fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
     events
         .iter()
-        .filter(|event| !matches!(event, ThreadEvent::ContextUsage { .. }))
+        .filter(|event| {
+            !matches!(
+                event,
+                ThreadEvent::ContextUsage { .. } | ThreadEvent::ContextBudget { .. }
+            )
+        })
         .map(|event| match event {
             ThreadEvent::Started { .. } => "started",
             ThreadEvent::AssistantText { .. } => "assistant_text",
@@ -99,8 +104,11 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::ContextCheckpoint { .. } => "context_checkpoint",
             ThreadEvent::ContextSuspended { .. } => "context_suspended",
             ThreadEvent::ContextCompacting => "context_compacting",
-            ThreadEvent::ContextUsage { .. } => unreachable!("metadata filtered above"),
+            ThreadEvent::ContextUsage { .. } | ThreadEvent::ContextBudget { .. } => {
+                unreachable!("metadata filtered above")
+            }
             ThreadEvent::Incomplete { .. } => "incomplete",
+            ThreadEvent::FilesChanged { .. } => "files_changed",
         })
         .collect()
 }
@@ -157,7 +165,12 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
     let events = run
         .events
         .iter()
-        .filter(|event| !matches!(event, ThreadEvent::ContextUsage { .. }))
+        .filter(|event| {
+            !matches!(
+                event,
+                ThreadEvent::ContextUsage { .. } | ThreadEvent::ContextBudget { .. }
+            )
+        })
         .collect::<Vec<_>>();
     let kinds = event_kinds(&run.events);
     // The final turn emits its text as `assistant_text`, then `finished`.
@@ -169,9 +182,21 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
             "approval_decided",
             "tool_finished",
             "assistant_text",
+            "files_changed",
             "finished",
         ],
         "{kinds:?}"
+    );
+    // The turn reports the file it wrote, just before it finishes.
+    let ThreadEvent::FilesChanged { files } = events[5] else {
+        panic!("expected files_changed, got {:?}", events[5]);
+    };
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.status))
+            .collect::<Vec<_>>(),
+        vec![("hello.txt", DiffStatus::Added)]
     );
     let ThreadEvent::ToolStarted { tool, .. } = events[1] else {
         panic!("expected tool_started, got {:?}", events[1]);

@@ -119,6 +119,7 @@ mod tests {
             dir.path().join("threads.json"),
             Arc::new(UnavailableReadStore),
             dir.path().join("projects"),
+            dir.path().join("trash"),
         );
         let (sink, _) = crate::sink::ChannelSink::channel();
         let result = crate::server::dispatch(
@@ -165,6 +166,7 @@ mod tests {
             dir.path().join("threads.json"),
             Arc::new(SlowReadStore(std::time::Duration::from_secs(31))),
             dir.path().join("projects"),
+            dir.path().join("trash"),
         );
         let (sink, _) = crate::sink::ChannelSink::channel();
         let result = crate::server::dispatch(
@@ -190,6 +192,7 @@ mod tests {
             dir.path().join("threads.json"),
             Arc::new(SlowReadStore(std::time::Duration::from_millis(150))),
             dir.path().join("projects"),
+            dir.path().join("trash"),
         );
         for status in [true, false] {
             let lookup = tokio::spawn({
@@ -221,6 +224,7 @@ mod tests {
             dir.path().join("threads.json"),
             Arc::new(SlowReadStore(std::time::Duration::from_millis(150))),
             dir.path().join("projects"),
+            dir.path().join("trash"),
         );
         let project = dir.path().join("project");
         std::fs::create_dir(&project).unwrap();

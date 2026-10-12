@@ -23,6 +23,15 @@ Read [docs/configuration.md](docs/configuration.md) and [docs/plugins.md](docs/p
 - Maintenance must preserve delivered ordinary observations (including plain reads, shell and MCP results) until semantic summarization consumes them. Offloading invocation arguments must retain original/recovery classification without granting permissions. Check net savings before publishing maintenance snapshots; cover mixed protected/redundant batches and retained checkpoint tails in provider-wire and shared CLI regressions.
 - Add focused shared-server/CLI regression checks for backend changes and browser/native checks for UI changes. Update the configuration, integration, and user guides with changed fields, limits, scope, and behavior. Label benchmark audits separately from automatic runtime checks; preserve ongoing live tests.
 
+## Desktop UI
+
+Follow [docs/ui-rules.md](docs/ui-rules.md) and [DESIGN.md](DESIGN.md) for layout, tokens and approved treatments.
+
+- Workspace is a read-only monitor of what agents write: no accept, discard, merge, commit, push or other state-changing Git actions. File and directory reads stay bounded and inside the project; the change list shows only readable text files.
+- Per-turn edited files come from the backend `files_changed` event (before/after fingerprints of readable changes), not from parsing tool summaries.
+- Deleting a project moves its folder to the Trash and never deletes in place; the built-in Themis project cannot be deleted. Projects live in the fixed projects folder, so there is no folder-picker flow.
+- The Bubbles companion is an assistant, not a persistent agent; keep its speech to the documented state notes.
+
 ## Build, Test, and Development
 
 Run from the repository root:

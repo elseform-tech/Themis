@@ -36,9 +36,10 @@ may not inherit environment variables exported by your shell.
 
 **Key available** reports presence only. Settings loads the Go model catalog
 automatically and lets you select a default model; **Refresh models** reloads it.
-New Go threads use `muse-spark-1.3-contributor` by default. The composer lists
-models available to the connected Go account. Its effort control uses the
-selected model's catalog levels and stays visible when no levels are listed.
+New Go threads use `muse-spark-1.3-contributor` by default. The model pill at
+the top of each thread lists models available to the connected Go account. Its
+effort slider uses the selected model's catalog levels and stays visible when no
+levels are listed.
 
 ## Projects, threads, runs
 
@@ -51,9 +52,14 @@ selected model's catalog levels and stays visible when no levels are listed.
   trace; the selected permission policy governs tool approvals (see below).
 - **⌘/Ctrl+K** opens the command palette: jump to threads and projects, or run
   actions (new thread, open project, toggle theme, open settings). **Esc** closes the topmost layer.
-- Hover or focus a sidebar thread to edit its name or remove it.
-  Select a Go model in the composer and use the horizontal effort slider when
-  that model offers effort levels. Tool calls appear inline
+- The sidebar shows the chosen project's chats only. Switch projects, create
+  or open one, or rename the current project from the project switcher at the top.
+  Hover or focus a chat and open its ⋮ menu to rename or remove it.
+  Open the model pill at the top of the thread to choose a Go model and, when
+  that model offers effort levels, the effort slider. A new chat shows a greeting,
+  a centred composer and starter suggestions. The composer's **+** menu attaches
+  files or inserts `/` (skill) and `@` (plugin). Run activity collapses into
+  **Show thinking** chips; completed replies offer **Copy**. Tool calls appear inline
   in the conversation with a chevron, expandable input/output and completion status.
   Public text streams as it arrives. Related updates and tool calls sit inside
   milestone groups; the current group opens while completed groups collapse.
@@ -64,11 +70,22 @@ selected model's catalog levels and stays visible when no levels are listed.
 - **⌘/Ctrl+B** collapses or pins the sidebar. Hovering at the left edge reveals
   an overlay after 300 ms. It closes 700 ms after leaving, unless focus is inside.
   Hover reveal can be disabled in Appearance. A visible button always reopens it.
-- Threads appear under their project. Rename long titles with the pencil beside the sidebar thread.
+- Threads appear under their project. Rename long titles from the thread's ⋮ menu.
   Drafts, selection and scroll positions restore locally. Conversation turns and
   completed tool events restore from SQLite.
 - Enter or ⌘/Ctrl+Enter sends; Shift+Enter inserts a newline.
-  ⌘/Ctrl+Shift+O or the composer + starts a new thread.
+  ⌘/Ctrl+Shift+O or **New chat** starts a new thread.
+- The ring beside send is the context meter: estimated use of the model's usable
+  context. Click it for the breakdown (tool activity, messages, attachments,
+  checkpoint and task ledger, instructions), the reserves held outside it and the
+  tidy-up and auto-compact thresholds. Near auto-compact during a run it turns
+  warm and a one-time heads-up appears; afterwards a **Context compacted** divider
+  shows the before → after usage. Nothing is deleted: originals stay on disk.
+- **Workspace** in a thread's header opens a read-only monitor of the project:
+  **Changes** (readable changed files and their wrapped, highlighted diff,
+  updating live while the agent works; binary and generated files are hidden), **Files**, **Branches** and **Pull requests** (needs
+  the GitHub CLI signed in). Drag its edge to resize. It never changes files or
+  runs Git actions. The composer shows the project folder and current branch.
 
 Recent projects are remembered (max 10) and reopened automatically on launch;
 threads that were still running at shutdown are marked **recovered**. The last
@@ -238,7 +255,7 @@ are displayed without execution. Mermaid fences render diagrams with expandable
 source; invalid diagrams show their source instead. Diagram configuration
 directives and image resources fall back to source for safety.
 
-The expandable sidebar shows a shimmering Themis wordmark and respects reduced motion.
+The expandable sidebar shows a glinting Themis wordmark and respects reduced motion.
 
 
 ### Workspace and appearance
@@ -263,7 +280,7 @@ choices with fallback families. Theme, font, and size preview across the app;
 cancels an unapplied preview. Code always uses monospace typography. Other
 settings continue to save automatically.
 
-Thread editing changes only the name. Select models in the composer between runs.
+Thread editing changes only the name. Select models in the thread's model pill between runs.
 Each completed response shows the model used; later switches leave those labels
 unchanged. Older responses say “Model not recorded” when metadata is missing.
 See [UI rules](ui-rules.md) for the maintained interface contract.
@@ -280,7 +297,11 @@ Automation editors keep destination, timezone and enabled/paused status visible 
 
 After a backend event gap or reconnect, Themis reloads completed histories and pending approvals. Active streams keep their current live text and reconcile durable history when the run finishes; missed streaming fragments can remain absent until then. Failed recovery displays a warning and retries. Recovery preserves the selected conversation and local drafts.
 
-The collapsible sidebar includes **Recent**, showing the eight most recently active chats across open projects. It sits below Projects, with one-line chat titles, current status icons, and full titles/project names on hover. Drag the sidebar’s right edge to resize it between 240 and 560 px; the width is remembered. Focus the edge and use Left/Right arrows or Home/End to resize with the keyboard. Ordering uses saved conversation events and survives app restarts; opening a chat alone does not change its position, and empty chats remain in their project until they have activity.
+The collapsible sidebar lists the chosen project's **Chats** (most recent first; older chats behind **Show more**). A small icon marks a chat that is working, waiting for your approval, failed, or finished in the background since you last looked. Projects with live work are marked in the switcher. Drag the sidebar’s right edge to resize it between 240 and 560 px (double-click resets it); the width is remembered. Opening **Workspace** on a smaller window folds the sidebar to its icons until you close Workspace. Focus the edge and use Left/Right arrows or Home/End to resize with the keyboard. Ordering uses saved conversation events and survives app restarts; opening a chat alone does not change its position, and empty chats remain in their project until they have activity.
+
+When a turn ends, its reply lists the files that turn edited; select one to open its diff in **Workspace**.
+
+To delete a project, open the project switcher and choose **Delete project**. After you confirm, Themis moves the project folder to the macOS Trash (recover it from there if needed) and forgets its chats, its automations and its place in recent projects. The built-in **Themis** project, folders outside the projects folder, and projects with a running chat cannot be deleted.
 
 Integrations keeps separate search and filter selections for Installed and Discover. Reset filters affects only the current view. Marketplace checks show the companion and real completed-check percentage, then reveal the checked catalog. Collapsed warnings expand to show compatibility limitations; unavailable local skills remain visible with their validation error.
 

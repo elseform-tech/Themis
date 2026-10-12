@@ -178,6 +178,9 @@ pub enum ThreadEvent {
     ContextUsage {
         metrics: serde_json::Value,
     },
+    ContextBudget {
+        budget: themis_core::runtime::ContextBudget,
+    },
     ContextSuspended {
         progress: String,
     },
@@ -193,6 +196,11 @@ pub enum ThreadEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         result: String,
+    },
+    /// Readable project files whose content changed during this run, sent
+    /// just before the run's terminal event.
+    FilesChanged {
+        files: Vec<ChangedFile>,
     },
     Failed {
         error: String,
@@ -214,6 +222,7 @@ impl From<RunEvent> for ThreadEvent {
             },
             RunEvent::ContextCompacting => Self::ContextCompacting,
             RunEvent::ContextUsage { metrics } => Self::ContextUsage { metrics },
+            RunEvent::ContextBudget(budget) => Self::ContextBudget { budget },
             RunEvent::ContextSuspended { progress } => Self::ContextSuspended { progress },
             RunEvent::ContextCheckpoint { summary } => Self::ContextCheckpoint { summary },
             RunEvent::Incomplete { result } => Self::Incomplete {
@@ -271,6 +280,13 @@ pub struct DiffHunk {
     pub new_start: usize,
     pub new_lines: usize,
     pub lines: Vec<DiffLine>,
+}
+
+/// One file a run changed (`ChangedFile` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: DiffStatus,
 }
 
 /// File change status (`DiffStatus` in types.ts).

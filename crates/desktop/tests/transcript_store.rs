@@ -319,7 +319,7 @@ async fn followup_after_restart_receives_prior_conversation() {
                 item,
                 HistoryItem::Event {
                     envelope: ThreadEventEnvelope {
-                        event: ThreadEvent::ContextUsage { .. },
+                        event: ThreadEvent::ContextUsage { .. } | ThreadEvent::ContextBudget { .. },
                         ..
                     }
                 }
