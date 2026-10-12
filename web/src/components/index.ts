@@ -37,7 +37,7 @@ export { CodeBlock, tokenizeLine } from "./CodeBlock";
 export type { CodeBlockProps } from "./CodeBlock";
 
 export { DiffView } from "./diff/DiffView";
-export type { DiffMode, DiffViewProps } from "./diff/DiffView";
+export type { DiffViewProps } from "./diff/DiffView";
 export { FileTree } from "./diff/FileTree";
 export type { FileTreeProps } from "./diff/FileTree";
 

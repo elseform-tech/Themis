@@ -82,8 +82,8 @@ levels are listed.
   warm and a one-time heads-up appears; afterwards a **Context compacted** divider
   shows the before → after usage. Nothing is deleted: originals stay on disk.
 - **Workspace** in a thread's header opens a read-only monitor of the project:
-  **Changes** (filterable changed files and their diff; tick **Viewed** to track
-  progress, J/K to move), **Files**, **Branches** and **Pull requests** (needs
+  **Changes** (changed files and their diff, updating live while the agent
+  works), **Files**, **Branches** and **Pull requests** (needs
   the GitHub CLI signed in). Drag its edge to resize. It never changes files or
   runs Git actions. The composer shows the project folder and current branch.
 

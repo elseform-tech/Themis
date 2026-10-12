@@ -90,7 +90,7 @@ Compatibility badges currently use the following dark color pairs in [`Plugins.c
 - Color reinforces a written status; it must never carry meaning alone.
 - Keep ordinary text contrast at least 4.5:1, large text at least 3:1, and essential control/focus boundaries at least 3:1 against adjacent colors. Verify actual rendered combinations across presets.
 - Do not reuse warning or danger colors for arbitrary category decoration. Personal/Public are provenance labels, not good/bad ratings.
-- Avoid gradients, glow, shimmer, or saturation as generic decoration. Approved treatments: the drifting warm-gradient greeting and faint glow on an empty chat, the sweeping ring on the composer while a run is active, the warm context-meter warning near auto-compact, the workspace viewed-progress bar, status shimmer for real pending work, and the wordmark glint. Honor reduced motion for all of them.
+- Avoid gradients, glow, shimmer, or saturation as generic decoration. Approved treatments: the drifting warm-gradient greeting and faint glow on an empty chat, the sweeping ring on the composer while a run is active, the warm context-meter warning near auto-compact, status shimmer for real pending work, and the wordmark glint. Honor reduced motion for all of them.
 
 ## Typography, motion, and accessibility
 

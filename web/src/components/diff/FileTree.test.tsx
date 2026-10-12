@@ -60,16 +60,12 @@ describe("FileTree", () => {
     expect(screen.getByText("No changed files")).toBeInTheDocument();
   });
 
-  it("filters large reviews, groups by folder and tracks viewed files", () => {
-    const many: DiffFile[] = Array.from({ length: 8 }, (_, i) => ({ path: `${i % 2 ? "docs" : "src"}/file-${i}.ts`, status: "modified", preexisting: false, hunks: [] }));
-    const onToggleViewed = vi.fn();
-    render(<FileTree files={many} selectedPath={null} onSelect={vi.fn()} onAccept={vi.fn()} onDiscard={vi.fn()} viewed={new Set(["src/file-0.ts"])} onToggleViewed={onToggleViewed} />);
-    expect(screen.getByRole("button", { name: /src\s*4/ })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("checkbox", { name: "Viewed src/file-0.ts" })).toBeChecked();
-    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed src/file-2.ts" }));
-    expect(onToggleViewed).toHaveBeenCalledWith("src/file-2.ts");
-    fireEvent.click(screen.getByRole("button", { name: "Unviewed 7" }));
-    expect(screen.queryByTitle("src/file-0.ts")).toBeNull();
+  it("groups large change lists by folder and filters them", () => {
+    const many: DiffFile[] = Array.from({ length: 14 }, (_, i) => ({ path: `${i % 2 ? "docs" : "src"}/file-${i}.ts`, status: "modified", preexisting: false, hunks: [] }));
+    render(<FileTree files={many} selectedPath={null} onSelect={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /src\s*7/ })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Accept / })).toBeNull();
     fireEvent.change(screen.getByRole("searchbox", { name: "Filter changed files" }), { target: { value: "file-3" } });
     expect(screen.getByTitle("docs/file-3.ts")).toBeInTheDocument();
     expect(screen.queryByTitle("src/file-2.ts")).toBeNull();

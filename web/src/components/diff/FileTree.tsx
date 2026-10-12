@@ -11,9 +11,6 @@ export interface FileTreeProps {
   onAccept?: (path: string) => void;
   onDiscard?: (path: string) => void;
   disabled?: boolean;
-  /** Paths the reviewer marked as viewed; enables the viewed filter and checkboxes. */
-  viewed?: ReadonlySet<string>;
-  onToggleViewed?: (path: string) => void;
 }
 
 const STATUS_GLYPH: Record<DiffStatus, string> = {
@@ -35,29 +32,23 @@ export function FileTree({
   onAccept,
   onDiscard,
   disabled = false,
-  viewed,
-  onToggleViewed,
 }: FileTreeProps) {
   const [query, setQuery] = useState("");
-  const [unviewedOnly, setUnviewedOnly] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   if (files.length === 0) {
     return <EmptyState title="No changed files" hint="There is nothing to review yet." />;
   }
   const needle = query.trim().toLowerCase();
-  const visible = files.filter(file =>
-    (needle === "" || file.path.toLowerCase().includes(needle)) &&
-    (!unviewedOnly || !viewed?.has(file.path)));
+  const visible = files.filter(file => needle === "" || file.path.toLowerCase().includes(needle));
   const groups = new Map<string, DiffFile[]>();
   for (const file of visible) {
     const directory = directoryOf(file.path);
     groups.set(directory, [...(groups.get(directory) ?? []), file]);
   }
-  const unviewed = viewed ? files.filter(file => !viewed.has(file.path)).length : 0;
 
   return (
     <div className="themis-filetree-wrap">
-      {files.length > 5 && (
+      {files.length > 12 && (
         <div className="themis-filetree-tools">
           <input
             className="themis-filetree-filter"
@@ -67,11 +58,6 @@ export function FileTree({
             value={query}
             onChange={event => setQuery(event.target.value)}
           />
-          {viewed && (
-            <button type="button" className="themis-filetree-chip" aria-pressed={unviewedOnly} onClick={() => setUnviewedOnly(value => !value)}>
-              Unviewed {unviewed}
-            </button>
-          )}
         </div>
       )}
       <ul aria-label="Changed files" className="themis-filetree">
@@ -90,15 +76,11 @@ export function FileTree({
                 {entries.map((file) => {
                   const selected = file.path === selectedPath;
                   const discardDisabled = disabled || file.preexisting;
-                  const isViewed = viewed?.has(file.path) ?? false;
                   return (
                     <li
                       key={file.path}
-                      className={`themis-filetree-row${selected ? " themis-filetree-row--selected" : ""}${isViewed ? " is-viewed" : ""}`}
+                      className={`themis-filetree-row${selected ? " themis-filetree-row--selected" : ""}`}
                     >
-                      {onToggleViewed && (
-                        <input type="checkbox" className="themis-filetree-viewed" aria-label={`Viewed ${file.path}`} checked={isViewed} onChange={() => onToggleViewed(file.path)} />
-                      )}
                       <button
                         type="button"
                         className="themis-filetree-select"

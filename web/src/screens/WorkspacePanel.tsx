@@ -27,7 +27,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   const diff = state.diffs[threadId];
   const changed = diff?.available ? diff.files.length : 0;
   return (
-    <aside className="themis-workspace-panel" aria-label="Workspace" style={{ width }}>
+    <aside className="themis-workspace-panel" aria-label="Workspace (read-only)" style={{ width }}>
       <div className="themis-workspace-resize" role="separator" aria-label="Resize workspace panel" aria-orientation="vertical" aria-valuemin={MIN_WIDTH} aria-valuemax={MAX_WIDTH} aria-valuenow={width} tabIndex={0}
         onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); drag.current = { x: event.clientX, width }; event.currentTarget.setPointerCapture(event.pointerId); }}
         onPointerMove={event => { if (drag.current) resize(drag.current.width + drag.current.x - event.clientX); }}
@@ -38,7 +38,6 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         <div className="themis-workspace-where">
           <strong>{workspace?.name ?? "Workspace"}</strong>
           {workspace?.branch && <span className="themis-workspace-branch"><BranchIcon />{workspace.branch}</span>}
-          <span className="themis-workspace-readonly">Read-only</span>
         </div>
         <button type="button" className="themis-link-button" aria-label="Close workspace" onClick={() => dispatch({ type: "ui/diff-panel", open: false })}>✕</button>
       </header>
@@ -66,51 +65,32 @@ export function BranchIcon() {
 function ChangesView({ threadId }: { threadId: string }) {
   const { state, dispatch } = useApp();
   const diff = state.diffs[threadId];
+  const running = state.running[threadId] ?? false;
+  const toolsDone = (state.traces[threadId] ?? []).filter(entry => entry.ok !== undefined).length;
   const [selected, setSelected] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [viewed, setViewed] = useState<Set<string>>(() => new Set(readSession<string[]>(`viewed:${threadId}`, [])));
   const refresh = useCallback(async () => {
-    setLoading(true);
-    try { dispatch({ type: "diff/set", threadId, diff: await listDiff(threadId) }); }
-    catch { dispatch({ type: "diff/set", threadId, diff: null }); }
-    finally { setLoading(false); }
+    // A failed refresh keeps the last diff on screen.
+    try { dispatch({ type: "diff/set", threadId, diff: await listDiff(threadId) }); } catch { /* keep last */ }
   }, [dispatch, threadId]);
-  useEffect(() => { if (diff === undefined) void refresh(); }, [diff, refresh]);
-  function toggleViewed(path: string) {
-    setViewed(previous => {
-      const next = new Set(previous);
-      if (next.has(path)) next.delete(path); else next.add(path);
-      writeSession(`viewed:${threadId}`, [...next]);
-      return next;
-    });
-  }
+  // Live: refresh on open, after each completed tool call and when a run ends.
+  useEffect(() => { void refresh(); }, [refresh, toolsDone, running]);
+  // Shell commands can change files without a file-tool event, so poll during a run.
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => void refresh(), 4000);
+    return () => clearInterval(timer);
+  }, [running, refresh]);
   if (diff === undefined) return <EmptyState title="Loading changes…" />;
   if (diff === null || !diff.available) return <EmptyState title="Changes unavailable" hint={diff?.reason ?? "This folder has no Git diff."} />;
   const files = diff.files;
-  const active = selected ?? files[0]?.path ?? null;
-  const file = files.find(entry => entry.path === active) ?? null;
-  const reviewed = files.filter(entry => viewed.has(entry.path)).length;
-  function step(offset: number) {
-    const index = files.findIndex(entry => entry.path === active);
-    const next = files[Math.min(files.length - 1, Math.max(0, index + offset))];
-    if (next) setSelected(next.path);
-  }
+  const file = files.find(entry => entry.path === selected) ?? files[0] ?? null;
   return (
-    <div className="themis-workspace-changes" onKeyDown={event => {
-      if ((event.target as HTMLElement).closest("input, textarea, select")) return;
-      if (event.key === "j") { event.preventDefault(); step(1); }
-      else if (event.key === "k") { event.preventDefault(); step(-1); }
-      else if (event.key === "v" && active) { event.preventDefault(); toggleViewed(active); }
-    }}>
-      <div className="themis-workspace-meta">
-        {files.length > 0 && <span className="themis-workspace-progress"><span role="progressbar" aria-label="Files viewed" aria-valuemin={0} aria-valuemax={files.length} aria-valuenow={reviewed}><i style={{ width: `${reviewed / files.length * 100}%` }} /></span>{reviewed} of {files.length} viewed · J/K · V</span>}
-        <button type="button" className="themis-link-button" disabled={loading} onClick={() => void refresh()}>{loading ? "Refreshing…" : "Refresh"}</button>
-      </div>
+    <div className="themis-workspace-changes">
       {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
-      {files.length === 0 ? <EmptyState title="No changes" hint="The checkout matches its last commit." /> : (
+      {file === null ? <EmptyState title="No changes" hint="The checkout matches its last commit." /> : (
         <div className="themis-workspace-split">
-          <FileTree files={files} selectedPath={active} onSelect={setSelected} viewed={viewed} onToggleViewed={toggleViewed} />
-          {file ? <DiffView file={file} /> : null}
+          <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />
+          <DiffView file={file} />
         </div>
       )}
     </div>

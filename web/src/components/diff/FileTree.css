@@ -1,23 +1,19 @@
-/* Changed-file tree: grouped by folder, filterable, with viewed checkboxes. */
+/* Changed-file tree: grouped by folder; a filter appears for long lists. */
 .themis-filetree-wrap { display: flex; flex-direction: column; gap: 8px; }
 .themis-filetree-tools { display: flex; flex-wrap: wrap; gap: 6px; }
 .themis-filetree-filter { flex: 1; min-width: 120px; height: 34px; padding: 0 14px; border: 0; border-radius: var(--themis-radius-pill, 999px); background: var(--themis-canvas); color: var(--themis-text); font: inherit; font-size: .8125rem; }
-.themis-filetree-chip { height: 34px; padding: 0 12px; border: 0; border-radius: var(--themis-radius-pill, 999px); background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; cursor: pointer; }
-.themis-filetree-chip[aria-pressed="true"] { color: var(--themis-text); font-weight: 600; }
 .themis-filetree, .themis-filetree-files { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .themis-filetree-dir { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: 10px; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; text-align: left; cursor: pointer; }
 .themis-filetree-dirname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; }
 .themis-filetree-count { color: var(--themis-text-3); }
 .themis-filetree-row { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 4px 0 10px; border-radius: 10px; }
 .themis-filetree-row--selected .themis-filetree-path { color: var(--themis-text); font-weight: 600; }
-.themis-filetree-viewed { flex: none; width: 15px; height: 15px; margin: 0; accent-color: var(--themis-accent); }
 .themis-filetree-select { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--themis-text); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
-.themis-filetree-row.is-viewed .themis-filetree-select { color: var(--themis-text-3); }
-.themis-filetree-status { display: grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 5px; font-size: .6875rem; font-weight: 700; color: var(--themis-accent-ink); }
-.themis-filetree-status--modified { background: var(--themis-accent); }
-.themis-filetree-status--added { background: var(--themis-success); }
-.themis-filetree-status--deleted { background: var(--themis-danger); }
-.themis-filetree-status--renamed { background: var(--themis-info); }
+.themis-filetree-status { flex: none; width: 12px; font-size: .6875rem; font-weight: 700; text-align: center; }
+.themis-filetree-status--modified { color: var(--themis-accent); }
+.themis-filetree-status--added { color: var(--themis-success); }
+.themis-filetree-status--deleted { color: var(--themis-danger); }
+.themis-filetree-status--renamed { color: var(--themis-info); }
 .themis-filetree-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; }
 .themis-filetree-pre { flex: none; color: var(--themis-text-3); font-size: .6875rem; }
 .themis-filetree-actions { display: flex; gap: 2px; opacity: 0; }
