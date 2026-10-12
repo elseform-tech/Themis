@@ -9,6 +9,29 @@ use themis_desktop::{
 };
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
+/// Mock assertion messages, reported by the test's final assertion.
+static MOCK_FAILURES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Turns a panicking mock assertion into an HTTP 400 that names it, instead
+/// of a dropped connection that only reports "error sending request".
+fn reporting(
+    handler: impl Fn(&Request) -> ResponseTemplate + Send + Sync + 'static,
+) -> impl Fn(&Request) -> ResponseTemplate + Send + Sync + 'static {
+    move |request: &Request| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(request))).unwrap_or_else(
+            |panic| {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                    .unwrap_or_default();
+                ResponseTemplate::new(400)
+                    .set_body_string(format!("mock assertion failed: {message}"))
+            },
+        )
+    }
+}
+
 /// Compares paths across platforms: JSON-escaped and native Windows
 /// separators both become `/`.
 fn slashes(text: &str) -> String {
@@ -2217,7 +2240,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
     let recovery_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed_calls = Arc::clone(&recovery_calls);
     let recovery_original = Arc::new(Mutex::new(None::<String>));
-    Mock::given(method("POST")).respond_with(move |request: &Request| {
+    Mock::given(method("POST")).respond_with(reporting(move |request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let messages = body["messages"].as_array().unwrap();
         if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
@@ -2292,7 +2315,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
             json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_1","type":"function","function":{"name":"read_file","arguments":if stage == 0 { json!({"file_path":relative,"find":"ARCHIVE-SECRET-","jsonl_record":999}).to_string() } else { json!({"file_path":relative,"find":"ARCHIVE-SECRET-"}).to_string() }}}]},"finish_reason":"tool_calls"}]})
         };
         ResponseTemplate::new(200).set_body_json(answer)
-    }).mount(&provider).await;
+    })).mount(&provider).await;
     let rebooted = AppState::new_for_test(data.path().join("settings.json"));
     rebooted
         .set_secret("go".into(), "test-key".into())
@@ -2341,7 +2364,12 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
     .await
     .unwrap();
     assert!(recovered);
-    assert_eq!(terminal["result"], "ARCHIVE-SECRET-753", "{terminal}");
+    assert_eq!(
+        terminal["result"],
+        "ARCHIVE-SECRET-753",
+        "{terminal}; mock assertions: {:?}",
+        MOCK_FAILURES.lock().unwrap()
+    );
     assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 8);
     let saved = rebooted.get_thread_history(id).await.unwrap();
     let checkpoint = saved
