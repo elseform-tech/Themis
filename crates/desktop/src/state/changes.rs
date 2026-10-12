@@ -288,3 +288,20 @@ impl AppState {
         self.persist_registry().await;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    proptest::proptest! {
+        /// Accepted diff paths are relative and never step above the project.
+        #[test]
+        fn accepted_diff_paths_stay_relative(path in "(\\.\\./|/|[a-z]{1,4}/|\\./){0,4}[a-z.]{0,6}") {
+            if ensure_root_relative(&path).is_ok() {
+                let candidate = Path::new(&path);
+                proptest::prop_assert!(!candidate.has_root());
+                proptest::prop_assert!(!candidate.components().any(|part| matches!(part, Component::ParentDir | Component::Prefix(_))));
+            }
+        }
+    }
+}

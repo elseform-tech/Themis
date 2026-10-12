@@ -777,6 +777,90 @@ index 5555555..6666666 100644
         );
     }
 
+    use proptest::prelude::*;
+
+    /// One generated file diff: path plus hunks of (kind, text) lines.
+    fn file_diff() -> impl Strategy<Value = (String, Vec<Vec<(u8, String)>>)> {
+        (
+            "[a-z]{1,8}(/[a-z]{1,8}){0,2}\\.rs",
+            proptest::collection::vec(
+                proptest::collection::vec((0u8..3, "[ -~]{0,30}"), 1..6),
+                1..4,
+            ),
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        /// Arbitrary text never panics the diff parser or the path decoder.
+        #[test]
+        fn diff_parser_accepts_any_text(text in any::<String>()) {
+            let _ = parse_diff(&text);
+            let _ = decode_git_quoted_path(&text);
+        }
+
+        /// Well-formed git output parses back to the same files, kinds and lines.
+        #[test]
+        fn generated_diffs_round_trip(files in proptest::collection::vec(file_diff(), 1..4)) {
+            let mut text = String::new();
+            for (path, hunks) in &files {
+                text.push_str(&format!("diff --git a/{path} b/{path}\nindex 1111111..2222222 100644\n--- a/{path}\n+++ b/{path}\n"));
+                let mut start = 1;
+                for lines in hunks {
+                    let old = lines.iter().filter(|(kind, _)| *kind != 1).count();
+                    let new = lines.iter().filter(|(kind, _)| *kind != 2).count();
+                    text.push_str(&format!("@@ -{start},{old} +{start},{new} @@\n"));
+                    for (kind, line) in lines {
+                        text.push_str(&format!("{}{line}\n", [' ', '+', '-'][*kind as usize]));
+                    }
+                    start += old + 10;
+                }
+            }
+            let parsed = parse_diff(&text);
+            prop_assert_eq!(parsed.len(), files.len());
+            for (file, (path, hunks)) in parsed.iter().zip(&files) {
+                prop_assert_eq!(&file.path, path);
+                prop_assert_eq!(file.hunks.len(), hunks.len());
+                for (hunk, lines) in file.hunks.iter().zip(hunks) {
+                    let kinds: Vec<(u8, &str)> = hunk.lines.iter().map(|line| (match line.kind { DiffLineKind::Context => 0, DiffLineKind::Add => 1, DiffLineKind::Del => 2 }, line.text.as_str())).collect();
+                    let expected: Vec<(u8, &str)> = lines.iter().map(|(kind, text)| (*kind, text.as_str())).collect();
+                    prop_assert_eq!(kinds, expected);
+                }
+            }
+        }
+
+        /// Reported files are exactly those whose content changed, sorted and unique.
+        #[test]
+        fn changed_files_are_exactly_the_differing_ones(
+            before in proptest::collection::hash_map("[a-c]{1,2}", (prop_oneof![Just(b'M'), Just(b'?'), Just(b'A')], proptest::option::of(0u64..4)), 0..6),
+            after in proptest::collection::hash_map("[a-c]{1,2}", (prop_oneof![Just(b'M'), Just(b'?'), Just(b'A')], proptest::option::of(0u64..4)), 0..6),
+        ) {
+            let dir = tempfile::tempdir().unwrap();
+            let changed = changed_between(dir.path(), &before, &after);
+            let paths: Vec<&str> = changed.iter().map(|file| file.path.as_str()).collect();
+            let mut expected: Vec<&str> = before.keys().chain(after.keys()).map(String::as_str)
+                .filter(|path| before.get(*path).map(|entry| entry.1) != after.get(*path).map(|entry| entry.1))
+                .collect();
+            expected.sort_unstable();
+            expected.dedup();
+            prop_assert_eq!(paths, expected);
+        }
+
+        /// Files judged readable are NUL-free UTF-8 in their sampled prefix.
+        #[test]
+        fn readable_files_are_text(content in proptest::collection::vec(any::<u8>(), 0..9000), text in any::<bool>(), unicode in any::<String>()) {
+            let dir = tempfile::tempdir().unwrap();
+            let bytes = if text { unicode.into_bytes() } else { content };
+            std::fs::write(dir.path().join("sample.txt"), &bytes).unwrap();
+            if is_readable_change(dir.path(), "sample.txt") {
+                let sample = &bytes[..bytes.len().min(TEXT_SAMPLE_BYTES)];
+                prop_assert!(!sample.contains(&0));
+                prop_assert!(std::str::from_utf8(sample).is_ok() || sample.len() == TEXT_SAMPLE_BYTES);
+            }
+        }
+    }
+
     #[test]
     fn only_readable_text_changes_are_monitored() {
         let dir = tempfile::tempdir().expect("tempdir");

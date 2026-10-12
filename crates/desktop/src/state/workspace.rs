@@ -76,7 +76,7 @@ pub struct FileView {
 
 /// Resolves a project-relative path inside `root`, rejecting absolute paths,
 /// `..` components and symlinks that escape the project.
-fn resolve_inside(root: &Path, relative: &str) -> Result<PathBuf, String> {
+pub fn resolve_inside(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let candidate = Path::new(relative);
     if candidate.has_root()
         || candidate
@@ -311,6 +311,36 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+        /// No combination of names, `.`/`..`, separators or symlinks resolves
+        /// outside the project; accepted paths exist inside it.
+        #[cfg(unix)]
+        #[test]
+        fn resolved_paths_never_leave_the_project(
+            parts in proptest::collection::vec(
+                proptest::sample::select(vec!["src", "inner", "..", ".", "out", "inside_link", "a.txt", "", "missing", "\\", "src\\inner"]),
+                0..6,
+            ),
+            absolute in proptest::prelude::any::<bool>(),
+        ) {
+            let outside = tempfile::tempdir().unwrap();
+            let project = tempfile::tempdir().unwrap();
+            let root = project.path().canonicalize().unwrap();
+            std::fs::create_dir_all(root.join("src/inner")).unwrap();
+            std::fs::write(root.join("src/a.txt"), "a").unwrap();
+            std::fs::write(outside.path().join("a.txt"), "secret").unwrap();
+            std::os::unix::fs::symlink(outside.path(), root.join("out")).unwrap();
+            std::os::unix::fs::symlink(root.join("src"), root.join("inside_link")).unwrap();
+            let relative = format!("{}{}", if absolute { "/" } else { "" }, parts.join("/"));
+            if let Ok(resolved) = resolve_inside(&root, &relative) {
+                proptest::prop_assert!(resolved.starts_with(&root), "{relative} -> {}", resolved.display());
+                proptest::prop_assert!(resolved.exists());
+                proptest::prop_assert!(!relative.split('/').any(|part| part == ".."), "{relative} accepted with ..");
+            }
+        }
+    }
 
     #[test]
     fn paths_cannot_leave_the_project() {

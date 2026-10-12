@@ -19,6 +19,10 @@ mod run;
 mod skills;
 mod threads;
 mod workspace;
+/// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub use workspace::resolve_inside;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};

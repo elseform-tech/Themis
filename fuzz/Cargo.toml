@@ -1,0 +1,43 @@
+[package]
+name = "themis-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+serde_json = "1"
+tempfile = "3"
+themis-core = { path = "../crates/core", features = ["fuzzing"] }
+themis-desktop = { path = "../crates/desktop", features = ["fuzzing"] }
+
+[[bin]]
+name = "diff_parse"
+path = "fuzz_targets/diff_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "project_path"
+path = "fuzz_targets/project_path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ledger_restore"
+path = "fuzz_targets/ledger_restore.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "provider_wire"
+path = "fuzz_targets/provider_wire.rs"
+test = false
+doc = false
+bench = false

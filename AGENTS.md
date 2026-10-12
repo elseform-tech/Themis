@@ -51,6 +51,7 @@ python3 -m unittest quality_dashboard.test_dashboard
 npm --prefix web run dev
 (cd crates/desktop && npx tauri dev)
 python3 -m quality_dashboard.dashboard
+(cd fuzz && cargo +nightly fuzz build --sanitizer none)   # optional; nightly only
 ```
 
 Run checks and start local apps with these root-level commands.
@@ -58,6 +59,8 @@ Run checks and start local apps with these root-level commands.
 ## Style and Testing
 
 Use `rustfmt`, Rust `snake_case`, and `PascalCase` types/components. Frontend uses two spaces and `camelCase`. Required linters are Clippy, ESLint (React Hooks), and Ruff. Rust tests use the built-in harness, web uses Vitest, and dashboard uses `unittest`; no coverage threshold is configured. Keep `*.test.tsx` beside frontend modules and Rust integration tests in crate `tests/`. Add focused regression cases.
+
+Code that parses untrusted input (model output, provider JSON, Git output, checkpoint history, paths from the UI) gets a property test, and a fuzz target when it is a parser; see [docs/fuzzing.md](docs/fuzzing.md). Commit every fuzz crash as a regression test.
 
 Exercise backend features through the local app server and `themis` in isolated automated tests. Keep UI and OS verification separate from the dashboard's automated test inventory. Add a focused CLI end-to-end case for a changed backend flow and report any unverified UI behavior explicitly.
 

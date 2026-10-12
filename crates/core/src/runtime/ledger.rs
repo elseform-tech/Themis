@@ -434,6 +434,85 @@ mod tests {
             .collect()
     }
 
+    use proptest::prelude::*;
+
+    /// Arbitrary text, sometimes wrapped in the ledger's own markers.
+    fn spoofable_text() -> impl Strategy<Value = String> {
+        (any::<String>(), any::<bool>(), any::<String>()).prop_map(|(before, wrap, inner)| {
+            if wrap {
+                format!("{before}Earlier context checkpoint{START}{inner}{END}")
+            } else {
+                before
+            }
+        })
+    }
+
+    /// Raw text or realistic read/shell/plan results with arbitrary content.
+    fn tool_output() -> impl Strategy<Value = String> {
+        prop_oneof![
+            any::<String>(),
+            (any::<String>(), any::<String>(), 0usize..100_000).prop_map(
+                |(path, content, offset)| {
+                    json!({"found":true,"path":path,"excerpt_offset":offset,"content":content})
+                        .to_string()
+                }
+            ),
+            (any::<i32>(), any::<String>())
+                .prop_map(|(code, output)| json!({"exit_code":code,"output":output}).to_string()),
+            any::<String>().prop_map(|step| {
+                json!({"items":[{"step":step,"status":"in_progress"}]}).to_string()
+            }),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(96))]
+
+        /// User text can never create ledger entries, whatever it contains.
+        #[test]
+        fn user_text_never_becomes_ledger_entries(text in spoofable_text(), total in 0usize..8192) {
+            let messages = initial_messages(Vec::new(), text);
+            let ledger = render(&messages, messages.len(), Budget { total, actions: total / 2 }, None);
+            prop_assert!(ledger.is_empty(), "{ledger}");
+        }
+
+        /// Any run of tool calls renders within budget, as one JSON object per line.
+        #[test]
+        fn rendered_ledger_stays_within_budget_and_parses(
+            calls in proptest::collection::vec(
+                (prop_oneof![Just("read_file".to_owned()), Just("shell".to_owned()), Just("update_plan".to_owned()), Just("write_file".to_owned()), "[a-z_]{1,10}"], any::<String>(), tool_output()),
+                0..12,
+            ),
+            total in 0usize..8192,
+            share in 0usize..=100,
+        ) {
+            let mut messages = initial_messages(Vec::new(), "task".into());
+            for (index, (name, arguments, output)) in calls.iter().enumerate() {
+                let id = format!("call-{index}");
+                messages.push(tool_message(ChatRole::Assistant, "use", &id, name, arguments, ""));
+                messages.push(tool_message(ChatRole::Tool, "result", &id, name, output, ""));
+            }
+            let budget = Budget { total, actions: total * share / 100 };
+            let ledger = render(&messages, messages.len(), budget, None);
+            prop_assert!(ledger.len() <= total, "{} > {total}", ledger.len());
+            if !ledger.is_empty() {
+                let body = ledger.strip_prefix(START).and_then(|rest| rest.strip_suffix(END));
+                prop_assert!(body.is_some(), "ledger must be framed by its markers");
+                for line in body.unwrap().lines() {
+                    prop_assert!(serde_json::from_str::<Value>(line).is_ok_and(|value| value.is_object()), "{line}");
+                }
+            }
+        }
+
+        /// Plan arguments from a model are validated, never trusted or panicked on.
+        #[test]
+        fn plan_arguments_never_panic(arguments in any::<String>()) {
+            if let Ok(rendered) = update_plan(&arguments) {
+                prop_assert!(!rendered.is_empty());
+            }
+        }
+    }
+
     #[test]
     fn plan_validation_bounds_steps_and_rejects_bad_status() {
         assert!(update_plan(r#"{"items":[]}"#).is_err());
