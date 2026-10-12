@@ -1,5 +1,5 @@
 /* Read-only diff: roomy monospace lines on the canvas, unboxed mode toggle. */
-.themis-diff { display: flex; flex-direction: column; min-height: 0; border-radius: 14px; overflow: hidden; background: var(--themis-canvas); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8125rem; line-height: 1.65; }
+.themis-diff { --cb-comment: var(--themis-text-3); --cb-string: var(--themis-success); --cb-keyword: var(--themis-info); --cb-number: var(--themis-warning); display: flex; flex-direction: column; min-height: 0; border-radius: 14px; overflow: hidden; background: var(--themis-canvas); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8125rem; line-height: 1.65; }
 .themis-diff-head { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-bottom: 1px solid var(--themis-border-subtle); font-family: inherit; }
 .themis-diff-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--themis-text); font-weight: 600; }
 .themis-diff-counts { display: inline-flex; gap: 8px; font-size: .75rem; font-weight: 600; }
@@ -9,10 +9,11 @@
 .themis-diff-toggle-btn { padding: 0; border: 0; background: transparent; color: var(--themis-text-3); font: inherit; font-family: system-ui, sans-serif; font-size: .75rem; cursor: pointer; }
 .themis-diff-toggle-btn:hover { color: var(--themis-text); }
 .themis-diff-toggle-btn--active { color: var(--themis-text); font-weight: 600; }
-.themis-diff-unified, .themis-diff-side { overflow: auto; padding-bottom: 8px; }
+.themis-diff-unified, .themis-diff-side { overflow-x: hidden; overflow-y: auto; padding-bottom: 8px; }
 .themis-diff-hunk + .themis-diff-hunk { margin-top: 10px; }
 .themis-diff-hunk-header { padding: 8px 14px 4px; color: var(--themis-text-3); white-space: pre; font-size: .75rem; }
-.themis-diff-line { display: flex; align-items: baseline; min-width: max-content; white-space: pre; }
+/* Long lines wrap under their own text column, so nothing scrolls sideways. */
+.themis-diff-line { display: flex; align-items: baseline; }
 .themis-diff-line--add { background-color: var(--themis-add-bg); }
 .themis-diff-line--del { background-color: var(--themis-del-bg); }
 .themis-diff-line--context { color: var(--themis-text-2); }
@@ -20,8 +21,9 @@
 .themis-diff-line--empty { background-color: transparent; }
 .themis-diff-no { display: inline-block; flex-shrink: 0; min-width: 3.25rem; padding: 0 10px; text-align: right; color: var(--themis-text-3); user-select: none; }
 .themis-diff-sign { display: inline-block; flex-shrink: 0; width: 1.25rem; text-align: center; color: var(--themis-text-3); user-select: none; }
-.themis-diff-text { padding: 0 16px 0 2px; }
+.themis-diff-text { flex: 1; min-width: 0; padding: 0 16px 0 2px; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
 .themis-diff-side-grid { display: flex; flex-direction: column; }
 .themis-diff-side-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .themis-diff-cell { display: flex; align-items: baseline; min-width: 0; overflow-x: auto; white-space: pre; }
 .themis-diff-cell + .themis-diff-cell { border-left: 1px solid var(--themis-border-subtle); }
+[data-theme="light"] .themis-diff { --cb-string: var(--themis-code-string-light); --cb-keyword: var(--themis-link-light); --cb-number: var(--themis-code-number-light); }

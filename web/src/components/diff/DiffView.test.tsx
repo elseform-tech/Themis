@@ -22,13 +22,22 @@ const FILE: DiffFile = {
   ],
 };
 
+/** Matches a whole diff line even when highlighting splits it into tokens. */
+const line = (text: string) => (_: string, element: Element | null) => element?.classList.contains("themis-diff-text") === true && element.textContent === text;
+
 describe("DiffView", () => {
   it("renders hunk content and hunk header", () => {
     render(<DiffView file={FILE} />);
-    expect(screen.getByText("line one")).toBeInTheDocument();
-    expect(screen.getByText("old line")).toBeInTheDocument();
-    expect(screen.getByText("new line")).toBeInTheDocument();
+    expect(screen.getByText(line("line one"))).toBeInTheDocument();
+    expect(screen.getByText(line("old line"))).toBeInTheDocument();
+    expect(screen.getByText(line("new line"))).toBeInTheDocument();
     expect(screen.getByText("Line 1")).toBeInTheDocument();
+  });
+
+  it("highlights code tokens and wraps instead of scrolling sideways", () => {
+    const { container } = render(<DiffView file={FILE} />);
+    expect(container.querySelector(".themis-codeblock-token--keyword")).toHaveTextContent("new");
+    expect(container.querySelector(".themis-diff-text")).toBeInTheDocument();
   });
 
   it("shows add/del counts", () => {
@@ -40,8 +49,8 @@ describe("DiffView", () => {
   it("renders a single read-only unified view without mode controls", () => {
     render(<DiffView file={FILE} />);
     expect(screen.queryByRole("button")).toBeNull();
-    expect(screen.getByText("old line")).toBeInTheDocument();
-    expect(screen.getByText("new line")).toBeInTheDocument();
+    expect(screen.getByText(line("old line"))).toBeInTheDocument();
+    expect(screen.getByText(line("new line"))).toBeInTheDocument();
   });
 
   it("shows an empty state when there are no hunks", () => {

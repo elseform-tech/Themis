@@ -39,3 +39,7 @@
 .themis-workspace-list-meta { display: inline-flex; align-items: center; gap: 6px; color: var(--themis-text-3); font-size: .75rem; }
 .themis-workspace-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
 @media (max-width: 900px) { .themis-workspace-panel { position: absolute; inset: 0 0 0 auto; z-index: 25; max-width: 100%; } }
+/* Read-only file view wraps long lines too. */
+.themis-files-view .themis-codeblock { overflow-x: hidden; border: 0; }
+.themis-files-view .themis-codeblock-line { padding-left: 3.5rem; text-indent: -3.5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.themis-files-view .themis-codeblock-lineno { text-indent: 0; }

@@ -3,11 +3,11 @@
 //! [`parse_diff`] is pure (text in, [`DiffFile`]s out) so fixtures can test it
 //! without a repo; the `git_*` helpers shell out to the `git` binary.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 
-use crate::types::{DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffStatus};
+use crate::types::{ChangedFile, DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffStatus};
 
 /// Maximum files returned by one diff listing (older entries are dropped and
 /// the state's `reason` notes the truncation).
@@ -79,6 +79,76 @@ pub fn git_status_names(root: &Path) -> Result<HashSet<String>, String> {
     Ok(names)
 }
 
+/// Working-tree state of readable changed files: porcelain code and a content
+/// hash (`None` when the file is gone).
+pub type ChangeFingerprint = HashMap<String, (u8, Option<u64>)>;
+
+/// Captures every readable file that differs from `HEAD`, including untracked
+/// ones, so two captures can tell which files a run touched. Not a Git repo or
+/// a Git failure yields an empty capture.
+#[must_use]
+pub fn change_fingerprint(root: &Path) -> ChangeFingerprint {
+    use std::hash::{Hash, Hasher};
+    let Ok(bytes) = git_output(
+        root,
+        &["status", "--porcelain", "-z", "--untracked-files=all"],
+    ) else {
+        return HashMap::new();
+    };
+    let mut fingerprint = HashMap::new();
+    let mut chunks = bytes.split(|byte| *byte == 0);
+    while let Some(chunk) = chunks.next() {
+        if chunk.len() < 4 {
+            continue;
+        }
+        if chunk[0] == b'R' || chunk[1] == b'R' {
+            chunks.next();
+        }
+        let path = String::from_utf8_lossy(&chunk[3..]).into_owned();
+        if !is_readable_change(root, &path) {
+            continue;
+        }
+        let code = if chunk[0] == b' ' { chunk[1] } else { chunk[0] };
+        let hash = std::fs::read(root.join(&path)).ok().map(|content| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            content.hash(&mut hasher);
+            hasher.finish()
+        });
+        fingerprint.insert(path, (code, hash));
+    }
+    fingerprint
+}
+
+/// Files whose content differs between two captures, sorted by path. A file
+/// that left the capture was restored to `HEAD` (modified) or removed.
+#[must_use]
+pub fn changed_between(
+    root: &Path,
+    before: &ChangeFingerprint,
+    after: &ChangeFingerprint,
+) -> Vec<ChangedFile> {
+    let paths: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+    paths
+        .into_iter()
+        .filter(|path| {
+            before.get(*path).map(|entry| entry.1) != after.get(*path).map(|entry| entry.1)
+        })
+        .map(|path| {
+            let status = match after.get(path) {
+                Some((_, None)) => DiffStatus::Deleted,
+                Some((b'?' | b'A', _)) => DiffStatus::Added,
+                Some(_) => DiffStatus::Modified,
+                None if root.join(path).exists() => DiffStatus::Modified,
+                None => DiffStatus::Deleted,
+            };
+            ChangedFile {
+                path: path.clone(),
+                status,
+            }
+        })
+        .collect()
+}
+
 /// Runs `git diff HEAD --no-color -U3` and parses it into [`DiffFile`]s.
 pub fn git_diff_head(root: &Path) -> Result<Vec<DiffFile>, String> {
     let bytes = git_output(root, &["diff", "HEAD", "--no-color", "-U3"])?;
@@ -107,6 +177,66 @@ pub fn git_untracked(root: &Path) -> Result<Vec<String>, String> {
         .filter(|chunk| !chunk.is_empty())
         .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
         .collect())
+}
+
+/// Folders whose contents are build or tool caches, never hand-written code.
+const GENERATED_DIRS: &[&str] = &[
+    "__pycache__",
+    "node_modules",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    ".gradle",
+    ".next",
+];
+/// Compiled or system artifacts that are never worth reading as a diff.
+const GENERATED_EXTENSIONS: &[&str] = &[
+    "pyc", "pyo", "class", "o", "obj", "so", "dylib", "dll", "exe", "a", "lib",
+];
+/// Bytes sampled to decide whether a file is readable text.
+const TEXT_SAMPLE_BYTES: usize = 8 * 1024;
+
+/// True for files a reader can follow in the monitor: not inside a cache
+/// folder, not a compiled artifact, and (when present on disk) UTF-8 text.
+/// Deleted files are kept so removals stay visible.
+#[must_use]
+pub fn is_readable_change(root: &Path, relative: &str) -> bool {
+    let path = Path::new(relative);
+    let generated_dir = path.components().any(|part| {
+        GENERATED_DIRS
+            .iter()
+            .any(|dir| part.as_os_str() == std::ffi::OsStr::new(dir))
+    });
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let generated_file = name == ".DS_Store"
+        || path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                GENERATED_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+            });
+    if generated_dir || generated_file {
+        return false;
+    }
+    let Ok(mut file) = std::fs::File::open(root.join(path)) else {
+        return true;
+    };
+    let mut sample = vec![0; TEXT_SAMPLE_BYTES];
+    let read = std::io::Read::read(&mut file, &mut sample).unwrap_or(0);
+    sample.truncate(read);
+    if sample.contains(&0) {
+        return false;
+    }
+    match std::str::from_utf8(&sample) {
+        Ok(_) => true,
+        // A full sample may cut a multi-byte character at its end.
+        Err(error) => read == TEXT_SAMPLE_BYTES && error.error_len().is_none(),
+    }
 }
 
 /// Builds an "added" [`DiffFile`] for an untracked file: full content as one
@@ -593,6 +723,84 @@ index 5555555..6666666 100644
         files.truncate(MAX_DIFF_FILES);
         assert_eq!(files.len(), MAX_DIFF_FILES);
         assert_eq!(files[199].path, "f199.txt");
+    }
+
+    #[test]
+    fn fingerprints_report_only_files_changed_between_captures() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("kept.txt"), "one\n").unwrap();
+        std::fs::write(root.join("gone.txt"), "bye\n").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "init",
+        ]);
+        std::fs::write(root.join("kept.txt"), "edited before the run\n").unwrap();
+        let before = change_fingerprint(root);
+        std::fs::write(root.join("new.py"), "print(1)\n").unwrap();
+        std::fs::write(root.join("blob.bin"), [0u8, 1, 2]).unwrap();
+        std::fs::remove_file(root.join("gone.txt")).unwrap();
+        let after = change_fingerprint(root);
+        let changed = changed_between(root, &before, &after);
+        assert_eq!(
+            changed,
+            vec![
+                ChangedFile {
+                    path: "gone.txt".into(),
+                    status: DiffStatus::Deleted
+                },
+                ChangedFile {
+                    path: "new.py".into(),
+                    status: DiffStatus::Added
+                },
+            ],
+            "an edit made before the run and binary files are not reported"
+        );
+    }
+
+    #[test]
+    fn only_readable_text_changes_are_monitored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("pkg/__pycache__")).unwrap();
+        std::fs::write(root.join("pkg/app.py"), "print('hi')\n").unwrap();
+        std::fs::write(root.join("pkg/__pycache__/app.cpython-314.pyc"), "x").unwrap();
+        std::fs::write(root.join("logo.png"), [0x89, b'P', b'N', b'G', 0, 1, 2]).unwrap();
+        std::fs::write(root.join("latin1.txt"), [b'c', b'a', b'f', 0xe9]).unwrap();
+        std::fs::write(root.join(".DS_Store"), "x").unwrap();
+        assert!(is_readable_change(root, "pkg/app.py"));
+        assert!(
+            is_readable_change(root, "removed.rs"),
+            "deleted files stay visible"
+        );
+        for hidden in [
+            "pkg/__pycache__/app.cpython-314.pyc",
+            "logo.png",
+            "latin1.txt",
+            ".DS_Store",
+            "build/lib.o",
+        ] {
+            assert!(!is_readable_change(root, hidden), "{hidden}");
+        }
     }
 
     #[test]

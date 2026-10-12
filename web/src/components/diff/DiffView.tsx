@@ -1,5 +1,7 @@
 import type { DiffFile } from "../../lib/types";
 import { EmptyState } from "../primitives/EmptyState";
+import { normalizeLanguage, tokenizeLine } from "../CodeBlock";
+import "../CodeBlock.css";
 import "./DiffView.css";
 
 export interface DiffViewProps {
@@ -45,6 +47,7 @@ function numberHunk(
 
 /** Read-only unified diff of one file. */
 export function DiffView({ file }: DiffViewProps) {
+  const language = normalizeLanguage(file.path.split(".").pop());
   let addCount = 0;
   let delCount = 0;
   for (const hunk of file.hunks) {
@@ -93,7 +96,7 @@ export function DiffView({ file }: DiffViewProps) {
                   <span className="themis-diff-sign">
                     {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
                   </span>
-                  <span className="themis-diff-text">{line.text}</span>
+                  <span className="themis-diff-text">{tokenizeLine(line.text, language).map((token, index) => token.kind === "plain" ? token.text : <span key={index} className={`themis-codeblock-token--${token.kind}`}>{token.text}</span>)}</span>
                 </div>
               ))}
             </div>

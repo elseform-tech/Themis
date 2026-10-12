@@ -121,3 +121,38 @@ async fn cli_workspace_reports_branches_lists_files_and_stays_inside_the_project
     client.call("shutdown", json!({})).await.unwrap();
     serving.await.unwrap().unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_change_list_shows_only_readable_files_and_counts_hidden_ones() {
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let project = cli(data.path(), "create_project", json!({"name": "Monitor"}));
+    let root = std::path::PathBuf::from(project["root"].as_str().unwrap());
+    std::fs::create_dir_all(root.join("__pycache__")).unwrap();
+    std::fs::write(root.join("app.py"), "print('hi')\n").unwrap();
+    std::fs::write(root.join("__pycache__/app.cpython-314.pyc"), "bytecode").unwrap();
+    std::fs::write(root.join("chart.png"), [0x89, b'P', b'N', b'G', 0, 0]).unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot": root, "provider": "go", "model": "muse-spark-1.3-contributor"}),
+    );
+
+    let diff = cli(data.path(), "list_diff", json!({"threadId": thread["id"]}));
+    let paths: Vec<&str> = diff["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["app.py"]);
+    assert_eq!(diff["reason"], "2 binary or generated files hidden");
+
+    Client::new(data.path().into())
+        .call("shutdown", json!({}))
+        .await
+        .unwrap();
+    serving.await.unwrap().unwrap();
+}
