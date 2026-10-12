@@ -39,8 +39,9 @@
 }
 
 .themis-automations-card {
-  border-bottom: 1px solid var(--themis-border-subtle);
-  padding: 1rem 0;
+  border-radius: var(--themis-radius-card);
+  background: var(--themis-sidebar-bg);
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -184,18 +185,8 @@
 .themis-automations-skill { display: inline-block; padding: 0 0.35rem; border-radius: 4px; background: var(--themis-surface); font-size: 0.8125rem; color: var(--themis-text-2); }
 
 .themis-automations-head-actions { display: flex; gap: 0.5rem; align-items: center; }
-.themis-automations-search {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--themis-border);
-  border-radius: 6px;
-  background: var(--themis-surface);
-  color: var(--themis-text);
-  padding: 0.5rem 0.75rem;
-  font: inherit;
-  font-size: 0.875rem;
-}
-.themis-automations-search:focus { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
+.themis-automations-search { width: 100%; box-sizing: border-box; min-height: 40px; padding: 0 16px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-surface); color: var(--themis-text); font: inherit; font-size: .875rem; }
+.themis-automations-search:focus { outline: 1px solid var(--themis-border); }
 .themis-automations-destination { margin: 0; font-size: .8125rem; line-height: 1.5; color: var(--themis-text-2); overflow-wrap: anywhere; }
 .themis-automations-schedule input, .themis-automations-schedule select { min-height: 2.5rem; box-sizing: border-box; }
 .themis-automations-schedule input, .themis-automations-schedule select { height: 2.5rem; }

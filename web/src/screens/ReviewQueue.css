@@ -30,10 +30,10 @@
 }
 
 .themis-review-card {
-  border: 1px solid var(--themis-border-subtle);
-  border-radius: 0.5rem;
-  background-color: var(--themis-surface);
-  padding: 0.75rem;
+  border: 0;
+  border-radius: var(--themis-radius-card);
+  background-color: var(--themis-sidebar-bg);
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;

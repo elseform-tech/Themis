@@ -1,35 +1,6 @@
-.themis-input-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.themis-input-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--themis-text-2);
-}
-
-.themis-input {
-  font-family: inherit;
-  font-size: 0.875rem;
-  background-color: var(--themis-surface);
-  color: var(--themis-text);
-  border: 1px solid var(--themis-border);
-  border-radius: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  outline: none;
-}
-
-.themis-input::placeholder {
-  color: var(--themis-text-3);
-}
-
-.themis-input:focus {
-  border-color: var(--themis-accent);
-}
-
-.themis-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.themis-input-wrap { display: flex; flex-direction: column; gap: 6px; }
+.themis-input-label { color: var(--themis-text-2); font-size: .75rem; font-weight: 500; }
+.themis-input { min-height: 40px; padding: 0 14px; border: 1px solid transparent; border-radius: 14px; outline: none; background: var(--themis-surface); color: var(--themis-text); font-family: inherit; font-size: .875rem; }
+.themis-input::placeholder { color: var(--themis-text-3); }
+.themis-input:focus { border-color: var(--themis-border); }
+.themis-input:disabled { opacity: .5; cursor: not-allowed; }
