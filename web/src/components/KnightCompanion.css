@@ -49,3 +49,6 @@ html.themis-desktop-companion, .themis-desktop-companion body, .themis-desktop-c
 .themis-loading-percent { font-variant-numeric: tabular-nums; font-size: 1.5rem; }
 @keyframes themis-loading-circle { to { transform: rotate(270deg); } }
 @media (prefers-reduced-motion: reduce) { .themis-knight-progress > .is-indeterminate { animation: none; } .themis-progress-value { transition: none; } }
+/* Bubbles speech: a short status above the companion. */
+.themis-knight-companion { overflow: visible; }
+.themis-companion-speech { position: absolute; bottom: calc(100% - 6px); right: 50%; max-width: 180px; padding: 6px 12px; border-radius: 16px 16px 4px 16px; background: var(--themis-raised); color: var(--themis-text); box-shadow: 0 8px 24px color-mix(in srgb, var(--themis-canvas) 70%, transparent); font-size: .75rem; font-weight: 500; white-space: nowrap; pointer-events: none; }
