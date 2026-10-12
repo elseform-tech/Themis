@@ -9,6 +9,12 @@ use themis_desktop::{
 };
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
+/// Compares paths across platforms: JSON-escaped and native Windows
+/// separators both become `/`.
+fn slashes(text: &str) -> String {
+    text.replace("\\\\", "/").replace('\\', "/")
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_credential_lookup_error_is_not_a_missing_key() {
     struct UnavailableStore;
@@ -979,7 +985,8 @@ async fn cli_recovers_from_malformed_shell_arguments_after_compaction() {
             if last["tool_call_id"] == "corrected" {
                 let result: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
                 assert_eq!(result["exit_code"],0);
-                assert_eq!(result["output"],"verified\n");
+                // Windows stdout ends lines with \r\n.
+                assert_eq!(result["output"].as_str().unwrap().trim_end(),"verified");
                 return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Corrected script verified."},"finish_reason":"stop"}]}));
             }
             let (id,args) = if last["tool_call_id"] == "malformed" {
@@ -2228,7 +2235,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
                 let mut entries = listing["entries"].as_array().unwrap().iter().filter(|entry| entry["name"].as_str().unwrap().starts_with("snapshot-")).collect::<Vec<_>>();
                 entries.sort_by_key(|entry| entry["name"].as_str().unwrap());
                 let discovered = entries.first().unwrap()["path"].as_str().unwrap().to_owned();
-                assert_eq!(discovered, retained_original, "recovery must discover the immutable original through model-visible tools");
+                assert_eq!(slashes(&discovered), slashes(&retained_original), "recovery must discover the immutable original through model-visible tools");
                 *recovery_original.lock().unwrap() = Some(discovered);
             } else {
                 let directory = std::path::Path::new(&directory).strip_prefix(&recovery_root).unwrap().to_string_lossy();
@@ -2245,7 +2252,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
             // The bounded earlier location is retained independently of the latest snapshot.
             // Reopen the immutable original, not an earlier generated recovery result.
             let path = recovery_original.lock().unwrap().clone().unwrap();
-            assert!(body.to_string().contains(&path), "earlier coordinates must remain visible before reopening");
+            assert!(slashes(&body.to_string()).contains(&slashes(&path)), "earlier coordinates must remain visible before reopening");
             json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"reopen_earlier","type":"function","function":{"name":"read_file","arguments":json!({"file_path":path,"find":"ARCHIVE-SECRET-"}).to_string()}}]},"finish_reason":"tool_calls"}]})
         } else if stage > 1 {
             if stage == 2 { assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native bounded read must deliver the fact"); }
