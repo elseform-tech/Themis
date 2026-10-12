@@ -66,6 +66,11 @@ export function renameProject(path: string, name: string): Promise<ProjectInfo> 
   return invoke("rename_project", { path, name });
 }
 
+/** Moves a project folder to the Trash and forgets its chats. */
+export function deleteProject(path: string): Promise<void> {
+  return invoke("delete_project", { path });
+}
+
 export function openProject(path: string): Promise<ProjectInfo> {
   return invoke('open_project', { path });
 }

@@ -145,3 +145,5 @@
 .themis-project-switcher .themis-project-menu { grid-template-columns: minmax(0, 1fr); box-sizing: border-box; max-width: 100%; }
 .themis-project-option { min-width: 0; width: 100%; }
 .themis-project-option .themis-moving-window { flex: 1; }
+.themis-project-option.is-danger { color: var(--themis-danger); }
+.themis-project-option.is-danger:hover { color: var(--themis-danger); filter: brightness(1.15); }

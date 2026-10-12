@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Dialog, Input, Tooltip } from "../components";
-import { createProject, getSettings, renameProject, renameThread } from "../lib/tauri";
+import { createProject, deleteProject, getSettings, renameProject, renameThread } from "../lib/tauri";
 import { describeError, toast, useApp, type MainView } from "../state/store";
 import { useNewThread, useDiscardThread } from "./actions";
 import type { ThreadInfo } from "../lib/types";
@@ -34,6 +34,7 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
   const newThread = useNewThread();
   const [name, setName] = useState("");
   const [renaming, setRenaming] = useState<{ root: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState<{ root: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { discard } = useDiscardThread();
@@ -118,6 +119,7 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
               <hr />
               <button type="button" className="themis-project-option" aria-label="New project" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); dispatch({ type: "ui/project-dialog", open: true }); }}>New project</button>
               {activeProject && <button type="button" className="themis-project-option" aria-label={`Rename ${activeProject.name}`} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setRenaming({ root: activeProject.root, name: activeProject.name }); }}>Rename project</button>}
+              {activeProject && !activeProject.is_default && <button type="button" className="themis-project-option is-danger" aria-label={`Delete ${activeProject.name}`} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setDeleting({ root: activeProject.root, name: activeProject.name }); }}>Delete project</button>}
             </div>
           </details>
           {activeProject && <>
@@ -159,6 +161,17 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
         {error && <p role="alert" className="themis-form-error">{error}</p>}
         <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setRenaming(null)}>Cancel</Button><Button type="submit" disabled={busy || !renaming.name.trim()}>Save</Button></div>
       </form>}
+    </Dialog>
+    <Dialog open={deleting !== null} title="Delete project?" onClose={() => { if (!busy) setDeleting(null); }}>
+      {deleting && <div className="themis-sidebar-dialog">
+        <p className="themis-sidebar-dialog-hint">“{deleting.name}” and its chats will be removed from Themis. The project folder moves to the Trash, so its files can still be recovered there.</p>
+        {error && <p role="alert" className="themis-form-error">{error}</p>}
+        <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setDeleting(null)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={async () => {
+          setBusy(true); setError("");
+          try { await deleteProject(deleting.root); dispatch({ type: "project/removed", root: deleting.root }); dispatch({ type: "settings/patched", settings: await getSettings() }); toast(dispatch, `Moved ${deleting.name} to the Trash`, "success"); setDeleting(null); }
+          catch (reason) { setError(describeError(reason)); } finally { setBusy(false); }
+        }}>{busy ? "Deleting…" : "Delete project"}</Button></div>
+      </div>}
     </Dialog>
     <Dialog open={editing !== null} title="Edit thread" onClose={() => { if (!editBusy) setEditing(null); }}>
       {editing && <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void saveThread(); }}>

@@ -293,6 +293,23 @@ describe("Workspace journey", () => {
     expect(bridge.renameProject).toHaveBeenCalledWith(root, "Research notes");
     expect(screen.getByLabelText("Project: Research notes")).toBeInTheDocument();
   });
+  it("deletes a project after confirmation and never offers it for the built-in project", async () => {
+    const root = "/tmp/Themis/Projects/Scratch";
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
+    vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Scratch", is_git: true });
+    const remove = vi.spyOn(bridge, "deleteProject").mockResolvedValue(undefined);
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: /^Themis/ }));
+    expect(screen.queryByRole("button", { name: "Delete Themis" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Scratch/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Scratch" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete project?" });
+    expect(dialog).toHaveTextContent("moves to the Trash");
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Delete project" })));
+    expect(remove).toHaveBeenCalledWith(root);
+    expect(screen.queryByRole("button", { name: /^Scratch/ })).toBeNull();
+    expect(screen.getByLabelText("Project: Themis")).toBeInTheDocument();
+  });
   it("edits only a thread name and retains response model labels", async () => {
     const thread = { id: "caption-thread", title: "Caption", provider: "go" as const, model: "current-model", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
     vi.mocked(bridge.listThreads).mockResolvedValue([thread]);

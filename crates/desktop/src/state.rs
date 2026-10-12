@@ -177,6 +177,8 @@ struct AppStateInner {
     stop_flags: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
     projects: tokio::sync::RwLock<HashMap<String, ProjectInfo>>,
     default_project_init: tokio::sync::Mutex<()>,
+    /// Where deleted projects are moved (the user Trash; a temp folder in tests).
+    trash_dir: PathBuf,
     threads: tokio::sync::RwLock<HashMap<String, ThreadRecord>>,
     pending: PendingMap,
     mcp: std::sync::Mutex<mcp::Connections>,
@@ -244,6 +246,10 @@ impl AppState {
             registry_path,
             secrets,
             PathBuf::from(crate::types::default_projects_directory()),
+            std::env::var_os("HOME").map_or_else(
+                || app_dir.join("trash"),
+                |home| PathBuf::from(home).join(".Trash"),
+            ),
         );
         Self::spawn_automation_scheduler(state.clone());
         state
@@ -272,6 +278,7 @@ impl AppState {
             registry_path,
             secrets,
             app_dir.join("projects"),
+            app_dir.join("trash"),
         )
     }
 
@@ -290,6 +297,7 @@ impl AppState {
             registry_path,
             Arc::new(MemoryStore::new()),
             app_dir.join("projects"),
+            app_dir.join("trash"),
         )
     }
 
@@ -299,6 +307,7 @@ impl AppState {
         registry_path: PathBuf,
         secrets: Arc<dyn SecretStore>,
         projects_root: PathBuf,
+        trash_dir: PathBuf,
     ) -> Self {
         let app_dir = settings_app_dir(&settings_path);
         let transcript = TranscriptStore::open(&app_dir.join("sessions.sqlite3"))
@@ -323,6 +332,7 @@ impl AppState {
                 stop_flags: std::sync::Mutex::new(HashMap::new()),
                 projects: tokio::sync::RwLock::new(HashMap::new()),
                 default_project_init: tokio::sync::Mutex::new(()),
+                trash_dir,
                 threads: tokio::sync::RwLock::new(threads),
                 pending: PendingMap::default(),
                 mcp: std::sync::Mutex::new(HashMap::new()),

@@ -117,6 +117,7 @@ export type AppAction =
   | { type: "mcp/status"; connections: McpConnections }
   | { type: "project/opened"; project: ProjectInfo; select?: boolean }
   | { type: "project/selected"; root: string }
+  | { type: "project/removed"; root: string }
   | { type: "thread/created"; projectRoot: string; thread: ThreadInfo }
   | { type: "thread/running-loaded"; threadId: string; running: boolean }
   | { type: "approval/loaded"; requests: ApprovalRequest[] }
@@ -478,6 +479,17 @@ export function reducer(state: AppState, action: AppAction): AppState {
         activeProjectRoot: action.select === false ? state.activeProjectRoot : action.project.root,
         mainView: action.select === false ? state.mainView : "thread",
       };
+    }
+    case "project/removed": {
+      const projects = state.projects.filter((p) => p.root !== action.root);
+      const threadsByProject = { ...state.threadsByProject };
+      delete threadsByProject[action.root];
+      const automations = state.automations.filter((a) => a.project_root !== action.root);
+      if (state.activeProjectRoot !== action.root) return { ...state, projects, threadsByProject, automations };
+      // Fall back to the built-in project, else the first remaining one.
+      const next = projects.find((p) => p.is_default) ?? projects[0] ?? null;
+      const threads = [...(next ? threadsByProject[next.root] ?? [] : [])].sort((a, b) => (b.last_activity_seq ?? 0) - (a.last_activity_seq ?? 0));
+      return { ...state, projects, threadsByProject, automations, activeProjectRoot: next?.root ?? null, activeThreadId: threads[0]?.id ?? null, mainView: "thread" };
     }
     case "project/selected": {
       // Without a selection in this project, open its most recently active chat.

@@ -445,6 +445,7 @@ pub async fn dispatch(
                 .rename_project(arg(&args, "path")?, arg(&args, "name")?)
                 .await?
         ),
+        "delete_project" => done!(state.delete_project(arg(&args, "path")?).await),
         "get_default_project" => output!(state.get_default_project().await?),
         "create_project" => output!(
             state
