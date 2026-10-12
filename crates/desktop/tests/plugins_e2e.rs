@@ -301,9 +301,23 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
         )
     });
     let mut startup_warning = None;
-    let terminal = tokio::time::timeout(Duration::from_secs(15), async {
+    // CLI process launch precedes the backend's recovery work and can be slow on macOS.
+    let first_event =
+        tokio::time::timeout(Duration::from_secs(60), Client::next_event(&mut events))
+            .await
+            .expect("CLI dispatch did not produce an event")
+            .unwrap();
+    let terminal = tokio::time::timeout(Duration::from_secs(60), async {
+        let mut event = first_event;
+        let mut recovery_deadline = None;
         loop {
-            let event = Client::next_event(&mut events).await.unwrap();
+            // Started now marks admission, before cold credential/catalog setup.
+            // Keep the original recovery bound once the startup failure is known.
+            if recovery_deadline.is_none() && event["name"] == "thread-event"
+                && event["payload"]["event"]["kind"] == "tool_finished"
+                && event["payload"]["event"]["tool"].as_str().is_some_and(|name| name.starts_with("mcp_start_")) {
+                recovery_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(15));
+            }
             if event["name"] == "approval-request" {
                 Client::new(data.path().into()).call("approve_action",json!({"threadId":id,"approvalId":event["payload"]["approval_id"],"decision":"once"})).await.unwrap();
             }
@@ -312,7 +326,16 @@ async fn agent_can_disable_broken_enabled_mcp_without_losing_chat() {
                 assert_eq!(event["payload"]["event"]["ok"], false);
                 startup_warning = Some(event["payload"]["event"]["output"].as_str().unwrap().to_owned());
             }
-            if event["name"] == "thread-event" && matches!(event["payload"]["event"]["kind"].as_str(),Some("finished" | "failed")) { break event; }
+            if event["name"] == "thread-event" && matches!(event["payload"]["event"]["kind"].as_str(),Some("finished" | "failed")) {
+                assert!(recovery_deadline.is_some(), "the recovery bound must actually start");
+                break event;
+            }
+            event = if let Some(deadline) = recovery_deadline {
+                tokio::time::timeout_at(deadline, Client::next_event(&mut events)).await
+                    .expect("MCP recovery exceeded 15 seconds after its failure warning").unwrap()
+            } else {
+                Client::next_event(&mut events).await.unwrap()
+            };
         }
     }).await.unwrap();
     assert_eq!(
@@ -518,7 +541,9 @@ async fn mcp_startup_is_background_isolated_and_reuses_connections() {
     .unwrap();
     assert_eq!(first["global:startup:mcp:healthy"]["status"], "connecting");
     assert!(first.get("global:startup:mcp:disabled").is_none());
-    let ready = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+    // The production connection deadline is 30s; allow its terminal state and
+    // scheduling under parallel tests while retaining the 300ms admission bound.
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(60), async {
         loop {
             let value = state.plugin_action(request.clone()).await.unwrap();
             assert_ne!(

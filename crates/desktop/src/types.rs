@@ -175,6 +175,12 @@ pub enum ThreadEvent {
         decision: ApprovalDecision,
     },
     ContextCompacting,
+    ContextUsage {
+        metrics: serde_json::Value,
+    },
+    ContextSuspended {
+        progress: String,
+    },
     ContextCheckpoint {
         summary: String,
     },
@@ -207,6 +213,8 @@ impl From<RunEvent> for ThreadEvent {
                 decision: ApprovalDecision::from(decision),
             },
             RunEvent::ContextCompacting => Self::ContextCompacting,
+            RunEvent::ContextUsage { metrics } => Self::ContextUsage { metrics },
+            RunEvent::ContextSuspended { progress } => Self::ContextSuspended { progress },
             RunEvent::ContextCheckpoint { summary } => Self::ContextCheckpoint { summary },
             RunEvent::Incomplete { result } => Self::Incomplete {
                 result,

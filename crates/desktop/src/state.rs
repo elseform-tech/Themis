@@ -102,6 +102,7 @@ struct ThreadRecord {
 struct RunSnapshot {
     reasoning_effort: Option<String>,
     history: Vec<ConversationTurn>,
+    documents: Vec<themis_core::runtime::documents::DocumentSource>,
     approval_timeout_seconds: u32,
     approval_mode: themis_core::configuration::ApprovalMode,
     runtime_configuration: themis_core::configuration::RuntimeConfig,
@@ -252,6 +253,15 @@ impl AppState {
     /// tests drive [`AppState::tick_automations_once`] directly.
     #[must_use]
     pub fn new_for_test(settings_path: PathBuf) -> Self {
+        Self::new_for_test_with_secret_store(settings_path, Arc::new(MemoryStore::new()))
+    }
+
+    /// Creates isolated headless state with an injected credential-store fixture.
+    #[must_use]
+    pub fn new_for_test_with_secret_store(
+        settings_path: PathBuf,
+        secrets: Arc<dyn SecretStore>,
+    ) -> Self {
         let app_dir = settings_app_dir(&settings_path);
         let worktrees_root = app_dir.join("worktrees");
         let registry_path = app_dir.join("threads.json");
@@ -259,7 +269,7 @@ impl AppState {
             settings_path,
             worktrees_root,
             registry_path,
-            Arc::new(MemoryStore::new()),
+            secrets,
             app_dir.join("projects"),
         )
     }
@@ -479,7 +489,7 @@ impl AppState {
     /// Creates a thread on `project_root`.
     /// Checks the Go connection and returns the current provider model catalog.
     pub async fn list_go_models(&self) -> Result<Vec<themis_core::providers::GoModel>, String> {
-        let key = self.api_key_for(ProviderKind::Go)?;
+        let key = self.api_key_for(ProviderKind::Go).await?;
         let base_url = self
             .inner
             .go_base_url_override
@@ -492,6 +502,14 @@ impl AppState {
             .map_err(|error| format!("Could not load OpenCode Go models: {error}"))?;
         *self.inner.go_catalog.write().await = models.clone();
         Ok(models)
+    }
+
+    async fn ensure_go_catalog(&self) -> Result<(), String> {
+        let unloaded = self.inner.go_catalog.read().await.is_empty();
+        if unloaded {
+            self.list_go_models().await?;
+        }
+        Ok(())
     }
 
     /// Stores a comment pinned to `path` and returns it.
@@ -1079,6 +1097,116 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cold_effort_validation_loads_catalog_before_rejecting_support() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+        for setting in [true, false] {
+            let (state, dir) = test_state();
+            state
+                .set_secret("go".into(), "synthetic-test-key".into())
+                .await
+                .unwrap();
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/models"))
+                .respond_with(ResponseTemplate::new(503))
+                .expect(1)
+                .mount(&server)
+                .await;
+            state.set_go_base_url_override(Some(server.uri()));
+            let thread = state
+                .create_thread(
+                    dir.path().to_string_lossy().into_owned(),
+                    ProviderKind::Go,
+                    Some("model-a".into()),
+                )
+                .await
+                .unwrap();
+            let error = if setting {
+                state
+                    .set_thread_effort(thread.id.clone(), Some("low".into()))
+                    .await
+                    .unwrap_err()
+            } else {
+                let (sink, _) = crate::sink::ChannelSink::channel();
+                state
+                    .send_message_with_effort(
+                        Arc::new(sink),
+                        thread.id.clone(),
+                        "hello".into(),
+                        Some("low".into()),
+                    )
+                    .await
+                    .unwrap_err()
+            };
+            assert!(
+                error.contains("Could not load OpenCode Go models"),
+                "an unloaded catalog is not evidence of unsupported effort: {error}"
+            );
+            assert!(!state.get_thread(&thread.id).await.unwrap().running);
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_cancels_cold_catalog_load_without_holding_thread_locks() {
+        use wiremock::{
+            matchers::{method, path},
+            Mock, MockServer, ResponseTemplate,
+        };
+        let (state, dir) = test_state();
+        state
+            .set_secret("go".into(), "synthetic-test-key".into())
+            .await
+            .unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(503).set_delay(std::time::Duration::from_secs(30)))
+            .mount(&server)
+            .await;
+        state.set_go_base_url_override(Some(server.uri()));
+        let thread = state
+            .create_thread(
+                dir.path().to_string_lossy().into_owned(),
+                ProviderKind::Go,
+                Some("model-a".into()),
+            )
+            .await
+            .unwrap();
+        let copy = state.clone();
+        let id = thread.id.clone();
+        let mut sending = tokio::spawn(async move {
+            let (sink, _) = crate::sink::ChannelSink::channel();
+            copy.send_message_with_effort(Arc::new(sink), id, "hello".into(), Some("low".into()))
+                .await
+        });
+        // Admission includes filesystem skill discovery; parallel suite load must
+        // not consume the separate, strict catalog-cancellation allowance below.
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            while server.received_requests().await.unwrap().is_empty() {
+                tokio::select! {
+                    biased;
+                    result = &mut sending => panic!("send ended before the catalog request: {result:?}"),
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {},
+                }
+            }
+        })
+        .await
+        .expect("catalog fetch started after run preparation");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            assert!(state.get_thread(&thread.id).await.unwrap().running);
+            state.stop_thread(thread.id.clone()).await.unwrap();
+            let error = sending.await.unwrap().unwrap_err();
+            assert!(error.contains("Stopped by you"), "{error}");
+            assert!(!state.get_thread(&thread.id).await.unwrap().running);
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn thread_effort_follows_catalog_and_survives_restart() {
         let (state, dir) = test_state();
         let thread = state
@@ -1092,6 +1220,8 @@ mod tests {
         *state.inner.go_catalog.write().await = vec![themis_core::providers::GoModel {
             id: "model-a".to_owned(),
             effort_levels: vec!["low".to_owned(), "high".to_owned()],
+            context_tokens: None,
+            output_tokens: None,
         }];
         assert!(state
             .set_thread_effort(thread.id.clone(), Some("max".to_owned()))
@@ -1124,12 +1254,24 @@ mod tests {
             )
             .await
             .expect("create");
-        let (sink, _rx) = crate::sink::ChannelSink::channel();
+        let (sink, mut events) = crate::sink::ChannelSink::channel();
         let err = state
             .send_message(Arc::new(sink), thread.id.clone(), "hi".to_owned())
             .await
             .expect_err("missing key");
         assert!(err.contains("no API key"), "{err}");
+        let crate::sink::TestEvent::Thread(started) = events.try_recv().expect("run admission")
+        else {
+            panic!("expected run admission event");
+        };
+        assert!(matches!(started.event, ThreadEvent::Started { .. }));
+        let crate::sink::TestEvent::Thread(failed) = events.try_recv().expect("setup failure")
+        else {
+            panic!("expected setup failure event");
+        };
+        assert_eq!(started.run_id, failed.run_id);
+        assert!(matches!(failed.event, ThreadEvent::Failed { .. }));
+        assert!(events.try_recv().is_err(), "one start and one terminal");
         // The failure path resets `running`: a retry fails the same way, not busy.
         let (sink, _rx) = crate::sink::ChannelSink::channel();
         let retry = state
@@ -1275,7 +1417,7 @@ mod tests {
     #[tokio::test]
     async fn secrets_never_surface_values() {
         let (state, _dir) = test_state();
-        let status = state.get_secret_status().await;
+        let status = state.get_secret_status().await.unwrap();
         assert_eq!(status, SecretStatus { go: false });
         assert!(state
             .set_secret("go".to_owned(), String::new())
@@ -1289,13 +1431,13 @@ mod tests {
             .set_secret("go".to_owned(), "sk-test".to_owned())
             .await
             .expect("set");
-        let status = state.get_secret_status().await;
+        let status = state.get_secret_status().await.unwrap();
         assert!(status.go);
         // The status JSON carries presence only.
         let json = serde_json::to_string(&status).expect("json");
         assert!(!json.contains("sk-test"));
         state.clear_secret("go".to_owned()).await.expect("clear");
-        assert!(!state.get_secret_status().await.go);
+        assert!(!state.get_secret_status().await.unwrap().go);
     }
 
     #[tokio::test]

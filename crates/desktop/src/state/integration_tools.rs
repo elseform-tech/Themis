@@ -79,6 +79,9 @@ impl ToolRuntime for ManagementTool {
         if args.get("scope").is_none() {
             args["scope"] = "global".into();
         }
+        if args["action"].as_str().unwrap_or("list") == "list" {
+            args["action"] = "inventory".into();
+        }
         self.state.plugin_action(args).await.map_err(error)
     }
 }
@@ -142,14 +145,14 @@ impl ToolT for ManagementTool {
     }
     fn description(&self) -> &str {
         match self.name {
-            "list_plugins" => "Inspect installed plugins, bundled skills, MCP connections and hooks in the current project and user scope.",
+            "list_plugins" => "Read paginated integration metadata and configured/enabled MCP counts in the current project and user scope, without bundled contents. Use kind, offset and limit (default 25, maximum 100); follow next_offset. Enabled does not imply connected or healthy.",
             "save_skill" => "Create or update a personal skill through the shared registry. Supply skill, plugin, scope and expectedRevision when updating.",
-            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list, save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, scan_marketplace, catalog, preview, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. preview takes marketplace and name to inspect supported package contents without installing; it reuses the completed marketplace scan. scan_marketplace returns saved status and starts or resumes background work; refresh requests a new scan. test_mcp takes server configuration; test_hook takes hook configuration. New integrations default to global scope, available across projects; preserve the existing scope when editing. Executable operations require approval.",
+            "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list (paginated metadata and MCP counts; kind/offset/limit, next_offset), save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, scan_marketplace, catalog, preview, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. preview takes marketplace and name to inspect supported package contents without installing; it reuses the completed marketplace scan. scan_marketplace returns saved status and starts or resumes background work; refresh requests a new scan. test_mcp takes server configuration; test_hook takes hook configuration. New integrations default to global scope, available across projects; preserve the existing scope when editing. Executable operations require approval.",
             _ => "Manage recurring tasks. Actions: list, create, update, enable, disable, delete. Supply id for existing tasks; input contains name/task and optional calendar schedule {repeat,time,timezone,weekday}. Creation defaults to current project/chat. Updates merge input with saved fields. Calendar timezone is IANA; time HH:MM; weekday 0=Monday. Uses normal runtime approvals.",
         }
     }
     fn args_schema(&self) -> Value {
-        json!({"type":"object","properties":{"action":{"type":"string"},"scope":{"type":"string","enum":["local","global"]},"projectRoot":{"type":"string"},"name":{"type":"string"},"plugin":{"type":"string"},"expectedRevision":{"type":"string"},"skill":{"type":"object"},"spec":{"type":"object"},"id":{"type":"string"},"path":{"type":"string"},"source":{"type":"string"},"url":{"type":"string"},"reference":{"type":"string"},"subdirectory":{"type":"string"},"content":{"type":"string"},"kind":{"type":"string","enum":["skill","mcp","hook"]},"marketplace":{"type":"string"},"refresh":{"type":"boolean"},"server":{"type":"object"},"hook":{"type":"object"},"enabled":{"type":"boolean"},"input":{"type":"object"}},"additionalProperties":true})
+        json!({"type":"object","properties":{"action":{"type":"string"},"scope":{"type":"string","enum":["local","global"]},"projectRoot":{"type":"string"},"name":{"type":"string"},"plugin":{"type":"string"},"expectedRevision":{"type":"string"},"skill":{"type":"object"},"spec":{"type":"object"},"id":{"type":"string"},"path":{"type":"string"},"source":{"type":"string"},"url":{"type":"string"},"reference":{"type":"string"},"subdirectory":{"type":"string"},"content":{"type":"string"},"kind":{"type":"string","enum":["plugin","skill","mcp","hook"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":100},"marketplace":{"type":"string"},"refresh":{"type":"boolean"},"server":{"type":"object"},"hook":{"type":"object"},"enabled":{"type":"boolean"},"input":{"type":"object"}},"additionalProperties":true})
     }
     fn output_schema(&self) -> Option<Value> {
         None
@@ -193,7 +196,7 @@ mod tests {
             .unwrap();
         manager.execute(json!({"action":"set_component_enabled","name":"imported","kind":"mcp","id":"example","enabled":true})).await.unwrap();
         let listed = manager.execute(json!({"action":"list"})).await.unwrap();
-        let imported = listed
+        let imported = listed["items"]
             .as_array()
             .unwrap()
             .iter()
@@ -236,6 +239,61 @@ mod tests {
         assert_eq!(updated["schedule"], created["schedule"]);
         let restarted = AppState::new_for_test(data.path().join("settings.json"));
         assert_eq!(restarted.list_automations().await[0].name, "Evening review");
+    }
+
+    #[tokio::test]
+    async fn inventory_returns_counts_without_bundled_content() {
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        state.plugin_action(json!({"action":"import_json","name":"large","content":json!({"name":"large","files":{"README.md":"bulk".repeat(60_000)},"mcp":{"example":{"command":"missing-server","enabled":false}}}).to_string()})).await.unwrap();
+        let tools = state.integration_management_tools(
+            Arc::new(AllowAllHook),
+            project.path().into(),
+            "chat".into(),
+        );
+        for name in ["list_plugins", "manage_integrations"] {
+            let listed = tools
+                .iter()
+                .find(|t| t.name() == name)
+                .unwrap()
+                .execute(json!({"action":"list","kind":"mcp"}))
+                .await
+                .unwrap();
+            assert_eq!(listed["counts"]["mcp"]["total"], 1);
+            assert_eq!(listed["counts"]["mcp"]["enabled"], 0);
+            assert_eq!(listed["items"][0]["spec"]["name"], "large");
+            assert!(listed["items"][0]["spec"].get("files").is_none());
+            assert!(listed.to_string().len() < 4096);
+        }
+        let default = tools
+            .iter()
+            .find(|t| t.name() == "manage_integrations")
+            .unwrap()
+            .execute(json!({}))
+            .await
+            .unwrap();
+        assert_eq!(default["counts"]["mcp"]["total"], 1);
+        assert!(default["items"][0]["spec"].get("files").is_none());
+        for args in [
+            json!({"limit":0}),
+            json!({"limit":101}),
+            json!({"offset":2,"kind":"mcp"}),
+            json!({"kind":"unknown"}),
+        ] {
+            let mut args = args;
+            args["action"] = "inventory".into();
+            assert!(state.plugin_action(args).await.is_err());
+        }
+        // The UI/CLI's complete inspection contract and durable contents are unchanged.
+        let full = state.plugin_action(json!({"action":"list"})).await.unwrap();
+        assert_eq!(
+            full[0]["spec"]["files"]["README.md"]
+                .as_str()
+                .unwrap()
+                .len(),
+            240_000
+        );
     }
 
     #[tokio::test]

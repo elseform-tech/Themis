@@ -155,8 +155,8 @@ impl SettingsStore {
                 current.max_total_turns = total as u32;
             }
             if let Some(budget) = patch.context_token_budget {
-                if !(2000..=200000).contains(&budget) {
-                    return Err("context_token_budget must be between 2000 and 200000".to_owned());
+                if !(2000..=256000).contains(&budget) {
+                    return Err("context_token_budget must be between 2000 and 256000".to_owned());
                 }
                 current.context_token_budget = budget as u32;
             }
@@ -319,12 +319,14 @@ mod tests {
         let saved = store
             .update(SettingsPatch {
                 context_messages: Some(24),
+                context_token_budget: Some(256000),
                 approval_timeout_seconds: Some(90),
                 ..Default::default()
             })
             .await
             .unwrap();
         assert_eq!(saved.context_messages, 24);
+        assert_eq!(saved.context_token_budget, 256000);
         assert_eq!(saved.approval_timeout_seconds, 90);
         assert_eq!(SettingsStore::load(path).get().await, saved);
     }

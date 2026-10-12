@@ -51,7 +51,40 @@ impl AppState {
                     .to_owned(),
             );
         }
-        let api_key = self.api_key_for(snapshot.provider)?;
+        let stopped = self
+            .inner
+            .stop_flags
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+            .cloned()
+            .ok_or_else(|| "Run is no longer active".to_owned())?;
+        let endpoint_override = self
+            .inner
+            .go_base_url_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        let api_key = tokio::select! {
+            biased;
+            _ = async {
+                while !stopped.load(Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            } => return Err("Stopped by you".to_owned()),
+            key = async {
+                let key = self.api_key_for(snapshot.provider).await?;
+                // Unknown limits remain explicit and use conservative admission.
+                // Effort selection still requires a successfully loaded catalog.
+                let requires_catalog = snapshot.reasoning_effort.is_some()
+                    || snapshot.runtime_configuration.compaction.summary_model.is_some();
+                if !endpoint_override || requires_catalog {
+                    let catalog = self.ensure_go_catalog().await;
+                    if requires_catalog {catalog?;}
+                }
+                Ok::<_, String>(key)
+            } => key?,
+        };
         if let Some(effort) = &snapshot.reasoning_effort {
             let catalog = self.inner.go_catalog.read().await;
             let supported = catalog
@@ -65,6 +98,26 @@ impl AppState {
                 ));
             }
         }
+        let capacity_catalog = self.inner.go_catalog.read().await.clone();
+        if let Some(model) = snapshot.runtime_configuration.compaction.summary_model {
+            if !capacity_catalog
+                .iter()
+                .any(|entry| entry.id == model.as_str())
+            {
+                return Err(format!(
+                    "Summary model '{}' is unavailable in the loaded OpenCode Go catalog",
+                    model.as_str()
+                ));
+            }
+        }
+        let context_capacity = self
+            .inner
+            .go_catalog
+            .read()
+            .await
+            .iter()
+            .find(|model| model.id == snapshot.model)
+            .and_then(|model| model.context_tokens);
         let mut config = ProviderConfig::new(themis_core::providers::ProviderKind::Go, api_key);
         config.reasoning_effort = snapshot.reasoning_effort;
         config.session_id = Some(thread_id.to_owned());
@@ -120,12 +173,20 @@ impl AppState {
         // Materialize skill scripts into the run workroot BEFORE building
         // tools: a failure aborts the spawn (the caller resets `running`),
         // so a run never starts half-skilled.
+        if stopped.load(Ordering::SeqCst) {
+            return Err("Stopped by you".to_owned());
+        }
         let mut skill_catalog = themis_core::skills::materialize_catalog(
             &snapshot.skill_catalog,
             &snapshot.work_root,
             run_id,
         )
         .map_err(|error| format!("failed to materialize skill catalog: {error:#}"))?;
+        skill_catalog = format!(
+            "\nCurrent run workspace: {}\nThis is the captured current project root for this run and its relative tool paths. Paths in skill descriptions, examples, attachments, or historical context do not change the current workspace. Follow the user's task scope when choosing paths.\n{}",
+            json!({"project_root": snapshot.work_root}),
+            skill_catalog
+        );
         materialize_scripts(&snapshot.skills, &snapshot.work_root).map_err(|e| e.to_string())?;
         let mut tools = themis_core::tools::boxed_tools_with_mode(
             &snapshot.work_root,
@@ -225,14 +286,6 @@ impl AppState {
             approvals: approvals.clone(),
         };
         let skills = snapshot.skills;
-        let stopped = self
-            .inner
-            .stop_flags
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(thread_id)
-            .cloned()
-            .ok_or_else(|| "Run is no longer active".to_owned())?;
 
         let evidence_directory = super::attachments::project_storage_directory(
             &snapshot.work_root,
@@ -256,6 +309,11 @@ impl AppState {
             let pump = tokio::spawn(async move {
                 let mut pending_text = String::new();
                 while let Some(event) = events_rx.recv().await {
+                    // Desktop admission already published Started before setup/preparation.
+                    // Keep core's event for standalone callers without resetting live UI state.
+                    if matches!(event, RunEvent::Started { .. }) {
+                        continue;
+                    }
                     if let RunEvent::AssistantText(delta) = &event {
                         pending_text.push_str(delta);
                         pump_sink.emit_thread_event(&ThreadEventEnvelope {
@@ -334,42 +392,80 @@ impl AppState {
             });
             // A panicking run must neither stick the thread busy nor leave the
             // UI waiting: join the run, then synthesize the terminal event.
+            let document_state = state.clone();
+            let document_thread = thread_id.clone();
             let run_outcome = tokio::spawn(async move {
                 for event in setup_events {
                     let _ = events_tx.send(event).await;
                 }
                 let hook_task = task.clone();
-                themis_core::diagnostics::ACTIVE
-                    .scope(
+                themis_core::providers::with_catalog_limits(
+                    &capacity_catalog,
+                    themis_core::diagnostics::ACTIVE.scope(
                         diagnostic_context,
-                        themis_core::runtime::with_configuration(
-                            run_configuration.compaction,
-                            themis_core::plugins::hooks::with_hooks(
-                                hook_runtime,
-                                &hook_task,
-                                events_tx,
-                                |events_tx| {
-                                    run_task_with_evidence(
-                                        llm,
-                                        if yolo {
-                                            tools
-                                        } else {
-                                            themis_core::skills::filter_tools(tools, &skills)
-                                        },
-                                        themis_core::skills::compose_task(&task, &skills),
-                                        snapshot.history,
-                                        approvals,
-                                        policy,
+                        themis_core::runtime::with_model_context_capacity(
+                            if endpoint_override {
+                                None
+                            } else {
+                                Some(context_capacity)
+                            },
+                            themis_core::context_metrics::with_run_policy(
+                                &run_configuration.clone(),
+                                themis_core::runtime::with_configuration(
+                                    run_configuration.compaction,
+                                    themis_core::plugins::hooks::with_hooks(
+                                        hook_runtime,
+                                        &hook_task,
                                         events_tx,
-                                        stopped,
-                                        skill_catalog,
-                                        Some(evidence_directory),
-                                    )
-                                },
+                                        |events_tx| {
+                                            Box::pin(themis_core::context_metrics::collect(async move {
+                                                themis_core::context_metrics::set_run_metadata(serde_json::json!({"thread_id":document_thread,"run_id":themis_core::diagnostics::ACTIVE.try_with(|context|context.run_id.clone()).ok(),"phase":"document_preparation","requested_context_tokens":policy.context_token_budget,"effective_context_tokens":if endpoint_override {policy.context_token_budget} else {policy.context_token_budget.min(context_capacity.unwrap_or(24000))},"provider_capacity_tokens":if endpoint_override {None} else {context_capacity},"capacity_source":if endpoint_override {"test_endpoint_unverified"} else if context_capacity.is_some() {"public_model_catalog"} else {"unknown_conservative_24k"},"configuration_fingerprint":themis_core::context_metrics::config_fingerprint()}));
+                                                let mut history = snapshot.history;
+                                                match themis_core::runtime::documents::prepare(
+                                                    &llm, &snapshot.documents,
+                                                    &evidence_directory, &stopped,
+                                                    |wanted| document_state.inner.transcript.load_document_capsule(&document_thread,wanted).map_err(anyhow::Error::msg),
+                                                    |capsule| document_state.inner.transcript.save_document_capsule(&document_thread,capsule).map_err(anyhow::Error::msg),
+                                                ).await {
+                                                    Ok(capsules) => history.extend(capsules.into_iter().map(|capsule|themis_core::runtime::ConversationTurn {
+                                                        role:themis_core::runtime::ConversationRole::Assistant, text:capsule.context(),
+                                                    })),
+                                                    Err(error) => {
+                                                        if let Some(metrics) = themis_core::context_metrics::snapshot() {
+                                                            let _ = events_tx.send(RunEvent::ContextUsage { metrics }).await;
+                                                        }
+                                                        let failure_message = if stopped.load(Ordering::SeqCst) { "Stopped by you. Completed actions remain available for review.".to_owned() } else {format!("Document preparation failed: {error}; working context unchanged; any completed originals and stages retained")};
+                                                        let _ = events_tx.send(RunEvent::Failed {error:failure_message}).await;
+                                                        return Err(error);
+                                                    }
+                                                }
+                                                run_task_with_evidence(
+                                                llm,
+                                                if yolo {
+                                                    tools
+                                                } else {
+                                                    themis_core::skills::filter_tools(
+                                                        tools, &skills,
+                                                    )
+                                                },
+                                                themis_core::skills::compose_task(&task, &skills),
+                                                history,
+                                                approvals,
+                                                policy,
+                                                events_tx,
+                                                stopped,
+                                                skill_catalog,
+                                                Some(evidence_directory),
+                                            ).await
+                                            }))
+                                        },
+                                    ),
+                                ),
                             ),
                         ),
-                    )
-                    .await
+                    ),
+                )
+                .await
             })
             .await;
             let _pump = pump.await;

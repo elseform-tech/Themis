@@ -25,6 +25,22 @@ fn cli(directory: &Path, method: &str, args: Value) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+fn assert_current_project(body: &Value, root: &Path) {
+    let workspace: Vec<Value> = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "system")
+        .flat_map(|message| message["content"].as_str().unwrap().lines())
+        .filter_map(|line| line.strip_prefix("Current run workspace: "))
+        .map(|metadata| serde_json::from_str(metadata).unwrap())
+        .collect();
+    assert_eq!(
+        workspace,
+        vec![json!({"project_root": root.canonicalize().unwrap()})]
+    );
+}
+
 #[test]
 fn documented_configuration_examples_use_the_runtime_resolver() {
     let guide = include_str!("../../../docs/configuration.md").replace("\r\n", "\n");
@@ -49,12 +65,25 @@ async fn shared_configuration_partial_import_and_diagnostics_survive_restart() {
     let server = Server::bind(state.clone(), directory.path()).await.unwrap();
     let host = tokio::spawn(server.run());
     let root = project.path().to_str().unwrap();
+    let settings = json!({"context_token_budget":200000,"compaction":{"document_batch_timeout_seconds":7200,"rate_limit_backoff_seconds":20},"approval":{"default":"deny","rules":[]}});
     let saved = cli(
         directory.path(),
         "save_runtime_configuration",
-        json!({"scope":"user","projectRoot":root,"json":"{ // team defaults\n\"context_token_budget\":200000,\"approval\":{\"default\":\"deny\",\"rules\":[]}}"}),
+        json!({"scope":"user","projectRoot":root,"json":settings.to_string()}),
     );
     assert_eq!(saved["config"]["context_token_budget"], 200000);
+    assert_eq!(
+        saved["config"]["compaction"]["document_batch_timeout_seconds"],
+        7200
+    );
+    assert_eq!(
+        saved["config"]["compaction"]["rate_limit_backoff_seconds"],
+        20
+    );
+    assert_eq!(
+        saved["provenance"]["compaction.document_batch_timeout_seconds"],
+        "user"
+    );
     let thread = cli(
         directory.path(),
         "create_thread",
@@ -115,6 +144,17 @@ async fn shared_configuration_partial_import_and_diagnostics_survive_restart() {
         .query_diagnostic_logs(Default::default())
         .unwrap()
         .is_empty());
+    let restored_config = restored
+        .get_runtime_configuration(Some(root.into()))
+        .unwrap();
+    assert_eq!(
+        restored_config["config"]["compaction"]["document_batch_timeout_seconds"],
+        7200
+    );
+    assert_eq!(
+        restored_config["config"]["compaction"]["rate_limit_backoff_seconds"],
+        20
+    );
     std::fs::write(directory.path().join("runtime.jsonc"), "{bad").unwrap();
     let broken = restored
         .get_runtime_configuration(Some(root.into()))
@@ -214,6 +254,9 @@ async fn configured_policy_and_repository_guidance_reach_the_actual_run() {
     assert!(requests
         .iter()
         .any(|r| String::from_utf8_lossy(&r.body).contains("CONFIG_GUIDANCE_MARKER")));
+    for request in &requests {
+        assert_current_project(&serde_json::from_slice(&request.body).unwrap(), &root);
+    }
     assert!(state
         .query_diagnostic_logs(Default::default())
         .unwrap()
@@ -345,6 +388,136 @@ async fn cli_catalog_inspection_distinguishes_partial_and_unsupported() {
         cli(data.path(), "get_pending_approvals", Value::Null),
         json!([])
     );
+    cli(data.path(), "shutdown", Value::Null);
+    host.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_retries_required_summary_automatically_and_exposes_usage() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use themis_desktop::server::Client;
+    use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(project.path().join(".themis/config.jsonc"), r#"{"context_token_budget":24000,"recent_messages":4,"compaction":{"timeout_seconds":120,"request_timeout_seconds":60,"max_stages":64},"logging":{"context_metrics":"detailed"}}"#).unwrap();
+    let provider = MockServer::start().await;
+    let summaries = Arc::new(AtomicUsize::new(0));
+    let counter = summaries.clone();
+    Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let summary = body["messages"][0]["content"].as_str().unwrap_or("").contains("You summarize agent context");
+        if summary && matches!(counter.fetch_add(1, Ordering::SeqCst), 1 | 2) { return ResponseTemplate::new(503); }
+        let text = if summary { "Goal/constraints: preserve task. Confirmed findings: originals supplied. Completed changes/tests: none. Unresolved work: continue the task. Next action: answer once." } else { "Resumed without repeating completed actions." };
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":text},"finish_reason":"stop"}],"usage":{"prompt_tokens":123,"completion_tokens":45,"total_tokens":168}}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    common::use_mock_llm(&state, &provider).await;
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let host = tokio::spawn(server.run());
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let client = Client::new(data.path().to_path_buf());
+    client.call("import_legacy_history", json!({"threadId":id,"messages":(0..40).map(|i| json!({"id":format!("old-{i}"),"role":"user","text":format!("Original record {i}: {}", "unchanged evidence ".repeat(600))})).collect::<Vec<_>>()})).await.unwrap();
+    let wait = || async {
+        for _ in 0..400 {
+            if !state.get_thread(id).await.unwrap().running {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("run did not finish");
+    };
+    let run = cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Continue original task"}),
+    );
+    wait().await;
+    let evidence = project.path().join(".themis/context").join(id);
+    let history = state.get_thread_history(id).await.unwrap();
+    let history = serde_json::to_value(history).unwrap();
+    assert!(
+        history
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["envelope"]["event"]["kind"] == "finished"),
+        "{history}"
+    );
+    assert!(!history.to_string().contains("/retry-compaction"));
+    assert!(summaries.load(Ordering::SeqCst) > 3);
+    let requests = provider.received_requests().await.unwrap();
+    let first: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert!(
+        !std::fs::read_dir(&evidence).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("pending-job-")),
+        "successful installation clears the suspended job"
+    );
+    let requests = provider.received_requests().await.unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(
+                |r| serde_json::from_slice::<Value>(&r.body).unwrap()["messages"]
+                    == first["messages"]
+            )
+            .count(),
+        1,
+        "automatic retries must not repeat a completed first stage"
+    );
+    let metrics = cli(
+        data.path(),
+        "get_context_usage",
+        json!({"threadId":id,"runId":run["run_id"]}),
+    );
+    assert!(metrics["total_requests"].as_u64().unwrap() > 1);
+    // The two HTTP 503 responses supplied no usage; missing must remain unknown.
+    assert_eq!(metrics["requests_missing_input_usage"], 2);
+    assert_eq!(metrics["failed_or_cancelled_requests"], 2);
+    let attempts = metrics["recent_requests"].as_array().unwrap();
+    assert!(attempts
+        .iter()
+        .any(|request| request["purpose"] == "summarization" && request["attempt"] == 2));
+    // A short follow-up must retain the authoritative workspace even after the
+    // older project instructions have become a lossy checkpoint.
+    let first_run_requests = provider.received_requests().await.unwrap().len();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Continue the remaining work"}),
+    );
+    wait().await;
+    let requests = provider.received_requests().await.unwrap();
+    assert!(requests.len() > first_run_requests);
+    let mut ordinary_requests = 0;
+    for request in requests {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        if !body["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("You summarize agent context")
+        {
+            assert_current_project(&body, project.path());
+            let system = body["messages"][0]["content"].as_str().unwrap();
+            assert_eq!(system.matches("For factual and technical work").count(), 1);
+            assert!(system.contains("verified current line or line range"));
+            assert!(system.contains("why it addresses the task"));
+            assert!(system.contains("using permitted reference fields without extra wrappers"));
+            ordinary_requests += 1;
+        }
+    }
+    assert!(ordinary_requests >= 2);
     cli(data.path(), "shutdown", Value::Null);
     host.await.unwrap().unwrap();
 }

@@ -20,6 +20,878 @@ fn has_finished(events: &[RunEvent]) -> bool {
         .any(|event| matches!(event, RunEvent::Finished { .. }))
 }
 
+/// Deterministic harness proof; the provider is scripted, not a live model quality claim.
+#[tokio::test]
+async fn forced_checkpoint_resumes_task_at_24k_200k_and_256k_without_replaying_writes() {
+    use themis_core::runtime::{ConversationRole, ConversationTurn};
+    for budget in [24_000, 200_000, 256_000] {
+        let server = MockServer::start().await;
+        let mut discarded = common::tool_call_body(
+            "discarded",
+            "write_file",
+            json!({"file_path":"progress.txt","content":"phase1\n","append":true}),
+        );
+        discarded["choices"][0]["finish_reason"] = "length".into();
+        common::mount_script_with_summary(
+            &server,
+            vec![discarded, common::tool_call_body(
+                "remaining", "write_file",
+                json!({"file_path":"progress.txt","content":"phase2\n","append":true}),
+            ), common::final_text_body("Task resumed and completed")],
+            Some("Original task ORDERED-PHASES: phase1 already saved to progress.txt; append only phase2, preserve phase1, then finish."),
+        ).await;
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("progress.txt"), "phase1\n").unwrap();
+        let evidence = project.path().join(".themis/context/forced");
+        std::fs::create_dir_all(&evidence).unwrap();
+        let mut history = vec![ConversationTurn {
+            role: ConversationRole::User,
+            text: "Original task ORDERED-PHASES: append phase1 then phase2 exactly once each, preserving existing progress.".into(),
+        }, ConversationTurn {
+            role: ConversationRole::Assistant,
+            text: "Completed phase1 in progress.txt. Remaining work: phase2 only.".into(),
+        }];
+        // Distinct unrelated historical records exceed the unchanged window. This
+        // bypasses neither the production trigger nor its snapshot/summary pipeline.
+        for index in 0..24 {
+            history.push(ConversationTurn {
+                role: ConversationRole::User,
+                text: format!(
+                    "Unrelated historical packet {index}: {}",
+                    format!("district {index} observation; ").repeat(budget / 100)
+                ),
+            });
+        }
+        let llm = resolve(
+            &ProviderConfig::new(ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2048);
+        let answer = themis_core::runtime::run_task_with_evidence(
+            llm,
+            boxed_tools(project.path(), approvals.clone()).unwrap(),
+            "Resume the original ordered task and finish only the remaining work.".into(),
+            history,
+            approvals,
+            RunPolicy {
+                total_turns: 4,
+                context_token_budget: budget,
+                recent_messages: 4,
+            },
+            tx,
+            Arc::new(AtomicBool::new(false)),
+            String::new(),
+            Some(evidence.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer, "Task resumed and completed");
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("progress.txt")).unwrap(),
+            "phase1\nphase2\n"
+        );
+        let events = common::drain(&mut rx).await;
+        let checkpoint = events
+            .iter()
+            .position(|event| matches!(event, RunEvent::ContextCheckpoint { .. }))
+            .expect("must install a genuine checkpoint");
+        let write = events
+            .iter()
+            .position(|event| matches!(event, RunEvent::ToolCallStarted { .. }))
+            .expect("must perform useful work");
+        assert!(checkpoint < write);
+        assert_eq!(events.iter().filter(|event| matches!(event, RunEvent::ToolCallFinished {tool,ok:true,..} if tool=="write_file")).count(),1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, RunEvent::Finished { .. }))
+                .count(),
+            1
+        );
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, RunEvent::Failed { .. })));
+        let archives = std::fs::read_dir(&evidence)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+            .collect::<Vec<_>>();
+        assert!(
+            !archives.is_empty(),
+            "checkpoint needs durable original evidence"
+        );
+        assert!(
+            archives
+                .iter()
+                .any(
+                    |path| std::fs::read_to_string(path).unwrap().lines().any(|line| {
+                        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                        record["role"] == "User" && record.to_string().contains("ORDERED-PHASES")
+                    })
+                ),
+            "original task must remain on disk"
+        );
+        let requests = server.received_requests().await.unwrap();
+        let bodies = requests
+            .iter()
+            .map(|request| request.body_json::<serde_json::Value>().unwrap())
+            .collect::<Vec<_>>();
+        let summary_packets = bodies
+            .iter()
+            .filter(|body| {
+                body["messages"][0]["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("You summarize agent context"))
+            })
+            .map(|body| body["messages"].to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(summary_packets.contains("ORDERED-PHASES"));
+        assert!(summary_packets.contains("Completed phase1 in progress.txt"));
+        let ordinary_packets = bodies
+            .iter()
+            .filter(|body| {
+                !body["messages"][0]["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("You summarize agent context"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordinary_packets.len(),
+            3,
+            "one discarded attempt, one useful write, one completion"
+        );
+        for packet in &ordinary_packets {
+            let system = packet["messages"][0]["content"].as_str().unwrap();
+            assert_eq!(system.matches("For factual and technical work").count(), 1);
+            assert!(system.contains("verified current line or line range"));
+            assert!(system.contains("why it addresses the task"));
+            assert!(system.contains("using permitted reference fields without extra wrappers"));
+        }
+        assert!(
+            ordinary_packets[0]["messages"]
+                .to_string()
+                .contains("phase1 already saved"),
+            "installed checkpoint must reach ordinary generation"
+        );
+        for request in requests {
+            let body: serde_json::Value = request.body_json().unwrap();
+            let message_tokens = body["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m.to_string().len().div_ceil(4) + 16)
+                .sum::<usize>();
+            let schema_tokens = body
+                .get("tools")
+                .map_or(0, |tools| tools.to_string().len().div_ceil(4));
+            assert!(
+                message_tokens + schema_tokens + body["max_tokens"].as_u64().unwrap() as usize
+                    <= budget,
+                "provider request exceeds selected budget"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body(
+                "wrong-format",
+                "read_file",
+                json!({"file_path":"source.py","jsonl_record":1,"json_pointer":"/content"}),
+            ),
+            common::tool_call_body("plain-read", "read_file", json!({"file_path":"source.py"})),
+            common::final_text_body("Read the source after correcting the selector"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("source.py"),
+        format!("import unittest\n{}", "# source detail\n".repeat(1000)),
+    )
+    .unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let answer = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Inspect source.py".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "Read the source after correcting the selector");
+    let events = common::drain(&mut rx).await;
+    let results = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::ToolCallFinished { ok, output, .. } => Some((*ok, output)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert!(!results[0].0);
+    assert!(results[0].1.contains("omit jsonl_record and json_pointer"));
+    assert!(results[1].0);
+    let text: serde_json::Value = serde_json::from_str(results[1].1).unwrap();
+    assert!(text["content"]
+        .as_str()
+        .unwrap()
+        .starts_with("import unittest"));
+    assert!(text["content"].as_str().unwrap().chars().count() <= 4000);
+    assert!(text["next_offset"].is_number());
+    assert!(has_finished(&events));
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 3);
+    let correction: serde_json::Value = requests[1].body_json().unwrap();
+    assert!(serde_json::to_string(&correction["messages"])
+        .unwrap()
+        .contains("omit jsonl_record and json_pointer"));
+    let continuation: serde_json::Value = requests[2].body_json().unwrap();
+    assert!(serde_json::to_string(&continuation["messages"])
+        .unwrap()
+        .contains("import unittest"));
+    let body: serde_json::Value = requests[0].body_json().unwrap();
+    assert!(body["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("JSONL selectors apply only to JSONL records, not Python source lines"));
+    let read = body["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "read_file")
+        .unwrap();
+    assert!(read["function"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("For ordinary source/text files"));
+}
+
+#[tokio::test]
+async fn retired_compaction_command_does_not_intercept_user_instructions() {
+    let server = MockServer::start().await;
+    common::mount_script(&server, vec![common::final_text_body("Ordinary answer")]).await;
+    let project = tempfile::tempdir().unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, _rx) = tokio::sync::mpsc::channel(128);
+    let text = "/retry-compaction explain this previously discussed command";
+    let answer = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        text.into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "Ordinary answer");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let body: serde_json::Value = requests[0].body_json().unwrap();
+    assert_eq!(
+        body["messages"].as_array().unwrap().last().unwrap()["content"],
+        text
+    );
+}
+
+#[tokio::test]
+async fn automatic_summary_retries_do_not_repeat_a_completed_write() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wiremock::{matchers::method, Mock, ResponseTemplate};
+    let server = MockServer::start().await;
+    let project = tempfile::tempdir().unwrap();
+    let receipt = project.path().join("receipt.txt");
+    let summaries_follow_write = Arc::new(AtomicBool::new(true));
+    let order = summaries_follow_write.clone();
+    let ordinary = Arc::new(AtomicUsize::new(0));
+    let summaries = Arc::new(AtomicUsize::new(0));
+    let ordinary_count = ordinary.clone();
+    let summary_count = summaries.clone();
+    Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
+        let body: serde_json::Value = request.body_json().unwrap();
+        if body["messages"][0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            order.fetch_and(ordinary_count.load(Ordering::SeqCst) == 1 && std::fs::read_to_string(&receipt).is_ok_and(|text| text == "once\n"), Ordering::SeqCst);
+            if summary_count.fetch_add(1, Ordering::SeqCst) < 2 {
+                return ResponseTemplate::new(503);
+            }
+            return ResponseTemplate::new(200).set_body_json(common::final_text_body("Goal/constraints: finish. Confirmed findings: write saved. Completed changes/tests: appended once to receipt.txt. Unresolved work: report completion. Next action: answer without repeating the write."));
+        }
+        let response = if ordinary_count.fetch_add(1, Ordering::SeqCst) == 0 {
+            let mut call = common::tool_call_body("append-once", "write_file", json!({"file_path":"receipt.txt","content":"once\n","append":true}));
+            call["choices"][0]["message"]["content"] = "progress narration ".repeat(50).into();
+            call
+        } else { common::final_text_body("Completed once") };
+        ResponseTemplate::new(200).set_body_json(response)
+    }).mount(&server).await;
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let evidence = project.path().join(".themis/context/check");
+    std::fs::create_dir_all(&evidence).unwrap();
+    let answer = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Append once and finish".into(),
+        vec![themis_core::runtime::ConversationTurn {
+            role: themis_core::runtime::ConversationRole::Assistant,
+            text: "Historical semantic state ".repeat(2300),
+        }],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 24_000,
+            recent_messages: 2,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "Completed once");
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("receipt.txt")).unwrap(),
+        "once\n"
+    );
+    assert_eq!(ordinary.load(Ordering::SeqCst), 2);
+    assert_eq!(summaries.load(Ordering::SeqCst), 3);
+    assert!(
+        summaries_follow_write.load(Ordering::SeqCst),
+        "all summary attempts must follow the completed append"
+    );
+    let events = common::drain(&mut rx).await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::ToolCallStarted { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::ContextCheckpoint { .. }))
+            .count(),
+        1
+    );
+    assert!(has_finished(&events));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { .. })));
+}
+
+#[tokio::test]
+async fn unchanged_ordinary_reads_get_a_reminder_but_changed_files_do_not() {
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("first", "read_file", json!({"file_path":"source.txt"})),
+            common::tool_call_body("other", "read_file", json!({"file_path":"other.txt"})),
+            common::tool_call_body("again", "read_file", json!({"file_path":"./source.txt"})),
+            common::tool_call_body(
+                "edit",
+                "write_file",
+                json!({"file_path":"source.txt","content":"changed","append":false}),
+            ),
+            common::tool_call_body("changed", "read_file", json!({"file_path":"source.txt"})),
+            common::final_text_body("Finished from the updated observation"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("source.txt"), "original").unwrap();
+    std::fs::write(project.path().join("other.txt"), "other").unwrap();
+    let evidence = project.path().join(".themis/context/repeats");
+    std::fs::create_dir_all(&evidence).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, _rx) = tokio::sync::mpsc::channel(128);
+    themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Inspect, edit, and inspect".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 8,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await
+    .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let tool_output = |index: usize, id: &str| -> String {
+        let body: serde_json::Value = requests[index].body_json().unwrap();
+        body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["tool_call_id"] == id)
+            .unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .into()
+    };
+    let repeated = tool_output(3, "again");
+    assert!(repeated.contains("repeated_unchanged"));
+    assert!(repeated.contains("original"));
+    let receipt: serde_json::Value = serde_json::from_str(&repeated).unwrap();
+    assert_eq!(
+        receipt["found"], true,
+        "reread reminders retain native read coordinates and content"
+    );
+    assert_eq!(receipt["content"], "original");
+    let changed = tool_output(5, "changed");
+    assert!(!changed.contains("repeated_unchanged"));
+    assert!(changed.contains("changed"));
+}
+
+#[tokio::test]
+async fn alternating_silent_shell_writes_remain_progress() {
+    let server = MockServer::start().await;
+    let mut script = (0..5)
+        .map(|i| {
+            common::tool_call_body(
+                &format!("append-{i}"),
+                "shell",
+                json!({"command":"sh","args":["-c", if i % 2 == 0 {
+                    "printf x >> a.txt"
+                } else {
+                    "printf x >> b.txt"
+                }],"cwd":""}),
+            )
+        })
+        .collect::<Vec<_>>();
+    script.push(common::final_text_body("Five writes completed"));
+    common::mount_script(&server, script).await;
+    let project = tempfile::tempdir().unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Append five items".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 8,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await;
+    assert!(result.is_ok(), "shell writes are actions: {result:?}");
+    assert!(has_finished(&common::drain(&mut rx).await));
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("a.txt")).unwrap(),
+        "xxx"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("b.txt")).unwrap(),
+        "xx"
+    );
+}
+
+#[tokio::test]
+async fn oversized_tool_schema_is_rejected_before_provider_request() {
+    #[derive(Debug)]
+    struct HugeSchema;
+    #[themis_core::tools::async_trait]
+    impl themis_core::tools::ToolRuntime for HugeSchema {
+        async fn execute(
+            &self,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, themis_core::tools::ToolCallError> {
+            Ok(json!(null))
+        }
+    }
+    impl themis_core::tools::ToolT for HugeSchema {
+        fn name(&self) -> &str {
+            "huge_schema"
+        }
+        fn description(&self) -> &str {
+            "Test a schema that alone exceeds the input budget"
+        }
+        fn args_schema(&self) -> serde_json::Value {
+            json!({"type":"object","description":"schema".repeat(20_000)})
+        }
+    }
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![common::final_text_body("Should not be requested")],
+    )
+    .await;
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = run_task_with_policy(
+        llm,
+        vec![Box::new(HugeSchema)],
+        "Hello".into(),
+        vec![],
+        Arc::new(AllowAllHook),
+        RunPolicy {
+            total_turns: 2,
+            context_token_budget: 10_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "tool schemas must count toward the complete request budget"
+    );
+    assert!(result.unwrap_err().to_string().contains("budget"));
+    assert!(server.received_requests().await.unwrap().is_empty());
+    assert!(common::drain(&mut rx)
+        .await
+        .iter()
+        .any(|e| matches!(e,RunEvent::Failed{error} if error.contains("budget"))));
+}
+
+#[tokio::test]
+async fn oversized_write_arguments_are_rejected_before_modifying_files() {
+    let server = MockServer::start().await;
+    let content = "large write Ω".repeat(20_000);
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body(
+                "write-large",
+                "write_file",
+                json!({"file_path":"keep.txt","content":content,"append":false}),
+            ),
+            common::final_text_body("Write rejected; use a generator"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("keep.txt"), "original").unwrap();
+    let evidence = project.path().join(".themis/context/write");
+    std::fs::create_dir_all(&evidence).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Write a generated file".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        std::fs::read_to_string(project.path().join("keep.txt")).unwrap() == "original",
+        "rejected arguments must leave the file untouched"
+    );
+    let requests = server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert!(!body.to_string().contains(&content));
+    assert!(body.to_string().contains("arguments_rejected"));
+    let originals = std::fs::read_dir(evidence)
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect::<String>();
+    assert!(originals.contains(&content));
+    assert!(!common::drain(&mut rx)
+        .await
+        .iter()
+        .any(|e| matches!(e, RunEvent::ContextCompacting)));
+}
+
+#[tokio::test]
+async fn repeated_archive_reads_stop_without_another_compaction() {
+    let server = MockServer::start().await;
+    let args =
+        json!({"file_path":".themis/context/source/snapshot-original.jsonl","jsonl_record":1});
+    let mut script = (0..5)
+        .map(|i| common::tool_call_body(&format!("read-{i}"), "read_file", args.clone()))
+        .collect::<Vec<_>>();
+    script.push(common::final_text_body("Repeated the same evidence"));
+    common::mount_script(&server, script).await;
+    let project = tempfile::tempdir().unwrap();
+    let evidence = project.path().join(".themis/context/source");
+    std::fs::create_dir_all(&evidence).unwrap();
+    std::fs::write(
+        evidence.join("snapshot-original.jsonl"),
+        json!({"role":"User","content":"Original fact: 17."}).to_string(),
+    )
+    .unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Recover the original fact".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 20,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "repeated identical archive reads must not cycle until the normal turn limit"
+    );
+    assert!(result.unwrap_err().to_string().contains("recovery"));
+    let events = common::drain(&mut rx).await;
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RunEvent::ContextCompacting)));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RunEvent::Failed { error } if error.contains("recovery"))));
+    assert!(server.received_requests().await.unwrap().len() <= 4);
+}
+
+#[tokio::test]
+async fn repeated_ordinary_reads_stop_even_without_archive_paths() {
+    let server = MockServer::start().await;
+    let args = json!({"file_path":"story.jsonl","jsonl_record":1});
+    let mut script = (0..5)
+        .map(|i| common::tool_call_body(&format!("read-{i}"), "read_file", args.clone()))
+        .collect::<Vec<_>>();
+    script.push(common::final_text_body("Repeated the same evidence"));
+    common::mount_script(&server, script).await;
+    let project = tempfile::tempdir().unwrap();
+    let evidence = project.path().join(".themis/context/source");
+    std::fs::create_dir_all(&evidence).unwrap();
+    std::fs::write(
+        project.path().join("story.jsonl"),
+        json!({"role":"User","content":"Original fact: 17."}).to_string(),
+    )
+    .unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Recover the original fact".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 20,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "repeated identical ordinary reads must not cycle until the normal turn limit"
+    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Repeated unchanged tool"));
+    let events = common::drain(&mut rx).await;
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, RunEvent::ContextCompacting)));
+    assert!(events.iter().any(
+        |e| matches!(e, RunEvent::Failed { error } if error.contains("Repeated unchanged tool"))
+    ));
+    assert!(server.received_requests().await.unwrap().len() <= 4);
+}
+
+#[tokio::test]
+async fn alternating_unchanged_reads_stop_after_compaction_at_both_budgets() {
+    for budget in [24_000, 200_000] {
+        let server = MockServer::start().await;
+        let mut script = (0..5)
+            .map(|i| {
+                common::tool_call_body(
+                    &format!("read-{i}"),
+                    "read_file",
+                    json!({"file_path":if i % 2 == 0 {"a.txt"} else {"b.txt"}}),
+                )
+            })
+            .collect::<Vec<_>>();
+        script.push(common::final_text_body("Finished alternating observations"));
+        common::mount_script_with_summary(
+            &server,
+            script,
+            Some("Both sources remain available; inspect them once."),
+        )
+        .await;
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("a.txt"), "A").unwrap();
+        std::fs::write(project.path().join("b.txt"), "B").unwrap();
+        let llm = resolve(
+            &ProviderConfig::new(ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+        let evidence = project.path().join(".themis/context/alternating");
+        std::fs::create_dir_all(&evidence).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+        let result = themis_core::runtime::run_task_with_evidence(
+            llm,
+            boxed_tools(project.path(), approvals.clone()).unwrap(),
+            "Inspect both files".into(),
+            vec![themis_core::runtime::ConversationTurn {
+                role: themis_core::runtime::ConversationRole::User,
+                text: "historical context ".repeat(budget),
+            }],
+            approvals,
+            RunPolicy {
+                total_turns: 20,
+                context_token_budget: budget,
+                recent_messages: 2,
+            },
+            tx,
+            Arc::new(AtomicBool::new(false)),
+            String::new(),
+            Some(evidence),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "alternating unchanged reads must not escape the loop guard at {budget}"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Repeated unchanged tool"));
+        let events = common::drain(&mut rx).await;
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, RunEvent::ContextCompacting))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, RunEvent::ToolCallFinished { .. }))
+                .count(),
+            5
+        );
+        assert!(!has_finished(&events));
+    }
+}
+
 #[tokio::test]
 async fn context_within_budget_keeps_exact_tool_result() {
     let server = MockServer::start().await;
@@ -86,15 +958,21 @@ async fn context_within_budget_keeps_exact_tool_result() {
 }
 
 #[tokio::test]
-async fn checkpoint_continues_same_request_after_token_pressure() {
+async fn maintenance_continues_same_request_without_unnecessary_checkpoint() {
     let server = MockServer::start().await;
-    common::mount_script(
+    common::mount_script_with_summary(
         &server,
         vec![
-            common::tool_call_body("call_1", "read_file", json!({"file_path":"note.txt"})),
-            common::final_text_body("Read note.txt; answer the original request next."),
+            {
+                let mut call =
+                    common::tool_call_body("call_1", "read_file", json!({"file_path":"note.txt"}));
+                call["choices"][0]["message"]["content"] =
+                    "progress narration ".repeat(2600).into();
+                call
+            },
             common::final_text_body("Done after checkpoint"),
         ],
+        Some("Read note.txt; answer the original request next."),
     )
     .await;
     let dir = tempfile::tempdir().unwrap();
@@ -109,7 +987,8 @@ async fn checkpoint_continues_same_request_after_token_pressure() {
     let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
     let tools = boxed_tools(dir.path(), Arc::clone(&approvals)).unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
-    let answer = run_task_with_policy(
+    std::fs::create_dir_all(dir.path().join(".themis/context/test")).unwrap();
+    let answer = themis_core::runtime::run_task_with_evidence(
         llm,
         tools,
         "Read the note".into(),
@@ -117,40 +996,40 @@ async fn checkpoint_continues_same_request_after_token_pressure() {
         approvals,
         RunPolicy {
             total_turns: 3,
-            context_token_budget: 2000,
+            context_token_budget: 16_000,
             recent_messages: 4,
         },
         tx,
         Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(dir.path().join(".themis/context/test")),
     )
     .await
     .unwrap();
     assert_eq!(answer, "Done after checkpoint");
     let events = common::drain(&mut rx).await;
-    assert!(events.iter().any(|event| matches!(event, RunEvent::ContextCheckpoint { summary } if summary.contains("Read note.txt"))), "{events:?}");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })),
+        "cheap maintenance should remove bulk before semantic compaction"
+    );
     assert!(has_finished(&events));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::ToolCallFinished { .. }))
+            .count(),
+        1
+    );
     let requests = server.received_requests().await.unwrap();
-    let final_request: serde_json::Value =
-        serde_json::from_slice(&requests.last().unwrap().body).unwrap();
-    assert!(final_request["messages"]
-        .as_array()
-        .unwrap()
+    assert_eq!(requests.len(), 2, "no summarizer or repeated tool request");
+    let final_request: serde_json::Value = requests.last().unwrap().body_json().unwrap();
+    let messages = final_request["messages"].as_array().unwrap();
+    assert!(messages
         .iter()
         .any(|message| message["role"] == "user" && message["content"] == "Read the note"));
-    let messages = final_request["messages"].as_array().unwrap();
-    let request = messages
-        .iter()
-        .position(|message| message["role"] == "user" && message["content"] == "Read the note")
-        .unwrap();
-    let checkpoint = messages
-        .iter()
-        .position(|message| {
-            message["content"]
-                .as_str()
-                .is_some_and(|text| text.starts_with("Earlier context checkpoint"))
-        })
-        .unwrap();
-    assert!(request < checkpoint, "completed work must follow the active request, so it is not presented as a new request to repeat");
+    assert!(messages.iter().any(|message| message["role"] == "tool"));
 }
 
 #[tokio::test]
@@ -162,7 +1041,7 @@ async fn tool_evidence_survives_completed_runs_without_compaction() {
             common::tool_call_body(
                 "observed_1",
                 "read_file",
-                json!({"file_path":"observation.txt"}),
+                json!({"file_path":"observation.txt","find":"historical receipt:"}),
             ),
             common::final_text_body("READY"),
         ],
@@ -208,7 +1087,7 @@ async fn tool_evidence_survives_completed_runs_without_compaction() {
     assert!(!events
         .iter()
         .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })));
-    assert!(events.iter().any(|event| matches!(event, RunEvent::ToolCallFinished { output, .. } if output.ends_with("[Output truncated]") && !output.contains("copper-753"))));
+    assert!(events.iter().any(|event| matches!(event, RunEvent::ToolCallFinished { output, .. } if output.contains("copper-753"))));
     std::fs::write(
         project.path().join("observation.txt"),
         "current receipt: silver-864",
@@ -232,10 +1111,57 @@ async fn tool_evidence_survives_completed_runs_without_compaction() {
     let output = records[1]["message_type"]["ToolResult"][0]["function"]["arguments"]
         .as_str()
         .unwrap();
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(output).unwrap()["content"],
-        original
-    );
+    let observed: serde_json::Value = serde_json::from_str(output).unwrap();
+    assert!(observed["content"].as_str().unwrap().contains("copper-753"));
+    assert!(!observed["content"].as_str().unwrap().contains("silver-864"));
+    assert!(observed["content"].as_str().unwrap().chars().count() <= 4000);
+}
+
+#[tokio::test]
+async fn failed_checkpoint_archive_does_not_advertise_a_saved_job() {
+    let server = MockServer::start().await;
+    let project = tempfile::tempdir().unwrap();
+    let evidence = project.path().join("evidence");
+    std::fs::write(&evidence, "cannot hold snapshots").unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Continue the task".into(),
+        vec![themis_core::runtime::ConversationTurn {
+            role: themis_core::runtime::ConversationRole::User,
+            text: "Retain the original task constraint. ".repeat(4000),
+        }],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 24_000,
+            recent_messages: 2,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await;
+    let error = result.unwrap_err().to_string();
+    assert!(error.starts_with("Context checkpoint failed:"), "{error}");
+    assert!(!error.contains("/retry-compaction"), "{error}");
+    assert!(!error.contains("Originals preserved"), "{error}");
+    let events = common::drain(&mut rx).await;
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { error: emitted } if emitted == &error)));
+    assert!(!has_finished(&events));
+    assert!(server.received_requests().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -295,15 +1221,26 @@ async fn failed_tool_evidence_save_stops_before_model_continuation() {
 #[tokio::test]
 async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
     let server = MockServer::start().await;
-    common::mount_script(
+    common::mount_script_with_summary(
         &server,
         vec![
-            common::tool_call_body("read_1", "read_file", json!({"file_path":"note.txt"})),
-            common::final_text_body("Read notes; originals remain recoverable."),
-            common::tool_call_body("read_2", "read_file", json!({"file_path":"other.txt"})),
-            common::final_text_body("Continue with the pending task."),
+            {
+                let mut call =
+                    common::tool_call_body("read_1", "read_file", json!({"file_path":"note.txt"}));
+                call["choices"][0]["message"]["content"] =
+                    "progress narration ".repeat(2600).into();
+                call
+            },
+            {
+                let mut call =
+                    common::tool_call_body("read_2", "read_file", json!({"file_path":"other.txt"}));
+                call["choices"][0]["message"]["content"] =
+                    "progress narration ".repeat(2600).into();
+                call
+            },
             common::final_text_body("Done"),
         ],
+        Some("Read notes; originals remain recoverable."),
     )
     .await;
     let dir = tempfile::tempdir().unwrap();
@@ -332,11 +1269,14 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
         llm,
         boxed_tools(dir.path(), approvals.clone()).unwrap(),
         "Read both notes".into(),
-        vec![],
+        vec![themis_core::runtime::ConversationTurn {
+            role: themis_core::runtime::ConversationRole::User,
+            text: "Historical semantic state ".repeat(4000),
+        }],
         approvals,
         RunPolicy {
             total_turns: 3,
-            context_token_budget: 2000,
+            context_token_budget: 16_000,
             recent_messages: 4,
         },
         tx,
@@ -346,66 +1286,53 @@ async fn evidence_snapshots_preserve_tool_results_across_checkpoints() {
     )
     .await
     .unwrap();
-    let mut snapshots: Vec<_> = std::fs::read_dir(&evidence)
+    let snapshots: Vec<_> = std::fs::read_dir(&evidence)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| {
-            std::fs::read_to_string(path)
-                .unwrap()
-                .contains("\"role\":\"Tool\"")
+            path.extension()
+                .is_some_and(|extension| extension == "jsonl")
         })
         .collect();
-    snapshots.sort();
-    assert_eq!(
-        snapshots.len(),
-        4,
-        "two completed calls and two checkpoints"
-    );
     let events = common::drain(&mut rx).await;
-    let checkpoints: Vec<_> = events
+    let checkpoints = events
         .iter()
-        .filter_map(|event| {
-            if let RunEvent::ContextCheckpoint { summary } = event {
-                Some(summary)
-            } else {
-                None
-            }
+        .filter_map(|event| match event {
+            RunEvent::ContextCheckpoint { summary } => Some(summary),
+            _ => None,
         })
-        .collect();
-    assert_eq!(checkpoints.len(), 2);
-    assert!(
-        checkpoints[1].contains(serde_json::to_string(&evidence).unwrap().trim_matches('"')),
-        "later checkpoints must preserve the directory for all older evidence"
+        .collect::<Vec<_>>();
+    assert_eq!(
+        checkpoints.len(),
+        1,
+        "historical semantic pressure compacts once; tool bulk uses maintenance"
     );
-    assert!(checkpoints[1].contains(&serde_json::to_string(&snapshots[3]).unwrap()));
+    assert!(checkpoints[0].contains(&serde_json::to_string(&evidence).unwrap()));
     assert!(
-        std::fs::read_to_string(&snapshots[3])
-            .unwrap()
-            .lines()
-            .any(|line| {
-                let record: serde_json::Value = serde_json::from_str(line).unwrap();
-                record["content"].as_str().is_some_and(|content| {
-                    content.contains(&serde_json::to_string(&snapshots[1]).unwrap())
-                })
-            }),
-        "the latest original must retain the earlier checkpoint reference"
+        snapshots.len() >= 3,
+        "checkpoint and both completed observations must be durable"
     );
-    for (path, fact) in snapshots
-        .iter()
-        .zip(["red-753", "red-753", "blue-864", "blue-864"])
-    {
-        let text = std::fs::read_to_string(path).unwrap();
-        let records: Vec<serde_json::Value> = text
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
+    for fact in ["red-753", "blue-864"] {
         assert!(
-            records
+            snapshots
                 .iter()
-                .any(|record| record["role"] == "Tool" && record.to_string().contains(fact)),
-            "full original tool result must survive: {text}"
+                .any(
+                    |path| std::fs::read_to_string(path).unwrap().lines().any(|line| {
+                        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                        record["role"] == "Tool" && record.to_string().contains(fact)
+                    })
+                ),
+            "original observed source must survive: {fact}"
         );
     }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::ToolCallFinished { .. }))
+            .count(),
+        2,
+        "compaction must not replay completed reads"
+    );
 }
 
 #[tokio::test]
@@ -418,9 +1345,6 @@ async fn hard_cap_returns_natural_handoff_without_failing() {
                 "call_1",
                 "write_file",
                 json!({"file_path":"progress.txt","content":"step 1\n","append":true}),
-            ),
-            common::final_text_body(
-                "The user requested ordered steps; step 1 was written to progress.txt.",
             ),
             common::final_text_body(
                 "I wrote step 1 to progress.txt. Next, write step 2 and verify the file.",
@@ -447,7 +1371,7 @@ async fn hard_cap_returns_natural_handoff_without_failing() {
         approvals,
         RunPolicy {
             total_turns: 1,
-            context_token_budget: 2000,
+            context_token_budget: 16_000,
             recent_messages: 4,
         },
         tx,
@@ -464,9 +1388,12 @@ async fn hard_cap_returns_natural_handoff_without_failing() {
         "step 1\n"
     );
     let events = common::drain(&mut rx).await;
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })),
+        "a turn cap alone must not trigger compaction"
+    );
     assert!(events
         .iter()
         .any(|event| matches!(event, RunEvent::Incomplete { .. })));
@@ -486,7 +1413,6 @@ async fn empty_handoff_does_not_claim_the_task_was_completed() {
                 "write_file",
                 json!({"file_path":"progress.txt","content":"step 1\n","append":true}),
             ),
-            common::final_text_body("The first step was written."),
             common::final_text_body(""),
         ],
     )
@@ -510,7 +1436,7 @@ async fn empty_handoff_does_not_claim_the_task_was_completed() {
         approvals,
         RunPolicy {
             total_turns: 1,
-            context_token_budget: 2000,
+            context_token_budget: 16_000,
             recent_messages: 4,
         },
         tx,
@@ -744,6 +1670,13 @@ async fn skill_catalog_reaches_system_request_without_body() {
     assert!(system.contains(&serde_json::to_string(&path).unwrap()));
     assert!(std::path::Path::new(&path).ends_with(std::path::Path::new("review").join("SKILL.md")));
     let followup: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+    for packet in [&request, &followup] {
+        let system = packet["messages"][0]["content"].as_str().unwrap();
+        assert_eq!(system.matches("For factual and technical work").count(), 1);
+        assert!(system.contains("verified current line or line range"));
+        assert!(system.contains("why it addresses the task"));
+        assert!(system.contains("using permitted reference fields without extra wrappers"));
+    }
     assert!(followup["messages"]
         .as_array()
         .unwrap()
@@ -782,12 +1715,13 @@ async fn stopped_provider_request_finishes(compacting: bool) {
     let history = if compacting {
         vec![ConversationTurn {
             role: ConversationRole::User,
-            text: "old context ".repeat(500),
+            text: "old context ".repeat(5000),
         }]
     } else {
         vec![]
     };
-    let run = tokio::spawn(run_task_with_policy(
+    let archive = tempfile::tempdir().unwrap();
+    let run = tokio::spawn(themis_core::runtime::run_task_with_evidence(
         llm,
         vec![],
         "Continue".into(),
@@ -795,11 +1729,13 @@ async fn stopped_provider_request_finishes(compacting: bool) {
         Arc::new(AllowAllHook),
         RunPolicy {
             total_turns: 5,
-            context_token_budget: if compacting { 64 } else { usize::MAX },
+            context_token_budget: if compacting { 16_000 } else { usize::MAX },
             recent_messages: 4,
         },
         tx,
         stopped.clone(),
+        String::new(),
+        Some(archive.path().to_owned()),
     ));
     let mut events = Vec::new();
     loop {
@@ -856,7 +1792,7 @@ async fn stop_cancels_stalled_answer_provider_request() {
 }
 
 #[tokio::test]
-async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
+async fn bounded_file_read_prevents_compaction_and_keeps_completion() {
     use wiremock::{matchers::method, Mock, Request, ResponseTemplate};
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -925,7 +1861,7 @@ async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
     assert!(system.contains("/content contains original User/attachment text"));
     assert!(system.contains("Bounded reads include record_role"));
     assert!(system.contains("If bounded searches do not recover the needed evidence"));
-    assert!(system.contains("let task-aware compaction focus it on the current request"));
+    assert!(system.contains("process relevant complete originals locally"));
     assert!(!system.contains("Do not read whole archives into the model again"));
     assert!(system.contains("Use section notes to locate originals"));
     assert!(system.contains("truncated tool output is incomplete evidence"));
@@ -946,24 +1882,40 @@ async fn oversized_tool_result_keeps_completed_call_receipt_after_compaction() {
     );
     let receipt: serde_json::Value =
         serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
-    assert_eq!(receipt["result_offloaded"], true);
-    assert_eq!(receipt["success"], true);
-    let path = std::path::Path::new(receipt["original_snapshot"].as_str().unwrap());
-    assert!(path.starts_with(&evidence));
-    let originals: Vec<serde_json::Value> = std::fs::read_to_string(path)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    let raw = originals
-        .iter()
-        .find(|message| message["role"] == "Tool")
-        .unwrap()["message_type"]["ToolResult"][0]["function"]["arguments"]
-        .as_str()
-        .unwrap();
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(raw).unwrap()["content"],
+        receipt["content"],
+        source.chars().take(4000).collect::<String>()
+    );
+    assert_eq!(receipt["truncated"], true);
+    assert_eq!(receipt["next_offset"], 4000);
+    assert_eq!(
+        requests.len(),
+        2,
+        "a large file must not force compaction when only a page was read"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("repository.txt")).unwrap(),
         source
+    );
+    let path = std::fs::read_dir(&evidence)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let saved = std::fs::read_to_string(path).unwrap();
+    let record: serde_json::Value = serde_json::from_str(saved.lines().nth(1).unwrap()).unwrap();
+    let original: serde_json::Value = serde_json::from_str(
+        record
+            .pointer("/message_type/ToolResult/0/function/arguments")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        original["content"], receipt["content"],
+        "archive the exact observed page"
     );
     assert!(serde_json::to_vec(&final_request).unwrap().len() < 100_000);
 }

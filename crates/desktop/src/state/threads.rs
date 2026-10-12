@@ -79,6 +79,28 @@ impl AppState {
         self.inner.transcript.history(thread_id)
     }
 
+    pub async fn get_thread_history_page(
+        &self,
+        thread_id: &str,
+        cursor: crate::transcript::history_pages::HistoryCursor,
+        through_seq: Option<i64>,
+        max_bytes: usize,
+    ) -> Result<crate::transcript::history_pages::HistoryPage, String> {
+        self.get_thread(thread_id).await?;
+        self.inner
+            .transcript
+            .history_page(thread_id, cursor, through_seq, max_bytes)
+    }
+
+    pub async fn get_context_usage(
+        &self,
+        thread_id: &str,
+        run_id: Option<&str>,
+    ) -> Result<serde_json::Value, String> {
+        self.get_thread(thread_id).await?;
+        self.inner.transcript.context_usage(thread_id, run_id)
+    }
+
     pub async fn import_legacy_history(
         &self,
         thread_id: &str,
@@ -176,7 +198,7 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(&run_id);
         let settings = self.inner.settings.get().await;
-        let mut history = self.inner.transcript.context(&thread_id, usize::MAX)?;
+        let mut history = Vec::new();
         let project_root = {
             let threads = self.inner.threads.read().await;
             threads
@@ -185,6 +207,18 @@ impl AppState {
                 .project_root
                 .clone()
         };
+        let sources =
+            super::attachments::project_storage_directory(&project_root, &["context", &thread_id])?;
+        let source_state = self.clone();
+        let source_thread = thread_id.clone();
+        tokio::task::spawn_blocking(move || {
+            source_state
+                .inner
+                .transcript
+                .publish_context_sources(&source_thread, &sources)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
         let explicit = configuration::RUN_OVERRIDE
             .try_with(Clone::clone)
             .ok()
@@ -192,6 +226,16 @@ impl AppState {
         let resolved_configuration =
             self.runtime_configuration(Some(&project_root), explicit.as_deref())?;
         let mut runtime_configuration = resolved_configuration.config;
+        history.extend(
+            self.inner.transcript.context_for_request(
+                &thread_id,
+                &text,
+                runtime_configuration
+                    .context_token_budget
+                    .unwrap_or(settings.context_token_budget as usize)
+                    / 2,
+            )?,
+        );
         if settings.confirm_reads
             && !resolved_configuration
                 .provenance
@@ -200,9 +244,44 @@ impl AppState {
         {
             runtime_configuration.approval.rules.clear();
         }
-        let (files, manifest) =
-            super::attachments::attachment_context(&project_root, &attachments)?;
+        let source_root = project_root.clone();
+        let source_paths = attachments.clone();
+        let documents = tokio::task::spawn_blocking(move || {
+            super::attachments::document_sources(&source_root, &source_paths)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        let other_attachments = attachments
+            .iter()
+            .filter(|path| !documents.iter().any(|source| &source.source_path == *path))
+            .cloned()
+            .collect::<Vec<_>>();
+        let (files, mut manifest) = super::attachments::attachment_context_with_budget(
+            &project_root,
+            &other_attachments,
+            runtime_configuration
+                .context_token_budget
+                .unwrap_or(settings.context_token_budget as usize)
+                / 2,
+        )?;
         history.extend(files);
+        for source in &documents {
+            manifest.push_str(&format!("\n- {} ({} bytes; complete document prepared before generation; original preserved)\n", source.source_path, source.text.len()));
+        }
+        history.extend(
+            self.inner.transcript.document_context(
+                &thread_id,
+                &text,
+                runtime_configuration
+                    .context_token_budget
+                    .unwrap_or(settings.context_token_budget as usize)
+                    / 2,
+                &documents
+                    .iter()
+                    .map(|source| source.source_path.clone())
+                    .collect::<Vec<_>>(),
+            )?,
+        );
         let legacy: Vec<_> = self
             .inner
             .skills
@@ -358,6 +437,7 @@ impl AppState {
             RunSnapshot {
                 reasoning_effort: reasoning_effort.or_else(|| record.reasoning_effort.clone()),
                 history,
+                documents,
                 approval_timeout_seconds: settings.approval_timeout_seconds.clamp(30, 600),
                 approval_mode: record.approval_mode,
                 runtime_configuration: runtime_configuration.clone(),
@@ -386,25 +466,40 @@ impl AppState {
                 .unwrap_or(settings.max_total_turns.clamp(1, 2000) as usize),
             context_token_budget: runtime_configuration
                 .context_token_budget
-                .unwrap_or(settings.context_token_budget.clamp(2000, 200000) as usize),
+                .unwrap_or(settings.context_token_budget.clamp(2000, 256000) as usize),
             recent_messages: runtime_configuration
                 .recent_messages
                 .unwrap_or(settings.context_messages.clamp(1, 100) as usize),
         };
+        let started = ThreadEventEnvelope {
+            thread_id: thread_id.clone(),
+            run_id: run_id.clone(),
+            event: ThreadEvent::Started {
+                task: resolved_text.clone(),
+                max_turns: policy.total_turns,
+            },
+        };
+        if let Err(error) = self.inner.transcript.append_event(&started) {
+            self.finish_run(&thread_id).await;
+            return Err(error);
+        }
+        sink.emit_thread_event(&started);
         if let Err(error) = self
             .spawn_run(&sink, &thread_id, &run_id, snapshot, resolved_text, policy)
             .await
         {
-            if let Err(save_error) = self.inner.transcript.append_event(&ThreadEventEnvelope {
+            let failed = ThreadEventEnvelope {
                 thread_id: thread_id.clone(),
                 run_id: run_id.clone(),
                 event: ThreadEvent::Failed {
                     error: error.clone(),
                 },
-            }) {
+            };
+            if let Err(save_error) = self.inner.transcript.append_event(&failed) {
                 self.record_error("save_thread_event", save_error);
             }
             self.finish_run(&thread_id).await;
+            sink.emit_thread_event(&failed);
             return Err(error);
         }
         Ok(RunHandle { run_id })
@@ -515,6 +610,9 @@ impl AppState {
         effort: Option<String>,
     ) -> Result<ThreadInfo, String> {
         let effort = effort.filter(|value| !value.is_empty());
+        if effort.is_some() {
+            self.ensure_go_catalog().await?;
+        }
         let info = {
             let mut threads = self.inner.threads.write().await;
             let record = threads

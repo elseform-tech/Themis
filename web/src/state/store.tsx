@@ -112,6 +112,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const currentState = useRef(state);
   currentState.current = state;
   const recoverState = useRef<() => void>(() => {});
+  const refreshSecretStatus = useRef<() => void>(() => {});
   useEffect(() => { if (startup === null) recoverState.current(); }, [startup]);
   const manualRuns = useRef(new Set<string>());
   const settings = useRef(state.settings);
@@ -194,6 +195,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             }).catch(() => {});
           }
           if (kind === "finished" || kind === "incomplete" || kind === "failed") {
+            refreshSecretStatus.current();
             const manual = manualRuns.current.delete(envelope.thread_id);
             if (manual && kind === "finished") {
               if (settings.current.completion_sound) playCompletionSound();
@@ -219,7 +221,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             if (!cancelled) dispatch({ type: "thread/synced", projectRoot, thread });
           }).catch(() => {});
         });
-        const offRecovery = await onBackendResync(() => { clearTimeout(retry); window.dispatchEvent(new Event("themis-mcp-reconnect")); void recover(); });
+        const offRecovery = await onBackendResync(() => { clearTimeout(retry); refreshSecretStatus.current(); window.dispatchEvent(new Event("themis-mcp-reconnect")); void recover(); });
         if (cancelled) {
           offRecovery();
           offThread();
@@ -248,10 +250,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Load settings + secret status once on mount, then restore recent
-  // projects and their threads.
+  // Restore recent projects and refresh credential presence after external changes.
   useEffect(() => {
     let cancelled = false;
+    let secretLoading = false, secretAgain = false, secretWarning = false;
+    async function refreshSecrets() {
+      if (cancelled) return;
+      if (secretLoading) { secretAgain = true; return; }
+      secretLoading = true;
+      do {
+        secretAgain = false;
+        try {
+          const status = await getSecretStatus();
+          if (!cancelled) dispatch({ type: "secrets/loaded", status });
+          secretWarning = false;
+        } catch (error) {
+          if (!cancelled && !secretWarning) toast(dispatch, `Failed to load secret status: ${describeError(error)}`, "warning");
+          secretWarning = true;
+        }
+      } while (secretAgain && !cancelled);
+      secretLoading = false;
+    }
+    const refresh = () => { void refreshSecrets(); };
+    const visible = () => { if (document.visibilityState === "visible") refresh(); };
+    refreshSecretStatus.current = refresh;
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visible);
+    refresh();
     getSettings()
       .then(async (settings) => {
         if (cancelled) return;
@@ -284,19 +309,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       })
       .finally(() => { if (!cancelled) setStartup(null); });
-    getSecretStatus()
-      .then((status) => {
-        if (!cancelled) dispatch({ type: "secrets/loaded", status });
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          toast(
-            dispatch,
-            `Failed to load secret status: ${describeError(error)}`,
-            "warning",
-          );
-        }
-      });
     // Phase 4 lists (skills, automations, reviews) load independently of the
     // project restore flow; failures toast per-list warnings.
     void loadPhase4Lists(
@@ -307,6 +319,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     );
     return () => {
       cancelled = true;
+      refreshSecretStatus.current = () => {};
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visible);
     };
     // state.settings is the compiled default on first mount; intentionally once.
     // eslint-disable-next-line react-hooks/exhaustive-deps

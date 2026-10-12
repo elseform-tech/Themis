@@ -67,6 +67,61 @@ use autoagents::llm::{
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+// The SDK sampling overrides do not carry request purpose; keep this task-local
+// so internal summary settings cannot leak into concurrent answer requests.
+tokio::task_local! { pub(crate) static COMPACTION_REQUEST: (); }
+tokio::task_local! { static MODEL_LIMITS: HashMap<String, (Option<usize>, Option<usize>)>; }
+
+pub async fn with_catalog_limits<F: std::future::Future>(
+    models: &[GoModel],
+    future: F,
+) -> F::Output {
+    if models.is_empty() {
+        return future.await;
+    }
+    MODEL_LIMITS
+        .scope(
+            models
+                .iter()
+                .map(|m| (m.id.clone(), (m.context_tokens, m.output_tokens)))
+                .collect(),
+            future,
+        )
+        .await
+}
+
+pub(crate) fn summary_model(model: &str) -> &str {
+    if let Some(configured) = crate::runtime::compaction_config().summary_model {
+        configured.as_str()
+    } else if model.starts_with("longcat-2.5-") || matches!(model, "gpt-5.6-luna" | "gpt-6-luna") {
+        model
+    } else {
+        "longcat-2.5-preview-free"
+    }
+}
+
+pub(crate) fn summary_context_limit(model: &str) -> Option<usize> {
+    MODEL_LIMITS
+        .try_with(|limits| {
+            limits
+                .get(summary_model(model))
+                .and_then(|limit| limit.0)
+                .unwrap_or(24_000)
+        })
+        .ok()
+}
+
+pub(crate) fn bounded_output_limit(model: &str, limit: u32) -> u32 {
+    MODEL_LIMITS
+        .try_with(|limits| {
+            limits
+                .get(model)
+                .and_then(|limit| limit.1)
+                .map_or(limit, |cap| limit.min(cap.min(u32::MAX as usize) as u32))
+        })
+        .unwrap_or(limit)
+}
+
 /// Canonical provider name reported for OpenCode Go in errors and diagnostics.
 ///
 /// This mirrors the `PROVIDER_NAME = "OpenCode Go"` value the plan assigned to a
@@ -195,10 +250,10 @@ impl ProviderConfig {
     }
 }
 
-/// HTTP client for one provider (120s default timeout, matching the SDK default).
+/// HTTP client for provider requests, including streamed answers and summaries (five minutes).
 fn http_client() -> Client {
     Client::builder()
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(300))
         .build()
         .unwrap_or_else(|_| Client::new())
 }
@@ -247,6 +302,7 @@ fn go_session_id() -> String {
 /// Per-conversation Go session IDs (see the module-level spike note) are supported
 /// by passing an explicit `session_id`; `None` falls back to `THEMIS_GO_SESSION`
 /// and then [`GO_DEFAULT_SESSION`].
+#[derive(Clone)]
 pub struct CompatibleProvider {
     provider_name: &'static str,
     api_key: String,
@@ -257,6 +313,8 @@ pub struct CompatibleProvider {
     client: Client,
 }
 
+tokio::task_local! { pub static OUTPUT_LIMIT: u32; }
+
 struct ChatEventStream {
     response: reqwest::Response,
     buffer: Vec<u8>,
@@ -265,6 +323,8 @@ struct ChatEventStream {
     messages_api: bool,
     responses_api: bool,
     done: bool,
+    finished_choice: bool,
+    trace: Option<crate::context_metrics::RequestTrace>,
 }
 
 impl ChatEventStream {
@@ -277,6 +337,8 @@ impl ChatEventStream {
             messages_api,
             responses_api,
             done: false,
+            finished_choice: false,
+            trace: None,
         }
     }
 
@@ -304,6 +366,12 @@ impl ChatEventStream {
                         ));
                     }
                 }
+                Ok(None) if self.finished_choice => {
+                    self.done = true;
+                    if let Some(trace) = &mut self.trace {
+                        trace.complete();
+                    }
+                }
                 Ok(None) => self.fail(LLMError::Generic(
                     "Provider stream ended before completion".to_owned(),
                 )),
@@ -320,6 +388,9 @@ impl ChatEventStream {
             return Ok(());
         };
         if data == "[DONE]" {
+            if let Some(trace) = &mut self.trace {
+                trace.complete();
+            }
             self.done = true;
             return Ok(());
         }
@@ -329,6 +400,17 @@ impl ChatEventStream {
     fn process_payload(&mut self, data: &str) -> Result<(), LLMError> {
         let value: serde_json::Value = serde_json::from_str(data)
             .map_err(|error| LLMError::Generic(format!("Invalid stream event: {error}")))?;
+        if let Some(trace) = &mut self.trace {
+            trace.usage(&value["usage"]);
+            trace.usage(&value["message"]["usage"]);
+            trace.usage(&value["response"]["usage"]);
+        }
+        if value["type"] == "message_stop" || value["type"] == "response.completed" {
+            self.done = true;
+            if let Some(trace) = &mut self.trace {
+                trace.complete();
+            }
+        }
         if let Some(error) = value.get("error") {
             return Err(LLMError::Generic(format!("Provider stream error: {error}")));
         }
@@ -418,7 +500,7 @@ impl ChatEventStream {
         self.ready.push_back(Ok(StreamChunk::Done {
             stop_reason: reason.to_owned(),
         }));
-        self.done = true;
+        self.finished_choice = true;
         Ok(())
     }
 
@@ -521,6 +603,24 @@ impl CompatibleProvider {
                 tools,
             })?
         };
+        if let Ok(limit) = OUTPUT_LIMIT.try_with(|limit| *limit) {
+            let key = if self.uses_responses() {
+                "max_output_tokens"
+            } else {
+                "max_tokens"
+            };
+            body[key] = bounded_output_limit(&self.model, limit).into();
+        }
+        if stream && !self.uses_messages() && !self.uses_responses() {
+            body["stream_options"] = serde_json::json!({"include_usage":true});
+        }
+        if COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
+            if self.uses_responses() {
+                body["reasoning"] = serde_json::json!({"effort":"none"});
+            } else {
+                body["thinking"] = serde_json::json!({"type":"disabled"});
+            }
+        }
         if let Some(sampling) = sampling {
             if let Some(limit) = sampling.max_tokens {
                 let key = if self.uses_responses() {
@@ -528,7 +628,7 @@ impl CompatibleProvider {
                 } else {
                     "max_tokens"
                 };
-                body[key] = limit.into();
+                body[key] = bounded_output_limit(&self.model, limit).into();
             }
             if let Some(temperature) = sampling.temperature {
                 body["temperature"] = temperature.into();
@@ -587,6 +687,23 @@ async fn ensure_success(
         return Ok(response);
     }
     let status = response.status().as_u16();
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            let value = value.trim();
+            value
+                .parse::<u64>()
+                .ok()
+                .map(Duration::from_secs)
+                .or_else(|| {
+                    httpdate::parse_http_date(value)
+                        .ok()?
+                        .duration_since(std::time::SystemTime::now())
+                        .ok()
+                })
+        });
     let body = response.text().await.unwrap_or_default();
     let message = format!("{provider_name} request failed with HTTP {status}");
     match status {
@@ -599,14 +716,14 @@ async fn ensure_success(
             status_code: status,
             message,
             response_body: body.into(),
-            retry_after: None,
+            retry_after,
             provider_code: None,
         }),
         _ => Err(LLMError::HttpStatusError {
             status_code: status,
             message,
             response_body: body.into(),
-            retry_after: None,
+            retry_after,
             provider_code: None,
         }),
     }
@@ -631,31 +748,54 @@ impl ChatProvider for CompatibleProvider {
         _json_schema: Option<StructuredOutputFormat>,
         sampling: Option<&SamplingOverrides>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
-        if self.api_key.is_empty() {
+        // ponytail: keep only verified off controls; use the known no-thinking Go
+        // summarizer for other models until their disable capability is verified.
+        let summary_provider = COMPACTION_REQUEST.try_with(|_| ()).ok().map(|()| Self {
+            model: summary_model(&self.model).to_owned(),
+            reasoning_effort: None,
+            ..self.clone()
+        });
+        let provider = summary_provider.as_ref().unwrap_or(self);
+        if provider.api_key.is_empty() {
             return Err(LLMError::missing_api_key(format!(
                 "Missing {} API key",
-                self.provider_name
+                provider.provider_name
             )));
         }
-        let response = self
+        let mut trace = crate::context_metrics::RequestTrace::begin(
+            &provider.model,
+            messages,
+            tools,
+            COMPACTION_REQUEST.try_with(|_| ()).is_ok(),
+        );
+        trace.output_limit(
+            sampling
+                .and_then(|s| s.max_tokens)
+                .or_else(|| OUTPUT_LIMIT.try_with(|limit| *limit).ok())
+                .map(|limit| bounded_output_limit(&provider.model, limit)),
+        );
+        let response = provider
             .chat_request(messages, tools, false, sampling)?
             .send()
             .await
             .map_err(|err| transport_error("chat request failed", err))?;
-        let response = ensure_success(response, self.provider_name).await?;
+        let response = ensure_success(response, provider.provider_name).await?;
         let raw = response
             .text()
             .await
             .map_err(|err| transport_error("failed to read chat response", err))?;
-        let parsed: WireChatResponse = if self.uses_responses() {
+        if let Ok(raw_usage) = serde_json::from_str::<serde_json::Value>(&raw) {
+            trace.usage(&raw_usage["usage"]);
+        }
+        let parsed: WireChatResponse = if provider.uses_responses() {
             responses_response(serde_json::from_str(&raw)?)?
-        } else if self.uses_messages() {
+        } else if provider.uses_messages() {
             messages_response(serde_json::from_str(&raw)?)?
         } else {
             serde_json::from_str(&raw).map_err(|err| LLMError::ResponseFormatError {
                 message: format!(
                     "Failed to decode {} API response: {err}",
-                    self.provider_name
+                    provider.provider_name
                 ),
                 raw_response: raw,
             })?
@@ -666,12 +806,33 @@ impl ChatProvider for CompatibleProvider {
                 .into_iter()
                 .next()
                 .ok_or_else(|| LLMError::ResponseFormatError {
-                    message: format!("{} returned no choices", self.provider_name),
+                    message: format!("{} returned no choices", provider.provider_name),
                     raw_response: String::new(),
                 })?;
-        if choice.finish_reason.as_deref() == Some("length") {
+        let truncated = choice.finish_reason.as_deref() == Some("length");
+        if truncated || COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
+            let usage = parsed.usage.as_ref();
+            crate::diagnostics::emit(
+                "provider",
+                if truncated {
+                    "output_truncated"
+                } else {
+                    "summary_usage"
+                },
+                if truncated { "warn" } else { "info" },
+                serde_json::json!({
+                    "model": provider.model,
+                    "output_limit_tokens": sampling.and_then(|sampling| sampling.max_tokens),
+                    "completion_tokens": usage.map(|usage| usage.completion_tokens),
+                    "reasoning_tokens": usage.and_then(|usage| usage.completion_tokens_details.as_ref()).and_then(|details| details.reasoning_tokens),
+                    "public_text_chars": choice.message.content.as_ref().map_or(0, |text| text.chars().count()),
+                }),
+            );
+        }
+        if truncated {
             return Err(LLMError::Generic("Provider response was truncated".into()));
         }
+        trace.complete();
         Ok(Box::new(CompatibleChatResponse {
             text: choice.message.content,
             tool_calls: choice.message.tool_calls,
@@ -685,6 +846,13 @@ impl ChatProvider for CompatibleProvider {
         tools: Option<&[Tool]>,
         _json_schema: Option<StructuredOutputFormat>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk, LLMError>> + Send>>, LLMError> {
+        let mut trace =
+            crate::context_metrics::RequestTrace::begin(&self.model, messages, tools, false);
+        trace.output_limit(
+            OUTPUT_LIMIT
+                .try_with(|limit| bounded_output_limit(&self.model, *limit))
+                .ok(),
+        );
         let messages_api = self.uses_messages();
         let responses_api = self.uses_responses();
         let response = self
@@ -701,10 +869,11 @@ impl ChatProvider for CompatibleProvider {
             .unwrap_or("")
             .contains("text/event-stream")
         {
-            let value = response
+            let value: serde_json::Value = response
                 .json()
                 .await
                 .map_err(|error| transport_error("invalid chat response", error))?;
+            trace.usage(&value["usage"]);
             let parsed: WireChatResponse = if responses_api {
                 responses_response(value)?
             } else if messages_api {
@@ -717,6 +886,9 @@ impl ChatProvider for CompatibleProvider {
                 .into_iter()
                 .next()
                 .ok_or_else(|| LLMError::Generic("Provider returned no choices".to_owned()))?;
+            if choice.finish_reason.as_deref() == Some("length") {
+                return Err(LLMError::Generic("Provider response was truncated".into()));
+            }
             let mut chunks = Vec::new();
             if let Some(text) = choice.message.content {
                 chunks.push(Ok(StreamChunk::Text(text)));
@@ -730,9 +902,11 @@ impl ChatProvider for CompatibleProvider {
             {
                 chunks.push(Ok(StreamChunk::ToolUseComplete { index, tool_call }));
             }
+            trace.complete();
             return Ok(Box::pin(stream::iter(chunks)));
         }
-        let state = ChatEventStream::new(response, messages_api, responses_api);
+        let mut state = ChatEventStream::new(response, messages_api, responses_api);
+        state.trace = Some(trace);
         Ok(Box::pin(stream::unfold(state, |mut state| async move {
             let item = state.next_chunk().await?;
             Some((item, state))
@@ -899,6 +1073,10 @@ struct WireModelList {
 pub struct GoModel {
     pub id: String,
     pub effort_levels: Vec<String>,
+    #[serde(default)]
+    pub context_tokens: Option<usize>,
+    #[serde(default)]
+    pub output_tokens: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -916,6 +1094,14 @@ struct CatalogProvider {
 struct CatalogModel {
     #[serde(default)]
     reasoning_options: Vec<CatalogReasoningOption>,
+    #[serde(default)]
+    limit: CatalogLimits,
+}
+
+#[derive(Default, Deserialize)]
+struct CatalogLimits {
+    context: Option<usize>,
+    output: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -938,7 +1124,13 @@ fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoModel> {
                 .filter(|option| option.kind == "effort")
                 .flat_map(|option| option.values.iter().cloned())
                 .collect();
-            GoModel { id, effort_levels }
+            let limits = catalog.go.models.get(&id).map(|model| &model.limit);
+            GoModel {
+                id,
+                effort_levels,
+                context_tokens: limits.and_then(|l| l.context),
+                output_tokens: limits.and_then(|l| l.output),
+            }
         })
         .collect()
 }
@@ -964,6 +1156,8 @@ pub async fn refresh_go_catalog(base_url: &str, api_key: &str) -> Result<Vec<GoM
             .map(|id| GoModel {
                 id,
                 effort_levels: Vec::new(),
+                context_tokens: None,
+                output_tokens: None,
             })
             .collect(),
     })
@@ -1017,6 +1211,50 @@ mod tests {
     /// Serializes tests that touch `THEMIS_*` environment variables (`resolve`
     /// reads them, and process env is global across test threads).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn http_errors_preserve_retry_after_headers() {
+        let server = MockServer::start().await;
+        let client = reqwest::Client::new();
+        for (index, (status, header, expected)) in [
+            (429, Some("45"), Some(45)),
+            (503, Some("45"), Some(45)),
+            (429, Some("Thu, 01 Jan 2099 00:00:00 GMT"), None),
+            (429, Some("invalid"), None),
+            (503, Some("Thu, 01 Jan 1970 00:00:00 GMT"), None),
+            (429, None, None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut response = ResponseTemplate::new(status);
+            if let Some(value) = header {
+                response = response.insert_header("Retry-After", value);
+            }
+            let endpoint = format!("/{index}");
+            Mock::given(method("GET"))
+                .and(path(&endpoint))
+                .respond_with(response)
+                .mount(&server)
+                .await;
+            let response = client
+                .get(format!("{}{endpoint}", server.uri()))
+                .send()
+                .await
+                .unwrap();
+            let error = ensure_success(response, "test").await.unwrap_err();
+            let delay = match error {
+                LLMError::RateLimitError { retry_after, .. }
+                | LLMError::HttpStatusError { retry_after, .. } => retry_after,
+                error => panic!("unexpected error: {error}"),
+            };
+            if index == 2 {
+                assert!(delay.is_some_and(|delay| delay.as_secs() > 60));
+            } else {
+                assert_eq!(delay.map(|delay| delay.as_secs()), expected, "{header:?}");
+            }
+        }
+    }
 
     #[tokio::test]
     async fn transport_failures_keep_native_retry_classification() {
@@ -1148,6 +1386,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streaming_usage_after_finish_is_captured_without_retaining_content() {
+        use futures_util::StreamExt;
+        let server = MockServer::start().await;
+        let events=concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"PRIVATE-CONTENT-173\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":80},\"completion_tokens_details\":{\"reasoning_tokens\":12}}}\n\n",
+            "data: [DONE]\n\n");
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(events, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let provider = CompatibleProvider::go(
+            "synthetic".into(),
+            "test-model".into(),
+            Some(server.uri()),
+            None,
+        );
+        crate::context_metrics::collect(async {
+            let chunks = provider
+                .chat_stream_with_tools(&[user_message("PRIVATE-PROMPT-337")], None, None)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await;
+            assert!(chunks.iter().all(Result::is_ok));
+            let usage = crate::context_metrics::snapshot().unwrap();
+            assert_eq!(usage["provider_input_tokens"], 100);
+            assert_eq!(usage["provider_output_tokens"], 20);
+            assert_eq!(usage["requests_missing_input_usage"], 0);
+            assert!(!usage.to_string().contains("PRIVATE-"));
+        })
+        .await;
+        assert_eq!(
+            server.received_requests().await.unwrap()[0]
+                .body_json::<Value>()
+                .unwrap()["stream_options"]["include_usage"],
+            true
+        );
+    }
+
+    #[tokio::test]
     async fn sampling_output_limit_reaches_each_protocol_without_changing_defaults() {
         use autoagents::llm::chat::SamplingOverrides;
         for (model, endpoint, key, response, default_limit) in [
@@ -1206,6 +1485,276 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_summary_model_routes_without_changing_ordinary_model() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(|request: &wiremock::Request| {
+                let response = if request.url.path() == "/responses" {
+                    json!({"output":[{"type":"message","content":[{"type":"output_text","text":"checkpoint"}]}]})
+                } else {
+                    json!({"choices":[{"message":{"content":"answer"},"finish_reason":"stop"}]})
+                };
+                ResponseTemplate::new(200).set_body_json(response)
+            }).mount(&server).await;
+        let catalog = vec![
+            GoModel {
+                id: "gpt-6-luna".into(),
+                effort_levels: vec!["none".into()],
+                context_tokens: Some(100000),
+                output_tokens: Some(1000),
+            },
+            GoModel {
+                id: "longcat-2.5-preview-free".into(),
+                effort_levels: vec![],
+                context_tokens: Some(200000),
+                output_tokens: Some(8192),
+            },
+        ];
+        let provider = CompatibleProvider::go(
+            "synthetic".into(),
+            "step-5-preview-free".into(),
+            Some(server.uri()),
+            Some("override-run".into()),
+        );
+        let config = serde_json::from_value::<crate::configuration::CompactionConfig>(
+            json!({"summary_model":"gpt-6-luna"}),
+        )
+        .unwrap();
+        let messages = [user_message("Summarize")];
+        with_catalog_limits(
+            &catalog,
+            crate::runtime::with_configuration(config, async {
+                assert_eq!(summary_context_limit("step-5-preview-free"), Some(100000));
+                COMPACTION_REQUEST
+                    .scope(
+                        (),
+                        provider.chat_and_sampling(
+                            &messages,
+                            None,
+                            Some(&SamplingOverrides::with_max_tokens(1654)),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+                provider.chat(&messages, None).await.unwrap();
+            }),
+        )
+        .await;
+        COMPACTION_REQUEST
+            .scope((), provider.chat(&messages, None))
+            .await
+            .unwrap();
+        let requests = server.received_requests().await.unwrap();
+        let bodies: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect();
+        assert_eq!(requests[0].url.path(), "/responses");
+        assert_eq!(bodies[0]["model"], "gpt-6-luna");
+        assert_eq!(bodies[0]["reasoning"]["effort"], "none");
+        assert_eq!(bodies[0]["max_output_tokens"], 1000);
+        assert_eq!(bodies[1]["model"], "step-5-preview-free");
+        assert_eq!(bodies[2]["model"], "longcat-2.5-preview-free");
+        assert_eq!(bodies[2]["thinking"], json!({"type":"disabled"}));
+        assert_eq!(requests[0].headers[GO_SESSION_HEADER], "override-run");
+    }
+
+    #[tokio::test]
+    async fn summary_model_overrides_are_isolated_between_concurrent_runs() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(|request:&wiremock::Request| {
+            let response=if request.url.path()=="/responses" {json!({"output":[{"type":"message","content":[{"type":"output_text","text":"summary"}]}]})} else {json!({"choices":[{"message":{"content":"answer"},"finish_reason":"stop"}]})};
+            ResponseTemplate::new(200).set_body_json(response)
+        }).mount(&server).await;
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let issue = |model: &'static str, session: &'static str| {
+            let barrier = barrier.clone();
+            let provider = CompatibleProvider::go(
+                "synthetic".into(),
+                "step-5-preview-free".into(),
+                Some(server.uri()),
+                Some(session.into()),
+            );
+            async move {
+                let config = serde_json::from_value(json!({"summary_model":model})).unwrap();
+                crate::runtime::with_configuration(config, async {
+                    barrier.wait().await;
+                    COMPACTION_REQUEST
+                        .scope((), provider.chat(&[user_message("summarize")], None))
+                        .await
+                        .unwrap();
+                    provider
+                        .chat(&[user_message("continue")], None)
+                        .await
+                        .unwrap();
+                })
+                .await;
+            }
+        };
+        tokio::join!(
+            issue("gpt-6-luna", "luna-run"),
+            issue("longcat-2.5-preview-free", "longcat-run")
+        );
+        let requests = server.received_requests().await.unwrap();
+        for (session, expected) in [
+            ("luna-run", "gpt-6-luna"),
+            ("longcat-run", "longcat-2.5-preview-free"),
+        ] {
+            let bodies: Vec<serde_json::Value> = requests
+                .iter()
+                .filter(|r| r.headers[GO_SESSION_HEADER] == session)
+                .map(|r| serde_json::from_slice(&r.body).unwrap())
+                .collect();
+            assert_eq!(bodies.len(), 2);
+            assert_eq!(bodies[0]["model"], expected);
+            assert_eq!(bodies[1]["model"], "step-5-preview-free");
+        }
+    }
+
+    #[tokio::test]
+    async fn compaction_disables_reasoning_or_uses_nonthinking_fallback() {
+        for model in [
+            "longcat-2.5-preview-free",
+            "gpt-5.6-luna",
+            "gpt-6-luna",
+            "mimo-v2.6-flash",
+            "muse-spark-1.3-contributor",
+            "grok-4.7",
+            "qwen3.8-max",
+            "minimax-m3",
+            "claude-haiku-5-5",
+            "unknown-model",
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(|request: &wiremock::Request| {
+                    let response = match request.url.path() {
+                        "/responses" => json!({"output":[{"type":"message","content":[{"type":"output_text","text":"checkpoint"}]}]}),
+                        "/messages" => json!({"content":[{"type":"text","text":"checkpoint"}],"stop_reason":"end_turn"}),
+                        _ => json!({"choices":[{"message":{"content":"checkpoint"},"finish_reason":"stop"}],
+                            "usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105,"completion_tokens_details":{"reasoning_tokens":0}}}),
+                    };
+                    ResponseTemplate::new(200).set_body_json(response)
+                })
+                .mount(&server).await;
+            let mut provider = CompatibleProvider::go(
+                "synthetic".into(),
+                model.into(),
+                Some(server.uri()),
+                Some("thread-session".into()),
+            );
+            provider.reasoning_effort = Some("high".into());
+            let messages = [user_message("summarize")];
+            let sampling = SamplingOverrides::with_max_tokens(1654);
+            let dir = tempfile::tempdir().unwrap();
+            let log = Arc::new(crate::diagnostics::DiagnosticLog::new(dir.path().into()));
+            crate::diagnostics::ACTIVE
+                .scope(
+                    crate::diagnostics::DiagnosticContext {
+                        log: Arc::clone(&log),
+                        thread_id: "thread".into(),
+                        run_id: "run".into(),
+                        level: "info".into(),
+                    },
+                    COMPACTION_REQUEST.scope(
+                        (),
+                        provider.chat_and_sampling(&messages, None, Some(&sampling)),
+                    ),
+                )
+                .await
+                .unwrap();
+            provider
+                .chat_and_sampling(&messages, None, None)
+                .await
+                .unwrap();
+            let requests = server.received_requests().await.unwrap();
+            let summary: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+            let answer: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
+            if model.starts_with("gpt-") {
+                assert_eq!(summary["model"], model);
+                assert_eq!(summary["reasoning"]["effort"], "none");
+                assert_eq!(summary["max_output_tokens"], 1654);
+            } else {
+                assert_eq!(summary["model"], "longcat-2.5-preview-free");
+                assert_eq!(summary["thinking"], json!({"type":"disabled"}));
+                assert!(summary.get("reasoning_effort").is_none());
+                assert_eq!(summary["max_tokens"], 1654);
+            }
+            assert_eq!(answer["model"], model);
+            assert!(answer.get("thinking").is_none());
+            if provider.uses_responses() {
+                assert_eq!(answer["reasoning"]["effort"], "high");
+            } else if !provider.uses_messages() {
+                assert_eq!(answer["reasoning_effort"], "high");
+            }
+            assert_eq!(requests[0].headers[GO_SESSION_HEADER], "thread-session");
+            let records = log
+                .query(&crate::diagnostics::DiagnosticFilter::default())
+                .unwrap();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].event, "summary_usage");
+            assert_eq!(records[0].details["model"], summary["model"]);
+            if !model.starts_with("gpt-") {
+                assert_eq!(records[0].details["reasoning_tokens"], 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn truncated_output_diagnostics_keep_only_usage_and_size_metadata() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices":[{"message":{"content":null,"reasoning_content":"private reasoning sentinel"},"finish_reason":"length"}],
+                "usage":{"prompt_tokens":100,"completion_tokens":1654,"total_tokens":1754,
+                    "completion_tokens_details":{"reasoning_tokens":1654}}
+            })))
+            .mount(&server).await;
+        let dir = tempfile::tempdir().unwrap();
+        let log = Arc::new(crate::diagnostics::DiagnosticLog::new(dir.path().into()));
+        let provider = CompatibleProvider::go(
+            "synthetic".into(),
+            "mimo-v2.6-flash".into(),
+            Some(server.uri()),
+            None,
+        );
+        crate::diagnostics::ACTIVE
+            .scope(
+                crate::diagnostics::DiagnosticContext {
+                    log: Arc::clone(&log),
+                    thread_id: "thread".into(),
+                    run_id: "run".into(),
+                    level: "info".into(),
+                },
+                async {
+                    assert!(provider
+                        .chat_and_sampling(
+                            &[user_message("private prompt sentinel")],
+                            None,
+                            Some(&SamplingOverrides::with_max_tokens(1654))
+                        )
+                        .await
+                        .is_err());
+                },
+            )
+            .await;
+        let records = log
+            .query(&crate::diagnostics::DiagnosticFilter::default())
+            .unwrap();
+        let record = records
+            .iter()
+            .find(|record| record.event == "output_truncated")
+            .expect("truncation must retain diagnostic metadata");
+        assert_eq!(record.details["completion_tokens"], 1654);
+        assert_eq!(record.details["reasoning_tokens"], 1654);
+        assert_eq!(record.details["public_text_chars"], 0);
+        assert_eq!(record.details["output_limit_tokens"], 1654);
+        assert!(!serde_json::to_string(&records)
+            .unwrap()
+            .contains("sentinel"));
+    }
+
+    #[tokio::test]
     async fn providers_identify_output_truncation_without_exposing_response_content() {
         for (model, response) in [
             (
@@ -1233,6 +1782,14 @@ mod tests {
                 matches!(&error, LLMError::Generic(message) if message == "Provider response was truncated"),
                 "{error}"
             );
+            assert!(!error.to_string().contains("private state"));
+            // stream=true may still return JSON; it must enforce the same stop reason.
+            let error = provider
+                .chat_stream_with_tools(&[user_message("Summarize")], None, None)
+                .await
+                .err()
+                .expect("JSON fallback must reject truncated output before publishing it");
+            assert!(error.to_string().contains("truncated"));
             assert!(!error.to_string().contains("private state"));
         }
     }
@@ -1884,6 +2441,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejected_tool_arguments_do_not_poison_history_in_any_protocol() {
+        for model in [
+            "mimo-v2.6-flash",
+            "muse-spark-1.3-contributor",
+            "claude-haiku-4-5",
+        ] {
+            for raw in [
+                r#"{"command":"python3","args":["-c","print(\'x\')"]}"#,
+                "[]",
+            ] {
+                let call = ToolCall {
+                    id: "bad-call".into(),
+                    call_type: "function".into(),
+                    function: FunctionCall {
+                        name: "shell".into(),
+                        arguments: raw.into(),
+                    },
+                };
+                let messages = [
+                    ChatMessage {
+                        role: ChatRole::Assistant,
+                        message_type: MessageType::ToolUse(vec![call]),
+                        content: String::new(),
+                    },
+                    ChatMessage {
+                        role: ChatRole::Tool,
+                        message_type: MessageType::ToolResult(vec![ToolCall {
+                            id: "bad-call".into(),
+                            call_type: "function".into(),
+                            function: FunctionCall {
+                                name: "shell".into(),
+                                arguments: "Arguments rejected; nothing executed".into(),
+                            },
+                        }]),
+                        content: String::new(),
+                    },
+                ];
+                let provider = CompatibleProvider::go("synthetic".into(), model.into(), None, None);
+                let request = provider
+                    .chat_request(&messages, None, true, None)
+                    .unwrap()
+                    .build()
+                    .unwrap();
+                let body: Value =
+                    serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+                let input = if provider.uses_responses() {
+                    serde_json::from_str::<Value>(body["input"][0]["arguments"].as_str().unwrap())
+                        .unwrap()
+                } else if provider.uses_messages() {
+                    body["messages"][0]["content"][0]["input"].clone()
+                } else {
+                    serde_json::from_str::<Value>(
+                        body["messages"][0]["tool_calls"][0]["function"]["arguments"]
+                            .as_str()
+                            .unwrap(),
+                    )
+                    .unwrap()
+                };
+                assert_eq!(input["_themis_rejected_tool_arguments"], raw);
+                if let MessageType::ToolUse(calls) = &messages[0].message_type {
+                    assert_eq!(
+                        calls[0].function.arguments, raw,
+                        "original history stays exact"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn tool_use_and_result_messages_reach_wire() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var(GO_MODEL_ENV_VAR);
@@ -2069,7 +2696,7 @@ mod tests {
     fn catalog_effort_levels_follow_go_metadata_and_live_ids() {
         let catalog: CatalogRoot = serde_json::from_value(json!({
             "opencode-go": {"models": {
-                "model-a": {"reasoning_options": [{"type":"toggle"}, {"type":"effort", "values":["low","high","max"]}]},
+                "model-a": {"limit":{"context":1000000,"output":65536},"reasoning_options": [{"type":"toggle"}, {"type":"effort", "values":["low","high","max"]}]},
                 "model-b": {"reasoning_options": []},
                 "not-available": {"reasoning_options": [{"type":"effort", "values":["low"]}]}
             }}
@@ -2079,11 +2706,15 @@ mod tests {
             vec![
                 GoModel {
                     id: "model-a".into(),
-                    effort_levels: vec!["low".into(), "high".into(), "max".into()]
+                    effort_levels: vec!["low".into(), "high".into(), "max".into()],
+                    context_tokens: Some(1000000),
+                    output_tokens: Some(65536)
                 },
                 GoModel {
                     id: "model-b".into(),
-                    effort_levels: vec![]
+                    effort_levels: vec![],
+                    context_tokens: None,
+                    output_tokens: None
                 },
             ]
         );

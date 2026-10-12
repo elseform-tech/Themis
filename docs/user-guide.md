@@ -108,7 +108,7 @@ The **Skills** tab holds reusable instruction bundles: a name, description,
 instructions injected into runs, an optional tool allowlist, and helper
 scripts. Attach skills to a thread to scope what it may use. The list includes plugin-bundled skills and skills discovered from local folders. Browse new packages in **Plugins → Discover**; Skills has no separate discovery catalog. Standalone imports remain available through chat or the CLI.
 
-Skill instructions can contain up to 256 KiB of UTF-8 text without truncation.
+Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. File reads are paged at 4,000 content characters; the agent must follow `next_offset` to read longer instructions. Large tool results are saved to disk and represented by a small receipt, so the agent can extract the relevant facts. An oversized tool result normally continues the run. Storage failures or repeated recovery can stop the current run; the chat remains available. Oversized tool arguments are rejected before execution, without partial writes. See [context limits and recovery](context-and-attachments.md).
 
 - An empty allowlist means "all tools".
 - Unknown tool names are rejected. The valid names are exactly:
@@ -289,3 +289,32 @@ MCP shows the full saved command and arguments, with status, toggle and uninstal
 Open an MCP connection’s details to see its exposed tool count, names and descriptions. This reads cached discovery metadata; it does not execute a tool. Tools appear after the connection completes.
 
 For large shared-server requests, use `themis call METHOD - < arguments.json`. The CLI reads bounded UTF-8 JSON from stdin (8 MiB maximum), avoiding operating-system command-line length limits. The complete request, including its method and envelope, must fit the shared server’s 8 MiB frame limit. Secret entry still requires the existing secure provider setup flow.
+
+Conversation history can grow beyond that transport limit. The app and
+`themis thread history ID` retrieve it in bounded pages and reconstruct the exact
+records, including individual entries larger than one frame. This preserves the
+existing full-history result; client/UI memory still grows with that result.
+Advanced observers can call `get_thread_history_page` directly to process pages
+incrementally. Its JSONL text may split a record across pages: concatenate chunks
+and decode only complete lines. Keep the returned `through_seq` snapshot and
+`next_cursor` for subsequent requests; a new snapshot includes later appends.
+See [history paging](configuration.md#history-paging) for arguments and bounds.
+
+For long coding tasks, checkpoints retain recent tool findings, completed edits and test observations alongside the working summary and original-source references. Summary size adapts to leave room for further work. An unchanged reread may carry a reminder to reuse prior findings; three consecutive previously seen native observations stop the run even when alternating files. Changed contents return a fresh result, and actions clear native read history. Shell retains its consecutive identical-call check because it can change files silently. For large edits, approved Python/bash can operate on local files and return selected verification facts. `apply_patch` requires numbered unified diffs and reports malformed formats before changing files. These controls reduce repeated work; summaries remain lossy and do not guarantee completion or prevent every loop.
+
+If required compaction fails after saving originals and pending inputs, a later
+ordinary request also receives selected historical tool observations and their
+original-source locations, including after restart. This helps avoid repeating
+completed actions; it does not automatically resume work or prove tool success.
+Your latest request chooses the task. Stop retains the existing archive recovery
+behavior. The bounded record is partial, and originals remain available.
+
+For factual and technical work, the agent is instructed to cite inspected sources,
+including current file lines or line ranges for code, and to explain what changed
+or was found, why it addresses the task, and relevant tradeoffs. Test reports
+should give actual commands, outcomes and captured evidence when available;
+unverified claims remain explicit. These instructions apply before and after
+compaction, preserve requested formats such as JSON, and do not require citations
+for creative prose. They guide model responses; they do not automatically certify
+that a citation supports a claim or that reported code locations remain current
+after subsequent edits.

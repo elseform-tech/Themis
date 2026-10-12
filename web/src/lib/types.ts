@@ -180,6 +180,8 @@ export type ThreadEvent =
   | { kind: 'tool_finished'; tool: string; ok: boolean; output?: string }
   | { kind: 'approval_decided'; tool: string; decision: ApprovalDecision }
   | { kind: 'context_compacting' }
+  | { kind: 'context_usage'; metrics: Record<string, unknown> }
+  | { kind: 'context_suspended'; progress: string }
   | { kind: 'context_checkpoint'; summary: string }
   | { kind: 'incomplete'; result: string; model?: string }
   | { kind: 'finished'; result: string; model?: string }
