@@ -2756,7 +2756,9 @@ mod tests {
                     },
                     &tx,
                     &AtomicBool::new(false),
-                    std::time::Duration::from_secs(10),
+                    // Generous: the test covers truncation retries, not the deadline, and
+                    // slow Windows debug builds need time to prepare large stages.
+                    std::time::Duration::from_secs(60),
                     Some(directory.path().to_owned()),
                 )
                 .await;

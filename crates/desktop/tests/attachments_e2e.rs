@@ -2341,7 +2341,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
     .await
     .unwrap();
     assert!(recovered);
-    assert_eq!(terminal["result"], "ARCHIVE-SECRET-753");
+    assert_eq!(terminal["result"], "ARCHIVE-SECRET-753", "{terminal}");
     assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 8);
     let saved = rebooted.get_thread_history(id).await.unwrap();
     let checkpoint = saved
