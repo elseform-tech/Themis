@@ -13,9 +13,11 @@ Backend (`01578bf`):
 - Maintenance may reduce results a checkpoint already summarized (`summarized_until`); newer observations stay protected.
 - Content-free `context_budget` run event before each bounded request.
 
-Frontend (`e28a779`, `2498449`, `3729552`, `ff4ee22`, `d2ba3d3`, `67d9827`): neutral palette with a warm gradient; pill composer with a **+** menu and a project/branch row; header model pill; greeting with starters; "Show thinking" chips; Copy action; checkpoint divider; context meter with heads-up; unboxed buttons, tabs and rows; a project-scoped sidebar (switcher, Needs you / Running / Chats); a read-only, resizable **Workspace** monitor (Changes with a live-refreshing unified diff, Files, Branches, Pull requests) with no review or Git actions; Bubbles companion.
+Frontend (`e28a779`, `2498449`, `3729552`, `ff4ee22`, `d2ba3d3`, `67d9827`): neutral palette with a warm gradient; pill composer with a **+** menu and a project/branch row; header model pill; greeting with starters; "Show thinking" chips; Copy action; checkpoint divider; context meter with heads-up; unboxed buttons, tabs and rows; a project-scoped sidebar (switcher and one Chats list with bubble icons, aligned looping titles and status icons for working, waiting, failed and unseen completion); a read-only, resizable **Workspace** monitor (Changes with a live-refreshing, wrapped and highlighted diff of readable files only, Files, Branches, Pull requests) with no review or Git actions; an "Edited N files" card under each reply; sent-attachment thumbnails and chips; unboxed utility pages, search and help; Bubbles companion without the scales mark.
 
 Workspace backend (`1216a9a`): read-only `get_workspace`, `list_project_dir` and `read_project_file` (bounded; traversal and symlink escapes rejected; pull requests via the GitHub CLI on request).
+
+Later backend work: project deletion that moves the folder to the Trash and forgets its chats, automations and recents; a readable-files filter for the change list; and a `files_changed` run event from before/after change fingerprints, saved before each terminal event. The folder-picker flow was removed because projects live in the fixed projects folder.
 
 Fix (`1190645`): `.themis/plugin-files` and `.themis/skill-catalogs` now carry a `*` `.gitignore`, so materialized user skills no longer appear as project changes.
 
@@ -27,9 +29,10 @@ Not done (deliberately): a dedicated `recall` tool (it would replace `read_file`
 | --- | --- |
 | `cargo fmt --all -- --check` | passed |
 | `cargo clippy --workspace --all-targets -- -D warnings` | passed |
-| `cargo llvm-cov --workspace --no-fail-fast --lcov --output-path coverage/lcov.info -- --skip entered_keys_survive_new_store_and_can_be_forgotten` (real home directory) | 483 passed, 0 failed, 2 ignored; Rust line coverage 28,706 / 31,513 = 91.1% |
+| `cargo test --workspace --no-fail-fast` (real home directory, final branch state) | 489 passed, 0 failed, 3 ignored |
+| `cargo llvm-cov … --skip entered_keys_survive_new_store_and_can_be_forgotten` (earlier branch state) | 483 passed; Rust line coverage 28,706 / 31,513 = 91.1% (not regenerated after the last backend changes) |
 | `npm --prefix web run lint` | passed |
-| `npm --prefix web test` | 318 passed (33 files) |
+| `npm --prefix web test` | 325 passed (33 files) |
 | `npm --prefix web run build` | passed (existing chunk-size warning) |
 | `ruff check quality_dashboard` | passed |
 | `python3 -m unittest quality_dashboard.test_dashboard` | 14 passed |
@@ -42,6 +45,7 @@ New or changed regression cases:
 - Runtime integration: repeated reads still in context receive a freshness receipt pointing at the earlier call.
 - CLI end to end (`workspace_e2e::cli_workspace_reports_branches_lists_files_and_stays_inside_the_project`): branch, branches, directory listing, file view, rejected `../` and absolute paths, and an unchanged `HEAD`.
 - CLI end to end (`attachments_e2e::cli_plan_survives_checkpoint_in_task_ledger_and_budget_events_reach_clients`): an isolated app server and `themis` CLI run a thread whose plan survives a real checkpoint, and every bounded request emits one `context_budget` whose breakdown sums to its used tokens without content.
+- CLI end to end: `project_delete_e2e::cli_delete_project_moves_it_to_trash_and_forgets_its_chats`, `workspace_e2e::cli_change_list_shows_only_readable_files_and_counts_hidden_ones`, `server_cli_e2e::cli_turn_records_the_files_it_edited_in_history`; `bridge_e2e` now expects `files_changed` before `finished`.
 - Web: reducer budget/divider handling, context meter states, file tree grouping/filter, read-only workspace panel views and live diff refresh, project-scoped sidebar, Bubbles speech; `skills::materialized_catalogs_stay_out_of_the_project_diff`.
 
 ## Code health
@@ -66,8 +70,9 @@ Vite dev server on port 1431 with a mocked Tauri bridge (fixture projects, threa
 
 - Greeting, starter chip filling the draft, send, then live events: warm meter and one-time heads-up near the threshold, run ring, "Compacting…" chip, "Context compacted · 82% → 35%" divider, Copy and model label on the reply.
 - Meter popover: breakdown, reserves and thresholds.
-- Review side panel: grouped tree, filter, Unviewed count, viewed progress.
-- Integrations, Automations, Review queue and Settings with pill tabs and cards.
+- Workspace panel: grouped tree, live refresh during a run, wrapped highlighted diff with no horizontal overflow, focus from an edited-files row.
+- Integrations, Automations, Review queue and Settings on one centred column with divided rows and switches; search and help dialogs.
+- Edited-files card at 2 and 14 files (collapsed to five, expanded scrolling list).
 - Bubbles picker (Honey, Pearl, Ink) and the "All done!" speech note.
 - Keyboard: Tab reaches the ⋮ thread menu and project actions; Enter opens Rename/Remove. Reduced motion stops the gradient and wraps titles.
 
