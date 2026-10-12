@@ -1,6 +1,7 @@
 // Pure state model for the Themis app shell. No Tauri/DOM imports —
 // safe to load in node-based unit tests.
 import type {
+  ContextBudget,
   McpConnections,
   ApprovalRequest,
   Automation,
@@ -90,6 +91,8 @@ export interface AppState {
   running: Record<string, boolean>;
   activeRunIds: Record<string, string>;
   compacting: Record<string, boolean>;
+  /** Latest context accounting per thread, live or replayed from history. */
+  contextBudgets: Record<string, ContextBudget>;
   runStartedAt: Record<string, number>;
   runDurations: Record<string, number>;
   diffs: Record<string, DiffState | null>;
@@ -199,6 +202,7 @@ export const initialState: AppState = {
   running: {},
   activeRunIds: {},
   compacting: {},
+  contextBudgets: {},
   runStartedAt: {},
   runDurations: {},
   diffs: {},
@@ -285,6 +289,10 @@ function appendMessage(
       [threadId]: [...(state.messages[threadId] ?? []), message],
     },
   };
+}
+
+export function usedPercent(budget: ContextBudget): number {
+  return budget.usable_tokens > 0 ? Math.min(100, Math.round(budget.used_tokens / budget.usable_tokens * 100)) : 0;
 }
 
 /**
@@ -375,8 +383,25 @@ export function applyThreadEvent(
     }
     case "context_usage":
     case "context_suspended": return state;
+    case "context_budget": {
+      const rows = state.messages[threadId] ?? [];
+      const last = rows[rows.length - 1];
+      const percent = usedPercent(event.budget);
+      // The first budget after a checkpoint completes its divider.
+      const messages = last?.checkpoint && last.checkpoint.after === undefined
+        ? { ...state.messages, [threadId]: [...rows.slice(0, -1), { ...last, checkpoint: { ...last.checkpoint, after: percent } }] }
+        : state.messages;
+      return { ...state, messages, contextBudgets: { ...state.contextBudgets, [threadId]: event.budget } };
+    }
     case "context_compacting": return { ...state, compacting: { ...state.compacting, [threadId]: true } };
-    case "context_checkpoint": return { ...state, compacting: { ...state.compacting, [threadId]: false } };
+    case "context_checkpoint": {
+      const before = state.contextBudgets[threadId];
+      const next = appendMessage(state, threadId, {
+        id: newId("checkpoint"), role: "system", text: "Context compacted", runId,
+        checkpoint: before ? { before: usedPercent(before) } : {},
+      });
+      return { ...next, compacting: { ...next.compacting, [threadId]: false } };
+    }
     case "incomplete":
     case "finished": {
       let next = appendMessage(state, threadId, {

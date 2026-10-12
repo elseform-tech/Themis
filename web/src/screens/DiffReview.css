@@ -1,113 +1,25 @@
-.themis-diffreview {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-  gap: 0.5rem;
-  padding: 0.75rem;
-}
-
-.themis-diffreview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.themis-diffreview-title {
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.themis-diffreview-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-}
-
-.themis-diffreview-file {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.themis-diffreview-comments {
-  border-top: 1px solid var(--themis-border-subtle);
-  padding-top: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.themis-diffreview-subtitle {
-  margin: 0;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--themis-text-2);
-}
-
-.themis-diffreview-none {
-  margin: 0;
-  font-size: 0.8125rem;
-  color: var(--themis-text-3);
-}
-
-.themis-diffreview-comment-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
-}
-
-.themis-diffreview-comment {
-  font-size: 0.8125rem;
-  border: 1px solid var(--themis-border-subtle);
-  border-radius: 0.375rem;
-  padding: 0.375rem 0.5rem;
-  background-color: var(--themis-surface);
-}
-
-.themis-diffreview-comment-form {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.5rem;
-}
-
-.themis-diffreview-conflicts {
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--themis-danger);
-  font-size: 0.8125rem;
-}
-
-.themis-diffreview-conflict-list {
-  margin: 0.25rem 0;
-  padding-left: 1.25rem;
-  font-family: ui-monospace, monospace;
-  font-size: 0.75rem;
-  word-break: break-all;
-}
-
-.themis-diffreview-merged {
-  margin: 0;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.8125rem;
-  border-bottom: 1px solid var(--themis-border-subtle);
-}
-
-.themis-diffreview-discard {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.themis-diffreview-discard-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
+/* Review side panel: heading with viewed progress, file tree beside the diff. */
+.themis-diffreview { display: flex; flex-direction: column; gap: 10px; min-height: 0; height: 100%; padding: 14px 14px 12px 20px; }
+.themis-diffreview-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.themis-diffreview-heading { flex: 1; min-width: 200px; display: grid; gap: 6px; }
+.themis-diffreview-title { margin: 0; font-size: 1rem; font-weight: 600; }
+.themis-diffreview-title span { color: var(--themis-text-2); font-weight: 400; }
+.themis-diffreview-progress { display: flex; align-items: center; gap: 10px; color: var(--themis-text-2); font-size: .75rem; }
+.themis-diffreview-progress > span { width: 160px; height: 6px; border-radius: 3px; background: var(--themis-raised); overflow: hidden; }
+.themis-diffreview-progress i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--themis-gradient-1), var(--themis-gradient-3)); }
+.themis-diffreview-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(220px, 34%) minmax(0, 1fr); gap: 12px; }
+.themis-diffreview-body > .themis-filetree-wrap { min-height: 0; overflow-y: auto; }
+.themis-diffreview-file { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 10px; border-radius: 16px; background: var(--themis-canvas); }
+.themis-diffreview-comments { display: grid; gap: 8px; }
+.themis-diffreview-subtitle { margin: 0; font-size: .8125rem; font-weight: 600; }
+.themis-diffreview-none { margin: 0; color: var(--themis-text-2); font-size: .8125rem; }
+.themis-diffreview-comment-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.themis-diffreview-comment { padding: 8px 12px; border-radius: 12px; background: var(--themis-raised); font-size: .8125rem; }
+.themis-diffreview-comment-form { display: flex; align-items: flex-end; gap: 8px; }
+.themis-diffreview-comment-form > :first-child { flex: 1; }
+.themis-diffreview-conflicts { padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--themis-danger) 12%, transparent); }
+.themis-diffreview-conflict-list { margin: 4px 0; padding-left: 18px; font-family: ui-monospace, monospace; font-size: .75rem; }
+.themis-diffreview-merged { margin: 0; color: var(--themis-success); font-size: .8125rem; }
+.themis-diffreview-discard { display: grid; gap: 12px; }
+.themis-diffreview-discard-actions { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 700px) { .themis-diffreview-body { grid-template-columns: 1fr; } }

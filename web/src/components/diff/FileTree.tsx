@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { DiffFile, DiffStatus } from "../../lib/types";
 import { EmptyState } from "../primitives/EmptyState";
 import "./FileTree.css";
@@ -9,6 +10,9 @@ export interface FileTreeProps {
   onAccept: (path: string) => void;
   onDiscard: (path: string) => void;
   disabled?: boolean;
+  /** Paths the reviewer marked as viewed; enables the viewed filter and checkboxes. */
+  viewed?: ReadonlySet<string>;
+  onToggleViewed?: (path: string) => void;
 }
 
 const STATUS_GLYPH: Record<DiffStatus, string> = {
@@ -18,6 +22,11 @@ const STATUS_GLYPH: Record<DiffStatus, string> = {
   renamed: "R",
 };
 
+function directoryOf(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
 export function FileTree({
   files,
   selectedPath,
@@ -25,74 +34,125 @@ export function FileTree({
   onAccept,
   onDiscard,
   disabled = false,
+  viewed,
+  onToggleViewed,
 }: FileTreeProps) {
+  const [query, setQuery] = useState("");
+  const [unviewedOnly, setUnviewedOnly] = useState(false);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   if (files.length === 0) {
     return <EmptyState title="No changed files" hint="There is nothing to review yet." />;
   }
+  const needle = query.trim().toLowerCase();
+  const visible = files.filter(file =>
+    (needle === "" || file.path.toLowerCase().includes(needle)) &&
+    (!unviewedOnly || !viewed?.has(file.path)));
+  const groups = new Map<string, DiffFile[]>();
+  for (const file of visible) {
+    const directory = directoryOf(file.path);
+    groups.set(directory, [...(groups.get(directory) ?? []), file]);
+  }
+  const unviewed = viewed ? files.filter(file => !viewed.has(file.path)).length : 0;
 
   return (
-    <ul aria-label="Changed files" className="themis-filetree">
-      {files.map((file) => {
-        const selected = file.path === selectedPath;
-        const discardDisabled = disabled || file.preexisting;
-        return (
-          <li
-            key={file.path}
-            className={
-              selected
-                ? "themis-filetree-row themis-filetree-row--selected"
-                : "themis-filetree-row"
-            }
-          >
-            <button
-              type="button"
-              className="themis-filetree-select"
-              aria-current={selected}
-              onClick={() => onSelect(file.path)}
-            >
-              <span
-                aria-hidden="true"
-                className={`themis-filetree-status themis-filetree-status--${file.status}`}
-              >
-                {STATUS_GLYPH[file.status]}
-              </span>
-              <span className="themis-filetree-path" title={file.path}>
-                {file.path}
-              </span>
-              {file.preexisting && (
-                <span className="themis-filetree-pre" title="Changed before this thread started">
-                  pre-existing
-                </span>
-              )}
+    <div className="themis-filetree-wrap">
+      {files.length > 5 && (
+        <div className="themis-filetree-tools">
+          <input
+            className="themis-filetree-filter"
+            type="search"
+            aria-label="Filter changed files"
+            placeholder={`Filter ${files.length} files`}
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+          />
+          {viewed && (
+            <button type="button" className="themis-filetree-chip" aria-pressed={unviewedOnly} onClick={() => setUnviewedOnly(value => !value)}>
+              Unviewed {unviewed}
             </button>
-            <span className="themis-filetree-actions">
-              <button
-                type="button"
-                aria-label={`Accept ${file.path}`}
-                className="themis-filetree-btn themis-filetree-btn--accept"
-                disabled={disabled}
-                onClick={() => onAccept(file.path)}
-              >
-                ✓
+          )}
+        </div>
+      )}
+      <ul aria-label="Changed files" className="themis-filetree">
+        {[...groups].map(([directory, entries]) => (
+          <li key={directory || "."} className="themis-filetree-group">
+            {groups.size > 1 && (
+              <button type="button" className="themis-filetree-dir" aria-expanded={!collapsed[directory]}
+                onClick={() => setCollapsed(previous => ({ ...previous, [directory]: !previous[directory] }))}>
+                <span aria-hidden="true">{collapsed[directory] ? "›" : "⌄"}</span>
+                <span className="themis-filetree-dirname">{directory || "(root)"}</span>
+                <span className="themis-filetree-count">{entries.length}</span>
               </button>
-              <button
-                type="button"
-                aria-label={`Discard ${file.path}`}
-                title={
-                  file.preexisting
-                    ? "Pre-existing changes cannot be discarded"
-                    : `Discard ${file.path}`
-                }
-                className="themis-filetree-btn themis-filetree-btn--discard"
-                disabled={discardDisabled}
-                onClick={() => onDiscard(file.path)}
-              >
-                ✕
-              </button>
-            </span>
+            )}
+            {!collapsed[directory] && (
+              <ul className="themis-filetree-files">
+                {entries.map((file) => {
+                  const selected = file.path === selectedPath;
+                  const discardDisabled = disabled || file.preexisting;
+                  const isViewed = viewed?.has(file.path) ?? false;
+                  return (
+                    <li
+                      key={file.path}
+                      className={`themis-filetree-row${selected ? " themis-filetree-row--selected" : ""}${isViewed ? " is-viewed" : ""}`}
+                    >
+                      {onToggleViewed && (
+                        <input type="checkbox" className="themis-filetree-viewed" aria-label={`Viewed ${file.path}`} checked={isViewed} onChange={() => onToggleViewed(file.path)} />
+                      )}
+                      <button
+                        type="button"
+                        className="themis-filetree-select"
+                        aria-current={selected}
+                        onClick={() => onSelect(file.path)}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`themis-filetree-status themis-filetree-status--${file.status}`}
+                        >
+                          {STATUS_GLYPH[file.status]}
+                        </span>
+                        <span className="themis-filetree-path" title={file.path}>
+                          {groups.size > 1 ? file.path.slice(directory.length + (directory ? 1 : 0)) : file.path}
+                        </span>
+                        {file.preexisting && (
+                          <span className="themis-filetree-pre" title="Changed before this thread started">
+                            pre-existing
+                          </span>
+                        )}
+                      </button>
+                      <span className="themis-filetree-actions">
+                        <button
+                          type="button"
+                          aria-label={`Accept ${file.path}`}
+                          className="themis-filetree-btn themis-filetree-btn--accept"
+                          disabled={disabled}
+                          onClick={() => onAccept(file.path)}
+                        >
+                          ✓
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Discard ${file.path}`}
+                          title={
+                            file.preexisting
+                              ? "Pre-existing changes cannot be discarded"
+                              : `Discard ${file.path}`
+                          }
+                          className="themis-filetree-btn themis-filetree-btn--discard"
+                          disabled={discardDisabled}
+                          onClick={() => onDiscard(file.path)}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </li>
-        );
-      })}
-    </ul>
+        ))}
+        {visible.length === 0 && <li className="themis-filetree-none">No files match.</li>}
+      </ul>
+    </div>
   );
 }

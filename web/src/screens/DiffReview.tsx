@@ -19,6 +19,7 @@ import {
   useActiveThread,
   useApp,
 } from "../state/store";
+import { readSession, writeSession } from "../state/session";
 import { useDiscardThread, useMergeThread } from "./actions";
 import "./DiffReview.css";
 
@@ -33,6 +34,16 @@ export function DiffReview() {
   const [merging, setMerging] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [viewed, setViewed] = useState<Set<string>>(() => new Set(threadId ? readSession<string[]>(`viewed:${threadId}`, []) : []));
+  function toggleViewed(path: string) {
+    if (threadId === null) return;
+    setViewed(previous => {
+      const next = new Set(previous);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      writeSession(`viewed:${threadId}`, [...next]);
+      return next;
+    });
+  }
   const { merge } = useMergeThread();
   const { discard } = useDiscardThread();
 
@@ -65,6 +76,8 @@ export function DiffReview() {
   }
 
   function worktreeActions() {
+    // Shared-checkout threads have nothing to merge or discard as a whole.
+    if (noWorktree) return null;
     return (
       <>
         <Button
@@ -190,6 +203,7 @@ export function DiffReview() {
   useEffect(() => {
     setSelectedPath(null);
     setCommentDraft("");
+    setViewed(new Set(threadId ? readSession<string[]>(`viewed:${threadId}`, []) : []));
     if (threadId !== null && state.diffs[threadId] === undefined) {
       void refresh();
     }
@@ -216,12 +230,13 @@ export function DiffReview() {
   }
 
   async function submitComment() {
-    if (threadId === null || selectedPath === null) return;
+    const path = selectedPath ?? (diff?.available ? diff.files[0]?.path ?? null : null);
+    if (threadId === null || path === null) return;
     const comment = commentDraft.trim();
     if (comment === "") return;
     setActing(true);
     try {
-      const saved = await addComment(threadId, selectedPath, comment);
+      const saved = await addComment(threadId, path, comment);
       dispatch({ type: "comment/added", threadId, comment: saved });
       setCommentDraft("");
       toast(dispatch, "Comment saved", "success");
@@ -280,21 +295,38 @@ export function DiffReview() {
     );
   }
 
+  // Without an explicit choice, review starts at the first changed file.
+  const activePath = selectedPath ?? diff.files[0]?.path ?? null;
   const selected =
-    selectedPath === null
+    activePath === null
       ? null
-      : (diff.files.find((f) => f.path === selectedPath) ?? null);
+      : (diff.files.find((f) => f.path === activePath) ?? null);
   const comments =
     threadId === null ? [] : (state.comments[threadId] ?? []);
   const selectedComments =
-    selectedPath === null
+    activePath === null
       ? []
-      : comments.filter((c) => c.path === selectedPath);
+      : comments.filter((c) => c.path === activePath);
 
+  const reviewed = diff.files.filter(file => viewed.has(file.path)).length;
+  function step(offset: number) {
+    const index = diff!.files.findIndex(file => file.path === activePath);
+    const next = diff!.files[Math.min(diff!.files.length - 1, Math.max(0, index + offset))];
+    if (next) setSelectedPath(next.path);
+  }
   return (
-    <div className="themis-diffreview">
+    <div className="themis-diffreview" onKeyDown={event => {
+      const target = event.target as HTMLElement;
+      if (target.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (event.key === "j") { event.preventDefault(); step(1); }
+      else if (event.key === "k") { event.preventDefault(); step(-1); }
+      else if (event.key === "v" && activePath) { event.preventDefault(); toggleViewed(activePath); }
+    }}>
       <div className="themis-diffreview-head">
-        <h2 className="themis-diffreview-title">Diff review</h2>
+        <div className="themis-diffreview-heading">
+          <h2 className="themis-diffreview-title">Review changes <span>· {diff.files.length} {diff.files.length === 1 ? "file" : "files"}</span></h2>
+          {diff.files.length > 0 && <div className="themis-diffreview-progress"><span role="progressbar" aria-label="Files viewed" aria-valuemin={0} aria-valuemax={diff.files.length} aria-valuenow={reviewed}><i style={{ width: `${reviewed / diff.files.length * 100}%` }} /></span>{reviewed} of {diff.files.length} viewed · J/K next/previous · V viewed</div>}
+        </div>
         <Button
           variant="ghost"
           size="small"
@@ -304,16 +336,19 @@ export function DiffReview() {
           {loading ? "Refreshing…" : "Refresh"}
         </Button>
         {worktreeActions()}
+        <Button variant="ghost" size="small" aria-label="Close review" onClick={() => dispatch({ type: "ui/diff-panel", open: false })}>✕</Button>
       </div>
       {mergeStatus()}
       <div className="themis-diffreview-body">
         <FileTree
           files={diff.files}
-          selectedPath={selectedPath}
+          selectedPath={activePath}
           onSelect={setSelectedPath}
           onAccept={(path) => void act(path, "accept")}
           onDiscard={(path) => void act(path, "discard")}
           disabled={acting}
+          viewed={viewed}
+          onToggleViewed={toggleViewed}
         />
         {selected === null ? (
           <EmptyState title="No file selected" hint="Pick a file to inspect." />

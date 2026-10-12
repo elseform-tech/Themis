@@ -1,133 +1,32 @@
-.themis-filetree {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  background-color: var(--themis-surface);
-  border: 1px solid var(--themis-border);
-  border-radius: 0.5rem;
-  overflow: hidden;
-}
-
-.themis-filetree-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.375rem 0.5rem;
-  border-bottom: 1px solid var(--themis-border-subtle);
-}
-
-.themis-filetree-row:last-child {
-  border-bottom: none;
-}
-
-.themis-filetree-row--selected {
-  background-color: var(--themis-raised);
-}
-
-.themis-filetree-select {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  font-family: inherit;
-  background-color: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 0.125rem;
-  text-align: left;
-}
-
-.themis-filetree-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 0.25rem;
-  font-size: 0.6875rem;
-  font-weight: 800;
-  flex-shrink: 0;
-}
-
-.themis-filetree-status--modified {
-  background-color: var(--themis-warning);
-  color: var(--themis-canvas);
-}
-
-.themis-filetree-status--added {
-  background-color: var(--themis-success);
-  color: var(--themis-canvas);
-}
-
-.themis-filetree-status--deleted {
-  background-color: var(--themis-danger);
-  color: var(--themis-canvas);
-}
-
-.themis-filetree-status--renamed {
-  background-color: var(--themis-info);
-  color: var(--themis-canvas);
-}
-
-.themis-filetree-path {
-  flex: 1;
-  font-size: 0.8125rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: var(--themis-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.themis-filetree-pre {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  color: var(--themis-text-3);
-  border: 1px solid var(--themis-border);
-  border-radius: 9999px;
-  padding: 0 0.375rem;
-  flex-shrink: 0;
-}
-
-.themis-filetree-actions {
-  display: inline-flex;
-  gap: 0.25rem;
-  flex-shrink: 0;
-}
-
-.themis-filetree-btn {
-  font-family: inherit;
-  width: 1.625rem;
-  height: 1.625rem;
-  border-radius: 0.375rem;
-  border: 1px solid var(--themis-border);
-  cursor: pointer;
-  font-size: 0.75rem;
-  line-height: 1;
-}
-
-.themis-filetree-btn--accept {
-  background-color: var(--themis-surface);
-  color: var(--themis-success);
-}
-
-.themis-filetree-btn--accept:hover:not(:disabled) {
-  background-color: var(--themis-success);
-  color: var(--themis-canvas);
-}
-
-.themis-filetree-btn--discard {
-  background-color: var(--themis-surface);
-  color: var(--themis-danger);
-}
-
-.themis-filetree-btn--discard:hover:not(:disabled) {
-  background-color: var(--themis-danger);
-  color: var(--themis-canvas);
-}
-
-.themis-filetree-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+/* Changed-file tree: grouped by folder, filterable, with viewed checkboxes. */
+.themis-filetree-wrap { display: flex; flex-direction: column; gap: 8px; }
+.themis-filetree-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.themis-filetree-filter { flex: 1; min-width: 120px; height: 34px; padding: 0 14px; border: 0; border-radius: var(--themis-radius-pill, 999px); background: var(--themis-canvas); color: var(--themis-text); font: inherit; font-size: .8125rem; }
+.themis-filetree-chip { height: 34px; padding: 0 12px; border: 0; border-radius: var(--themis-radius-pill, 999px); background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; cursor: pointer; }
+.themis-filetree-chip[aria-pressed="true"] { background: var(--themis-nav-active-bg); color: var(--themis-text); }
+.themis-filetree, .themis-filetree-files { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.themis-filetree-dir { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: 10px; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; text-align: left; cursor: pointer; }
+.themis-filetree-dirname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; }
+.themis-filetree-count { color: var(--themis-text-3); }
+.themis-filetree-row { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 4px 0 10px; border-radius: 10px; }
+.themis-filetree-row:hover { background: var(--themis-nav-hover-bg); }
+.themis-filetree-row--selected { background: var(--themis-nav-active-bg); }
+.themis-filetree-viewed { flex: none; width: 15px; height: 15px; margin: 0; accent-color: var(--themis-accent); }
+.themis-filetree-select { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--themis-text); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
+.themis-filetree-row.is-viewed .themis-filetree-select { color: var(--themis-text-3); }
+.themis-filetree-status { display: grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 5px; font-size: .6875rem; font-weight: 700; color: var(--themis-accent-ink); }
+.themis-filetree-status--modified { background: var(--themis-accent); }
+.themis-filetree-status--added { background: var(--themis-success); }
+.themis-filetree-status--deleted { background: var(--themis-danger); }
+.themis-filetree-status--renamed { background: var(--themis-info); }
+.themis-filetree-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; }
+.themis-filetree-pre { flex: none; color: var(--themis-text-3); font-size: .6875rem; }
+.themis-filetree-actions { display: flex; gap: 2px; opacity: 0; }
+.themis-filetree-row:hover .themis-filetree-actions, .themis-filetree-row:focus-within .themis-filetree-actions, .themis-filetree-row--selected .themis-filetree-actions { opacity: 1; }
+.themis-filetree-btn { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; font-size: .75rem; cursor: pointer; }
+.themis-filetree-btn--accept { color: var(--themis-success); }
+.themis-filetree-btn--discard { color: var(--themis-danger); }
+.themis-filetree-btn:hover:not(:disabled) { background: var(--themis-nav-active-bg); }
+.themis-filetree-btn:disabled { opacity: .35; cursor: not-allowed; }
+.themis-filetree-none { padding: 10px; color: var(--themis-text-2); font-size: .8125rem; }
+@media (pointer: coarse) { .themis-filetree-actions { opacity: 1; } }

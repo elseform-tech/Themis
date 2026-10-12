@@ -16,6 +16,7 @@ vi.mock("../lib/tauri", () => ({
   getDefaultProject: async () => null,
   listThreads: async () => [],
   getThreadHistory: async () => [],
+  listDiff: async () => ({ available: false, files: [] }),
   importLegacyHistory: async () => {},
   openProject: async (root: string) => ({ root, name: "project", is_git: false }),
   listSkills: async () => [],

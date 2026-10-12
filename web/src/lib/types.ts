@@ -181,6 +181,7 @@ export type ThreadEvent =
   | { kind: 'approval_decided'; tool: string; decision: ApprovalDecision }
   | { kind: 'context_compacting' }
   | { kind: 'context_usage'; metrics: Record<string, unknown> }
+  | { kind: 'context_budget'; budget: ContextBudget }
   | { kind: 'context_suspended'; progress: string }
   | { kind: 'context_checkpoint'; summary: string }
   | { kind: 'incomplete'; result: string; model?: string }
@@ -191,6 +192,20 @@ export interface ThreadEventEnvelope {
   thread_id: string;
   run_id: string;
   event: ThreadEvent;
+}
+
+/** Byte-estimated context accounting emitted before each bounded model request. */
+export interface ContextBudget {
+  budget_tokens: number;
+  usable_tokens: number;
+  used_tokens: number;
+  tool_definition_tokens: number;
+  output_reserve_tokens: number;
+  safety_margin_tokens: number;
+  maintenance_at_tokens: number;
+  compaction_at_tokens: number;
+  compaction_soon: boolean;
+  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number };
 }
 
 export interface PersistedMessage {
@@ -204,6 +219,8 @@ export interface PersistedMessage {
   /** Internal handoff marker; not shown as a conversation label. */
   incomplete?: boolean;
   tool?: { name: string; ok?: boolean; output?: string };
+  /** Context checkpoint divider; percentages of usable context before and after. */
+  checkpoint?: { before?: number; after?: number };
 }
 
 export type HistoryItem =

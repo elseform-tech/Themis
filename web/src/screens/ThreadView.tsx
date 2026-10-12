@@ -4,12 +4,16 @@ import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components";
 import type { GoModel } from "../lib/types";
-import { attachFiles, getThread, listGoModels, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, stopThread } from "../lib/tauri";
+import { attachFiles, getThread, listDiff, listGoModels, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, stopThread } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
 import { ThreadComposer } from "./ThreadComposer";
 import { ThreadConversation } from "./ThreadConversation";
+import { ThreadHeader } from "./ThreadHeader";
+import { CompactionNotice } from "./ContextMeter";
+import { DiffReview } from "./DiffReview";
+import { skillToken } from "../lib/prompt";
 import "./ThreadView.css";
 
 
@@ -51,6 +55,12 @@ export function ThreadView() {
   const [sending, setSending] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [permissionSaving,setPermissionSaving]=useState(false);
+  const [noticeDismissed, setNoticeDismissed] = useState<Record<string, boolean>>({});
+  const soon = threadId !== undefined && state.contextBudgets[threadId]?.compaction_soon === true;
+  // A dismissed heads-up returns the next time compaction is projected.
+  useEffect(() => {
+    if (threadId !== undefined && !soon) setNoticeDismissed(previous => previous[threadId] ? { ...previous, [threadId]: false } : previous);
+  }, [threadId, soon]);
   const permissionPending=useRef(false);
   async function changeApprovalMode(mode:"custom"|"yolo") {
     if(!thread || !project || permissionPending.current)return;
@@ -77,6 +87,14 @@ export function ThreadView() {
     document.addEventListener("keydown", shortcut);
     return () => document.removeEventListener("keydown", shortcut);
   }, [newThread]);
+  const diffKnown = threadId !== undefined && state.diffs[threadId] !== undefined;
+  const gitProject = project?.is_git === true;
+  useEffect(() => {
+    if (threadId === undefined || diffKnown || !gitProject) return;
+    let cancelled = false;
+    listDiff(threadId).then(diff => { if (!cancelled) dispatch({ type: "diff/set", threadId, diff }); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [threadId, diffKnown, gitProject, dispatch]);
   useEffect(() => {
     let cancelled = false;
     setModels([]);
@@ -201,57 +219,99 @@ export function ThreadView() {
     );
   }
 
+  const budget = state.contextBudgets[thread.id];
+  const compacting = state.compacting[thread.id] ?? false;
+  const diff = state.diffs[thread.id];
+  const changedFiles = diff?.available ? diff.files.length : undefined;
+  const empty = messages.length === 0 && stream === "" && !running && !sending;
+  const showNotice = budget?.compaction_soon === true && !compacting && running && !noticeDismissed[thread.id];
+  const starters = [
+    ...promptSkills.filter(skill => !skill.retired).slice(0, 2).map(skill => ({ label: `/ ${skill.name}`, text: `${skillToken(skill.id)} ` })),
+    { label: "Review the current changes", text: "Review the current changes and point out problems." },
+    { label: "Explain this project", text: "Explain how this project is structured." },
+    { label: "Find and fix failing tests", text: "Run the tests, then find and fix any failures." },
+  ].slice(0, 4);
+  const composer = (
+    <ThreadComposer
+      thread={thread}
+      key={thread.id}
+      hero={empty}
+      draft={draft}
+      attachments={attachments}
+      onAttach={() => void attach()}
+      onRemoveAttachment={path => updateAttachments(thread.id, files => files.filter(file => file.path !== path))}
+      skills={promptSkills}
+      plugins={promptPlugins}
+      history={messages.filter(m => m.role === "user" && !messages.some(error => m.runId !== undefined && error.runId === m.runId && error.text.startsWith("Send failed:"))).map(m => m.text)}
+      composerDisabled={composerDisabled}
+      readOnly={readOnly}
+      running={running}
+      stopping={stopping}
+      sendError={sendError ?? (skillsError ? `Skills unavailable: ${skillsError}` : undefined)}
+      secretConfigured={state.secretStatus.go}
+      onDraftChange={setDraft}
+      onSend={() => void send()}
+      onStop={() => void stop()}
+      onNewThread={() => void newThread()}
+      permissionSaving={permissionSaving}
+      onApprovalModeChange={mode => void changeApprovalMode(mode)}
+      onOpenSettings={() => dispatch({ type: "ui/view", view: "settings" })}
+      budget={budget}
+      compacting={compacting}
+    />
+  );
+
   return (
+    <div className={`themis-thread-layout${state.diffPanelOpen ? " is-reviewing" : ""}`}>
     <div className="themis-thread">
-      <ThreadConversation
-        threadId={thread.id}
-        messages={messages}
-        stream={stream}
-        running={running}
-        sending={sending}
-        stopping={stopping}
-        runDurations={runDurations}
-        activeRunId={state.activeRunIds[thread.id]}
-        runStartedAt={state.runStartedAt[thread.id]}
-        compacting={state.compacting[thread.id] ?? false}
-        traces={trace}
-      />
-      <ThreadComposer
+      <ThreadHeader
         thread={thread}
-        key={thread.id}
-        draft={draft}
-        attachments={attachments}
-        onAttach={() => void attach()}
-        onRemoveAttachment={path => updateAttachments(thread.id, files => files.filter(file => file.path !== path))}
-        skills={promptSkills}
-        plugins={promptPlugins}
-        history={messages.filter(m => m.role === "user" && !messages.some(error => m.runId !== undefined && error.runId === m.runId && error.text.startsWith("Send failed:"))).map(m => m.text)}
         models={models}
         effortLevels={effortLevels}
         effort={effort}
-        composerDisabled={composerDisabled}
-        composerBusy={composerBusy}
-        readOnly={readOnly}
-        running={running}
-        stopping={stopping}
+        busy={composerBusy}
         switching={switching}
-        sendError={sendError ?? (skillsError ? `Skills unavailable: ${skillsError}` : undefined)}
-        secretConfigured={state.secretStatus.go}
-        onDraftChange={setDraft}
-        onSend={() => void send()}
-        onStop={() => void stop()}
-        onNewThread={() => void newThread()}
         onProviderChange={model => void applyProvider(model)}
         onEffortChange={value => {
           void setThreadEffort(thread.id, value)
             .then(updated => dispatch({ type: "thread/updated", projectRoot: project.root, thread: updated }))
             .catch(error => toast(dispatch, `Effort change failed: ${describeError(error)}`, "danger"));
         }}
-        permissionSaving={permissionSaving}
-        onApprovalModeChange={mode => void changeApprovalMode(mode)}
-        onOpenSettings={() => dispatch({ type: "ui/view", view: "settings" })}
+        changedFiles={changedFiles}
+        reviewOpen={state.diffPanelOpen}
+        onToggleReview={() => dispatch({ type: "ui/diff-panel", open: !state.diffPanelOpen })}
       />
-
+      {empty ? (
+        <section className="themis-greeting" aria-label="New chat">
+          <h1><span className="themis-gradient-text">Hi there.</span><br /><span className="themis-greeting-sub">What are we building in {project.name}?</span></h1>
+          {composer}
+          <div className="themis-starters" aria-label="Suggestions">
+            {starters.map(starter => (
+              <button key={starter.label} type="button" className="themis-starter" disabled={composerDisabled} onClick={() => setDraft(starter.text)}>{starter.label}</button>
+            ))}
+          </div>
+        </section>
+      ) : (
+        <>
+          <ThreadConversation
+            threadId={thread.id}
+            messages={messages}
+            stream={stream}
+            running={running}
+            sending={sending}
+            stopping={stopping}
+            runDurations={runDurations}
+            activeRunId={state.activeRunIds[thread.id]}
+            runStartedAt={state.runStartedAt[thread.id]}
+            compacting={compacting}
+            traces={trace}
+          />
+          {showNotice && <CompactionNotice onDismiss={() => setNoticeDismissed(previous => ({ ...previous, [thread.id]: true }))} />}
+          {composer}
+        </>
+      )}
+    </div>
+    {state.diffPanelOpen && <aside className="themis-review-panel" aria-label="Review changes"><DiffReview /></aside>}
     </div>
   );
 }

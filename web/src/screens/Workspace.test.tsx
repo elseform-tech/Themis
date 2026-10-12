@@ -428,7 +428,7 @@ describe("Workspace journey", () => {
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_finished", tool: "read_file", ok: true, output: "ORBIT-17" } });
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "finished", result: "Verified." } });
     });
-    const activitySummary = screen.getByText("Activities").closest("summary")!;
+    const activitySummary = screen.getByText("Show thinking").closest("summary")!;
     expect(activitySummary).toHaveTextContent(/1 tool call · 12s elapsed/);
     expect(activitySummary).not.toHaveTextContent("milestone");
     const activities = activitySummary.parentElement as HTMLDetailsElement;
