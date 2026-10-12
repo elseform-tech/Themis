@@ -1,9 +1,13 @@
 .themis-moving-window { display: block; flex: 1; min-width: 0; overflow: hidden; }
 .themis-moving-text { display: block; width: max-content; white-space: nowrap; }
-button:hover .is-overflowing .themis-moving-text,
-button:focus-visible .is-overflowing .themis-moving-text { animation: themis-title-reveal var(--title-duration) linear .6s 1 both; }
+button:hover .is-overflowing:not(.themis-moving-window--loop) .themis-moving-text,
+button:focus-visible .is-overflowing:not(.themis-moving-window--loop) .themis-moving-text { animation: themis-title-reveal var(--title-duration) linear .6s 1 both; }
+.themis-moving-window--loop.is-overflowing .themis-moving-text { animation: themis-title-loop var(--title-duration) ease-in-out 1s infinite; }
+.themis-moving-window--loop.is-overflowing { mask-image: linear-gradient(90deg, black 85%, transparent); }
+@keyframes themis-title-loop { 0%, 18% { transform: translateX(0); } 50%, 68% { transform: translateX(var(--title-end)); } 100% { transform: translateX(0); } }
 @keyframes themis-title-reveal { from { transform: translateX(0); } to { transform: translateX(var(--title-end)); } }
 @media (prefers-reduced-motion: reduce) {
-  .themis-moving-window { overflow: visible; }
+  .themis-moving-window { overflow: visible; mask-image: none; }
+  .themis-moving-text { animation: none !important; }
   .themis-moving-text { white-space: normal; width: auto; overflow-wrap: anywhere; }
 }

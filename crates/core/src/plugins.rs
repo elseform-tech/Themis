@@ -791,6 +791,7 @@ impl PluginStore {
                 let path = directory.join(relative);
                 let parent = path.parent().context("Missing parent")?;
                 safe_create_parent(root, parent)?;
+                crate::skills::ensure_git_excluded(&root.join(".themis/plugin-files"))?;
                 if path
                     .symlink_metadata()
                     .is_ok_and(|m| m.file_type().is_symlink())

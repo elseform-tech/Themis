@@ -1,13 +1,11 @@
-import { useState } from "react";
 import type { DiffFile } from "../../lib/types";
 import { EmptyState } from "../primitives/EmptyState";
+import { normalizeLanguage, tokenizeLine } from "../CodeBlock";
+import "../CodeBlock.css";
 import "./DiffView.css";
-
-export type DiffMode = "unified" | "side-by-side";
 
 export interface DiffViewProps {
   file: DiffFile;
-  defaultMode?: DiffMode;
 }
 
 interface NumberedLine {
@@ -17,13 +15,9 @@ interface NumberedLine {
   newNo: number | null;
 }
 
-interface SideRow {
-  left: NumberedLine | null;
-  right: NumberedLine | null;
-}
-
 function hunkHeader(oldStart: number, oldLines: number, newStart: number, newLines: number): string {
-  return `@@ -${oldStart},${oldLines} +${newStart},${newLines} @@`;
+  // Plain location instead of @@ hunk syntax; deletions-only hunks point at the old file.
+  return newLines > 0 ? `Line ${newStart}` : `Line ${oldStart} (removed${oldLines > 1 ? ` ${oldLines} lines` : ""})`;
 }
 
 function numberHunk(
@@ -51,39 +45,9 @@ function numberHunk(
   });
 }
 
-/** Pair consecutive del runs with following add runs for side-by-side rows. */
-function toSideRows(lines: NumberedLine[]): SideRow[] {
-  const rows: SideRow[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line === undefined) break;
-    if (line.kind === "context") {
-      rows.push({ left: line, right: line });
-      i += 1;
-      continue;
-    }
-    const dels: NumberedLine[] = [];
-    const adds: NumberedLine[] = [];
-    while (i < lines.length && lines[i]?.kind === "del") {
-      dels.push(lines[i] as NumberedLine);
-      i += 1;
-    }
-    while (i < lines.length && lines[i]?.kind === "add") {
-      adds.push(lines[i] as NumberedLine);
-      i += 1;
-    }
-    const count = Math.max(dels.length, adds.length);
-    for (let k = 0; k < count; k++) {
-      rows.push({ left: dels[k] ?? null, right: adds[k] ?? null });
-    }
-  }
-  return rows;
-}
-
-export function DiffView({ file, defaultMode = "unified" }: DiffViewProps) {
-  const [mode, setMode] = useState<DiffMode>(defaultMode);
-
+/** Read-only unified diff of one file. */
+export function DiffView({ file }: DiffViewProps) {
+  const language = normalizeLanguage(file.path.split(".").pop());
   let addCount = 0;
   let delCount = 0;
   for (const hunk of file.hunks) {
@@ -103,37 +67,11 @@ export function DiffView({ file, defaultMode = "unified" }: DiffViewProps) {
           <span className="themis-diff-count-add">+{addCount}</span>
           <span className="themis-diff-count-del">-{delCount}</span>
         </span>
-        <div role="group" aria-label="Diff mode" className="themis-diff-toggle">
-          <button
-            type="button"
-            aria-pressed={mode === "unified"}
-            className={
-              mode === "unified"
-                ? "themis-diff-toggle-btn themis-diff-toggle-btn--active"
-                : "themis-diff-toggle-btn"
-            }
-            onClick={() => setMode("unified")}
-          >
-            Unified
-          </button>
-          <button
-            type="button"
-            aria-pressed={mode === "side-by-side"}
-            className={
-              mode === "side-by-side"
-                ? "themis-diff-toggle-btn themis-diff-toggle-btn--active"
-                : "themis-diff-toggle-btn"
-            }
-            onClick={() => setMode("side-by-side")}
-          >
-            Side-by-side
-          </button>
-        </div>
       </div>
 
       {file.hunks.length === 0 ? (
         <EmptyState title="No changes" hint={`${file.path} has no hunks to display.`} />
-      ) : mode === "unified" ? (
+      ) : (
         <div className="themis-diff-unified">
           {file.hunks.map((hunk, hunkIndex) => (
             <div key={hunkIndex} className="themis-diff-hunk">
@@ -158,43 +96,9 @@ export function DiffView({ file, defaultMode = "unified" }: DiffViewProps) {
                   <span className="themis-diff-sign">
                     {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
                   </span>
-                  <span className="themis-diff-text">{line.text}</span>
+                  <span className="themis-diff-text">{tokenizeLine(line.text, language).map((token, index) => token.kind === "plain" ? token.text : <span key={index} className={`themis-codeblock-token--${token.kind}`}>{token.text}</span>)}</span>
                 </div>
               ))}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="themis-diff-side">
-          {file.hunks.map((hunk, hunkIndex) => (
-            <div key={hunkIndex} className="themis-diff-hunk">
-              <div className="themis-diff-hunk-header">
-                {hunkHeader(hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines)}
-              </div>
-              <div className="themis-diff-side-grid">
-                {toSideRows(
-                  numberHunk(
-                    hunk.old_start,
-                    hunk.new_start,
-                    hunk.lines.map((l) => ({ ...l, oldNo: null, newNo: null })),
-                  ),
-                ).map((row, rowIndex) => (
-                  <div key={rowIndex} className="themis-diff-side-row">
-                    <div
-                      className={`themis-diff-cell themis-diff-line--${row.left?.kind ?? "empty"}`}
-                    >
-                      <span className="themis-diff-no">{row.left?.oldNo ?? ""}</span>
-                      <span className="themis-diff-text">{row.left?.text ?? ""}</span>
-                    </div>
-                    <div
-                      className={`themis-diff-cell themis-diff-line--${row.right?.kind ?? "empty"}`}
-                    >
-                      <span className="themis-diff-no">{row.right?.newNo ?? ""}</span>
-                      <span className="themis-diff-text">{row.right?.text ?? ""}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
           ))}
         </div>

@@ -1,7 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
-import honey from "../assets/knight-honey.svg?raw";
-import pearl from "../assets/knight-pearl.svg?raw";
-import ink from "../assets/knight-ink.svg?raw";
+// Bubbles: blob companions derived from the original blob knight artwork.
+import honey from "../assets/bubble-honey.svg?raw";
+import pearl from "../assets/bubble-pearl.svg?raw";
+import ink from "../assets/bubble-ink.svg?raw";
 import { Dialog, Tooltip } from "./index";
 import { readSession } from "../state/session";
 import "./KnightCompanion.css";
@@ -43,8 +44,8 @@ export function KnightArtwork({ variant, mood = "idle", icon = false }: { varian
 export function KnightControl({ preferences, onChange }: { preferences: CompanionPreferences; onChange: (next: CompanionPreferences) => void }) {
   const [open, setOpen] = useState(false);
   return <div className="themis-knight-control">
-    <Tooltip content="Knight companion"><button type="button" className="themis-sidebar-row" aria-label="Knight companion" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(value => !value)}><KnightArtwork variant={preferences.variant} icon /></button></Tooltip>
-    <Dialog open={open} title="Knight companion" onClose={() => setOpen(false)}>
+    <Tooltip content="Bubbles companion"><button type="button" className="themis-sidebar-row" aria-label="Bubbles companion" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(value => !value)}><KnightArtwork variant={preferences.variant} icon /></button></Tooltip>
+    <Dialog open={open} title="Bubbles companion" onClose={() => setOpen(false)}>
       <div className="themis-knight-choices" aria-label="Knight variants">{(Object.keys(knights) as KnightVariant[]).map(variant => <button type="button" key={variant} aria-label={knights[variant].name} aria-pressed={preferences.variant === variant} onClick={() => onChange({ ...preferences, variant })}><KnightArtwork variant={variant} icon /><span>{knights[variant].name}</span></button>)}</div>
       <label className="themis-knight-toggle"><span>Companion</span><input type="checkbox" checked={preferences.enabled} onChange={event => onChange({ ...preferences, enabled: event.target.checked })} /></label>
       <label className="themis-knight-size"><span>Size <output>{preferences.size}px</output></span><input type="range" min="56" max="192" step="4" aria-label="Size" value={preferences.size} onChange={event => onChange({ ...preferences, size: Number(event.target.value) })} /></label>
@@ -74,6 +75,15 @@ export function KnightCompanion({ preferences, onChange, mood }: { preferences: 
   useEffect(() => { setPosition(preferences.position); }, [preferences.position]);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
   const displayedMood = mood === "idle" && poked ? "complete" : mood;
+  // A short speech bubble announces completion briefly and attention until resolved.
+  const [speech, setSpeech] = useState<string | null>(null);
+  useEffect(() => {
+    if (mood === "attention") { setSpeech("Needs you"); return; }
+    if (mood !== "complete") { setSpeech(null); return; }
+    setSpeech("All done!");
+    const hide = setTimeout(() => setSpeech(null), 6000);
+    return () => clearTimeout(hide);
+  }, [mood]);
   function finishDrag(event: React.PointerEvent<HTMLButtonElement>) {
     const active = drag.current;
     if (!active || active.pointer !== event.pointerId) return;
@@ -115,6 +125,7 @@ export function KnightCompanion({ preferences, onChange, mood }: { preferences: 
         setPosition(next); onChange({ ...preferences, position: next });
       }}
       onClick={event => { if (event.detail === 0) { setPoked(true); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => setPoked(false), 1600); } }}>
+      {speech && <span className="themis-companion-speech" role="status">{speech}</span>}
       <KnightArtwork variant={preferences.variant} mood={displayedMood} /><span className="themis-knight-grip" aria-hidden="true">⠿</span><span className="themis-sr-only">{({ idle: "Idle", working: "Working", complete: "Complete", attention: "Needs attention" })[mood]}</span>
     </button>
   </div>;

@@ -5,10 +5,14 @@ export interface DialogProps {
   open: boolean;
   onClose: () => void;
   title?: string;
+  /** Accessible name when no visible title is shown. */
+  label?: string;
+  /** Extra panel class, e.g. for a borderless palette. */
+  className?: string;
   children: ReactNode;
 }
 
-export function Dialog({ open, onClose, title, children }: DialogProps) {
+export function Dialog({ open, onClose, title, label, className, children }: DialogProps) {
   const focusableSelector = "button:not(:disabled), input:not(:disabled):not([type='hidden']), select:not(:disabled), textarea:not(:disabled), summary, [href], [contenteditable='true'], [tabindex]:not([tabindex='-1'])";
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -55,9 +59,9 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-label={label ?? title}
         tabIndex={-1}
-        className="themis-dialog-panel"
+        className={className ? `themis-dialog-panel ${className}` : "themis-dialog-panel"}
       >
         {title !== undefined && title !== "" && (
           <h2 className="themis-dialog-title">{title}</h2>

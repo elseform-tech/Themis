@@ -1,16 +1,21 @@
 //! Cheap working-context maintenance. Immutable snapshots keep exact observations.
 use super::*;
 
+/// `summarized_until` is the first message index a checkpoint has not yet
+/// summarized. Earlier results already reached the summarizer and may become
+/// receipts; later acquired observations stay protected until they do.
 pub(super) async fn maintain(
     messages: &mut Vec<ChatMessage>,
     policy: &RunPolicy,
     directory: Option<&std::path::Path>,
+    summarized_until: usize,
 ) -> anyhow::Result<bool> {
     let Some(directory) = directory else {
         return Ok(false);
     };
     let split = context_split(messages, policy);
-    let protected = summary_evidence::protected_entries(messages);
+    let mut protected = summary_evidence::protected_entries(messages);
+    protected.retain(|(index, _)| *index >= summarized_until);
     let candidates: Vec<usize> = (1..split)
         .filter(|&i| {
             let calls = match &messages[i].message_type {
@@ -234,7 +239,7 @@ mod tests {
                 context_token_budget: 24000,
                 recent_messages: 2,
             };
-            assert!(maintain(&mut messages, &policy, Some(&evidence))
+            assert!(maintain(&mut messages, &policy, Some(&evidence), 0)
                 .await
                 .unwrap());
             llm.chat_with_tools(&messages, None, None).await.unwrap();
@@ -304,7 +309,7 @@ mod tests {
             recent_messages: 2,
         };
         for _ in 0..2 {
-            assert!(!maintain(&mut messages, &policy, Some(directory.path()))
+            assert!(!maintain(&mut messages, &policy, Some(directory.path()), 0)
                 .await
                 .unwrap());
             assert_eq!(serde_json::to_value(&messages).unwrap(), original);
@@ -314,6 +319,68 @@ mod tests {
                 "a known no-op must not archive the entire context on every turn"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn summarized_results_become_reducible_but_new_observations_stay_protected() {
+        let directory = tempfile::tempdir().unwrap();
+        let call = ToolCall {
+            id: "acquired".into(),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: "read_file".into(),
+                arguments: serde_json::json!({"file_path":"story.txt"}).to_string(),
+            },
+        };
+        let mut result = call.clone();
+        result.function.arguments =
+            serde_json::json!({"content":"acquired fact ".repeat(300)}).to_string();
+        let mut messages = initial_messages(Vec::new(), "Answer from acquired facts".into());
+        messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            content: String::new(),
+            message_type: MessageType::ToolUse(vec![call]),
+        });
+        messages.push(ChatMessage {
+            role: ChatRole::Tool,
+            content: String::new(),
+            message_type: MessageType::ToolResult(vec![result]),
+        });
+        let summarized = messages.len();
+        for _ in 0..6 {
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                content: "Later work".into(),
+                message_type: MessageType::Text,
+            });
+        }
+        let policy = RunPolicy {
+            total_turns: 20,
+            context_token_budget: 24000,
+            recent_messages: 2,
+        };
+        assert!(
+            !maintain(&mut messages, &policy, Some(directory.path()), 0)
+                .await
+                .unwrap(),
+            "an observation the summarizer has not seen stays protected"
+        );
+        assert!(
+            maintain(&mut messages, &policy, Some(directory.path()), summarized)
+                .await
+                .unwrap(),
+            "after a checkpoint summarized it, the result can become a receipt"
+        );
+        let MessageType::ToolResult(results) = &messages[3].message_type else {
+            panic!("result missing")
+        };
+        let receipt: serde_json::Value =
+            serde_json::from_str(&results[0].function.arguments).unwrap();
+        assert_eq!(receipt["maintenance_receipt"], true);
+        let path = receipt["original"]["path"].as_str().unwrap();
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("acquired fact"));
     }
 
     #[tokio::test]
@@ -360,7 +427,7 @@ mod tests {
             context_token_budget: 24000,
             recent_messages: 4,
         };
-        assert!(maintain(&mut messages, &policy, Some(directory.path()))
+        assert!(maintain(&mut messages, &policy, Some(directory.path()), 0)
             .await
             .unwrap());
         let MessageType::ToolUse(calls) = &messages[1].message_type else {
@@ -383,7 +450,7 @@ mod tests {
             panic!("lost result");
         };
         assert_eq!(results[0].function.arguments, result.function.arguments);
-        assert!(!maintain(&mut messages, &policy, Some(directory.path()))
+        assert!(!maintain(&mut messages, &policy, Some(directory.path()), 0)
             .await
             .unwrap());
     }

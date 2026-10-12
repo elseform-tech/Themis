@@ -1,39 +1,58 @@
 @import "tailwindcss";
 
-/* Themis theme tokens — approved values, do not restyle without review. */
+/* Themis theme tokens. Neutral greys carry the interface; one warm gradient
+   (bronze to champagne) marks Themis moments. Palette presets override the
+   base colors at runtime through appearance.ts. */
 
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
-  --themis-shell-bg: #343840;
-  --themis-sidebar-bg: #22262c;
-  --themis-canvas: #14171c;
-  --themis-surface: #262830;
-  --themis-raised: #30323b;
-  --themis-border: #3b3d46;
-  --themis-border-subtle: #34363e;
-  --themis-text: #e8eaf0;
-  --themis-text-2: #9aa3b2;
-  --themis-text-3: #878e9c;
+  --themis-shell-bg: #232427;
+  --themis-sidebar-bg: #1c1d20;
+  --themis-canvas: #131314;
+  --themis-surface: #1f2023;
+  --themis-raised: #282a2d;
+  --themis-border: #34363b;
+  --themis-border-subtle: #2a2c30;
+  --themis-text: #e6e6e6;
+  --themis-text-2: #a8abb2;
+  --themis-text-3: #8d9199;
   --themis-accent: #d9a73e;
-  --themis-accent-hover: #e5b95c;
+  --themis-accent-hover: #e3b85a;
   --themis-accent-ink: #1a1405;
-  --themis-success: #3fb950;
-  --themis-warning: #d29922;
-  --themis-danger: #f85149;
-  --themis-info: #58a6ff;
-  --themis-add-bg: rgba(63, 185, 80, 0.14);
-  --themis-del-bg: rgba(248, 81, 73, 0.14);
+  --themis-success: #81c995;
+  --themis-warning: #e3b85a;
+  --themis-danger: #f28b82;
+  --themis-info: #8ab4f8;
+  --themis-add-bg: rgba(129, 201, 149, 0.13);
+  --themis-del-bg: rgba(242, 139, 130, 0.13);
   --themis-composer-bg: var(--themis-surface);
-  --themis-user-message-bg: var(--themis-surface);
-  --themis-user-message-border: var(--themis-border);
-  --themis-nav-hover-bg: color-mix(in srgb, var(--themis-text) 4%, transparent);
-  --themis-nav-active-bg: color-mix(in srgb, var(--themis-text) 6%, transparent);
-  --themis-nav-text: var(--themis-text-2);
+  --themis-user-message-bg: var(--themis-raised);
+  --themis-user-message-border: transparent;
+  --themis-nav-hover-bg: color-mix(in srgb, var(--themis-text) 6%, transparent);
+  --themis-nav-active-bg: color-mix(in srgb, var(--themis-text) 10%, transparent);
+  --themis-nav-text: var(--themis-text);
   --themis-nav-icon: var(--themis-text-2);
   --themis-shimmer-base: var(--themis-text-2);
-  --themis-shimmer-highlight: var(--themis-text);
+  --themis-shimmer-highlight: var(--themis-gradient-3);
+  --themis-gradient-1: #c08a2e;
+  --themis-gradient-2: #e3b85a;
+  --themis-gradient-3: #f6e7bd;
+  --themis-radius-pill: 999px;
+  --themis-radius-card: 20px;
+  --themis-radius-composer: 28px;
 }
+
+/* Signature gradient text: drifts slowly; the global reduced-motion rule stops it. */
+.themis-gradient-text {
+  background-image: linear-gradient(100deg, var(--themis-gradient-1) 0%, var(--themis-gradient-2) 35%, var(--themis-gradient-3) 65%, var(--themis-gradient-2) 100%);
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: themis-gradient-drift 9s ease-in-out infinite alternate;
+}
+@keyframes themis-gradient-drift { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
 
 body {
   background-color: var(--themis-canvas);

@@ -36,7 +36,16 @@ describe("Automation navigation", () => {
     expectNoAutomationMutation();
   });
 
+  it("hides search for a short list", () => {
+    render(<Automations />);
+    expect(screen.queryByRole("searchbox", { name: "Search automations" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Morning review enabled" })).toBeChecked();
+    expect(screen.getByText(/Every 30 minutes/)).toBeInTheDocument();
+  });
+
   it("filters names, instructions, schedule and paused status with a recoverable empty result", () => {
+    const extra = mocks.state.automations[1]!;
+    mocks.state = { ...mocks.state, automations: [...mocks.state.automations, ...["Build", "Lint", "Docs"].map(name => ({ ...extra, id: name, name, task: `${name} check`, enabled: true }))] };
     render(<Automations />);
     const search = screen.getByRole("searchbox", { name: "Search automations" });
     fireEvent.change(search, { target: { value: " unread " } });

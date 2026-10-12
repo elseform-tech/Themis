@@ -10,6 +10,9 @@ import type {
   AutomationInput,
   Diagnostics,
   DiffState,
+  DirListing,
+  FileView,
+  WorkspaceInfo,
   GoModel,
   HistoryItem,
   PersistedMessage,
@@ -42,6 +45,10 @@ function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise
 export function listPromptSkills(projectRoot?: string | null): Promise<PromptSkill[]> { return invoke("list_prompt_skills", { projectRoot: projectRoot ?? null }); }
 export function pluginAction<T>(args: Record<string, unknown>): Promise<T> { return invoke("plugin_action", args); }
 
+export function getWorkspace(projectRoot: string, pullRequests = false): Promise<WorkspaceInfo> { return invoke("get_workspace", { projectRoot, pullRequests }); }
+export function listProjectDir(projectRoot: string, path: string): Promise<DirListing> { return invoke("list_project_dir", { projectRoot, path }); }
+export function readProjectFile(projectRoot: string, path: string): Promise<FileView> { return invoke("read_project_file", { projectRoot, path }); }
+
 export function ping(): Promise<string> {
   return invoke('ping');
 }
@@ -57,6 +64,11 @@ export function createProject(name: string): Promise<ProjectInfo> {
 
 export function renameProject(path: string, name: string): Promise<ProjectInfo> {
   return invoke("rename_project", { path, name });
+}
+
+/** Moves a project folder to the Trash and forgets its chats. */
+export function deleteProject(path: string): Promise<void> {
+  return invoke("delete_project", { path });
 }
 
 export function openProject(path: string): Promise<ProjectInfo> {

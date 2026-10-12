@@ -65,7 +65,7 @@ async fn terminal(
 }
 
 fn append_call() -> Value {
-    json!({"id":"append","type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c","from pathlib import Path; p=Path('completed.txt'); p.open('a').write('once\\n'); print('APPEND_DONE_753')"]}).to_string()}})
+    json!({"id":"append","type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c","from pathlib import Path; p=Path('completed.txt'); p.open('a', newline='').write('once\\n'); print('APPEND_DONE_753')"]}).to_string()}})
 }
 
 #[tokio::test(flavor = "multi_thread")]

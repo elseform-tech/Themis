@@ -132,6 +132,77 @@ impl AppState {
             .await?;
         self.open_project(project.root).await
     }
+
+    /// Moves a project folder to the Trash, then forgets its chats,
+    /// automations, recents entry and display name. Only folders directly in
+    /// the projects folder qualify; the built-in Themis project and projects
+    /// with a running chat are refused. Nothing is forgotten if the move fails.
+    pub async fn delete_project(&self, path: String) -> Result<(), String> {
+        let root = canonical_project_dir(&path)?;
+        let base = PathBuf::from(self.inner.settings.get().await.projects_directory)
+            .canonicalize()
+            .map_err(|err| format!("Projects folder unavailable: {err}"))?;
+        if root.parent() != Some(base.as_path()) {
+            return Err("Only projects in the projects folder can be deleted".to_owned());
+        }
+        if root == base.join("Themis") {
+            return Err("The built-in Themis project cannot be deleted".to_owned());
+        }
+        let belongs = |candidate: &Path| {
+            candidate
+                .canonicalize()
+                .map_or(candidate == root, |path| path == root)
+        };
+        let mut threads = self.inner.threads.write().await;
+        if threads
+            .values()
+            .any(|record| record.running && belongs(&record.project_root))
+        {
+            return Err("Stop the running chat in this project before deleting it".to_owned());
+        }
+        move_to_trash(&self.inner.trash_dir, &root)?;
+        let ids: Vec<String> = threads
+            .iter()
+            .filter(|(_, record)| belongs(&record.project_root))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &ids {
+            self.inner.transcript.delete_thread(id)?;
+            threads.remove(id);
+        }
+        drop(threads);
+        self.persist_registry().await;
+        let root_text = root.to_string_lossy().into_owned();
+        let removed = {
+            let mut automations = self.inner.automations.write().await;
+            let before = automations.len();
+            automations.retain(|_, automation| automation.project_root != root_text);
+            before != automations.len()
+        };
+        if removed {
+            self.persist_automations().await;
+        }
+        self.inner.projects.write().await.remove(&root_text);
+        self.inner.settings.forget_project(&root_text).await
+    }
+}
+
+/// Moves `root` into `trash` under a free name; never deletes in place.
+fn move_to_trash(trash: &Path, root: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(trash).map_err(|err| format!("Trash unavailable: {err}"))?;
+    let name = root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Project".to_owned());
+    let mut target = trash.join(&name);
+    let mut copy = 1;
+    while target.exists() {
+        copy += 1;
+        target = trash.join(format!("{name} {copy}"));
+    }
+    std::fs::rename(root, &target)
+        .map_err(|err| format!("Could not move the project to the Trash: {err}"))?;
+    Ok(target)
 }
 
 fn validate_project_name(name: &str) -> Result<String, String> {

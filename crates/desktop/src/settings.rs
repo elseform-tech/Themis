@@ -227,6 +227,17 @@ impl SettingsStore {
         Ok(())
     }
 
+    /// Drops a deleted project from recents and display names.
+    pub(crate) async fn forget_project(&self, root: &str) -> Result<(), String> {
+        let mut guard = self.current.lock().await;
+        let mut next = guard.clone();
+        next.recent_roots.retain(|recent| recent != root);
+        next.project_names.remove(root);
+        self.save(&next)?;
+        *guard = next;
+        Ok(())
+    }
+
     fn save(&self, settings: &Settings) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)

@@ -1,26 +1,41 @@
 import { useEffect, useState } from "react";
 import { attachmentFile } from "../lib/tauri";
 
+const IMAGE = /^(png|jpe?g|gif|webp|avif|bmp)$/;
+const AUDIO = /^(mp3|m4a|wav|ogg|flac|aac)$/;
+const VIDEO = /^(mp4|webm|mov|m4v)$/;
+
+/** Sent or pending attachment: media as a rounded thumbnail, everything else as a compact file chip. */
 export function AttachmentPreview({ threadId, path }: { threadId: string; path: string }) {
   const name = path.split(/[\\/]/).pop() ?? path;
-  const extension = name.split(".").pop()?.toLowerCase();
+  const extension = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
   const [url, setUrl] = useState("");
-  const [error, setError] = useState("");
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    setUrl(""); setError("");
-    attachmentFile(threadId, path).then(value => { if (!cancelled) setUrl(value); })
-      .catch(() => { if (!cancelled) setError("Preview unavailable"); });
+    setUrl(""); setFailed(false);
+    attachmentFile(threadId, path).then(value => { if (!cancelled) { if (value) setUrl(value); else setFailed(true); } })
+      .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
   }, [threadId, path]);
-  return <figure className="themis-attachment-preview" aria-label={name}>
-    <div className="themis-attachment-media">
-    {url && (/^(png|jpe?g|gif|webp|avif|bmp)$/.test(extension ?? "") ? <img src={url} alt={name} onError={() => setError("Preview unavailable")} />
-      : extension === "pdf" ? (url.endsWith(".png") ? <img src={url} alt={`Preview ${name}`} /> : <iframe src={url} title={`Preview ${name}`} sandbox="" />)
-      : /^(mp3|m4a|wav|ogg|flac|aac)$/.test(extension ?? "") ? <audio src={url} controls preload="metadata" aria-label={`Play ${name}`} onError={() => setError("Preview unavailable")} />
-      : /^(mp4|webm|mov|m4v)$/.test(extension ?? "") ? <video src={url} controls preload="metadata" aria-label={`Play ${name}`} onError={() => setError("Preview unavailable")} /> : <svg width="32" height="40" viewBox="0 0 24 30" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 1h12l6 6v22H3zM15 1v6h6M7 14h10M7 19h10" /></svg>)}
-    </div>
-    <figcaption title={name}>{name}</figcaption>
-    {error && <small role="status">{error}</small>}
+  const pdfImage = extension === "pdf" && url.endsWith(".png");
+  const visual = !failed && (IMAGE.test(extension) || VIDEO.test(extension) || extension === "pdf");
+  if (visual) {
+    return <figure className="themis-attachment-preview themis-attachment-preview--media" aria-label={name} title={name}>
+      <div className="themis-attachment-media">
+        {url && (IMAGE.test(extension) || pdfImage ? <img src={url} alt={pdfImage ? `Preview ${name}` : name} onError={() => setFailed(true)} />
+          : extension === "pdf" ? <iframe src={url} title={`Preview ${name}`} sandbox="" />
+          : <video src={url} controls preload="metadata" aria-label={`Play ${name}`} onError={() => setFailed(true)} />)}
+      </div>
+      <figcaption>{name}</figcaption>
+    </figure>;
+  }
+  return <figure className="themis-attachment-preview themis-attachment-preview--file" aria-label={name} title={name}>
+    <span className="themis-attachment-ext" aria-hidden="true">{extension.slice(0, 4) || "file"}</span>
+    <span className="themis-attachment-text">
+      <figcaption>{name}</figcaption>
+      {url && AUDIO.test(extension) ? <audio src={url} controls preload="metadata" aria-label={`Play ${name}`} onError={() => setFailed(true)} />
+        : <small>{failed ? "Preview unavailable" : extension ? `${extension.toUpperCase()} file` : "File"}</small>}
+    </span>
   </figure>;
 }

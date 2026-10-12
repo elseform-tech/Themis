@@ -2,7 +2,8 @@ import { AttachmentPreview } from "./AttachmentPreview";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
-import { useActiveProject } from "../state/store";
+import { useActiveProject, useApp } from "../state/store";
+import type { ChangedFile } from "../lib/types";
 import { useEffect, useRef, useState } from "react";
 import { ResponseBody } from "../components/ResponseBody";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
@@ -140,7 +141,7 @@ function ConversationRow({
     <details className="themis-run-bucket" open={row.active || undefined}>
       <summary>
         <span className="themis-tool-chevron" aria-hidden="true">›</span>
-        <span>Activities</span>
+        <span>Show thinking</span>
         <span className="themis-run-meta">
           {row.toolCount} tool call{row.toolCount === 1 ? "" : "s"}{durationLabel && ` · ${durationLabel}`}
         </span>
@@ -180,15 +181,60 @@ function Milestone({
   );
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return <button type="button" className="themis-response-action" aria-label={copied ? "Copied" : "Copy response"} title={copied ? "Copied" : "Copy"}
+    onClick={() => void navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {})}>
+    {copied
+      ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m5 12 5 5 9-10" /></svg>
+      : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>}
+  </button>;
+}
+
+const STATUS_LETTER: Record<ChangedFile["status"], string> = { added: "A", modified: "M", deleted: "D", renamed: "R" };
+
+const EDITED_PREVIEW = 5;
+
+/** The files one turn changed, in a card under its response; a row opens that file's diff. Long lists show five until expanded. */
+function EditedFiles({ files }: { files: ChangedFile[] }) {
+  const { dispatch } = useApp();
+  const [expanded, setExpanded] = useState(false);
+  const counts = (["added", "modified", "deleted", "renamed"] as const)
+    .map(status => [status, files.filter(file => file.status === status).length] as const)
+    .filter(([, count]) => count > 0);
+  const shown = expanded ? files : files.slice(0, EDITED_PREVIEW);
+  return <section className="themis-edited-files" aria-label="Files edited in this turn">
+    <header>
+      <h3>Edited {files.length} file{files.length === 1 ? "" : "s"}</h3>
+      <span className="themis-edited-counts">{counts.map(([status, count]) => <span key={status} className={`themis-edited-status--${status}`}>{count} {status}</span>)}</span>
+    </header>
+    <ul className={expanded ? "is-expanded" : undefined}>{shown.map(file => {
+      const slash = file.path.lastIndexOf("/");
+      return <li key={file.path}><button type="button" title={`${file.path} · show diff`} onClick={() => dispatch({ type: "ui/diff-panel", open: true, focus: file.path })}>
+        <span className={`themis-edited-status themis-edited-status--${file.status}`} aria-label={file.status}>{STATUS_LETTER[file.status]}</span>
+        <span className="themis-edited-path">{slash >= 0 && <span>{file.path.slice(0, slash + 1)}</span>}{file.path.slice(slash + 1)}</span>
+      </button></li>;
+    })}</ul>
+    {files.length > EDITED_PREVIEW && <button type="button" className="themis-edited-more" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? "Show fewer" : `Show all ${files.length}`}</button>}
+  </section>;
+}
+
+function CheckpointDivider({ checkpoint }: { checkpoint: NonNullable<ChatMessage["checkpoint"]> }) {
+  const change = checkpoint.before !== undefined && checkpoint.after !== undefined ? ` · ${checkpoint.before}% → ${checkpoint.after}%` : "";
+  return <div className="themis-checkpoint-divider" role="note"><span>Context compacted{change}</span></div>;
+}
+
 function Message({ message, threadId, activeRunId, skills, plugins }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
+  if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
   const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;
   const completed = message.role === "assistant" && !isActiveRun;
 
   return (
+    <>
+    {threadId && !!message.attachments?.length && <div className="themis-message-attachments" aria-label="Attached files">{message.attachments.map(path => <AttachmentPreview key={path} threadId={threadId} path={path} />)}</div>}
     <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}${completed ? " themis-thread-msg--completed" : ""}`}>
-      {threadId && !!message.attachments?.length && <div className="themis-message-attachments" aria-label="Attached files">{message.attachments.map(path => <AttachmentPreview key={path} threadId={threadId} path={path} />)}</div>}
       {message.tool ? (
         <details className="themis-tool-message">
           <summary className={message.tool.ok === undefined && isActiveRun ? "themis-shimmer" : ""}>
@@ -207,18 +253,26 @@ function Message({ message, threadId, activeRunId, skills, plugins }: { message:
           </div>
         </details>
       ) : message.text.startsWith("Run failed:") ? (
+        <>
         <details className="themis-request-error">
           <summary>Request failed · Details</summary>
           <p className="themis-thread-text"><PromptText value={message.text} skills={skills} plugins={plugins} /></p>
         </details>
+        {!!message.changedFiles?.length && <EditedFiles files={message.changedFiles} />}
+        </>
       ) : message.role === "assistant" ? (
         <>
           <ResponseBody text={message.text} />
-          {(message.final || !message.runId) && <small className="themis-response-model">{message.model ?? "Model not recorded"}</small>}
+          {!!message.changedFiles?.length && <EditedFiles files={message.changedFiles} />}
+          {(message.final || !message.runId) && <div className="themis-response-actions">
+            <CopyButton text={message.text} />
+            <small className="themis-response-model">{message.model ?? "Model not recorded"}</small>
+          </div>}
         </>
       ) : (
         <p className="themis-thread-text"><PromptText value={text} skills={skills} plugins={plugins} /></p>
       )}
     </div>
+    </>
   );
 }

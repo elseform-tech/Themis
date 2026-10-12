@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Dialog, EmptyState, Input } from "../components";
+import { Dialog } from "../components";
 import { updateSettings } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
-import { useNewThread, useOpenProject } from "./actions";
+import { useNewThread } from "./actions";
 import "./Palette.css";
 
 interface Entry {
   id: string;
-  group: "Threads" | "Projects" | "Actions";
+  group: "Chats" | "Projects" | "Actions";
   label: string;
   detail?: string;
   run: () => void;
@@ -33,7 +33,6 @@ function fuzzyScore(query: string, target: string): number | null {
 
 export function Palette() {
   const { state, dispatch } = useApp();
-  const openProjectFlow = useOpenProject();
   const newThread = useNewThread();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -51,9 +50,9 @@ export function Palette() {
       for (const thread of threads) {
         list.push({
           id: `thread:${thread.id}`,
-          group: "Threads",
+          group: "Chats",
           label: thread.title,
-          detail: root,
+          detail: state.projects.find(project => project.root === root)?.name ?? root.split(/[\\/]/).pop(),
           run: () =>
             dispatch({ type: "thread/selected", projectRoot: root, threadId: thread.id }),
         });
@@ -64,7 +63,6 @@ export function Palette() {
         id: `project:${project.root}`,
         group: "Projects",
         label: project.name,
-        detail: project.root,
         run: () => dispatch({ type: "project/selected", root: project.root }),
       });
     }
@@ -73,14 +71,8 @@ export function Palette() {
       {
         id: "action:new-thread",
         group: "Actions",
-        label: "New thread",
+        label: "New chat",
         run: () => void newThread(),
-      },
-      {
-        id: "action:open-project",
-        group: "Actions",
-        label: "Open project…",
-        run: () => void openProjectFlow(),
       },
       {
         id: "action:toggle-theme",
@@ -105,7 +97,8 @@ export function Palette() {
       },
     );
     return list;
-  }, [state.threadsByProject, state.projects, state.settings.theme, dispatch, newThread, openProjectFlow]);
+  }, [state.threadsByProject, state.projects, state.settings.theme, dispatch, newThread]);
+
 
   const filtered = useMemo(() => {
     const scored: Array<{ entry: Entry; score: number }> = [];
@@ -127,56 +120,58 @@ export function Palette() {
     entry.run();
   }
 
+  // Without a query, show a short recent list per group instead of everything.
+  const visible = query.trim() === "" ? (["Chats", "Projects", "Actions"] as const).flatMap(group => filtered.filter(entry => entry.group === group).slice(0, group === "Actions" ? 6 : 5)) : filtered.slice(0, 40);
   return (
     <Dialog
       open={state.paletteOpen}
-      title="Command palette"
+      label="Search"
+      className="themis-palette-dialog"
       onClose={() => dispatch({ type: "ui/palette", open: false })}
     >
       <div className="themis-palette">
-        <Input
-          id="themis-palette-query"
-          label="Search threads, projects, actions"
-          placeholder="Type to filter…"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              setActive((a) => Math.min(a + 1, Math.max(filtered.length - 1, 0)));
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setActive((a) => Math.max(a - 1, 0));
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              run(filtered[active]);
-            }
-          }}
-        />
+        <label className="themis-palette-search">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m12.5 12.5 4.2 4.2" /></svg>
+          <input
+            id="themis-palette-query"
+            aria-label="Search chats, projects and actions"
+            placeholder="Search chats, projects and actions"
+            autoComplete="off"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setActive((a) => Math.min(a + 1, Math.max(visible.length - 1, 0)));
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setActive((a) => Math.max(a - 1, 0));
+              } else if (event.key === "Enter") {
+                event.preventDefault();
+                run(visible[active]);
+              }
+            }}
+          />
+        </label>
         <div className="themis-palette-list" role="listbox" aria-label="Results">
-          {filtered.length === 0 ? (
-            <EmptyState title="No matches" hint="Try a different query." />
+          {visible.length === 0 ? (
+            <p className="themis-palette-none">No matches</p>
           ) : (
-            filtered.map((entry, index) => (
-              <button
-                key={entry.id}
-                type="button"
-                role="option"
-                aria-selected={index === active}
-                className={
-                  index === active
-                    ? "themis-palette-row themis-palette-row--active"
-                    : "themis-palette-row"
-                }
-                onMouseEnter={() => setActive(index)}
-                onClick={() => run(entry)}
-              >
-                <span className="themis-palette-group">{entry.group}</span>
-                <span className="themis-palette-label">{entry.label}</span>
-                {entry.detail !== undefined && (
-                  <span className="themis-palette-detail">{entry.detail}</span>
-                )}
-              </button>
+            visible.map((entry, index) => (
+              <div key={entry.id} role="presentation">
+                {entry.group !== visible[index - 1]?.group && <p className="themis-palette-group" role="presentation">{entry.group}</p>}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={index === active}
+                  className={index === active ? "themis-palette-row themis-palette-row--active" : "themis-palette-row"}
+                  onMouseEnter={() => setActive(index)}
+                  onClick={() => run(entry)}
+                >
+                  <span className="themis-palette-label">{entry.label}</span>
+                  {entry.detail !== undefined && <span className="themis-palette-detail">{entry.detail}</span>}
+                </button>
+              </div>
             ))
           )}
         </div>

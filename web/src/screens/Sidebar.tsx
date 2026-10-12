@@ -1,15 +1,15 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Dialog, Input, Tooltip } from "../components";
-import { createProject, getSettings, renameProject, renameThread } from "../lib/tauri";
+import { createProject, deleteProject, getSettings, renameProject, renameThread } from "../lib/tauri";
 import { describeError, toast, useApp, type MainView } from "../state/store";
-import { useNewThread, useOpenProject, useDiscardThread } from "./actions";
+import { useNewThread, useDiscardThread } from "./actions";
 import type { ThreadInfo } from "../lib/types";
 import { readSession, writeSession } from "../state/session";
 import { MovingText } from "../components/MovingText";
 import "./Sidebar.css";
 
 const views: Array<[MainView, string]> = [["skills", "Integrations"], ["automations", "Automations"], ["queue", "Review queue"]];
-type SidebarIconName = "panel" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search";
+type SidebarIconName = "panel" | "chat" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search";
 const viewIcons: Record<MainView, SidebarIconName> = { thread: "thread", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
 export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
@@ -17,15 +17,24 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
   const [width, setWidth] = useState(() => Math.max(240, Math.min(560, Number(readSession("sidebarWidth", 292)) || 292)));
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
   const [resizing, setResizing] = useState(false);
+  const slot = useRef<HTMLDivElement>(null);
+  const clampSidebar = (value: number) => Math.round(Math.max(240, Math.min(560, value)));
   function resize(value: number) {
-    const next = Math.round(Math.max(240, Math.min(560, value)));
+    const next = clampSidebar(value);
     setWidth(next);
     writeSession("sidebarWidth", next);
   }
-  const openProject = useOpenProject();
+  // While dragging, move only the CSS variable; React state and storage update once on release.
+  const lastWidth = useRef<number | null>(null);
+  function preview(value: number) { lastWidth.current = clampSidebar(value); slot.current?.style.setProperty("--themis-sidebar-width", `${lastWidth.current}px`); }
+  function finishResize() {
+    if (resizeStart.current && lastWidth.current !== null) resize(lastWidth.current);
+    resizeStart.current = null; lastWidth.current = null; setResizing(false);
+  }
   const newThread = useNewThread();
   const [name, setName] = useState("");
   const [renaming, setRenaming] = useState<{ root: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState<{ root: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { discard } = useDiscardThread();
@@ -35,14 +44,17 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
   const [editBusy, setEditBusy] = useState(false);
   const [help, setHelp] = useState(false);
   const pending = state.reviews.filter(r => r.status === "pending").length;
-  const recentThreads = state.projects.flatMap(project => (state.threadsByProject[project.root] ?? []).map(thread => ({ project, thread })))
-    .filter(({ thread }) => (thread.last_activity_seq ?? 0) > 0)
-    .sort((a, b) => (b.thread.last_activity_seq ?? 0) - (a.thread.last_activity_seq ?? 0))
-    .slice(0, 8);
-  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(() => readSession("collapsedProjects", {}));
-  function setProjectCollapsed(root: string, value: boolean) {
-    setCollapsedProjects(previous => { const next = { ...previous, [root]: value }; writeSession("collapsedProjects", next); return next; });
-  }
+  const activeRoot = state.activeProjectRoot;
+  const activeProject = state.projects.find(project => project.root === activeRoot) ?? null;
+  const projects = [...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default));
+  const statusOf = (thread: ThreadInfo) => threadStatus(state, thread);
+  const threads = [...(activeRoot ? state.threadsByProject[activeRoot] ?? [] : [])]
+    .sort((a, b) => (b.last_activity_seq ?? 0) - (a.last_activity_seq ?? 0));
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? threads : threads.slice(0, 12);
+  const finished = useFreshlyFinished(state.running, state.mainView === "thread" ? state.activeThreadId : null);
+  const projectBusy = (root: string) => (state.threadsByProject[root] ?? []).some(thread => ["Working", "Needs approval"].includes(statusOf(thread)));
+  const busyElsewhere = projects.some(project => project.root !== activeRoot && projectBusy(project.root));
 
   async function create() {
     if (busy || !name.trim()) return;
@@ -68,43 +80,65 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
     } catch (error) { setEditError(describeError(error)); }
     finally { setEditBusy(false); }
   }
+  function threadRow(thread: ThreadInfo) {
+    const active = thread.id === state.activeThreadId && state.mainView === "thread";
+    const locked = state.running[thread.id] ?? thread.running;
+    return <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${active ? "themis-sidebar-row--active" : ""}`} title={thread.title} aria-label={thread.title} aria-current={active ? "true" : undefined} onClick={() => activeRoot && dispatch({ type: "thread/selected", projectRoot: activeRoot, threadId: thread.id })}><SidebarIcon name="chat" /><MovingText loop>{thread.title}</MovingText><ThreadStatus status={statusOf(thread)} fresh={finished.has(thread.id)} /></button><details className="themis-thread-row-actions"><summary aria-label={`Options for ${thread.title}`} title="Thread options"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg></summary><div className="themis-row-menu"><button type="button" aria-label={`Edit ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setEditError(""); setEditing({ ...thread, projectRoot: activeRoot! }); }}>Rename</button><button type="button" className="is-danger" aria-label={`Remove ${thread.title}`} disabled={locked} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setRemoving({ ...thread, projectRoot: activeRoot! }); }}>Remove</button></div></details></li>;
+  }
   function nav(view: MainView, label: string) {
     return <Tooltip key={view} content={label}><button type="button" className={`themis-sidebar-row ${state.mainView === view ? "themis-sidebar-row--active" : ""}`} aria-label={view === "queue" && pending > 0 ? `${label} ${pending}` : label} aria-current={state.mainView === view ? "page" : undefined} onClick={() => dispatch({ type: "ui/view", view })}>
       <SidebarIcon name={viewIcons[view]} /><span className="themis-sidebar-name">{label}</span>{view === "queue" && pending > 0 && <Badge tone="warning">{pending}</Badge>}
     </button></Tooltip>;
   }
   return <>
-    <div className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
+    <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
       <nav className="themis-sidebar-rail" aria-label="Utilities">
         {views.map(([view, label]) => nav(view, label))}
         <div className="themis-rail-footer">{companionControl}{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={() => setHelp(true)}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
       </nav>
       <aside id="themis-sidebar" className={`themis-sidebar ${collapsed ? "" : "is-visible"}`} inert={collapsed} aria-hidden={collapsed} aria-label="Workspace navigation">
         <div className="themis-brand"><span className="themis-wordmark">Themis</span></div>
-        <div className="themis-sidebar-nav"><button type="button" className="themis-sidebar-row" disabled={!state.activeProjectRoot} onClick={() => void newThread()}><SidebarIcon name="thread" /><span>New chat</span></button></div>
+        <div className="themis-sidebar-nav"><button type="button" className="themis-new-chat" disabled={!state.activeProjectRoot} onClick={() => void newThread()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New chat</span></button></div>
         <div className="themis-sidebar-projects">
-          <div className="themis-sidebar-head"><h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="project" /><span>Projects</span></h2><div className="themis-project-actions"><Button size="small" variant="ghost" aria-label="New project" title="New project" onClick={() => dispatch({ type: "ui/project-dialog", open: true })}>+</Button><details><summary aria-label="Project actions" title="Project actions">···</summary><div className="themis-project-menu"><Button variant="ghost" size="small" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open folder</Button></div></details></div></div>
-          {state.projects.length === 0 ? <p className="themis-sidebar-note">No projects</p> : <ul className="themis-sidebar-list">{[...state.projects].sort((a, b) => Number(!!b.is_default) - Number(!!a.is_default)).map(project => <li className="themis-project" key={project.root}>
-            <div className="themis-project-heading"><button type="button" className="themis-sidebar-row themis-project-row" title={project.root} aria-expanded={!collapsedProjects[project.root]} onClick={() => setProjectCollapsed(project.root, !collapsedProjects[project.root])}><span aria-hidden="true">{collapsedProjects[project.root] ? "›" : "⌄"}</span><SidebarIcon name="project" /><MovingText>{project.name}</MovingText></button><Button variant="ghost" size="small" aria-label={`Rename ${project.name}`} title="Rename project" onClick={() => { setError(""); setRenaming({ root: project.root, name: project.name }); }}>✎</Button><Button variant="ghost" size="small" aria-label={`New thread in ${project.name}`} title="New thread" onClick={() => { setProjectCollapsed(project.root, false); void newThread(project.root); }}>+</Button></div>
-            {!collapsedProjects[project.root] && <ul className="themis-sidebar-list themis-thread-list">{(state.threadsByProject[project.root] ?? []).map(thread => <li key={thread.id} className="themis-sidebar-thread"><button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={thread.title} aria-label={thread.title} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}><SidebarIcon name="thread" /><MovingText>{thread.title}</MovingText><ThreadStatus thread={thread} /></button><div className="themis-thread-row-actions"><button aria-label={`Edit ${thread.title}`} title="Edit thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => { setEditError(""); setEditing({ ...thread, projectRoot: project.root }); }}>✎</button><button aria-label={`Remove ${thread.title}`} title="Remove thread" disabled={state.running[thread.id] ?? thread.running} onClick={() => setRemoving({ ...thread, projectRoot: project.root })}><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 6v5M9 6v5"/></svg></button></div></li>)}</ul>}
-          </li>)}</ul>}
-          <section aria-label="Recent" className="themis-sidebar-recent">
-            <h2 className="themis-sidebar-title themis-sidebar-title-line"><SidebarIcon name="automations" /><span>Recent</span></h2>
-            {recentThreads.length ? <ul className="themis-sidebar-list">{recentThreads.map(({ project, thread }) => <li key={thread.id}>
-              <button type="button" className={`themis-sidebar-row themis-thread-row ${thread.id === state.activeThreadId && state.mainView === "thread" ? "themis-sidebar-row--active" : ""}`} title={`${thread.title} · ${project.name}`} aria-label={`Recent: ${thread.title} · ${project.name}`} aria-current={thread.id === state.activeThreadId && state.mainView === "thread" ? "true" : undefined} onClick={() => dispatch({ type: "thread/selected", projectRoot: project.root, threadId: thread.id })}>
-                <SidebarIcon name="thread" /><span className="themis-sidebar-name">{thread.title}</span><ThreadStatus thread={thread} />
-              </button>
-            </li>)}</ul> : <p className="themis-sidebar-note">Your recent chats will appear here.</p>}
-          </section>
+          <details className="themis-project-switcher">
+            <summary aria-label={`Project: ${activeProject?.name ?? "none"}`} title={activeProject?.root}>
+              <SidebarIcon name="project" /><MovingText loop>{activeProject?.name ?? "Choose a project"}</MovingText>
+              {busyElsewhere && <span className="themis-project-busy" role="img" aria-label="Activity in another project" />}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+            </summary>
+            <div className="themis-project-menu" role="group" aria-label="Projects">
+              {projects.length === 0 && <p className="themis-sidebar-note">No projects</p>}
+              {projects.map(project => (
+                <button key={project.root} type="button" className="themis-project-option" title={project.root} aria-current={project.root === activeRoot ? "true" : undefined}
+                  onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowAll(false); dispatch({ type: "project/selected", root: project.root }); }}>
+                  <MovingText>{project.name}</MovingText>
+                  {projectBusy(project.root) && <span className="themis-project-busy" aria-hidden="true" />}
+                  <span className="themis-project-count">{(state.threadsByProject[project.root] ?? []).length}</span>
+                </button>
+              ))}
+              <hr />
+              <button type="button" className="themis-project-option" aria-label="New project" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); dispatch({ type: "ui/project-dialog", open: true }); }}>New project</button>
+              {activeProject && <button type="button" className="themis-project-option" aria-label={`Rename ${activeProject.name}`} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setRenaming({ root: activeProject.root, name: activeProject.name }); }}>Rename project</button>}
+              {activeProject && !activeProject.is_default && <button type="button" className="themis-project-option is-danger" aria-label={`Delete ${activeProject.name}`} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setDeleting({ root: activeProject.root, name: activeProject.name }); }}>Delete project</button>}
+            </div>
+          </details>
+          {activeProject && <>
+            <section className="themis-thread-group" aria-label="Chats">
+              <h2 className="themis-sidebar-section">Chats{threads.length > 0 && <span aria-hidden="true">{threads.length}</span>}</h2>
+              {threads.length ? <ul className="themis-sidebar-list">{shown.map(threadRow)}</ul> : <p className="themis-sidebar-note">No chats yet</p>}
+            </section>
+            {threads.length > shown.length && <button type="button" className="themis-show-more" onClick={() => setShowAll(true)}>Show {threads.length - shown.length} more</button>}
+          </>}
         </div>
 
       </aside>
       {!collapsed && <div className="themis-sidebar-resize" role="separator" aria-label="Resize sidebar" aria-controls="themis-sidebar" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={560} aria-valuenow={width} tabIndex={0}
         onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.focus(); resizeStart.current = { x: event.clientX, width: event.currentTarget.parentElement!.getBoundingClientRect().width }; event.currentTarget.setPointerCapture(event.pointerId); setResizing(true); }}
-        onPointerMove={event => { if (resizeStart.current) resize(resizeStart.current.width + event.clientX - resizeStart.current.x); }}
-        onLostPointerCapture={() => { resizeStart.current = null; setResizing(false); }}
-        onPointerUp={event => { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); resizeStart.current = null; setResizing(false); }}
-        onPointerCancel={() => { resizeStart.current = null; setResizing(false); }}
+        onPointerMove={event => { if (resizeStart.current) preview(resizeStart.current.width + event.clientX - resizeStart.current.x); }}
+        onPointerUp={event => { finishResize(); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+        onLostPointerCapture={finishResize}
+        onPointerCancel={() => { resizeStart.current = null; setResizing(false); preview(width); }}
+        onDoubleClick={() => resize(292)}
         onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); resize(event.key === "Home" ? 240 : event.key === "End" ? 560 : width + (event.key === "ArrowRight" ? 20 : -20)); } }}
       />}
     </div>
@@ -128,6 +162,17 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
         <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setRenaming(null)}>Cancel</Button><Button type="submit" disabled={busy || !renaming.name.trim()}>Save</Button></div>
       </form>}
     </Dialog>
+    <Dialog open={deleting !== null} title="Delete project?" onClose={() => { if (!busy) setDeleting(null); }}>
+      {deleting && <div className="themis-sidebar-dialog">
+        <p className="themis-sidebar-dialog-hint">“{deleting.name}” and its chats will be removed from Themis. The project folder moves to the Trash, so its files can still be recovered there.</p>
+        {error && <p role="alert" className="themis-form-error">{error}</p>}
+        <div className="themis-sidebar-dialog-actions"><Button variant="ghost" disabled={busy} onClick={() => setDeleting(null)}>Cancel</Button><Button variant="danger" disabled={busy} onClick={async () => {
+          setBusy(true); setError("");
+          try { await deleteProject(deleting.root); dispatch({ type: "project/removed", root: deleting.root }); dispatch({ type: "settings/patched", settings: await getSettings() }); toast(dispatch, `Moved ${deleting.name} to the Trash`, "success"); setDeleting(null); }
+          catch (reason) { setError(describeError(reason)); } finally { setBusy(false); }
+        }}>{busy ? "Deleting…" : "Delete project"}</Button></div>
+      </div>}
+    </Dialog>
     <Dialog open={editing !== null} title="Edit thread" onClose={() => { if (!editBusy) setEditing(null); }}>
       {editing && <form className="themis-sidebar-dialog" onSubmit={event => { event.preventDefault(); void saveThread(); }}>
         <Input id="sidebar-thread-title" label="Name" value={editing.title} maxLength={120} onChange={event => setEditing({ ...editing, title: event.target.value })} />
@@ -136,16 +181,17 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
       </form>}
     </Dialog>
     <Dialog open={removing !== null} title="Remove thread?" onClose={() => { if (!editBusy) setRemoving(null); }}>
-      <p>This permanently removes the thread and its worktree. Unmerged changes will be lost.</p>
+      <p>This permanently removes the chat and its history. Project files are not changed.</p>
       <div className="themis-sidebar-dialog-actions"><Button variant="ghost" onClick={() => setRemoving(null)} disabled={editBusy}>Cancel</Button><Button variant="danger" disabled={editBusy} onClick={async () => { if (!removing) return; setEditBusy(true); try { if (await discard(removing.projectRoot, removing.id)) setRemoving(null); } finally { setEditBusy(false); } }}>Remove thread</Button></div>
     </Dialog>
-    <Dialog open={help} title="Help & shortcuts" onClose={() => setHelp(false)}><div className="themis-help"><p>Create a project, describe what you want, then review the result.</p><dl><dt>Find a project, thread or command</dt><dd>⌘ / Ctrl + K</dd><dt>Show or hide sidebar</dt><dd>⌘ / Ctrl + B</dd><dt>Send a message</dt><dd>Enter or ⌘ / Ctrl + Enter · Shift + Enter for a new line</dd><dt>New thread</dt><dd>⌘ / Ctrl + Shift + O</dd><dt>Close a panel or dialog</dt><dd>Escape</dd></dl><p>Agent changes stay in a separate worktree until you choose Merge. Actions requiring permission pause for your decision.</p></div></Dialog>
+    <Dialog open={help} title="Shortcuts" onClose={() => setHelp(false)}><div className="themis-help"><dl>{SHORTCUTS.map(([label, keys]) => <div key={label}><dt>{label}</dt><dd>{keys.map(key => <kbd key={key}>{key}</kbd>)}</dd></div>)}</dl><p>Open <strong>Workspace</strong> to watch what the agent changes. Actions that need permission pause for you.</p></div></Dialog>
   </>;
 }
 
 // Lucide SVG paths from the approved Framed rail visualization (ISC license).
 export function SidebarIcon({ name }: { name: SidebarIconName }) {
   return <svg className="themis-sidebar-icon" viewBox={name === "help" || name === "search" ? "0 0 20 20" : "0 0 24 24"} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    {name === "chat" && <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />}
     {name === "panel" && <><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /></>}
     {name === "thread" && <><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" /></>}
     {name === "skills" && <><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0ZM12 18v4" /></>}
@@ -158,19 +204,55 @@ export function SidebarIcon({ name }: { name: SidebarIconName }) {
   </svg>;
 }
 
-function ThreadStatus({ thread }: { thread: ThreadInfo }) {
-  const { state } = useApp();
+type ThreadState = "Working" | "Needs approval" | "Failed" | "Stopped" | "Done" | "Idle" | "Interrupted";
+export function threadStatus(state: ReturnType<typeof useApp>["state"], thread: ThreadInfo): ThreadState {
   const messages = state.messages[thread.id] ?? [];
   const last = messages[messages.length - 1];
   const running = state.running[thread.id] ?? thread.running;
-  const status = running
+  return running
     ? state.approvals.some(approval => approval.thread_id === thread.id) ? "Needs approval" : "Working"
     : state.sendErrors[thread.id] || (last?.role === "system" && /^(Run failed:|Send failed:|Send rejected:)/.test(last.text)) ? "Failed"
     : last?.role === "system" && last.text.startsWith("Stopped by you.") ? "Stopped"
     : last?.incomplete ? "Idle"
     : last?.final ? "Done"
     : thread.recovered ? "Interrupted" : "Idle";
-  return <span role="img" aria-label={status} title={status} className={`themis-thread-status themis-thread-status--${status.toLowerCase().replace(/ /g, "-")}`}>
-    {status === "Working" ? <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" /></svg> : status === "Done" ? "✓" : status === "Failed" || status === "Needs approval" ? "!" : status === "Stopped" || status === "Interrupted" ? "■" : "·"}
+}
+
+const SHORTCUTS: Array<[string, string[]]> = [
+  ["Search chats, projects and commands", ["⌘", "K"]],
+  ["New chat", ["⌘", "⇧", "O"]],
+  ["Show or hide the sidebar", ["⌘", "B"]],
+  ["Send", ["↵"]],
+  ["New line", ["⇧", "↵"]],
+  ["Close a panel or dialog", ["Esc"]],
+];
+
+/** Threads whose run ended this session and that have not been opened since. */
+function useFreshlyFinished(running: Record<string, boolean>, viewing: string | null) {
+  const previous = useRef(running);
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    const ended = Object.keys(previous.current).filter(id => previous.current[id] && !running[id] && id !== viewing);
+    previous.current = running;
+    if (ended.length) setFresh(current => new Set([...current, ...ended]));
+  }, [running, viewing]);
+  useEffect(() => {
+    if (viewing) setFresh(current => { if (!current.has(viewing)) return current; const next = new Set(current); next.delete(viewing); return next; });
+  }, [viewing]);
+  return fresh;
+}
+
+/** Live work, waiting for you, failure, and unseen completion get an indicator; everything else stays quiet. */
+function ThreadStatus({ status, fresh }: { status: ThreadState; fresh: boolean }) {
+  const shown = status === "Working" || status === "Needs approval" || status === "Failed" || (status === "Done" && fresh);
+  if (!shown) return null;
+  const label = status === "Needs approval" ? "Needs approval" : status;
+  return <span role="img" aria-label={label} title={label} className={`themis-thread-status themis-thread-status--${status.toLowerCase().replace(/ /g, "-")}`}>
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      {status === "Working" && <><circle className="themis-status-track" cx="8" cy="8" r="6" /><circle className="themis-status-arc" cx="8" cy="8" r="6" /></>}
+      {status === "Needs approval" && <><circle className="themis-status-halo" cx="8" cy="8" r="6" /><path d="M6.4 5.5v5M9.6 5.5v5" /></>}
+      {status === "Failed" && <><circle cx="8" cy="8" r="6.5" className="themis-status-fill" /><path d="M8 4.8v3.8M8 11.1v.1" /></>}
+      {status === "Done" && <path d="m4.2 8.4 2.5 2.4 5.1-5.3" />}
+    </svg>
   </span>;
 }

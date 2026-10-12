@@ -443,10 +443,26 @@ mod tests {
     async fn batch_deadline_still_bounds_fresh_document_jobs_and_retains_completed_work() {
         let server = MockServer::start().await;
         let summary = "Entities/relationships: supplied. Chronology/causality: complete. Ambiguities: none. Source references: record 1.";
-        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200)
-            .set_delay(std::time::Duration::from_millis(650))
-            .set_body_json(serde_json::json!({"choices":[{"message":{"content":summary},"finish_reason":"stop"}]})))
-            .mount(&server).await;
+        let body =
+            serde_json::json!({"choices":[{"message":{"content":summary},"finish_reason":"stop"}]});
+        // Document b hangs past the batch deadline while a answers at once, so
+        // the outcome does not depend on runner speed.
+        Mock::given(method("POST"))
+            .and(wiremock::matchers::body_string_contains(
+                "b complete source",
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_secs(30))
+                    .set_body_json(body.clone()),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
                 .with_model("test-model")
@@ -463,7 +479,8 @@ mod tests {
         let saved = Mutex::new(Vec::new());
         let config = crate::configuration::CompactionConfig {
             timeout_seconds: 5,
-            document_batch_timeout_seconds: 1,
+            // Room for the quick document on slow runners; b hangs far longer.
+            document_batch_timeout_seconds: 3,
             retry_limit: 0,
             ..Default::default()
         };

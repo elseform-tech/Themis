@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { DiffFile } from "../../lib/types";
 import { DiffView } from "./DiffView";
 
@@ -22,13 +22,22 @@ const FILE: DiffFile = {
   ],
 };
 
+/** Matches a whole diff line even when highlighting splits it into tokens. */
+const line = (text: string) => (_: string, element: Element | null) => element?.classList.contains("themis-diff-text") === true && element.textContent === text;
+
 describe("DiffView", () => {
   it("renders hunk content and hunk header", () => {
     render(<DiffView file={FILE} />);
-    expect(screen.getByText("line one")).toBeInTheDocument();
-    expect(screen.getByText("old line")).toBeInTheDocument();
-    expect(screen.getByText("new line")).toBeInTheDocument();
-    expect(screen.getByText("@@ -1,3 +1,3 @@")).toBeInTheDocument();
+    expect(screen.getByText(line("line one"))).toBeInTheDocument();
+    expect(screen.getByText(line("old line"))).toBeInTheDocument();
+    expect(screen.getByText(line("new line"))).toBeInTheDocument();
+    expect(screen.getByText("Line 1")).toBeInTheDocument();
+  });
+
+  it("highlights code tokens and wraps instead of scrolling sideways", () => {
+    const { container } = render(<DiffView file={FILE} />);
+    expect(container.querySelector(".themis-codeblock-token--keyword")).toHaveTextContent("new");
+    expect(container.querySelector(".themis-diff-text")).toBeInTheDocument();
   });
 
   it("shows add/del counts", () => {
@@ -37,24 +46,11 @@ describe("DiffView", () => {
     expect(screen.getByText("-1")).toBeInTheDocument();
   });
 
-  it("toggles between unified and side-by-side modes", () => {
+  it("renders a single read-only unified view without mode controls", () => {
     render(<DiffView file={FILE} />);
-    const sideButton = screen.getByRole("button", { name: "Side-by-side" });
-    fireEvent.click(sideButton);
-    expect(sideButton).toHaveAttribute("aria-pressed", "true");
-    // Side-by-side renders paired cells; both texts still visible.
-    expect(screen.getByText("old line")).toBeInTheDocument();
-    expect(screen.getByText("new line")).toBeInTheDocument();
-    const unifiedButton = screen.getByRole("button", { name: "Unified" });
-    fireEvent.click(unifiedButton);
-    expect(unifiedButton).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("respects defaultMode", () => {
-    render(<DiffView file={FILE} defaultMode="side-by-side" />);
-    expect(
-      screen.getByRole("button", { name: "Side-by-side" }),
-    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByText(line("old line"))).toBeInTheDocument();
+    expect(screen.getByText(line("new line"))).toBeInTheDocument();
   });
 
   it("shows an empty state when there are no hunks", () => {

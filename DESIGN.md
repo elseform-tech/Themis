@@ -64,18 +64,19 @@ Dark mode is the product baseline. Palette values come from [`web/src/theme/appe
 
 | Role | Token | Themis preset / value | Rule |
 | --- | --- | --- | --- |
-| Frame | `--themis-shell-bg` | `#343840` | Persistent app chrome |
-| Sidebar | `--themis-sidebar-bg` | `#22262c` | Project and chat navigation |
-| Canvas | `--themis-canvas` | `#14171c` | Main working surface |
-| Surface / raised | `--themis-surface`, `--themis-raised` | `#262830`, `#30323b` | Inputs and meaningful elevation |
-| Border | `--themis-border` | `#3b3d46` | Necessary boundaries only |
-| Primary text | `--themis-text` | `#e8eaf0` | Content and primary labels |
-| Secondary text | `--themis-text-2` | `#a1aaba` in the applied preset | Useful supporting information; never a reason to add filler |
+| Frame | `--themis-shell-bg` | `#232427` | Persistent app chrome |
+| Sidebar | `--themis-sidebar-bg` | `#1c1d20` | Project and chat navigation |
+| Canvas | `--themis-canvas` | `#131314` | Main working surface |
+| Surface / raised | `--themis-surface`, `--themis-raised` | `#1f2023`, `#282a2d` | Inputs and meaningful elevation |
+| Border | `--themis-border` | `#34363b` | Necessary boundaries only |
+| Primary text | `--themis-text` | `#e6e6e6` | Content and primary labels |
+| Secondary text | `--themis-text-2` | `#a8abb2` | Useful supporting information; never a reason to add filler |
 | Accent | `--themis-accent` | `#d9a73e` | Sparse emphasis, not decoration on every control |
-| Success | `--themis-success` | `#3fb950` | Successful outcome |
-| Warning | `--themis-warning` | `#d29922` | Limitation or decision requiring attention |
-| Danger | `--themis-danger` | `#f85149` | Failure or destructive action |
-| Information | `--themis-info` | `#58a6ff` | Neutral informational emphasis |
+| Success | `--themis-success` | `#81c995` | Successful outcome |
+| Warning | `--themis-warning` | `#e3b85a` | Limitation or decision requiring attention |
+| Danger | `--themis-danger` | `#f28b82` | Failure or destructive action |
+| Information | `--themis-info` | `#8ab4f8` | Neutral informational emphasis |
+| Warm gradient | `--themis-gradient-1/2/3` | `#c08a2e` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
 
 Compatibility badges currently use the following dark color pairs in [`Plugins.css`](web/src/screens/Plugins.css). Keep this mapping consistent across tiles and filters; centralize these values if another screen needs them.
 
@@ -89,7 +90,7 @@ Compatibility badges currently use the following dark color pairs in [`Plugins.c
 - Color reinforces a written status; it must never carry meaning alone.
 - Keep ordinary text contrast at least 4.5:1, large text at least 3:1, and essential control/focus boundaries at least 3:1 against adjacent colors. Verify actual rendered combinations across presets.
 - Do not reuse warning or danger colors for arbitrary category decoration. Personal/Public are provenance labels, not good/bad ratings.
-- Avoid gradients, glow, shimmer, or saturation as generic decoration. Retain only approved product treatments; honor reduced motion.
+- Avoid gradients, glow, shimmer, or saturation as generic decoration. Approved treatments: the drifting warm-gradient greeting and faint glow on an empty chat, the sweeping ring on the composer while a run is active, the warm context-meter warning near auto-compact, status shimmer for real pending work, and the wordmark glint. Honor reduced motion for all of them.
 
 ## Typography, motion, and accessibility
 

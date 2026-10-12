@@ -9,6 +9,35 @@ use themis_desktop::{
 };
 use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
 
+/// Mock assertion messages, reported by the test's final assertion.
+static MOCK_FAILURES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Turns a panicking mock assertion into an HTTP 400 that names it, instead
+/// of a dropped connection that only reports "error sending request".
+fn reporting(
+    handler: impl Fn(&Request) -> ResponseTemplate + Send + Sync + 'static,
+) -> impl Fn(&Request) -> ResponseTemplate + Send + Sync + 'static {
+    move |request: &Request| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(request))).unwrap_or_else(
+            |panic| {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                    .unwrap_or_default();
+                ResponseTemplate::new(400)
+                    .set_body_string(format!("mock assertion failed: {message}"))
+            },
+        )
+    }
+}
+
+/// Compares paths across platforms: JSON-escaped and native Windows
+/// separators both become `/`.
+fn slashes(text: &str) -> String {
+    text.replace("\\\\", "/").replace('\\', "/")
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_credential_lookup_error_is_not_a_missing_key() {
     struct UnavailableStore;
@@ -979,7 +1008,8 @@ async fn cli_recovers_from_malformed_shell_arguments_after_compaction() {
             if last["tool_call_id"] == "corrected" {
                 let result: Value = serde_json::from_str(last["content"].as_str().unwrap()).unwrap();
                 assert_eq!(result["exit_code"],0);
-                assert_eq!(result["output"],"verified\n");
+                // Windows stdout ends lines with \r\n.
+                assert_eq!(result["output"].as_str().unwrap().trim_end(),"verified");
                 return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Corrected script verified."},"finish_reason":"stop"}]}));
             }
             let (id,args) = if last["tool_call_id"] == "malformed" {
@@ -1203,10 +1233,10 @@ async fn cli_recent_script_receipt_survives_stale_summary_without_replaying_edit
         assert_eq!(index,1,"completed edit must not be replayed");
         let context=messages.iter().filter_map(|m|m["content"].as_str()).collect::<Vec<_>>().join("\n");
         assert!(context.contains("Completed Changes: None yet."));
-        assert!(context.contains("Completed action record"));
+        assert!(context.contains("Task ledger"));
         assert!(context.contains("Patch complete; next verify result.txt."));
         assert!(context.contains("written"));
-        assert!(context.contains("completed tool observations take precedence"));
+        assert!(context.contains("the task ledger records observed actions"));
         let invocation=messages.iter().find(|m|m["tool_calls"][0]["id"]=="completed-script").unwrap();
         let arguments=invocation["tool_calls"][0]["function"]["arguments"].as_str().unwrap();
         assert!(arguments.len()<2048);
@@ -1266,6 +1296,132 @@ async fn cli_recent_script_receipt_survives_stale_summary_without_replaying_edit
     assert_eq!(
         std::fs::read_to_string(project.path().join("result.txt")).unwrap(),
         "x"
+    );
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_plan_survives_checkpoint_in_task_ledger_and_budget_events_reach_clients() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":12}"#,
+    )
+    .unwrap();
+    let provider = MockServer::start().await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = calls.clone();
+    Mock::given(method("POST")).respond_with(move |request: &Request| {
+        let body: Value = request.body_json().unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Goal/constraints: write and verify result.txt. Unresolved work: verification. Next action: verify."},"finish_reason":"stop"}]}));
+        }
+        let index = observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Fresh shell output stays protected until a checkpoint summarizes it,
+        // so two bounded batches force exactly one checkpoint.
+        let shell = |id: String, fill: char| json!({"id":id,"type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",format!("print('{fill}'*11000)")],"cwd":""}).to_string()}});
+        if index == 0 {
+            let offered = body["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "update_plan");
+            assert!(offered, "production runs offer the plan tool");
+            let plan = json!({"items":[{"step":"Write result.txt","status":"done"},{"step":"Verify result.txt","status":"in_progress"}]}).to_string();
+            let mut tool_calls = vec![json!({"id":"plan","type":"function","function":{"name":"update_plan","arguments":plan}})];
+            tool_calls.extend(['a', 'b', 'c'].map(|fill| shell(format!("first-{fill}"), fill)));
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Planned; gathering output.","tool_calls":tool_calls},"finish_reason":"tool_calls"}]}));
+        }
+        let context = messages.iter().filter_map(|m| m["content"].as_str()).collect::<Vec<_>>().join("\n");
+        if !context.contains("Task ledger") {
+            let fills = ['d', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r'];
+            let tool_calls: Vec<Value> = fills[(index - 1) * 3 % 15..][..3].iter().map(|fill| shell(format!("more-{index}-{fill}"), *fill)).collect();
+            return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"More output.","tool_calls":tool_calls},"finish_reason":"tool_calls"}]}));
+        }
+        assert!(context.contains(r#""kind":"plan""#), "plan survives the checkpoint");
+        assert!(context.contains("Verify result.txt"));
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Plan survived."},"finish_reason":"stop"}]}))
+    }).mount(&provider).await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"Write and verify result.txt."}),
+    );
+    let mut compactions = 0;
+    let mut budgets = Vec::new();
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let item = Client::next_event(&mut events).await.unwrap();
+            if item["name"] != "thread-event" || item["payload"]["thread_id"] != id {
+                continue;
+            }
+            let event = &item["payload"]["event"];
+            compactions += usize::from(event["kind"] == "context_compacting");
+            if event["kind"] == "context_budget" {
+                budgets.push(event["budget"].clone());
+            }
+            if ["finished", "incomplete", "failed"].contains(&event["kind"].as_str().unwrap()) {
+                break event.clone();
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(terminal["kind"], "finished", "{terminal}");
+    assert_eq!(terminal["result"], "Plan survived.");
+    assert_eq!(compactions, 1);
+    let requests = calls.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(requests >= 3);
+    assert_eq!(
+        budgets.len(),
+        requests,
+        "one budget per bounded model request"
+    );
+    for budget in &budgets {
+        let breakdown = &budget["breakdown"];
+        let parts: u64 = [
+            "system",
+            "checkpoint",
+            "attachments",
+            "conversation",
+            "tool_activity",
+        ]
+        .iter()
+        .map(|key| breakdown[key].as_u64().unwrap())
+        .sum();
+        assert_eq!(parts, budget["used_tokens"].as_u64().unwrap());
+        assert!(budget["used_tokens"].as_u64() <= budget["usable_tokens"].as_u64());
+        assert!(budget["compaction_at_tokens"].as_u64() <= budget["usable_tokens"].as_u64());
+        assert!(budget.get("content").is_none(), "budgets carry counts only");
+    }
+    let last = budgets.last().unwrap();
+    assert!(last["breakdown"]["checkpoint"].as_u64().unwrap() > 0);
+    assert!(
+        budgets[..budgets.len() - 1]
+            .iter()
+            .any(|budget| budget["compaction_soon"] == true),
+        "growth projects the checkpoint before it happens"
     );
     client.call("shutdown", json!({})).await.unwrap();
     serving.await.unwrap().unwrap();
@@ -2084,7 +2240,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
     let recovery_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed_calls = Arc::clone(&recovery_calls);
     let recovery_original = Arc::new(Mutex::new(None::<String>));
-    Mock::given(method("POST")).respond_with(move |request: &Request| {
+    Mock::given(method("POST")).respond_with(reporting(move |request: &Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let messages = body["messages"].as_array().unwrap();
         if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
@@ -2102,7 +2258,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
                 let mut entries = listing["entries"].as_array().unwrap().iter().filter(|entry| entry["name"].as_str().unwrap().starts_with("snapshot-")).collect::<Vec<_>>();
                 entries.sort_by_key(|entry| entry["name"].as_str().unwrap());
                 let discovered = entries.first().unwrap()["path"].as_str().unwrap().to_owned();
-                assert_eq!(discovered, retained_original, "recovery must discover the immutable original through model-visible tools");
+                assert_eq!(slashes(&discovered), slashes(&retained_original), "recovery must discover the immutable original through model-visible tools");
                 *recovery_original.lock().unwrap() = Some(discovered);
             } else {
                 let directory = std::path::Path::new(&directory).strip_prefix(&recovery_root).unwrap().to_string_lossy();
@@ -2119,7 +2275,9 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
             // The bounded earlier location is retained independently of the latest snapshot.
             // Reopen the immutable original, not an earlier generated recovery result.
             let path = recovery_original.lock().unwrap().clone().unwrap();
-            assert!(body.to_string().contains(&path), "earlier coordinates must remain visible before reopening");
+            // The snapshot's file name is unique; full path spellings differ on Windows.
+            let snapshot_name = std::path::Path::new(&slashes(&path)).file_name().unwrap().to_string_lossy().into_owned();
+            assert!(body.to_string().contains(&snapshot_name), "earlier coordinates must remain visible before reopening");
             json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"reopen_earlier","type":"function","function":{"name":"read_file","arguments":json!({"file_path":path,"find":"ARCHIVE-SECRET-"}).to_string()}}]},"finish_reason":"tool_calls"}]})
         } else if stage > 1 {
             if stage == 2 { assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native bounded read must deliver the fact"); }
@@ -2159,7 +2317,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
             json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"recover_1","type":"function","function":{"name":"read_file","arguments":if stage == 0 { json!({"file_path":relative,"find":"ARCHIVE-SECRET-","jsonl_record":999}).to_string() } else { json!({"file_path":relative,"find":"ARCHIVE-SECRET-"}).to_string() }}}]},"finish_reason":"tool_calls"}]})
         };
         ResponseTemplate::new(200).set_body_json(answer)
-    }).mount(&provider).await;
+    })).mount(&provider).await;
     let rebooted = AppState::new_for_test(data.path().join("settings.json"));
     rebooted
         .set_secret("go".into(), "test-key".into())
@@ -2208,7 +2366,12 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
     .await
     .unwrap();
     assert!(recovered);
-    assert_eq!(terminal["result"], "ARCHIVE-SECRET-753");
+    assert_eq!(
+        terminal["result"],
+        "ARCHIVE-SECRET-753",
+        "{terminal}; mock assertions: {:?}",
+        MOCK_FAILURES.lock().unwrap()
+    );
     assert_eq!(recovery_calls.load(std::sync::atomic::Ordering::SeqCst), 8);
     let saved = rebooted.get_thread_history(id).await.unwrap();
     let checkpoint = saved

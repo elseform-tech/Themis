@@ -9,6 +9,7 @@ import {
   Dialog,
   EmptyState,
   Input,
+  Switch,
 } from "../components";
 import {
   createAutomation,
@@ -31,18 +32,25 @@ import {
 } from "./automationForm";
 import "./Automations.css";
 
+const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-function formatTime(iso: string | null): string {
-  if (iso === null) return "never";
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+function everyInterval(minutes: number): string {
+  if (minutes === 1440) return "Every day";
+  if (minutes === 60) return "Every hour";
+  if (minutes % 1440 === 0) return `Every ${minutes / 1440} days`;
+  if (minutes % 60 === 0) return `Every ${minutes / 60} hours`;
+  return `Every ${minutes} minutes`;
 }
 
-const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+function shortTime(iso: string | null): string {
+  if (iso === null) return "";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+}
 
 function scheduleLabel(automation: Automation): string {
   const schedule = automation.schedule;
-  if (!schedule) return `Every ${automation.interval_mins} minutes`;
+  if (!schedule) return everyInterval(automation.interval_mins);
   const repeat = schedule.repeat === "daily" ? "Daily" : schedule.repeat === "weekdays" ? "Weekdays" : weekdays[schedule.weekday];
   return `${repeat} at ${schedule.time} · ${schedule.timezone}`;
 }
@@ -247,7 +255,7 @@ export function Automations() {
         </p>
       )}
 
-      {state.automations.length > 0 && <input className="themis-automations-search" type="search" aria-label="Search automations" placeholder="Search automations" value={query} onChange={event => setQuery(event.target.value)} />}
+      {state.automations.length > 4 && <input className="themis-automations-search" type="search" aria-label="Search automations" placeholder="Search automations" value={query} onChange={event => setQuery(event.target.value)} />}
       {state.automations.length === 0 ? (
         <EmptyState
           title="No automations"
@@ -260,51 +268,20 @@ export function Automations() {
           {visibleAutomations.map((automation) => {
             const busy = rowBusy === automation.id;
             return (
-              <li key={automation.id} className="themis-automations-card">
-                <div className="themis-automations-card-head">
-                  <span className="themis-automations-name">
-                    {automation.name}
-                  </span>
-                  {!automation.enabled && <span className="themis-automations-hint">Paused</span>}
+              <li key={automation.id} className={`themis-automations-row${automation.enabled ? "" : " is-paused"}`}>
+                <div className="themis-automations-main">
+                  <div className="themis-automations-card-head">
+                    <span className="themis-automations-name">{automation.name}</span>
+                    {!automation.enabled && <span className="themis-automations-hint">Paused</span>}
+                  </div>
+                  <p className="themis-automations-instructions">{promptParts(automation.task).map((part, index) => "text" in part ? part.text : <span className="themis-automations-skill" key={index}>{"skill" in part ? promptSkills.find(skill => skill.id === part.skill)?.name ?? "Skill" : "Plugin"}</span>)}</p>
+                  <p className="themis-automations-hint">{scheduleLabel(automation)}{automation.enabled && automation.next_run_at ? ` · Next ${shortTime(automation.next_run_at)}` : ""}</p>
                 </div>
-                <p className="themis-automations-instructions">{promptParts(automation.task).map((part, index) => "text" in part ? part.text : <span className="themis-automations-skill" key={index}>{"skill" in part ? promptSkills.find(skill => skill.id === part.skill)?.name ?? "Skill" : "Plugin"}</span>)}</p>
-                <p className="themis-automations-hint">{scheduleLabel(automation)}{automation.enabled ? ` · Next ${formatTime(automation.next_run_at)}` : ""}</p>
                 <div className="themis-automations-card-actions">
-                  <label className="themis-automations-toggle">
-                    <input
-                      type="checkbox"
-                      checked={automation.enabled}
-                      disabled={busy}
-                      onChange={(event) =>
-                        void toggleEnabled(automation.id, event.target.checked)
-                      }
-                    />
-                    Enabled
-                  </label>
-                  <Button
-                    variant="ghost"
-                    size="small"
-                    disabled={busy}
-                    onClick={() => void runNow(automation.id)}
-                  >
-                    {busy ? "…" : "Run now"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="small"
-                    disabled={busy}
-                    onClick={() => openEdit(automation.id)}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="small"
-                    disabled={busy}
-                    onClick={() => setDeleting(automation.id)}
-                  >
-                    Delete
-                  </Button>
+                  <button type="button" className="themis-text-action" disabled={busy} onClick={() => void runNow(automation.id)}>{busy ? "Starting…" : "Run now"}</button>
+                  <button type="button" className="themis-text-action" disabled={busy} onClick={() => openEdit(automation.id)}>Edit</button>
+                  <button type="button" className="themis-text-action is-danger" disabled={busy} onClick={() => setDeleting(automation.id)}>Delete</button>
+                  <Switch aria-label={`${automation.name} enabled`} title={automation.enabled ? "Pause" : "Resume"} checked={automation.enabled} disabled={busy} onChange={event => void toggleEnabled(automation.id, event.target.checked)} />
                 </div>
               </li>
             );

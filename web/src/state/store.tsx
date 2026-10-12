@@ -25,6 +25,7 @@ import {
   getDefaultProject,
   getThread,
   getThreadHistory,
+  listDiff,
   importLegacyHistory,
   listAutomations,
   listReviewItems,
@@ -196,6 +197,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
           if (kind === "finished" || kind === "incomplete" || kind === "failed") {
             refreshSecretStatus.current();
+            // Changed files drive the thread header's review toggle.
+            void listDiff(envelope.thread_id).then(diff => { if (!cancelled) dispatch({ type: "diff/set", threadId: envelope.thread_id, diff }); }).catch(() => {});
             const manual = manualRuns.current.delete(envelope.thread_id);
             if (manual && kind === "finished") {
               if (settings.current.completion_sound) playCompletionSound();
