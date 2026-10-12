@@ -12,11 +12,16 @@ Plan: [.agents/plans/2026-09-23-themis-coding-agent.md](.agents/plans/2026-09-23
 - Skills, scheduled automations, and a review queue
 - OpenCode Go model catalog and model-specific effort controls
 - Name-only project creation, collapsible navigation, compact system typography
-- Organized settings with autosave, manual update checks, one-click diagnostics
+- Organized settings with autosave and manual update checks; diagnostics stay in
+  the CLI (`themis doctor`) and bounded log files
+- Adaptive context management: bounded tool results, durable checkpoints and
+  automatic compaction near the model's context budget
 
 Docs: [user guide](docs/user-guide.md) · [sandbox model](docs/sandbox.md) ·
-[configuration and diagnostics](docs/configuration.md) · [plugins and skills](docs/plugins.md) ·
-[distribution guide](docs/maintainer-distribution.md).
+[configuration and diagnostics](docs/configuration.md) · [context and attachments](docs/context-and-attachments.md) ·
+[plugins and skills](docs/plugins.md) · [automations](docs/automations.md) ·
+[distribution guide](docs/maintainer-distribution.md). Verification records live in
+[docs/verification](docs/verification).
 
 ## Layout
 
@@ -27,15 +32,18 @@ Docs: [user guide](docs/user-guide.md) · [sandbox model](docs/sandbox.md) ·
 ## Commands
 
 ```sh
-cargo fmt --check
-cargo clippy --workspace -- -D warnings
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+npm --prefix web run lint
 npm --prefix web test
 npm --prefix web run build
 npx tauri dev        # from crates/desktop
 npx tauri build      # from crates/desktop
 python3 -m quality_dashboard.dashboard # local quality dashboard
 ```
+
+`AGENTS.md` lists the full check sequence, including Rust coverage and the dashboard tests.
 
 The desktop starts a separate local app server process and connects to it. The
 server owns thread state and keeps scheduled automations available after the
