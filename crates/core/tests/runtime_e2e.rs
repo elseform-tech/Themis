@@ -428,7 +428,7 @@ async fn automatic_summary_retries_do_not_repeat_a_completed_write() {
 }
 
 #[tokio::test]
-async fn unchanged_ordinary_reads_get_a_reminder_but_changed_files_do_not() {
+async fn unchanged_reads_still_in_context_get_a_freshness_receipt_but_changed_files_do_not() {
     let server = MockServer::start().await;
     common::mount_script(
         &server,
@@ -492,14 +492,21 @@ async fn unchanged_ordinary_reads_get_a_reminder_but_changed_files_do_not() {
             .into()
     };
     let repeated = tool_output(3, "again");
-    assert!(repeated.contains("repeated_unchanged"));
-    assert!(repeated.contains("original"));
     let receipt: serde_json::Value = serde_json::from_str(&repeated).unwrap();
+    assert_eq!(receipt["repeated_unchanged"], true);
     assert_eq!(
-        receipt["found"], true,
-        "reread reminders retain native read coordinates and content"
+        receipt["unchanged_since_call"], "first",
+        "a repeat points at the identical result still in context"
     );
-    assert_eq!(receipt["content"], "original");
+    assert_eq!(receipt["found"], true, "coordinates stay for paging");
+    assert!(
+        receipt.get("content").is_none(),
+        "content already in context is not resent"
+    );
+    assert!(
+        tool_output(3, "first").contains("original"),
+        "the referenced result is in the same request"
+    );
     let changed = tool_output(5, "changed");
     assert!(!changed.contains("repeated_unchanged"));
     assert!(changed.contains("changed"));

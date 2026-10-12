@@ -178,6 +178,9 @@ pub enum ThreadEvent {
     ContextUsage {
         metrics: serde_json::Value,
     },
+    ContextBudget {
+        budget: themis_core::runtime::ContextBudget,
+    },
     ContextSuspended {
         progress: String,
     },
@@ -214,6 +217,7 @@ impl From<RunEvent> for ThreadEvent {
             },
             RunEvent::ContextCompacting => Self::ContextCompacting,
             RunEvent::ContextUsage { metrics } => Self::ContextUsage { metrics },
+            RunEvent::ContextBudget(budget) => Self::ContextBudget { budget },
             RunEvent::ContextSuspended { progress } => Self::ContextSuspended { progress },
             RunEvent::ContextCheckpoint { summary } => Self::ContextCheckpoint { summary },
             RunEvent::Incomplete { result } => Self::Incomplete {

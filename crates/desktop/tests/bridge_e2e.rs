@@ -87,7 +87,12 @@ async fn drive_run(
 fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
     events
         .iter()
-        .filter(|event| !matches!(event, ThreadEvent::ContextUsage { .. }))
+        .filter(|event| {
+            !matches!(
+                event,
+                ThreadEvent::ContextUsage { .. } | ThreadEvent::ContextBudget { .. }
+            )
+        })
         .map(|event| match event {
             ThreadEvent::Started { .. } => "started",
             ThreadEvent::AssistantText { .. } => "assistant_text",
@@ -99,7 +104,9 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::ContextCheckpoint { .. } => "context_checkpoint",
             ThreadEvent::ContextSuspended { .. } => "context_suspended",
             ThreadEvent::ContextCompacting => "context_compacting",
-            ThreadEvent::ContextUsage { .. } => unreachable!("metadata filtered above"),
+            ThreadEvent::ContextUsage { .. } | ThreadEvent::ContextBudget { .. } => {
+                unreachable!("metadata filtered above")
+            }
             ThreadEvent::Incomplete { .. } => "incomplete",
         })
         .collect()
@@ -157,7 +164,12 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
     let events = run
         .events
         .iter()
-        .filter(|event| !matches!(event, ThreadEvent::ContextUsage { .. }))
+        .filter(|event| {
+            !matches!(
+                event,
+                ThreadEvent::ContextUsage { .. } | ThreadEvent::ContextBudget { .. }
+            )
+        })
         .collect::<Vec<_>>();
     let kinds = event_kinds(&run.events);
     // The final turn emits its text as `assistant_text`, then `finished`.
