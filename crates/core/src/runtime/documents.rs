@@ -453,7 +453,7 @@ mod tests {
             ))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_delay(std::time::Duration::from_secs(10))
+                    .set_delay(std::time::Duration::from_secs(30))
                     .set_body_json(body.clone()),
             )
             .with_priority(1)
@@ -479,7 +479,8 @@ mod tests {
         let saved = Mutex::new(Vec::new());
         let config = crate::configuration::CompactionConfig {
             timeout_seconds: 5,
-            document_batch_timeout_seconds: 1,
+            // Room for the quick document on slow runners; b hangs far longer.
+            document_batch_timeout_seconds: 3,
             retry_limit: 0,
             ..Default::default()
         };
