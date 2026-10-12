@@ -2275,7 +2275,9 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
             // The bounded earlier location is retained independently of the latest snapshot.
             // Reopen the immutable original, not an earlier generated recovery result.
             let path = recovery_original.lock().unwrap().clone().unwrap();
-            assert!(slashes(&body.to_string()).contains(&slashes(&path)), "earlier coordinates must remain visible before reopening");
+            // The snapshot's file name is unique; full path spellings differ on Windows.
+            let snapshot_name = std::path::Path::new(&slashes(&path)).file_name().unwrap().to_string_lossy().into_owned();
+            assert!(body.to_string().contains(&snapshot_name), "earlier coordinates must remain visible before reopening");
             json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"reopen_earlier","type":"function","function":{"name":"read_file","arguments":json!({"file_path":path,"find":"ARCHIVE-SECRET-"}).to_string()}}]},"finish_reason":"tool_calls"}]})
         } else if stage > 1 {
             if stage == 2 { assert!(body.to_string().contains("ARCHIVE-SECRET-753"), "native bounded read must deliver the fact"); }
