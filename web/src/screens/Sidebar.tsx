@@ -124,7 +124,7 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
           </details>
           {activeProject && <>
             <section className="themis-thread-group" aria-label="Chats">
-              <h2 className="themis-sidebar-title">Chats</h2>
+              <h2 className="themis-sidebar-section">Chats{threads.length > 0 && <span aria-hidden="true">{threads.length}</span>}</h2>
               {threads.length ? <ul className="themis-sidebar-list">{shown.map(threadRow)}</ul> : <p className="themis-sidebar-note">No chats yet</p>}
             </section>
             {threads.length > shown.length && <button type="button" className="themis-show-more" onClick={() => setShowAll(true)}>Show {threads.length - shown.length} more</button>}
