@@ -140,3 +140,8 @@
 .themis-thread-row.themis-sidebar-row--active { background: var(--themis-raised); }
 .themis-thread-row.themis-sidebar-row--active > .themis-sidebar-icon { color: var(--themis-accent); }
 .themis-sidebar-section { padding-left: 10px; }
+
+/* The project menu never grows past the dock; long names reveal on hover like chat titles. */
+.themis-project-switcher .themis-project-menu { grid-template-columns: minmax(0, 1fr); box-sizing: border-box; max-width: 100%; }
+.themis-project-option { min-width: 0; width: 100%; }
+.themis-project-option .themis-moving-window { flex: 1; }

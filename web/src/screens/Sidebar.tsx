@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Dialog, Input, Tooltip } from "../components";
 import { createProject, getSettings, renameProject, renameThread } from "../lib/tauri";
 import { describeError, toast, useApp, type MainView } from "../state/store";
-import { useNewThread, useOpenProject, useDiscardThread } from "./actions";
+import { useNewThread, useDiscardThread } from "./actions";
 import type { ThreadInfo } from "../lib/types";
 import { readSession, writeSession } from "../state/session";
 import { MovingText } from "../components/MovingText";
@@ -31,7 +31,6 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
     if (resizeStart.current && lastWidth.current !== null) resize(lastWidth.current);
     resizeStart.current = null; lastWidth.current = null; setResizing(false);
   }
-  const openProject = useOpenProject();
   const newThread = useNewThread();
   const [name, setName] = useState("");
   const [renaming, setRenaming] = useState<{ root: string; name: string } | null>(null);
@@ -111,14 +110,13 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
               {projects.map(project => (
                 <button key={project.root} type="button" className="themis-project-option" title={project.root} aria-current={project.root === activeRoot ? "true" : undefined}
                   onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowAll(false); dispatch({ type: "project/selected", root: project.root }); }}>
-                  <span className="themis-sidebar-name">{project.name}</span>
+                  <MovingText>{project.name}</MovingText>
                   {projectBusy(project.root) && <span className="themis-project-busy" aria-hidden="true" />}
                   <span className="themis-project-count">{(state.threadsByProject[project.root] ?? []).length}</span>
                 </button>
               ))}
               <hr />
               <button type="button" className="themis-project-option" aria-label="New project" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); dispatch({ type: "ui/project-dialog", open: true }); }}>New project</button>
-              <button type="button" className="themis-project-option" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>Open folder…</button>
               {activeProject && <button type="button" className="themis-project-option" aria-label={`Rename ${activeProject.name}`} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setRenaming({ root: activeProject.root, name: activeProject.name }); }}>Rename project</button>}
             </div>
           </details>

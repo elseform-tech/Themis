@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Dialog } from "../components";
 import { updateSettings } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
-import { useNewThread, useOpenProject } from "./actions";
+import { useNewThread } from "./actions";
 import "./Palette.css";
 
 interface Entry {
@@ -33,7 +33,6 @@ function fuzzyScore(query: string, target: string): number | null {
 
 export function Palette() {
   const { state, dispatch } = useApp();
-  const openProjectFlow = useOpenProject();
   const newThread = useNewThread();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -76,12 +75,6 @@ export function Palette() {
         run: () => void newThread(),
       },
       {
-        id: "action:open-project",
-        group: "Actions",
-        label: "Open folder…",
-        run: () => void openProjectFlow(),
-      },
-      {
         id: "action:toggle-theme",
         group: "Actions",
         label: "Toggle theme",
@@ -104,7 +97,7 @@ export function Palette() {
       },
     );
     return list;
-  }, [state.threadsByProject, state.projects, state.settings.theme, dispatch, newThread, openProjectFlow]);
+  }, [state.threadsByProject, state.projects, state.settings.theme, dispatch, newThread]);
 
 
   const filtered = useMemo(() => {
