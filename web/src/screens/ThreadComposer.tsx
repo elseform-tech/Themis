@@ -108,7 +108,7 @@ export function ThreadComposer({
             <summary aria-label="Add files, skills or plugins" title="Add files, skills or plugins">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             </summary>
-            <div className="themis-composer-menu" role="group" aria-label="Add to message">
+            <div className="themis-composer-menu" role="group" aria-label="Attach or reference">
               <button type="button" aria-label="Attach files" disabled={composerDisabled} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); onAttach?.(); }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2" /></svg>Attach files
               </button>
