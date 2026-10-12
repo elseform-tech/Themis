@@ -533,6 +533,26 @@ pub async fn dispatch(
                 .await?
         ),
         "list_diff" => output!(state.list_diff(arg(&args, "threadId")?).await?),
+        "get_workspace" => output!(
+            state
+                .get_workspace(
+                    arg(&args, "projectRoot")?,
+                    args.get("pullRequests")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                )
+                .await?
+        ),
+        "list_project_dir" => output!(
+            state
+                .list_project_dir(arg(&args, "projectRoot")?, arg(&args, "path")?)
+                .await?
+        ),
+        "read_project_file" => output!(
+            state
+                .read_project_file(arg(&args, "projectRoot")?, arg(&args, "path")?)
+                .await?
+        ),
         "accept_file" => done!(
             state
                 .accept_file(arg(&args, "threadId")?, arg(&args, "path")?)

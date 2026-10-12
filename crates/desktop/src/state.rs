@@ -18,6 +18,7 @@ mod reviews;
 mod run;
 mod skills;
 mod threads;
+mod workspace;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
