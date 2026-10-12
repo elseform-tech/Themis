@@ -133,3 +133,10 @@
 .themis-sidebar-section > span { font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; }
 .themis-show-more { margin: 6px 0 0; padding: 4px 10px; border: 0; background: transparent; color: var(--themis-text-3); font: inherit; font-size: .75rem; cursor: pointer; }
 .themis-show-more:hover { color: var(--themis-text); }
+
+/* Chat rows: a speech-bubble icon in the same column as the project folder, so titles line up with the project name; the active chat sits in a soft pill. */
+.themis-thread-row > .themis-sidebar-icon { flex-basis: 18px; width: 18px; height: 15px; opacity: 1; color: var(--themis-text-3); }
+.themis-thread-row:hover { background: color-mix(in srgb, var(--themis-text) 4%, transparent); }
+.themis-thread-row.themis-sidebar-row--active { background: var(--themis-raised); }
+.themis-thread-row.themis-sidebar-row--active > .themis-sidebar-icon { color: var(--themis-accent); }
+.themis-sidebar-section { padding-left: 10px; }
