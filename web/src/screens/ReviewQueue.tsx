@@ -78,12 +78,10 @@ export function ReviewQueue() {
               <li key={item.id} className="themis-review-card">
                 <div className="themis-review-card-head">
                   <span className="themis-review-name">{item.title}</span>
-                  <Badge tone="warning">pending</Badge>
                 </div>
                 <p className="themis-review-summary">{item.summary}</p>
                 <p className="themis-review-meta">
-                  {automationName(state.automations, item.automation_id)} ·{" "}
-                  {formatTime(item.created_at)}
+                  {[automationName(state.automations, item.automation_id), formatTime(item.created_at)].filter((part, index) => index > 0 || part !== item.title).join(" · ")}
                 </p>
                 <div className="themis-review-actions">
                   <Button

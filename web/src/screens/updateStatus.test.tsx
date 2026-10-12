@@ -39,7 +39,7 @@ vi.mock("../state/store", () => ({
 
 it("keeps settings free of advanced configuration and log controls", () => {
   const html = renderToStaticMarkup(createElement(SettingsScreen));
-  expect(html).toContain("Check updates");
+  expect(html).toContain("Check for updates");
   expect(html).not.toContain("Copy diagnostics");
   expect(html).not.toContain("Configuration");
   expect(html).not.toContain("Diagnostics");
@@ -54,7 +54,6 @@ describe("UpdateStatusView", () => {
   it("renders the never-checked prompt when status is null", () => {
     const html = render(null);
     expect(html).toContain("Not checked yet");
-    expect(html).toContain("Check updates");
   });
 
   it("renders disabled with its message and a docs hint", () => {

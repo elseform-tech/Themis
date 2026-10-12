@@ -54,9 +54,6 @@
   min-height: 0;
 }
 
-.themis-review-queue {
-  padding: 2rem 1rem;
-}
 html, body, #root { margin: 0; height: 100%; }
 * { box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
@@ -80,3 +77,11 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 .themis-nav { border: 0; background: var(--themis-sidebar-bg); min-height: 46px; padding: 6px 14px; color: var(--themis-text-2); }
 .themis-shell--mac .themis-nav { padding-left: 88px; }
 #sidebar-toggle svg { width: 17px; height: 17px; }
+
+/* Utility pages share one centred reading column, an unboxed title and divided rows. */
+.themis-review-queue, .themis-automations, .themis-integrations { width: 100%; max-width: 880px; margin: 0 auto; padding: 32px 32px 48px; }
+.themis-review-queue-title, .themis-automations-title, .themis-integrations > h2 { margin: 0; font-size: 1.375rem; font-weight: 500; }
+.themis-review-list { gap: 0; }
+.themis-review-card { padding: 14px 4px; border-bottom: 1px solid var(--themis-border-subtle); }
+.themis-review-card:last-child { border-bottom: 0; }
+.themis-automations-list { gap: 0; }

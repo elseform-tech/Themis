@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Button, EmptyState, Input } from "../components";
+import { Badge, Button, EmptyState, Input, Switch } from "../components";
 import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
 import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 import type {
@@ -27,7 +27,7 @@ export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
   if (status === null) {
     return (
       <p className="themis-settings-hint">
-        Not checked yet — press &ldquo;Check updates&rdquo;.
+        Not checked yet.
       </p>
     );
   }
@@ -193,24 +193,23 @@ export function SettingsScreen() {
 
   return (
     <div className="themis-settings">
-      <div className="themis-settings-heading"><div><h2 className="themis-settings-title">Settings</h2><p className="themis-settings-hint">App preferences</p></div><span role="status" className="themis-settings-hint">{saving ? "Saving…" : saved}</span></div>
+      <div className="themis-settings-heading"><h2 className="themis-settings-title">Settings</h2><span role="status" className="themis-settings-hint">{saving ? "Saving…" : saved}</span></div>
       <nav className="themis-settings-tabs" aria-label="Settings sections">{["General", "Appearance", "Models", "Permissions", "Advanced"].map(label => <button key={label} aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setSaved(""); }}>{label}</button>)}</nav>
       {error && <p role="alert" className="themis-form-error">{error}</p>}
       <fieldset disabled={saving} className="themis-settings-fields">
       {section === "General" && <>
         <section className="themis-settings-section" aria-label="Projects"><h3 className="themis-settings-subtitle">Projects</h3>
-          <div className="themis-settings-control"><span>Projects root</span><span className="themis-settings-hint">Fixed</span></div><p className="themis-settings-root">{state.settings.projects_directory}</p>
-
+          <div className="themis-settings-control"><span>Projects folder</span><span className="themis-settings-root" title={state.settings.projects_directory}>{state.settings.projects_directory}</span></div>
         </section>
-        <section className="themis-settings-section" aria-label="Automations"><h3 className="themis-settings-subtitle">Automations</h3><label className="themis-settings-check"><input type="checkbox" checked={form.automations_enabled} onChange={event => void save({ automations_enabled: event.target.checked })} />Scheduled runs</label><p className="themis-settings-hint">Manage in Automations.</p></section>
-        <details className="themis-settings-section"><summary>Updates</summary><UpdateStatusView status={update} /><div><Button variant="ghost" size="small" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check updates"}</Button></div></details>
+        <section className="themis-settings-section" aria-label="Automations"><h3 className="themis-settings-subtitle">Automations</h3><label className="themis-settings-check">Scheduled runs<Switch checked={form.automations_enabled} onChange={event => void save({ automations_enabled: event.target.checked })} /></label></section>
+        <section className="themis-settings-section" aria-label="Updates"><h3 className="themis-settings-subtitle">Updates</h3><div className="themis-settings-control"><span>Version</span><button type="button" className="themis-text-action" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check for updates"}</button></div><UpdateStatusView status={update} /></section>
       </>}
       {section === "Appearance" && <>
         <AppearanceSettings settings={state.settings} save={save} />
         <section className="themis-settings-section" aria-label="Completion feedback">
           <h3 className="themis-settings-subtitle">Feedback</h3>
-          <label className="themis-settings-check" title="Play a click when a response you started finishes"><input type="checkbox" checked={form.completion_sound} onChange={event => void save({ completion_sound: event.target.checked })} />Sound</label>
-          {navigator.platform.startsWith("Mac") && <label className="themis-settings-check" title="Use trackpad feedback when available"><input type="checkbox" checked={form.completion_haptic} onChange={event => void save({ completion_haptic: event.target.checked })} />Haptics</label>}
+          <label className="themis-settings-check" title="Play a click when a response you started finishes">Sound when a reply finishes<Switch checked={form.completion_sound} onChange={event => void save({ completion_sound: event.target.checked })} /></label>
+          {navigator.platform.startsWith("Mac") && <label className="themis-settings-check" title="Use trackpad feedback when available">Haptics<Switch checked={form.completion_haptic} onChange={event => void save({ completion_haptic: event.target.checked })} /></label>}
         </section>
       </>}
       {section === "Models" && <>

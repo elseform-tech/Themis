@@ -1,6 +1,6 @@
-.themis-integrations { padding: 1.5rem; display: flex; flex-direction: column; overflow: hidden; }
+.themis-integrations { display: flex; flex-direction: column; overflow: hidden; }
 .themis-integrations > :not(.themis-integrations-list) { flex-shrink: 0; }
-.themis-integrations h2 { font-size: 1.25rem; font-weight: 500; margin: 0 0 1rem; }
+.themis-integrations h2 { margin: 0 0 1rem; }
 .themis-integrations button, .themis-integrations summary { color: var(--themis-text); background: transparent; border: 0; padding: .5rem; min-height: 2.5rem; font: inherit; cursor: pointer; }
 .themis-integrations button:hover { background: color-mix(in srgb, var(--themis-text) 4%, transparent); }
 .themis-integrations button:focus-visible { outline: 2px solid var(--themis-text-2); outline-offset: 2px; }
@@ -8,9 +8,10 @@
 .themis-integrations-tabs { display: flex; gap: 18px; }
 .themis-integrations-tabs button { padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
 .themis-integrations-tabs button[aria-pressed="true"] { color: var(--themis-text); font-weight: 600; }
-.themis-integrations-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem 0; }
+.themis-integrations-toolbar { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: .5rem; padding: 12px 0 8px; }
 .themis-integrations-toolbar > div { display: flex; align-items: center; gap: .5rem; }
-.themis-integrations-search { margin: .25rem 0 .75rem; }
+.themis-integrations-search { width: 200px; height: 34px; padding: 0 14px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-raised); color: var(--themis-text); font: inherit; font-size: .8125rem; }
+.themis-integrations-search:focus-visible { outline: 1px solid var(--themis-border); }
 .themis-integrations-list { padding: 0; margin: 0; list-style: none; flex: 1; min-height: 0; overflow-y: auto; }
 .themis-integrations-list > li { display: flex; align-items: center; gap: .5rem; min-height: 3.5rem; border-bottom: 1px solid var(--themis-border-subtle); }
 .themis-integration-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -76,8 +77,11 @@
 .themis-skill-viewer .themis-response li::marker { color: var(--themis-accent); }
 @media (max-width: 650px) { .themis-integrations .themis-integration-source { display: block; } .themis-preview-install { flex-wrap: wrap; } }
 
-.themis-integration-filters { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding-bottom: .75rem; }
-.themis-integration-filters > select, .themis-integration-filters > .themis-marketplace-picker { flex: 1 1 10rem; min-width: 0; width: auto; }
+.themis-integration-filters { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.themis-integration-filters .themis-integrations-search { flex: 0 1 200px; width: 200px; min-width: 120px; margin: 0; }
+.themis-integration-filters select { width: auto; height: 34px; padding: 0 18px 0 4px; border: 0; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23a8abb2' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 2px center; color: var(--themis-text-2); font: inherit; font-size: .8125rem; appearance: none; cursor: pointer; }
+.themis-integration-filters select:hover { color: var(--themis-text); }
+.themis-integration-filters .themis-marketplace-picker { flex: none; }
 .themis-integration-filters .themis-marketplace-picker { display: flex; align-items: center; }
 @media (max-width: 650px) { .themis-integrations-toolbar { flex-wrap: wrap; } }
 
@@ -97,7 +101,8 @@
 .themis-compatibility-reason ul { padding: 0 .75rem .5rem 1.75rem; margin: 0; }
 .themis-compatibility-reason li + li { margin-top: .5rem; }
 .themis-installed-integrations .themis-compatibility-reason { grid-column: 2 / -1; }
-.themis-filter-summary { display: flex; align-items: center; justify-content: space-between; font-size: .75rem; color: var(--themis-text-2); }
+.themis-filter-summary { display: flex; align-items: center; gap: 12px; padding-bottom: 6px; font-size: .75rem; color: var(--themis-text-2); }
+.themis-integrations .themis-filter-summary button { min-height: 0; padding: 2px 0; color: var(--themis-text-2); font-size: .75rem; }
 .themis-marketplace-loading { flex: 1; min-height: 260px; display: grid; place-items: center; }
 .themis-marketplace-loading .themis-knight-loading { height: auto; background: transparent; }
 .themis-marketplace-loading + .themis-integrations-list:empty { flex: 0; }
