@@ -1,7 +1,10 @@
 /* Read-only workspace monitor: resizable side panel with unboxed tabs and actions. */
-.themis-workspace-panel { position: relative; flex: none; min-width: 380px; max-width: calc(100% - 420px); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--themis-border-subtle); background: var(--themis-sidebar-bg); }
-.themis-workspace-resize { position: absolute; top: 0; bottom: 0; left: -4px; z-index: 5; width: 8px; cursor: col-resize; touch-action: none; }
-.themis-workspace-resize:hover, .themis-workspace-resize:focus-visible { background: var(--themis-accent); opacity: .5; outline: none; }
+.themis-workspace-panel { position: relative; flex: none; min-width: 380px; max-width: calc(100% - 460px); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--themis-border-subtle); background: var(--themis-sidebar-bg); }
+.themis-workspace-panel.is-resizing { user-select: none; }
+.themis-workspace-resize { position: absolute; top: 0; bottom: 0; left: -5px; z-index: 5; width: 10px; cursor: col-resize; touch-action: none; }
+.themis-workspace-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; border-radius: 1px; background: var(--themis-accent); opacity: 0; transition: opacity 120ms ease; }
+.themis-workspace-resize:hover::after, .themis-workspace-resize:focus-visible::after, .is-resizing > .themis-workspace-resize::after { opacity: .7; transition-delay: 80ms; }
+.themis-workspace-resize:focus-visible { outline: none; }
 .themis-workspace-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 6px 20px; }
 .themis-workspace-where { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .themis-workspace-where strong { font-weight: 600; }

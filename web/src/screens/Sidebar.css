@@ -73,19 +73,30 @@
 .themis-row-menu button:disabled { opacity: .5; cursor: not-allowed; }
 @media (pointer: coarse) { .themis-thread-row-actions, .themis-project-heading > .themis-button { opacity: 1; } .themis-sidebar-row { min-height: 44px; } }
 
-.themis-thread-status { display: grid; place-items: center; flex-shrink: 0; width: 14px; height: 14px; font-size: 12px; line-height: 1; }
-.themis-thread-status--working, .themis-thread-status--needs-approval { color: var(--themis-accent); }
-.themis-thread-status--done { color: var(--themis-success); }
+.themis-thread-status { display: grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; }
+.themis-thread-status svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.themis-thread-status--working { color: var(--themis-gradient-2); }
+.themis-thread-status--working .themis-status-track { stroke: var(--themis-border); }
+.themis-thread-status--working .themis-status-arc { stroke-dasharray: 10 28; transform-origin: 8px 8px; animation: themis-thread-spin 1s linear infinite; }
+.themis-thread-status--needs-approval { color: var(--themis-accent); }
+.themis-thread-status--needs-approval .themis-status-halo { fill: color-mix(in srgb, var(--themis-accent) 18%, transparent); stroke: none; transform-origin: 8px 8px; animation: themis-status-pulse 1.8s ease-in-out infinite; }
 .themis-thread-status--failed { color: var(--themis-danger); }
-.themis-thread-status svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-dasharray: 27 11; animation: themis-thread-spin 900ms linear infinite; }
+.themis-thread-status--failed .themis-status-fill { fill: color-mix(in srgb, var(--themis-danger) 20%, transparent); stroke: none; }
+.themis-thread-status--failed path { stroke-width: 1.9; }
+.themis-thread-status--done { color: var(--themis-success); animation: themis-status-in 300ms ease-out both; }
+.themis-thread-status--done path { stroke-width: 2; }
+@keyframes themis-status-pulse { 0%, 100% { transform: scale(.85); opacity: .7; } 50% { transform: scale(1.25); opacity: 1; } }
+@keyframes themis-status-in { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
 @keyframes themis-thread-spin { to { transform: rotate(360deg); } }
 .themis-sidebar-recent { margin: 20px 0; }
 .themis-sidebar-recent > h2 { margin-bottom: 6px; }
 .themis-sidebar-note { margin: 0; padding: 8px 12px; color: var(--themis-text-2); font-size: .75rem; }
 .themis-sidebar-row--active .themis-moving-text { color: var(--themis-text); }
 
-.themis-sidebar-resize { position: absolute; top: 0; right: -4px; bottom: 0; z-index: 25; width: 8px; cursor: col-resize; touch-action: none; }
-.themis-sidebar-resize:hover, .themis-sidebar-resize:focus-visible, .is-resizing .themis-sidebar-resize { background: var(--themis-accent); opacity: .6; outline: none; }
+.themis-sidebar-resize { position: absolute; top: 0; right: -5px; bottom: 0; z-index: 25; width: 10px; cursor: col-resize; touch-action: none; }
+.themis-sidebar-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; border-radius: 1px; background: var(--themis-accent); opacity: 0; transition: opacity 120ms ease; }
+.themis-sidebar-resize:hover::after, .themis-sidebar-resize:focus-visible::after, .is-resizing .themis-sidebar-resize::after { opacity: .7; transition-delay: 80ms; }
+.themis-sidebar-resize:focus-visible { outline: none; }
 
 /* Dialogs launched from the sidebar. */
 .themis-sidebar-dialog { display: grid; gap: 16px; min-width: min(340px, 80vw); }
@@ -94,9 +105,14 @@
 .themis-sidebar-dialog summary { margin-bottom: 8px; font-size: .8125rem; cursor: pointer; }
 .themis-sidebar-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .themis-sidebar-dialog select { display: block; width: 100%; padding: 7px; border: 1px solid var(--themis-border); border-radius: 10px; background: var(--themis-surface); color: var(--themis-text); }
-.themis-help { display: grid; gap: 16px; font-size: .875rem; line-height: 1.6; }
-.themis-help dd { margin: 0 0 12px; color: var(--themis-text-2); }
-@media (prefers-reduced-motion: reduce) { .themis-thread-status svg, .themis-wordmark { animation: none; } }
+.themis-help { display: grid; gap: 18px; min-width: min(380px, 80vw); font-size: .875rem; line-height: 1.5; }
+.themis-help p { margin: 0; color: var(--themis-text-2); }
+.themis-help dl { display: grid; gap: 4px; margin: 0; }
+.themis-help dl > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 34px; }
+.themis-help dt { color: var(--themis-text); }
+.themis-help dd { display: flex; gap: 4px; margin: 0; }
+.themis-help kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 6px; background: var(--themis-raised); color: var(--themis-text-2); font: inherit; font-size: .75rem; }
+@media (prefers-reduced-motion: reduce) { .themis-thread-status, .themis-thread-status *, .themis-wordmark { animation: none !important; } }
 
 /* Project switcher: the dock shows only the chosen project's chats. */
 .themis-project-switcher { position: relative; margin: 0 0 10px; }
@@ -111,7 +127,7 @@
 .themis-project-count { margin-left: auto; color: var(--themis-text-3); font-size: .75rem; font-variant-numeric: tabular-nums; }
 .themis-project-menu hr { margin: 4px 0; border: 0; border-top: 1px solid var(--themis-border-subtle); }
 .themis-project-busy { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--themis-accent); }
-.themis-thread-group { margin-top: 12px; }
+.themis-thread-group { margin-top: 4px; }
 .themis-thread-group > .themis-sidebar-title { margin-bottom: 4px; }
 .themis-show-more { margin: 6px 0 0; padding: 4px 10px; border: 0; background: transparent; color: var(--themis-text-3); font: inherit; font-size: .75rem; cursor: pointer; }
 .themis-show-more:hover { color: var(--themis-text); }

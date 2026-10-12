@@ -203,8 +203,9 @@ function Message({ message, threadId, activeRunId, skills, plugins }: { message:
   const completed = message.role === "assistant" && !isActiveRun;
 
   return (
+    <>
+    {threadId && !!message.attachments?.length && <div className="themis-message-attachments" aria-label="Attached files">{message.attachments.map(path => <AttachmentPreview key={path} threadId={threadId} path={path} />)}</div>}
     <div className={`themis-thread-msg themis-thread-msg--${message.role}${message.text.startsWith("Stopped by you.") ? " themis-thread-msg--stopped" : ""}${actionWaiting ? " themis-thread-msg--action-waiting" : ""}${completed ? " themis-thread-msg--completed" : ""}`}>
-      {threadId && !!message.attachments?.length && <div className="themis-message-attachments" aria-label="Attached files">{message.attachments.map(path => <AttachmentPreview key={path} threadId={threadId} path={path} />)}</div>}
       {message.tool ? (
         <details className="themis-tool-message">
           <summary className={message.tool.ok === undefined && isActiveRun ? "themis-shimmer" : ""}>
@@ -239,5 +240,6 @@ function Message({ message, threadId, activeRunId, skills, plugins }: { message:
         <p className="themis-thread-text"><PromptText value={text} skills={skills} plugins={plugins} /></p>
       )}
     </div>
+    </>
   );
 }

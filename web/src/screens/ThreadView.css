@@ -139,14 +139,26 @@
 .themis-send.themis-button--ghost { color: var(--themis-text); }
 .themis-composer-attachments, .themis-message-attachments { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px; margin: 0; list-style: none; align-items: flex-start; }
 .themis-composer-attachments li { position: relative; flex-shrink: 0; }
-.themis-composer-attachments > li > button { position: absolute; top: 3px; right: 3px; z-index: 1; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--themis-raised); color: inherit; cursor: pointer; }
-.themis-attachment-preview { flex-shrink: 0; position: relative; box-sizing: border-box; margin: 0; padding: 6px; border-radius: 14px; background: var(--themis-raised); width: 136px; height: 126px; font-size: .75rem; }
-.themis-attachment-media { display: flex; align-items: center; justify-content: center; height: 88px; overflow: hidden; }
-.themis-attachment-preview img, .themis-attachment-preview video { display: block; width: 100%; height: 88px; object-fit: contain; }
-.themis-attachment-preview iframe { display: block; width: 100%; height: 88px; border: 0; background: white; }
-.themis-attachment-preview audio { width: 100%; height: 40px; }
-.themis-attachment-preview figcaption { padding-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.themis-attachment-preview small { position: absolute; bottom: 4px; left: 4px; right: 4px; background: var(--themis-raised); text-align: center; }
+.themis-composer-attachments > li > button { position: absolute; top: -6px; right: -6px; z-index: 1; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: var(--themis-text-2); color: var(--themis-canvas); font-size: 11px; cursor: pointer; opacity: 0; transition: opacity 120ms; }
+.themis-composer-attachments > li:hover > button, .themis-composer-attachments > li:focus-within > button { opacity: 1; }
+.themis-composer-attachments { padding: 8px 6px 4px; overflow: visible; flex-wrap: wrap; }
+.themis-message-attachments { align-self: flex-end; align-items: flex-end; justify-content: flex-end; flex-wrap: wrap; max-width: 100%; padding: 0; margin-bottom: -6px; overflow: visible; }
+.themis-attachment-preview { flex-shrink: 0; position: relative; box-sizing: border-box; margin: 0; font-size: .75rem; }
+.themis-attachment-preview figcaption { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--themis-text); }
+.themis-attachment-preview--media { width: 176px; }
+.themis-attachment-media { display: grid; place-items: center; height: 112px; overflow: hidden; border-radius: 14px; background: var(--themis-raised); }
+.themis-attachment-media img, .themis-attachment-media video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.themis-attachment-media iframe { display: block; width: 100%; height: 100%; border: 0; background: white; pointer-events: none; }
+.themis-attachment-preview--media figcaption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.themis-attachment-preview--file { display: flex; align-items: center; gap: 10px; width: 200px; height: 56px; padding: 8px 12px 8px 8px; border-radius: 14px; background: var(--themis-raised); }
+.themis-attachment-ext { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 10px; background: color-mix(in srgb, var(--themis-accent) 16%, transparent); color: var(--themis-accent); font-size: .625rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.themis-attachment-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.themis-attachment-text small { color: var(--themis-text-3); font-size: .6875rem; }
+.themis-attachment-text audio { width: 100%; height: 26px; }
+.themis-composer-attachments .themis-attachment-preview--media { width: 96px; }
+.themis-composer-attachments .themis-attachment-media { height: 64px; border-radius: 12px; }
+.themis-composer-attachments .themis-attachment-preview--file { width: 188px; height: 48px; }
+.themis-composer-attachments .themis-attachment-ext { width: 32px; height: 32px; border-radius: 8px; }
 @media (prefers-reduced-motion: reduce) { .themis-composer-ring::before, .themis-greeting::before { animation: none; } }
 
 /* Context meter and compaction heads-up. */

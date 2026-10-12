@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApprovalDialog, Button, Toasts } from "./components";
 import type { ApprovalDecision } from "./lib/types";
 import { approveAction } from "./lib/tauri";
@@ -30,7 +30,15 @@ function Shell() {
   const [companion, setCompanion] = useState(readCompanionPreferences);
   function updateCompanion(next: CompanionPreferences) { setCompanion(next); writeSession("companion", next); }
   const [collapsed, setCollapsed] = useState(() => readSession("sidebar-collapsed", false));
-  function toggleSidebar() { setCollapsed(value => { writeSession("sidebar-collapsed", !value); return !value; }); }
+  function toggleSidebar() { autoFolded.current = false; setCollapsed(value => { writeSession("sidebar-collapsed", !value); return !value; }); }
+  // Opening the workspace on a narrower window folds the sidebar to its rail so the
+  // conversation keeps room; closing the workspace restores it.
+  const autoFolded = useRef(false);
+  useEffect(() => {
+    if (state.diffPanelOpen && !collapsed && window.innerWidth < 1500) { autoFolded.current = true; setCollapsed(true); }
+    else if (!state.diffPanelOpen && autoFolded.current) { autoFolded.current = false; setCollapsed(readSession("sidebar-collapsed", false)); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react only to the panel opening or closing
+  }, [state.diffPanelOpen]);
   useEffect(() => { applyAppearance(state.settings); }, [state.settings]);
   const headApproval = state.approvals[0];
 

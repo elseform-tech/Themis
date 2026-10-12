@@ -93,8 +93,10 @@ describe("Workspace journey", () => {
     vi.spyOn(handle.parentElement!, "getBoundingClientRect").mockReturnValue({ width: 312 } as DOMRect);
     fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 300 });
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 420 });
-    expect(handle).toHaveAttribute("aria-valuenow", "432");
+    // Dragging only moves the CSS width; the value commits on release.
+    expect(handle.parentElement!.style.getPropertyValue("--themis-sidebar-width")).toBe("432px");
     fireEvent.pointerUp(handle, { pointerId: 1 });
+    expect(handle).toHaveAttribute("aria-valuenow", "432");
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 450 });
     expect(localStorage.getItem("themis:sidebarWidth")).toBe("432");
     mounted.unmount();
@@ -510,21 +512,39 @@ describe("Workspace journey", () => {
     await mount();
     const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
     fireEvent.click(within(sidebar).getByRole("button", { name: /^One/ }));
-    expect(within(within(sidebar).getByRole("region", { name: "Running" })).getByRole("img", { name: "Working" })).toBeInTheDocument();
+    expect(within(within(sidebar).getByRole("region", { name: "Chats" })).getByRole("img", { name: "Working" })).toBeInTheDocument();
+    expect(within(sidebar).queryByRole("region", { name: "Needs you" })).toBeNull();
     expect(within(sidebar).getByRole("button", { name: "Edit Status thread" })).toBeDisabled();
     const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
     await act(async () => receive({ thread_id: "status", run_id: "r", event: { kind: "finished", result: "Done" } }));
+    // The finished thread is the one on screen, so there is no unseen-completion check.
     expect(within(sidebar).queryByRole("img")).toBeNull();
-    expect(within(sidebar).queryByRole("region", { name: "Running" })).toBeNull();
     await act(async () => receive({ thread_id: "status", run_id: "old", event: { kind: "incomplete", result: "I completed the draft. Next, verify it." } }));
     expect(within(sidebar).queryByRole("img")).toBeNull();
     expect(screen.queryByText(/Run activity · Incomplete/)).not.toBeInTheDocument();
     await act(async () => receive({ thread_id: "status", run_id: "r2", event: { kind: "started", task: "retry", max_turns: 3 } }));
     expect(within(sidebar).getByRole("img", { name: "Working" })).toBeInTheDocument();
     await act(async () => receive({ thread_id: "status", run_id: "r2", event: { kind: "failed", error: "HTTP 503" } }));
-    expect(within(within(sidebar).getByRole("region", { name: "Needs you" })).getByRole("img", { name: "Failed" })).toBeInTheDocument();
+    expect(within(sidebar).getByRole("img", { name: "Failed" })).toBeInTheDocument();
     await act(async () => receive({ thread_id: "status", run_id: "r3", event: { kind: "failed", error: "Stopped by you." } }));
     expect(within(sidebar).queryByRole("img")).toBeNull();
+  });
+  it("marks a background run that finished as done until the chat is opened", async () => {
+    const base = { provider: "go" as const, model: "muse-spark-1.3-contributor", worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
+    const front = { ...base, id: "front", title: "Front chat", running: false, last_activity_seq: 2 };
+    const back = { ...base, id: "back", title: "Background chat", running: true, last_activity_seq: 1 };
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: ["/tmp/one"] });
+    vi.mocked(bridge.openProject).mockResolvedValue({ root: "/tmp/one", name: "One", is_git: true });
+    vi.mocked(bridge.listThreads).mockImplementation(async root => root === "/tmp/fixed-themis" ? [] : [front, back]);
+    await mount();
+    const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+    fireEvent.click(within(sidebar).getByRole("button", { name: /^One/ }));
+    expect(within(sidebar).getByRole("button", { name: "Front chat" })).toHaveAttribute("aria-current", "true");
+    const receive = vi.mocked(bridge.onThreadEvent).mock.calls[0]![0];
+    await act(async () => receive({ thread_id: "back", run_id: "r", event: { kind: "finished", result: "Done" } }));
+    expect(within(sidebar).getByRole("img", { name: "Done" })).toBeInTheDocument();
+    await act(async () => fireEvent.click(within(sidebar).getByRole("button", { name: "Background chat" })));
+    expect(within(sidebar).queryByRole("img", { name: "Done" })).toBeNull();
   });
   it("keeps compact navigation without expanding on hover", async () => {
     vi.useFakeTimers(); await mount();

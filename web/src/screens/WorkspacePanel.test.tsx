@@ -33,7 +33,7 @@ describe("WorkspacePanel", () => {
     expect(screen.queryByRole("button", { name: /^Accept|^Discard|Merge|Comment|Refresh|Unified|Side-by-side/ })).toBeNull();
     const separator = screen.getByRole("separator", { name: "Resize workspace panel" });
     fireEvent.keyDown(separator, { key: "ArrowLeft" });
-    expect(separator).toHaveAttribute("aria-valuenow", "640");
+    expect(separator).toHaveAttribute("aria-valuenow", "600");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Files" })));
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "README.md" })));
     expect(screen.getByText("hello")).toBeInTheDocument();

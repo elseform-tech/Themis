@@ -11,6 +11,7 @@ type Tab = "changes" | "files" | "branches" | "pulls";
 const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"]];
 const MIN_WIDTH = 380;
 const MAX_WIDTH = 1200;
+const DEFAULT_WIDTH = 560;
 
 function clampWidth(value: number) {
   return Math.round(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, value)));
@@ -20,19 +21,27 @@ function clampWidth(value: number) {
 export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRoot: string; threadId: string; workspace: WorkspaceInfo | null }) {
   const { state, dispatch } = useApp();
   const [tab, setTab] = useState<Tab>(() => readSession<Tab>("workspaceTab", "changes"));
-  const [width, setWidth] = useState(() => clampWidth(Number(readSession("workspacePanelWidth", 600)) || 600));
+  const [width, setWidth] = useState(() => clampWidth(Number(readSession("workspacePanelWidth", DEFAULT_WIDTH)) || DEFAULT_WIDTH));
+  const panel = useRef<HTMLElement>(null);
   const drag = useRef<{ x: number; width: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
   function resize(next: number) { const value = clampWidth(next); setWidth(value); writeSession("workspacePanelWidth", value); }
+  // While dragging only the element width changes; state and storage update on release.
+  const lastWidth = useRef<number | null>(null);
+  function preview(clientX: number) { if (!drag.current || !panel.current) return; lastWidth.current = clampWidth(drag.current.width + drag.current.x - clientX); panel.current.style.width = `${lastWidth.current}px`; }
+  // Commit what is visible: CSS keeps room for the conversation, so store the rendered width.
+  function finish() { if (drag.current && lastWidth.current !== null) resize(Math.min(lastWidth.current, panel.current?.getBoundingClientRect().width || lastWidth.current)); drag.current = null; lastWidth.current = null; setDragging(false); }
   function choose(next: Tab) { setTab(next); writeSession("workspaceTab", next); }
   const diff = state.diffs[threadId];
   const changed = diff?.available ? diff.files.length : 0;
   return (
-    <aside className="themis-workspace-panel" aria-label="Workspace (read-only)" style={{ width }}>
+    <aside ref={panel} className={`themis-workspace-panel${dragging ? " is-resizing" : ""}`} aria-label="Workspace (read-only)" style={{ width }}>
       <div className="themis-workspace-resize" role="separator" aria-label="Resize workspace panel" aria-orientation="vertical" aria-valuemin={MIN_WIDTH} aria-valuemax={MAX_WIDTH} aria-valuenow={width} tabIndex={0}
-        onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); drag.current = { x: event.clientX, width }; event.currentTarget.setPointerCapture(event.pointerId); }}
-        onPointerMove={event => { if (drag.current) resize(drag.current.width + drag.current.x - event.clientX); }}
-        onPointerUp={() => { drag.current = null; }}
-        onLostPointerCapture={() => { drag.current = null; }}
+        onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); drag.current = { x: event.clientX, width: panel.current?.getBoundingClientRect().width ?? width }; setDragging(true); event.currentTarget.setPointerCapture(event.pointerId); }}
+        onPointerMove={event => preview(event.clientX)}
+        onPointerUp={finish}
+        onLostPointerCapture={finish}
+        onDoubleClick={() => resize(DEFAULT_WIDTH)}
         onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); resize(width + 40); } else if (event.key === "ArrowRight") { event.preventDefault(); resize(width - 40); } }} />
       <header className="themis-workspace-head">
         <div className="themis-workspace-where">
