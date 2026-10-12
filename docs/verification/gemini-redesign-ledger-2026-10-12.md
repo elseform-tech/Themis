@@ -13,7 +13,11 @@ Backend (`01578bf`):
 - Maintenance may reduce results a checkpoint already summarized (`summarized_until`); newer observations stay protected.
 - Content-free `context_budget` run event before each bounded request.
 
-Frontend (`e28a779`, `2498449`, `3729552`, `ff4ee22`): neutral palette with a warm gradient, pill composer with **+** menu, header model pill, greeting with starters, "Show thinking" chips, Copy action, checkpoint divider, context meter with heads-up, review side panel with a grouped/filterable tree and viewed progress, pill/card utility screens, ⋮ thread menus, Bubbles companion.
+Frontend (`e28a779`, `2498449`, `3729552`, `ff4ee22`, `d2ba3d3`, `67d9827`): neutral palette with a warm gradient; pill composer with a **+** menu and a project/branch row; header model pill; greeting with starters; "Show thinking" chips; Copy action; checkpoint divider; context meter with heads-up; unboxed buttons, tabs and rows; a project-scoped sidebar (switcher, Needs you / Running / Chats); a read-only, resizable **Workspace** monitor (Changes with a live-refreshing unified diff, Files, Branches, Pull requests) with no review or Git actions; Bubbles companion.
+
+Workspace backend (`1216a9a`): read-only `get_workspace`, `list_project_dir` and `read_project_file` (bounded; traversal and symlink escapes rejected; pull requests via the GitHub CLI on request).
+
+Fix (`1190645`): `.themis/plugin-files` and `.themis/skill-catalogs` now carry a `*` `.gitignore`, so materialized user skills no longer appear as project changes.
 
 Not done (deliberately): a dedicated `recall` tool (it would replace `read_file` JSONL selectors and needs its own migration); a degraded continuation when summarization fails (left as a product decision; the run still stops and preserves originals).
 
@@ -23,23 +27,22 @@ Not done (deliberately): a dedicated `recall` tool (it would replace `read_file`
 | --- | --- |
 | `cargo fmt --all -- --check` | passed |
 | `cargo clippy --workspace --all-targets -- -D warnings` | passed |
-| `cargo test --workspace --no-fail-fast -- --skip entered_keys_survive_new_store_and_can_be_forgotten` | 478 passed, 2 failed, 3 ignored |
-| Same two failing binaries with an empty `HOME` (`automation_e2e`, `bridge_e2e`) | 8/8 and 7/7 passed |
-| `cargo llvm-cov --workspace --lcov …` (empty `HOME`) | see Coverage |
+| `cargo llvm-cov --workspace --no-fail-fast --lcov --output-path coverage/lcov.info -- --skip entered_keys_survive_new_store_and_can_be_forgotten` (real home directory) | 483 passed, 0 failed, 2 ignored; Rust line coverage 28,706 / 31,513 = 91.1% |
 | `npm --prefix web run lint` | passed |
-| `npm --prefix web test` | 317 passed (32 files) |
+| `npm --prefix web test` | 318 passed (33 files) |
 | `npm --prefix web run build` | passed (existing chunk-size warning) |
 | `ruff check quality_dashboard` | passed |
 | `python3 -m unittest quality_dashboard.test_dashboard` | 14 passed |
 
-The two failures (`automation_runs_use_shared_checkout`, `scripted_write_file_run_finishes_and_shows_in_diff`) are environmental and pre-existing: the unmodified base also fails `automation_runs_use_shared_checkout`. User-level skills under the real home directory are materialized into the test project's `.themis/plugin-files/`, the diff reaches 361 files and truncates at 200 before `hello.txt`. With an empty `HOME` both pass. Showing materialized plugin files as changes is a separate product issue.
+Before `1190645`, `automation_runs_use_shared_checkout` (failing on the unmodified base) and `scripted_write_file_run_finishes_and_shows_in_diff` failed on this machine: user skills materialized into `.themis/plugin-files/` made the diff 361 files long and truncated it before `hello.txt`. With the exclusion both pass with the real home directory.
 
 New or changed regression cases:
 
 - Core: five ledger unit tests (plan validation, plan survives restart, user text cannot inject entries, legacy blocks restore, actions keep room and evicted reads keep locations); maintenance watermark test; existing cache tests moved to the ledger API with the same invariants.
 - Runtime integration: repeated reads still in context receive a freshness receipt pointing at the earlier call.
+- CLI end to end (`workspace_e2e::cli_workspace_reports_branches_lists_files_and_stays_inside_the_project`): branch, branches, directory listing, file view, rejected `../` and absolute paths, and an unchanged `HEAD`.
 - CLI end to end (`attachments_e2e::cli_plan_survives_checkpoint_in_task_ledger_and_budget_events_reach_clients`): an isolated app server and `themis` CLI run a thread whose plan survives a real checkpoint, and every bounded request emits one `context_budget` whose breakdown sums to its used tokens without content.
-- Web: reducer budget/divider handling, context meter states, file tree filter/viewed, Bubbles speech.
+- Web: reducer budget/divider handling, context meter states, file tree grouping/filter, read-only workspace panel views and live diff refresh, project-scoped sidebar, Bubbles speech; `skills::materialized_catalogs_stay_out_of_the_project_diff`.
 
 ## Code health
 
@@ -70,8 +73,20 @@ Vite dev server on port 1431 with a mocked Tauri bridge (fixture projects, threa
 
 A narrow-sidebar truncation found here was fixed (project actions now overlay on hover/focus). The only console noise is the mock's missing native window API ("Companion unavailable"), which does not occur in the app.
 
+## Real-model runs
+
+`muse-spark-1.3-contributor` through the shared server and `themis` CLI, in scratch Git projects:
+
+- 200k budget: the model kept a 4-step plan with `update_plan`, wrote tests, fixed `stats.py`, ran the tests, marked every step done and finished on its own (5 tests pass). No checkpoint was needed.
+- 24k budget: the model again used `update_plan` and its artifacts passed (8 tests), but the run checkpointed after nearly every tool call and kept re-checking; it was stopped after 34 checkpoints. The context meter's breakdown shows why: system instructions take about 8.7k tokens and tool definitions about 8.0k of the 24k budget, leaving about 2.3k tokens of working space below the auto-compact threshold. This overhead predates this branch (the plan guidance and tool add about 250 tokens); at 24k the ledger and plan do not prevent the loop.
+
+## Native app
+
+`cargo build -p themis-desktop --bins --features tauri/custom-protocol` with the production frontend build, launched from the worktree against the real app data (with permission). Captured with `screencapture`: the thread header model pill, Workspace toggle, "Context compacted" divider and "Show thinking" chip on existing history; the project switcher with only the chosen project's chats; the composer project/branch row and context meter on the real-model thread; the floating Bubbles window. Interaction used macOS keyboard events (the ⌘K palette); pointer automation was unavailable because the computer-use helper was not running.
+
 ## Not verified
 
-- Native Tauri app: not launched. The desktop app has no data-directory override, so a native run would use the real app data, keychain and scheduled automations. Window chrome, the floating desktop Bubbles window and native diff/merge flows remain unverified.
-- Live model behavior: no real-provider run; whether `update_plan` and the narrower summary reduce repeated inspection needs the existing 24k/200k live trials.
+- Native pointer interactions (clicking, dragging the panel edge, the Bubbles window drag) and sending from the native composer: typed input did not reach an unfocused composer, and nothing was sent.
+- Pull requests against a real GitHub remote: only the CLI path and the unavailable-reason path are exercised.
+- Narrative and 256k real-model trials.
 - Frontend line coverage: not configured.
