@@ -1071,6 +1071,7 @@ impl crate::tools::ToolRuntime for ManagementTool {
         crate::tools::check_approval_permitted(
             self.approvals.as_ref(),
             &ToolAction {
+                command: Vec::new(),
                 tool: self.name.into(),
                 summary: format!(
                     "{} {}",

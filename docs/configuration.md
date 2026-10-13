@@ -173,7 +173,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.summary_max_tokens` | Initial summary-output ceiling, 256–16,384; default 8,192. Retries may use up to twice the effective initial allowance, subject to capacity. |
 | `compaction.summary_model` | Optional `longcat-2.5-preview-free`, `gpt-5.6-luna`, or `gpt-6-luna`; omitted/null keeps automatic routing. Only internal summaries change; the configured model must be present in the captured Go catalog. |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
-| `approval.rules` | At most 256 ordered rules |
+| `approval.rules` | At most 256 ordered rules `{tool, action, risk?, command?}`; `command` is an argv-prefix array (see Composer permissions) |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration
@@ -222,10 +222,31 @@ Actions are `allow`, `ask`, or `deny`; risks are `read`, `write`, `execute`,
 actions. The existing confirm-reads setting still applies when no explicit
 approval configuration is supplied.
 
-Project approval configuration may add deny rules only. Those restrictions are
+A rule may carry `command`, an array of 1–16 non-empty argv tokens (each at most
+256 bytes) that scopes it to `shell` calls: it matches when the program and its
+arguments begin with exactly those tokens (`["cargo","test"]` matches
+`cargo test --lib`, not `cargo build`, `cargo testing` or `/usr/bin/cargo test`).
+No globbing applies. `command` is valid only with `"tool": "shell"` (exact name).
+Example allow rule: `{ "tool": "shell", "command": ["cargo", "test"], "action": "allow" }`.
+Allow and ask rules match the program token exactly (`/bin/echo` or a project-local
+`./echo` does not match `["echo"]`, so an allow rule never widens). Deny rules also
+match the program by basename, lowercased on macOS/Windows and without
+`.exe`/`.cmd`/`.bat` on Windows, so `["rm"]` denies `rm`, `/bin/rm`, `./rm` and `RM`.
+Wrappers (`env`, `sudo`, `command`, `busybox`, `xargs`, `bash -c`) still bypass
+deny rules: this is a tool policy, not a sandbox; deny the wrappers you do not want.
+
+Project approval configuration may add deny rules only (including `command` denies). Those restrictions are
 evaluated ahead of user rules; a project cannot grant itself access. Explicit
 run overrides are caller-supplied policy. An interactive **Allow for this run** grant is
-cached for the same tool and risk within the run and cannot override a deny rule.
+cached within the run and cannot override a deny rule. Grants are keyed by the
+action's grant key: the tool name (plus risk for configured policy) for most tools.
+For `shell` the key is program plus first argument only for subcommand-style CLIs
+(`cargo`, `git`, `npm`, `pnpm`, `yarn`, `go`, `rustup`, `pip`, `pip3`, `uv`, `poetry`)
+whose first argument is a non-flag subcommand other than an executing one (`run`,
+`run-script`, `exec`, `x`, `dlx`, `npx`, `create`, `tool`, `generate`, `shell`,
+`install`, `add`). So approving `cargo test` covers `cargo test --lib` but not
+`cargo publish` or `cargo run`. Every other program, wrapper and interpreter
+(`find`, `sudo`, `env`, `ssh`, `bash -c`, ...) is keyed by its full argv.
 Unattended CLI `ask` requests deny; use explicit policy or an interactive client.
 
 YOLO bypasses harness approval gates, filesystem root restrictions, skill tool

@@ -60,6 +60,7 @@ impl ToolRuntime for ManagementTool {
         themis_core::tools::check_approval_permitted(
             self.approvals.as_ref(),
             &ToolAction {
+                command: Vec::new(),
                 tool: themis_core::tools::integration_approval_identity(self.name, &args),
                 summary: format!(
                     "{} {}",

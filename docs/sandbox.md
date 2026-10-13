@@ -14,11 +14,14 @@ adds its own tools.
 
 Actions have a risk (`read`, `write`, `execute`, `network`, `destructive`). Ordered
 Custom rules choose allow, ask, or deny; the first matching rule wins. Default
-policy allows reads and asks for other actions. Project rules may only add deny
+policy allows reads and asks for other actions. Rules may carry an optional `command`
+argv prefix to scope `shell` rules (for example allow `["cargo","test"]`). Project rules may only add deny
 restrictions. Explicit user/run allow rules proceed without the interactive gate.
 
 An ask invokes the desktop/CLI approval hook. **Once** grants one action,
-**Always** remembers the same tool and risk for this run, and **Deny** rejects it.
+**Always** remembers the grant key for this run: the tool (and risk) for most tools;
+for `shell`, program plus subcommand only for a short list of subcommand-style CLIs
+such as `cargo test`, and the exact full argv for everything else, and **Deny** rejects it.
 Cached grants cannot bypass policy denies. Approval timeouts (default five minutes),
 lost clients, and unattended CLI requests deny. The interactive hook denies
 non-read actions in non-Git projects; explicit allow policy or YOLO bypasses
@@ -47,9 +50,21 @@ does not confine the process. Core path guards do not sandbox subprocesses or
 third-party MCP servers/hooks.
 
 Custom requires the tool working directory to stay inside the project root.
-YOLO permits external paths. Shell output is bounded at 32 KiB; the default
-execution timeout is 120 seconds. Child environment handling excludes provider
-credentials from normal tool launches. MCP servers can receive explicitly configured environment-variable references.
+YOLO permits external paths. Command rules are a tool policy, not a sandbox: deny rules match the program basename
+(case-insensitively on macOS/Windows) but wrappers such as `env`, `sudo` or `bash -c`
+bypass them. The shell child runs in its own process group, so Ctrl-C in the CLI does
+not signal it; only the timeout kills the group, and stopping a run does not
+currently kill a running shell child.
+Shell output is bounded at 32 KiB; the default
+execution timeout is 120 seconds. On timeout the whole process tree is killed:
+on Unix the child leads its own process group, which receives SIGTERM, a short
+grace period, then SIGKILL; on Windows `taskkill /T /F` ends the tree (a
+descendant that detaches from its parent is not reached). Child environment
+handling excludes provider credentials from normal tool launches. Children
+receive only `PATH`, `TMPDIR`/`TEMP`/`TMP`, `LANG`, `LC_ALL` and other `LC_*`,
+`TERM`, plus `HOME`/`USER`/`LOGNAME`/`SSH_AUTH_SOCK` on Unix or the Windows
+system/user variables; any name containing `KEY`, `TOKEN` or `SECRET` is
+dropped even if otherwise allowed. MCP servers can receive explicitly configured environment-variable references.
 Hooks receive the fixed allowlist plus `CLAUDE_PLUGIN_ROOT`, rather than a
 configurable environment map. Imported MCP servers and hooks
 begin disabled and require explicit activation; hook trust remains separate

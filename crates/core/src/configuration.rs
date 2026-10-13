@@ -29,6 +29,9 @@ pub struct ApprovalRule {
     pub action: PolicyAction,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk: Option<String>,
+    /// Argv prefix (program, then arguments) a `shell` call must start with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +45,7 @@ impl Default for ApprovalPolicy {
         Self {
             default: PolicyAction::Ask,
             rules: vec![ApprovalRule {
+                command: None,
                 tool: "*".into(),
                 action: PolicyAction::Allow,
                 risk: Some("read".into()),
@@ -61,12 +65,55 @@ impl ApprovalPolicy {
                         action.tool.starts_with(prefix)
                     });
                 matches
+                    && rule.command.as_ref().is_none_or(|prefix| {
+                        command_has_prefix(&action.command, prefix)
+                            || (rule.action == PolicyAction::Deny
+                                && command_has_prefix_normalized(&action.command, prefix))
+                    })
                     && rule
                         .risk
                         .as_ref()
                         .is_none_or(|risk| risk == risk_name(action.risk))
             })
             .map_or(self.default, |rule| rule.action)
+    }
+}
+/// Exact token-prefix match: `["cargo","test"]` matches `cargo test --lib` but
+/// not `cargo testing`, `/usr/bin/cargo test` or an empty command.
+pub fn command_has_prefix(command: &[String], prefix: &[String]) -> bool {
+    !prefix.is_empty() && command.len() >= prefix.len() && command[..prefix.len()] == *prefix
+}
+/// Normalized program name: basename, lowercased on macOS/Windows
+/// (case-insensitive file systems), `.exe`/`.cmd`/`.bat` stripped on Windows.
+fn normalize_program(program: &str) -> String {
+    let base = program
+        .rsplit(|c| c == '/' || (cfg!(windows) && c == '\\'))
+        .next()
+        .unwrap_or(program);
+    let mut name = if cfg!(any(target_os = "macos", windows)) {
+        base.to_lowercase()
+    } else {
+        base.to_owned()
+    };
+    if cfg!(windows) {
+        for ext in [".exe", ".cmd", ".bat"] {
+            if let Some(stem) = name.strip_suffix(ext) {
+                name = stem.to_owned();
+                break;
+            }
+        }
+    }
+    name
+}
+/// Prefix match with the program token normalized on both sides. Used only for
+/// deny rules so `/bin/rm`, `./rm` and `RM` (on case-insensitive systems) are
+/// still denied by `["rm"]`; allow/ask rules stay exact so they never widen.
+fn command_has_prefix_normalized(command: &[String], prefix: &[String]) -> bool {
+    match (command.split_first(), prefix.split_first()) {
+        (Some((program, rest)), Some((first, wanted))) => {
+            normalize_program(program) == normalize_program(first) && rest.starts_with(wanted)
+        }
+        _ => false,
     }
 }
 fn risk_name(risk: RiskLevel) -> &'static str {
@@ -83,7 +130,7 @@ struct ConfiguredHook {
     mode: ApprovalMode,
     policy: ApprovalPolicy,
     interactive: Arc<dyn ApprovalHook>,
-    allowed: std::sync::Mutex<std::collections::HashSet<(String, &'static str)>>,
+    allowed: std::sync::Mutex<std::collections::HashSet<(String, &'static str)>>, // (grant key, risk)
 }
 impl ApprovalHook for ConfiguredHook {
     fn approve(&self, action: &ToolAction) -> Approval {
@@ -94,7 +141,7 @@ impl ApprovalHook for ConfiguredHook {
             PolicyAction::Allow => Approval::AllowOnce,
             PolicyAction::Deny => Approval::Deny,
             PolicyAction::Ask => {
-                let key = (action.tool.clone(), risk_name(action.risk));
+                let key = (action.grant_key(), risk_name(action.risk));
                 if self
                     .allowed
                     .lock()
@@ -429,6 +476,7 @@ pub fn resolve(
                         current.rules.insert(
                             0,
                             ApprovalRule {
+                                command: None,
                                 tool: "*".into(),
                                 action: PolicyAction::Deny,
                                 risk: None,
@@ -572,6 +620,20 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'),
             "approval rule tool must be an exact name or trailing-star prefix"
         );
+        if let Some(command) = &rule.command {
+            ensure!(
+                rule.tool == "shell",
+                "approval rule command is only valid with tool \"shell\""
+            );
+            ensure!(
+                !command.is_empty() && command.len() <= 16,
+                "approval rule command must have 1..16 tokens"
+            );
+            ensure!(
+                command.iter().all(|t| !t.is_empty() && t.len() <= 256),
+                "approval rule command tokens must be 1..256 bytes"
+            );
+        }
         if let Some(risk) = &rule.risk {
             ensure!(
                 ["read", "write", "execute", "network", "destructive"].contains(&risk.as_str()),
@@ -652,7 +714,8 @@ pub fn schema() -> Value {
                 "rules":{"type":"array","maxItems":256,"items":{"type":"object","additionalProperties":false,"required":["tool","action"],"properties":{
                     "tool":{"type":"string","pattern":"^([A-Za-z0-9_.-]+\\*?|\\*)$"},
                     "action":{"enum":["allow","ask","deny"]},
-                    "risk":{"enum":["read","write","execute","network","destructive"]}
+                    "risk":{"enum":["read","write","execute","network","destructive"]},
+                    "command":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}}
                 }}}
             }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
@@ -886,6 +949,7 @@ mod tests {
         let policy = ApprovalPolicy {
             default: PolicyAction::Ask,
             rules: vec![ApprovalRule {
+                command: None,
                 tool: "git".into(),
                 action: PolicyAction::Deny,
                 risk: Some("destructive".into()),
@@ -897,6 +961,7 @@ mod tests {
             Arc::new(crate::tools::AllowAllHook),
         );
         let action = |risk| ToolAction {
+            command: Vec::new(),
             tool: "git".into(),
             summary: String::new(),
             risk,
@@ -909,6 +974,182 @@ mod tests {
         );
     }
 
+    fn shell_action(argv: &[&str]) -> ToolAction {
+        ToolAction {
+            command: argv.iter().map(|t| t.to_string()).collect(),
+            tool: "shell".into(),
+            summary: String::new(),
+            risk: RiskLevel::Execute,
+        }
+    }
+
+    #[test]
+    fn command_rules_match_token_prefixes_only() {
+        let config = resolve(
+            Some(
+                r#"{"approval":{"rules":[
+                {"tool":"shell","command":["cargo","test"],"action":"allow"},
+                {"tool":"shell","command":["echo"],"action":"allow"}]}}"#,
+            ),
+            Some(r#"{"approval":{"rules":[{"tool":"shell","command":["rm"],"action":"deny"}]}}"#),
+            None,
+        )
+        .unwrap()
+        .config;
+        let decide = |argv: &[&str]| config.approval.decision(&shell_action(argv));
+        assert_eq!(decide(&["cargo", "test", "--lib"]), PolicyAction::Allow);
+        assert_eq!(decide(&["echo"]), PolicyAction::Allow);
+        assert_eq!(decide(&["cargo", "build"]), PolicyAction::Ask);
+        assert_eq!(decide(&["cargo", "testing"]), PolicyAction::Ask);
+        assert_eq!(decide(&["cargo"]), PolicyAction::Ask);
+        assert_eq!(decide(&["/bin/echo", "x"]), PolicyAction::Ask);
+        assert_eq!(decide(&["rm", "-rf", "x"]), PolicyAction::Deny);
+        // Deny rules also catch path-qualified spellings of the program...
+        assert_eq!(decide(&["/bin/rm", "x"]), PolicyAction::Deny);
+        assert_eq!(decide(&["./rm"]), PolicyAction::Deny);
+        // ...but allow rules never widen: a local ./echo is not `echo`.
+        assert_eq!(decide(&["./echo", "hi"]), PolicyAction::Ask);
+        assert_eq!(decide(&["/bin/echo"]), PolicyAction::Ask);
+        // Wrappers still bypass deny rules (tool policy, not a sandbox).
+        assert_eq!(decide(&["env", "rm", "x"]), PolicyAction::Ask);
+        #[cfg(any(target_os = "macos", windows))]
+        assert_eq!(decide(&["RM", "x"]), PolicyAction::Deny);
+        #[cfg(windows)]
+        assert_eq!(decide(&["rm.exe", "x"]), PolicyAction::Deny);
+        // A command rule never matches a tool that carries no argv.
+        let mut other = shell_action(&[]);
+        other.tool = "git".into();
+        assert_eq!(config.approval.decision(&other), PolicyAction::Ask);
+    }
+
+    #[test]
+    fn command_rule_validation() {
+        let bad = |rule: &str| {
+            resolve(
+                Some(&format!(r#"{{"approval":{{"rules":[{rule}]}}}}"#)),
+                None,
+                None,
+            )
+            .is_err()
+        };
+        assert!(!bad(
+            r#"{"tool":"shell","command":["ls"],"action":"allow"}"#
+        ));
+        assert!(bad(r#"{"tool":"shell","command":[],"action":"allow"}"#));
+        assert!(bad(r#"{"tool":"shell","command":[""],"action":"allow"}"#));
+        assert!(bad(
+            r#"{"tool":"git","command":["status"],"action":"allow"}"#
+        ));
+        assert!(bad(
+            r#"{"tool":"shell*","command":["ls"],"action":"allow"}"#
+        ));
+        assert!(bad(
+            r#"{"tool":"shell","command":["a"],"action":"allow","x":1}"#
+        ));
+        let seventeen = vec!["a"; 17].join("\",\"");
+        assert!(bad(&format!(
+            r#"{{"tool":"shell","command":["{seventeen}"],"action":"allow"}}"#
+        )));
+        let long = "a".repeat(257);
+        assert!(bad(&format!(
+            r#"{{"tool":"shell","command":["{long}"],"action":"allow"}}"#
+        )));
+        // Project layer may add command denies but not allows.
+        assert!(resolve(
+            None,
+            Some(r#"{"approval":{"rules":[{"tool":"shell","command":["ls"],"action":"allow"}]}}"#),
+            None
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn grant_key_scopes_shell_to_program_and_subcommand() {
+        let key = |argv: &[&str]| shell_action(argv).grant_key();
+        assert_eq!(key(&["cargo", "test", "--lib"]), key(&["cargo", "test"]));
+        assert_ne!(key(&["cargo", "test"]), key(&["cargo", "publish"]));
+        assert_ne!(key(&["cargo", "test"]), key(&["rm", "-rf", "x"]));
+        // Flag-first calls are keyed by their full argv.
+        assert_ne!(key(&["bash", "-c", "ls"]), key(&["bash", "-c", "rm x"]));
+        assert_eq!(key(&["ls"]), key(&["ls"]));
+        // Only subcommand-style CLIs share a key across their arguments.
+        assert_eq!(key(&["cargo", "test", "--lib"]), key(&["cargo", "test"]));
+        assert_ne!(
+            key(&["find", ".", "-name", "x"]),
+            key(&["find", ".", "-delete"])
+        );
+        assert_ne!(
+            key(&["sudo", "rm", "foo"]),
+            key(&["sudo", "rm", "-rf", "/"])
+        );
+        assert_ne!(key(&["env", "X=1", "rm"]), key(&["env", "X=1", "ls"]));
+        assert_ne!(
+            key(&["cargo", "run", "--", "a"]),
+            key(&["cargo", "run", "--", "b"])
+        );
+        assert_ne!(key(&["npm", "exec", "a"]), key(&["npm", "exec", "b"]));
+        assert_ne!(key(&["ssh", "host", "ls"]), key(&["ssh", "host", "rm"]));
+        let mut git = shell_action(&["status"]);
+        git.tool = "git".into();
+        assert_eq!(git.grant_key(), "git");
+    }
+
+    #[test]
+    fn cached_shell_grant_does_not_extend_to_another_program() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let hook = configured_hook(
+            ApprovalMode::Custom,
+            ApprovalPolicy::default(),
+            Arc::new(crate::tools::FnHook::new(move |_: &ToolAction| {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Approval::AllowAlways
+            })),
+        );
+        assert_eq!(
+            hook.approve(&shell_action(&["cargo", "test"])),
+            Approval::AllowOnce
+        );
+        assert_eq!(
+            hook.approve(&shell_action(&["cargo", "test", "-q"])),
+            Approval::AllowOnce
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        hook.approve(&shell_action(&["rm", "-rf", "x"]));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    mod prop {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn prefix_match_agrees_with_slice_prefix(
+                command in proptest::collection::vec(".{0,8}", 0..6),
+                prefix in proptest::collection::vec(".{0,8}", 0..6),
+            ) {
+                let expected = !prefix.is_empty() && command.starts_with(&prefix);
+                prop_assert_eq!(command_has_prefix(&command, &prefix), expected);
+                // Any non-empty prefix of the command itself always matches.
+                for n in 1..=command.len() {
+                    prop_assert!(command_has_prefix(&command, &command[..n]));
+                }
+            }
+
+            #[test]
+            fn grant_key_never_panics_and_is_stable(command in proptest::collection::vec(".{0,8}", 0..6)) {
+                let action = ToolAction {
+                    command,
+                    tool: "shell".into(),
+                    summary: String::new(),
+                    risk: RiskLevel::Execute,
+                };
+                prop_assert_eq!(action.grant_key(), action.grant_key());
+            }
+        }
+    }
+
     #[test]
     fn policy_order_and_project_restrictions() {
         let config = resolve(
@@ -919,6 +1160,7 @@ mod tests {
         .unwrap()
         .config;
         let action = |tool: &str| ToolAction {
+            command: Vec::new(),
             tool: tool.into(),
             summary: String::new(),
             risk: RiskLevel::Read,

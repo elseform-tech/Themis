@@ -78,6 +78,7 @@ pub async fn run(
     let mut definition = std::collections::hash_map::DefaultHasher::new();
     serde_json::to_string(hook)?.hash(&mut definition);
     let action = ToolAction {
+        command: Vec::new(),
         tool: format!(
             "hook_{}_{:016x}",
             hook.runtime_identity.as_ref().unwrap_or(&hook.name),
