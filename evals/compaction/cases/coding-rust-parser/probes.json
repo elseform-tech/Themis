@@ -1,0 +1,95 @@
+[
+  {
+    "id": "msrv",
+    "category": "constraint",
+    "question": "What is the minimum supported Rust version, and which syntax is therefore banned?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "(?is)1\\.70.*let-?else|let-?else.*1\\.70"
+    }
+  },
+  {
+    "id": "no_regex",
+    "category": "negation",
+    "question": "Is it acceptable to add the regex crate to simplify the parser?",
+    "planted_at": 23,
+    "expected": {
+      "regex": "(?i)^\\W*no\\b|not|never|do not"
+    }
+  },
+  {
+    "id": "fail_tests",
+    "category": "tool_result",
+    "question": "Which two tests failed initially?",
+    "planted_at": 4,
+    "expected": {
+      "regex": "(?is)caret_zero_zero_patch.*tilde_missing_minor|tilde_missing_minor.*caret_zero_zero_patch"
+    }
+  },
+  {
+    "id": "bug_file",
+    "category": "identifier",
+    "question": "In which file and function was the off-by-one found?",
+    "planted_at": 38,
+    "expected": {
+      "regex": "(?is)caret\\.rs.*bump_index|bump_index.*caret\\.rs"
+    }
+  },
+  {
+    "id": "bug_cmp",
+    "category": "tool_result",
+    "question": "What was the incorrect comparison, and what replaced it?",
+    "planted_at": 38,
+    "expected": {
+      "regex": "<=.*<|<\\s*2"
+    }
+  },
+  {
+    "id": "empty",
+    "category": "constraint",
+    "question": "What should an empty comparator return?",
+    "planted_at": 55,
+    "expected": {
+      "any_of": [
+        "EmptyComparator"
+      ]
+    },
+    "stale": [
+      "(?i)panic"
+    ]
+  },
+  {
+    "id": "final_tests",
+    "category": "tool_result",
+    "question": "How many tests passed in the final cargo test run?",
+    "planted_at": 57,
+    "expected": {
+      "regex": "\\b34\\b"
+    }
+  },
+  {
+    "id": "clippy",
+    "category": "tool_result",
+    "question": "Where did clippy complain and about what?",
+    "planted_at": 60,
+    "expected": {
+      "regex": "(?is)tilde\\.rs.*(19|unused)|unused.*tilde"
+    }
+  },
+  {
+    "id": "rustc_version",
+    "category": "decoy",
+    "question": "Which exact rustc version is installed on the build machine?",
+    "planted_at": 1,
+    "expect_unknown": true
+  },
+  {
+    "id": "next",
+    "category": "next_action",
+    "question": "What remains to be done?",
+    "planted_at": 66,
+    "expected": {
+      "regex": "(?is)changelog.*0\\.4\\.2|0\\.4\\.2.*changelog"
+    }
+  }
+]

@@ -1,0 +1,94 @@
+[
+  {
+    "id": "dates",
+    "category": "parked_topic",
+    "question": "What dates is the Lisbon trip?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "(?i)March 14.*(March )?19|14.*19 March|Mar(ch)? 14"
+    }
+  },
+  {
+    "id": "budget",
+    "category": "parked_topic",
+    "question": "What is the total trip budget?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "1,?800"
+    }
+  },
+  {
+    "id": "allergy",
+    "category": "parked_topic",
+    "question": "What food allergy must be remembered for the trip?",
+    "planted_at": 1,
+    "expected": {
+      "any_of": [
+        "peanut"
+      ]
+    }
+  },
+  {
+    "id": "hotel",
+    "category": "parked_topic",
+    "question": "Which hotel was penciled in and at what nightly price?",
+    "planted_at": 15,
+    "expected": {
+      "regex": "(?is)Miradouro Verde.*96|96.*Miradouro Verde"
+    }
+  },
+  {
+    "id": "neighborhood",
+    "category": "parked_topic",
+    "question": "Which neighborhood did the user want to stay in?",
+    "planted_at": 1,
+    "expected": {
+      "any_of": [
+        "Alfama"
+      ]
+    }
+  },
+  {
+    "id": "bug_func",
+    "category": "identifier",
+    "question": "Which function had the rounding bug and in which file?",
+    "planted_at": 32,
+    "expected": {
+      "regex": "(?is)round_cents.*totals\\.py|totals\\.py.*round_cents"
+    }
+  },
+  {
+    "id": "rounding",
+    "category": "decision",
+    "question": "Which rounding mode does the fix use?",
+    "planted_at": 35,
+    "expected": {
+      "regex": "(?i)HALF_EVEN|banker"
+    }
+  },
+  {
+    "id": "park_state",
+    "category": "parked_topic",
+    "question": "What was the status of the trip planning while the bug was fixed?",
+    "planted_at": 17,
+    "expected": {
+      "regex": "(?i)park|paus|on hold"
+    }
+  },
+  {
+    "id": "flight",
+    "category": "decoy",
+    "question": "Which airline and flight number was chosen for the trip?",
+    "planted_at": 1,
+    "expect_unknown": true
+  },
+  {
+    "id": "next",
+    "category": "next_action",
+    "question": "What is pending for the trip?",
+    "planted_at": 58,
+    "expected": {
+      "regex": "(?is)flight.*(dinner|restaurant)|(dinner|restaurant).*flight"
+    }
+  }
+]

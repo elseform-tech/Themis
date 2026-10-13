@@ -1,0 +1,14 @@
+{
+  "name": "parked-budget-recipe",
+  "kind": "parked_topic",
+  "description": "Budget script interrupted by two parked side topics (recipe, gift) then resumed.",
+  "suites": [
+    "core"
+  ],
+  "records": 62,
+  "chunks": [
+    28,
+    62
+  ],
+  "next_action": "Add a CSV export for the monthly budget plan."
+}

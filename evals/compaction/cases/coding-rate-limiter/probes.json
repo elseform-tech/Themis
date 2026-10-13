@@ -1,0 +1,117 @@
+[
+  {
+    "id": "algorithm",
+    "category": "constraint",
+    "question": "Which rate-limiting algorithm was the user required to use?",
+    "planted_at": 1,
+    "expected": {
+      "any_of": [
+        "token bucket",
+        "token-bucket"
+      ]
+    },
+    "stale": [
+      "sliding window"
+    ]
+  },
+  {
+    "id": "deps",
+    "category": "constraint",
+    "question": "Is adding a new third-party dependency allowed for this feature? Answer yes or no.",
+    "planted_at": 1,
+    "expected": {
+      "regex": "^\\W*no\\b"
+    }
+  },
+  {
+    "id": "free_tier",
+    "category": "identifier",
+    "question": "How many requests per minute does the free tier get?",
+    "planted_at": 24,
+    "expected": {
+      "regex": "\\b60\\b(?!\\d)"
+    }
+  },
+  {
+    "id": "paid_tier",
+    "category": "identifier",
+    "question": "How many requests per minute does the paid tier get?",
+    "planted_at": 24,
+    "expected": {
+      "regex": "\\b600\\b"
+    }
+  },
+  {
+    "id": "root_cause",
+    "category": "tool_result",
+    "question": "What was the root cause of the failing test_burst_exceeds?",
+    "planted_at": 52,
+    "expected": {
+      "any_of": [
+        "time.time",
+        "wall clock",
+        "wall-clock",
+        "monotonic"
+      ]
+    }
+  },
+  {
+    "id": "header",
+    "category": "superseded",
+    "question": "What is the final name of the response header showing remaining tokens?",
+    "planted_at": 69,
+    "expected": {
+      "regex": "X-RateLimit-Remaining"
+    },
+    "stale": [
+      "X-Rate-Remaining"
+    ]
+  },
+  {
+    "id": "clock_file",
+    "category": "identifier",
+    "question": "Which file holds the injected clock?",
+    "planted_at": 55,
+    "expected": {
+      "any_of": [
+        "limiter/clock.py"
+      ]
+    }
+  },
+  {
+    "id": "burst",
+    "category": "tool_result",
+    "question": "What is RATE_LIMIT_BURST set to in settings.py?",
+    "planted_at": 12,
+    "expected": {
+      "regex": "\\b25\\b"
+    }
+  },
+  {
+    "id": "skipped",
+    "category": "tool_result",
+    "question": "Why was one test skipped?",
+    "planted_at": 57,
+    "expected": {
+      "any_of": [
+        "redis"
+      ]
+    }
+  },
+  {
+    "id": "redis_host",
+    "category": "decoy",
+    "question": "What Redis hostname is the limiter configured to use?",
+    "planted_at": 1,
+    "expect_unknown": true
+  },
+  {
+    "id": "next",
+    "category": "next_action",
+    "question": "What are the remaining follow-up tasks?",
+    "planted_at": 83,
+    "expected": {
+      "regex": "(?is)(docs/limits|tier table|documentation).*(per-IP|ip)|(per-IP|ip).*(docs/limits|tier table|documentation)"
+    }
+  }
+]

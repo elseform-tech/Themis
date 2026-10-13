@@ -1,0 +1,14 @@
+{
+  "name": "narrative-lighthouse",
+  "kind": "narrative",
+  "description": "Collaborative novel with a character rename, a hidden secret and a hidden motive.",
+  "suites": [
+    "core"
+  ],
+  "records": 34,
+  "chunks": [
+    14,
+    34
+  ],
+  "next_action": "Write the next chapter: the inspector returns and Teague is exposed."
+}

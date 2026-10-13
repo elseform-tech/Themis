@@ -1,0 +1,98 @@
+[
+  {
+    "id": "delimiter",
+    "category": "identifier",
+    "question": "What delimiter does the legacy export use?",
+    "planted_at": 1,
+    "expected": {
+      "any_of": [
+        "semicolon",
+        ";"
+      ]
+    }
+  },
+  {
+    "id": "encoding",
+    "category": "identifier",
+    "question": "What character encoding does the legacy export use?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "(?i)windows-?1252|cp-?1252"
+    }
+  },
+  {
+    "id": "inplace",
+    "category": "constraint",
+    "question": "Which file must never be modified in place?",
+    "planted_at": 1,
+    "expected": {
+      "any_of": [
+        "orders_2019.csv"
+      ]
+    }
+  },
+  {
+    "id": "bad_rows",
+    "category": "superseded",
+    "question": "What should the importer do with rows that have an empty customer_id?",
+    "planted_at": 28,
+    "expected": {
+      "regex": "(?i)reject|skip"
+    },
+    "stale": [
+      "(?i)abort(s|ed)?\\b(?!.*instead)"
+    ]
+  },
+  {
+    "id": "bad_row_no",
+    "category": "tool_result",
+    "question": "Which row number caused the ValueError in test_full_file?",
+    "planted_at": 43,
+    "expected": {
+      "regex": "\\b8812\\b"
+    }
+  },
+  {
+    "id": "cause",
+    "category": "tool_result",
+    "question": "What was the cause of that ValueError?",
+    "planted_at": 43,
+    "expected": {
+      "regex": "(?i)whitespace|space|strip"
+    }
+  },
+  {
+    "id": "rows",
+    "category": "tool_result",
+    "question": "How many rows were imported and how many rejected in the final run?",
+    "planted_at": 62,
+    "expected": {
+      "regex": "(?s)41,?207.*\\b93\\b"
+    }
+  },
+  {
+    "id": "decimal",
+    "category": "identifier",
+    "question": "What decimal separator do amounts use in the export?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "(?i)comma|,"
+    }
+  },
+  {
+    "id": "page_size",
+    "category": "decoy",
+    "question": "What SQLite page_size did we configure?",
+    "planted_at": 1,
+    "expect_unknown": true
+  },
+  {
+    "id": "next",
+    "category": "next_action",
+    "question": "What is the proposed next step?",
+    "planted_at": 63,
+    "expected": {
+      "regex": "(?is)index.*customer_id|readme"
+    }
+  }
+]

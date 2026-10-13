@@ -1,0 +1,15 @@
+{
+  "name": "coding-rate-limiter",
+  "kind": "coding",
+  "description": "Python service: token-bucket limiter with a mid-session header rename and a clock-related test failure.",
+  "suites": [
+    "core"
+  ],
+  "records": 83,
+  "chunks": [
+    35,
+    72,
+    83
+  ],
+  "next_action": "Update docs/limits.md with the tier table; open a follow-up for per-IP limits."
+}

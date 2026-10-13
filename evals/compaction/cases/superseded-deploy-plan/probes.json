@@ -1,0 +1,103 @@
+[
+  {
+    "id": "region",
+    "category": "superseded",
+    "question": "What is the final deployment region?",
+    "planted_at": 43,
+    "expected": {
+      "regex": "eu-central-1"
+    },
+    "stale": [
+      "us-east-1",
+      "eu-west-1"
+    ]
+  },
+  {
+    "id": "pg",
+    "category": "superseded",
+    "question": "Which Postgres version will be used?",
+    "planted_at": 41,
+    "expected": {
+      "regex": "\\b16\\b"
+    },
+    "stale": [
+      "(?<![\\d.])15(?![\\d])"
+    ]
+  },
+  {
+    "id": "size",
+    "category": "superseded",
+    "question": "What instance type will be used?",
+    "planted_at": 29,
+    "expected": {
+      "regex": "t3\\.large"
+    },
+    "stale": [
+      "t3\\.medium"
+    ]
+  },
+  {
+    "id": "date",
+    "category": "superseded",
+    "question": "When is the cutover?",
+    "planted_at": 51,
+    "expected": {
+      "regex": "(?i)Nov(ember)?\\.? 11|11 Nov"
+    },
+    "stale": [
+      "(?i)Nov(ember)?\\.? 4\\b|\\b4 Nov"
+    ]
+  },
+  {
+    "id": "redis",
+    "category": "negation",
+    "question": "Is Redis to be used for caching?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "(?i)^\\W*no\\b|not|never|don't|do not"
+    }
+  },
+  {
+    "id": "analytics",
+    "category": "negation",
+    "question": "Will the analytics database be migrated this quarter?",
+    "planted_at": 27,
+    "expected": {
+      "regex": "(?i)^\\W*no\\b|not|never"
+    }
+  },
+  {
+    "id": "why_eu",
+    "category": "decision",
+    "question": "Why was the region moved to the EU first?",
+    "planted_at": 15,
+    "expected": {
+      "regex": "(?i)legal|data.*(stay|resid)|EU"
+    }
+  },
+  {
+    "id": "why_fra",
+    "category": "decision",
+    "question": "Why was eu-central-1 chosen over eu-west-1?",
+    "planted_at": 43,
+    "expected": {
+      "regex": "(?i)Frankfurt|latency"
+    }
+  },
+  {
+    "id": "backup",
+    "category": "decoy",
+    "question": "What backup retention period did we agree on?",
+    "planted_at": 1,
+    "expect_unknown": true
+  },
+  {
+    "id": "next",
+    "category": "next_action",
+    "question": "What is the next step?",
+    "planted_at": 59,
+    "expected": {
+      "regex": "(?is)rollback.*load test|load test.*rollback"
+    }
+  }
+]

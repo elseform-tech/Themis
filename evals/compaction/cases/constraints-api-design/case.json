@@ -1,0 +1,14 @@
+{
+  "name": "constraints-api-design",
+  "kind": "superseded",
+  "description": "API design with standing constraints, negations and two reversed decisions; terse reply style.",
+  "suites": [
+    "core"
+  ],
+  "records": 57,
+  "chunks": [
+    28,
+    57
+  ],
+  "next_action": "Write the OpenAPI entry for /v2/profiles and the cursor encoding spec."
+}

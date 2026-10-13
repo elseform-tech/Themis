@@ -1,0 +1,14 @@
+{
+  "name": "superseded-deploy-plan",
+  "kind": "superseded",
+  "description": "Deployment plan where region, DB version, size and date each change; plus negations.",
+  "suites": [
+    "core"
+  ],
+  "records": 59,
+  "chunks": [
+    30,
+    59
+  ],
+  "next_action": "Write the rollback runbook and rerun the load test on t3.large."
+}
