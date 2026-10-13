@@ -29,6 +29,7 @@ def trial_rows(case, run):
     from .grade import grade
 
     answers = {a["id"]: a["answer"] for a in run["answers"]}
+    errors = {a["id"]: a.get("error") for a in run["answers"]}
     rows = []
     for probe in case["probes"]:
         verdict = grade(probe, answers.get(probe["id"]))
@@ -40,6 +41,7 @@ def trial_rows(case, run):
             "has_stale": bool(probe.get("stale")),
             "verdict": verdict,
             "answer": answers.get(probe["id"]),
+            "error": errors.get(probe["id"]),
         })
     return rows
 
