@@ -85,8 +85,12 @@ levels are listed.
   **Changes** (readable changed files and their wrapped, highlighted diff,
   updating live while the agent works; binary and generated files are hidden), **Files**, **Branches**, **Pull requests** (needs
   the GitHub CLI signed in) and **Tasks**. Tasks lists this chat's running work and
-  the automations that continue it, with **Stop** (the current run) and **Pause**
-  (turn an automation off); stopping never undoes work already done. A small
+  the automations that continue it and programs the agent started in the
+  background (dev servers, watchers), with **Stop** (the current run, or one
+  background program, with its latest output and a read-only **Full log**) and
+  **Pause** (turn an automation off); stopping never undoes work already done.
+  Background programs end when you delete the chat or quit the Themis server;
+  stopping a run does not end them, but it does end a command the run was waiting for. A small
   stack of icons beside the Workspace button shows the same tasks at a glance and
   opens that tab. Drag its edge to resize. It never changes files or
   runs Git actions. The composer shows the project folder and current branch.
