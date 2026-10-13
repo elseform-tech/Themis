@@ -34,9 +34,33 @@ Observed with the real free model `longcat-2.5-preview-free`:
   `docs/verification/assets/workspace-tasks-tab-scheduled-native.png` (native window screenshot).
 - The app, background server and vite were quit afterward.
 
+## Native click-through after review fixes (head `79ad8f5`)
+
+Debug `.app` bundle (`npx -y @tauri-apps/cli@2 build --debug --bundles app` in `crates/desktop`), its `Contents/MacOS/themis-desktop` launched with an isolated `HOME`, so the window carries the `ai.themis.desktop` bundle identity while using scratch data. Clicks were real native clicks through desktop computer use; captures are window-only `screencapture -l`.
+
+- Live `longcat-2.5-preview-free` prompt, then the indicator: Tasks tab shows a Running row ("Chat run · Running now", Stop) above the Scheduled automation (Pause), badge "2":
+  `docs/verification/assets/workspace-tasks-running-row-native.png`.
+- Clicking Stop: the chat shows "Stopped by you", the Running row disappears, the badge drops to "1" and the indicator keeps only the clock:
+  `docs/verification/assets/workspace-tasks-stopped-native.png`.
+- Clicking Pause: the row reads "Paused · resume it in Automations", the badge and the header indicator disappear, and `get_thread_tasks` reports the automation `enabled: false`:
+  `docs/verification/assets/workspace-tasks-paused-native.png`.
+
+### Temporary self-cancelling watch (live, existing tools only)
+
+In a second chat (YOLO), the agent created "Watch status.txt" through `manage_automations` (`origin: agent`, no calendar schedule, `interval_mins` then set to 2 through `update_automation`). Task: read `status.txt`; if it contains DONE, reply and delete this automation; otherwise reply "still pending". A content-free poller logged `list_automations` and `get_thread_tasks` and flipped the file after two runs.
+
+| Time | Event |
+| --- | --- |
+| 20:53 | Created; Tasks shows "Every 2 minutes · next 8:55 PM", Automation · by agent (`workspace-temp-watch-scheduled-native.png`) |
+| 20:55:50 | Run 1 → "Still pending"; Tasks adds an Earlier row, indicator shows clock + check (`workspace-temp-watch-run1-native.png`) |
+| 20:58:31 | Run 2 → "still pending"; poller flips `status.txt` to DONE |
+| 21:00:47 | Run 3 → "Task finished - removing this watch"; the agent listed and deleted the automation |
+| 21:01:06 | `list_automations` has no automation for the chat; Tasks shows only Earlier runs (`workspace-temp-watch-deleted-native.png`) |
+
+Observations for follow-up work (not regressions of this branch): the agent needed four attempts to create an interval automation because the tool description documents only calendar schedules; runs were 2 min 41 s apart (next run is computed from completion and the scheduler ticks every 30 s); after deletion, Earlier rows fall back to the raw "Automation <name> — <timestamp>" title and lose the "by agent" tag; a chat created through the CLI does not appear in an already open window until it reloads; Stop discards the partially streamed answer text (not yet checked against `main`).
+
 ## Not verified
 
-- Native screenshot of the Tasks tab with a Running row, a Needs attention row (approval or failed automation run) or an Earlier row: the desktop was shared with other agents, so synthetic input was limited to opening the tab once. These groups are covered by Vitest only.
-- Clicking Stop or Pause in the native window. Pause is covered by `thread_tasks_cli_e2e` (backend) and by Vitest (bridge dispatch), not by a native click.
+- A native Needs attention row (approval wait or failed automation run); covered by Vitest.
 - The reduced-motion no-spin rule is a CSS media query; the test only checks the arc element exists.
 - Windows and Linux rendering.
