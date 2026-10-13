@@ -1926,3 +1926,199 @@ async fn bounded_file_read_prevents_compaction_and_keeps_completion() {
     );
     assert!(serde_json::to_vec(&final_request).unwrap().len() < 100_000);
 }
+
+struct CalibrationRun {
+    result: anyhow::Result<String>,
+    events: Vec<RunEvent>,
+    summary_requests: usize,
+    ordinary_requests: usize,
+    evidence: std::path::PathBuf,
+    _project: tempfile::TempDir,
+}
+
+/// A 24k-budget run whose history sits well below the raw compaction threshold.
+async fn calibration_run(usage_multiplier: Option<f64>, overflows: usize) -> CalibrationRun {
+    use themis_core::runtime::{ConversationRole, ConversationTurn};
+    let server = MockServer::start().await;
+    common::mount_script_scripted(
+        &server,
+        vec![
+            common::tool_call_body(
+                "write",
+                "write_file",
+                json!({"file_path":"out.txt","content":"done\n","append":false}),
+            ),
+            common::final_text_body("Calibration run finished"),
+        ],
+        Some("Original task CALIBRATE: write out.txt once, then finish."),
+        usage_multiplier,
+        overflows,
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    let evidence = project.path().join(".themis/context/calibration");
+    std::fs::create_dir_all(&evidence).unwrap();
+    let mut history = vec![ConversationTurn {
+        role: ConversationRole::User,
+        text: "Original task CALIBRATE: write out.txt once, then finish.".into(),
+    }];
+    for index in 0..24 {
+        history.push(ConversationTurn {
+            role: ConversationRole::User,
+            text: format!(
+                "Historical packet {index}: {}",
+                format!("district {index} observation; ").repeat(40)
+            ),
+        });
+    }
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2048);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Write out.txt and finish.".into(),
+        history,
+        approvals,
+        RunPolicy {
+            total_turns: 4,
+            context_token_budget: 24_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence.clone()),
+    )
+    .await;
+    let events = common::drain(&mut rx).await;
+    let requests = server.received_requests().await.unwrap();
+    let is_summary = |request: &wiremock::Request| {
+        let body: serde_json::Value = request.body_json().unwrap();
+        body["messages"][0]["content"]
+            .as_str()
+            .is_some_and(|text| text.contains("You summarize agent context"))
+    };
+    CalibrationRun {
+        result,
+        events,
+        summary_requests: requests.iter().filter(|r| is_summary(r)).count(),
+        ordinary_requests: requests.iter().filter(|r| !is_summary(r)).count(),
+        evidence,
+        _project: project,
+    }
+}
+
+fn budget_events(events: &[RunEvent]) -> Vec<&themis_core::runtime::ContextBudget> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::ContextBudget(budget) => Some(budget),
+            _ => None,
+        })
+        .collect()
+}
+
+fn checkpoints(events: &[RunEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| matches!(event, RunEvent::ContextCheckpoint { .. }))
+        .count()
+}
+
+#[tokio::test]
+async fn provider_usage_above_the_estimate_compacts_earlier_than_the_raw_estimate() {
+    let raw = calibration_run(None, 0).await;
+    assert_eq!(raw.result.as_deref().unwrap(), "Calibration run finished");
+    assert_eq!(
+        checkpoints(&raw.events),
+        0,
+        "raw estimate stays below the threshold"
+    );
+    let first = budget_events(&raw.events)[0];
+    assert!(first.calibration_ratio_milli.is_none() && first.provider_input_tokens.is_none());
+    assert_eq!(Some(first.used_tokens), first.raw_estimated_tokens);
+
+    let calibrated = calibration_run(Some(3.0), 0).await;
+    assert_eq!(
+        calibrated.result.as_deref().unwrap(),
+        "Calibration run finished"
+    );
+    assert_eq!(
+        checkpoints(&calibrated.events),
+        1,
+        "provider usage 3x the estimate must trigger compaction before the second request"
+    );
+    let budgets = budget_events(&calibrated.events);
+    assert!(budgets[0].calibration_ratio_milli.is_none());
+    let second = budgets.last().unwrap();
+    let ratio = second
+        .calibration_ratio_milli
+        .expect("ratio after one report");
+    assert!(
+        (2000..=4000).contains(&ratio),
+        "ratio {ratio} reflects the 3x report"
+    );
+    assert!(second.provider_input_tokens.unwrap() > 0);
+    assert!(
+        second.raw_estimated_tokens.unwrap() < second.used_tokens
+            || checkpoints(&calibrated.events) == 1
+    );
+    assert!(!calibrated
+        .events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { .. })));
+}
+
+#[tokio::test]
+async fn context_overflow_compacts_once_and_retries_without_replaying_tools() {
+    let run = calibration_run(None, 1).await;
+    assert_eq!(run.result.as_deref().unwrap(), "Calibration run finished");
+    assert_eq!(
+        checkpoints(&run.events),
+        1,
+        "overflow triggers one compaction"
+    );
+    assert!(run.summary_requests >= 1);
+    assert_eq!(
+        run.ordinary_requests, 3,
+        "overflowed request, retry, final answer"
+    );
+    let writes = run
+        .events
+        .iter()
+        .filter(|event| matches!(event, RunEvent::ToolCallFinished { tool, ok: true, .. } if tool == "write_file"))
+        .count();
+    assert_eq!(writes, 1);
+    assert!(!run
+        .events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { .. })));
+}
+
+#[tokio::test]
+async fn second_consecutive_overflow_fails_explicitly_with_originals_preserved() {
+    let run = calibration_run(None, 2).await;
+    let error = run.result.expect_err("two overflows must fail").to_string();
+    assert!(error.contains("LLM request failed"), "{error}");
+    assert_eq!(run.ordinary_requests, 2, "exactly one retry");
+    assert!(run
+        .events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { .. })));
+    assert!(!run
+        .events
+        .iter()
+        .any(|event| matches!(event, RunEvent::ToolCallStarted { .. })));
+    let archived: String = std::fs::read_dir(&run.evidence)
+        .unwrap()
+        .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap_or_default())
+        .collect();
+    assert!(archived.contains("CALIBRATE"), "originals stay on disk");
+}

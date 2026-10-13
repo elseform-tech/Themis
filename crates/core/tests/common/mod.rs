@@ -65,9 +65,23 @@ pub async fn mount_script_with_summary(
     bodies: Vec<Value>,
     summary: Option<&str>,
 ) {
+    mount_script_scripted(server, bodies, summary, None, 0).await;
+}
+
+/// Like `mount_script_with_summary`, but ordinary answers report `usage.prompt_tokens`
+/// as `usage_multiplier` times the request body's bytes / 4 (the runtime's own estimate
+/// basis), and the first `overflows` ordinary requests fail with a context-length 400.
+pub async fn mount_script_scripted(
+    server: &MockServer,
+    bodies: Vec<Value>,
+    summary: Option<&str>,
+    usage_multiplier: Option<f64>,
+    overflows: usize,
+) {
     assert!(!bodies.is_empty(), "script needs at least one response");
     let bodies = Arc::new(bodies);
     let count = Arc::new(AtomicUsize::new(0));
+    let attempts = Arc::new(AtomicUsize::new(0));
     let summary = summary.map(|text| format!("Goal/constraints: preserve the request. Confirmed findings: {text} Completed changes/tests: observed actions only. Unresolved work: finish the request. Next action: continue from recorded state."));
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
@@ -81,11 +95,22 @@ pub async fn mount_script_with_summary(
                     return ResponseTemplate::new(200).set_body_json(final_text_body(summary));
                 }
             }
+            if attempts.fetch_add(1, Ordering::SeqCst) < overflows {
+                return ResponseTemplate::new(400).set_body_json(json!({"error": {
+                    "code": "context_length_exceeded",
+                    "message": "This model's maximum context length is 8192 tokens."
+                }}));
+            }
             let index = count.fetch_add(1, Ordering::SeqCst);
-            let body = bodies
+            let mut body = bodies
                 .get(index)
                 .unwrap_or_else(|| bodies.last().expect("non-empty script"))
                 .clone();
+            if let Some(multiplier) = usage_multiplier {
+                let prompt = (request.body.len() as f64 / 4.0 * multiplier) as u64;
+                body["usage"] = json!({"prompt_tokens": prompt, "completion_tokens": 5,
+                    "total_tokens": prompt + 5});
+            }
             ResponseTemplate::new(200).set_body_json(body)
         })
         .mount(server)
