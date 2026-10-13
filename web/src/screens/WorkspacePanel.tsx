@@ -39,10 +39,11 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   useEffect(() => { if (focusAt) setTab("changes"); }, [focusAt]);
   // The header's task indicator asks for the Tasks tab.
   const tabRequestAt = state.workspaceTabRequest?.at;
-  useEffect(() => { if (tabRequestAt) choose("tasks"); }, [tabRequestAt]);
+  // The request is applied once, so the remembered tab wins the next time the panel opens.
+  useEffect(() => { if (tabRequestAt) { choose("tasks"); dispatch({ type: "ui/tab-request-consumed" }); } }, [tabRequestAt]); // eslint-disable-line react-hooks/exhaustive-deps
   const diff = state.diffs[threadId];
   const changed = diff?.available ? diff.files.length : 0;
-  const counts = countTasks(state.tasks[threadId]);
+  const counts = countTasks(state.tasks[threadId], state.settings.automations_enabled);
   const taskCount = counts.attention + counts.running + counts.scheduled;
   return (
     <aside ref={panel} className={`themis-workspace-panel${dragging ? " is-resizing" : ""}`} aria-label="Workspace (read-only)" style={{ width }}>

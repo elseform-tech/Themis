@@ -170,6 +170,7 @@ export type AppAction =
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView }
   | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: "tasks" }
+  | { type: "ui/tab-request-consumed" }
   | { type: "tasks/loaded"; threadId: string; tasks: ThreadTasks }
   | { type: "ui/palette"; open: boolean }
   | { type: "ui/project-dialog"; open: boolean };
