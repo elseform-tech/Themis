@@ -213,6 +213,7 @@ impl AppState {
             },
             automations: targeting,
             recent,
+            background_tasks: self.thread_background_tasks(thread_id),
         })
     }
 

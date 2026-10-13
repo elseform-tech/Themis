@@ -109,6 +109,7 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             }
             ThreadEvent::Incomplete { .. } => "incomplete",
             ThreadEvent::FilesChanged { .. } => "files_changed",
+            ThreadEvent::BackgroundTasksChanged => "background_tasks_changed",
         })
         .collect()
 }

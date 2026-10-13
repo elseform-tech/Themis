@@ -57,6 +57,7 @@ pending, `summary`). The UI refreshes it on existing run, approval, tool,
 automation and review events. Stop in Tasks uses `stop_thread`; Pause uses
 `set_automation_enabled` with `enabled: false`. Neither undoes completed work.
 Only automations that continue a chat (`target_thread_id`) appear there.
+`background_tasks` lists the chat's background shell tasks (see [sandbox.md](sandbox.md#background-shell-tasks)) and refreshes on `background_tasks_changed` events.
 
 ## Verification
 

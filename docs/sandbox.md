@@ -53,8 +53,14 @@ Custom requires the tool working directory to stay inside the project root.
 YOLO permits external paths. Command rules are a tool policy, not a sandbox: deny rules match the program basename
 (case-insensitively on macOS/Windows) but wrappers such as `env`, `sudo` or `bash -c`
 bypass them. The shell child runs in its own process group, so Ctrl-C in the CLI does
-not signal it; only the timeout kills the group, and stopping a run does not
-currently kill a running shell child.
+not signal it. The timeout kills the group, and **stopping a run kills the
+blocking shell command it is waiting for** (whole process group, same
+SIGTERM-then-SIGKILL sequence); the call fails with "command was stopped by you
+and killed". Background tasks (below) are the exception: they outlive the turn.
+After the direct child exits, output is collected for at most 1.5 seconds. A
+backgrounded grandchild (`sh -c 'server &'`) inherits the output pipes and no longer
+hangs the call; the result then ends with a note saying the process still holds
+its output and suggesting `background=true`. That grandchild keeps running.
 Shell output is bounded at 32 KiB; the default
 execution timeout is 120 seconds. On timeout the whole process tree is killed:
 on Unix the child leads its own process group, which receives SIGTERM, a short
@@ -91,3 +97,51 @@ other private information; inspect exported logs before sharing them.
 3. Review the recorded tool events; advanced users can inspect local diagnostic logs.
 4. If a key was pasted into a prompt/file or otherwise exposed, rotate it with
    the provider and replace the stored key.
+
+## Background shell tasks
+
+`shell` with `"background": true` starts the program and returns at once with a
+`task_id` (optional `background_timeout_secs`, default 7,200, maximum 86,400). The
+call goes through exactly the same approval path as a blocking call: same
+`ToolAction` argv, same grant key and command-scoped `approval.rules[].command`
+matching, same Custom/YOLO behavior; the approval summary adds "in the
+background". The program gets the same scrubbed environment, no stdin and its
+own process group. Output (stdout and stderr interleaved) feeds a rolling log of
+the last 64 KiB, captured on helper threads, cut only at UTF-8 character
+boundaries.
+
+The separate **`background_task`** tool (a separate tool keeps the `shell`
+schema simple and lets a skill grant managing tasks together with `shell`)
+takes `action`:
+
+| Action | Result |
+| --- | --- |
+| `list` | this chat's tasks (id, state, exit code, command, log size) |
+| `status` | state, exit code and the last 20 output lines |
+| `log` | a page of at most 16 KiB (default 8 KiB): `offset` (use the previous `next_offset`; omit for the newest output), `next_offset`, `total_bytes`, `oldest_retained_offset`, `more` |
+| `stop` | kills the whole process group (SIGTERM, 300 ms grace, SIGKILL) and waits up to 5 s |
+
+`background_task` needs no extra approval: it reaches only tasks this chat
+already started with an approved `shell` call, and returns bounded output.
+Tasks are private to their chat.
+
+Limits: 4 running tasks per chat and 16 per app server (starting another fails
+with the limit named); the last 20 finished records per chat are kept.
+
+Lifetime. A task belongs to its chat and **outlives the turn**; ending or
+stopping a run does not stop it. It is killed (whole group) when the chat is
+deleted (also when its project is deleted), when the app server shuts down (the
+`shutdown` request, SIGTERM or SIGINT) and at its deadline. When the main
+process exits on its own, the rest of its process group is stopped so nothing is
+orphaned; a program that daemonizes into a new session escapes this, as it does
+for blocking commands. Records and finished logs are persisted under
+`background/` in the app data directory. If the server dies without cleanup
+(crash, SIGKILL, power loss), tasks that were running are reported as **lost**
+after the next start, never as running; Themis does not track or kill such
+processes, so check the port or `pgrep` if you expect one to be left.
+Graceful shutdown records tasks as stopped and keeps their logs.
+
+A started task is recorded in the task ledger like any other action (the start
+result carries the `task_id`), so the agent still knows it after context
+compaction; `background_task list` recovers it from the app server as well.
+

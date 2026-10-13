@@ -21,10 +21,10 @@ pub const MAX_SCRIPTS_TOTAL_BYTES: usize = 65536;
 /// Exact tool names available from [`crate::tools::boxed_tools`], in build order.
 ///
 /// Verified against the `#[tool(name = ...)]` attributes in `tools.rs`
-/// (`shell`, `apply_patch`, `git`) and the `autoagents-toolkit` filesystem
+/// (`shell`, `background_task`, `apply_patch`, `git`) and the `autoagents-toolkit` filesystem
 /// tool names (`list_dir`, `read_file`, `write_file`, `copy_file`,
 /// `move_file`, `delete_file`, `create_dir`, `search_file`).
-const KNOWN_TOOL_NAMES: [&str; 11] = [
+const KNOWN_TOOL_NAMES: [&str; 12] = [
     "list_dir",
     "read_file",
     "write_file",
@@ -34,6 +34,7 @@ const KNOWN_TOOL_NAMES: [&str; 11] = [
     "create_dir",
     "search_file",
     "shell",
+    "background_task",
     "apply_patch",
     "git",
 ];
@@ -187,9 +188,15 @@ pub fn filter_tools(tools: Vec<Box<dyn ToolT>>, skills: &[Skill]) -> Vec<Box<dyn
             if !KNOWN_TOOL_NAMES.contains(&name) {
                 return true;
             }
+            // Managing a background task is part of granting `shell`.
+            let granted = if name == "background_task" {
+                "shell"
+            } else {
+                name
+            };
             skills.iter().all(|skill| {
                 skill.allowed_tools.is_empty()
-                    || skill.allowed_tools.iter().any(|allowed| allowed == name)
+                    || skill.allowed_tools.iter().any(|allowed| allowed == granted)
             })
         })
         .collect()
@@ -470,7 +477,7 @@ mod tests {
     fn filter_tools_applies_intersection_semantics() {
         let tmp = tempfile::tempdir().unwrap();
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 12);
         let skills = vec![
             skill("a", "A", &["read_file", "list_dir", "shell"], vec![]),
             skill("b", "B", &["read_file", "shell", "git"], vec![]),
@@ -478,7 +485,14 @@ mod tests {
         let kept = filter_tools(tools, &skills);
         let mut names: Vec<String> = kept.iter().map(|tool| tool.name().to_owned()).collect();
         names.sort();
-        assert_eq!(names, vec!["read_file".to_owned(), "shell".to_owned()]);
+        assert_eq!(
+            names,
+            vec![
+                "background_task".to_owned(),
+                "read_file".to_owned(),
+                "shell".to_owned()
+            ]
+        );
     }
 
     #[test]
@@ -487,10 +501,10 @@ mod tests {
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
         let skills = vec![skill("a", "A", &[], vec![])];
         let kept = filter_tools(tools, &skills);
-        assert_eq!(kept.len(), 11);
+        assert_eq!(kept.len(), 12);
         // Empty skills == passthrough.
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
-        assert_eq!(filter_tools(tools, &[]).len(), 11);
+        assert_eq!(filter_tools(tools, &[]).len(), 12);
     }
 
     #[test]

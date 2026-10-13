@@ -171,6 +171,7 @@ impl AppState {
             threads.remove(id);
         }
         drop(threads);
+        self.forget_background_tasks(&ids).await;
         self.persist_registry().await;
         let root_text = root.to_string_lossy().into_owned();
         let removed = {

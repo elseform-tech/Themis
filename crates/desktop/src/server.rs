@@ -232,10 +232,12 @@ impl Server {
     pub async fn run(self) -> Result<(), String> {
         self.state.log_server_event("started");
         let mut stopped = self.shutdown.subscribe();
+        let mut termination = Termination::install();
         loop {
             let (stream, _) = tokio::select! {
                 result = self.listener.accept() => result.map_err(|err| err.to_string())?,
                 _ = stopped.recv() => break,
+                _ = termination.requested() => break,
             };
             let state = self.state.clone();
             let token = self.token.clone();
@@ -246,6 +248,8 @@ impl Server {
                 let _ = serve_connection(stream, state, token, tx, sink, shutdown).await;
             });
         }
+        // Background programs belong to this server: stop them with it.
+        self.state.shutdown_background_tasks().await;
         let path = self.data_dir.join(DISCOVERY_FILE);
         if std::fs::read_to_string(&path)
             .ok()
@@ -256,6 +260,46 @@ impl Server {
         }
         self.state.log_server_event("stopped");
         Ok(())
+    }
+}
+
+/// SIGTERM/SIGINT listeners, created once before the accept loop so a signal
+/// arriving between accepts or during cleanup is never dropped (the first
+/// registration replaces the default action). Never fires where signals cannot
+/// be observed.
+struct Termination {
+    #[cfg(unix)]
+    streams: Option<(tokio::signal::unix::Signal, tokio::signal::unix::Signal)>,
+}
+
+impl Termination {
+    fn install() -> Self {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let streams = match (
+                signal(SignalKind::terminate()),
+                signal(SignalKind::interrupt()),
+            ) {
+                (Ok(terminate), Ok(interrupt)) => Some((terminate, interrupt)),
+                _ => None,
+            };
+            Self { streams }
+        }
+        #[cfg(not(unix))]
+        Self {}
+    }
+
+    async fn requested(&mut self) {
+        #[cfg(unix)]
+        if let Some((terminate, interrupt)) = self.streams.as_mut() {
+            tokio::select! {
+                _ = terminate.recv() => {}
+                _ = interrupt.recv() => {}
+            }
+            return;
+        }
+        std::future::pending::<()>().await;
     }
 }
 
@@ -635,6 +679,21 @@ pub async fn dispatch(
         "get_thread_tasks" => output!(
             state
                 .get_thread_tasks(&arg::<String>(&args, "threadId")?)
+                .await?
+        ),
+        "stop_background_task" => output!(
+            state
+                .stop_background_task(arg(&args, "threadId")?, arg(&args, "taskId")?)
+                .await?
+        ),
+        "get_background_task_log" => output!(
+            state
+                .get_background_task_log(
+                    arg(&args, "threadId")?,
+                    arg(&args, "taskId")?,
+                    arg::<Option<u64>>(&args, "offset")?,
+                    arg::<Option<usize>>(&args, "maxBytes")?,
+                )
                 .await?
         ),
         "create_automation" => output!(

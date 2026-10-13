@@ -12,6 +12,7 @@
 //! `Context::with_tools(...)` without the `#[agent(...)]` macro (see
 //! [`boxed_tools`] docs for both wirings).
 
+pub mod background;
 mod patch;
 
 use patch::*;
@@ -19,7 +20,8 @@ use patch::*;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub use autoagents::async_trait;
@@ -928,6 +930,7 @@ async fn run_command(
     args: Vec<String>,
     workdir: PathBuf,
     tool: &'static str,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<CommandOutput, ToolCallError> {
     run_command_with_timeout(
         program,
@@ -935,34 +938,76 @@ async fn run_command(
         workdir,
         tool,
         Duration::from_secs(SHELL_TIMEOUT_SECS),
+        cancel,
     )
     .await
 }
 
 /// [`run_command`] with an explicit kill deadline (tests use a short budget).
+/// `cancel` kills the whole process tree as soon as it is set (Stop).
 async fn run_command_with_timeout(
     program: String,
     args: Vec<String>,
     workdir: PathBuf,
     tool: &'static str,
     timeout: Duration,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<CommandOutput, ToolCallError> {
     tokio::task::spawn_blocking(move || {
-        run_command_blocking(&program, &args, &workdir, tool, timeout)
+        run_command_blocking(&program, &args, &workdir, tool, timeout, cancel.as_deref())
     })
     .await
     .map_err(|e| tool_error(format!("{tool}: execution task failed: {e}")))?
 }
 
+/// How long to keep reading output after the direct child has exited. A
+/// backgrounded grandchild (`cmd &`) inherits the pipes and would otherwise
+/// hold them open for as long as it lives.
+const PIPE_GRACE: Duration = Duration::from_millis(1500);
+/// Per-stream capture bound while a command runs; excess is discarded.
+const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+
+/// One output pipe drained on its own thread into a shared, bounded buffer.
+struct Drain {
+    buffer: Arc<Mutex<Vec<u8>>>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl Drain {
+    fn spawn<R: Read + Send + 'static>(mut pipe: R) -> Self {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let shared = Arc::clone(&buffer);
+        let thread = std::thread::spawn(move || {
+            let mut chunk = [0u8; 8192];
+            while let Ok(read) = pipe.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                let mut buffer = shared.lock().unwrap_or_else(|e| e.into_inner());
+                let room = MAX_CAPTURE_BYTES.saturating_sub(buffer.len());
+                buffer.extend_from_slice(&chunk[..read.min(room)]);
+            }
+        });
+        Self { buffer, thread }
+    }
+
+    fn take(&self) -> Vec<u8> {
+        std::mem::take(&mut *self.buffer.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
 /// Blocking child-process driver: spawn, poll with a kill deadline, combine
 /// stdout/stderr, truncate. Both pipes are drained on helper threads so a
 /// chatty child never wedges on a full pipe buffer while we poll `try_wait`.
+/// After the child exits, output is collected for at most [`PIPE_GRACE`]: a
+/// grandchild that kept the pipes open no longer hangs the call.
 fn run_command_blocking(
     program: &str,
     args: &[String],
     workdir: &Path,
     tool: &str,
     timeout: Duration,
+    cancel: Option<&AtomicBool>,
 ) -> Result<CommandOutput, ToolCallError> {
     let mut command = std::process::Command::new(program);
     command
@@ -980,23 +1025,8 @@ fn run_command_blocking(
         .spawn()
         .map_err(|e| tool_error(format!("{tool}: failed to start '{program}': {e}")))?;
 
-    let drain = |mut pipe: std::process::ChildStdout| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = pipe.read_to_end(&mut buf);
-            buf
-        })
-    };
-    // `ChildStdout` and `ChildStderr` are distinct types; read stderr through
-    // the same shape via a tiny adapter thread.
-    let stdout_thread = child.stdout.take().map(drain);
-    let stderr_thread = child.stderr.take().map(|mut pipe| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = pipe.read_to_end(&mut buf);
-            buf
-        })
-    });
+    let stdout_drain = child.stdout.take().map(Drain::spawn);
+    let stderr_drain = child.stderr.take().map(Drain::spawn);
 
     let deadline = Instant::now() + timeout;
     let status = loop {
@@ -1006,32 +1036,54 @@ fn run_command_blocking(
         {
             Some(status) => break status,
             None => {
-                if Instant::now() >= deadline {
+                let stopped = cancel.is_some_and(|flag| flag.load(Ordering::SeqCst));
+                if stopped || Instant::now() >= deadline {
                     kill_process_tree(&mut child);
                     let _ = child.wait();
                     // Detach the drain threads instead of joining: a process
                     // that escaped the group (e.g. called setsid) could still
                     // hold the pipes open and wedge the join. The error must
                     // return promptly; the threads exit when the pipes close.
-                    drop(stdout_thread);
-                    drop(stderr_thread);
-                    return Err(tool_error(format!(
-                        "{tool}: command timed out after {}s and was killed",
-                        timeout.as_secs()
-                    )));
+                    drop((stdout_drain, stderr_drain));
+                    return Err(tool_error(if stopped {
+                        format!("{tool}: command was stopped by you and killed")
+                    } else {
+                        format!(
+                            "{tool}: command timed out after {}s and was killed",
+                            timeout.as_secs()
+                        )
+                    }));
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
     };
 
-    let stdout = stdout_thread
-        .and_then(|thread| thread.join().ok())
-        .unwrap_or_default();
-    let stderr = stderr_thread
-        .and_then(|thread| thread.join().ok())
-        .unwrap_or_default();
-    Ok(combine_output(&status, &stdout, &stderr))
+    let drains = [&stdout_drain, &stderr_drain];
+    let grace = Instant::now() + PIPE_GRACE;
+    while Instant::now() < grace
+        && !drains.iter().all(|drain| {
+            drain
+                .as_ref()
+                .is_none_or(|drain| drain.thread.is_finished())
+        })
+    {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let leaked = !drains.iter().all(|drain| {
+        drain
+            .as_ref()
+            .is_none_or(|drain| drain.thread.is_finished())
+    });
+    let stdout = stdout_drain.as_ref().map(Drain::take).unwrap_or_default();
+    let stderr = stderr_drain.as_ref().map(Drain::take).unwrap_or_default();
+    let mut output = combine_output(&status, &stdout, &stderr);
+    if leaked {
+        output.output.push_str(
+            "\n[note: a process started by this command still holds its output open; stopped waiting 1.5s after the command exited. Use shell with background=true for programs that keep running.]",
+        );
+    }
+    Ok(output)
 }
 
 /// Kill `child` and every descendant that stayed in its process tree.
@@ -1192,6 +1244,18 @@ pub struct ShellArgs {
     #[serde(default)]
     #[input(description = "Working directory relative to the project root; empty means the root")]
     pub cwd: String,
+    /// Start the program and return at once with a task id instead of waiting.
+    #[serde(default)]
+    #[input(
+        description = "true starts the program in the background (dev servers, watchers) and returns a task_id immediately; manage it with the background_task tool. false (default) waits for it to finish"
+    )]
+    pub background: bool,
+    /// Deadline for a background task, in seconds; 0 means the 2 hour default.
+    #[serde(default)]
+    #[input(
+        description = "Only with background=true: kill the task after this many seconds (0 = default 7200, max 86400)"
+    )]
+    pub background_timeout_secs: u64,
 }
 
 /// Runs a program with argv (no shell string) and `cwd` pinned inside root.
@@ -1202,7 +1266,7 @@ pub struct ShellArgs {
 /// execution timeout ([`SHELL_TIMEOUT_SECS`] by default).
 #[tool(
     name = "shell",
-    description = "Run a program with explicit argv and a project-root working directory (no shell). Always requires approval.",
+    description = "Run a program with explicit argv and a project-root working directory (no shell). Always requires approval. Waits for the program to finish; for dev servers and watchers pass background=true to get a task_id at once, then use the background_task tool.",
     input = ShellArgs,
 )]
 pub struct ShellTool {
@@ -1210,6 +1274,8 @@ pub struct ShellTool {
     approvals: Arc<dyn ApprovalHook>,
     timeout: Duration,
     unrestricted: bool,
+    background: Option<background::BackgroundScope>,
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl ShellTool {
@@ -1220,7 +1286,23 @@ impl ShellTool {
             approvals,
             timeout: Duration::from_secs(SHELL_TIMEOUT_SECS),
             unrestricted: false,
+            background: None,
+            cancel: None,
         }
+    }
+
+    /// Enables `background: true`, owned by the chat in `scope`.
+    #[must_use]
+    pub fn with_background(mut self, scope: background::BackgroundScope) -> Self {
+        self.background = Some(scope);
+        self
+    }
+
+    /// Kills a running blocking command as soon as `cancel` is set (Stop).
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(cancel);
+        self
     }
 
     pub fn with_unrestricted_paths(mut self, unrestricted: bool) -> Self {
@@ -1249,7 +1331,13 @@ impl ShellTool {
 #[async_trait]
 impl ToolRuntime for ShellTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let ShellArgs { command, args, cwd } = serde_json::from_value(args)?;
+        let ShellArgs {
+            command,
+            args,
+            cwd,
+            background,
+            background_timeout_secs,
+        } = serde_json::from_value(args)?;
         if command.trim().is_empty() {
             return Err(tool_error("shell: 'command' must not be empty".to_string()));
         }
@@ -1273,15 +1361,35 @@ impl ToolRuntime for ShellTool {
             command: argv,
             tool: "shell".to_string(),
             summary: format!(
-                "run `{command} {}` in {}",
+                "run `{command} {}` in {}{}",
                 args.join(" "),
-                workdir.display()
+                workdir.display(),
+                if background { " in the background" } else { "" }
             ),
             risk: RiskLevel::Execute,
         };
+        if background && self.background.is_none() {
+            return Err(tool_error(
+                "shell: background tasks are not available in this context".to_string(),
+            ));
+        }
         check_approval_permitted(self.approvals.as_ref(), &action)?;
 
-        let out = run_command_with_timeout(command, args, workdir, "shell", self.timeout).await?;
+        if background {
+            let scope = self.background.clone().expect("checked above");
+            return scope
+                .start(command, args, workdir, background_timeout_secs)
+                .await;
+        }
+        let out = run_command_with_timeout(
+            command,
+            args,
+            workdir,
+            "shell",
+            self.timeout,
+            self.cancel.clone(),
+        )
+        .await?;
         Ok(json!({
             "success": out.success,
             "exit_code": out.exit_code,
@@ -1493,7 +1601,7 @@ impl ToolRuntime for GitTool {
 
         let mut full_args = vec!["-C".to_string(), root.to_string_lossy().into_owned()];
         full_args.extend(args);
-        let out = run_command("git".to_string(), full_args, root, "git").await?;
+        let out = run_command("git".to_string(), full_args, root, "git", None).await?;
         Ok(json!({
             "success": out.success,
             "exit_code": out.exit_code,
@@ -1560,6 +1668,19 @@ pub fn boxed_tools_with_mode(
     root: &Path,
     approvals: Arc<dyn ApprovalHook>,
     yolo: bool,
+) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
+    boxed_tools_for_chat(root, approvals, yolo, None, None)
+}
+
+/// [`boxed_tools_with_mode`] for one chat: `background` lets `shell` start
+/// background tasks and `background_task` manage them; `cancel` kills a
+/// running blocking `shell` command when the user stops the run.
+pub fn boxed_tools_for_chat(
+    root: &Path,
+    approvals: Arc<dyn ApprovalHook>,
+    yolo: bool,
+    background: Option<background::BackgroundScope>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
     let canonical = root
         .canonicalize()
@@ -1639,9 +1760,16 @@ pub fn boxed_tools_with_mode(
             RiskLevel::Read,
         ),
     ];
-    tools.push(Box::new(
-        ShellTool::new(canonical.clone(), Arc::clone(&approvals)).with_unrestricted_paths(yolo),
-    ));
+    let mut shell =
+        ShellTool::new(canonical.clone(), Arc::clone(&approvals)).with_unrestricted_paths(yolo);
+    if let Some(scope) = background.clone() {
+        shell = shell.with_background(scope);
+    }
+    if let Some(cancel) = cancel {
+        shell = shell.with_cancel(cancel);
+    }
+    tools.push(Box::new(shell));
+    tools.push(Box::new(background::BackgroundTool::new(background)));
     tools.push(Box::new(
         ApplyPatchTool::new(canonical.clone(), Arc::clone(&approvals))
             .with_unrestricted_paths(yolo),
@@ -2401,6 +2529,53 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn shell_returns_when_a_backgrounded_grandchild_holds_the_pipes() {
+        let (_tmp, root) = rooted_case();
+        let pidfile = root.join("held.pid");
+        let script = format!("sleep 30 & echo $! > '{}'; echo started", pidfile.display());
+        let tool = ShellTool::new(root, allow_all());
+        let began = Instant::now();
+        let result = tool
+            .execute(json!({ "command": "sh", "args": ["-c", script] }))
+            .await
+            .unwrap();
+        let elapsed = began.elapsed();
+        let pid: libc::pid_t = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // SAFETY: cleanup of the helper process this test started.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+        assert!(elapsed < Duration::from_secs(10), "hung for {elapsed:?}");
+        assert_eq!(result["success"], true);
+        let text = result["output"].as_str().unwrap();
+        assert!(text.contains("started"), "{text}");
+        assert!(text.contains("still holds its output open"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_stop_flag_kills_a_running_command_promptly() {
+        let (_tmp, root) = rooted_case();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let tool = ShellTool::new(root, allow_all()).with_cancel(Arc::clone(&cancel));
+        let flag = Arc::clone(&cancel);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            flag.store(true, Ordering::SeqCst);
+        });
+        let began = Instant::now();
+        let error = tool
+            .execute(json!({ "command": "sleep", "args": ["60"] }))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("stopped by you"), "{error}");
+        assert!(began.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn shell_timeout_kills_grandchildren() {
         let (tmp, root) = rooted_case();
         let pidfile = root.join("grandchild.pid");
@@ -2818,6 +2993,7 @@ mod tests {
                 "create_dir",
                 "search_file",
                 "shell",
+                "background_task",
                 "apply_patch",
                 "git",
             ]
@@ -2839,9 +3015,9 @@ mod tests {
     fn shared_tools_convert_to_boxes() {
         let (_tmp, root) = rooted_case();
         let shared = shared_tools(&root, allow_all()).unwrap();
-        assert_eq!(shared.len(), 11);
+        assert_eq!(shared.len(), 12);
         let boxes = autoagents::core::tool::shared_tools_to_boxes(&shared);
-        assert_eq!(boxes.len(), 11);
+        assert_eq!(boxes.len(), 12);
         assert_eq!(boxes[8].name(), "shell");
     }
 }

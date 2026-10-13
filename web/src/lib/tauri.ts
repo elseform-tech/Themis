@@ -30,6 +30,8 @@ import type {
   ThreadComment,
   ThreadTasks,
   ThreadEventEnvelope,
+  ThreadTaskBackground,
+  BackgroundTaskLog,
   ThreadInfo,
 } from './types';
 import {
@@ -201,6 +203,14 @@ export function listAutomations(): Promise<Automation[]> {
 
 export function getThreadTasks(threadId: string): Promise<ThreadTasks> {
   return invoke('get_thread_tasks', { threadId });
+}
+
+export function stopBackgroundTask(threadId: string, taskId: string): Promise<ThreadTaskBackground> {
+  return invoke('stop_background_task', { threadId, taskId });
+}
+
+export function getBackgroundTaskLog(threadId: string, taskId: string, offset?: number, maxBytes?: number): Promise<BackgroundTaskLog> {
+  return invoke('get_background_task_log', { threadId, taskId, offset: offset ?? null, maxBytes: maxBytes ?? null });
 }
 
 export function createAutomation(input: AutomationInput): Promise<Automation> {

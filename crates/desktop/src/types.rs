@@ -205,6 +205,9 @@ pub enum ThreadEvent {
     Failed {
         error: String,
     },
+    /// A background task of this chat started, finished or was stopped.
+    /// Sent outside any run (`run_id` is empty); clients refresh the task feed.
+    BackgroundTasksChanged,
 }
 
 impl From<RunEvent> for ThreadEvent {
@@ -535,6 +538,44 @@ pub struct ThreadTasks {
     pub automations: Vec<ThreadTaskAutomation>,
     /// Newest first, capped at [`THREAD_TASKS_RECENT_LIMIT`].
     pub recent: Vec<ThreadTaskRun>,
+    /// Programs the agent started in the background, oldest first.
+    #[serde(default)]
+    pub background_tasks: Vec<ThreadTaskBackground>,
+}
+
+/// One background shell task in the chat's task feed (`ThreadTaskBackground` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadTaskBackground {
+    pub id: String,
+    /// One-line, length-bounded command.
+    pub command: String,
+    pub cwd: String,
+    pub state: themis_core::tools::background::TaskState,
+    pub exit_code: Option<i32>,
+    pub pid: u32,
+    /// RFC 3339 UTC.
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub timeout_secs: u64,
+    /// Most recent output lines.
+    pub last_lines: Vec<String>,
+    /// `last_lines` is the whole output, so "Full log" would repeat it.
+    #[serde(default)]
+    pub last_lines_complete: bool,
+    pub log_bytes: u64,
+}
+
+/// One page of a background task's rolling log (`BackgroundTaskLog` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackgroundTaskLog {
+    pub id: String,
+    pub state: themis_core::tools::background::TaskState,
+    pub text: String,
+    pub offset: u64,
+    pub next_offset: u64,
+    pub total_bytes: u64,
+    /// Output before this byte offset rotated out of the bounded log.
+    pub oldest_retained_offset: u64,
 }
 
 /// Maximum finished runs returned in [`ThreadTasks::recent`].

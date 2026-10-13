@@ -7,6 +7,7 @@
 
 mod attachments;
 mod automation;
+mod background;
 mod changes;
 pub(crate) mod configuration;
 mod integration_tools;
@@ -214,6 +215,8 @@ struct AppStateInner {
     /// Sink the background scheduler emits on (registered post-construction;
     /// the scheduler skips ticks until one is set).
     scheduler_sink: std::sync::Mutex<Option<Arc<dyn EventSink>>>,
+    /// Background shell tasks of every chat (`background/` in the app data dir).
+    background: Arc<themis_core::tools::background::BackgroundRegistry>,
     /// Recent command failures, oldest-first, capped at [`MAX_RECENT_ERRORS`].
     recent_errors: std::sync::Mutex<VecDeque<DiagnosticsError>>,
 }
@@ -358,6 +361,9 @@ impl AppState {
                 reviews_path,
                 automation_runs: std::sync::Mutex::new(HashMap::new()),
                 scheduler_sink: std::sync::Mutex::new(None),
+                background: themis_core::tools::background::BackgroundRegistry::open(Some(
+                    themis_core::tools::background::storage_dir(&app_dir),
+                )),
                 recent_errors: std::sync::Mutex::new(VecDeque::new()),
             }),
         }
@@ -378,6 +384,7 @@ impl AppState {
     /// Registers the sink the background scheduler emits on (production
     /// wires the Tauri sink right after construction).
     pub fn set_scheduler_sink(&self, sink: Arc<dyn EventSink>) {
+        self.install_background_notifier(Arc::clone(&sink));
         *self
             .inner
             .scheduler_sink

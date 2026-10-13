@@ -211,6 +211,24 @@ HTTP status and delay, without provider bodies. Stop can cancel either wait. Ori
 usable state and deterministic action/read receipts remain separate from the
 model summary. This does not add compaction UI or guarantee lossless recall.
 
+### Background shell task limits
+
+Not configurable in `runtime.jsonc`; fixed constants in the core:
+
+| Limit | Value |
+| --- | --- |
+| running background tasks per chat / per app server | 4 / 16 |
+| rolling log per task | last 64 KiB (page size default 8 KiB, max 16 KiB) |
+| per-task deadline | default 7,200 s, maximum 86,400 s (`background_timeout_secs`) |
+| finished records kept per chat | 20 |
+| output wait after a blocking command exits | 1.5 s |
+
+Approval mode and rules are captured once per run like any shell call; the
+approval mode change affects subsequent runs, not tasks already started. See
+[sandbox.md](sandbox.md#background-shell-tasks) for behavior and lifetime, and
+`get_thread_tasks` (`background_tasks`), `get_background_task_log` and
+`stop_background_task` for the shared-server API.
+
 ## Composer permissions
 
 The shield offers only **Custom** (default) or **YOLO**, persisted per thread.

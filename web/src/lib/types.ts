@@ -158,6 +158,38 @@ export interface ThreadTasks {
   run: ThreadRunTask;
   automations: ThreadTaskAutomation[];
   recent: ThreadTaskRun[];
+  /** Programs the agent started in the background, oldest first. */
+  background_tasks?: ThreadTaskBackground[];
+}
+
+export type BackgroundTaskState = 'running' | 'exited' | 'stopped' | 'timed_out' | 'lost';
+
+/** One background shell task in the chat's task feed. */
+export interface ThreadTaskBackground {
+  id: string;
+  command: string;
+  cwd: string;
+  state: BackgroundTaskState;
+  exit_code: number | null;
+  pid: number;
+  started_at: string;
+  ended_at: string | null;
+  timeout_secs: number;
+  last_lines: string[];
+  /** `last_lines` is the whole output, so the full log would repeat it. */
+  last_lines_complete?: boolean;
+  log_bytes: number;
+}
+
+/** One page of a background task's bounded rolling log. */
+export interface BackgroundTaskLog {
+  id: string;
+  state: BackgroundTaskState;
+  text: string;
+  offset: number;
+  next_offset: number;
+  total_bytes: number;
+  oldest_retained_offset: number;
 }
 
 export interface AutomationInput {
@@ -230,7 +262,8 @@ export type ThreadEvent =
   | { kind: 'files_changed'; files: ChangedFile[] }
   | { kind: 'incomplete'; result: string; model?: string }
   | { kind: 'finished'; result: string; model?: string }
-  | { kind: 'failed'; error: string };
+  | { kind: 'failed'; error: string }
+  | { kind: 'background_tasks_changed' };
 
 export interface ThreadEventEnvelope {
   thread_id: string;

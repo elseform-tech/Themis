@@ -111,7 +111,7 @@ async fn skilled_run_sends_composed_instructions_and_filtered_tools() {
     let llm = resolve(&config).await.unwrap();
     let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
     let tools = boxed_tools(&root, Arc::clone(&approvals)).unwrap();
-    assert_eq!(tools.len(), 11);
+    assert_eq!(tools.len(), 12);
 
     let (events_tx, mut events_rx) = tokio::sync::mpsc::channel(1024);
     let result = run_task_skilled(
@@ -185,6 +185,6 @@ async fn empty_skills_match_plain_run_task() {
         let requests = received.lock().unwrap().clone();
         assert_eq!(requests.len(), 1);
         assert_eq!(first_user_text(&requests[0]), "plain");
-        assert_eq!(tool_names_sent(&requests[0]).len(), 11);
+        assert_eq!(tool_names_sent(&requests[0]).len(), 12);
     }
 }
