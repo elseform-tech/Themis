@@ -399,7 +399,8 @@ export function applyThreadEvent(
       });
     }
     case "context_usage":
-    case "context_suspended": return state;
+    case "context_suspended":
+    case "background_tasks_changed": return state;
     case "context_budget": {
       const rows = state.messages[threadId] ?? [];
       const last = rows[rows.length - 1];

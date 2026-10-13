@@ -28,6 +28,7 @@ import {
   listDiff,
   importLegacyHistory,
   listAutomations,
+  getThreadTasks,
   listReviewItems,
   listSkills,
   listThreads,
@@ -187,6 +188,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           eventVersion++;
           dispatch({ type: "thread/event", envelope });
           const { kind } = envelope.event;
+          // A background task started, exited or was stopped: refresh this chat's task feed.
+          if (kind === "background_tasks_changed") {
+            const threadId = envelope.thread_id;
+            void getThreadTasks(threadId).then(tasks => { if (!cancelled) dispatch({ type: "tasks/loaded", threadId, tasks }); }).catch(() => {});
+          }
           // The agent can create or change automations through this tool.
           if (envelope.event.kind === "tool_finished" && envelope.event.tool === "manage_automations") {
             void listAutomations().then(automations => { if (!cancelled) dispatch({ type: "automation/loaded", automations }); }).catch(() => {});

@@ -5,6 +5,7 @@ import { getThreadTasks } from "../lib/tauri";
 import type { ThreadTaskAutomation, ThreadTaskRun, ThreadTasks } from "../lib/types";
 import { useApp } from "../state/store";
 import { scheduleLabel, shortTime } from "./Automations";
+import { countBackground } from "./backgroundTasks";
 
 export type TaskKind = "attention" | "running" | "scheduled" | "finished";
 export const TASK_KINDS: TaskKind[] = ["attention", "running", "scheduled", "finished"];
@@ -94,9 +95,10 @@ export function groupTasks(tasks: ThreadTasks | undefined, schedulerOn = true): 
 
 export function countTasks(tasks: ThreadTasks | undefined, schedulerOn = true): TaskCounts {
   const groups = groupTasks(tasks, schedulerOn);
+  const background = countBackground(tasks);
   return {
-    attention: groups.attention.length,
-    running: groups.running.length,
+    attention: groups.attention.length + background.attention,
+    running: groups.running.length + background.running,
     scheduled: tasks?.automations.filter(item => isScheduled(item, schedulerOn) && !(item.running && (tasks.run.running || tasks.run.awaiting_approval))).length ?? 0,
     finished: tasks?.recent.filter(item => item.ok && !item.seen).length ?? 0,
   };
