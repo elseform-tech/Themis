@@ -52,6 +52,7 @@ fn automation_input(project_root: &str, task: &str) -> AutomationInput {
         schedule: None,
         task: task.to_owned(),
         enabled: true,
+        watch: Default::default(),
     }
 }
 

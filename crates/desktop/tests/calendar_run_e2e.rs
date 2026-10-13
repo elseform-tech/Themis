@@ -46,6 +46,7 @@ async fn failed_calendar_run_advances_wall_clock_schedule_and_persists_review() 
             schedule: Some(schedule.clone()),
             task: "Review changes".into(),
             enabled: true,
+            watch: Default::default(),
         })
         .await
         .unwrap();

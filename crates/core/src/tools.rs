@@ -88,6 +88,15 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
     })
 }
 
+/// Tools that decide approval themselves inside `execute`, because the answer
+/// depends on state the dispatcher does not see. `manage_automations` lets an
+/// agent manage its own chat's automations without a prompt and asks for
+/// anything else; the dispatcher therefore neither prompts nor arms a permit.
+#[must_use]
+pub fn tool_approves_itself(name: &str) -> bool {
+    name == "manage_automations"
+}
+
 pub fn integration_approval_identity(name: &str, args: &Value) -> String {
     if matches!(name, "manage_integrations" | "manage_automations") {
         use std::hash::{Hash, Hasher};
@@ -937,6 +946,36 @@ async fn run_command(
         Duration::from_secs(SHELL_TIMEOUT_SECS),
     )
     .await
+}
+
+/// Result of [`run_check_command`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckOutput {
+    pub exit_code: Option<i32>,
+    /// Combined stdout/stderr, bounded to [`MAX_COMMAND_OUTPUT`] bytes.
+    pub output: String,
+    pub truncated: bool,
+}
+
+/// Runs a watch check through the shell runner (argv only, scrubbed
+/// environment, own process group, kill deadline, bounded output). Approval is
+/// decided by the caller; this performs no policy check.
+pub async fn run_check_command(
+    argv: Vec<String>,
+    workdir: PathBuf,
+    timeout: Duration,
+) -> Result<CheckOutput, ToolCallError> {
+    let mut parts = argv.into_iter();
+    let program = parts
+        .next()
+        .filter(|program| !program.trim().is_empty())
+        .ok_or_else(|| tool_error("check: command must not be empty".to_string()))?;
+    let out = run_command_with_timeout(program, parts.collect(), workdir, "check", timeout).await?;
+    Ok(CheckOutput {
+        exit_code: out.exit_code,
+        output: out.output,
+        truncated: out.truncated,
+    })
 }
 
 /// [`run_command`] with an explicit kill deadline (tests use a short budget).

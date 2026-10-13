@@ -414,9 +414,74 @@ pub enum AutomationOrigin {
 }
 
 impl AutomationOrigin {
-    fn is_user(&self) -> bool {
+    pub(crate) fn is_user(&self) -> bool {
         *self == Self::User
     }
+}
+
+/// Limits and change detection for short-interval watches. All optional, so
+/// ordinary automations serialize exactly as before.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchSettings {
+    /// RFC3339 instant after which the automation is removed ("expired").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    /// Stop after this many executions, including checks that start no model run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_runs: Option<u64>,
+    /// Short plain-language goal shown in Tasks ("until status.txt says DONE").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_when: Option<String>,
+    /// Argv run before each tick without a model call; the model only runs when
+    /// its output changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_command: Option<Vec<String>>,
+}
+
+/// Scheduler bookkeeping for watches; never supplied by clients.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchState {
+    /// Failed runs or checks in a row; three stop the automation.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub consecutive_failures: u32,
+    /// Hash of the last `check_command` output that was handed to the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check_hash: Option<String>,
+    /// Why a user-created automation was paused by a backstop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_reason: Option<String>,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+/// Name and origin copied onto a review item so a finished run keeps a stable
+/// title after its automation is deleted.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewSource {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation_name: Option<String>,
+    #[serde(default, skip_serializing_if = "AutomationOrigin::is_user")]
+    pub automation_origin: AutomationOrigin,
+}
+
+/// An automation that no longer exists, kept so Tasks can say why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutomationRemoval {
+    pub id: String,
+    pub automation_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "AutomationOrigin::is_user")]
+    pub origin: AutomationOrigin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    pub removed_at: String,
+    /// "completed by agent", "expired", "run limit", "failed 3 times", ...
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_when: Option<String>,
+    pub run_count: u64,
 }
 
 /// A scheduled automation (`Automation` in types.ts).
@@ -446,6 +511,10 @@ pub struct Automation {
     /// Omitted from JSON when `user`, so existing records and clients are unchanged.
     #[serde(default, skip_serializing_if = "AutomationOrigin::is_user")]
     pub origin: AutomationOrigin,
+    #[serde(flatten)]
+    pub watch: WatchSettings,
+    #[serde(flatten)]
+    pub watch_state: WatchState,
 }
 
 /// Automation create/update payload (`AutomationInput` in types.ts).
@@ -468,6 +537,8 @@ pub struct AutomationInput {
     pub schedule: Option<AutomationSchedule>,
     pub task: String,
     pub enabled: bool,
+    #[serde(flatten)]
+    pub watch: WatchSettings,
 }
 
 /// Review-item status (`ReviewStatus` in types.ts).
@@ -489,6 +560,8 @@ pub struct ReviewItem {
     pub title: String,
     pub summary: String,
     pub status: ReviewStatus,
+    #[serde(flatten)]
+    pub source: ReviewSource,
 }
 
 /// Live run state of one chat inside [`ThreadTasks`].
@@ -513,6 +586,11 @@ pub struct ThreadTaskAutomation {
     pub run_count: u64,
     /// True while one of its runs is in flight in this chat.
     pub running: bool,
+    #[serde(flatten)]
+    pub watch: WatchSettings,
+    /// Set when a backstop paused a user-created automation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_reason: Option<String>,
 }
 
 /// One finished automation run in this chat (`seen` once reviewed or dismissed).
@@ -525,6 +603,8 @@ pub struct ThreadTaskRun {
     pub ok: bool,
     pub summary: String,
     pub seen: bool,
+    /// Kept after the automation is deleted.
+    pub origin: AutomationOrigin,
 }
 
 /// Per-chat task feed (`ThreadTasks` in types.ts).
@@ -535,6 +615,9 @@ pub struct ThreadTasks {
     pub automations: Vec<ThreadTaskAutomation>,
     /// Newest first, capped at [`THREAD_TASKS_RECENT_LIMIT`].
     pub recent: Vec<ThreadTaskRun>,
+    /// Automations of this chat that ended, newest first, with the reason.
+    #[serde(default)]
+    pub removed: Vec<AutomationRemoval>,
 }
 
 /// Maximum finished runs returned in [`ThreadTasks::recent`].
@@ -1281,6 +1364,8 @@ mod tests {
             next_run_at: "2026-01-01T00:00:00Z".to_owned(),
             run_count: 0,
             origin: AutomationOrigin::User,
+            watch: Default::default(),
+            watch_state: Default::default(),
         };
         assert_eq!(
             to_value(&automation),
@@ -1312,6 +1397,7 @@ mod tests {
             title: "Automation Nightly".to_owned(),
             summary: "done".to_owned(),
             status: ReviewStatus::Pending,
+            source: Default::default(),
         };
         assert_eq!(
             to_value(&item),

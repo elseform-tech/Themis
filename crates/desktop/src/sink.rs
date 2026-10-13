@@ -123,6 +123,7 @@ mod tests {
             title: "title".to_owned(),
             summary: "done".to_owned(),
             status: ReviewStatus::Pending,
+            source: Default::default(),
         });
         drop(sink);
         let first = rx.blocking_recv().expect("thread event");
