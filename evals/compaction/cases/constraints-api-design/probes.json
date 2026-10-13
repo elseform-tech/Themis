@@ -15,8 +15,9 @@
     "category": "constraint",
     "question": "Are new dependencies allowed?",
     "planted_at": 1,
+    "needle": "no new dependencies",
     "expected": {
-      "regex": "(?i)^\\W*no\\b|not|none"
+      "regex": "(?i)^\\W*no\\b|\\bnone\\b|\\bnot\\b.{0,20}\\ballowed\\b"
     }
   },
   {
@@ -59,7 +60,7 @@
     "question": "Is the audit log part of this change?",
     "planted_at": 27,
     "expected": {
-      "regex": "(?i)^\\W*no\\b|not|out of scope|don't"
+      "regex": "(?i)^\\W*no\\b|\\bnot part\\b|\\bout of scope\\b|\\bdon'?t touch\\b"
     }
   },
   {
@@ -68,7 +69,7 @@
     "question": "Why was cursor pagination chosen?",
     "planted_at": 41,
     "expected": {
-      "regex": "(?i)large tables|offset breaks|break"
+      "regex": "(?i)\\blarge tables?\\b|offset breaks?"
     }
   },
   {

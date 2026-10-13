@@ -19,6 +19,7 @@
     "category": "constraint",
     "question": "Is adding a new third-party dependency allowed for this feature? Answer yes or no.",
     "planted_at": 1,
+    "needle": "new third-party dependency",
     "expected": {
       "regex": "^\\W*no\\b"
     }
@@ -91,7 +92,7 @@
     "id": "skipped",
     "category": "tool_result",
     "question": "Why was one test skipped?",
-    "planted_at": 57,
+    "planted_at": 58,
     "expected": {
       "any_of": [
         "redis"

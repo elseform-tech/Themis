@@ -28,6 +28,8 @@ def trial_rows(case, run):
     """Graded rows for one run: one dict per probe."""
     from .grade import grade
 
+    verbatim = run.get("verbatim_records")
+    verbatim = None if verbatim is None else set(verbatim)
     answers = {a["id"]: a["answer"] for a in run["answers"]}
     errors = {a["id"]: a.get("error") for a in run["answers"]}
     rows = []
@@ -39,6 +41,8 @@ def trial_rows(case, run):
             "category": probe["category"],
             "position": position(probe["planted_at"], case["records"]),
             "has_stale": bool(probe.get("stale")),
+            # True when the planted record was still verbatim in the post-compaction context.
+            "verbatim": None if verbatim is None else probe["planted_at"] in verbatim,
             "verdict": verdict,
             "answer": answers.get(probe["id"]),
             "error": errors.get(probe["id"]),
@@ -53,15 +57,33 @@ def _retention(rows, key=None, value=None):
 
 
 def trial_summary(rows, runs):
-    """Metrics for one trial index pooled over all cases."""
+    """Metrics for one trial index pooled over all cases.
+
+    The headline is summary-only retention: probes whose planted record is no longer
+    verbatim in the working context, so the answer can only come from the checkpoint.
+    Tail retention (record still verbatim) and overall retention are secondary.
+    """
+    split = all(r["verbatim"] is not None for r in rows)
+    summary_rows = [r for r in rows if r["verbatim"] is False] if split else []
+    tail_rows = [r for r in rows if r["verbatim"] is True] if split else []
+    headline = summary_rows if split else rows
     stale_rows = [r for r in rows if r["has_stale"] and r["verdict"] in SCORED]
     decoys = [r for r in rows if r["category"] == "decoy"]
     chunks = [c for run in runs for c in run["chunks"]]
     return {
-        "retention": _retention(rows),
-        "by_category": {c: _retention(rows, "category", c)
+        "summary_only_retention": _retention(summary_rows) if split else None,
+        "tail_retention": _retention(tail_rows) if split else None,
+        "overall_retention": _retention(rows),
+        "summary_only_probes": sum(r["category"] != "decoy" for r in summary_rows),
+        "tail_probes": sum(r["category"] != "decoy" for r in tail_rows),
+        "tail_split_available": split,
+        "by_category": {c: _retention(headline, "category", c)
                         for c in sorted({r["category"] for r in rows} - {"decoy"})},
-        "by_position": {p: _retention(rows, "position", p) for p in ("early", "middle", "late")},
+        "by_position": {p: _retention(headline, "position", p) for p in ("early", "middle", "late")},
+        "by_category_overall": {c: _retention(rows, "category", c)
+                                for c in sorted({r["category"] for r in rows} - {"decoy"})},
+        "by_position_overall": {p: _retention(rows, "position", p)
+                                for p in ("early", "middle", "late")},
         "stale_fact_rate": _rate(sum(r["verdict"] == "stale" for r in stale_rows), len(stale_rows)),
         "forgot_rate": _rate(sum(r["verdict"] == "unknown" for r in rows if r["category"] != "decoy"),
                              sum(r["category"] != "decoy" for r in rows)),
@@ -91,12 +113,15 @@ def _collect(trials, path):
 
 def aggregate(trials):
     """Mean +- spread across trials for every metric in `trial_summary` outputs."""
-    scalar = ["retention", "stale_fact_rate", "forgot_rate", "wrong_answers", "invented_decoy_answers",
+    scalar = ["summary_only_retention", "tail_retention", "overall_retention",
+              "summary_only_probes", "tail_probes", "stale_fact_rate", "forgot_rate", "wrong_answers", "invented_decoy_answers",
               "probe_errors", "compactions", "compactions_failed", "compaction_ms_mean",
               "tokens_before_mean", "tokens_after_mean", "provider_requests_per_compaction"]
     result = {name: spread(_collect(trials, [name])) for name in scalar}
-    result["by_category"] = {c: spread(_collect(trials, ["by_category", c]))
-                             for c in sorted({c for t in trials for c in t["by_category"]})}
-    result["by_position"] = {p: spread(_collect(trials, ["by_position", p]))
-                             for p in ("early", "middle", "late")}
+    for key in ("by_category", "by_category_overall"):
+        result[key] = {c: spread(_collect(trials, [key, c]))
+                       for c in sorted({c for t in trials for c in t[key]})}
+    for key in ("by_position", "by_position_overall"):
+        result[key] = {p: spread(_collect(trials, [key, p])) for p in ("early", "middle", "late")}
+    result["tail_split_available"] = all(t["tail_split_available"] for t in trials)
     return result

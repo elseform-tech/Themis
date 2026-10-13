@@ -95,7 +95,7 @@
     "question": "What did the protagonist confess to Ingrid?",
     "planted_at": 23,
     "expected": {
-      "regex": "(?i)lied.*inspector|inspector.*March|lie"
+      "regex": "(?i)\\blied\\b|\\blie\\b|\\blying\\b"
     }
   },
   {

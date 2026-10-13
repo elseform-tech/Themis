@@ -15,8 +15,11 @@ FUNCS = 9
 CASES = os.path.join(os.path.dirname(__file__), "cases")
 
 
-def P(pid, category, question, planted_at, any_of=None, regex=None, stale=None, expect_unknown=False):
+def P(pid, category, question, planted_at, any_of=None, regex=None, stale=None, expect_unknown=False,
+      needle=None):
     probe = {"id": pid, "category": category, "question": question, "planted_at": planted_at}
+    if needle:
+        probe["needle"] = needle  # must appear in the planted record (checked by finish)
     if expect_unknown:
         probe["expect_unknown"] = True
     else:
@@ -81,14 +84,14 @@ def coding_rate_limiter():
     t.asst("Full suite is green. Remaining follow-ups: update docs/limits.md with the tier table and open a follow-up for per-IP limits for unauthenticated routes.")
     probes = [
         P("algorithm", "constraint", "Which rate-limiting algorithm was the user required to use?", c_algo, any_of=["token bucket", "token-bucket"], stale=["sliding window"]),
-        P("deps", "constraint", "Is adding a new third-party dependency allowed for this feature? Answer yes or no.", c_algo, regex=r"^\W*no\b"),
+        P("deps", "constraint", "Is adding a new third-party dependency allowed for this feature? Answer yes or no.", c_algo, regex=r"^\W*no\b", needle=r"new third-party dependency"),
         P("free_tier", "identifier", "How many requests per minute does the free tier get?", c_tier, regex=r"\b60\b(?!\d)"),
         P("paid_tier", "identifier", "How many requests per minute does the paid tier get?", c_tier, regex=r"\b600\b"),
         P("root_cause", "tool_result", "What was the root cause of the failing test_burst_exceeds?", c_root, any_of=["time.time", "wall clock", "wall-clock", "monotonic"]),
         P("header", "superseded", "What is the final name of the response header showing remaining tokens?", c_hdr2, regex=r"X-RateLimit-Remaining", stale=[r"X-Rate-Remaining"]),
         P("clock_file", "identifier", "Which file holds the injected clock?", c_clockfile, any_of=["limiter/clock.py"]),
         P("burst", "tool_result", "What is RATE_LIMIT_BURST set to in settings.py?", c_settings, regex=r"\b25\b"),
-        P("skipped", "tool_result", "Why was one test skipped?", c_pass, any_of=["redis"]),
+        P("skipped", "tool_result", "Why was one test skipped?", c_pass + 1, any_of=["redis"]),
         P("redis_host", "decoy", "What Redis hostname is the limiter configured to use?", 1, expect_unknown=True),
         P("next", "next_action", "What are the remaining follow-up tasks?", len(t.records), regex=r"(?is)(docs/limits|tier table|documentation).*(per-IP|ip)|(per-IP|ip).*(docs/limits|tier table|documentation)"),
     ]
@@ -127,9 +130,9 @@ def coding_csv_migration():
         P("inplace", "constraint", "Which file must never be modified in place?", c_fmt, any_of=["orders_2019.csv"]),
         P("bad_rows", "superseded", "What should the importer do with rows that have an empty customer_id?", c_rej, regex=r"(?i)reject|skip", stale=[r"(?i)abort(s|ed)?\b(?!.*instead)"]),
         P("bad_row_no", "tool_result", "Which row number caused the ValueError in test_full_file?", c_err, regex=r"\b8812\b"),
-        P("cause", "tool_result", "What was the cause of that ValueError?", c_err, regex=r"(?i)whitespace|space|strip"),
+        P("cause", "tool_result", "What was the cause of that ValueError?", c_err + 1, regex=r"(?i)\bwhitespace\b|\bspaces?\b|\bstrip"),
         P("rows", "tool_result", "How many rows were imported and how many rejected in the final run?", c_final, regex=r"(?s)41,?207.*\b93\b"),
-        P("decimal", "identifier", "What decimal separator do amounts use in the export?", c_fmt, regex=r"(?i)comma|,"),
+        P("decimal", "identifier", "What decimal separator do amounts use in the export?", c_fmt, regex=r"(?i)\bcomma\b"),
         P("page_size", "decoy", "What SQLite page_size did we configure?", 1, expect_unknown=True),
         P("next", "next_action", "What is the proposed next step?", len(t.records), regex=r"(?is)index.*customer_id|readme"),
     ]
@@ -158,7 +161,6 @@ def coding_rust_parser():
     t.call("write_file", {"file_path": "src/range/caret.rs", "content": "if idx < 2 { v.bump(idx) } else { v.next_patch() }"}, '{"ok":true,"path":"src/range/caret.rs"}')
     explore(t, 6, "rust", "src/parse", "Checking the comparator parsing path.")
     t.call("write_file", {"file_path": "src/parse/comparator.rs", "content": "if text.is_empty() { return Err(ParseError::EmptyComparator); }"}, '{"ok":true,"path":"src/parse/comparator.rs"}')
-    c_empty = len(t.records)
     shell(t, "cargo test", "running 34 tests\ntest result: ok. 34 passed; 0 failed")
     c_pass = len(t.records)
     t.asst("All 34 tests pass (33 existing plus the new empty-comparator test).")
@@ -170,11 +172,11 @@ def coding_rust_parser():
     t.asst("Clippy clean. Remaining: add a CHANGELOG entry and bump the version to 0.4.2.")
     probes = [
         P("msrv", "constraint", "What is the minimum supported Rust version, and which syntax is therefore banned?", c_con, regex=r"(?is)1\.70.*let-?else|let-?else.*1\.70"),
-        P("no_regex", "negation", "Is it acceptable to add the regex crate to simplify the parser?", c_noreg, regex=r"(?i)^\W*no\b|not|never|do not"),
+        P("no_regex", "negation", "Is it acceptable to add the regex crate to simplify the parser?", c_noreg, regex=r"(?i)^\W*no\b|\bnot (acceptable|allowed|permitted|be added)\b|\bdo not\b|\bnever\b"),
         P("fail_tests", "tool_result", "Which two tests failed initially?", c_fail, regex=r"(?is)caret_zero_zero_patch.*tilde_missing_minor|tilde_missing_minor.*caret_zero_zero_patch"),
-        P("bug_file", "identifier", "In which file and function was the off-by-one found?", c_bug, regex=r"(?is)caret\.rs.*bump_index|bump_index.*caret\.rs"),
+        P("bug_file", "identifier", "In which file and function was the off-by-one found?", c_bug + 1, regex=r"(?is)caret\.rs.*bump_index|bump_index.*caret\.rs"),
         P("bug_cmp", "tool_result", "What was the incorrect comparison, and what replaced it?", c_bug, regex=r"<=.*<|<\s*2"),
-        P("empty", "constraint", "What should an empty comparator return?", c_empty, any_of=["EmptyComparator"], stale=[r"(?i)panic"]),
+        P("empty", "constraint", "What should an empty comparator return?", c_con, any_of=["EmptyComparator"], stale=[r"(?i)panic"]),
         P("final_tests", "tool_result", "How many tests passed in the final cargo test run?", c_pass, regex=r"\b34\b"),
         P("clippy", "tool_result", "Where did clippy complain and about what?", c_clip, regex=r"(?is)tilde\.rs.*(19|unused)|unused.*tilde"),
         P("rustc_version", "decoy", "Which exact rustc version is installed on the build machine?", 1, expect_unknown=True),
@@ -222,8 +224,8 @@ def parked_trip_bugfix():
         P("allergy", "parked_topic", "What food allergy must be remembered for the trip?", c_trip, any_of=["peanut"]),
         P("hotel", "parked_topic", "Which hotel was penciled in and at what nightly price?", c_hotel, regex=r"(?is)Miradouro Verde.*96|96.*Miradouro Verde"),
         P("neighborhood", "parked_topic", "Which neighborhood did the user want to stay in?", c_trip, any_of=["Alfama"]),
-        P("bug_func", "identifier", "Which function had the rounding bug and in which file?", c_bug, regex=r"(?is)round_cents.*totals\.py|totals\.py.*round_cents"),
-        P("rounding", "decision", "Which rounding mode does the fix use?", c_fix, regex=r"(?i)HALF_EVEN|banker"),
+        P("bug_func", "identifier", "Which function had the rounding bug and in which file?", c_bug + 1, regex=r"(?is)round_cents.*totals\.py|totals\.py.*round_cents"),
+        P("rounding", "decision", "Which rounding mode does the fix use?", c_fix - 1, regex=r"(?i)HALF_EVEN|banker"),
         P("park_state", "parked_topic", "What was the status of the trip planning while the bug was fixed?", c_park, regex=r"(?i)park|paus|on hold"),
         P("flight", "decoy", "Which airline and flight number was chosen for the trip?", 1, expect_unknown=True),
         P("next", "next_action", "What is pending for the trip?", len(t.records), regex=r"(?is)flight.*(dinner|restaurant)|(dinner|restaurant).*flight"),
@@ -269,15 +271,15 @@ def parked_budget_recipe():
     t.asst("Budget tests pass. Next I'll add a CSV export for the monthly plan.")
     probes = [
         P("rent", "parked_topic", "What is the monthly rent in the budget?", c_budget, regex=r"1,?450"),
-        P("savings", "parked_topic", "What savings target is set, as a percentage and amount?", c_budget, regex=r"(?is)15.*630|630.*15"),
+        P("savings", "parked_topic", "What savings target is set, as a percentage and amount?", c_budget + 1, regex=r"(?is)15.*630|630.*15"),
         P("income", "parked_topic", "What is the monthly income?", c_budget, regex=r"4,?200"),
         P("diet", "parked_topic", "What dietary restriction affects the recipe?", c_recipe, any_of=["lactose"]),
-        P("substitute", "parked_topic", "What buttermilk substitute was chosen?", c_recipe, regex=r"(?is)oat milk.*lemon|lemon.*oat"),
+        P("substitute", "parked_topic", "What buttermilk substitute was chosen?", c_recipe + 1, regex=r"(?is)oat milk.*lemon|lemon.*oat"),
         P("flour", "parked_topic", "How much flour does the final recipe use?", c_final_recipe, regex=r"\b2 cups\b|two cups"),
         P("gift", "parked_topic", "Which gift was chosen for the sister?", c_mug, regex=r"(?i)mug"),
         P("gift_date", "parked_topic", "When is the sister's birthday?", c_gift, regex=r"(?i)Nov(ember)?\.? 9|9 Nov"),
         P("gift_budget", "parked_topic", "What is the gift budget?", c_gift, regex=r"\b80\b"),
-        P("test_fail", "tool_result", "Why did test_savings_goal fail?", c_fail, regex=r"(?is)640.*630|test constant|wrong"),
+        P("test_fail", "tool_result", "Why did test_savings_goal fail?", c_fail + 1, regex=r"(?is)640.*630|630.*640|test (constant|expectation)|expected (value|constant)"),
         P("oven", "decoy", "What oven temperature does the pancake recipe need?", 1, expect_unknown=True),
         P("next", "next_action", "What is the next step on the budget?", len(t.records), regex=r"(?i)csv"),
     ]
@@ -324,9 +326,9 @@ def superseded_deploy_plan():
         P("pg", "superseded", "Which Postgres version will be used?", c_pg, regex=r"\b16\b", stale=[r"(?<![\d.])15(?![\d])"]),
         P("size", "superseded", "What instance type will be used?", c_size, regex=r"t3\.large", stale=[r"t3\.medium"]),
         P("date", "superseded", "When is the cutover?", c_date, regex=r"(?i)Nov(ember)?\.? 11|11 Nov", stale=[r"(?i)Nov(ember)?\.? 4\b|\b4 Nov"]),
-        P("redis", "negation", "Is Redis to be used for caching?", c_draft, regex=r"(?i)^\W*no\b|not|never|don't|do not"),
-        P("analytics", "negation", "Will the analytics database be migrated this quarter?", c_analytics, regex=r"(?i)^\W*no\b|not|never"),
-        P("why_eu", "decision", "Why was the region moved to the EU first?", c_reg1, regex=r"(?i)legal|data.*(stay|resid)|EU"),
+        P("redis", "negation", "Is Redis to be used for caching?", c_draft, regex=r"(?i)^\W*no\b|\bnot\b.{0,20}\buse[d]?\b|\bdo not use\b|\bnever\b"),
+        P("analytics", "negation", "Will the analytics database be migrated this quarter?", c_analytics, regex=r"(?i)^\W*no\b|\bnot\b.{0,25}\bmigrat\w*|\bout of scope\b"),
+        P("why_eu", "decision", "Why was the region moved to the EU first?", c_reg1, regex=r"(?i)\blegal\b|\bdata\b.{0,40}\b(stay|resid\w*|remain)\b"),
         P("why_fra", "decision", "Why was eu-central-1 chosen over eu-west-1?", c_reg2, regex=r"(?i)Frankfurt|latency"),
         P("backup", "decoy", "What backup retention period did we agree on?", 1, expect_unknown=True),
         P("next", "next_action", "What is the next step?", len(t.records), regex=r"(?is)rollback.*load test|load test.*rollback"),
@@ -362,12 +364,12 @@ def constraints_api_design():
     t.asst("- 12 profile tests pass\n- Next: write the OpenAPI entry for /v2/profiles and the cursor encoding spec")
     probes = [
         P("schema", "constraint", "Which endpoint's response schema must never change?", c_rules, any_of=["/v1/users"]),
-        P("deps", "constraint", "Are new dependencies allowed?", c_rules, regex=r"(?i)^\W*no\b|not|none"),
+        P("deps", "constraint", "Are new dependencies allowed?", c_rules, regex=r"(?i)^\W*no\b|\bnone\b|\bnot\b.{0,20}\ballowed\b", needle=r"no new dependencies"),
         P("style", "constraint", "What reply style did the user request?", c_rules, regex=r"(?i)terse|bullet"),
         P("pagination", "superseded", "Which pagination scheme is used for the new endpoints?", c_page, regex=r"(?i)cursor", stale=[r"(?i)\boffset\b(?!.*(drop|break|instead))"]),
         P("field", "superseded", "What is the final name of the profile display field?", c_name2, regex=r"displayName", stale=[r"display_name", r"fullName"]),
-        P("audit", "negation", "Is the audit log part of this change?", c_audit, regex=r"(?i)^\W*no\b|not|out of scope|don't"),
-        P("why_cursor", "decision", "Why was cursor pagination chosen?", c_page, regex=r"(?i)large tables|offset breaks|break"),
+        P("audit", "negation", "Is the audit log part of this change?", c_audit, regex=r"(?i)^\W*no\b|\bnot part\b|\bout of scope\b|\bdon'?t touch\b"),
+        P("why_cursor", "decision", "Why was cursor pagination chosen?", c_page, regex=r"(?i)\blarge tables?\b|offset breaks?"),
         P("why_camel", "decision", "Why was camelCase chosen for the field?", c_name2, regex=r"(?i)mobile"),
         P("tests", "tool_result", "How many profile tests passed?", c_tests, regex=r"\b12\b"),
         P("auth_scheme", "decoy", "Which OAuth scope name guards /v2/profiles?", 1, expect_unknown=True),
@@ -423,7 +425,7 @@ def narrative_lighthouse():
         P("compass", "narrative", "What initials are engraved on the compass?", c_secret, regex=r"T\.?K\.?"),
         P("secret", "narrative", "What flaw has the protagonist been hiding?", c_secret, regex=r"(?i)crack"),
         P("motive", "narrative", "Why does Teague want the lamp blamed?", c_teague, regex=r"(?i)debt|owes|shipping line"),
-        P("confession", "narrative", "What did the protagonist confess to Ingrid?", c_turn, regex=r"(?i)lied.*inspector|inspector.*March|lie"),
+        P("confession", "narrative", "What did the protagonist confess to Ingrid?", c_turn, regex=r"(?i)\blied\b|\blie\b|\blying\b"),
         P("tone", "constraint", "What tone was requested?", c_teague, regex=r"(?i)quiet|melanchol"),
         P("dog", "decoy", "What is the name of Marit's dog?", 1, expect_unknown=True),
         P("next", "next_action", "What happens in the next chapter?", len(t.records), regex=r"(?is)inspector.*Teague|Teague.*inspector"),

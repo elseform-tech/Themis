@@ -7,6 +7,8 @@ keeps the generator readable. Nothing here is imported by the harness at run tim
 import json
 import random
 
+from .grade import matches
+
 NOUNS = "ledger widget gateway cursor tenant shard bucket session ticket payload digest router planner cache batch socket queue index record schema fixture token window handler adapter".split()
 VERBS = "build parse merge flush resolve render collect encode verify rotate expire normalize hydrate sample dispatch compact".split()
 ADJ = "pending stale primary shared lazy strict partial rolling nested opaque sparse bounded".split()
@@ -138,6 +140,12 @@ def finish(case_dir, name, kind, transcript, probes, next_action, description):
     assert ends and ends == sorted(set(ends)) and ends[-1] <= total, (name, ends, total)
     for probe in probes:
         assert 1 <= probe["planted_at"] <= total, (name, probe["id"])
+        if probe.get("expect_unknown"):
+            continue
+        # The planted record must itself state the fact the probe expects.
+        text = json.dumps(transcript.records[probe["planted_at"] - 1], ensure_ascii=False)
+        spec = {"regex": probe["needle"]} if probe.get("needle") else probe["expected"]
+        assert matches(spec, text), (name, probe["id"], probe["planted_at"])
     transcript.write(os.path.join(case_dir, "transcript.jsonl"))
     with open(os.path.join(case_dir, "probes.json"), "w", encoding="utf-8") as handle:
         json.dump(probes, handle, indent=2, ensure_ascii=False)

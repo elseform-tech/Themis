@@ -54,7 +54,7 @@
     "question": "Is Redis to be used for caching?",
     "planted_at": 1,
     "expected": {
-      "regex": "(?i)^\\W*no\\b|not|never|don't|do not"
+      "regex": "(?i)^\\W*no\\b|\\bnot\\b.{0,20}\\buse[d]?\\b|\\bdo not use\\b|\\bnever\\b"
     }
   },
   {
@@ -63,7 +63,7 @@
     "question": "Will the analytics database be migrated this quarter?",
     "planted_at": 27,
     "expected": {
-      "regex": "(?i)^\\W*no\\b|not|never"
+      "regex": "(?i)^\\W*no\\b|\\bnot\\b.{0,25}\\bmigrat\\w*|\\bout of scope\\b"
     }
   },
   {
@@ -72,7 +72,7 @@
     "question": "Why was the region moved to the EU first?",
     "planted_at": 15,
     "expected": {
-      "regex": "(?i)legal|data.*(stay|resid)|EU"
+      "regex": "(?i)\\blegal\\b|\\bdata\\b.{0,40}\\b(stay|resid\\w*|remain)\\b"
     }
   },
   {

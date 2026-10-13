@@ -15,7 +15,7 @@ import threading
 import unittest
 
 from . import __main__ as harness
-from .grade import grade, position
+from .grade import grade, matches, position
 from .report import aggregate, spread, trial_rows, trial_summary
 
 SUMMARY = ("Goal/constraints: keep the fixture facts. Confirmed findings: scripted checkpoint. "
@@ -48,6 +48,16 @@ class GradeTests(unittest.TestCase):
         probe = {"expect_unknown": True}
         self.assertEqual(grade(probe, "UNKNOWN"), "correct_unknown")
         self.assertEqual(grade(probe, "redis.internal"), "invented")
+        self.assertEqual(grade(probe, "Unknown redis.internal"), "invented")
+        for abstention in ("UNKNOWN - the conversation never says.", "It was not mentioned.",
+                           "The context does not specify a hostname.", "No information is available."):
+            self.assertEqual(grade(probe, abstention), "correct_unknown", abstention)
+
+    def test_unknown_followed_by_a_value_is_not_an_abstention(self):
+        probe = {"expected": {"any_of": ["t3.large"]}}
+        self.assertEqual(grade(probe, "Unknown, probably t3.small"), "wrong")
+        self.assertEqual(grade(probe, "UNKNOWN - the context does not say."), "unknown")
+        self.assertEqual(grade(probe, "The size is not mentioned."), "unknown")
 
     def test_position_thirds(self):
         self.assertEqual([position(n, 30) for n in (1, 10, 11, 20, 21, 30)],
@@ -71,19 +81,45 @@ class ReportTests(unittest.TestCase):
         run = self.run_report({"a": "x", "b": "old value", "d": "made up"})
         rows = trial_rows(self.case(), run)
         summary = trial_summary(rows, [run])
-        self.assertEqual(summary["retention"], 0.5)
+        self.assertEqual(summary["overall_retention"], 0.5)
+        self.assertFalse(summary["tail_split_available"])
+        self.assertIsNone(summary["summary_only_retention"])
         self.assertEqual(summary["stale_fact_rate"], 1.0)
         self.assertEqual(summary["invented_decoy_answers"], 1)
         self.assertEqual(summary["by_position"]["early"], 1.0)
         self.assertEqual(summary["by_position"]["late"], 0.0)
         self.assertEqual(summary["tokens_after_mean"], 300)
 
+    def test_summary_only_headline_excludes_the_verbatim_tail(self):
+        # "a" (record 1) was summarized and answered wrong; "b" (record 25) is verbatim and right.
+        run = self.run_report({"a": "nope", "b": "new", "d": "UNKNOWN"})
+        run["verbatim_records"] = [25]
+        rows = trial_rows(self.case(), run)
+        self.assertEqual([r["verbatim"] for r in rows], [False, True, False])
+        summary = trial_summary(rows, [run])
+        self.assertEqual(summary["summary_only_retention"], 0.0)
+        self.assertEqual(summary["tail_retention"], 1.0)
+        self.assertEqual(summary["overall_retention"], 0.5)
+        self.assertEqual(summary["by_position"]["early"], 0.0)  # headline basis
+        self.assertEqual(summary["by_position_overall"]["late"], 1.0)
+
+    def test_invalid_runs_are_excluded_and_reported(self):
+        good = self.run_report({"a": "x", "b": "new", "d": "UNKNOWN"})
+        bad = dict(self.run_report({"a": "x", "b": "new", "d": "UNKNOWN"}), valid=False)
+        bad["chunks"] = [dict(bad["chunks"][0], installed=False, error="boom")]
+        case = dict(self.case(), directory="")
+        summary = harness.build_summary([case], {(0, "c"): good, (1, "c"): bad}, 2)
+        self.assertEqual(summary["trials_with_data"], 1)
+        self.assertEqual(summary["invalid_runs"], [{"trial": 1, "case": "c", "errors": ["boom"]}])
+
     def test_spread(self):
         self.assertEqual(spread([0.5, 1.0])["mean"], 0.75)
         self.assertEqual(spread([1.0])["sd"], 0.0)
         self.assertIsNone(spread([]))
-        trial = {"retention": 0.5, "by_category": {}, "by_position": {}}
-        self.assertEqual(aggregate([trial, trial])["retention"]["mean"], 0.5)
+        trial = {"by_category": {}, "by_position": {}, "by_category_overall": {},
+                 "by_position_overall": {}}
+        trial.update(summary_only_retention=0.5, tail_split_available=True)
+        self.assertEqual(aggregate([trial, trial])["summary_only_retention"]["mean"], 0.5)
 
 
 class Mock(http.server.BaseHTTPRequestHandler):
@@ -109,8 +145,7 @@ class EndToEndTests(unittest.TestCase):
     def test_harness_runs_the_real_example_against_a_scripted_server(self):
         subprocess.run(["cargo", "build", "-q", "-p", "themis-core", "--features", "eval",
                         "--example", "compaction_eval"], cwd=harness.ROOT, check=True)
-        target = os.environ.get("CARGO_TARGET_DIR", os.path.join(harness.ROOT, "target"))
-        runner = os.path.join(target, "debug", "examples", "compaction_eval" + harness.EXE)
+        runner = os.path.join(harness.target_dir(), "debug", "examples", "compaction_eval" + harness.EXE)
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Mock)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
@@ -126,7 +161,9 @@ class EndToEndTests(unittest.TestCase):
                 result = json.load(handle)
         self.assertEqual(result["trials_with_data"], 2)
         self.assertEqual(result["failed_runs"], [])
-        self.assertEqual(result["aggregate"]["retention"]["mean"], 0.0)  # mock always says UNKNOWN
+        self.assertEqual(result["aggregate"]["overall_retention"]["mean"], 0.0)  # mock says UNKNOWN
+        self.assertTrue(result["aggregate"]["tail_split_available"])
+        self.assertGreater(result["aggregate"]["summary_only_probes"]["mean"], 0)
         self.assertEqual(result["aggregate"]["invented_decoy_answers"]["mean"], 0.0)
         self.assertEqual(result["aggregate"]["compactions_failed"]["mean"], 0.0)
         self.assertGreater(result["aggregate"]["tokens_before_mean"]["mean"],
@@ -134,7 +171,55 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn("early", result["aggregate"]["by_position"])
 
 
+KNOWN_WRONG = {
+    # (case, probe): answers that must never be graded correct.
+    ("coding-csv-migration", "decimal"): ["A period", "Dot, as in 12.50", "A semicolon", "tab"],
+    ("coding-csv-migration", "cause"): ["A namespace collision", "Encoding mismatch"],
+    ("superseded-deploy-plan", "why_eu"): [
+        "To use a neutral queue", "Because Europe is nice", "Lower cost", "Latency to customers"],
+    ("superseded-deploy-plan", "redis"): [
+        "Yes, Redis will be used", "Note that Redis is fine", "Nothing prevents it"],
+    ("superseded-deploy-plan", "analytics"): [
+        "Yes, it will be migrated", "Nothing was said", "It cannot be migrated"],
+    ("constraints-api-design", "deps"): ["Yes, they are allowed", "Note: fine", "Nothing forbids it"],
+    ("constraints-api-design", "audit"): ["Yes, it is included", "Note the audit log changes",
+                                          "Nothing else"],
+    ("coding-rust-parser", "no_regex"): ["Yes, it is acceptable", "Note that regex helps",
+                                         "Nothing stops it", "It cannot hurt"],
+    ("parked-budget-recipe", "test_fail"): ["The test was wrong somehow", "Wrong import"],
+    ("constraints-api-design", "why_cursor"): ["It would break the API", "Offsets are fine"],
+}
+KNOWN_RIGHT = {
+    ("coding-csv-migration", "decimal"): "A comma",
+    ("superseded-deploy-plan", "why_eu"): "Legal required customer data to stay in the EU",
+    ("superseded-deploy-plan", "redis"): "No, Redis is not to be used",
+    ("superseded-deploy-plan", "analytics"): "No, it is not being migrated this quarter",
+    ("constraints-api-design", "deps"): "No new dependencies",
+    ("constraints-api-design", "audit"): "No, it is out of scope",
+    ("coding-rust-parser", "no_regex"): "No, do not add it",
+}
+
+
 class FixtureTests(unittest.TestCase):
+    def test_fixed_probes_reject_known_wrong_answers(self):
+        probes = {(c["name"], p["id"]): p for c in harness.load_cases("core") for p in c["probes"]}
+        for key, answers in KNOWN_WRONG.items():
+            for answer in answers:
+                self.assertNotEqual(grade(probes[key], answer), "correct", (key, answer))
+        for key, answer in KNOWN_RIGHT.items():
+            self.assertEqual(grade(probes[key], answer), "correct", (key, answer))
+
+    def test_planted_record_states_the_fact(self):
+        for case in harness.load_cases("core"):
+            with open(os.path.join(case["directory"], "transcript.jsonl"), encoding="utf-8") as h:
+                lines = h.read().splitlines()
+            for probe in case["probes"]:
+                if probe.get("expect_unknown"):
+                    continue
+                spec = {"regex": probe["needle"]} if probe.get("needle") else probe["expected"]
+                self.assertTrue(matches(spec, lines[probe["planted_at"] - 1]),
+                                (case["name"], probe["id"]))
+
     def test_every_core_case_is_well_formed(self):
         cases = harness.load_cases("core")
         self.assertGreaterEqual(len(cases), 8)

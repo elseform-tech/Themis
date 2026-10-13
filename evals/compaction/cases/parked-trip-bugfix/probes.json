@@ -52,7 +52,7 @@
     "id": "bug_func",
     "category": "identifier",
     "question": "Which function had the rounding bug and in which file?",
-    "planted_at": 32,
+    "planted_at": 33,
     "expected": {
       "regex": "(?is)round_cents.*totals\\.py|totals\\.py.*round_cents"
     }
@@ -61,7 +61,7 @@
     "id": "rounding",
     "category": "decision",
     "question": "Which rounding mode does the fix use?",
-    "planted_at": 35,
+    "planted_at": 34,
     "expected": {
       "regex": "(?i)HALF_EVEN|banker"
     }

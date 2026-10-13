@@ -33,11 +33,16 @@ def load_cases(suite, only=None):
     return cases
 
 
+def target_dir():
+    """Cargo's target directory; a relative CARGO_TARGET_DIR is relative to the repo root."""
+    return os.path.join(ROOT, os.environ.get("CARGO_TARGET_DIR", "target"))
+
+
 def build_runner():
     command = ["cargo", "build", "--release", "-q", "-p", "themis-core", "--features", "eval",
                "--example", "compaction_eval"]
     subprocess.run(command, cwd=ROOT, check=True)
-    target = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
+    target = target_dir()
     return [os.path.join(target, "release", "examples", "compaction_eval" + EXE)]
 
 
@@ -58,6 +63,74 @@ def run_once(runner, case, args):
         return json.loads(done.stdout), None
     except ValueError as error:
         return None, f"unparseable runner output: {error}"
+
+
+def build_summary(cases, results, trials_requested):
+    """Grades and aggregates `results[(trial, case_name)]` run reports.
+
+    Runs whose compaction failed (`valid` false) were answered from uncompacted history;
+    they are listed under `invalid_runs` and excluded from every retention statistic.
+    """
+    trials, per_case, raw, invalid = [], {}, [], []
+    for trial in range(trials_requested):
+        rows, runs = [], []
+        for case in cases:
+            report = results.get((trial, case["name"]))
+            if not report:
+                continue
+            if report.get("valid") is False:
+                invalid.append({"trial": trial, "case": case["name"],
+                                "errors": [c.get("error") for c in report["chunks"]]})
+                continue
+            graded = trial_rows(case, report)
+            rows += graded
+            runs.append(report)
+            scored = [r for r in graded if r["category"] != "decoy"]
+            per_case.setdefault(case["name"], []).append(
+                sum(r["verdict"] == "correct" for r in scored) / max(1, len(scored)))
+            raw.append({"trial": trial, "case": case["name"], "chunks": report["chunks"],
+                        "valid": True, "verbatim_records": report.get("verbatim_records"),
+                        "rows": graded})
+        if runs:
+            trials.append(trial_summary(rows, runs))
+    return {
+        "trials_requested": trials_requested, "trials_with_data": len(trials),
+        "cases": [c["name"] for c in cases], "invalid_runs": invalid,
+        "aggregate": aggregate(trials) if trials else None,
+        "per_trial": trials,
+        "per_case_retention": {name: {"mean": round(sum(v) / len(v), 4), "trials": v}
+                               for name, v in per_case.items()},
+        "details": raw,
+    }
+
+
+def regrade(args):
+    """Re-grades a stored result with the current grader and fixtures, offline."""
+    with open(args.result, encoding="utf-8") as handle:
+        old = json.load(handle)
+    cases = {c["name"]: c for c in load_cases(old["suite"])}
+    results = {}
+    for item in old["details"]:
+        results[(item["trial"], item["case"])] = {
+            "chunks": item["chunks"], "valid": item.get("valid", True),
+            "verbatim_records": item.get("verbatim_records"),
+            "answers": [{"id": r["id"], "answer": r["answer"], "error": r.get("error")}
+                        for r in item["rows"]]}
+    summary = build_summary([cases[n] for n in old["cases"]], results, old["trials_requested"])
+    for key in ("suite", "model", "budget", "recent_messages", "failed_runs", "created",
+                "git_commit"):
+        summary[key] = old.get(key)
+    summary["note"] = ("Offline regrade of " + os.path.basename(args.result) + " with the "
+                       "current grader and fixtures; answers are the original model output. "
+                       + ("" if summary["aggregate"] and summary["aggregate"]["tail_split_available"]
+                          else "Verbatim-record data was not stored by that run, so no "
+                               "summary-only/tail split is available."))
+    out = args.out or args.result.replace(".json", "-regraded.json")
+    with open(out, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    print(out)
+    return 0
 
 
 def run(args):
@@ -87,37 +160,15 @@ def run(args):
             else:
                 failures.append({"trial": trial, "case": case["name"], "error": error})
 
-    trials, per_case, raw = [], {}, []
-    for trial in range(args.trials):
-        rows, runs = [], []
-        for case in cases:
-            report = results.get((trial, case["name"]))
-            if not report:
-                continue
-            graded = trial_rows(case, report)
-            rows += graded
-            runs.append(report)
-            per_case.setdefault(case["name"], []).append(
-                sum(r["verdict"] == "correct" for r in graded if r["category"] != "decoy")
-                / max(1, sum(r["category"] != "decoy" for r in graded)))
-            raw.append({"trial": trial, "case": case["name"], "chunks": report["chunks"],
-                        "rows": graded})
-        if runs:
-            trials.append(trial_summary(rows, runs))
-    summary = {
+    summary = build_summary(cases, results, args.trials)
+    summary.update({
         "suite": args.suite, "model": args.model, "budget": args.budget,
-        "recent_messages": args.recent, "trials_requested": args.trials,
-        "trials_with_data": len(trials), "cases": [c["name"] for c in cases],
-        "failed_runs": failures, "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "recent_messages": args.recent, "failed_runs": failures,
+        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "git_commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
                                      capture_output=True, text=True).stdout.strip(),
         "note": "Live-model benchmark audit; not an automated runtime check.",
-        "aggregate": aggregate(trials) if trials else None,
-        "per_trial": trials,
-        "per_case_retention": {name: {"mean": round(sum(v) / len(v), 4), "trials": v}
-                               for name, v in per_case.items()},
-        "details": raw,
-    }
+    })
     out = args.out or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "results",
         f"{datetime.date.today()}-{(args.model or 'default').replace('/', '_')}-{args.budget}.json")
@@ -144,8 +195,11 @@ def main(argv=None):
     cmd.add_argument("--timeout", type=int, default=1200)
     cmd.add_argument("--runner", default=None, help="runner command (default: build the example)")
     cmd.add_argument("--out", default=None)
+    again = sub.add_parser("regrade", help="re-grade a stored result offline")
+    again.add_argument("result")
+    again.add_argument("--out", default=None)
     args = parser.parse_args(argv)
-    return run(args)
+    return regrade(args) if args.command == "regrade" else run(args)
 
 
 if __name__ == "__main__":

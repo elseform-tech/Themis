@@ -12,7 +12,7 @@
     "id": "savings",
     "category": "parked_topic",
     "question": "What savings target is set, as a percentage and amount?",
-    "planted_at": 1,
+    "planted_at": 2,
     "expected": {
       "regex": "(?is)15.*630|630.*15"
     }
@@ -41,7 +41,7 @@
     "id": "substitute",
     "category": "parked_topic",
     "question": "What buttermilk substitute was chosen?",
-    "planted_at": 17,
+    "planted_at": 18,
     "expected": {
       "regex": "(?is)oat milk.*lemon|lemon.*oat"
     }
@@ -86,9 +86,9 @@
     "id": "test_fail",
     "category": "tool_result",
     "question": "Why did test_savings_goal fail?",
-    "planted_at": 56,
+    "planted_at": 57,
     "expected": {
-      "regex": "(?is)640.*630|test constant|wrong"
+      "regex": "(?is)640.*630|630.*640|test (constant|expectation)|expected (value|constant)"
     }
   },
   {

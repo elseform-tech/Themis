@@ -56,9 +56,9 @@
     "id": "cause",
     "category": "tool_result",
     "question": "What was the cause of that ValueError?",
-    "planted_at": 43,
+    "planted_at": 44,
     "expected": {
-      "regex": "(?i)whitespace|space|strip"
+      "regex": "(?i)\\bwhitespace\\b|\\bspaces?\\b|\\bstrip"
     }
   },
   {
@@ -76,7 +76,7 @@
     "question": "What decimal separator do amounts use in the export?",
     "planted_at": 1,
     "expected": {
-      "regex": "(?i)comma|,"
+      "regex": "(?i)\\bcomma\\b"
     }
   },
   {

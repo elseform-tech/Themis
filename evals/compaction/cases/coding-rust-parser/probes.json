@@ -14,7 +14,7 @@
     "question": "Is it acceptable to add the regex crate to simplify the parser?",
     "planted_at": 23,
     "expected": {
-      "regex": "(?i)^\\W*no\\b|not|never|do not"
+      "regex": "(?i)^\\W*no\\b|\\bnot (acceptable|allowed|permitted|be added)\\b|\\bdo not\\b|\\bnever\\b"
     }
   },
   {
@@ -30,7 +30,7 @@
     "id": "bug_file",
     "category": "identifier",
     "question": "In which file and function was the off-by-one found?",
-    "planted_at": 38,
+    "planted_at": 39,
     "expected": {
       "regex": "(?is)caret\\.rs.*bump_index|bump_index.*caret\\.rs"
     }
@@ -48,7 +48,7 @@
     "id": "empty",
     "category": "constraint",
     "question": "What should an empty comparator return?",
-    "planted_at": 55,
+    "planted_at": 1,
     "expected": {
       "any_of": [
         "EmptyComparator"
