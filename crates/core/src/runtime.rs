@@ -220,6 +220,7 @@ fn context_breakdown(messages: &[ChatMessage]) -> ContextBreakdown {
 /// prompt answers once per tool instead of once per call.
 pub struct CachingApprovals {
     inner: Arc<dyn ApprovalHook>,
+    /// Grant keys; see [`ToolAction::grant_key`].
     allowed: Mutex<HashSet<String>>,
 }
 
@@ -252,7 +253,8 @@ impl CachingApprovals {
         Arc::new(Self::new(inner))
     }
 
-    /// Returns true when `tool` was previously allow-always'd.
+    /// Returns true when `tool` was previously allow-always'd (for `shell`,
+    /// pass the grant key from [`ToolAction::grant_key`]).
     pub fn is_cached(&self, tool: &str) -> bool {
         self.allowed
             .lock()
@@ -263,7 +265,8 @@ impl CachingApprovals {
 
 impl ApprovalHook for CachingApprovals {
     fn approve(&self, action: &ToolAction) -> Approval {
-        if self.is_cached(&action.tool) {
+        let key = action.grant_key();
+        if self.is_cached(&key) {
             return Approval::AllowAlways;
         }
         let decision = self.inner.approve(action);
@@ -271,7 +274,7 @@ impl ApprovalHook for CachingApprovals {
             self.allowed
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .insert(action.tool.clone());
+                .insert(key);
         }
         decision
     }
@@ -2486,6 +2489,11 @@ async fn execute_call(
         summary: summary.to_owned(),
         risk: crate::tools::integration_risk(name, &approval_args)
             .unwrap_or_else(|| risk_for(name)),
+        command: if name == "shell" {
+            crate::tools::shell_argv(&approval_args)
+        } else {
+            Vec::new()
+        },
     });
     events
         .send(RunEvent::ApprovalDecided {
@@ -3424,6 +3432,7 @@ mod tests {
 
     fn action(tool: &str) -> ToolAction {
         ToolAction {
+            command: Vec::new(),
             tool: tool.to_owned(),
             summary: "test".to_owned(),
             risk: RiskLevel::Write,
@@ -6074,6 +6083,7 @@ mod tests {
             ApprovalPolicy {
                 default: PolicyAction::Allow,
                 rules: vec![ApprovalRule {
+                    command: None,
                     tool: "*".into(),
                     action: PolicyAction::Deny,
                     risk: Some("destructive".into()),

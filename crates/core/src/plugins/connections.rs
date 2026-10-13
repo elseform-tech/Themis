@@ -399,6 +399,7 @@ impl ToolRuntime for McpTool {
         crate::tools::check_approval_permitted(
             self.approvals.as_ref(),
             &ToolAction {
+                command: Vec::new(),
                 tool: self.name.clone(),
                 summary: format!("Call MCP tool {}", self.remote),
                 risk: RiskLevel::Network,
@@ -453,6 +454,7 @@ pub async fn tools(
 
 pub fn startup_action(name: &str, server: &McpServer) -> anyhow::Result<ToolAction> {
     Ok(ToolAction {
+        command: Vec::new(),
         tool: format!("mcp_start_{name}"),
         summary: format!(
             "Connect MCP server: {} {:?}",

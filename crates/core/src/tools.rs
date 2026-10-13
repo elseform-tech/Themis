@@ -116,6 +116,43 @@ pub struct ToolAction {
     pub summary: String,
     /// Risk classification.
     pub risk: RiskLevel,
+    /// Program followed by its arguments for `shell` actions; empty for every
+    /// other tool. Used by command-scoped approval rules and grant caching.
+    pub command: Vec<String>,
+}
+
+impl ToolAction {
+    /// Key under which an interactive "allow for this run" grant is cached.
+    ///
+    /// Most tools are keyed by name. For `shell` the key is the approved
+    /// command prefix: the program plus its first argument when that argument
+    /// is a plain subcommand word (no leading `-`), otherwise the program plus
+    /// the full argument list. Approving `cargo test` therefore never approves
+    /// `cargo publish`, `rm ...` or `bash -c ...`.
+    pub fn grant_key(&self) -> String {
+        if self.tool != "shell" || self.command.is_empty() {
+            return self.tool.clone();
+        }
+        let prefix = match self.command.get(1) {
+            Some(first) if !first.starts_with('-') => &self.command[..2],
+            _ => &self.command[..],
+        };
+        // NUL cannot occur in argv, so the join is unambiguous.
+        format!("shell\0{}", prefix.join("\0"))
+    }
+}
+
+/// Program and arguments of a `shell` tool call, as validated arguments or raw
+/// model JSON. Empty when the call has no usable `command`.
+pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
+    let Some(program) = args.get("command").and_then(|v| v.as_str()) else {
+        return Vec::new();
+    };
+    let mut argv = vec![program.to_owned()];
+    if let Some(rest) = args.get("args").and_then(|v| v.as_array()) {
+        argv.extend(rest.iter().filter_map(|v| v.as_str()).map(str::to_owned));
+    }
+    argv
 }
 
 /// Decides whether a proposed [`ToolAction`] may run.
@@ -375,6 +412,7 @@ impl ToolRuntime for GatedTool {
         }
         let name = self.inner.name();
         let action = ToolAction {
+            command: Vec::new(),
             tool: name.to_owned(),
             summary: (self.summarize)(name, &args),
             risk: self.risk,
@@ -1191,7 +1229,11 @@ impl ToolRuntime for ShellTool {
                 workdir.display()
             )));
         }
+        let argv: Vec<String> = std::iter::once(command.clone())
+            .chain(args.iter().cloned())
+            .collect();
         let action = ToolAction {
+            command: argv,
             tool: "shell".to_string(),
             summary: format!(
                 "run `{command} {}` in {}",
@@ -1285,6 +1327,7 @@ impl ToolRuntime for ApplyPatchTool {
         check_approval_permitted(
             self.approvals.as_ref(),
             &ToolAction {
+                command: Vec::new(),
                 tool: "apply_patch".to_string(),
                 summary,
                 risk: RiskLevel::Write,
@@ -1374,6 +1417,7 @@ impl ToolRuntime for GitTool {
                 check_approval_permitted(
                     self.approvals.as_ref(),
                     &ToolAction {
+                        command: Vec::new(),
                         tool: "git".into(),
                         summary: format!("run git {}", args.join(" ")),
                         risk: RiskLevel::Execute,
@@ -1384,6 +1428,7 @@ impl ToolRuntime for GitTool {
                 check_approval_permitted(
                     self.approvals.as_ref(),
                     &ToolAction {
+                        command: Vec::new(),
                         tool: "git".into(),
                         summary: format!("run git {}", args.join(" ")),
                         risk: RiskLevel::Read,
@@ -1394,6 +1439,7 @@ impl ToolRuntime for GitTool {
                 check_approval_permitted(
                     self.approvals.as_ref(),
                     &ToolAction {
+                        command: Vec::new(),
                         tool: "git".to_string(),
                         summary: format!("run `git {}`", args.join(" ")),
                         risk: RiskLevel::Write,
@@ -2129,6 +2175,7 @@ mod tests {
         let policy = crate::configuration::ApprovalPolicy {
             default: crate::configuration::PolicyAction::Allow,
             rules: vec![crate::configuration::ApprovalRule {
+                command: None,
                 tool: "git".into(),
                 action: crate::configuration::PolicyAction::Deny,
                 risk: Some("read".into()),
@@ -2437,6 +2484,7 @@ mod tests {
     #[test]
     fn approval_hooks_behave() {
         let shell = ToolAction {
+            command: Vec::new(),
             tool: "shell".to_string(),
             summary: "run echo".to_string(),
             risk: RiskLevel::Execute,
@@ -2452,6 +2500,7 @@ mod tests {
         });
         assert_eq!(hook.approve(&shell), Approval::Deny);
         let git = ToolAction {
+            command: Vec::new(),
             tool: "git".to_string(),
             summary: "status".to_string(),
             risk: RiskLevel::Read,

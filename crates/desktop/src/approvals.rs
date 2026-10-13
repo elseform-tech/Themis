@@ -166,6 +166,7 @@ mod tests {
 
     fn action(tool: &str, risk: CoreRisk) -> ToolAction {
         ToolAction {
+            command: Vec::new(),
             tool: tool.to_owned(),
             summary: format!("test {tool}"),
             risk,
