@@ -1,0 +1,15 @@
+{
+  "name": "parked-trip-bugfix",
+  "kind": "parked_topic",
+  "description": "Trip planning parked while a coding bug is fixed; both threads probed afterwards.",
+  "suites": [
+    "core"
+  ],
+  "records": 58,
+  "chunks": [
+    18,
+    50,
+    58
+  ],
+  "next_action": "Return to the Lisbon trip: book flights and reserve a seafood dinner."
+}

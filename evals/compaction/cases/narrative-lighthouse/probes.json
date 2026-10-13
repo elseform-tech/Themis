@@ -1,0 +1,126 @@
+[
+  {
+    "id": "island",
+    "category": "narrative",
+    "question": "What is the name of the island and the year?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "(?is)Skarn.*1894|1894.*Skarn"
+    }
+  },
+  {
+    "id": "pov",
+    "category": "constraint",
+    "question": "What narrative person and tense were requested?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "(?is)third.*past|past.*third"
+    }
+  },
+  {
+    "id": "name",
+    "category": "superseded",
+    "question": "What is the protagonist's full name now?",
+    "planted_at": 3,
+    "expected": {
+      "regex": "Marit Oyelaran"
+    },
+    "stale": [
+      "\\bMara\\b"
+    ]
+  },
+  {
+    "id": "sister",
+    "category": "narrative",
+    "question": "Who is the protagonist's sister?",
+    "planted_at": 1,
+    "expected": {
+      "any_of": [
+        "Ingrid"
+      ]
+    }
+  },
+  {
+    "id": "ship",
+    "category": "narrative",
+    "question": "What was the name of the ship that ran aground?",
+    "planted_at": 5,
+    "expected": {
+      "any_of": [
+        "Halcyon Dray"
+      ]
+    }
+  },
+  {
+    "id": "villain",
+    "category": "narrative",
+    "question": "Who blames the lamp for the wreck?",
+    "planted_at": 5,
+    "expected": {
+      "any_of": [
+        "Teague"
+      ]
+    }
+  },
+  {
+    "id": "compass",
+    "category": "narrative",
+    "question": "What initials are engraved on the compass?",
+    "planted_at": 13,
+    "expected": {
+      "regex": "T\\.?K\\.?"
+    }
+  },
+  {
+    "id": "secret",
+    "category": "narrative",
+    "question": "What flaw has the protagonist been hiding?",
+    "planted_at": 13,
+    "expected": {
+      "regex": "(?i)crack"
+    }
+  },
+  {
+    "id": "motive",
+    "category": "narrative",
+    "question": "Why does Teague want the lamp blamed?",
+    "planted_at": 25,
+    "expected": {
+      "regex": "(?i)debt|owes|shipping line"
+    }
+  },
+  {
+    "id": "confession",
+    "category": "narrative",
+    "question": "What did the protagonist confess to Ingrid?",
+    "planted_at": 23,
+    "expected": {
+      "regex": "(?i)\\blied\\b|\\blie\\b|\\blying\\b"
+    }
+  },
+  {
+    "id": "tone",
+    "category": "constraint",
+    "question": "What tone was requested?",
+    "planted_at": 25,
+    "expected": {
+      "regex": "(?i)quiet|melanchol"
+    }
+  },
+  {
+    "id": "dog",
+    "category": "decoy",
+    "question": "What is the name of Marit's dog?",
+    "planted_at": 1,
+    "expect_unknown": true
+  },
+  {
+    "id": "next",
+    "category": "next_action",
+    "question": "What happens in the next chapter?",
+    "planted_at": 34,
+    "expected": {
+      "regex": "(?is)inspector.*Teague|Teague.*inspector"
+    }
+  }
+]

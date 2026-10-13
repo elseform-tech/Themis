@@ -27,6 +27,8 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 
 pub mod documents;
+#[cfg(feature = "eval")]
+pub mod eval;
 mod ledger;
 mod maintenance;
 mod pending;

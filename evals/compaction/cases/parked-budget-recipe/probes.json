@@ -1,0 +1,110 @@
+[
+  {
+    "id": "rent",
+    "category": "parked_topic",
+    "question": "What is the monthly rent in the budget?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "1,?450"
+    }
+  },
+  {
+    "id": "savings",
+    "category": "parked_topic",
+    "question": "What savings target is set, as a percentage and amount?",
+    "planted_at": 2,
+    "expected": {
+      "regex": "(?is)15.*630|630.*15"
+    }
+  },
+  {
+    "id": "income",
+    "category": "parked_topic",
+    "question": "What is the monthly income?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "4,?200"
+    }
+  },
+  {
+    "id": "diet",
+    "category": "parked_topic",
+    "question": "What dietary restriction affects the recipe?",
+    "planted_at": 17,
+    "expected": {
+      "any_of": [
+        "lactose"
+      ]
+    }
+  },
+  {
+    "id": "substitute",
+    "category": "parked_topic",
+    "question": "What buttermilk substitute was chosen?",
+    "planted_at": 18,
+    "expected": {
+      "regex": "(?is)oat milk.*lemon|lemon.*oat"
+    }
+  },
+  {
+    "id": "flour",
+    "category": "parked_topic",
+    "question": "How much flour does the final recipe use?",
+    "planted_at": 27,
+    "expected": {
+      "regex": "\\b2 cups\\b|two cups"
+    }
+  },
+  {
+    "id": "gift",
+    "category": "parked_topic",
+    "question": "Which gift was chosen for the sister?",
+    "planted_at": 41,
+    "expected": {
+      "regex": "(?i)mug"
+    }
+  },
+  {
+    "id": "gift_date",
+    "category": "parked_topic",
+    "question": "When is the sister's birthday?",
+    "planted_at": 29,
+    "expected": {
+      "regex": "(?i)Nov(ember)?\\.? 9|9 Nov"
+    }
+  },
+  {
+    "id": "gift_budget",
+    "category": "parked_topic",
+    "question": "What is the gift budget?",
+    "planted_at": 29,
+    "expected": {
+      "regex": "\\b80\\b"
+    }
+  },
+  {
+    "id": "test_fail",
+    "category": "tool_result",
+    "question": "Why did test_savings_goal fail?",
+    "planted_at": 57,
+    "expected": {
+      "regex": "(?is)640.*630|630.*640|test (constant|expectation)|expected (value|constant)"
+    }
+  },
+  {
+    "id": "oven",
+    "category": "decoy",
+    "question": "What oven temperature does the pancake recipe need?",
+    "planted_at": 1,
+    "expect_unknown": true
+  },
+  {
+    "id": "next",
+    "category": "next_action",
+    "question": "What is the next step on the budget?",
+    "planted_at": 62,
+    "expected": {
+      "regex": "(?i)csv"
+    }
+  }
+]

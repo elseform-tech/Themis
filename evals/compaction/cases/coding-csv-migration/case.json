@@ -1,0 +1,14 @@
+{
+  "name": "coding-csv-migration",
+  "kind": "coding",
+  "description": "Legacy CSV import with a mid-session policy reversal and a data-quality failure.",
+  "suites": [
+    "core"
+  ],
+  "records": 63,
+  "chunks": [
+    29,
+    63
+  ],
+  "next_action": "Add an index on customer_id and document the rejects.csv format in the README."
+}

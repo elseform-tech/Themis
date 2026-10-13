@@ -1,0 +1,109 @@
+[
+  {
+    "id": "schema",
+    "category": "constraint",
+    "question": "Which endpoint's response schema must never change?",
+    "planted_at": 1,
+    "expected": {
+      "any_of": [
+        "/v1/users"
+      ]
+    }
+  },
+  {
+    "id": "deps",
+    "category": "constraint",
+    "question": "Are new dependencies allowed?",
+    "planted_at": 1,
+    "needle": "no new dependencies",
+    "expected": {
+      "regex": "(?i)^\\W*no\\b|\\bnone\\b|\\bnot\\b.{0,20}\\ballowed\\b"
+    }
+  },
+  {
+    "id": "style",
+    "category": "constraint",
+    "question": "What reply style did the user request?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "(?i)terse|bullet"
+    }
+  },
+  {
+    "id": "pagination",
+    "category": "superseded",
+    "question": "Which pagination scheme is used for the new endpoints?",
+    "planted_at": 41,
+    "expected": {
+      "regex": "(?i)cursor"
+    },
+    "stale": [
+      "(?i)\\boffset\\b(?!.*(drop|break|instead))"
+    ]
+  },
+  {
+    "id": "field",
+    "category": "superseded",
+    "question": "What is the final name of the profile display field?",
+    "planted_at": 43,
+    "expected": {
+      "regex": "displayName"
+    },
+    "stale": [
+      "display_name",
+      "fullName"
+    ]
+  },
+  {
+    "id": "audit",
+    "category": "negation",
+    "question": "Is the audit log part of this change?",
+    "planted_at": 27,
+    "expected": {
+      "regex": "(?i)^\\W*no\\b|\\bnot part\\b|\\bout of scope\\b|\\bdon'?t touch\\b"
+    }
+  },
+  {
+    "id": "why_cursor",
+    "category": "decision",
+    "question": "Why was cursor pagination chosen?",
+    "planted_at": 41,
+    "expected": {
+      "regex": "(?i)\\blarge tables?\\b|offset breaks?"
+    }
+  },
+  {
+    "id": "why_camel",
+    "category": "decision",
+    "question": "Why was camelCase chosen for the field?",
+    "planted_at": 43,
+    "expected": {
+      "regex": "(?i)mobile"
+    }
+  },
+  {
+    "id": "tests",
+    "category": "tool_result",
+    "question": "How many profile tests passed?",
+    "planted_at": 56,
+    "expected": {
+      "regex": "\\b12\\b"
+    }
+  },
+  {
+    "id": "auth_scheme",
+    "category": "decoy",
+    "question": "Which OAuth scope name guards /v2/profiles?",
+    "planted_at": 1,
+    "expect_unknown": true
+  },
+  {
+    "id": "next",
+    "category": "next_action",
+    "question": "What is the next step?",
+    "planted_at": 57,
+    "expected": {
+      "regex": "(?is)openapi.*cursor|cursor.*openapi"
+    }
+  }
+]

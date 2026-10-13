@@ -1,0 +1,14 @@
+{
+  "name": "coding-rust-parser",
+  "kind": "coding",
+  "description": "Rust crate bug fix with negated suggestion (no regex) and constraint set.",
+  "suites": [
+    "core"
+  ],
+  "records": 66,
+  "chunks": [
+    24,
+    66
+  ],
+  "next_action": "Add a CHANGELOG entry and bump the version to 0.4.2."
+}
