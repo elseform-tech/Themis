@@ -1598,6 +1598,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn thread_tasks_classify_runs_from_terminal_events() {
+        let (state, dir) = test_state();
+        let project = dir.path().to_string_lossy().into_owned();
+        let thread = state
+            .create_thread(project.clone(), ProviderKind::Go, Some("m".to_owned()))
+            .await
+            .expect("thread");
+        let mut input = automation_input(&project);
+        input.target_thread_id = Some(thread.id.clone());
+        let automation = state.create_automation(input).await.expect("automation");
+        let (sink, _rx) = test_sink();
+        for (run_id, event) in [
+            (
+                "ok-run",
+                RunEvent::Finished {
+                    result: "done".to_owned(),
+                },
+            ),
+            (
+                "bad-run",
+                RunEvent::Failed {
+                    error: "boom".to_owned(),
+                },
+            ),
+        ] {
+            state.inner.automation_runs.lock().unwrap().insert(
+                run_id.to_owned(),
+                AutomationRunContext {
+                    automation_id: automation.id.clone(),
+                    thread_id: thread.id.clone(),
+                    title: "t".to_owned(),
+                },
+            );
+            state.complete_automation_run(&sink, run_id, &event).await;
+        }
+        let tasks = state.get_thread_tasks(&thread.id).await.expect("tasks");
+        assert_eq!(tasks.recent.len(), 2);
+        assert_eq!(tasks.recent.iter().filter(|run| run.ok).count(), 1);
+        let times: Vec<_> = tasks.recent.iter().map(|run| &run.finished_at).collect();
+        assert!(times[0] >= times[1], "newest first");
+    }
+
+    #[tokio::test]
     async fn skill_crud_validates_and_persists() {
         let (state, dir) = test_state();
         assert!(state.list_skills().await.is_empty());

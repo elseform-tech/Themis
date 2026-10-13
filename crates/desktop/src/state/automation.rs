@@ -188,6 +188,8 @@ impl AppState {
                 name: automations
                     .get(&item.automation_id)
                     .map_or(item.title, |automation| automation.name.clone()),
+                // `complete_automation_run` prefixes failed runs with "failed: ";
+                // the review item has no separate status (covered by a unit test).
                 ok: !item.summary.starts_with("failed:"),
                 seen: item.status != ReviewStatus::Pending,
                 review_id: item.id,
@@ -196,7 +198,12 @@ impl AppState {
                 summary: item.summary,
             })
             .collect();
-        recent.reverse();
+        recent.sort_by(|left, right| {
+            right
+                .finished_at
+                .cmp(&left.finished_at)
+                .then_with(|| right.review_id.cmp(&left.review_id))
+        });
         recent.truncate(THREAD_TASKS_RECENT_LIMIT);
         Ok(ThreadTasks {
             thread_id: thread_id.to_owned(),
