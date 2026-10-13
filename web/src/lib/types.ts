@@ -98,7 +98,19 @@ export interface AutomationSchedule {
   weekday: number;
 }
 
-export interface Automation {
+/** Optional limits and change detection of a watch; absent on ordinary automations. */
+export interface WatchSettings {
+  /** RFC3339 instant after which the automation is removed. */
+  expires_at?: string | null;
+  /** Executions allowed, checks without a model run included. */
+  max_runs?: number | null;
+  /** Short plain-language goal. */
+  stop_when?: string | null;
+  /** argv run without the model each interval. */
+  check_command?: string[] | null;
+}
+
+export interface Automation extends WatchSettings {
   id: string;
   name: string;
   project_root: string;
@@ -117,6 +129,8 @@ export interface Automation {
   run_count: number;
   /** Who created it; absent means the user. */
   origin?: AutomationOrigin;
+  /** Why a backstop paused it. */
+  stopped_reason?: string | null;
 }
 
 export type AutomationOrigin = 'user' | 'agent';
@@ -128,8 +142,9 @@ export interface ThreadRunTask {
 }
 
 /** An automation that continues one chat. */
-export interface ThreadTaskAutomation {
+export interface ThreadTaskAutomation extends WatchSettings {
   id: string;
+  stopped_reason?: string | null;
   name: string;
   enabled: boolean;
   origin: AutomationOrigin;
@@ -150,6 +165,22 @@ export interface ThreadTaskRun {
   ok: boolean;
   summary: string;
   seen: boolean;
+  /** Kept after the automation is deleted. */
+  origin?: AutomationOrigin;
+}
+
+/** An automation of this chat that ended, with the reason. */
+export interface AutomationRemoval {
+  id: string;
+  automation_id: string;
+  name: string;
+  origin?: AutomationOrigin;
+  thread_id?: string | null;
+  removed_at: string;
+  /** "completed by agent", "expired", "run limit", "failed 3 times", "deleted", ... */
+  reason: string;
+  stop_when?: string | null;
+  run_count: number;
 }
 
 /** Per-chat task feed behind the header indicator and the Workspace Tasks tab. */
@@ -158,9 +189,11 @@ export interface ThreadTasks {
   run: ThreadRunTask;
   automations: ThreadTaskAutomation[];
   recent: ThreadTaskRun[];
+  /** Newest first. */
+  removed?: AutomationRemoval[];
 }
 
-export interface AutomationInput {
+export interface AutomationInput extends WatchSettings {
   name: string;
   project_root: string;
   target_thread_id?: string | null;

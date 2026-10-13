@@ -62,6 +62,51 @@ describe("task grouping", () => {
   });
 });
 
+describe("watches", () => {
+  const expiry = "2030-01-01T21:30:00Z";
+  const clock = new Date(expiry).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const watch = (over: Partial<ThreadTaskAutomation> = {}) => automation({
+    id: "w1", name: "Watch status.txt", origin: "agent", schedule: null, interval_mins: 2,
+    stop_when: "status.txt says DONE", expires_at: expiry, max_runs: 60, ...over,
+  });
+  it("shows the stored interval, goal and expiry on the scheduled row", () => {
+    const row = groupTasks(tasks({ automations: [watch()] })).scheduled[0];
+    expect(row).toMatchObject({ name: "Watch status.txt", tag: "Automation · by agent" });
+    expect(row?.meta).toContain(`Every 2 min · until status.txt says DONE · expires ${clock} · next`);
+  });
+  it("explains why a watch ended in Earlier, newest first, with its origin", () => {
+    const feed = tasks({
+      recent: [finished({ review_id: "r1", automation_id: "w1", name: "Watch status.txt", origin: "agent", finished_at: "2030-01-01T20:00:00Z" })],
+      removed: [
+        { id: "x2", automation_id: "w1", name: "Watch status.txt", origin: "agent", removed_at: "2030-01-01T20:02:00Z", reason: "completed by agent", stop_when: "status.txt says DONE", run_count: 3 },
+        { id: "x1", automation_id: "w0", name: "Old watch", origin: "agent", removed_at: "2030-01-01T10:00:00Z", reason: "expired", run_count: 60 },
+        { id: "x3", automation_id: "w9", name: "Looping", removed_at: "2030-01-01T11:00:00Z", reason: "failed 3 times", run_count: 3 },
+      ],
+    });
+    const earlier = groupTasks(feed).earlier;
+    expect(earlier.map(row => row.name)).toEqual(["Watch status.txt", "Watch status.txt", "Looping", "Old watch"]);
+    expect(earlier[0]?.meta).toMatch(/^Completed by agent · .* · until status\.txt says DONE$/);
+    expect(earlier[0]?.tag).toBe("Automation · by agent");
+    expect(earlier[1]).toMatchObject({ name: "Watch status.txt", tag: "Automation · by agent" });
+    expect(earlier[1]?.meta).toMatch(/^Finished/);
+    expect(earlier[2]?.meta).toMatch(/^Failed 3 times/);
+    expect(earlier[2]?.tag).toBe("Automation");
+    expect(earlier[3]?.meta).toMatch(/^Expired/);
+    expect(countTasks(feed).scheduled).toBe(0);
+  });
+  it("names the reason a user's automation was paused", () => {
+    const row = groupTasks(tasks({ automations: [automation({ enabled: false, stopped_reason: "failed 3 times" })] })).scheduled[0];
+    expect(row?.meta).toBe("Paused · failed 3 times");
+  });
+  it("renders removal rows in the Earlier section", () => {
+    appState = { ...initialState, tasks: { t1: tasks({ removed: [{ id: "x", automation_id: "w1", name: "Watch status.txt", origin: "agent", removed_at: "2030-01-01T20:02:00Z", reason: "completed by agent", run_count: 2 }] }) } };
+    render(<TasksView threadId="t1" />);
+    expect(screen.getByRole("region", { name: "Earlier" })).toHaveTextContent("Watch status.txt");
+    expect(screen.getByText(/Completed by agent/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Pause|Stop/ })).toBeNull();
+  });
+});
+
 describe("scheduler switch", () => {
   it("shows chat automations as off and leaves them out of the scheduled count", () => {
     const feed = tasks({ automations: [automation()] });

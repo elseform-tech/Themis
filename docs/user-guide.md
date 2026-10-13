@@ -147,6 +147,14 @@ minutes (≥ 1), task prompt, and enabled flag. Choose where each run goes:
   then choose a Go catalog model, its available reasoning effort, and skills.
   Older automations keep this behavior.
 
+- **Watches.** Ask the chat agent in plain words ("watch status.txt every 2
+  minutes and tell me when it says DONE, then stop watching"). It creates a short
+  automation on that chat without asking, checks cheaply (a command that costs no
+  model call) and uses the model only when something changed. Watches expire after
+  2 hours by default (at most 24 hours), stop after 60 runs by default and after
+  three failures in a row, and the agent ends them when the goal is met. The chat's
+  Tasks tab shows the interval, goal and expiry, and why a finished one ended.
+  Stop or Pause them there at any time. See [automations](automations.md).
 - The scheduler only runs **while the app is open**, and only when
   **automations_enabled** is on in Settings (the global kill-switch).
 - **Run now** fires an automation immediately regardless of the kill-switch.
