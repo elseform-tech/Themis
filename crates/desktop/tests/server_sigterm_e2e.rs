@@ -63,20 +63,40 @@ async fn sigterm_under_connection_churn_stops_the_server_and_its_background_task
 
     let (sink, mut rx) = ChannelSink::channel();
     state
-        .send_message(Arc::new(sink) as Arc<dyn EventSink>, thread.id.clone(), "go".into())
+        .send_message(
+            Arc::new(sink) as Arc<dyn EventSink>,
+            thread.id.clone(),
+            "go".into(),
+        )
         .await
         .unwrap();
     loop {
-        match tokio::time::timeout(Duration::from_secs(60), rx.recv()).await.unwrap().unwrap() {
+        match tokio::time::timeout(Duration::from_secs(60), rx.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
             TestEvent::Approval(request) => state
-                .approve_action(thread.id.clone(), request.approval_id, ApprovalDecision::Once)
+                .approve_action(
+                    thread.id.clone(),
+                    request.approval_id,
+                    ApprovalDecision::Once,
+                )
                 .await
                 .unwrap(),
-            TestEvent::Thread(envelope) if matches!(envelope.event, ThreadEvent::Finished { .. }) => break,
+            TestEvent::Thread(envelope)
+                if matches!(envelope.event, ThreadEvent::Finished { .. }) =>
+            {
+                break
+            }
             _ => {}
         }
     }
-    let tasks = state.get_thread_tasks(&thread.id).await.unwrap().background_tasks;
+    let tasks = state
+        .get_thread_tasks(&thread.id)
+        .await
+        .unwrap()
+        .background_tasks;
     let pid = u64::from(tasks[0].pid);
     assert!(alive(pid));
 
@@ -99,14 +119,21 @@ async fn sigterm_under_connection_churn_stops_the_server_and_its_background_task
     });
     tokio::time::sleep(Duration::from_millis(700)).await;
     let me = std::process::id().to_string();
-    assert!(std::process::Command::new("kill").args(["-TERM", &me]).status().unwrap().success());
+    assert!(std::process::Command::new("kill")
+        .args(["-TERM", &me])
+        .status()
+        .unwrap()
+        .success());
 
     let finished = tokio::time::timeout(Duration::from_secs(15), serving).await;
     churning.store(false, std::sync::atomic::Ordering::SeqCst);
     assert!(finished.is_ok(), "SIGTERM did not stop the server");
     let deadline = Instant::now() + Duration::from_secs(10);
     while alive(pid) {
-        assert!(Instant::now() < deadline, "background task survived the server");
+        assert!(
+            Instant::now() < deadline,
+            "background task survived the server"
+        );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     churn.join().unwrap();

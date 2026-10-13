@@ -461,3 +461,48 @@ async fn setting_the_cancel_flag_kills_a_running_blocking_command() {
     let grandchild = pid_from(&pidfile);
     wait_until("blocking group gone", || !alive(grandchild));
 }
+
+#[test]
+fn a_removed_chat_never_leaves_an_orphan_log_even_when_removal_did_not_wait() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = tempfile::tempdir().unwrap();
+    let registry = BackgroundRegistry::open(Some(store.path().to_path_buf()));
+    let started = registry
+        .start(spec("gone", "echo hi; exec sleep 300", dir.path(), 0))
+        .unwrap();
+    wait_until("output", || {
+        registry
+            .status("gone", &started.record.id)
+            .unwrap()
+            .log_bytes
+            > 0
+    });
+    // Zero wait: the supervisor is still winding down when the record goes.
+    registry.remove_thread("gone", Duration::ZERO);
+    wait_until("process gone", || !alive(started.record.pid as libc::pid_t));
+    std::thread::sleep(Duration::from_millis(700));
+    let logs: Vec<_> = std::fs::read_dir(store.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "log"))
+        .collect();
+    assert!(logs.is_empty(), "orphan logs: {logs:?}");
+    assert!(registry.list("gone", 0).is_empty());
+}
+
+#[test]
+fn a_finished_task_with_a_dangling_character_pages_to_the_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = BackgroundRegistry::in_memory();
+    let id = registry
+        .start(spec("t", r"printf 'ok\342\202'", dir.path(), 0))
+        .unwrap()
+        .record
+        .id;
+    wait_until("exit", || {
+        registry.status("t", &id).unwrap().record.state != TaskState::Running
+    });
+    let (_, chunk) = registry.log("t", &id, Some(0), 100).unwrap();
+    assert_eq!(chunk.text, "ok\u{FFFD}");
+    assert_eq!(chunk.next_offset, chunk.total);
+}

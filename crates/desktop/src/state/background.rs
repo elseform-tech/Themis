@@ -38,6 +38,7 @@ fn feed_row(view: TaskView) -> ThreadTaskBackground {
         ended_at: view.record.ended_at_ms.map(timestamp),
         timeout_secs: view.record.timeout_secs,
         last_lines: view.tail,
+        last_lines_complete: view.tail_complete,
         log_bytes: view.log_bytes,
     }
 }

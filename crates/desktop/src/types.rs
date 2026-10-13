@@ -559,6 +559,9 @@ pub struct ThreadTaskBackground {
     pub timeout_secs: u64,
     /// Most recent output lines.
     pub last_lines: Vec<String>,
+    /// `last_lines` is the whole output, so "Full log" would repeat it.
+    #[serde(default)]
+    pub last_lines_complete: bool,
     pub log_bytes: u64,
 }
 

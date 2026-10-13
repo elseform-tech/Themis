@@ -169,6 +169,13 @@ impl LogRing {
     /// retained). Never splits a character: leading continuation bytes are
     /// skipped and an incomplete trailing sequence waits for the next page.
     pub fn read(&self, from: u64, max_bytes: usize) -> LogChunk {
+        self.read_with(from, max_bytes, false)
+    }
+
+    /// [`read`](Self::read); with `settled` the stream is over, so an
+    /// incomplete character at the very end is final and decoded lossily
+    /// instead of waiting for bytes that will never arrive.
+    pub fn read_with(&self, from: u64, max_bytes: usize, settled: bool) -> LogChunk {
         let retained_from = self.retained_from();
         let mut start = from.clamp(retained_from, self.total);
         let skip = (start - retained_from) as usize;
@@ -188,7 +195,12 @@ impl LogRing {
         // A page that begins inside a character resumes after it.
         slice.drain(..leading);
         start += leading as u64;
-        let trim = incomplete_tail(&slice);
+        let reaches_end = start + slice.len() as u64 >= self.total;
+        let trim = if settled && reaches_end {
+            0
+        } else {
+            incomplete_tail(&slice)
+        };
         slice.truncate(slice.len() - trim);
         if slice.len() > max_bytes {
             // Cut back to the last whole character within the budget, but
@@ -221,19 +233,36 @@ impl LogRing {
         self.read(from, max_bytes)
     }
 
+    /// [`tail`](Self::tail) for a finished stream.
+    pub fn tail_settled(&self, max_bytes: usize) -> LogChunk {
+        let from = self.total.saturating_sub(max_bytes as u64);
+        self.read_with(from, max_bytes, true)
+    }
+
     /// Up to `lines` most recent non-empty lines, each bounded in length.
     pub fn tail_lines(&self, lines: usize) -> Vec<String> {
+        self.tail_lines_complete(lines).0
+    }
+
+    /// [`tail_lines`](Self::tail_lines) plus whether they are the entire
+    /// output (nothing rotated out, no line cut, nothing left out).
+    pub fn tail_lines_complete(&self, lines: usize) -> (Vec<String>, bool) {
         let chunk = self.tail(8 * 1024);
+        let mut complete = self.retained_from() == 0 && chunk.offset == 0;
         let mut found: Vec<String> = chunk
             .text
             .lines()
             .map(str::trim_end)
             .filter(|line| !line.is_empty())
-            .map(|line| line.chars().take(MAX_TAIL_LINE_CHARS).collect())
+            .map(|line| {
+                complete &= line.chars().count() <= MAX_TAIL_LINE_CHARS;
+                line.chars().take(MAX_TAIL_LINE_CHARS).collect()
+            })
             .collect();
         let excess = found.len().saturating_sub(lines);
+        complete &= excess == 0 && chunk.next_offset >= chunk.total;
         found.drain(..excess);
-        found
+        (found, complete)
     }
 }
 
@@ -284,6 +313,8 @@ pub struct TaskView {
     pub log_bytes: u64,
     /// Most recent output lines.
     pub tail: Vec<String>,
+    /// `tail` is the entire output, so a full log would repeat it.
+    pub tail_complete: bool,
 }
 
 /// Command line shortened to one bounded line.
@@ -597,11 +628,17 @@ impl BackgroundRegistry {
         }
         let thread_id = lock(&task.record).thread_id.clone();
         let id = lock(&task.record).id.clone();
+        // Only a task that is still registered keeps a log file: a chat removed
+        // while this supervisor was winding down must not leave an orphan.
+        // Holding the registry lock orders this against `remove_thread`.
         if let Some(path) = self.log_path(&id) {
-            if let Some(dir) = &self.dir {
-                let _ = std::fs::create_dir_all(dir);
+            let tasks = lock(&self.tasks);
+            if tasks.iter().any(|registered| Arc::ptr_eq(registered, task)) {
+                if let Some(dir) = &self.dir {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(path, lock(&task.log).to_vec());
             }
-            let _ = std::fs::write(path, lock(&task.log).to_vec());
         }
         {
             let mut record = lock(&task.record);
@@ -663,15 +700,16 @@ impl BackgroundRegistry {
 
     fn view(&self, task: &Task, tail_lines: usize) -> TaskView {
         let record = task.record();
-        let (log_bytes, tail) = {
+        let (log_bytes, (tail, tail_complete)) = {
             let log = lock(&task.log);
-            (log.total(), log.tail_lines(tail_lines))
+            (log.total(), log.tail_lines_complete(tail_lines))
         };
         TaskView {
             summary: summarize_command(&record.command),
             record,
             log_bytes,
             tail,
+            tail_complete,
         }
     }
 
@@ -702,13 +740,16 @@ impl BackgroundRegistry {
     ) -> Result<(TaskRecord, LogChunk), String> {
         let task = self.find(thread_id, id)?;
         let max_bytes = max_bytes.clamp(1, MAX_LOG_PAGE_BYTES);
+        let record = task.record();
+        let settled = record.state != TaskState::Running;
         let log = lock(&task.log);
         let chunk = match offset {
-            Some(offset) => log.read(offset, max_bytes),
+            Some(offset) => log.read_with(offset, max_bytes, settled),
+            None if settled => log.tail_settled(max_bytes),
             None => log.tail(max_bytes),
         };
         drop(log);
-        Ok((task.record(), chunk))
+        Ok((record, chunk))
     }
 
     /// Stops one task (whole process group) and waits for it to be reaped.
@@ -1061,6 +1102,51 @@ mod tests {
         assert_eq!(partial.read(0, 100).text, "");
         partial.push(&"€".as_bytes()[2..]);
         assert_eq!(partial.read(0, 100).text, "€");
+    }
+
+    #[test]
+    fn a_settled_log_decodes_a_dangling_character_instead_of_stalling() {
+        let mut ring = LogRing::new(64);
+        ring.push(b"ok\n");
+        ring.push(&"€".as_bytes()[..2]);
+        // While running the partial character waits; once settled it is final.
+        let running = ring.read(3, 100);
+        assert_eq!((running.text.as_str(), running.next_offset), ("", 3));
+        let settled = ring.read_with(3, 100, true);
+        assert_eq!(settled.text, "\u{FFFD}");
+        assert_eq!(settled.next_offset, ring.total());
+        assert_eq!(ring.tail_settled(100).text, "ok\n\u{FFFD}");
+        // Paging to the end terminates.
+        let mut offset = 0;
+        for _ in 0..10 {
+            let chunk = ring.read_with(offset, 2, true);
+            if chunk.next_offset >= chunk.total {
+                offset = chunk.next_offset;
+                break;
+            }
+            assert!(chunk.next_offset > offset);
+            offset = chunk.next_offset;
+        }
+        assert_eq!(offset, ring.total());
+    }
+
+    #[test]
+    fn tail_lines_report_whether_they_are_the_whole_output() {
+        let mut ring = LogRing::new(MAX_LOG_BYTES);
+        ring.push(b"a\nb\n");
+        assert_eq!(
+            ring.tail_lines_complete(3),
+            (vec!["a".to_owned(), "b".to_owned()], true)
+        );
+        ring.push(b"c\nd\n");
+        assert!(!ring.tail_lines_complete(3).1);
+        let mut long = LogRing::new(MAX_LOG_BYTES);
+        long.push("x".repeat(MAX_TAIL_LINE_CHARS + 1).as_bytes());
+        assert!(!long.tail_lines_complete(3).1);
+        let mut rotated = LogRing::new(4);
+        rotated.push(b"abcdefgh");
+        assert!(!rotated.tail_lines_complete(3).1);
+        assert!(LogRing::new(8).tail_lines_complete(3).1);
     }
 
     #[test]
