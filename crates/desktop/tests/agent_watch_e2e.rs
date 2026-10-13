@@ -124,6 +124,7 @@ async fn finish_run(rx: &mut UnboundedReceiver<TestEvent>) {
     .expect("run finished");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn check_command_only_wakes_the_model_when_its_output_changes() {
     let server = plain_provider().await;
@@ -209,6 +210,7 @@ async fn denied_check_commands_are_rejected_when_the_watch_is_created() {
         .unwrap();
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn backstops_remove_or_pause_with_a_reason() {
     let server = plain_provider().await;

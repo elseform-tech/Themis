@@ -710,6 +710,7 @@ mod tests {
         json!({"action":"create","input":{"name":"w","task":"look","interval_mins":2,"check_command":argv}})
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn unapproved_check_commands_never_execute() {
         // Custom, no rules, the user answers no: nothing is saved, nothing runs.
@@ -759,6 +760,7 @@ mod tests {
         drop(data);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn approval_is_bound_to_the_exact_argv_and_policy_is_rechecked() {
         let (state, tool, thread, data, project) = watch_tool(Arc::new(AllowAllHook)).await;
@@ -815,6 +817,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn allow_rules_and_yolo_run_without_a_prompt_until_the_policy_changes() {
         // An allow rule: created and run with an approver that would refuse everything.
