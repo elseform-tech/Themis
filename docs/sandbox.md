@@ -14,11 +14,14 @@ adds its own tools.
 
 Actions have a risk (`read`, `write`, `execute`, `network`, `destructive`). Ordered
 Custom rules choose allow, ask, or deny; the first matching rule wins. Default
-policy allows reads and asks for other actions. Project rules may only add deny
+policy allows reads and asks for other actions. Rules may carry an optional `command`
+argv prefix to scope `shell` rules (for example allow `["cargo","test"]`). Project rules may only add deny
 restrictions. Explicit user/run allow rules proceed without the interactive gate.
 
 An ask invokes the desktop/CLI approval hook. **Once** grants one action,
-**Always** remembers the same tool and risk for this run, and **Deny** rejects it.
+**Always** remembers the same tool and risk for this run (for `shell`, only the
+approved command: program plus first subcommand word, or the exact argv when the
+first argument is a flag), and **Deny** rejects it.
 Cached grants cannot bypass policy denies. Approval timeouts (default five minutes),
 lost clients, and unattended CLI requests deny. The interactive hook denies
 non-read actions in non-Git projects; explicit allow policy or YOLO bypasses
