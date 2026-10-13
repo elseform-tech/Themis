@@ -130,3 +130,38 @@ fn malformed_transcripts_are_rejected() {
         1
     );
 }
+
+#[tokio::test]
+async fn failed_compaction_invalidates_the_trial() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("bad request"))
+        .mount(&server)
+        .await;
+    let config = ProviderConfig::new(ProviderKind::Go, "mock-key")
+        .with_model("mock-model")
+        .with_base_url(server.uri());
+    let llm = resolve(&config).await.unwrap();
+    let dir = cases_dir().join("narrative-lighthouse");
+    let transcript =
+        parse_transcript(&std::fs::read_to_string(dir.join("transcript.jsonl")).unwrap()).unwrap();
+    let evidence = tempfile::tempdir().unwrap();
+    let outcome = compact_chunks(
+        &llm,
+        &transcript,
+        &[14],
+        EvalPolicy {
+            context_token_budget: 24_000,
+            recent_messages: 20,
+        },
+        evidence.path(),
+    )
+    .await
+    .unwrap();
+    assert!(!outcome.valid);
+    assert!(!outcome.chunks[0].installed);
+    assert!(outcome.chunks[0].error.is_some());
+    // Nothing was summarized, so every record is still verbatim.
+    assert_eq!(outcome.verbatim_records.len(), record_count(&transcript));
+}

@@ -119,6 +119,8 @@ async fn main() -> anyhow::Result<()> {
         "recent_messages": args.recent,
         "transcript_records": record_count(&transcript),
         "chunks": outcome.chunks,
+        "valid": outcome.valid,
+        "verbatim_records": outcome.verbatim_records,
         "answers": answers,
     });
     let text = serde_json::to_string_pretty(&report)?;

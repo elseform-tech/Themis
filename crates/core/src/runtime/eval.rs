@@ -17,7 +17,8 @@ pub struct EvalPolicy {
 #[derive(Debug, Clone, Serialize)]
 pub struct ChunkReport {
     pub chunk: usize,
-    pub messages_before: usize,
+    /// Transcript records replayed so far (excluding the system message).
+    pub records_before: usize,
     pub tokens_before: usize,
     pub tokens_after: usize,
     pub duration_ms: u128,
@@ -32,6 +33,13 @@ pub struct ChunkReport {
 pub struct EvalOutcome {
     pub messages: Vec<ChatMessage>,
     pub chunks: Vec<ChunkReport>,
+    /// False when any compaction failed or installed nothing: the probes would then
+    /// be answered from uncompacted history, so the trial must not count as retention.
+    pub valid: bool,
+    /// 1-based transcript records still present word for word in `messages`
+    /// (the verbatim tail and the active request); every other fact survives only
+    /// through the checkpoint.
+    pub verbatim_records: Vec<usize>,
 }
 
 #[derive(Deserialize)]
@@ -176,7 +184,7 @@ pub async fn compact_chunks(
             .await;
             chunks.push(ChunkReport {
                 chunk: index,
-                messages_before: end - 1,
+                records_before: end - 1,
                 tokens_before,
                 tokens_after: estimated_tokens(&working),
                 duration_ms: started.elapsed().as_millis(),
@@ -192,9 +200,20 @@ pub async fn compact_chunks(
     drain.abort();
     result?;
     working.extend_from_slice(&transcript[taken..]);
+    let present: std::collections::HashSet<String> = working
+        .iter()
+        .filter_map(|message| serde_json::to_string(message).ok())
+        .collect();
+    let verbatim_records = (1..transcript.len())
+        .filter(|&record| {
+            serde_json::to_string(&transcript[record]).is_ok_and(|text| present.contains(&text))
+        })
+        .collect();
     Ok(EvalOutcome {
         messages: working,
+        valid: !chunks.is_empty() && chunks.iter().all(|chunk| chunk.installed),
         chunks,
+        verbatim_records,
     })
 }
 
