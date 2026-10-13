@@ -115,6 +115,49 @@ export interface Automation {
   last_run_at: string | null;
   next_run_at: string;
   run_count: number;
+  /** Who created it; absent means the user. */
+  origin?: AutomationOrigin;
+}
+
+export type AutomationOrigin = 'user' | 'agent';
+
+/** Live run state of one chat. */
+export interface ThreadRunTask {
+  running: boolean;
+  awaiting_approval: boolean;
+}
+
+/** An automation that continues one chat. */
+export interface ThreadTaskAutomation {
+  id: string;
+  name: string;
+  enabled: boolean;
+  origin: AutomationOrigin;
+  schedule?: AutomationSchedule | null;
+  interval_mins: number;
+  next_run_at: string;
+  last_run_at: string | null;
+  run_count: number;
+  running: boolean;
+}
+
+/** One finished automation run in a chat; `seen` once reviewed or dismissed. */
+export interface ThreadTaskRun {
+  review_id: string;
+  automation_id: string;
+  name: string;
+  finished_at: string;
+  ok: boolean;
+  summary: string;
+  seen: boolean;
+}
+
+/** Per-chat task feed behind the header indicator and the Workspace Tasks tab. */
+export interface ThreadTasks {
+  thread_id: string;
+  run: ThreadRunTask;
+  automations: ThreadTaskAutomation[];
+  recent: ThreadTaskRun[];
 }
 
 export interface AutomationInput {

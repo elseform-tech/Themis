@@ -83,8 +83,12 @@ levels are listed.
   shows the before → after usage. Nothing is deleted: originals stay on disk.
 - **Workspace** in a thread's header opens a read-only monitor of the project:
   **Changes** (readable changed files and their wrapped, highlighted diff,
-  updating live while the agent works; binary and generated files are hidden), **Files**, **Branches** and **Pull requests** (needs
-  the GitHub CLI signed in). Drag its edge to resize. It never changes files or
+  updating live while the agent works; binary and generated files are hidden), **Files**, **Branches**, **Pull requests** (needs
+  the GitHub CLI signed in) and **Tasks**. Tasks lists this chat's running work and
+  the automations that continue it, with **Stop** (the current run) and **Pause**
+  (turn an automation off); stopping never undoes work already done. A small
+  stack of icons beside the Workspace button shows the same tasks at a glance and
+  opens that tab. Drag its edge to resize. It never changes files or
   runs Git actions. The composer shows the project folder and current branch.
 
 Recent projects are remembered (max 10) and reopened automatically on launch;

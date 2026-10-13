@@ -5,10 +5,12 @@ import type { DirEntry, FileView, WorkspaceInfo } from "../lib/types";
 import { getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
+import { TasksView } from "./TasksView";
+import { countTasks } from "./threadTasks";
 import "./WorkspacePanel.css";
 
-type Tab = "changes" | "files" | "branches" | "pulls";
-const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"]];
+type Tab = "changes" | "files" | "branches" | "pulls" | "tasks";
+const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"]];
 const MIN_WIDTH = 380;
 const MAX_WIDTH = 1200;
 const DEFAULT_WIDTH = 560;
@@ -17,10 +19,10 @@ function clampWidth(value: number) {
   return Math.round(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, value)));
 }
 
-/** Read-only monitor of what agents change: diffs, files, branches and PRs. */
+/** Read-only monitor of what agents change (diffs, files, branches, PRs) plus Stop and Pause for this chat's tasks. */
 export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRoot: string; threadId: string; workspace: WorkspaceInfo | null }) {
   const { state, dispatch } = useApp();
-  const [tab, setTab] = useState<Tab>(() => readSession<Tab>("workspaceTab", "changes"));
+  const [tab, setTab] = useState<Tab>(() => state.workspaceTabRequest ? state.workspaceTabRequest.tab : readSession<Tab>("workspaceTab", "changes"));
   const [width, setWidth] = useState(() => clampWidth(Number(readSession("workspacePanelWidth", DEFAULT_WIDTH)) || DEFAULT_WIDTH));
   const panel = useRef<HTMLElement>(null);
   const drag = useRef<{ x: number; width: number } | null>(null);
@@ -35,8 +37,13 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   // A request to show a changed file switches to Changes.
   const focusAt = state.diffFocus?.at;
   useEffect(() => { if (focusAt) setTab("changes"); }, [focusAt]);
+  // The header's task indicator asks for the Tasks tab.
+  const tabRequestAt = state.workspaceTabRequest?.at;
+  useEffect(() => { if (tabRequestAt) choose("tasks"); }, [tabRequestAt]);
   const diff = state.diffs[threadId];
   const changed = diff?.available ? diff.files.length : 0;
+  const counts = countTasks(state.tasks[threadId]);
+  const taskCount = counts.attention + counts.running + counts.scheduled;
   return (
     <aside ref={panel} className={`themis-workspace-panel${dragging ? " is-resizing" : ""}`} aria-label="Workspace (read-only)" style={{ width }}>
       <div className="themis-workspace-resize" role="separator" aria-label="Resize workspace panel" aria-orientation="vertical" aria-valuemin={MIN_WIDTH} aria-valuemax={MAX_WIDTH} aria-valuenow={width} tabIndex={0}
@@ -57,6 +64,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         {TABS.map(([value, label]) => (
           <button key={value} type="button" aria-pressed={tab === value} onClick={() => choose(value)}>
             {label}{value === "changes" && changed > 0 ? <span className="themis-workspace-count">{changed}</span> : null}
+            {value === "tasks" && taskCount > 0 ? <span className="themis-workspace-count themis-workspace-count--tasks">{taskCount}</span> : null}
           </button>
         ))}
       </nav>
@@ -65,6 +73,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         {tab === "files" && <FilesView projectRoot={projectRoot} />}
         {tab === "branches" && <BranchesView workspace={workspace} />}
         {tab === "pulls" && <PullRequestsView projectRoot={projectRoot} />}
+        {tab === "tasks" && <TasksView threadId={threadId} />}
       </div>
     </aside>
   );

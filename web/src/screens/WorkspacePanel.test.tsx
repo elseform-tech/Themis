@@ -58,6 +58,13 @@ describe("WorkspacePanel", () => {
     expect(calls()).toBe(initial + 2);
     vi.useRealTimers();
   });
+  it("shows a Tasks tab with a count and opens it when the indicator asks", async () => {
+    const feed = { thread_id: "t1", run: { running: true, awaiting_approval: false }, automations: [], recent: [] };
+    appState = { ...appState, tasks: { t1: feed }, workspaceTabRequest: { tab: "tasks", at: 1 } };
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    expect(screen.getByRole("button", { name: /^Tasks1$/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "Running" })).toBeInTheDocument();
+  });
   it("opens the file an edited-files row asks for", async () => {
     const second = { ...diff.files[0]!, path: "docs/guide.md" };
     appState = { ...appState, diffs: { t1: { ...diff, files: [...diff.files, second] } }, diffFocus: { path: "docs/guide.md", at: 1 } };

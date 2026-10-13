@@ -42,6 +42,22 @@ calendar occurrence; fixed intervals retain their prior completion-based timing.
 The global scheduler switch and each automation's enabled state control automatic
 runs. Run now remains available while either is paused.
 
+## Origin and the chat Tasks view
+
+Each automation records `origin`: `user` (default; omitted from JSON and for
+records created before this field) or `agent` when the agent created it through
+`manage_automations`. Updates keep the original origin.
+
+`get_thread_tasks {threadId}` (also `themis call get_thread_tasks`) returns the
+feed behind the Workspace **Tasks** tab and the header task indicator for one
+chat: `run` (`running`, `awaiting_approval`), `automations` that target the chat
+(`enabled`, `origin`, `schedule`, `next_run_at`, `last_run_at`, `running`) and
+up to 10 `recent` finished runs (`ok`, `seen` once the review item is no longer
+pending, `summary`). The UI refreshes it on existing run, approval, tool,
+automation and review events. Stop in Tasks uses `stop_thread`; Pause uses
+`set_automation_enabled` with `enabled: false`. Neither undoes completed work.
+Only automations that continue a chat (`target_thread_id`) appear there.
+
 ## Verification
 
 `cargo test -p themis-desktop --lib schedule_tests` covers calendar recurrence,
@@ -51,3 +67,9 @@ server, validation failure, persisted restart state, and legacy records.
 `calendar_run_e2e` covers a mocked provider failure, subsequent calendar time,
 review history, and restart persistence. UI form mapping and legacy edit behavior
 are covered by `web/src/screens/automationForm.test.ts`.
+`thread_tasks_cli_e2e` covers `get_thread_tasks` and pausing through `themis call`
+against the shared server. `thread_tasks_report_live_automations_and_finished_runs`
+(unit) covers live, finished and per-chat filtering, and the agent-origin
+assertions live in the `manage_automations` management-tool test. UI grouping,
+ordering, the indicator name and Stop/Pause dispatch are covered by
+`web/src/screens/threadTasks.test.tsx`.
