@@ -56,7 +56,11 @@ create, update, enable, disable, complete and delete automations that continue
 the current chat without a prompt. The check runs inside the tool
 (`tool_approves_itself`), so the dispatcher neither asks nor arms a permit.
 Another chat's automations, and every other management tool, keep the normal
-approvals. **Only the lifecycle is approval-free: a `check_command` executes a
+approvals. The approval policy still applies to the lifecycle: a deny rule (for
+example `manage_automations*`) or `default: deny` rejects the action, `ask` proceeds
+without a prompt (the user's decision), YOLO is unchanged, and each automatic
+decision is logged as `approval/auto_decided` ("auto: own-chat automation
+lifecycle"). **Only the lifecycle is approval-free: a `check_command` executes a
 program and follows the shell approval policy** (below).
 
 **Explicit timing.** Exactly one of:
@@ -84,7 +88,8 @@ user-created ones:
 Three failures in a row (a failed run, or a check that cannot start, times out
 or is denied) remove an agent watch ("failed 3 times") and pause a user's own
 automation, which then shows `Paused · failed 3 times`. A watch whose chat was
-deleted is removed ("chat deleted"). Agent calendar automations carry no default
+deleted is removed ("chat deleted"); a user's own automation whose chat was
+deleted is paused with that reason instead of being deleted. Agent calendar automations carry no default
 expiry or run limit. Every removal is recorded with a reason in
 `automation_removals.json` (newest 200) and logged as an `automation_removed`
 diagnostic with the id and reason only. The limits are fixed constants, not
@@ -98,7 +103,11 @@ only when the hash differs from the last handled one (and on the first look),
 and receives the new output as data. A non-zero exit code is a result, not a
 failure (`grep -q DONE status.txt` works). The baseline moves only after a
 successful model run. Each check logs a `watch_check` diagnostic with
-`changed` and the exit code, never the output.
+`changed` and the exit code, never the output. The output reaches the model
+inside a code fence longer than any backtick run it contains, with control
+characters removed, and is labeled as data. When the model run cannot start (for
+example a busy concurrency gate) the check is still recorded for that slot and
+only retried at the next slot, never on every tick.
 
 **Check command approval.** The argv is evaluated as a `shell` action (risk
 Execute, same command-scoped rules and deny normalization) at create and update
@@ -109,14 +118,21 @@ time and again before every execution:
 - Deny: creation or update is rejected; at run time the automation is paused
   (`Paused · check command denied by approval rules`).
 - Ask (the Custom default): the agent's create or update triggers an approval
-  prompt "watch check command ...: argv" in that interactive run, bound to the
-  exact argv. Declined or unattended (for example `themis thread send` without a
+  prompt in that interactive run, asked as a `shell` action with the exact argv
+  (summary "watch check command ...: argv"), so command-scoped rules apply and a
+  non-git project refuses it like the shell tool. No run-scoped grant cache is
+  used: "Always allow" for one argv never covers another. The decision uses the
+  mode and policy the run captured when it started. Declined or unattended (for example `themis thread send` without a
   terminal) means the call fails with an error the agent relays and nothing is
   saved; the agent can create the watch without `check_command` instead. The
   approval is stored on the automation as `approved_check`; changing the argv
   clears it, and a different argv needs a new approval. The scheduler never
   prompts: without a matching stored approval the check does not run and the
   automation is paused (`Paused · check command needs approval`).
+- A run that captured YOLO counts as "allowed by mode" and stores nothing, even
+  if the user flips the chat to Custom mid-run; the scheduler then pauses it.
+  A paused watch can be re-approved for the same argv in a later interactive
+  run (update with the same `check_command`).
 - A later deny rule, or switching the chat from YOLO to Custom, takes effect at
   the next execution; an allow-rule or YOLO watch has no stored approval, so it
   stops then. "Allow for this run" grants never carry into scheduled checks.

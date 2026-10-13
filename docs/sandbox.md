@@ -98,7 +98,9 @@ A watch's `check_command` (see [automations](automations.md)) is a scheduled
 `shell` action and follows this policy: the same argv, Execute risk, command-scoped
 and deny rules. Creating or updating an automation is approval-free for the agent's
 own chat; executing a program is not. In Custom mode an `ask` becomes an approval of
-the exact argv in the creating run, stored with the automation and invalidated by any
-change; the scheduler never prompts and pauses a watch that lacks approval or whose
+the exact argv in the creating run, asked as a `shell` action (command-scoped
+rules, the non-git refusal, no grant cache) using the mode and policy that run captured,
+stored with the automation and invalidated by any change; the scheduler never prompts and pauses a watch that lacks approval or whose
 policy now denies. Policy is re-evaluated before every execution, so a later deny
-rule or a switch from YOLO to Custom stops the check. Run-scoped grants do not persist.
+rule or a switch from YOLO to Custom stops the check. Run-scoped grants do not persist. Deny rules also still reject an agent's own-chat
+automation lifecycle actions (`manage_automations*`); `ask` proceeds without a prompt.

@@ -1,19 +1,59 @@
 //! Agent-facing management uses the same validated state APIs as the UI and CLI.
-use super::automation::{schedule_summary, CheckPolicy, WATCH_MAX_EXPIRY_MINS};
+use super::automation::{
+    schedule_summary, shell_policy_for, CheckGrant, CheckPolicy, WATCH_MAX_EXPIRY_MINS,
+};
 use super::{AppState, Automation, AutomationInput, PathBuf};
 use crate::types::AutomationOrigin;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
+use themis_core::configuration::{ApprovalMode, ApprovalPolicy, PolicyAction};
 use themis_core::tools::{
     async_trait, ApprovalHook, ToolAction, ToolCallError, ToolRuntime, ToolT,
 };
 
+/// The approval mode and policy a run captured when it started, plus the
+/// interactive hook (no grant cache) used to ask about a check command.
+#[derive(Clone)]
+pub(super) struct RunApproval {
+    pub(super) mode: ApprovalMode,
+    pub(super) policy: ApprovalPolicy,
+    pub(super) interactive: Arc<dyn ApprovalHook>,
+}
+
 impl AppState {
+    /// Management tools outside a run (tests): capture the live mode and policy.
+    #[cfg(test)]
     pub(super) fn integration_management_tools(
         &self,
         approvals: Arc<dyn ApprovalHook>,
         project: PathBuf,
         thread_id: String,
+    ) -> Vec<Box<dyn ToolT>> {
+        let mode = self
+            .inner
+            .threads
+            .try_read()
+            .ok()
+            .and_then(|threads| threads.get(&thread_id).map(|thread| thread.approval_mode))
+            .unwrap_or_default();
+        let policy = self
+            .runtime_configuration(Some(&project), None)
+            .map(|resolved| resolved.config.approval)
+            .unwrap_or_default();
+        let run = RunApproval {
+            mode,
+            policy,
+            interactive: approvals.clone(),
+        };
+        self.integration_management_tools_for_run(approvals, project, thread_id, run)
+    }
+
+    pub(super) fn integration_management_tools_for_run(
+        &self,
+        approvals: Arc<dyn ApprovalHook>,
+        project: PathBuf,
+        thread_id: String,
+        run: RunApproval,
     ) -> Vec<Box<dyn ToolT>> {
         [
             "list_plugins",
@@ -29,6 +69,7 @@ impl AppState {
                 approvals: approvals.clone(),
                 project: project.clone(),
                 thread_id: thread_id.clone(),
+                run: run.clone(),
             }) as Box<dyn ToolT>
         })
         .collect()
@@ -41,6 +82,7 @@ struct ManagementTool {
     approvals: Arc<dyn ApprovalHook>,
     project: PathBuf,
     thread_id: String,
+    run: RunApproval,
 }
 impl std::fmt::Debug for ManagementTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -64,7 +106,9 @@ impl ToolRuntime for ManagementTool {
         // chat's automation) follows the normal approval rules.
         let own_chat_automation =
             self.name == "manage_automations" && self.targets_own_chat(&args).await;
-        if !own_chat_automation {
+        if own_chat_automation {
+            self.own_chat_policy(&args)?;
+        } else {
             themis_core::tools::check_approval_permitted(
                 self.approvals.as_ref(),
                 &ToolAction {
@@ -96,6 +140,41 @@ impl ToolRuntime for ManagementTool {
     }
 }
 impl ManagementTool {
+    /// Own-chat lifecycle never prompts, but the captured policy still applies:
+    /// a deny rule rejects, ask proceeds silently (the user's decision), YOLO
+    /// is unchanged. Every automatic decision is logged.
+    fn own_chat_policy(&self, args: &Value) -> Result<(), ToolCallError> {
+        let action = ToolAction {
+            command: Vec::new(),
+            tool: themis_core::tools::integration_approval_identity(self.name, args),
+            summary: format!(
+                "{} {}",
+                self.name,
+                args["action"].as_str().unwrap_or("list")
+            ),
+            risk: themis_core::tools::integration_risk(self.name, args)
+                .expect("known management tool"),
+        };
+        let decision = if self.run.mode == ApprovalMode::Yolo {
+            PolicyAction::Allow
+        } else {
+            self.run.policy.decision(&action)
+        };
+        let _ = self.state.inner.diagnostics.append(
+            "approval",
+            "auto_decided",
+            "info",
+            json!({"thread_id": self.thread_id, "tool": action.tool, "decision": format!("{decision:?}"), "reason": "auto: own-chat automation lifecycle"}),
+        );
+        if decision == PolicyAction::Deny {
+            return Err(error(format!(
+                "approval denied for '{}': the approval rules deny this automation action",
+                self.name
+            )));
+        }
+        Ok(())
+    }
+
     /// True when an automation action only touches this chat's own automations.
     async fn targets_own_chat(&self, args: &Value) -> bool {
         match args["action"].as_str().unwrap_or("list") {
@@ -216,32 +295,30 @@ impl ManagementTool {
     }
 
     /// A check command runs like the `shell` tool. Lifecycle actions are free,
-    /// but an argv the policy would ask about needs the user's answer now, in
-    /// this interactive run, for exactly this argv. Returns whether it was
-    /// approved; the scheduler later runs it only with that stored approval.
+    /// but an argv the captured policy would ask about needs the user's answer
+    /// now, in this interactive run, for exactly this argv, asked as a `shell`
+    /// action (command-scoped rules, non-git denial) without any grant cache.
+    /// Returns what authorized it. Allow by rule or by the
+    /// run's captured YOLO mode stores nothing: the scheduler re-evaluates the
+    /// current mode and policy before every execution.
     async fn approve_check_command(
         &self,
         input: &AutomationInput,
         stored: Option<&Automation>,
-    ) -> Result<bool, String> {
+    ) -> Result<CheckGrant, String> {
         let Some(argv) = &input.watch.check_command else {
-            return Ok(false);
+            return Ok(CheckGrant::None);
         };
-        if stored.is_some_and(|item| item.watch.check_command.as_ref() == Some(argv)) {
-            return Ok(false);
+        if stored.is_some_and(|item| item.watch_state.approved_check.as_ref() == Some(argv)) {
+            return Ok(CheckGrant::None);
         }
-        let root = std::path::Path::new(&input.project_root);
-        let policy = self
-            .state
-            .check_command_policy(root, Some(&self.thread_id), argv)
-            .await?;
-        match policy {
+        match shell_policy_for(self.run.mode, &self.run.policy, argv) {
             CheckPolicy::Deny => Err("check_command is denied by the approval rules".to_owned()),
-            CheckPolicy::Allow => Ok(false),
+            CheckPolicy::Allow => Ok(CheckGrant::Allowed),
             CheckPolicy::Ask => {
-                let decision = self.approvals.approve(&ToolAction {
+                let decision = self.run.interactive.approve(&ToolAction {
                     command: argv.clone(),
-                    tool: "watch_check".to_owned(),
+                    tool: "shell".to_owned(),
                     summary: format!(
                         "watch check command (runs every {} min until the watch ends): {}",
                         input.interval_mins,
@@ -252,7 +329,7 @@ impl ManagementTool {
                 if decision == themis_core::tools::Approval::Deny {
                     Err("The user did not approve the check command, so the watch was not saved. Retry without check_command (read the file yourself on each run), or ask the user to allow this exact command.".to_owned())
                 } else {
-                    Ok(true)
+                    Ok(CheckGrant::Approved)
                 }
             }
         }
@@ -753,7 +830,7 @@ mod tests {
                     },
                 },
                 AutomationOrigin::Agent,
-                false,
+                CheckGrant::None,
             )
             .await;
         assert!(forged.unwrap_err().contains("needs approval"));
@@ -822,12 +899,15 @@ mod tests {
     async fn allow_rules_and_yolo_run_without_a_prompt_until_the_policy_changes() {
         // An allow rule: created and run with an approver that would refuse everything.
         let (state, tool, thread, data, project) = watch_tool(Arc::new(DenyAllHook)).await;
+        let _ = tool;
         let (argv, marker) = marker_check(project.path(), "ran.marker");
         std::fs::write(
             data.path().join("runtime.jsonc"),
             r#"{"approval":{"rules":[{"tool":"shell","command":["touch"],"action":"allow"}]}}"#,
         )
         .unwrap();
+        // A new run captures the new policy.
+        let tool = rebuild(&state, Arc::new(DenyAllHook), project.path(), &thread);
         let allowed = tool.execute(create_args(&argv)).await.unwrap();
         assert!(state.list_automations().await[0]
             .watch_state
@@ -854,9 +934,13 @@ mod tests {
 
         // YOLO chat: created and run unprompted, but switching to Custom stops it.
         state
-            .set_thread_approval_mode(thread, themis_core::configuration::ApprovalMode::Yolo)
+            .set_thread_approval_mode(
+                thread.clone(),
+                themis_core::configuration::ApprovalMode::Yolo,
+            )
             .await
             .unwrap();
+        let tool = rebuild(&state, Arc::new(DenyAllHook), project.path(), &thread);
         let yolo = tool.execute(create_args(&argv)).await.unwrap();
         let id = yolo["id"].as_str().unwrap();
         tick(&state, id).await;
@@ -875,6 +959,142 @@ mod tests {
         tick(&state, id).await;
         assert!(!marker.exists());
         assert!(!state.list_automations().await[0].enabled);
+    }
+
+    fn rebuild(
+        state: &AppState,
+        hook: Arc<dyn ApprovalHook>,
+        project: &std::path::Path,
+        thread: &str,
+    ) -> Box<dyn ToolT> {
+        state
+            .integration_management_tools(hook, project.into(), thread.to_owned())
+            .into_iter()
+            .find(|tool| tool.name() == "manage_automations")
+            .unwrap()
+    }
+
+    type Asked = Arc<std::sync::Mutex<Vec<(String, Vec<String>)>>>;
+    fn always_hook() -> (Arc<dyn ApprovalHook>, Asked) {
+        let asked: Asked = Arc::default();
+        let seen = asked.clone();
+        let hook = themis_core::tools::FnHook::new(move |action: &ToolAction| {
+            seen.lock()
+                .unwrap()
+                .push((action.tool.clone(), action.command.clone()));
+            themis_core::tools::Approval::AllowAlways
+        });
+        (Arc::new(hook), asked)
+    }
+
+    #[tokio::test]
+    async fn check_prompts_are_exact_shell_actions_and_grants_never_widen() {
+        let (hook, asked) = always_hook();
+        let (state, _tool, thread, data, project) = watch_tool(hook.clone()).await;
+        let tool = rebuild(&state, hook.clone(), project.path(), &thread);
+        let a: Vec<String> = vec!["cat".into(), "a.txt".into()];
+        let b: Vec<String> = vec!["curl".into(), "https://example.invalid".into()];
+        tool.execute(create_args(&a)).await.unwrap();
+        // "Always allow" for argv A does not cover argv B.
+        tool.execute(create_args(&b)).await.unwrap();
+        let log = asked.lock().unwrap().clone();
+        assert_eq!(log, vec![("shell".to_owned(), a), ("shell".to_owned(), b)]);
+        // default allow + a shell ask rule still prompts (policy sees a shell action).
+        std::fs::write(
+            data.path().join("runtime.jsonc"),
+            r#"{"approval":{"default":"allow","rules":[{"tool":"shell","action":"ask"}]}}"#,
+        )
+        .unwrap();
+        let tool = rebuild(&state, hook.clone(), project.path(), &thread);
+        tool.execute(create_args(&["cat".into(), "c.txt".into()]))
+            .await
+            .unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 3);
+        // Without the ask rule, default allow runs it with no prompt.
+        std::fs::write(
+            data.path().join("runtime.jsonc"),
+            r#"{"approval":{"default":"allow","rules":[]}}"#,
+        )
+        .unwrap();
+        let tool = rebuild(&state, hook, project.path(), &thread);
+        tool.execute(create_args(&["cat".into(), "d.txt".into()]))
+            .await
+            .unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn deny_rules_still_apply_to_own_chat_lifecycle() {
+        let (state, _tool, thread, data, project) = watch_tool(Arc::new(AllowAllHook)).await;
+        let plain = json!({"action":"create","input":{"name":"w","task":"look","interval_mins":5}});
+        for config in [
+            r#"{"approval":{"rules":[{"tool":"manage_automations*","action":"deny"}]}}"#,
+            r#"{"approval":{"default":"deny","rules":[]}}"#,
+        ] {
+            std::fs::write(data.path().join("runtime.jsonc"), config).unwrap();
+            let tool = rebuild(&state, Arc::new(AllowAllHook), project.path(), &thread);
+            let error = tool.execute(plain.clone()).await.unwrap_err().to_string();
+            assert!(error.contains("approval denied"), "{config}: {error}");
+        }
+        assert!(state.list_automations().await.is_empty());
+        // Ask (the default) proceeds silently, as decided.
+        std::fs::remove_file(data.path().join("runtime.jsonc")).unwrap();
+        let tool = rebuild(&state, Arc::new(DenyAllHook), project.path(), &thread);
+        tool.execute(plain).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn captured_yolo_is_not_a_stored_approval_and_a_paused_watch_can_be_reapproved() {
+        let (state, _tool, thread, _data, project) = watch_tool(Arc::new(DenyAllHook)).await;
+        let (argv, marker) = marker_check(project.path(), "ran.marker");
+        state
+            .set_thread_approval_mode(
+                thread.clone(),
+                themis_core::configuration::ApprovalMode::Yolo,
+            )
+            .await
+            .unwrap();
+        // The run captured YOLO ...
+        let tool = rebuild(&state, Arc::new(DenyAllHook), project.path(), &thread);
+        // ... and the user flips the chat to Custom mid-run.
+        state
+            .set_thread_approval_mode(
+                thread.clone(),
+                themis_core::configuration::ApprovalMode::Custom,
+            )
+            .await
+            .unwrap();
+        let created = tool.execute(create_args(&argv)).await.unwrap();
+        let id = created["id"].as_str().unwrap().to_owned();
+        assert!(state.list_automations().await[0]
+            .watch_state
+            .approved_check
+            .is_none());
+        tick(&state, &id).await;
+        assert!(!marker.exists(), "Custom policy applies at execution");
+        let paused = state.list_automations().await.remove(0);
+        assert_eq!(
+            paused.watch_state.stopped_reason.as_deref(),
+            Some("check command needs approval")
+        );
+        // A later interactive run may approve the SAME argv again.
+        let (hook, asked) = always_hook();
+        let tool = rebuild(&state, hook, project.path(), &thread);
+        tool.execute(json!({"action":"update","id":id,"input":{"check_command":argv}}))
+            .await
+            .unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 1);
+        assert_eq!(
+            state.list_automations().await[0].watch_state.approved_check,
+            Some(argv)
+        );
+        state
+            .set_automation_enabled(id.clone(), true)
+            .await
+            .unwrap();
+        tick(&state, &id).await;
+        assert!(marker.exists());
     }
 
     #[tokio::test]

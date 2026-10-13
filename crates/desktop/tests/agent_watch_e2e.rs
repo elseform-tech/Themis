@@ -271,7 +271,13 @@ async fn backstops_remove_or_pause_with_a_reason() {
         .unwrap();
     assert_eq!(limited.watch.max_runs, Some(1));
 
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while chrono::DateTime::parse_from_rfc3339(expired.watch.expires_at.as_ref().unwrap()).unwrap()
+        > chrono::Utc::now()
+    {
+        assert!(std::time::Instant::now() < deadline, "expiry never passed");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     // Agent watches always carry an expiry and a run limit by default.
     assert!(failing.watch.expires_at.is_some() && failing.watch.max_runs == Some(60));
 
@@ -318,20 +324,63 @@ async fn backstops_remove_or_pause_with_a_reason() {
 }
 
 #[tokio::test]
-async fn deleting_the_chat_removes_its_watch() {
+async fn deleting_the_chat_removes_agent_watches_and_pauses_user_automations() {
     let server = plain_provider().await;
     let fx = fixture(&server).await;
     let (sink, _rx) = sink();
-    let created = fx
+    let user = fx
         .state
         .create_automation(input(&fx, WatchSettings::default()))
         .await
         .unwrap();
+    fx.state
+        .create_automation_from(
+            input(&fx, WatchSettings::default()),
+            AutomationOrigin::Agent,
+        )
+        .await
+        .unwrap();
     fx.state.discard_thread(fx.thread.clone()).await.unwrap();
     fx.state.tick_automations_once(&sink).await;
-    assert!(fx.state.list_automations().await.is_empty());
+    let left = fx.state.list_automations().await;
+    assert_eq!(left.len(), 1, "the agent's watch is gone");
+    assert_eq!(left[0].id, user.id);
+    assert!(!left[0].enabled);
+    assert_eq!(
+        left[0].watch_state.stopped_reason.as_deref(),
+        Some("chat deleted")
+    );
     assert_eq!(model_calls(&server).await, 0);
-    let _ = created;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_changed_check_that_cannot_start_the_model_is_not_rerun_every_tick() {
+    let server = plain_provider().await;
+    let fx = fixture(&server).await;
+    let (sink, _rx) = sink();
+    // A new-chat automation with a reasoning effort fails before spawning
+    // (no model catalog in this fixture): the fire step errors after the check ran.
+    let mut watch = input(
+        &fx,
+        check(&["sh", "-c", "echo x >> count.txt; echo changed"]),
+    );
+    watch.target_thread_id = None;
+    watch.model = "fixture".into();
+    watch.reasoning_effort = Some("high".into());
+    let created = fx.state.create_automation(watch).await.unwrap();
+    fx.state
+        .set_automation_next_run_for_test(&created.id, PAST.into())
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        fx.state.tick_automations_once(&sink).await;
+    }
+    let runs = std::fs::read_to_string(fx.project.path().join("count.txt")).unwrap();
+    assert_eq!(runs.lines().count(), 1, "the check ran once for this slot");
+    let after = fx.state.list_automations().await.remove(0);
+    assert_eq!(after.run_count, 1);
+    assert!(chrono::DateTime::parse_from_rfc3339(&after.next_run_at).unwrap() > chrono::Utc::now());
 }
 
 /// Scripted model: creates a watch on the first user turn and completes it
@@ -446,16 +495,39 @@ async fn agent_creates_and_completes_a_watch_without_any_approval_in_custom_mode
 }
 
 #[tokio::test]
-async fn an_agent_check_command_in_custom_mode_needs_the_users_answer_and_runs_nothing_without_it()
-{
+async fn an_agent_check_command_needs_the_users_answer_in_a_git_project() {
+    if std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return;
+    }
     let server = scripted_agent(true).await;
     let fx = fixture(&server).await;
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(fx.project.path())
+        .status()
+        .unwrap()
+        .success());
+    // The repository flag is recorded when a chat is created.
+    let git_thread = fx
+        .state
+        .create_thread(
+            fx.project.path().to_string_lossy().into(),
+            ProviderKind::Go,
+            Some("fixture".into()),
+        )
+        .await
+        .unwrap()
+        .id;
     std::fs::write(fx.project.path().join("status.txt"), "WORKING\n").unwrap();
     let (sink, mut rx) = sink();
     fx.state
         .send_message(
             Arc::clone(&sink),
-            fx.thread.clone(),
+            git_thread.clone(),
             "watch status.txt".into(),
         )
         .await
@@ -487,7 +559,7 @@ async fn an_agent_check_command_in_custom_mode_needs_the_users_answer_and_runs_n
     .await
     .expect("chat run finished");
     let asked = asked.expect("the user was asked about the exact command");
-    assert_eq!(asked.tool, "watch_check");
+    assert_eq!(asked.tool, "shell");
     assert!(
         asked.summary.contains("cat status.txt"),
         "{}",
@@ -497,4 +569,36 @@ async fn an_agent_check_command_in_custom_mode_needs_the_users_answer_and_runs_n
         fx.state.list_automations().await.is_empty(),
         "denied: nothing was saved"
     );
+}
+
+#[tokio::test]
+async fn an_agent_check_command_is_refused_like_shell_outside_a_git_project() {
+    let server = scripted_agent(true).await;
+    let fx = fixture(&server).await;
+    std::fs::write(fx.project.path().join("status.txt"), "WORKING\n").unwrap();
+    let (sink, mut rx) = sink();
+    fx.state
+        .send_message(
+            Arc::clone(&sink),
+            fx.thread.clone(),
+            "watch status.txt".into(),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(DEADLINE, async {
+        loop {
+            match rx.recv().await.expect("events") {
+                TestEvent::Approval(request) => panic!("no prompt expected: {request:?}"),
+                TestEvent::Thread(envelope) => match envelope.event {
+                    ThreadEvent::Finished { .. } => return,
+                    ThreadEvent::Failed { error } => panic!("run failed: {error}"),
+                    _ => {}
+                },
+                TestEvent::Review(_) => {}
+            }
+        }
+    })
+    .await
+    .expect("chat run finished");
+    assert!(fx.state.list_automations().await.is_empty());
 }
