@@ -80,7 +80,7 @@ user-created ones:
 
 | Field | Meaning | Default for agent interval watches | Limit |
 | --- | --- | --- | --- |
-| `expires_at` / `expires_in_mins` | removed at that instant ("expired") | now + 120 min | at most 24 h ahead |
+| `expires_at` / `expires_in_mins` | removed at that instant ("expired") | interval watch: now + 120 min; agent calendar automation: now + 7 days | agent: at most 24 h (interval) or 7 days (calendar) ahead |
 | `max_runs` | executions, including checks that start no model run ("run limit") | 60 | 1 to 1000 |
 | `stop_when` | short plain-language goal shown in Tasks | none | 200 characters |
 | `check_command` | argv array, see below | none | 16 arguments |
@@ -89,8 +89,11 @@ Three failures in a row (a failed run, or a check that cannot start, times out
 or is denied) remove an agent watch ("failed 3 times") and pause a user's own
 automation, which then shows `Paused · failed 3 times`. A watch whose chat was
 deleted is removed ("chat deleted"); a user's own automation whose chat was
-deleted is paused with that reason instead of being deleted. Agent calendar automations carry no default
-expiry or run limit. Every removal is recorded with a reason in
+deleted is paused with that reason instead of being deleted. Agent calendar automations expire after 7 days by default and carry no run limit;
+the agent may shorten the expiry but cannot extend it past 7 days or remove it.
+Only a user edit (Automations form, CLI `update_automation`) can extend or clear it,
+and automations the user creates stay unlimited unless they set a limit. The expiry
+is echoed in tool results and shown as "expires <time or date>" in Tasks. Every removal is recorded with a reason in
 `automation_removals.json` (newest 200) and logged as an `automation_removed`
 diagnostic with the id and reason only. The limits are fixed constants, not
 runtime configuration.

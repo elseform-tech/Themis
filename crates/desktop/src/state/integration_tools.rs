@@ -1,6 +1,6 @@
 //! Agent-facing management uses the same validated state APIs as the UI and CLI.
 use super::automation::{
-    schedule_summary, shell_policy_for, CheckGrant, CheckPolicy, WATCH_MAX_EXPIRY_MINS,
+    schedule_summary, shell_policy_for, CheckGrant, CheckPolicy, CALENDAR_EXPIRY_MINS,
 };
 use super::{AppState, Automation, AutomationInput, PathBuf};
 use crate::types::AutomationOrigin;
@@ -285,7 +285,7 @@ impl ManagementTool {
                         .await?
                 } else {
                     self.state
-                        .update_automation_checked(id, input, approved)
+                        .update_automation_checked(id, input, approved, AutomationOrigin::Agent)
                         .await?
                 };
                 Ok(describe(&saved))
@@ -421,9 +421,9 @@ impl ManagementTool {
             }
             let minutes = minutes
                 .as_i64()
-                .filter(|minutes| (1..=WATCH_MAX_EXPIRY_MINS).contains(minutes))
+                .filter(|minutes| (1..=CALENDAR_EXPIRY_MINS).contains(minutes))
                 .ok_or_else(|| {
-                    format!("expires_in_mins must be between 1 and {WATCH_MAX_EXPIRY_MINS}")
+                    format!("expires_in_mins must be between 1 and {CALENDAR_EXPIRY_MINS} (7 days; interval watches 1440)")
                 })?;
             patch.insert(
                 "expires_at".into(),
@@ -452,7 +452,7 @@ fn automation_input_schema() -> Value {
             "time": {"type": "string", "description": "HH:MM local time for calendar repeats."},
             "timezone": {"type": "string", "description": "IANA zone, e.g. Europe/Berlin."},
             "weekday": {"type": "integer", "minimum": 0, "maximum": 6, "description": "0 = Monday; weekly only."},
-            "expires_in_mins": {"type": "integer", "minimum": 1, "maximum": 1440, "description": "Watches expire after 120 minutes by default."},
+            "expires_in_mins": {"type": "integer", "minimum": 1, "maximum": 10080, "description": "Interval watches expire after 120 minutes by default (at most 1440); calendar automations after 7 days (at most 10080). Only the user can extend or remove it."},
             "expires_at": {"type": "string", "description": "RFC3339, at most 24 hours ahead."},
             "max_runs": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Defaults to 60 for interval watches."},
             "stop_when": {"type": "string", "description": "Short plain-language goal shown to the user, e.g. status.txt says DONE."},
@@ -491,7 +491,7 @@ impl ToolT for ManagementTool {
             "list_plugins" => "Read paginated integration metadata and configured/enabled MCP counts in the current project and user scope, without bundled contents. Use kind, offset and limit (default 25, maximum 100); follow next_offset. Enabled does not imply connected or healthy.",
             "save_skill" => "Create or update a personal skill through the shared registry. Supply skill, plugin, scope and expectedRevision when updating.",
             "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list (paginated metadata and MCP counts; kind/offset/limit, next_offset), save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, scan_marketplace, catalog, preview, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. preview takes marketplace and name to inspect supported package contents without installing; it reuses the completed marketplace scan. scan_marketplace returns saved status and starts or resumes background work; refresh requests a new scan. test_mcp takes server configuration; test_hook takes hook configuration. New integrations default to global scope, available across projects; preserve the existing scope when editing. Executable operations require approval.",
-            _ => "Manage this chat's recurring automations and short-interval watches. No approval is needed for automations of this chat. Actions: list, create, update, enable, disable, delete, complete. Results echo the STORED schedule_summary, interval_mins, schedule, expires_at, max_runs and next_run_at; report those exact facts to the user, never what you intended. Put fields in `input` (or at the top level). create needs name, task and exactly ONE timing: (a) interval watch: interval_mins 2-60 (every N minutes; optionally repeat \"interval\"), or (b) calendar: repeat daily|weekdays|weekly (weekdays = Monday to Friday) with time HH:MM, timezone (IANA, e.g. Europe/Berlin) and weekday 0=Monday for weekly. interval_mins and a calendar schedule cannot be mixed. A watch is temporary: it expires in 2 hours by default (set expires_in_mins up to 1440) and stops after max_runs (default 60) runs; set stop_when to a short plain-language goal (shown to the user), and when that goal is met call action complete (with id, optional when this chat has one automation) to end it. Optional check_command (an argv array such as [\"cat\",\"status.txt\"]) polls cheaply: it runs without the model each interval and the model starts only when its output (or exit code) changes. It is a shell command, so it follows the shell approval policy, unlike the lifecycle actions: in Custom mode the user is asked to approve that exact argv when you create or update the watch (declined means the watch is not saved; then create it without check_command and read the file yourself on each run), and it stops if the policy later denies it. Three failures in a row stop an automation. Updates merge input into the saved fields; update with interval_mins switches to an interval, with a calendar schedule switches to the calendar. Automations always continue this chat; delete removes one that is no longer wanted.",
+            _ => "Manage this chat's recurring automations and short-interval watches. No approval is needed for automations of this chat. Actions: list, create, update, enable, disable, delete, complete. Results echo the STORED schedule_summary, interval_mins, schedule, expires_at, max_runs and next_run_at; report those exact facts to the user, never what you intended. Put fields in `input` (or at the top level). create needs name, task and exactly ONE timing: (a) interval watch: interval_mins 2-60 (every N minutes; optionally repeat \"interval\"), or (b) calendar: repeat daily|weekdays|weekly (weekdays = Monday to Friday) with time HH:MM, timezone (IANA, e.g. Europe/Berlin) and weekday 0=Monday for weekly. interval_mins and a calendar schedule cannot be mixed. A watch is temporary: it expires in 2 hours by default (set expires_in_mins up to 1440); calendar automations expire after 7 days by default (up to 10080); only the user can extend or remove an expiry. A watch also stops after max_runs (default 60) runs; set stop_when to a short plain-language goal (shown to the user), and when that goal is met call action complete (with id, optional when this chat has one automation) to end it. Optional check_command (an argv array such as [\"cat\",\"status.txt\"]) polls cheaply: it runs without the model each interval and the model starts only when its output (or exit code) changes. It is a shell command, so it follows the shell approval policy, unlike the lifecycle actions: in Custom mode the user is asked to approve that exact argv when you create or update the watch (declined means the watch is not saved; then create it without check_command and read the file yourself on each run), and it stops if the policy later denies it. Three failures in a row stop an automation. Updates merge input into the saved fields; update with interval_mins switches to an interval, with a calendar schedule switches to the calendar. Automations always continue this chat; delete removes one that is no longer wanted.",
         }
     }
     fn args_schema(&self) -> Value {
@@ -687,9 +687,15 @@ mod tests {
             weekdays["schedule_summary"],
             "weekdays (Monday to Friday) at 09:00 Europe/Berlin"
         );
+        let hours =
+            (chrono::DateTime::parse_from_rfc3339(weekdays["expires_at"].as_str().unwrap())
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+                - chrono::Utc::now())
+            .num_hours();
         assert!(
-            weekdays.get("expires_at").is_none(),
-            "calendar automations have no default expiry"
+            (166..=168).contains(&hours),
+            "calendar default is 7 days, got {hours} h"
         );
         // Switching an interval watch to the calendar clears the interval and back.
         let switched = tool
@@ -698,15 +704,15 @@ mod tests {
             .unwrap();
         assert_eq!(switched["schedule_summary"], "every 10 min");
         assert!(switched["schedule"].is_null());
-        // expires_in_mins is capped at 24 hours.
+        // An interval watch is capped at 24 hours.
         let error = tool
             .execute(
-                json!({"action":"update","id":weekdays["id"],"input":{"expires_in_mins":1441}}),
+                json!({"action":"update","id":weekdays["id"],"input":{"expires_in_mins":1500}}),
             )
             .await
             .unwrap_err()
             .to_string();
-        assert!(error.contains("between 1 and 1440"), "{error}");
+        assert!(error.contains("at most 1440 minutes"), "{error}");
         // Complete ends the watch and says so.
         let done = tool
             .execute(json!({"action":"complete","id":interval["id"]}))
@@ -715,6 +721,82 @@ mod tests {
         assert_eq!(done["reason"], "completed by agent");
         let left = tool.execute(json!({"action":"list"})).await.unwrap();
         assert_eq!(left.as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn agent_calendar_expiry_cannot_be_extended_or_cleared_but_the_user_can() {
+        let (state, tool, _thread, _data, _project) = watch_tool(Arc::new(AllowAllHook)).await;
+        let created = tool
+            .execute(json!({"action":"create","input":{"name":"w","task":"look","repeat":"daily","time":"09:00","timezone":"UTC","expires_in_mins":60}}))
+            .await
+            .unwrap();
+        let id = created["id"].as_str().unwrap();
+        let first = created["expires_at"].as_str().unwrap().to_owned();
+        // Shorter is fine; longer than 7 days, or removing it, is not.
+        tool.execute(json!({"action":"update","id":id,"input":{"expires_in_mins":10080}}))
+            .await
+            .unwrap();
+        for bad in [
+            json!({"expires_at": (chrono::Utc::now() + chrono::Duration::days(8)).to_rfc3339()}),
+            json!({"expires_at": null}),
+            json!({"expires_in_mins": 10081}),
+        ] {
+            let error = tool
+                .execute(json!({"action":"update","id":id,"input":bad}))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("the user") || error.contains("between 1 and"),
+                "{error}"
+            );
+        }
+        let kept = state.list_automations().await.remove(0);
+        assert_ne!(kept.watch.expires_at.as_deref(), Some(first.as_str()));
+        // The user's edit (UI or CLI path) can extend it and remove it.
+        let mut input = crate::types::AutomationInput {
+            name: kept.name.clone(),
+            project_root: kept.project_root.clone(),
+            target_thread_id: kept.target_thread_id.clone(),
+            provider: kept.provider,
+            model: String::new(),
+            reasoning_effort: None,
+            skill_ids: vec![],
+            interval_mins: kept.interval_mins.into(),
+            schedule: kept.schedule.clone(),
+            task: kept.task.clone(),
+            enabled: true,
+            watch: kept.watch.clone(),
+        };
+        input.watch.expires_at =
+            Some((chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339());
+        let extended = state
+            .update_automation(id.to_owned(), input.clone())
+            .await
+            .unwrap();
+        assert!(extended.watch.expires_at.is_some());
+        input.watch.expires_at = None;
+        let cleared = state.update_automation(id.to_owned(), input).await.unwrap();
+        assert!(cleared.watch.expires_at.is_none());
+        // A user-created calendar automation is unlimited by default.
+        let user = state
+            .create_automation(crate::types::AutomationInput {
+                name: "mine".into(),
+                project_root: kept.project_root,
+                target_thread_id: kept.target_thread_id,
+                provider: kept.provider,
+                model: String::new(),
+                reasoning_effort: None,
+                skill_ids: vec![],
+                interval_mins: 60,
+                schedule: kept.schedule,
+                task: "t".into(),
+                enabled: true,
+                watch: Default::default(),
+            })
+            .await
+            .unwrap();
+        assert!(user.watch.expires_at.is_none());
     }
 
     #[tokio::test]

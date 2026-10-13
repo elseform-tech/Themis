@@ -17,6 +17,9 @@ pub const WATCH_MAX_INTERVAL_MINS: i64 = 60;
 /// Default and hard limits for watch expiry, in minutes.
 pub const WATCH_DEFAULT_EXPIRY_MINS: i64 = 120;
 pub const WATCH_MAX_EXPIRY_MINS: i64 = 24 * 60;
+/// Agent-created calendar automations expire after this long by default, and
+/// the agent cannot extend them further; only a user edit can.
+pub const CALENDAR_EXPIRY_MINS: i64 = 7 * 24 * 60;
 /// Default and hard limits for executions (checks included).
 pub const WATCH_DEFAULT_MAX_RUNS: u64 = 60;
 pub const WATCH_MAX_RUNS: u64 = 1000;
@@ -181,11 +184,13 @@ fn normalize_watch(watch: &mut WatchSettings) {
 }
 
 /// Validates expiry, run limit, goal text and check command. An unchanged
-/// `expires_at` is accepted as stored; a new one must be in the next 24 hours.
+/// `expires_at` is accepted as stored; a new one must be in the future and, when
+/// `max_expiry_mins` is set (the agent acting), within that many minutes.
 fn validate_watch(
     watch: &WatchSettings,
     now: DateTime<Utc>,
     stored: Option<&WatchSettings>,
+    max_expiry_mins: Option<i64>,
 ) -> Result<(), String> {
     if let Some(expires) = &watch.expires_at {
         let at = DateTime::parse_from_rfc3339(expires)
@@ -196,14 +201,13 @@ fn validate_watch(
             if at <= now {
                 return Err("expires_at must be in the future".to_owned());
             }
-            if at
-                > now
-                    + chrono::Duration::minutes(WATCH_MAX_EXPIRY_MINS)
-                    + chrono::Duration::minutes(1)
-            {
-                return Err(format!(
-                    "expires_at is at most {WATCH_MAX_EXPIRY_MINS} minutes (24 hours) from now"
-                ));
+            if let Some(max) = max_expiry_mins {
+                if at > now + chrono::Duration::minutes(max) + chrono::Duration::minutes(1) {
+                    return Err(format!(
+                        "expires_at is at most {max} minutes ({} hours) from now for an agent; only the user can extend it",
+                        max / 60
+                    ));
+                }
             }
         }
     }
@@ -281,15 +285,21 @@ impl AppState {
     ) -> Result<Automation, String> {
         normalize_watch(&mut input.watch);
         let now = Utc::now();
-        if origin == AutomationOrigin::Agent && input.schedule.is_none() {
-            // Agent watches always end: expiry and a run limit are defaults.
+        if origin == AutomationOrigin::Agent {
+            // Agent automations always end: interval watches in 2 hours with a
+            // run limit, calendar automations in 7 days.
+            let default_expiry = if input.schedule.is_none() {
+                input.watch.max_runs.get_or_insert(WATCH_DEFAULT_MAX_RUNS);
+                WATCH_DEFAULT_EXPIRY_MINS
+            } else {
+                CALENDAR_EXPIRY_MINS
+            };
             input
                 .watch
                 .expires_at
-                .get_or_insert_with(|| rfc3339_plus_minutes(now, WATCH_DEFAULT_EXPIRY_MINS));
-            input.watch.max_runs.get_or_insert(WATCH_DEFAULT_MAX_RUNS);
+                .get_or_insert_with(|| rfc3339_plus_minutes(now, default_expiry));
         }
-        self.check_automation_input(&input, origin, None, grant)
+        self.check_automation_input(&input, origin, origin, None, grant)
             .await?;
         let root = canonical_project_dir(&input.project_root)?;
         let interval_mins = if input.schedule.is_some() {
@@ -376,6 +386,7 @@ impl AppState {
             } else {
                 CheckGrant::None
             },
+            AutomationOrigin::User,
         )
         .await
     }
@@ -387,6 +398,7 @@ impl AppState {
         automation_id: String,
         mut input: AutomationInput,
         grant: CheckGrant,
+        actor: AutomationOrigin,
     ) -> Result<Automation, String> {
         normalize_watch(&mut input.watch);
         let existing = self
@@ -397,7 +409,7 @@ impl AppState {
             .get(&automation_id)
             .cloned()
             .ok_or_else(|| format!("unknown automation '{automation_id}'"))?;
-        self.check_automation_input(&input, existing.origin, Some(&existing), grant)
+        self.check_automation_input(&input, existing.origin, actor, Some(&existing), grant)
             .await?;
         let root = canonical_project_dir(&input.project_root)?;
         let interval_mins = if input.schedule.is_some() {
@@ -654,6 +666,7 @@ impl AppState {
         &self,
         input: &AutomationInput,
         origin: AutomationOrigin,
+        actor: AutomationOrigin,
         existing: Option<&Automation>,
         grant: CheckGrant,
     ) -> Result<(), String> {
@@ -678,7 +691,23 @@ impl AppState {
                 input.interval_mins
             ));
         }
-        validate_watch(&input.watch, Utc::now(), existing.map(|item| &item.watch))?;
+        let cap = (actor == AutomationOrigin::Agent).then_some(if input.schedule.is_none() {
+            WATCH_MAX_EXPIRY_MINS
+        } else {
+            CALENDAR_EXPIRY_MINS
+        });
+        validate_watch(
+            &input.watch,
+            Utc::now(),
+            existing.map(|item| &item.watch),
+            cap,
+        )?;
+        if actor == AutomationOrigin::Agent
+            && input.watch.expires_at.is_none()
+            && existing.is_some_and(|item| item.watch.expires_at.is_some())
+        {
+            return Err("The expiry can only be removed by the user".to_owned());
+        }
         if let Some(schedule) = &input.schedule {
             next_calendar_run(schedule, Utc::now())?;
         }
@@ -1588,7 +1617,8 @@ mod schedule_tests {
     #[test]
     fn watch_limits_are_validated() {
         let now = at_now();
-        let ok = |watch: WatchSettings| validate_watch(&watch, now, None);
+        let ok =
+            |watch: WatchSettings| validate_watch(&watch, now, None, Some(WATCH_MAX_EXPIRY_MINS));
         assert!(ok(WatchSettings::default()).is_ok());
         let soon = (now + chrono::Duration::minutes(30)).to_rfc3339();
         assert!(ok(WatchSettings {
@@ -1621,7 +1651,7 @@ mod schedule_tests {
             expires_at: Some(past.clone()),
             ..WatchSettings::default()
         };
-        assert!(validate_watch(&stored, now, Some(&stored)).is_ok());
+        assert!(validate_watch(&stored, now, Some(&stored), Some(WATCH_MAX_EXPIRY_MINS)).is_ok());
         for runs in [0, 1001] {
             assert!(ok(WatchSettings {
                 max_runs: Some(runs),

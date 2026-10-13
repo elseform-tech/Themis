@@ -55,10 +55,7 @@ async fn watch_fields_validation_and_removal_reason_through_themis_call() {
 
     // Limits are validated by the shared server, not just the tool.
     for (extra, message) in [
-        (
-            json!({"expires_at": (chrono::Utc::now() + chrono::Duration::hours(30)).to_rfc3339()}),
-            "24 hours",
-        ),
+        (json!({"expires_at": "2001-01-01T00:00:00Z"}), "future"),
         (json!({"max_runs": 0}), "max_runs"),
         (json!({"check_command": [" "]}), "check_command"),
     ] {

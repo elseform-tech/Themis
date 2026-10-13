@@ -6,7 +6,7 @@ import type { ThreadTaskAutomation, ThreadTaskRun, ThreadTasks } from "../lib/ty
 import * as bridge from "../lib/tauri";
 import { TaskIndicator } from "./TaskIndicator";
 import { TasksView } from "./TasksView";
-import { countTasks, describeCounts, groupTasks, useThreadTasksSync } from "./threadTasks";
+import { countTasks, describeCounts, expiryLabel, groupTasks, useThreadTasksSync } from "./threadTasks";
 import { reducer } from "../state/reducer";
 
 const dispatch = vi.fn();
@@ -64,7 +64,7 @@ describe("task grouping", () => {
 
 describe("watches", () => {
   const expiry = "2030-01-01T21:30:00Z";
-  const clock = new Date(expiry).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const clock = expiryLabel(expiry);
   const watch = (over: Partial<ThreadTaskAutomation> = {}) => automation({
     id: "w1", name: "Watch status.txt", origin: "agent", schedule: null, interval_mins: 2,
     stop_when: "status.txt says DONE", expires_at: expiry, max_runs: 60, ...over,
@@ -73,6 +73,16 @@ describe("watches", () => {
     const row = groupTasks(tasks({ automations: [watch()] })).scheduled[0];
     expect(row).toMatchObject({ name: "Watch status.txt", tag: "Automation · by agent" });
     expect(row?.meta).toContain(`Every 2 min · until status.txt says DONE · expires ${clock} · next`);
+  });
+  it("shows today's expiry as a time and a later one as a date", () => {
+    const now = new Date("2030-01-01T10:00:00");
+    expect(expiryLabel("2030-01-01T21:30:00", now)).toBe(new Date("2030-01-01T21:30:00").toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }));
+    expect(expiryLabel("2030-01-08T09:00:00", now)).toBe(new Date("2030-01-08T09:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }));
+    expect(expiryLabel("garbage", now)).toBe("garbage");
+  });
+  it("shows a calendar automation's expiry date with its schedule", () => {
+    const row = groupTasks(tasks({ automations: [automation({ origin: "agent", expires_at: "2030-01-08T09:00:00Z" })] })).scheduled[0];
+    expect(row?.meta).toContain(`Daily at 09:00 · Europe/Berlin · expires ${expiryLabel("2030-01-08T09:00:00Z")} · next`);
   });
   it("explains why a watch ended in Earlier, newest first, with its origin", () => {
     const feed = tasks({

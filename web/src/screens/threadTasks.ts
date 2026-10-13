@@ -39,15 +39,18 @@ const automationTag = (automation: Pick<ThreadTaskAutomation, "origin">) =>
 /** Runs and removals outlive their automation, so they carry the origin themselves. */
 const recordedTag = (origin: AutomationOrigin | undefined) => origin === "agent" ? "Automation · by agent" : "Automation";
 
-function clock(iso: string): string {
+/** Time of day when it is today, otherwise the date: "21:30" or "Oct 20". */
+export function expiryLabel(iso: string, now: Date = new Date()): string {
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (Number.isNaN(date.getTime())) return iso;
+  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 /** "Every 2 min · until status.txt says DONE · expires 21:30": the stored facts of a watch. */
 export function watchLabel(item: Pick<ThreadTaskAutomation, "schedule" | "interval_mins" | "stop_when" | "expires_at">): string {
   const base = item.schedule ? scheduleLabel(item) : item.interval_mins < 60 ? `Every ${item.interval_mins} min` : scheduleLabel(item);
-  return [base, item.stop_when ? `until ${item.stop_when}` : "", item.expires_at ? `expires ${clock(item.expires_at)}` : ""].filter(Boolean).join(" · ");
+  return [base, item.stop_when ? `until ${item.stop_when}` : "", item.expires_at ? `expires ${expiryLabel(item.expires_at)}` : ""].filter(Boolean).join(" · ");
 }
 
 const reasonLabel = (reason: string) => reason.charAt(0).toUpperCase() + reason.slice(1);
