@@ -447,7 +447,13 @@ pub struct WatchState {
     /// Hash of the last `check_command` output that was handed to the model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_check_hash: Option<String>,
-    /// Why a user-created automation was paused by a backstop.
+    /// The exact `check_command` argv a user approved for this automation
+    /// (interactively in the creating run, or by editing it themselves). It
+    /// never covers a different argv and is not a run-scoped grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_check: Option<Vec<String>>,
+    /// Why an automation was paused (failure backstop, or a check command the
+    /// approval policy no longer allows).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stopped_reason: Option<String>,
 }

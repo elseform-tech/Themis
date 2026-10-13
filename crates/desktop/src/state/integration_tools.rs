@@ -1,5 +1,5 @@
 //! Agent-facing management uses the same validated state APIs as the UI and CLI.
-use super::automation::{schedule_summary, WATCH_MAX_EXPIRY_MINS};
+use super::automation::{schedule_summary, CheckPolicy, WATCH_MAX_EXPIRY_MINS};
 use super::{AppState, Automation, AutomationInput, PathBuf};
 use crate::types::AutomationOrigin;
 use serde_json::{json, Map, Value};
@@ -199,16 +199,62 @@ impl ManagementTool {
                 self.merge_patch(&mut input, patch, stored.is_some())?;
                 let input: AutomationInput =
                     serde_json::from_value(input).map_err(|e| e.to_string())?;
+                let approved = self.approve_check_command(&input, stored.as_ref()).await?;
                 let saved = if action == "create" {
                     self.state
-                        .create_automation_from(input, AutomationOrigin::Agent)
+                        .create_automation_checked(input, AutomationOrigin::Agent, approved)
                         .await?
                 } else {
-                    self.state.update_automation(id, input).await?
+                    self.state
+                        .update_automation_checked(id, input, approved)
+                        .await?
                 };
                 Ok(describe(&saved))
             }
             _ => Err("Unknown automation action. Use list, create, update, enable, disable, delete or complete.".into()),
+        }
+    }
+
+    /// A check command runs like the `shell` tool. Lifecycle actions are free,
+    /// but an argv the policy would ask about needs the user's answer now, in
+    /// this interactive run, for exactly this argv. Returns whether it was
+    /// approved; the scheduler later runs it only with that stored approval.
+    async fn approve_check_command(
+        &self,
+        input: &AutomationInput,
+        stored: Option<&Automation>,
+    ) -> Result<bool, String> {
+        let Some(argv) = &input.watch.check_command else {
+            return Ok(false);
+        };
+        if stored.is_some_and(|item| item.watch.check_command.as_ref() == Some(argv)) {
+            return Ok(false);
+        }
+        let root = std::path::Path::new(&input.project_root);
+        let policy = self
+            .state
+            .check_command_policy(root, Some(&self.thread_id), argv)
+            .await?;
+        match policy {
+            CheckPolicy::Deny => Err("check_command is denied by the approval rules".to_owned()),
+            CheckPolicy::Allow => Ok(false),
+            CheckPolicy::Ask => {
+                let decision = self.approvals.approve(&ToolAction {
+                    command: argv.clone(),
+                    tool: "watch_check".to_owned(),
+                    summary: format!(
+                        "watch check command (runs every {} min until the watch ends): {}",
+                        input.interval_mins,
+                        argv.join(" ")
+                    ),
+                    risk: themis_core::tools::RiskLevel::Execute,
+                });
+                if decision == themis_core::tools::Approval::Deny {
+                    Err("The user did not approve the check command, so the watch was not saved. Retry without check_command (read the file yourself on each run), or ask the user to allow this exact command.".to_owned())
+                } else {
+                    Ok(true)
+                }
+            }
         }
     }
 
@@ -368,7 +414,7 @@ impl ToolT for ManagementTool {
             "list_plugins" => "Read paginated integration metadata and configured/enabled MCP counts in the current project and user scope, without bundled contents. Use kind, offset and limit (default 25, maximum 100); follow next_offset. Enabled does not imply connected or healthy.",
             "save_skill" => "Create or update a personal skill through the shared registry. Supply skill, plugin, scope and expectedRevision when updating.",
             "manage_integrations" => "Manage integrations through shared validated APIs. Actions: list (paginated metadata and MCP counts; kind/offset/limit, next_offset), save, save_skill, set_component_enabled, remove_component, enable, disable, delete, marketplaces, scan_marketplace, catalog, preview, add_marketplace, remove_marketplace, install, update, import_path, import_json, import_repository, preview_repository, test_mcp, test_hook. import_path takes path; import_json takes content as a JSON string; import_repository and preview_repository take url with optional reference and subdirectory; preview_repository reads package contents without installing. Component actions take name, kind (skill/mcp/hook), id and enabled for set_component_enabled. Marketplace actions take source or marketplace as appropriate. preview takes marketplace and name to inspect supported package contents without installing; it reuses the completed marketplace scan. scan_marketplace returns saved status and starts or resumes background work; refresh requests a new scan. test_mcp takes server configuration; test_hook takes hook configuration. New integrations default to global scope, available across projects; preserve the existing scope when editing. Executable operations require approval.",
-            _ => "Manage this chat's recurring automations and short-interval watches. No approval is needed for automations of this chat. Actions: list, create, update, enable, disable, delete, complete. Results echo the STORED schedule_summary, interval_mins, schedule, expires_at, max_runs and next_run_at; report those exact facts to the user, never what you intended. Put fields in `input` (or at the top level). create needs name, task and exactly ONE timing: (a) interval watch: interval_mins 2-60 (every N minutes; optionally repeat \"interval\"), or (b) calendar: repeat daily|weekdays|weekly (weekdays = Monday to Friday) with time HH:MM, timezone (IANA, e.g. Europe/Berlin) and weekday 0=Monday for weekly. interval_mins and a calendar schedule cannot be mixed. A watch is temporary: it expires in 2 hours by default (set expires_in_mins up to 1440) and stops after max_runs (default 60) runs; set stop_when to a short plain-language goal (shown to the user), and when that goal is met call action complete (with id, optional when this chat has one automation) to end it. Prefer check_command (an argv array such as [\"cat\",\"status.txt\"]) for cheap polling: it runs without the model each interval and the model is only started when its output (or exit code) changes, receiving the new output. Three failures in a row stop an automation. Updates merge input into the saved fields; update with interval_mins switches to an interval, with a calendar schedule switches to the calendar. Automations always continue this chat; delete removes one that is no longer wanted.",
+            _ => "Manage this chat's recurring automations and short-interval watches. No approval is needed for automations of this chat. Actions: list, create, update, enable, disable, delete, complete. Results echo the STORED schedule_summary, interval_mins, schedule, expires_at, max_runs and next_run_at; report those exact facts to the user, never what you intended. Put fields in `input` (or at the top level). create needs name, task and exactly ONE timing: (a) interval watch: interval_mins 2-60 (every N minutes; optionally repeat \"interval\"), or (b) calendar: repeat daily|weekdays|weekly (weekdays = Monday to Friday) with time HH:MM, timezone (IANA, e.g. Europe/Berlin) and weekday 0=Monday for weekly. interval_mins and a calendar schedule cannot be mixed. A watch is temporary: it expires in 2 hours by default (set expires_in_mins up to 1440) and stops after max_runs (default 60) runs; set stop_when to a short plain-language goal (shown to the user), and when that goal is met call action complete (with id, optional when this chat has one automation) to end it. Optional check_command (an argv array such as [\"cat\",\"status.txt\"]) polls cheaply: it runs without the model each interval and the model starts only when its output (or exit code) changes. It is a shell command, so it follows the shell approval policy, unlike the lifecycle actions: in Custom mode the user is asked to approve that exact argv when you create or update the watch (declined means the watch is not saved; then create it without check_command and read the file yourself on each run), and it stops if the policy later denies it. Three failures in a row stop an automation. Updates merge input into the saved fields; update with interval_mins switches to an interval, with a calendar schedule switches to the calendar. Automations always continue this chat; delete removes one that is no longer wanted.",
         }
     }
     fn args_schema(&self) -> Value {
@@ -645,6 +691,187 @@ mod tests {
             assert!(error.contains("approval denied"), "{action}: {error}");
         }
         assert_eq!(state.list_automations().await.len(), 1);
+    }
+
+    fn marker_check(project: &std::path::Path, name: &str) -> (Vec<String>, std::path::PathBuf) {
+        (vec!["touch".into(), name.into()], project.join(name))
+    }
+
+    async fn tick(state: &AppState, id: &str) {
+        let sink: Arc<dyn crate::sink::EventSink> = Arc::new(crate::sink::ChannelSink::channel().0);
+        state
+            .set_automation_next_run_for_test(id, "2001-01-01T00:00:00Z".into())
+            .await
+            .unwrap();
+        state.tick_automations_once(&sink).await;
+    }
+
+    fn create_args(argv: &[String]) -> Value {
+        json!({"action":"create","input":{"name":"w","task":"look","interval_mins":2,"check_command":argv}})
+    }
+
+    #[tokio::test]
+    async fn unapproved_check_commands_never_execute() {
+        // Custom, no rules, the user answers no: nothing is saved, nothing runs.
+        let (state, tool, _thread, data, project) = watch_tool(Arc::new(DenyAllHook)).await;
+        let (argv, marker) = marker_check(project.path(), "ran.marker");
+        let error = tool
+            .execute(create_args(&argv))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("did not approve"), "{error}");
+        assert!(state.list_automations().await.is_empty());
+        // The lifecycle itself stays free: the same watch without a check works.
+        let plain = tool
+            .execute(
+                json!({"action":"create","input":{"name":"w","task":"look","interval_mins":2}}),
+            )
+            .await
+            .unwrap();
+        tick(&state, plain["id"].as_str().unwrap()).await;
+        assert!(!marker.exists());
+        // A client that writes the record without an approval cannot run it either.
+        let forged = state
+            .create_automation_checked(
+                crate::types::AutomationInput {
+                    name: "forged".into(),
+                    project_root: project.path().to_string_lossy().into(),
+                    target_thread_id: None,
+                    provider: super::super::ProviderKind::Go,
+                    model: "m".into(),
+                    reasoning_effort: None,
+                    skill_ids: vec![],
+                    interval_mins: 2,
+                    schedule: None,
+                    task: "t".into(),
+                    enabled: true,
+                    watch: crate::types::WatchSettings {
+                        check_command: Some(argv.clone()),
+                        ..Default::default()
+                    },
+                },
+                AutomationOrigin::Agent,
+                false,
+            )
+            .await;
+        assert!(forged.unwrap_err().contains("needs approval"));
+        drop(data);
+    }
+
+    #[tokio::test]
+    async fn approval_is_bound_to_the_exact_argv_and_policy_is_rechecked() {
+        let (state, tool, thread, data, project) = watch_tool(Arc::new(AllowAllHook)).await;
+        let (argv, marker) = marker_check(project.path(), "ran.marker");
+        let created = tool.execute(create_args(&argv)).await.unwrap();
+        let id = created["id"].as_str().unwrap().to_owned();
+        assert_eq!(created["check_command"], json!(argv));
+        tick(&state, &id).await;
+        assert!(marker.exists(), "approved exact argv runs");
+
+        // The scheduler never asks: a different argv has no approval of its own.
+        let stored = state.list_automations().await.remove(0);
+        assert_eq!(stored.watch_state.approved_check, Some(argv.clone()));
+        let denying = state.integration_management_tools(
+            Arc::new(DenyAllHook),
+            project.path().into(),
+            thread.clone(),
+        );
+        let manage = denying
+            .iter()
+            .find(|t| t.name() == "manage_automations")
+            .unwrap();
+        let (other, other_marker) = marker_check(project.path(), "other.marker");
+        let error = manage
+            .execute(json!({"action":"update","id":id,"input":{"check_command":other}}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("did not approve"), "{error}");
+        // Changing the argv through an approving run re-binds the approval to the new argv only.
+        tool.execute(json!({"action":"update","id":id,"input":{"check_command":other}}))
+            .await
+            .unwrap();
+        let rebound = state.list_automations().await.remove(0);
+        assert_eq!(rebound.watch_state.approved_check, Some(other.clone()));
+        std::fs::remove_file(&marker).unwrap();
+        tick(&state, &id).await;
+        assert!(other_marker.exists() && !marker.exists());
+
+        // A deny rule added later stops it and says why.
+        std::fs::write(
+            data.path().join("runtime.jsonc"),
+            r#"{"approval":{"rules":[{"tool":"shell","action":"deny","command":["touch"]}]}}"#,
+        )
+        .unwrap();
+        std::fs::remove_file(&other_marker).unwrap();
+        tick(&state, &id).await;
+        assert!(!other_marker.exists());
+        let paused = state.list_automations().await.remove(0);
+        assert!(!paused.enabled);
+        assert_eq!(
+            paused.watch_state.stopped_reason.as_deref(),
+            Some("check command denied by approval rules")
+        );
+    }
+
+    #[tokio::test]
+    async fn allow_rules_and_yolo_run_without_a_prompt_until_the_policy_changes() {
+        // An allow rule: created and run with an approver that would refuse everything.
+        let (state, tool, thread, data, project) = watch_tool(Arc::new(DenyAllHook)).await;
+        let (argv, marker) = marker_check(project.path(), "ran.marker");
+        std::fs::write(
+            data.path().join("runtime.jsonc"),
+            r#"{"approval":{"rules":[{"tool":"shell","command":["touch"],"action":"allow"}]}}"#,
+        )
+        .unwrap();
+        let allowed = tool.execute(create_args(&argv)).await.unwrap();
+        assert!(state.list_automations().await[0]
+            .watch_state
+            .approved_check
+            .is_none());
+        tick(&state, allowed["id"].as_str().unwrap()).await;
+        assert!(marker.exists());
+        // Rules gone, so Ask again: the allow-rule watch stops (no stored approval).
+        std::fs::remove_file(data.path().join("runtime.jsonc")).unwrap();
+        std::fs::remove_file(&marker).unwrap();
+        tick(&state, allowed["id"].as_str().unwrap()).await;
+        assert!(!marker.exists());
+        assert_eq!(
+            state.list_automations().await[0]
+                .watch_state
+                .stopped_reason
+                .as_deref(),
+            Some("check command needs approval")
+        );
+        state
+            .delete_automation(allowed["id"].as_str().unwrap().into())
+            .await
+            .unwrap();
+
+        // YOLO chat: created and run unprompted, but switching to Custom stops it.
+        state
+            .set_thread_approval_mode(thread, themis_core::configuration::ApprovalMode::Yolo)
+            .await
+            .unwrap();
+        let yolo = tool.execute(create_args(&argv)).await.unwrap();
+        let id = yolo["id"].as_str().unwrap();
+        tick(&state, id).await;
+        assert!(marker.exists());
+        state
+            .set_thread_approval_mode(
+                state.list_automations().await[0]
+                    .target_thread_id
+                    .clone()
+                    .unwrap(),
+                themis_core::configuration::ApprovalMode::Custom,
+            )
+            .await
+            .unwrap();
+        std::fs::remove_file(&marker).unwrap();
+        tick(&state, id).await;
+        assert!(!marker.exists());
+        assert!(!state.list_automations().await[0].enabled);
     }
 
     #[tokio::test]

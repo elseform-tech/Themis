@@ -214,6 +214,14 @@ async fn backstops_remove_or_pause_with_a_reason() {
     let server = plain_provider().await;
     let fx = fixture(&server).await;
     let (sink, _rx) = sink();
+    // Allow rules in the user's runtime config let these agent checks run unattended.
+    std::fs::write(
+        fx._data.path().join("runtime.jsonc"),
+        r#"{"approval":{"rules":[
+            {"tool":"shell","action":"allow","command":["cat"]},
+            {"tool":"shell","action":"allow","command":["definitely-not-a-program-xyz"]}]}}"#,
+    )
+    .unwrap();
 
     let expired = fx
         .state
@@ -326,11 +334,11 @@ async fn deleting_the_chat_removes_its_watch() {
 
 /// Scripted model: creates a watch on the first user turn and completes it
 /// when a watch run (whose prompt carries the watch id) asks.
-async fn scripted_agent() -> MockServer {
+async fn scripted_agent(with_check: bool) -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .respond_with(|request: &Request| {
+        .respond_with(move |request: &Request| {
             let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
             let messages = body["messages"].as_array().cloned().unwrap_or_default();
             let last = messages.last().cloned().unwrap_or(Value::Null);
@@ -349,12 +357,15 @@ async fn scripted_agent() -> MockServer {
                     .collect();
                 tool_call("manage_automations", &json!({"action":"complete","id":id}))
             } else {
+                let mut input = json!({
+                    "name":"Watch status.txt","task":"Read status.txt and report it",
+                    "interval_mins":2,"stop_when":"status.txt says DONE"});
+                if with_check {
+                    input["check_command"] = json!(["cat", "status.txt"]);
+                }
                 tool_call(
                     "manage_automations",
-                    &json!({"action":"create","input":{
-                        "name":"Watch status.txt","task":"Check status.txt",
-                        "interval_mins":2,"stop_when":"status.txt says DONE",
-                        "check_command":["cat","status.txt"]}}),
+                    &json!({"action":"create","input":input}),
                 )
             };
             ResponseTemplate::new(200).set_body_json(payload)
@@ -366,7 +377,7 @@ async fn scripted_agent() -> MockServer {
 
 #[tokio::test]
 async fn agent_creates_and_completes_a_watch_without_any_approval_in_custom_mode() {
-    let server = scripted_agent().await;
+    let server = scripted_agent(false).await;
     let fx = fixture(&server).await;
     std::fs::write(fx.project.path().join("status.txt"), "WORKING\n").unwrap();
     let (sink, mut rx) = sink();
@@ -430,4 +441,58 @@ async fn agent_creates_and_completes_a_watch_without_any_approval_in_custom_mode
     // The finished run keeps a stable name and origin after deletion.
     assert_eq!(tasks.recent[0].name, "Watch status.txt");
     assert_eq!(tasks.recent[0].origin, AutomationOrigin::Agent);
+}
+
+#[tokio::test]
+async fn an_agent_check_command_in_custom_mode_needs_the_users_answer_and_runs_nothing_without_it()
+{
+    let server = scripted_agent(true).await;
+    let fx = fixture(&server).await;
+    std::fs::write(fx.project.path().join("status.txt"), "WORKING\n").unwrap();
+    let (sink, mut rx) = sink();
+    fx.state
+        .send_message(
+            Arc::clone(&sink),
+            fx.thread.clone(),
+            "watch status.txt".into(),
+        )
+        .await
+        .unwrap();
+    let mut asked = None;
+    tokio::time::timeout(DEADLINE, async {
+        loop {
+            match rx.recv().await.expect("events") {
+                TestEvent::Approval(request) => {
+                    asked = Some(request.clone());
+                    fx.state
+                        .approve_action(
+                            request.thread_id,
+                            request.approval_id,
+                            themis_desktop::types::ApprovalDecision::Deny,
+                        )
+                        .await
+                        .unwrap();
+                }
+                TestEvent::Thread(envelope) => match envelope.event {
+                    ThreadEvent::Finished { .. } => return,
+                    ThreadEvent::Failed { error } => panic!("run failed: {error}"),
+                    _ => {}
+                },
+                TestEvent::Review(_) => {}
+            }
+        }
+    })
+    .await
+    .expect("chat run finished");
+    let asked = asked.expect("the user was asked about the exact command");
+    assert_eq!(asked.tool, "watch_check");
+    assert!(
+        asked.summary.contains("cat status.txt"),
+        "{}",
+        asked.summary
+    );
+    assert!(
+        fx.state.list_automations().await.is_empty(),
+        "denied: nothing was saved"
+    );
 }

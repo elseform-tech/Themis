@@ -100,7 +100,10 @@ impl ApprovalHook for DesktopApprovalHook {
             || action.tool.starts_with("hook_")
             || action.tool.starts_with("manage_integrations_")
             || action.tool.starts_with("manage_automations_")
-            || matches!(action.tool.as_str(), "list_plugins" | "save_skill");
+            || matches!(
+                action.tool.as_str(),
+                "list_plugins" | "save_skill" | "watch_check"
+            );
         if !self.is_git && action.risk != CoreRisk::Read && !integration {
             return Approval::Deny;
         }

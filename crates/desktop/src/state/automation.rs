@@ -34,6 +34,25 @@ struct CheckReport {
     fingerprint: String,
 }
 
+/// How the approval policy treats a watch's `check_command` (a `shell` action).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckPolicy {
+    /// An allow rule or a YOLO chat: it may run without a stored approval.
+    Allow,
+    /// Custom mode default: it runs only with a stored approval of this exact argv.
+    Ask,
+    /// A deny rule.
+    Deny,
+}
+
+/// Why a scheduled check did not run.
+enum CheckError {
+    /// Policy or approval forbids it now: the automation is paused.
+    Blocked(String),
+    /// It could not run (start failure, timeout): counts as a failure.
+    Failed(String),
+}
+
 /// Releases the scheduler's claim on an automation when its pass ends.
 struct WatchGuard {
     state: AppState,
@@ -177,8 +196,22 @@ impl AppState {
     /// Like [`Self::create_automation`], recording who created it.
     pub async fn create_automation_from(
         &self,
+        input: AutomationInput,
+        origin: AutomationOrigin,
+    ) -> Result<Automation, String> {
+        // A user authoring their own automation (UI, CLI) is the approval; an
+        // agent's check command must be approved separately by the caller.
+        self.create_automation_checked(input, origin, origin == AutomationOrigin::User)
+            .await
+    }
+
+    /// Creates an automation; `check_approved` says the caller obtained an
+    /// approval of exactly `input.watch.check_command`.
+    pub async fn create_automation_checked(
+        &self,
         mut input: AutomationInput,
         origin: AutomationOrigin,
+        check_approved: bool,
     ) -> Result<Automation, String> {
         normalize_watch(&mut input.watch);
         let now = Utc::now();
@@ -190,7 +223,8 @@ impl AppState {
                 .get_or_insert_with(|| rfc3339_plus_minutes(now, WATCH_DEFAULT_EXPIRY_MINS));
             input.watch.max_runs.get_or_insert(WATCH_DEFAULT_MAX_RUNS);
         }
-        self.check_automation_input(&input, origin, None).await?;
+        self.check_automation_input(&input, origin, None, check_approved)
+            .await?;
         let root = canonical_project_dir(&input.project_root)?;
         let interval_mins = if input.schedule.is_some() {
             60 // Calendar schedules do not use the legacy interval field.
@@ -232,8 +266,11 @@ impl AppState {
             next_run_at,
             run_count: 0,
             origin,
+            watch_state: WatchState {
+                approved_check: input.watch.check_command.clone().filter(|_| check_approved),
+                ..WatchState::default()
+            },
             watch: input.watch,
-            watch_state: WatchState::default(),
         };
         self.inner
             .automations
@@ -250,7 +287,19 @@ impl AppState {
     pub async fn update_automation(
         &self,
         automation_id: String,
+        input: AutomationInput,
+    ) -> Result<Automation, String> {
+        self.update_automation_checked(automation_id, input, true)
+            .await
+    }
+
+    /// Updates an automation; a changed `check_command` needs `check_approved`
+    /// (an approval of exactly that argv) unless policy allows it outright.
+    pub async fn update_automation_checked(
+        &self,
+        automation_id: String,
         mut input: AutomationInput,
+        check_approved: bool,
     ) -> Result<Automation, String> {
         normalize_watch(&mut input.watch);
         let existing = self
@@ -261,7 +310,7 @@ impl AppState {
             .get(&automation_id)
             .cloned()
             .ok_or_else(|| format!("unknown automation '{automation_id}'"))?;
-        self.check_automation_input(&input, existing.origin, Some(&existing))
+        self.check_automation_input(&input, existing.origin, Some(&existing), check_approved)
             .await?;
         let root = canonical_project_dir(&input.project_root)?;
         let interval_mins = if input.schedule.is_some() {
@@ -305,7 +354,10 @@ impl AppState {
         automation.enabled = input.enabled;
         automation.next_run_at = next_run_at;
         if automation.watch.check_command != input.watch.check_command {
+            // A different argv is a different command: new baseline, new approval.
             automation.watch_state.last_check_hash = None;
+            automation.watch_state.approved_check =
+                input.watch.check_command.clone().filter(|_| check_approved);
         }
         automation.watch = input.watch;
         // An edit is a fresh start for the failure counter.
@@ -510,6 +562,7 @@ impl AppState {
         input: &AutomationInput,
         origin: AutomationOrigin,
         existing: Option<&Automation>,
+        check_approved: bool,
     ) -> Result<(), String> {
         if input.name.trim().is_empty() {
             return Err("automation name must not be empty".to_owned());
@@ -538,8 +591,24 @@ impl AppState {
         }
         let root = canonical_project_dir(&input.project_root)?;
         if let Some(command) = &input.watch.check_command {
-            self.check_command_allowed(&root, input.target_thread_id.as_deref(), command)
-                .await?;
+            // An unchanged command keeps its stored approval; the scheduler
+            // re-evaluates policy before every execution regardless.
+            let unchanged =
+                existing.is_some_and(|item| item.watch.check_command.as_ref() == Some(command));
+            if !unchanged {
+                match self
+                    .check_command_policy(&root, input.target_thread_id.as_deref(), command)
+                    .await?
+                {
+                    CheckPolicy::Deny => {
+                        return Err("check_command is denied by the approval rules".to_owned())
+                    }
+                    CheckPolicy::Ask if !check_approved => {
+                        return Err("check_command needs approval: it runs like the shell tool, and the approval policy asks first. Create the watch without check_command, or have the user approve this exact command.".to_owned())
+                    }
+                    _ => {}
+                }
+            }
         }
         let legacy: Vec<_> = self
             .inner
@@ -700,7 +769,11 @@ impl AppState {
         if let Some(argv) = &automation.watch.check_command {
             let report = match self.run_watch_check(&automation, argv).await {
                 Ok(report) => report,
-                Err(error) => {
+                Err(CheckError::Blocked(reason)) => {
+                    self.pause_blocked_check(&automation.id, &reason).await;
+                    return;
+                }
+                Err(CheckError::Failed(error)) => {
                     eprintln!(
                         "themis: automation '{}' check failed: {error}",
                         automation.id
@@ -728,23 +801,40 @@ impl AppState {
         }
     }
 
-    /// Validated check execution: deny rules apply, the child runs through the
-    /// shell runner (scrubbed environment, timeout, bounded output).
+    /// Policy is evaluated again before every execution, exactly like a
+    /// `shell` action: a later deny rule, or a chat switched from YOLO to
+    /// Custom, stops the check. Run-scoped "allow for this run" grants never
+    /// reach here. The scheduler never prompts.
     async fn run_watch_check(
         &self,
         automation: &Automation,
         argv: &[String],
-    ) -> Result<CheckReport, String> {
-        let root = canonical_project_dir(&automation.project_root)?;
-        self.check_command_allowed(&root, automation.target_thread_id.as_deref(), argv)
-            .await?;
+    ) -> Result<CheckReport, CheckError> {
+        let root = canonical_project_dir(&automation.project_root).map_err(CheckError::Failed)?;
+        match self
+            .check_command_policy(&root, automation.target_thread_id.as_deref(), argv)
+            .await
+            .map_err(CheckError::Failed)?
+        {
+            CheckPolicy::Deny => {
+                return Err(CheckError::Blocked(
+                    "check command denied by approval rules".to_owned(),
+                ))
+            }
+            CheckPolicy::Ask if automation.watch_state.approved_check.as_deref() != Some(argv) => {
+                return Err(CheckError::Blocked(
+                    "check command needs approval".to_owned(),
+                ))
+            }
+            _ => {}
+        }
         let out = themis_core::tools::run_check_command(
             argv.to_vec(),
             root,
             std::time::Duration::from_secs(WATCH_CHECK_TIMEOUT_SECS),
         )
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| CheckError::Failed(error.to_string()))?;
         Ok(CheckReport {
             argv: argv.to_vec(),
             fingerprint: check_fingerprint(out.exit_code, &out.output),
@@ -753,14 +843,14 @@ impl AppState {
         })
     }
 
-    /// Only an approval-rule deny blocks a check: the chat's owner created the
-    /// watch, so no per-run approval is requested. YOLO bypasses the rules.
-    async fn check_command_allowed(
+    /// The approval policy's verdict on running `argv` as a `shell` action in
+    /// this chat: YOLO allows, otherwise the resolved rules decide.
+    pub async fn check_command_policy(
         &self,
         root: &Path,
         thread_id: Option<&str>,
         argv: &[String],
-    ) -> Result<(), String> {
+    ) -> Result<CheckPolicy, String> {
         if let Some(thread_id) = thread_id {
             let yolo = self
                 .inner
@@ -770,7 +860,7 @@ impl AppState {
                 .get(thread_id)
                 .is_some_and(|thread| thread.approval_mode == ApprovalMode::Yolo);
             if yolo {
-                return Ok(());
+                return Ok(CheckPolicy::Allow);
             }
         }
         let resolved = self.runtime_configuration(Some(root), None)?;
@@ -780,10 +870,31 @@ impl AppState {
             summary: format!("watch check `{}`", argv.join(" ")),
             risk: RiskLevel::Execute,
         };
-        if resolved.config.approval.decision(&action) == PolicyAction::Deny {
-            return Err("check_command is denied by the approval rules".to_owned());
+        Ok(match resolved.config.approval.decision(&action) {
+            PolicyAction::Allow => CheckPolicy::Allow,
+            PolicyAction::Ask => CheckPolicy::Ask,
+            PolicyAction::Deny => CheckPolicy::Deny,
+        })
+    }
+
+    /// Pauses an automation whose check may no longer run, with the reason
+    /// shown in Tasks. Re-enabling it re-evaluates the policy.
+    async fn pause_blocked_check(&self, automation_id: &str, reason: &str) {
+        {
+            let mut automations = self.inner.automations.write().await;
+            let Some(automation) = automations.get_mut(automation_id) else {
+                return;
+            };
+            automation.enabled = false;
+            automation.watch_state.stopped_reason = Some(reason.to_owned());
         }
-        Ok(())
+        self.persist_automations().await;
+        let _ = self.inner.diagnostics.append(
+            "automation",
+            "automation_paused",
+            "info",
+            json!({"automation_id": automation_id, "reason": reason}),
+        );
     }
 
     /// Records a check that started no model run: either unchanged output or a

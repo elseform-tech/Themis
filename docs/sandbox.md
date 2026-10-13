@@ -91,3 +91,14 @@ other private information; inspect exported logs before sharing them.
 3. Review the recorded tool events; advanced users can inspect local diagnostic logs.
 4. If a key was pasted into a prompt/file or otherwise exposed, rotate it with
    the provider and replace the stored key.
+
+## Automation check commands
+
+A watch's `check_command` (see [automations](automations.md)) is a scheduled
+`shell` action and follows this policy: the same argv, Execute risk, command-scoped
+and deny rules. Creating or updating an automation is approval-free for the agent's
+own chat; executing a program is not. In Custom mode an `ask` becomes an approval of
+the exact argv in the creating run, stored with the automation and invalidated by any
+change; the scheduler never prompts and pauses a watch that lacks approval or whose
+policy now denies. Policy is re-evaluated before every execution, so a later deny
+rule or a switch from YOLO to Custom stops the check. Run-scoped grants do not persist.

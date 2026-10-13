@@ -56,7 +56,8 @@ create, update, enable, disable, complete and delete automations that continue
 the current chat without a prompt. The check runs inside the tool
 (`tool_approves_itself`), so the dispatcher neither asks nor arms a permit.
 Another chat's automations, and every other management tool, keep the normal
-approvals. Deny rules still apply to a watch's `check_command`.
+approvals. **Only the lifecycle is approval-free: a `check_command` executes a
+program and follows the shell approval policy** (below).
 
 **Explicit timing.** Exactly one of:
 
@@ -96,9 +97,31 @@ without any model call. Its exit code and output are hashed; the model starts
 only when the hash differs from the last handled one (and on the first look),
 and receives the new output as data. A non-zero exit code is a result, not a
 failure (`grep -q DONE status.txt` works). The baseline moves only after a
-successful model run. Only an approval-rule deny (Custom mode) blocks a check;
-YOLO bypasses the rules. Each check logs a `watch_check` diagnostic with
+successful model run. Each check logs a `watch_check` diagnostic with
 `changed` and the exit code, never the output.
+
+**Check command approval.** The argv is evaluated as a `shell` action (risk
+Execute, same command-scoped rules and deny normalization) at create and update
+time and again before every execution:
+
+- Allow (an allow rule in the user's runtime configuration, or a YOLO chat): it
+  runs without a stored approval.
+- Deny: creation or update is rejected; at run time the automation is paused
+  (`Paused · check command denied by approval rules`).
+- Ask (the Custom default): the agent's create or update triggers an approval
+  prompt "watch check command ...: argv" in that interactive run, bound to the
+  exact argv. Declined or unattended (for example `themis thread send` without a
+  terminal) means the call fails with an error the agent relays and nothing is
+  saved; the agent can create the watch without `check_command` instead. The
+  approval is stored on the automation as `approved_check`; changing the argv
+  clears it, and a different argv needs a new approval. The scheduler never
+  prompts: without a matching stored approval the check does not run and the
+  automation is paused (`Paused · check command needs approval`).
+- A later deny rule, or switching the chat from YOLO to Custom, takes effect at
+  the next execution; an allow-rule or YOLO watch has no stored approval, so it
+  stops then. "Allow for this run" grants never carry into scheduled checks.
+- A check created by the user in the UI or CLI counts as the user's own approval
+  of that argv (deny rules still apply).
 
 **Scheduler.** The scheduler ticks every 10 s. An interval watch runs from the
 scheduled time, not from completion: the next slot is the previous scheduled
