@@ -612,6 +612,51 @@ mod tests {
     }
 
     #[test]
+    fn started_background_task_keeps_its_id_in_the_ledger() {
+        let started = json!({
+            "background": true, "task_id": "bg_a1b2c3", "state": "running", "pid": 4242,
+            "command": "python3 -m http.server 8765", "timeout_secs": 7200,
+            "next": "Use background_task (status | log | stop) with this task_id."
+        })
+        .to_string();
+        let arguments =
+            json!({"command":"python3","args":["-m","http.server","8765"],"background":true})
+                .to_string();
+        let messages = vec![
+            tool_message(
+                ChatRole::Assistant,
+                "use",
+                "c1",
+                "shell",
+                &arguments,
+                "Starting the server",
+            ),
+            tool_message(ChatRole::Tool, "result", "c1", "shell", &started, ""),
+        ];
+        let ledger = render(
+            &messages,
+            messages.len(),
+            Budget {
+                total: 4096,
+                actions: 2048,
+            },
+            None,
+        );
+        let entry = entries(&ledger)
+            .into_iter()
+            .find(|entry| entry["kind"] == "action" && entry["tool"] == "shell")
+            .expect("shell action recorded");
+        assert!(entry["observed_excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("bg_a1b2c3"));
+        assert!(entry["arguments_excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("\"background\":true"));
+    }
+
+    #[test]
     fn legacy_blocks_restore_into_one_ledger() {
         let action = json!({"tool":"shell","observed_excerpt":"Ran 16 tests. OK"}).to_string();
         let read = json!({"found":true,"path":"a.txt","excerpt_offset":0,"content":"decision"})
