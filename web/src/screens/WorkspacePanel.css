@@ -43,3 +43,18 @@
 .themis-files-view .themis-codeblock { overflow-x: hidden; border: 0; }
 .themis-files-view .themis-codeblock-line { padding-left: 3.5rem; text-indent: -3.5rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .themis-files-view .themis-codeblock-lineno { text-indent: 0; }
+/* Tasks tab: this chat's runs and automations. */
+.themis-tasks { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
+.themis-tasks-heading { margin: 0 0 2px; color: var(--themis-text-3); font-size: .6875rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.themis-task-row { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 10px; }
+.themis-task-row-icon { display: grid; place-items: center; width: 16px; height: 16px; }
+.themis-task-row-text { display: grid; gap: 2px; min-width: 0; }
+.themis-task-row-text .themis-workspace-list-title { flex-wrap: wrap; }
+.themis-task-row-text .themis-workspace-list-title em { color: var(--themis-text-3); }
+.themis-task-row-text .themis-workspace-list-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-task-row-actions { display: inline-flex; gap: 12px; }
+.themis-task-row-actions button { padding: 4px 2px; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
+.themis-task-row-actions button:hover:not(:disabled) { color: var(--themis-text); }
+.themis-task-row-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.themis-tasks-footer { margin-top: auto; }
+.themis-workspace-count--tasks { color: var(--themis-text-2); }

@@ -58,6 +58,25 @@ describe("WorkspacePanel", () => {
     expect(calls()).toBe(initial + 2);
     vi.useRealTimers();
   });
+  it("shows a Tasks tab with a count and opens it when the indicator asks", async () => {
+    const feed = { thread_id: "t1", run: { running: true, awaiting_approval: false }, automations: [], recent: [] };
+    appState = { ...appState, tasks: { t1: feed }, workspaceTabRequest: { tab: "tasks", at: 1 } };
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    expect(screen.getByRole("button", { name: /^Tasks1$/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "Running" })).toBeInTheDocument();
+  });
+  it("applies a tab request once so the remembered tab wins when reopened", async () => {
+    appState = { ...appState, workspaceTabRequest: { tab: "tasks", at: 1 } };
+    const first = render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui/tab-request-consumed" });
+    // The user moves on to Files, closes the panel and reopens it with no request pending.
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Files" })));
+    first.unmount();
+    appState = { ...appState, workspaceTabRequest: null };
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    expect(screen.getByRole("button", { name: "Files" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /^Tasks/ })).toHaveAttribute("aria-pressed", "false");
+  });
   it("opens the file an edited-files row asks for", async () => {
     const second = { ...diff.files[0]!, path: "docs/guide.md" };
     appState = { ...appState, diffs: { t1: { ...diff, files: [...diff.files, second] } }, diffFocus: { path: "docs/guide.md", at: 1 } };

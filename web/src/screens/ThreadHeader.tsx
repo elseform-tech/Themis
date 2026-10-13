@@ -1,4 +1,6 @@
 import type { GoModel, ThreadInfo } from "../lib/types";
+import { TaskIndicator } from "./TaskIndicator";
+import type { TaskCounts } from "./threadTasks";
 // Official OpenCode theme assets: https://github.com/anomalyco/opencode/tree/dev/packages/console/app/src/asset
 import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
 import opencodeLogoLight from "../assets/opencode-logo-light.svg";
@@ -15,10 +17,12 @@ interface ThreadHeaderProps {
   changedFiles?: number;
   reviewOpen: boolean;
   onToggleReview: () => void;
+  taskCounts?: TaskCounts;
+  onOpenTasks?: () => void;
 }
 
 /** Model and effort live in one header pill; review opens as a side panel. */
-export function ThreadHeader({ thread, models, effortLevels, effort, busy, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview }: ThreadHeaderProps) {
+export function ThreadHeader({ thread, models, effortLevels, effort, busy, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview, taskCounts, onOpenTasks }: ThreadHeaderProps) {
   const choices = ["", ...effortLevels];
   const effortIndex = Math.max(0, choices.indexOf(effort));
   return (
@@ -54,7 +58,8 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, switc
         </div>
       </details>
       <span className="themis-thread-head-spacer" />
-      <button type="button" className={`themis-workspace-toggle${reviewOpen ? " is-open" : ""}`} aria-pressed={reviewOpen} title="Read-only view of changes, files, branches and pull requests" onClick={onToggleReview}>
+      {taskCounts && onOpenTasks && <TaskIndicator counts={taskCounts} onOpen={onOpenTasks} />}
+      <button type="button" className={`themis-workspace-toggle${reviewOpen ? " is-open" : ""}`} aria-pressed={reviewOpen} title="Changes, files, branches, pull requests and this chat's tasks" onClick={onToggleReview}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16" /></svg>
         Workspace{changedFiles ? <span className="themis-review-count">{changedFiles} changed</span> : null}
       </button>

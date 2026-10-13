@@ -42,13 +42,13 @@ function everyInterval(minutes: number): string {
   return `Every ${minutes} minutes`;
 }
 
-function shortTime(iso: string | null): string {
+export function shortTime(iso: string | null): string {
   if (iso === null) return "";
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
 }
 
-function scheduleLabel(automation: Automation): string {
+export function scheduleLabel(automation: Pick<Automation, "schedule" | "interval_mins">): string {
   const schedule = automation.schedule;
   if (!schedule) return everyInterval(automation.interval_mins);
   const repeat = schedule.repeat === "daily" ? "Daily" : schedule.repeat === "weekdays" ? "Weekdays" : weekdays[schedule.weekday];

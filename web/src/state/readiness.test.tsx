@@ -8,6 +8,7 @@ const backend = vi.hoisted(() => ({
   status: vi.fn(),
   event: null as ((event: ThreadEventEnvelope) => void) | null,
   reconnect: null as (() => void) | null,
+  automations: vi.fn(async () => [] as unknown[]),
 }));
 
 vi.mock("../lib/tauri", () => ({
@@ -20,7 +21,7 @@ vi.mock("../lib/tauri", () => ({
   importLegacyHistory: async () => {},
   openProject: async (root: string) => ({ root, name: "project", is_git: false }),
   listSkills: async () => [],
-  listAutomations: async () => [],
+  listAutomations: backend.automations,
   listReviewItems: async () => [],
   getPendingApprovals: async () => [],
   onThreadEvent: async (callback: typeof backend.event) => {
@@ -85,4 +86,17 @@ it("coalesces readiness refresh bursts and refreshes after reconnect or completi
   await act(async () => { complete({go: false}); });
   await screen.findByText("available");
   expect(backend.status).toHaveBeenCalledTimes(2);
+});
+
+it("reloads automations when the agent finishes a manage_automations call", async () => {
+  function Names() { const { state } = useApp(); return <output>{state.automations.map(item => item.name).join(",") || "none"}</output>; }
+  render(<AppProvider><Names /></AppProvider>);
+  await waitFor(() => expect(backend.event).toBeTypeOf("function"));
+  await screen.findByText("none");
+  backend.automations.mockResolvedValue([{ id: "a", name: "By agent" }]);
+  const envelope = (tool: string) => ({ thread_id: "t", run_id: "r", event: { kind: "tool_finished", tool, ok: true } }) as ThreadEventEnvelope;
+  act(() => backend.event?.(envelope("read_file")));
+  expect(screen.getByText("none")).toBeInTheDocument();
+  act(() => backend.event?.(envelope("manage_automations")));
+  await screen.findByText("By agent");
 });

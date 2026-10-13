@@ -19,7 +19,16 @@ export function reduceUiActions(
         diffPanelOpen: action.view === "thread" && state.diffPanelOpen,
       };
     case "ui/diff-panel":
-      return { ...state, diffPanelOpen: action.open, ...(action.focus ? { diffFocus: { path: action.focus, at: Date.now() } } : {}) };
+      return {
+        ...state,
+        diffPanelOpen: action.open,
+        ...(action.focus ? { diffFocus: { path: action.focus, at: Date.now() } } : {}),
+        ...(action.open && action.tab ? { workspaceTabRequest: { tab: action.tab, at: Date.now() } } : {}),
+      };
+    case "ui/tab-request-consumed":
+      return state.workspaceTabRequest ? { ...state, workspaceTabRequest: null } : state;
+    case "tasks/loaded":
+      return { ...state, tasks: { ...state.tasks, [action.threadId]: action.tasks } };
     case "ui/palette":
       return { ...state, paletteOpen: action.open };
     case "ui/project-dialog":

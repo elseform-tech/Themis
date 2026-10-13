@@ -1,5 +1,6 @@
 //! Agent-facing management uses the same validated state APIs as the UI and CLI.
 use super::{AppState, AutomationInput, PathBuf};
+use crate::types::AutomationOrigin;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use themis_core::tools::{
@@ -127,7 +128,9 @@ impl ManagementTool {
                 let input: AutomationInput =
                     serde_json::from_value(input).map_err(|e| e.to_string())?;
                 let saved = if action == "create" {
-                    self.state.create_automation(input).await?
+                    self.state
+                        .create_automation_from(input, AutomationOrigin::Agent)
+                        .await?
                 } else {
                     self.state.update_automation(id, input).await?
                 };
@@ -230,6 +233,7 @@ mod tests {
             .unwrap();
         let created = tool.execute(json!({"action":"create","input":{"name":"Review daily","task":"Review recent changes","schedule":{"repeat":"daily","time":"19:00","timezone":"Europe/Berlin"}}})).await.unwrap();
         assert_eq!(created["target_thread_id"], thread.id);
+        assert_eq!(created["origin"], "agent");
         let updated = tool
             .execute(
                 json!({"action":"update","id":created["id"],"input":{"name":"Evening review"}}),
@@ -237,6 +241,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated["task"], "Review recent changes");
+        assert_eq!(updated["origin"], "agent");
         assert_eq!(updated["schedule"], created["schedule"]);
         let restarted = AppState::new_for_test(data.path().join("settings.json"));
         assert_eq!(restarted.list_automations().await[0].name, "Evening review");

@@ -187,6 +187,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           eventVersion++;
           dispatch({ type: "thread/event", envelope });
           const { kind } = envelope.event;
+          // The agent can create or change automations through this tool.
+          if (envelope.event.kind === "tool_finished" && envelope.event.tool === "manage_automations") {
+            void listAutomations().then(automations => { if (!cancelled) dispatch({ type: "automation/loaded", automations }); }).catch(() => {});
+          }
           if (kind === "started" || kind === "finished" || kind === "incomplete" || kind === "failed") {
             const version = eventVersion;
             metadataRequests.set(envelope.thread_id, version);

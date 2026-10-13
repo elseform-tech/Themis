@@ -13,6 +13,7 @@ import { ThreadConversation } from "./ThreadConversation";
 import { ThreadHeader } from "./ThreadHeader";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
+import { countTasks, useThreadTasksSync } from "./threadTasks";
 import { skillToken } from "../lib/prompt";
 import "./ThreadView.css";
 
@@ -23,6 +24,7 @@ export function ThreadView() {
   const { state, dispatch, armManualRun, cancelManualRun } = useApp();
   const project = useActiveProject();
   const thread = useActiveThread();
+  useThreadTasksSync(thread?.id ?? null);
   const [drafts, setDrafts] = useState<Record<string, string>>(() => readSession("drafts", {}));
   const [pendingFiles, setPendingFiles] = useState<Record<string, Attachment[]>>(() => readSession("attachments", {}));
   const attachments = thread ? pendingFiles[thread.id] ?? [] : [];
@@ -291,6 +293,8 @@ export function ThreadView() {
         changedFiles={changedFiles}
         reviewOpen={state.diffPanelOpen}
         onToggleReview={() => dispatch({ type: "ui/diff-panel", open: !state.diffPanelOpen })}
+        taskCounts={countTasks(state.tasks[thread.id], state.settings.automations_enabled)}
+        onOpenTasks={() => dispatch({ type: "ui/diff-panel", open: true, tab: "tasks" })}
       />
       {empty ? (
         <section className="themis-greeting" aria-label="New chat">

@@ -930,7 +930,7 @@ fn spawn_opener(target: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::sink::TestEvent;
-    use crate::types::{SettingsPatch, ThemeMode};
+    use crate::types::{AutomationOrigin, SettingsPatch, ThemeMode};
 
     fn test_state() -> (AppState, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1537,6 +1537,107 @@ mod tests {
     ) {
         let (sink, rx) = crate::sink::ChannelSink::channel();
         (Arc::new(sink), rx)
+    }
+
+    #[tokio::test]
+    async fn thread_tasks_report_live_automations_and_finished_runs() {
+        let (state, dir) = test_state();
+        let project = dir.path().to_string_lossy().into_owned();
+        let thread = state
+            .create_thread(project.clone(), ProviderKind::Go, Some("m".to_owned()))
+            .await
+            .expect("thread");
+        let other = state
+            .create_thread(project.clone(), ProviderKind::Go, Some("m".to_owned()))
+            .await
+            .expect("other thread");
+        let mut input = automation_input(&project);
+        input.target_thread_id = Some(thread.id.clone());
+        let automation = state
+            .create_automation_from(input.clone(), AutomationOrigin::Agent)
+            .await
+            .expect("automation");
+        state.create_automation(input).await.expect("user one");
+        let tasks = state.get_thread_tasks(&thread.id).await.expect("tasks");
+        assert_eq!(tasks.automations.len(), 2);
+        assert!(tasks
+            .automations
+            .iter()
+            .any(|item| item.origin == AutomationOrigin::Agent));
+        assert!(!tasks.run.running && !tasks.run.awaiting_approval);
+        assert!(state
+            .get_thread_tasks(&other.id)
+            .await
+            .expect("other tasks")
+            .automations
+            .is_empty());
+
+        state.inner.automation_runs.lock().unwrap().insert(
+            "run-1".to_owned(),
+            AutomationRunContext {
+                automation_id: automation.id.clone(),
+                thread_id: thread.id.clone(),
+                title: "Automation Nightly".to_owned(),
+            },
+        );
+        let live = state.get_thread_tasks(&thread.id).await.expect("tasks");
+        assert_eq!(
+            live.automations.iter().filter(|item| item.running).count(),
+            1
+        );
+        let (sink, _rx) = test_sink();
+        state
+            .finish_automation_run(&sink, "run-1", "failed: boom".to_owned())
+            .await;
+        let done = state.get_thread_tasks(&thread.id).await.expect("tasks");
+        assert!(done.automations.iter().all(|item| !item.running));
+        assert_eq!(done.recent.len(), 1);
+        assert!(!done.recent[0].ok && !done.recent[0].seen);
+        assert_eq!(done.recent[0].name, "Nightly");
+        assert!(state.get_thread_tasks("missing").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn thread_tasks_classify_runs_from_terminal_events() {
+        let (state, dir) = test_state();
+        let project = dir.path().to_string_lossy().into_owned();
+        let thread = state
+            .create_thread(project.clone(), ProviderKind::Go, Some("m".to_owned()))
+            .await
+            .expect("thread");
+        let mut input = automation_input(&project);
+        input.target_thread_id = Some(thread.id.clone());
+        let automation = state.create_automation(input).await.expect("automation");
+        let (sink, _rx) = test_sink();
+        for (run_id, event) in [
+            (
+                "ok-run",
+                RunEvent::Finished {
+                    result: "done".to_owned(),
+                },
+            ),
+            (
+                "bad-run",
+                RunEvent::Failed {
+                    error: "boom".to_owned(),
+                },
+            ),
+        ] {
+            state.inner.automation_runs.lock().unwrap().insert(
+                run_id.to_owned(),
+                AutomationRunContext {
+                    automation_id: automation.id.clone(),
+                    thread_id: thread.id.clone(),
+                    title: "t".to_owned(),
+                },
+            );
+            state.complete_automation_run(&sink, run_id, &event).await;
+        }
+        let tasks = state.get_thread_tasks(&thread.id).await.expect("tasks");
+        assert_eq!(tasks.recent.len(), 2);
+        assert_eq!(tasks.recent.iter().filter(|run| run.ok).count(), 1);
+        let times: Vec<_> = tasks.recent.iter().map(|run| &run.finished_at).collect();
+        assert!(times[0] >= times[1], "newest first");
     }
 
     #[tokio::test]
@@ -2202,6 +2303,7 @@ mod tests {
             last_run_at: None,
             next_run_at: "2001-01-01T00:00:00Z".to_owned(),
             run_count: 4,
+            origin: AutomationOrigin::User,
         };
         let future = Automation {
             id: "future".to_owned(),

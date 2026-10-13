@@ -402,6 +402,23 @@ pub struct AutomationSchedule {
     pub weekday: u8,
 }
 
+/// Who created an automation (`AutomationOrigin` in types.ts).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutomationOrigin {
+    /// Created from the Automations screen or CLI (also the default for old records).
+    #[default]
+    User,
+    /// Created by the agent through `manage_automations`.
+    Agent,
+}
+
+impl AutomationOrigin {
+    fn is_user(&self) -> bool {
+        *self == Self::User
+    }
+}
+
 /// A scheduled automation (`Automation` in types.ts).
 ///
 /// Timestamps are RFC3339 strings. `schedule` uses local calendar time;
@@ -426,6 +443,9 @@ pub struct Automation {
     pub last_run_at: Option<String>,
     pub next_run_at: String,
     pub run_count: u64,
+    /// Omitted from JSON when `user`, so existing records and clients are unchanged.
+    #[serde(default, skip_serializing_if = "AutomationOrigin::is_user")]
+    pub origin: AutomationOrigin,
 }
 
 /// Automation create/update payload (`AutomationInput` in types.ts).
@@ -470,6 +490,55 @@ pub struct ReviewItem {
     pub summary: String,
     pub status: ReviewStatus,
 }
+
+/// Live run state of one chat inside [`ThreadTasks`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadRunTask {
+    pub running: bool,
+    pub awaiting_approval: bool,
+}
+
+/// An automation that continues a chat, as shown in the Tasks view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadTaskAutomation {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub origin: AutomationOrigin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<AutomationSchedule>,
+    pub interval_mins: u32,
+    pub next_run_at: String,
+    pub last_run_at: Option<String>,
+    pub run_count: u64,
+    /// True while one of its runs is in flight in this chat.
+    pub running: bool,
+}
+
+/// One finished automation run in this chat (`seen` once reviewed or dismissed).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadTaskRun {
+    pub review_id: String,
+    pub automation_id: String,
+    pub name: String,
+    pub finished_at: String,
+    pub ok: bool,
+    pub summary: String,
+    pub seen: bool,
+}
+
+/// Per-chat task feed (`ThreadTasks` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadTasks {
+    pub thread_id: String,
+    pub run: ThreadRunTask,
+    pub automations: Vec<ThreadTaskAutomation>,
+    /// Newest first, capped at [`THREAD_TASKS_RECENT_LIMIT`].
+    pub recent: Vec<ThreadTaskRun>,
+}
+
+/// Maximum finished runs returned in [`ThreadTasks::recent`].
+pub const THREAD_TASKS_RECENT_LIMIT: usize = 10;
 
 /// Result of `run_automation_now` (`{automation_id, thread_id, run_id}`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1211,6 +1280,7 @@ mod tests {
             last_run_at: None,
             next_run_at: "2026-01-01T00:00:00Z".to_owned(),
             run_count: 0,
+            origin: AutomationOrigin::User,
         };
         assert_eq!(
             to_value(&automation),

@@ -18,6 +18,7 @@ import type {
   HistoryItem,
   PersistedMessage,
   ThreadInfo,
+  ThreadTasks,
 } from "../lib/types";
 import type { ToastItem, ToastTone } from "../components";
 import { reduceCollectionActions } from "./reducer/collections";
@@ -114,6 +115,10 @@ export interface AppState {
   diffPanelOpen: boolean;
   /** A file to show in the Workspace changes view, e.g. from an edited-files list. */
   diffFocus: { path: string; at: number } | null;
+  /** Asks the open (or next opened) Workspace panel to show a tab. */
+  workspaceTabRequest: { tab: "tasks"; at: number } | null;
+  /** Per-chat task feed behind the header indicator and the Tasks tab. */
+  tasks: Record<string, ThreadTasks>;
   paletteOpen: boolean;
   projectDialogOpen: boolean;
 }
@@ -164,7 +169,9 @@ export type AppAction =
   | { type: "toast/push"; toast: ToastItem }
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView }
-  | { type: "ui/diff-panel"; open: boolean; focus?: string }
+  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: "tasks" }
+  | { type: "ui/tab-request-consumed" }
+  | { type: "tasks/loaded"; threadId: string; tasks: ThreadTasks }
   | { type: "ui/palette"; open: boolean }
   | { type: "ui/project-dialog"; open: boolean };
 
@@ -226,6 +233,8 @@ export const initialState: AppState = {
   toasts: [],
   diffPanelOpen: false,
   diffFocus: null,
+  workspaceTabRequest: null,
+  tasks: {},
   paletteOpen: false,
   projectDialogOpen: false,
 };

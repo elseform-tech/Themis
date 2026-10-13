@@ -28,6 +28,7 @@ import type {
   SecretStatus,
   Settings,
   ThreadComment,
+  ThreadTasks,
   ThreadEventEnvelope,
   ThreadInfo,
 } from './types';
@@ -196,6 +197,10 @@ export function setThreadSkills(
 
 export function listAutomations(): Promise<Automation[]> {
   return invoke('list_automations');
+}
+
+export function getThreadTasks(threadId: string): Promise<ThreadTasks> {
+  return invoke('get_thread_tasks', { threadId });
 }
 
 export function createAutomation(input: AutomationInput): Promise<Automation> {
