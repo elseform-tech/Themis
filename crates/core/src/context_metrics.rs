@@ -8,6 +8,7 @@ tokio::task_local! { static ACTIVE: Arc<Mutex<Metrics>>; }
 tokio::task_local! { static LEVEL: ContextMetricsLevel; }
 tokio::task_local! { static STAGE: (String, usize); }
 tokio::task_local! { static ATTEMPT: usize; }
+tokio::task_local! { static USAGE_SINK: Arc<std::sync::atomic::AtomicU64>; }
 tokio::task_local! { static CONFIG_FINGERPRINT: String; }
 
 #[derive(Default)]
@@ -22,6 +23,7 @@ struct Metrics {
     failed: usize,
     run_metadata: Value,
     activities: std::collections::BTreeMap<String, u64>,
+    calibration: Vec<Value>,
 }
 
 pub async fn with_level<F: std::future::Future>(
@@ -72,6 +74,26 @@ pub async fn collect<F: std::future::Future>(future: F) -> F::Output {
         .await
 }
 
+/// Receives the latest provider-reported input tokens of requests made inside
+/// `future`, independent of the metrics level.
+pub async fn with_usage_sink<F: std::future::Future>(
+    sink: Arc<std::sync::atomic::AtomicU64>,
+    future: F,
+) -> F::Output {
+    USAGE_SINK.scope(sink, future).await
+}
+
+/// Keeps one content-free estimate-vs-report sample per ordinary request.
+pub fn calibration_sample(sample: Value) {
+    let _ = ACTIVE.try_with(|metrics| {
+        let mut metrics = metrics.lock().unwrap_or_else(|e| e.into_inner());
+        if metrics.calibration.len() == 32 {
+            metrics.calibration.remove(0);
+        }
+        metrics.calibration.push(sample);
+    });
+}
+
 pub fn set_run_metadata(value: Value) {
     let _ = ACTIVE.try_with(|metrics| {
         metrics
@@ -96,7 +118,7 @@ pub fn snapshot() -> Option<Value> {
         let metrics = metrics.lock().unwrap_or_else(|e|e.into_inner());
         if metrics.level == ContextMetricsLevel::Off { return None; }
         Some(json!({"pipeline_version":"adaptive-context-v1","measurement":"byte_estimate_and_provider_report",
-            "run":metrics.run_metadata,"activities":metrics.activities,"total_requests":metrics.total_requests,"failed_or_cancelled_requests":metrics.failed,
+            "run":metrics.run_metadata,"activities":metrics.activities,"token_calibration":metrics.calibration,"total_requests":metrics.total_requests,"failed_or_cancelled_requests":metrics.failed,
             "provider_input_tokens":if metrics.known_input>0 {Some(metrics.input)} else {None},
             "provider_output_tokens":if metrics.known_output>0 {Some(metrics.output)} else {None},
             "requests_with_input_usage":metrics.known_input,"requests_with_output_usage":metrics.known_output,
@@ -270,6 +292,10 @@ impl RequestTrace {
                 self.record["input_usage_normalization"] =
                     "anthropic_uncached_plus_cache_read_and_creation".into();
             }
+        }
+        if let Some(input) = self.record["input_tokens"].as_u64() {
+            let _ =
+                USAGE_SINK.try_with(|sink| sink.store(input, std::sync::atomic::Ordering::SeqCst));
         }
     }
     pub fn complete(&mut self) {
