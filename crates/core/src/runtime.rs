@@ -172,6 +172,15 @@ pub struct ContextBudget {
     /// The observed growth projects a checkpoint within about two interactions.
     pub compaction_soon: bool,
     pub breakdown: ContextBreakdown,
+    /// Uncorrected byte estimate behind `used_tokens`; absent in older events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_estimated_tokens: Option<usize>,
+    /// Provider-reported input tokens of the previous request, when reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_input_tokens: Option<u64>,
+    /// Correction ratio in thousandths (1000 = estimate was exact).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibration_ratio_milli: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -547,7 +556,7 @@ async fn run_task_with_evidence_inner(
     crate::context_metrics::set_run_metadata(
         serde_json::json!({"thread_id":identity.as_ref().map(|v|&v.0),"run_id":identity.as_ref().map(|v|&v.1),"task_id":identity.as_ref().map(|v|&v.1),"configuration_fingerprint":crate::context_metrics::config_fingerprint(),"compaction_config_fingerprint":config_fingerprint,"requested_context_tokens":requested_budget,"effective_context_tokens":effective_budget,"provider_capacity_tokens":capacity.flatten(),"capacity_source":if capacity.flatten().is_some() {"public_model_catalog"} else if capacity.is_some() {"unknown_conservative_24k"} else {"caller_budget_unverified"},"schema_estimated_tokens":schema_tokens,"output_reserve_tokens":answer_reserve,"safety_margin_tokens":safety_margin,"usable_message_tokens":input_budget}),
     );
-    let context_policy = RunPolicy {
+    let mut context_policy = RunPolicy {
         context_token_budget: input_budget,
         ..policy
     };
@@ -577,10 +586,21 @@ async fn run_task_with_evidence_inner(
     let mut summarized_until = messages.len() - 1;
     let mut previous_size = estimated_tokens(&messages);
     let mut growth = 0usize;
-    for _ in 0..policy.total_turns {
+    // Budget decisions use the raw byte estimate scaled by what the provider reported.
+    let mut calibration = crate::calibration::TokenCalibration::new();
+    let usage_sink = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let mut last_reported_input = None;
+    let mut overflow_retried = false;
+    let mut force_compaction = false;
+    let mut turn = 0;
+    while turn < policy.total_turns {
+        turn += 1;
         check_stopped(&stopped, &events).await?;
-        let size = estimated_tokens(&messages);
-        let added = size.saturating_sub(previous_size);
+        // Compaction and maintenance compare raw estimates, so hand them the equivalent raw budget.
+        context_policy.context_token_budget = calibration.raw_budget(input_budget, schema_tokens);
+        let raw_size = estimated_tokens(&messages);
+        let size = calibration.messages(raw_size, schema_tokens);
+        let added = raw_size.saturating_sub(previous_size);
         if added > 0 {
             growth = if growth == 0 {
                 added
@@ -601,12 +621,15 @@ async fn run_task_with_evidence_inner(
                 crate::context_metrics::activity("maintenance_reductions");
             }
         }
-        let forecast = growth
+        let calibrated_growth = (growth as f64 * calibration.factor()) as usize;
+        let forecast = calibrated_growth
             .saturating_mul(config.target_headroom_interactions)
             .min(input_budget / 8);
         let semantic_threshold = ((input_budget as f64 * config.semantic_threshold_ratio) as usize)
             .min(input_budget.saturating_sub(forecast));
-        if estimated_tokens(&messages) > semantic_threshold {
+        if std::mem::take(&mut force_compaction)
+            || calibrated_tokens(&calibration, &messages, schema_tokens) > semantic_threshold
+        {
             crate::plugins::hooks::emit_current(
                 "BeforeCompaction",
                 serde_json::json!({"event":"BeforeCompaction"}),
@@ -640,7 +663,7 @@ async fn run_task_with_evidence_inner(
                 }
             }
         }
-        if estimated_tokens(&messages) > input_budget {
+        if calibrated_tokens(&calibration, &messages, schema_tokens) > input_budget {
             let error = "Context still exceeds the request budget after one compaction; originals preserved".to_owned();
             emit(RunEvent::Failed {
                 error: error.clone(),
@@ -653,7 +676,8 @@ async fn run_task_with_evidence_inner(
             emit(RunEvent::ContextUsage { metrics }).await.ok();
         }
         if policy.context_token_budget != usize::MAX {
-            let used = estimated_tokens(&messages);
+            let raw_used = estimated_tokens(&messages);
+            let used = calibration.messages(raw_used, schema_tokens);
             emit(RunEvent::ContextBudget(ContextBudget {
                 budget_tokens: policy.context_token_budget,
                 usable_tokens: input_budget,
@@ -664,8 +688,14 @@ async fn run_task_with_evidence_inner(
                 maintenance_at_tokens: (input_budget as f64 * config.maintenance_threshold_ratio)
                     as usize,
                 compaction_at_tokens: semantic_threshold,
-                compaction_soon: used.saturating_add(growth.saturating_mul(2)) > semantic_threshold,
+                compaction_soon: used.saturating_add(calibrated_growth.saturating_mul(2))
+                    > semantic_threshold,
                 breakdown: context_breakdown(&messages),
+                raw_estimated_tokens: Some(raw_used),
+                provider_input_tokens: last_reported_input,
+                calibration_ratio_milli: calibration
+                    .ratio()
+                    .map(|ratio| (ratio * 1000.0).round() as u32),
             }))
             .await
             .ok();
@@ -674,26 +704,60 @@ async fn run_task_with_evidence_inner(
             "context",
             "request_budget",
             "info",
-            serde_json::json!({"context_token_budget":policy.context_token_budget,"schema_tokens":schema_tokens,"output_reserve_tokens":answer_reserve,"safety_margin_tokens":safety_margin,"usable_message_tokens":input_budget,"estimated_message_tokens":estimated_tokens(&messages),"semantic_threshold_tokens":semantic_threshold,"forecast_growth_tokens":forecast,"requested_context_tokens":requested_budget,"provider_capacity_tokens":capacity.flatten(),"capacity_source":if capacity.flatten().is_some() {"public_model_catalog"} else if capacity.is_some() {"unknown; conservative_24k"} else {"caller_budget_unverified"}}),
+            serde_json::json!({"context_token_budget":policy.context_token_budget,"schema_tokens":schema_tokens,"output_reserve_tokens":answer_reserve,"safety_margin_tokens":safety_margin,"usable_message_tokens":input_budget,"estimated_message_tokens":estimated_tokens(&messages),"calibrated_message_tokens":calibrated_tokens(&calibration, &messages, schema_tokens),"calibration_ratio":calibration.ratio(),"semantic_threshold_tokens":semantic_threshold,"forecast_growth_tokens":forecast,"requested_context_tokens":requested_budget,"provider_capacity_tokens":capacity.flatten(),"capacity_source":if capacity.flatten().is_some() {"public_model_catalog"} else if capacity.is_some() {"unknown; conservative_24k"} else {"caller_budget_unverified"}}),
         );
         previous_size = estimated_tokens(&messages);
-        let (text, calls) =
-            match request_answer(&llm, &messages, &llm_tools, &events, &stopped).await {
-                Ok(answer) => answer,
-                Err(error) => {
-                    // check_stopped already emitted the cancellation event.
-                    if stopped.load(Ordering::SeqCst) {
-                        return Err(error);
-                    }
-                    let error = format!("LLM request failed: {error}");
-                    emit(RunEvent::Failed {
-                        error: error.clone(),
-                    })
-                    .await
-                    .ok();
-                    return Err(anyhow!(error));
+        usage_sink.store(0, Ordering::SeqCst);
+        let (text, calls) = match crate::context_metrics::with_usage_sink(
+            usage_sink.clone(),
+            request_answer(&llm, &messages, &llm_tools, &events, &stopped),
+        )
+        .await
+        {
+            Ok(answer) => {
+                overflow_retried = false;
+                let raw_request = previous_size.saturating_add(schema_tokens);
+                let reported = usage_sink.load(Ordering::SeqCst);
+                let sample = calibration_sample(&mut calibration, raw_request, reported);
+                last_reported_input = (reported > 0).then_some(reported);
+                crate::diagnostics::emit("context", "token_calibration", "info", sample.clone());
+                crate::context_metrics::calibration_sample(sample);
+                answer
+            }
+            Err(error) => {
+                // check_stopped already emitted the cancellation event.
+                if stopped.load(Ordering::SeqCst) {
+                    return Err(error);
                 }
-            };
+                // The provider rejected the input size before any answer text: tighten the
+                // estimate and compact once, then retry. Completed tools are never replayed.
+                if !overflow_retried
+                    && error
+                        .downcast_ref::<autoagents::llm::error::LLMError>()
+                        .is_some_and(crate::calibration::error_is_context_overflow)
+                {
+                    overflow_retried = true;
+                    force_compaction = true;
+                    calibration.tighten(previous_size, schema_tokens, semantic_threshold);
+                    crate::context_metrics::activity("context_overflow_recoveries");
+                    crate::diagnostics::emit(
+                        "context",
+                        "context_overflow",
+                        "warn",
+                        serde_json::json!({"estimated_message_tokens":previous_size,"schema_tokens":schema_tokens,"calibration_ratio":calibration.ratio(),"action":"compact_and_retry_once"}),
+                    );
+                    turn -= 1;
+                    continue;
+                }
+                let error = format!("LLM request failed: {error}");
+                emit(RunEvent::Failed {
+                    error: error.clone(),
+                })
+                .await
+                .ok();
+                return Err(anyhow!(error));
+            }
+        };
         check_stopped(&stopped, &events).await?;
         if calls.is_empty() {
             let result = text.unwrap_or_default();
@@ -836,7 +900,9 @@ async fn run_task_with_evidence_inner(
 
     check_stopped(&stopped, &events).await?;
     // The last tool batch is complete. Save a handoff before the hard stop.
-    if policy.context_token_budget != usize::MAX && estimated_tokens(&messages) > input_budget {
+    if policy.context_token_budget != usize::MAX
+        && calibrated_tokens(&calibration, &messages, schema_tokens) > input_budget
+    {
         crate::plugins::hooks::emit_current(
             "BeforeCompaction",
             serde_json::json!({"event":"BeforeCompaction"}),
@@ -872,7 +938,7 @@ async fn run_task_with_evidence_inner(
             message_type: MessageType::Text,
             content: prompt.to_owned(),
         });
-        let details = if estimated_tokens(&handoff)
+        let details = if calibration.messages(estimated_tokens(&handoff), schema_tokens)
             <= policy.context_token_budget.saturating_sub(answer_reserve)
         {
             llm.chat(&handoff, None)
@@ -1417,11 +1483,17 @@ fn content_fingerprint(text: &str) -> u64 {
 fn estimated_tokens(messages: &[ChatMessage]) -> usize {
     messages
         .iter()
-        .map(|message| {
-            let serialized = serde_json::to_string(message).unwrap_or_default();
-            serialized.len().div_ceil(4) + 16
-        })
+        .map(crate::calibration::message_tokens)
         .sum()
+}
+
+/// Message tokens corrected by provider-reported usage; unchanged before the first report.
+fn calibrated_tokens(
+    calibration: &crate::calibration::TokenCalibration,
+    messages: &[ChatMessage],
+    schema_tokens: usize,
+) -> usize {
+    calibration.messages(estimated_tokens(messages), schema_tokens)
 }
 
 pub async fn with_model_context_capacity<F: std::future::Future>(
@@ -1859,6 +1931,30 @@ fn checkpoint_task_state(mut state: &str) -> &str {
     state[..end].trim_end()
 }
 
+/// One request's content-free calibration record; updates the run's ratio.
+fn calibration_sample(
+    calibration: &mut crate::calibration::TokenCalibration,
+    raw_request_tokens: usize,
+    reported_input_tokens: u64,
+) -> serde_json::Value {
+    let calibrated_before = (raw_request_tokens as f64 * calibration.factor()).round() as u64;
+    let observed = calibration.observe(reported_input_tokens, raw_request_tokens);
+    let error = |estimate: u64| {
+        (reported_input_tokens > 0).then(|| {
+            (estimate as f64 - reported_input_tokens as f64) / reported_input_tokens as f64
+        })
+    };
+    serde_json::json!({
+        "raw_estimated_input_tokens": raw_request_tokens,
+        "calibrated_estimated_input_tokens": calibrated_before,
+        "provider_input_tokens": (reported_input_tokens > 0).then_some(reported_input_tokens),
+        "observed_ratio": observed,
+        "calibration_ratio": calibration.ratio(),
+        "raw_error": error(raw_request_tokens as u64),
+        "calibrated_error": error(calibrated_before),
+    })
+}
+
 fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
     // Keep recent full messages within a third of the space left after instructions.
     let recent_budget = policy
@@ -1867,7 +1963,14 @@ fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
         / 3;
     let mut split = messages.len().saturating_sub(policy.recent_messages.max(4));
     split = split.max(2);
-    while split < messages.len() && estimated_tokens(&messages[split..]) > recent_budget {
+    // Measure the suffix once, then drop messages from its front.
+    let mut suffix = if split < messages.len() {
+        estimated_tokens(&messages[split..])
+    } else {
+        0
+    };
+    while split < messages.len() && suffix > recent_budget {
+        suffix -= estimated_tokens(&messages[split..=split]);
         split += 1;
     }
     if split < messages.len() && matches!(messages[split].role, ChatRole::Tool) {
@@ -6142,5 +6245,48 @@ mod tests {
             .expect("direct execute allowed");
         assert_eq!(direct, serde_json::json!({"ok": true}));
         assert_eq!(consults.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn naive_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
+        let recent_budget = policy
+            .context_token_budget
+            .saturating_sub(estimated_tokens(&messages[..1]))
+            / 3;
+        let mut split = messages.len().saturating_sub(policy.recent_messages.max(4));
+        split = split.max(2);
+        while split < messages.len() && estimated_tokens(&messages[split..]) > recent_budget {
+            split += 1;
+        }
+        if split < messages.len() && matches!(messages[split].role, ChatRole::Tool) {
+            split += 1;
+        }
+        split
+    }
+
+    proptest! {
+        #[test]
+        fn linear_split_matches_the_quadratic_definition(
+            sizes in proptest::collection::vec(0usize..600, 1..40),
+            budget in 0usize..6000,
+            recent in 0usize..12,
+        ) {
+            let messages: Vec<ChatMessage> = sizes
+                .iter()
+                .enumerate()
+                .map(|(index, size)| ChatMessage {
+                    role: if index == 0 { ChatRole::System } else if index % 3 == 0 { ChatRole::Tool } else { ChatRole::User },
+                    message_type: MessageType::Text,
+                    content: "x".repeat(*size),
+                })
+                .collect();
+            let policy = RunPolicy { total_turns: 1, context_token_budget: budget, recent_messages: recent };
+            prop_assert_eq!(context_split(&messages, &policy), naive_split(&messages, &policy));
+        }
     }
 }

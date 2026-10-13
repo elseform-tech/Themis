@@ -206,6 +206,12 @@ export interface ContextBudget {
   maintenance_at_tokens: number;
   compaction_at_tokens: number;
   compaction_soon: boolean;
+  /** Uncorrected byte estimate behind `used_tokens`. */
+  raw_estimated_tokens?: number;
+  /** Provider-reported input tokens of the previous request. */
+  provider_input_tokens?: number;
+  /** Estimate correction in thousandths (1000 = exact). */
+  calibration_ratio_milli?: number;
   breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number };
 }
 
