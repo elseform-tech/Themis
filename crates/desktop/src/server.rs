@@ -236,6 +236,7 @@ impl Server {
             let (stream, _) = tokio::select! {
                 result = self.listener.accept() => result.map_err(|err| err.to_string())?,
                 _ = stopped.recv() => break,
+                _ = termination_signal() => break,
             };
             let state = self.state.clone();
             let token = self.token.clone();
@@ -246,6 +247,8 @@ impl Server {
                 let _ = serve_connection(stream, state, token, tx, sink, shutdown).await;
             });
         }
+        // Background programs belong to this server: stop them with it.
+        self.state.shutdown_background_tasks().await;
         let path = self.data_dir.join(DISCOVERY_FILE);
         if std::fs::read_to_string(&path)
             .ok()
@@ -257,6 +260,27 @@ impl Server {
         self.state.log_server_event("stopped");
         Ok(())
     }
+}
+
+/// Resolves when the process is asked to terminate (SIGTERM/SIGINT), so the
+/// server can stop the background programs it owns before exiting. Never
+/// resolves where signals cannot be observed.
+async fn termination_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let (Ok(mut terminate), Ok(mut interrupt)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) {
+            tokio::select! {
+                _ = terminate.recv() => {}
+                _ = interrupt.recv() => {}
+            }
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
 }
 
 async fn serve_connection(
@@ -635,6 +659,21 @@ pub async fn dispatch(
         "get_thread_tasks" => output!(
             state
                 .get_thread_tasks(&arg::<String>(&args, "threadId")?)
+                .await?
+        ),
+        "stop_background_task" => output!(
+            state
+                .stop_background_task(arg(&args, "threadId")?, arg(&args, "taskId")?)
+                .await?
+        ),
+        "get_background_task_log" => output!(
+            state
+                .get_background_task_log(
+                    arg(&args, "threadId")?,
+                    arg(&args, "taskId")?,
+                    arg::<Option<u64>>(&args, "offset")?,
+                    arg::<Option<usize>>(&args, "maxBytes")?,
+                )
                 .await?
         ),
         "create_automation" => output!(

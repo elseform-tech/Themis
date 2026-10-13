@@ -570,6 +570,7 @@ impl AppState {
             }
         };
         drop(record);
+        self.forget_background_tasks(&[thread_id]).await;
         self.persist_registry().await;
         Ok(())
     }
