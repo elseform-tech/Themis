@@ -64,7 +64,12 @@ def run(args):
     cases = load_cases(args.suite, args.case)
     if not cases:
         sys.exit(f"no cases in suite {args.suite!r}")
-    runner = shlex.split(args.runner) if args.runner else build_runner()
+    if not args.runner:
+        runner = build_runner()
+    elif os.path.exists(args.runner):  # a bare path; shlex would eat Windows backslashes
+        runner = [args.runner]
+    else:
+        runner = shlex.split(args.runner)
     jobs = [(trial, case) for trial in range(args.trials) for case in cases]
     results, failures = {}, []
 
