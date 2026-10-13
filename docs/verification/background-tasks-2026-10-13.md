@@ -37,9 +37,22 @@ $T --data-dir <scratch>/data thread send <id> "... start python3 -m http.server 
 
 Observation: on three attempts the free model answered "started, task_id ..., pid ..." without calling the tool (the diagnostics log has no approval record for those runs, `get_thread_tasks` showed no task, nothing listened). That is model narration, not a runtime behavior; the clean runs above are the evidence. The model also passed `background_timeout_secs: 86400` on its own.
 
+## Native check (lead, real window, computer use)
+
+- `assets/background-tasks-running-native.png`: a live free-model chat started `python3 -m http.server 8799` with `background=true` (task `bg_ef9d07`). After the model run ended, the header shows the running indicator, and Tasks shows the Running row "python3 -m http.server 8799 - Background task - Started 23:04 by agent - ends when this chat closes" with the two curl access-log lines, Stop and Full log.
+- `assets/background-tasks-stopped-native.png`: after clicking Stop the row moved to Earlier ("Started 23:04 by agent - Stopped 23:05") with its log kept, and the indicator cleared. `lsof -iTCP:8799` was empty, no `http.server 8799` process remained and curl was refused.
+- Full log expands inline ("Hide log"). The port is parsed from recent output, so it is not shown for this task: python prints no "Serving HTTP" line when stdout is a pipe.
+
+## Review follow-ups
+
+- SIGTERM/SIGINT listeners are created once before the accept loop; `server_sigterm_e2e` sends SIGTERM under connection churn and asserts the server exits and kills its background task.
+- Lost tasks no longer light the indicator (listed under Earlier with a note); Full log is hidden when the preview is the whole output.
+- A finished log ending in a dangling UTF-8 sequence decodes lossily instead of paging forever; a removed chat leaves no orphan `<id>.log`.
+- e2e fixtures run an in-process server, so the CLI never auto-starts detached `serve` processes; a fixture assertion checks that none is left.
+
 ## Not verified here
 
-- Native window rendering of the new rows (the lead checks the desktop UI); web behavior is covered by Vitest only.
+- Native rendering after the review follow-ups (hidden Full log, lost under Earlier); the lead's native check above predates them.
 - Windows: the process-group handling is compiled out (`taskkill /T /F` path for blocking commands only); background task tests are unix-only and Windows is untested.
 - Quality dashboard refresh and `cargo llvm-cov` were not run for this branch.
 - Orphans after a hard server crash (SIGKILL/power loss): the next start reports such tasks as `lost`; Themis does not kill them.

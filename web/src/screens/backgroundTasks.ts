@@ -8,9 +8,13 @@ export interface BackgroundGroups {
   earlier: ThreadTaskBackground[];
 }
 
-/** A task needs attention when the server lost it or it ended abnormally. */
+/**
+ * A task needs attention when it timed out or exited abnormally. Lost tasks
+ * (the server restarted) stay listed under Earlier with a note: there is no
+ * way to dismiss them, so they must not hold the badge lit.
+ */
 export function needsAttention(task: ThreadTaskBackground): boolean {
-  if (task.state === "lost" || task.state === "timed_out") return true;
+  if (task.state === "timed_out") return true;
   return task.state === "exited" && task.exit_code !== 0;
 }
 
@@ -69,7 +73,7 @@ export function backgroundMeta(task: ThreadTaskBackground): string {
     const port = detectPort(task.last_lines);
     if (port) parts.push(`port ${port}`);
   } else if (task.state === "lost") {
-    parts.push("lost when the Themis server restarted; the program may still be running");
+    parts.push("lost after restart; the program may still be running");
   } else {
     parts.push(`${stateLabel(task)}${task.ended_at ? ` ${clock(task.ended_at)}` : ""}`);
   }

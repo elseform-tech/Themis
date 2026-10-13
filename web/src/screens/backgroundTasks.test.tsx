@@ -47,25 +47,30 @@ describe("background task grouping", () => {
       task({ id: "bg_000006", state: "timed_out" }),
     ]));
     expect(groups.running.map(item => item.id)).toEqual(["bg_000005"]);
-    expect(groups.attention.map(item => item.id)).toEqual(["bg_000006", "bg_000003", "bg_000002"]);
-    expect(groups.earlier.map(item => item.id)).toEqual(["bg_000004", "bg_000001"]);
+    expect(groups.attention.map(item => item.id)).toEqual(["bg_000006", "bg_000003"]);
+    expect(groups.earlier.map(item => item.id)).toEqual(["bg_000004", "bg_000002", "bg_000001"]);
     expect(groupBackground(undefined)).toEqual({ attention: [], running: [], earlier: [] });
     expect(needsAttention(task({ state: "stopped" }))).toBe(false);
   });
   it("counts into the indicator as running and attention", () => {
     const tasks = feed([task(), task({ id: "bg_2", state: "lost" }), task({ id: "bg_3", state: "exited", exit_code: 0 })]);
-    expect(countBackground(tasks)).toEqual({ attention: 1, running: 1 });
-    expect(countTasks(tasks)).toEqual({ attention: 1, running: 1, scheduled: 0, finished: 0 });
-    expect(describeCounts(countTasks(tasks))).toBe("1 needs attention, 1 running");
-    const { container } = render(<TaskIndicator counts={countTasks(tasks)} onOpen={() => undefined} />);
+    expect(countBackground(tasks)).toEqual({ attention: 0, running: 1 });
+    const failing = feed([task(), task({ id: "bg_4", state: "exited", exit_code: 1 })]);
+    expect(countTasks(failing)).toEqual({ attention: 1, running: 1, scheduled: 0, finished: 0 });
+    expect(describeCounts(countTasks(failing))).toBe("1 needs attention, 1 running");
+    const { container } = render(<TaskIndicator counts={countTasks(failing)} onOpen={() => undefined} />);
     expect(container.querySelectorAll(".themis-task-icon")).toHaveLength(2);
+    cleanup();
+    // A lost task alone never lights the indicator.
+    const lostOnly = render(<TaskIndicator counts={countTasks(feed([task({ id: "bg_5", state: "lost" })]))} onOpen={() => undefined} />);
+    expect(lostOnly.container).toBeEmptyDOMElement();
   });
   it("finds the local port and words the meta line", () => {
     expect(detectPort(["boot", "Listening on http://127.0.0.1:8765/"])).toBe("8765");
     expect(detectPort(["Serving HTTP on :: port 9000"])).toBe("9000");
     expect(detectPort(["nothing"])).toBeNull();
     expect(backgroundMeta(task())).toMatch(/^Started .+ by agent · ends when this chat closes · port 1420$/);
-    expect(backgroundMeta(task({ state: "lost" }))).toMatch(/lost when the Themis server restarted/);
+    expect(backgroundMeta(task({ state: "lost" }))).toMatch(/lost after restart/);
     expect(backgroundMeta(task({ state: "exited", exit_code: 3, ended_at: "2030-01-01T15:00:00Z" }))).toMatch(/Exited with code 3/);
   });
 });
@@ -83,10 +88,12 @@ describe("TasksView background rows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop npm run dev" }));
     await waitFor(() => expect(bridge.stopBackgroundTask).toHaveBeenCalledWith("t1", "bg_a1b2c3"));
   });
-  it("puts lost tasks under Needs attention and finished ones under Earlier, without Stop", () => {
-    appState = { ...initialState, tasks: { t1: feed([task({ id: "bg_l", state: "lost", command: "python3 -m http.server" }), task({ id: "bg_f", state: "stopped", command: "sleep 9" })]) } };
+  it("puts failed tasks under Needs attention, lost and finished ones under Earlier, without Stop", () => {
+    appState = { ...initialState, tasks: { t1: feed([task({ id: "bg_l", state: "lost", command: "python3 -m http.server" }), task({ id: "bg_f", state: "stopped", command: "sleep 9" }), task({ id: "bg_x", state: "exited", exit_code: 2, command: "make" })]) } };
     render(<TasksView threadId="t1" />);
-    expect(screen.getByRole("region", { name: "Needs attention" })).toHaveTextContent("python3 -m http.server");
+    expect(screen.getByRole("region", { name: "Needs attention" })).toHaveTextContent("make");
+    expect(screen.getByRole("region", { name: "Earlier" })).toHaveTextContent("python3 -m http.server");
+    expect(screen.getByRole("region", { name: "Earlier" })).toHaveTextContent("lost after restart");
     expect(screen.getByRole("region", { name: "Earlier" })).toHaveTextContent("sleep 9");
     expect(screen.queryByRole("button", { name: /^Stop / })).toBeNull();
     expect(screen.queryByText("No tasks in this chat")).toBeNull();
@@ -115,6 +122,18 @@ describe("TasksView background rows", () => {
     render(<TasksView threadId="t1" />);
     fireEvent.click(screen.getByRole("button", { name: "Stop npm run dev" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("unknown background task");
+  });
+});
+
+describe("Full log button", () => {
+  it("is hidden while the preview already shows the whole output and reappears otherwise", () => {
+    appState = { ...initialState, tasks: { t1: feed([task({ last_lines_complete: true })]) } };
+    render(<TasksView threadId="t1" />);
+    expect(screen.queryByRole("button", { name: /full log/i })).toBeNull();
+    cleanup();
+    appState = { ...initialState, tasks: { t1: feed([task({ last_lines_complete: false })]) } };
+    render(<TasksView threadId="t1" />);
+    expect(screen.getByRole("button", { name: "Show full log of npm run dev" })).toBeInTheDocument();
   });
 });
 

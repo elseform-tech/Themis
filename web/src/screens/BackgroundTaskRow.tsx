@@ -53,7 +53,7 @@ export function BackgroundTaskRow({ threadId, task, busy, onStop }: Props) {
       </span>
       <span className="themis-task-row-actions">
         {running && <button type="button" aria-label={`Stop ${task.command}`} disabled={busy} onClick={() => onStop(task)}>Stop</button>}
-        <button type="button" aria-label={`${log === null ? "Show" : "Hide"} full log of ${task.command}`} aria-expanded={log !== null} onClick={() => void toggleLog()}>{log === null ? "Full log" : "Hide log"}</button>
+        {(!task.last_lines_complete || log !== null) && <button type="button" aria-label={`${log === null ? "Show" : "Hide"} full log of ${task.command}`} aria-expanded={log !== null} onClick={() => void toggleLog()}>{log === null ? "Full log" : "Hide log"}</button>}
       </span>
     </li>
   );

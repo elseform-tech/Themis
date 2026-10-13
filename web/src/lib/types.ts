@@ -176,6 +176,8 @@ export interface ThreadTaskBackground {
   ended_at: string | null;
   timeout_secs: number;
   last_lines: string[];
+  /** `last_lines` is the whole output, so the full log would repeat it. */
+  last_lines_complete?: boolean;
   log_bytes: number;
 }
 
