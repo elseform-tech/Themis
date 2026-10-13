@@ -8,8 +8,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-pub const MIN_RATIO: f64 = 0.5;
+pub const MIN_RATIO: f64 = 0.75;
 pub const MAX_RATIO: f64 = 4.0;
+const RAW_BUDGET_FLOOR: usize = 256;
 const SMOOTHING: f64 = 0.5;
 const TIGHTEN_FACTOR: f64 = 1.25;
 const TIGHTEN_MARGIN: f64 = 1.05;
@@ -81,9 +82,17 @@ impl TokenCalibration {
     pub fn raw_budget(&self, calibrated_budget: usize, schema: usize) -> usize {
         match self.ratio {
             None => calibrated_budget,
-            Some(ratio) => (((calibrated_budget.saturating_add(schema)) as f64 / ratio).floor()
-                as usize)
-                .saturating_sub(schema),
+            Some(ratio) => {
+                let raw = (((calibrated_budget.saturating_add(schema)) as f64 / ratio).floor()
+                    as usize)
+                    .saturating_sub(schema);
+                // Never collapse to zero: keep a small usable window.
+                raw.max(
+                    RAW_BUDGET_FLOOR
+                        .min(calibrated_budget)
+                        .max(calibrated_budget / 8),
+                )
+            }
         }
     }
 
@@ -190,6 +199,10 @@ const OVERFLOW_MARKERS: &[&str] = &[
     "input is too long",
     "too many tokens",
     "reduce the length of the messages",
+    "request_too_large",
+    "exceeds the maximum allowed number of bytes",
+    "exceeds the maximum number of tokens",
+    "input token count",
 ];
 const OVERFLOW_STATUSES: &[u16] = &[400, 413, 422];
 const INSPECTED_BYTES: usize = 16 * 1024;
@@ -273,6 +286,17 @@ mod tests {
         let mut low = TokenCalibration::new();
         low.observe(1, 1000);
         assert_eq!(low.ratio(), Some(MIN_RATIO));
+        assert_eq!(MIN_RATIO, 0.75);
+    }
+
+    #[test]
+    fn raw_budget_keeps_a_floor_when_schema_dominates() {
+        let mut calibration = TokenCalibration::new();
+        calibration.observe(1_000_000, 10);
+        // (1000 + 5000) / 4 - 5000 saturates to zero without a floor.
+        assert_eq!(calibration.raw_budget(1000, 5000), 256);
+        assert_eq!(calibration.raw_budget(100, 5000), 100);
+        assert_eq!(calibration.raw_budget(16_000, 20_000), 2000);
     }
 
     #[test]

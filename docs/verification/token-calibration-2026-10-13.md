@@ -9,7 +9,7 @@ described in [context and attachments](../context-and-attachments.md#estimate-ca
 
 These are deterministic harness tests; the provider is scripted, not a model-quality claim.
 
-- `crates/core/src/calibration.rs` unit tests: ratio update, smoothing, clamping to 0.5-4.0,
+- `crates/core/src/calibration.rs` unit tests: ratio update, smoothing, clamping to 0.75-4.0,
   ignored zero usage, tighten, raw/calibrated budget round trip, cached size equals the
   serialized definition.
 - Property tests: classifier never panics and ignores non-400/413/422 statuses; JSON-like
