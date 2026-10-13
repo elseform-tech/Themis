@@ -2,7 +2,7 @@
 // indicator and the Workspace Tasks tab. Pure logic; the hook only refreshes.
 import { useEffect } from "react";
 import { getThreadTasks } from "../lib/tauri";
-import type { ThreadTaskAutomation, ThreadTaskRun, ThreadTasks } from "../lib/types";
+import type { AutomationOrigin, AutomationRemoval, ThreadTaskAutomation, ThreadTaskRun, ThreadTasks } from "../lib/types";
 import { useApp } from "../state/store";
 import { scheduleLabel, shortTime } from "./Automations";
 import { countBackground } from "./backgroundTasks";
@@ -21,6 +21,8 @@ export interface TaskRow {
   stop?: boolean;
   /** Turns the automation off. */
   pause?: string;
+  /** When an earlier item ended; orders the Earlier group. */
+  at?: string;
 }
 
 export interface TaskGroups {
@@ -35,6 +37,36 @@ export type TaskCounts = Record<TaskKind, number>;
 const automationTag = (automation: Pick<ThreadTaskAutomation, "origin">) =>
   automation.origin === "agent" ? "Automation · by agent" : "Automation · continues this chat";
 
+/** Runs and removals outlive their automation, so they carry the origin themselves. */
+const recordedTag = (origin: AutomationOrigin | undefined) => origin === "agent" ? "Automation · by agent" : "Automation";
+
+/** Time of day when it is today, otherwise the date: "21:30" or "Oct 20". */
+export function expiryLabel(iso: string, now: Date = new Date()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** "Every 2 min · until status.txt says DONE · expires 21:30": the stored facts of a watch. */
+export function watchLabel(item: Pick<ThreadTaskAutomation, "schedule" | "interval_mins" | "stop_when" | "expires_at">): string {
+  const base = item.schedule ? scheduleLabel(item) : item.interval_mins < 60 ? `Every ${item.interval_mins} min` : scheduleLabel(item);
+  return [base, item.stop_when ? `until ${item.stop_when}` : "", item.expires_at ? `expires ${expiryLabel(item.expires_at)}` : ""].filter(Boolean).join(" · ");
+}
+
+const reasonLabel = (reason: string) => reason.charAt(0).toUpperCase() + reason.slice(1);
+
+function removalRow(item: AutomationRemoval): TaskRow {
+  return {
+    key: `removed-${item.id}`,
+    kind: "earlier",
+    name: item.name,
+    tag: recordedTag(item.origin),
+    meta: [reasonLabel(item.reason), shortTime(item.removed_at), item.stop_when ? `until ${item.stop_when}` : ""].filter(Boolean).join(" · "),
+    at: item.removed_at,
+  };
+}
+
 function snippet(text: string): string {
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > 90 ? `${line.slice(0, 89)}…` : line;
@@ -47,8 +79,9 @@ function runRow(run: ThreadTaskRun, kind: TaskRow["kind"], automations: ThreadTa
     kind,
     failed: !run.ok,
     name: run.name,
-    tag: automation ? automationTag(automation) : "Automation",
+    tag: automation ? automationTag(automation) : recordedTag(run.origin),
     meta: [run.ok ? "Finished" : "Failed", shortTime(run.finished_at), snippet(run.summary.replace(/^failed:\s*/, ""))].filter(Boolean).join(" · "),
+    at: run.finished_at,
   };
 }
 
@@ -58,7 +91,7 @@ const isScheduled = (item: ThreadTaskAutomation, schedulerOn: boolean) => item.e
 export function groupTasks(tasks: ThreadTasks | undefined, schedulerOn = true): TaskGroups {
   const groups: TaskGroups = { attention: [], running: [], scheduled: [], earlier: [] };
   if (!tasks) return groups;
-  const { run, automations, recent } = tasks;
+  const { run, automations, recent, removed = [] } = tasks;
   const live = automations.find(item => item.running);
   const liveRow = (kind: "attention" | "running", meta: string): TaskRow => ({
     key: live ? `automation-${live.id}` : "run",
@@ -83,13 +116,15 @@ export function groupTasks(tasks: ThreadTasks | undefined, schedulerOn = true): 
       name: item.name,
       tag: automationTag(item),
       meta: !item.enabled
-        ? "Paused · resume it in Automations"
+        ? item.stopped_reason ? `Paused · ${item.stopped_reason}` : "Paused · resume it in Automations"
         : !schedulerOn
           ? "Automations are off in Settings"
-          : `${scheduleLabel(item)} · next ${shortTime(item.next_run_at)}${item.last_run_at ? ` · last ${shortTime(item.last_run_at)}` : ""}`,
+          : `${watchLabel(item)} · next ${shortTime(item.next_run_at)}${item.last_run_at ? ` · last ${shortTime(item.last_run_at)}` : ""}`,
       pause: item.enabled ? item.id : undefined,
     });
   }
+  for (const item of removed) groups.earlier.push(removalRow(item));
+  groups.earlier.sort((left, right) => (right.at ?? "").localeCompare(left.at ?? ""));
   return groups;
 }
 

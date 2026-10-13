@@ -103,6 +103,12 @@ describe("toAutomationInput", () => {
     expect(toAutomationInput(form).reasoning_effort).toBe("medium");
     expect(toAutomationInput({ ...form, effort: "" }).reasoning_effort).toBeNull();
   });
+  it("carries a watch's limits through an edit unchanged", () => {
+    const watch = { expires_at: "2030-01-01T21:30:00Z", max_runs: 60, stop_when: "status.txt says DONE", check_command: ["cat", "status.txt"] };
+    const input = toAutomationInput(automationToForm({ ...AUTOMATION, ...watch }));
+    expect(input).toMatchObject(watch);
+    expect(Object.keys(toAutomationInput(automationToForm(AUTOMATION)))).not.toContain("expires_at");
+  });
   it("continues an existing thread without freezing its model or effort", () => {
     const form = automationToForm({ ...AUTOMATION, target_thread_id: "thread-1", reasoning_effort: "high" });
     expect(form.targetMode).toBe("continue");

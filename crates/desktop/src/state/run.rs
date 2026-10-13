@@ -1,5 +1,6 @@
 //! Provider setup and asynchronous event lifecycle for agent runs.
 
+use super::integration_tools::RunApproval;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -169,6 +170,16 @@ impl AppState {
             )))
             .with_read_approval(true),
         );
+        // Management tools evaluate with this run's captured mode and policy and
+        // ask the user through the raw interactive hook (no run-scoped grant cache).
+        let check_approval = RunApproval {
+            mode: snapshot.approval_mode,
+            policy: run_configuration.approval.clone(),
+            interactive: Arc::new(AuditedApprovals {
+                inner: hook.clone(),
+                context: diagnostic_context.clone(),
+            }),
+        };
         let approvals = themis_core::configuration::configured_hook(
             snapshot.approval_mode,
             run_configuration.approval.clone(),
@@ -286,10 +297,11 @@ impl AppState {
                 return Err("Duplicate plugin tool identity".into());
             }
         }
-        tools.extend(self.integration_management_tools(
+        tools.extend(self.integration_management_tools_for_run(
             approvals.clone(),
             snapshot.work_root.clone(),
             thread_id.to_owned(),
+            check_approval,
         ));
         let hook_runtime = themis_core::plugins::hooks::HookRuntime {
             hooks,

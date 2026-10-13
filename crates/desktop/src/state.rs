@@ -42,9 +42,10 @@ use crate::settings::SettingsStore;
 use crate::sink::EventSink;
 use crate::transcript::{HistoryItem, TranscriptStore};
 use crate::types::{
-    ApprovalDecision, Automation, AutomationInput, Diagnostics, DiagnosticsError, ProjectInfo,
-    ProviderKind, ReviewItem, ReviewStatus, RunAutomationNow, RunHandle, SecretStatus, Settings,
-    SettingsPatch, Skill, SkillInput, ThreadComment, ThreadEvent, ThreadEventEnvelope, ThreadInfo,
+    ApprovalDecision, Automation, AutomationInput, AutomationRemoval, Diagnostics,
+    DiagnosticsError, ProjectInfo, ProviderKind, ReviewItem, ReviewSource, ReviewStatus,
+    RunAutomationNow, RunHandle, SecretStatus, Settings, SettingsPatch, Skill, SkillInput,
+    ThreadComment, ThreadEvent, ThreadEventEnvelope, ThreadInfo,
 };
 
 /// Title assigned to threads before their first message.
@@ -53,8 +54,12 @@ pub const UNTITLED_THREAD: &str = "New thread";
 /// Maximum title length taken from the first message, in chars.
 pub const MAX_TITLE_CHARS: usize = 60;
 
-/// Production scheduler cadence: the background task ticks this often.
-const SCHEDULER_TICK_SECS: u64 = 30;
+/// Newest removal records kept for the Tasks view.
+const REMOVAL_HISTORY_LIMIT: usize = 200;
+
+/// Production scheduler cadence: the background task ticks this often, so a
+/// short interval fires within about this many seconds of being due.
+const SCHEDULER_TICK_SECS: u64 = 10;
 
 /// Boot deferral for automations already due at startup (no thundering herd).
 const BOOT_DEFERRAL_SECS: i64 = 60;
@@ -132,6 +137,10 @@ struct AutomationRunContext {
     thread_id: String,
     /// Thread title at spawn time, reused for the review item.
     title: String,
+    /// Name and origin, copied onto the review item so it outlives deletion.
+    source: ReviewSource,
+    /// Watch check output hash to record once this run succeeds.
+    check_hash: Option<String>,
 }
 
 /// One persisted thread (the `threads.json` registry in the app data dir).
@@ -208,6 +217,11 @@ struct AppStateInner {
     /// Review store (`review_items.json` in the app data dir).
     reviews: tokio::sync::RwLock<HashMap<String, ReviewItem>>,
     reviews_path: PathBuf,
+    /// Why automations ended (`automation_removals.json`), newest 200.
+    removals: tokio::sync::RwLock<HashMap<String, AutomationRemoval>>,
+    removals_path: PathBuf,
+    /// Automations the scheduler is processing right now (check or spawn).
+    watch_inflight: std::sync::Mutex<HashSet<String>>,
     /// In-flight automation runs (`run_id` -> context). Deliberately
     /// in-memory only: a run killed mid-flight by a shutdown has no mapping
     /// post-boot, so it yields no review item (documented recovery rule).
@@ -323,9 +337,11 @@ impl AppState {
         let skills_path = app_dir.join("skills.json");
         let automations_path = app_dir.join("automations.json");
         let reviews_path = app_dir.join("review_items.json");
+        let removals_path = app_dir.join("automation_removals.json");
         let skills = load_store_file(&skills_path, "skill", &mut report);
         let automations = load_automations_file(&automations_path, &mut report);
         let reviews = load_store_file(&reviews_path, "review item", &mut report);
+        let removals = load_store_file(&removals_path, "automation removal", &mut report);
         let diagnostics = Arc::new(themis_core::diagnostics::DiagnosticLog::new(
             themis_core::diagnostics::directory_for(&app_dir),
         ));
@@ -359,6 +375,9 @@ impl AppState {
                 automations_path,
                 reviews: tokio::sync::RwLock::new(reviews),
                 reviews_path,
+                removals: tokio::sync::RwLock::new(removals),
+                removals_path,
+                watch_inflight: std::sync::Mutex::new(HashSet::new()),
                 automation_runs: std::sync::Mutex::new(HashMap::new()),
                 scheduler_sink: std::sync::Mutex::new(None),
                 background: themis_core::tools::background::BackgroundRegistry::open(Some(
@@ -375,7 +394,12 @@ impl AppState {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(SCHEDULER_TICK_SECS)).await;
                 if let Some(sink) = state.scheduler_sink() {
-                    state.tick_automations_once(&sink).await;
+                    // Not awaited: a slow check must not delay the next tick.
+                    // `watch_inflight` keeps one pass per automation.
+                    let state = state.clone();
+                    tauri::async_runtime::spawn(async move {
+                        state.tick_automations_once(&sink).await;
+                    });
                 }
             }
         });
@@ -492,6 +516,26 @@ impl AppState {
             .collect();
         if let Err(err) = write_json_file(&self.inner.automations_path, &automations) {
             eprintln!("themis: failed to persist automations: {err}");
+        }
+    }
+
+    /// Persists the removal history, keeping only the newest entries.
+    async fn persist_removals(&self) {
+        let mut removals = self.inner.removals.write().await;
+        if removals.len() > REMOVAL_HISTORY_LIMIT {
+            let mut order: Vec<(String, String)> = removals
+                .values()
+                .map(|item| (item.removed_at.clone(), item.id.clone()))
+                .collect();
+            order.sort();
+            for (_, id) in order.iter().take(removals.len() - REMOVAL_HISTORY_LIMIT) {
+                removals.remove(id);
+            }
+        }
+        let list: Vec<AutomationRemoval> = removals.values().cloned().collect();
+        drop(removals);
+        if let Err(err) = write_json_file(&self.inner.removals_path, &list) {
+            eprintln!("themis: failed to persist automation removals: {err}");
         }
     }
 
@@ -704,6 +748,12 @@ impl StoreEntry for Skill {
 }
 
 impl StoreEntry for Automation {
+    fn store_id(&self) -> &str {
+        &self.id
+    }
+}
+
+impl StoreEntry for AutomationRemoval {
     fn store_id(&self) -> &str {
         &self.id
     }
@@ -1535,6 +1585,7 @@ mod tests {
             schedule: None,
             task: "Check health.".to_owned(),
             enabled: true,
+            watch: Default::default(),
         }
     }
 
@@ -1585,6 +1636,8 @@ mod tests {
                 automation_id: automation.id.clone(),
                 thread_id: thread.id.clone(),
                 title: "Automation Nightly".to_owned(),
+                source: Default::default(),
+                check_hash: None,
             },
         );
         let live = state.get_thread_tasks(&thread.id).await.expect("tasks");
@@ -1636,6 +1689,8 @@ mod tests {
                     automation_id: automation.id.clone(),
                     thread_id: thread.id.clone(),
                     title: "t".to_owned(),
+                    source: Default::default(),
+                    check_hash: None,
                 },
             );
             state.complete_automation_run(&sink, run_id, &event).await;
@@ -2136,6 +2191,7 @@ mod tests {
             title: "Automation Nightly".to_owned(),
             summary: "done".to_owned(),
             status: ReviewStatus::Pending,
+            source: Default::default(),
         };
         std::fs::write(
             dir.path().join("review_items.json"),
@@ -2182,6 +2238,7 @@ mod tests {
             title: "Automation Nightly".to_owned(),
             summary: "done again".to_owned(),
             status: ReviewStatus::Pending,
+            source: Default::default(),
         };
         std::fs::write(
             dir.path().join("review_items.json"),
@@ -2225,6 +2282,7 @@ mod tests {
             title: "t".to_owned(),
             summary: "s".to_owned(),
             status: ReviewStatus::Pending,
+            source: Default::default(),
         };
         std::fs::write(
             dir.path().join("review_items.json"),
@@ -2273,6 +2331,7 @@ mod tests {
             title: "t".to_owned(),
             summary: "s".to_owned(),
             status: ReviewStatus::Pending,
+            source: Default::default(),
         };
         std::fs::write(
             dir.path().join("review_items.json"),
@@ -2311,6 +2370,8 @@ mod tests {
             next_run_at: "2001-01-01T00:00:00Z".to_owned(),
             run_count: 4,
             origin: AutomationOrigin::User,
+            watch: Default::default(),
+            watch_state: Default::default(),
         };
         let future = Automation {
             id: "future".to_owned(),
