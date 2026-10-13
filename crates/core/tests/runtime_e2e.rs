@@ -1938,6 +1938,14 @@ struct CalibrationRun {
 
 /// A 24k-budget run whose history sits well below the raw compaction threshold.
 async fn calibration_run(usage_multiplier: Option<f64>, overflows: usize) -> CalibrationRun {
+    calibration_run_turns(usage_multiplier, overflows, 4).await
+}
+
+async fn calibration_run_turns(
+    usage_multiplier: Option<f64>,
+    overflows: usize,
+    total_turns: usize,
+) -> CalibrationRun {
     use themis_core::runtime::{ConversationRole, ConversationTurn};
     let server = MockServer::start().await;
     common::mount_script_scripted(
@@ -1987,7 +1995,7 @@ async fn calibration_run(usage_multiplier: Option<f64>, overflows: usize) -> Cal
         history,
         approvals,
         RunPolicy {
-            total_turns: 4,
+            total_turns,
             context_token_budget: 24_000,
             recent_messages: 4,
         },
@@ -2121,4 +2129,22 @@ async fn second_consecutive_overflow_fails_explicitly_with_originals_preserved()
         .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap_or_default())
         .collect();
     assert!(archived.contains("CALIBRATE"), "originals stay on disk");
+}
+
+#[tokio::test]
+async fn ratio_rising_on_the_last_turn_compacts_before_the_handoff() {
+    let run = calibration_run_turns(Some(3.0), 0, 1).await;
+    assert_eq!(
+        checkpoints(&run.events),
+        1,
+        "the post-loop fit check must compact against the updated ratio"
+    );
+    assert!(run
+        .events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Incomplete { .. })));
+    assert!(!run
+        .events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { .. })));
 }

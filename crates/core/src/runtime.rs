@@ -899,6 +899,8 @@ async fn run_task_with_evidence_inner(
     }
 
     check_stopped(&stopped, &events).await?;
+    // The ratio may have risen on the last turn; compaction compares raw estimates.
+    context_policy.context_token_budget = calibration.raw_budget(input_budget, schema_tokens);
     // The last tool batch is complete. Save a handoff before the hard stop.
     if policy.context_token_budget != usize::MAX
         && calibrated_tokens(&calibration, &messages, schema_tokens) > input_budget
