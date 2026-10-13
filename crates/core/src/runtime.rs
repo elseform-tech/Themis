@@ -2591,24 +2591,30 @@ async fn execute_call(
         ));
     };
     let approval_args: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
-    let decision = approvals.approve(&ToolAction {
-        tool: crate::tools::integration_approval_identity(name, &approval_args),
-        summary: summary.to_owned(),
-        risk: crate::tools::integration_risk(name, &approval_args)
-            .unwrap_or_else(|| risk_for(name)),
-        command: if name == "shell" {
-            crate::tools::shell_argv(&approval_args)
-        } else {
-            Vec::new()
-        },
-    });
-    events
-        .send(RunEvent::ApprovalDecided {
-            tool: name.to_owned(),
-            decision: ApprovalDecision::from(decision),
-        })
-        .await
-        .ok();
+    let self_approving = crate::tools::tool_approves_itself(name);
+    let decision = if self_approving {
+        Approval::AllowOnce
+    } else {
+        let decision = approvals.approve(&ToolAction {
+            tool: crate::tools::integration_approval_identity(name, &approval_args),
+            summary: summary.to_owned(),
+            risk: crate::tools::integration_risk(name, &approval_args)
+                .unwrap_or_else(|| risk_for(name)),
+            command: if name == "shell" {
+                crate::tools::shell_argv(&approval_args)
+            } else {
+                Vec::new()
+            },
+        });
+        events
+            .send(RunEvent::ApprovalDecided {
+                tool: name.to_owned(),
+                decision: ApprovalDecision::from(decision),
+            })
+            .await
+            .ok();
+        decision
+    };
     if stopped.load(Ordering::SeqCst) {
         return Err("Stopped by you".to_owned());
     }
@@ -2630,7 +2636,12 @@ async fn execute_call(
     // the tool's own execution-time check passes without prompting twice.
     // (Direct `execute` calls outside `run_task` carry no permit and stay
     // fully gated.)
-    let outcome = match crate::tools::with_dispatch_permit(tool.execute(parsed.clone())).await {
+    let result = if self_approving {
+        tool.execute(parsed.clone()).await
+    } else {
+        crate::tools::with_dispatch_permit(tool.execute(parsed.clone())).await
+    };
+    let outcome = match result {
         Ok(value) => Ok(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())),
         Err(err) => Err(format!("tool '{name}' failed: {err}")),
     };

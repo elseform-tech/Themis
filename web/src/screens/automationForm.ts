@@ -7,6 +7,7 @@ import type {
   AutomationInput,
   ProviderKind,
   AutomationSchedule,
+  WatchSettings,
 } from "../lib/types";
 import { failureMessage } from "../lib/errors";
 import { newId, type AppAction } from "../state/reducer";
@@ -28,6 +29,8 @@ export interface AutomationFormState {
   weekday: number;
   task: string;
   enabled: boolean;
+  /** Watch limits are not editable here; they are carried through unchanged. */
+  watch?: WatchSettings;
 }
 
 export type AutomationFormDispatch = (action: AppAction) => void;
@@ -81,7 +84,17 @@ export function automationToForm(
     weekday: automation.schedule?.weekday ?? 0,
     task: automation.task + automation.skill_ids.filter(id => !automation.task.includes(skillToken(id))).map(id => ` ${skillToken(id)}`).join(""),
     enabled: automation.enabled,
+    ...watchOf(automation),
   };
+}
+
+function watchOf(source: WatchSettings): { watch?: WatchSettings } {
+  const watch: WatchSettings = {};
+  if (source.expires_at) watch.expires_at = source.expires_at;
+  if (source.max_runs) watch.max_runs = source.max_runs;
+  if (source.stop_when) watch.stop_when = source.stop_when;
+  if (source.check_command?.length) watch.check_command = source.check_command;
+  return Object.keys(watch).length ? { watch } : {};
 }
 
 /** Client-side validation; null when the form may be submitted. */
@@ -121,6 +134,7 @@ export function toAutomationInput(
     schedule: form.repeat === "interval" ? null : { repeat: form.repeat, time: form.time, timezone: form.timezone, weekday: form.weekday },
     task: form.task,
     enabled: form.enabled,
+    ...form.watch,
   };
 }
 
