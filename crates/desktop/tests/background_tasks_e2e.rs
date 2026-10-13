@@ -105,6 +105,7 @@ struct Fixture {
     rx: tokio::sync::mpsc::UnboundedReceiver<TestEvent>,
     thread: String,
     announced: usize,
+    serving: Option<tokio::task::JoinHandle<Result<(), String>>>,
     _provider: MockServer,
 }
 
@@ -125,6 +126,11 @@ async fn fixture(steps: Vec<Step>) -> Fixture {
         .unwrap();
     let (sink, rx) = ChannelSink::channel();
     let sink = Arc::new(sink);
+    // `themis call` talks to this in-process server; without it the CLI would
+    // auto-start a detached `serve` process that outlives the test.
+    let serving = Server::bind(state.clone(), data.path()).await.unwrap();
+    let serving = tokio::spawn(serving.run());
+    // Server::bind registered its own sink; route events to ours instead.
     state.set_scheduler_sink(Arc::clone(&sink) as Arc<dyn EventSink>);
     Fixture {
         data,
@@ -134,7 +140,27 @@ async fn fixture(steps: Vec<Step>) -> Fixture {
         rx,
         thread: thread.id,
         announced: 0,
+        serving: Some(serving),
         _provider: provider,
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if let Some(serving) = self.serving.take() {
+            serving.abort();
+        }
+        if std::thread::panicking() {
+            return;
+        }
+        // No detached `themis ... serve` may be left on this data directory.
+        let leftover = std::process::Command::new("pgrep")
+            .arg("-f")
+            .arg(self.data.path().to_string_lossy().as_ref())
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        assert!(!leftover, "a server process was left running");
     }
 }
 
@@ -220,14 +246,6 @@ async fn agent_starts_inspects_and_the_person_stops_a_background_task() {
         }),
     ])
     .await;
-    let server = Server::bind(fx.state.clone(), fx.data.path())
-        .await
-        .unwrap();
-    let serving = tokio::spawn(server.run());
-    // Server::bind registered its own sink; route events to ours again.
-    fx.state
-        .set_scheduler_sink(Arc::clone(&fx.sink) as Arc<dyn EventSink>);
-
     assert!(fx.run("start a server").await);
     let tasks = fx.background();
     assert_eq!(tasks.len(), 1, "{tasks:?}");
@@ -281,7 +299,7 @@ async fn agent_starts_inspects_and_the_person_stops_a_background_task() {
     assert!(!wrong.status.success());
 
     cli_call(fx.data.path(), "shutdown", Value::Null);
-    let _ = serving.await;
+    let _ = fx.serving.take().unwrap().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -297,15 +315,11 @@ async fn deleting_the_chat_and_shutting_down_the_server_kill_their_tasks() {
 
     // Server shutdown stops tasks of the remaining chats.
     let mut second = fixture(vec![start_step("exec sleep 3142")]).await;
-    let server = Server::bind(second.state.clone(), second.data.path())
-        .await
-        .unwrap();
-    let serving = tokio::spawn(server.run());
     assert!(second.run("start").await);
     let pid = second.background()[0]["pid"].as_u64().unwrap();
     assert!(alive(pid));
     cli_call(second.data.path(), "shutdown", Value::Null);
-    let _ = serving.await;
+    let _ = second.serving.take().unwrap().await;
     eventually("task killed with the server", || !alive(pid)).await;
     let reborn = AppState::new_for_test(second.data.path().join("settings.json"));
     let tasks = reborn

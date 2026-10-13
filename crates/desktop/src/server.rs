@@ -232,11 +232,12 @@ impl Server {
     pub async fn run(self) -> Result<(), String> {
         self.state.log_server_event("started");
         let mut stopped = self.shutdown.subscribe();
+        let mut termination = Termination::install();
         loop {
             let (stream, _) = tokio::select! {
                 result = self.listener.accept() => result.map_err(|err| err.to_string())?,
                 _ = stopped.recv() => break,
-                _ = termination_signal() => break,
+                _ = termination.requested() => break,
             };
             let state = self.state.clone();
             let token = self.token.clone();
@@ -262,25 +263,44 @@ impl Server {
     }
 }
 
-/// Resolves when the process is asked to terminate (SIGTERM/SIGINT), so the
-/// server can stop the background programs it owns before exiting. Never
-/// resolves where signals cannot be observed.
-async fn termination_signal() {
+/// SIGTERM/SIGINT listeners, created once before the accept loop so a signal
+/// arriving between accepts or during cleanup is never dropped (the first
+/// registration replaces the default action). Never fires where signals cannot
+/// be observed.
+struct Termination {
     #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        if let (Ok(mut terminate), Ok(mut interrupt)) = (
-            signal(SignalKind::terminate()),
-            signal(SignalKind::interrupt()),
-        ) {
+    streams: Option<(tokio::signal::unix::Signal, tokio::signal::unix::Signal)>,
+}
+
+impl Termination {
+    fn install() -> Self {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let streams = match (
+                signal(SignalKind::terminate()),
+                signal(SignalKind::interrupt()),
+            ) {
+                (Ok(terminate), Ok(interrupt)) => Some((terminate, interrupt)),
+                _ => None,
+            };
+            Self { streams }
+        }
+        #[cfg(not(unix))]
+        Self {}
+    }
+
+    async fn requested(&mut self) {
+        #[cfg(unix)]
+        if let Some((terminate, interrupt)) = self.streams.as_mut() {
             tokio::select! {
                 _ = terminate.recv() => {}
                 _ = interrupt.recv() => {}
             }
             return;
         }
+        std::future::pending::<()>().await;
     }
-    std::future::pending::<()>().await;
 }
 
 async fn serve_connection(
