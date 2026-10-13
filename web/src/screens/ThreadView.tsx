@@ -293,7 +293,7 @@ export function ThreadView() {
         changedFiles={changedFiles}
         reviewOpen={state.diffPanelOpen}
         onToggleReview={() => dispatch({ type: "ui/diff-panel", open: !state.diffPanelOpen })}
-        taskCounts={countTasks(state.tasks[thread.id])}
+        taskCounts={countTasks(state.tasks[thread.id], state.settings.automations_enabled)}
         onOpenTasks={() => dispatch({ type: "ui/diff-panel", open: true, tab: "tasks" })}
       />
       {empty ? (

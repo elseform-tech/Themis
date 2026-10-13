@@ -62,6 +62,18 @@ describe("task grouping", () => {
   });
 });
 
+describe("scheduler switch", () => {
+  it("shows chat automations as off and leaves them out of the scheduled count", () => {
+    const feed = tasks({ automations: [automation()] });
+    expect(countTasks(feed, false).scheduled).toBe(0);
+    expect(countTasks(feed, true).scheduled).toBe(1);
+    const row = groupTasks(feed, false).scheduled[0];
+    expect(row?.meta).toBe("Automations are off in Settings");
+    expect(row?.meta).not.toMatch(/next/);
+    expect(groupTasks(feed, true).scheduled[0]?.meta).toMatch(/next/);
+  });
+});
+
 describe("TaskIndicator", () => {
   it("is hidden when nothing is active", () => {
     const { container } = render(<TaskIndicator counts={countTasks(tasks())} onOpen={() => undefined} />);
@@ -127,5 +139,7 @@ describe("task feed sync", () => {
     next = reducer(next, { type: "ui/diff-panel", open: true, tab: "tasks" });
     expect(next.diffPanelOpen).toBe(true);
     expect(next.workspaceTabRequest?.tab).toBe("tasks");
+    next = reducer(next, { type: "ui/tab-request-consumed" });
+    expect(next.workspaceTabRequest).toBeNull();
   });
 });

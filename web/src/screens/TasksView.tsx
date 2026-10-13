@@ -16,7 +16,7 @@ export function TasksView({ threadId }: { threadId: string }) {
   const { state, dispatch } = useApp();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const groups = groupTasks(state.tasks[threadId]);
+  const groups = groupTasks(state.tasks[threadId], state.settings.automations_enabled);
   async function act(row: TaskRow, what: "stop" | "pause") {
     setBusy(`${row.key}:${what}`); setError("");
     try {

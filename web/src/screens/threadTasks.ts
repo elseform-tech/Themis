@@ -51,7 +51,10 @@ function runRow(run: ThreadTaskRun, kind: TaskRow["kind"], automations: ThreadTa
   };
 }
 
-export function groupTasks(tasks: ThreadTasks | undefined): TaskGroups {
+/** Automations run only while the global Settings switch is on. */
+const isScheduled = (item: ThreadTaskAutomation, schedulerOn: boolean) => item.enabled && schedulerOn;
+
+export function groupTasks(tasks: ThreadTasks | undefined, schedulerOn = true): TaskGroups {
   const groups: TaskGroups = { attention: [], running: [], scheduled: [], earlier: [] };
   if (!tasks) return groups;
   const { run, automations, recent } = tasks;
@@ -78,21 +81,23 @@ export function groupTasks(tasks: ThreadTasks | undefined): TaskGroups {
       kind: "scheduled",
       name: item.name,
       tag: automationTag(item),
-      meta: item.enabled
-        ? `${scheduleLabel(item)} · next ${shortTime(item.next_run_at)}${item.last_run_at ? ` · last ${shortTime(item.last_run_at)}` : ""}`
-        : "Paused · resume it in Automations",
+      meta: !item.enabled
+        ? "Paused · resume it in Automations"
+        : !schedulerOn
+          ? "Automations are off in Settings"
+          : `${scheduleLabel(item)} · next ${shortTime(item.next_run_at)}${item.last_run_at ? ` · last ${shortTime(item.last_run_at)}` : ""}`,
       pause: item.enabled ? item.id : undefined,
     });
   }
   return groups;
 }
 
-export function countTasks(tasks: ThreadTasks | undefined): TaskCounts {
-  const groups = groupTasks(tasks);
+export function countTasks(tasks: ThreadTasks | undefined, schedulerOn = true): TaskCounts {
+  const groups = groupTasks(tasks, schedulerOn);
   return {
     attention: groups.attention.length,
     running: groups.running.length,
-    scheduled: tasks?.automations.filter(item => item.enabled && !(item.running && (tasks.run.running || tasks.run.awaiting_approval))).length ?? 0,
+    scheduled: tasks?.automations.filter(item => isScheduled(item, schedulerOn) && !(item.running && (tasks.run.running || tasks.run.awaiting_approval))).length ?? 0,
     finished: tasks?.recent.filter(item => item.ok && !item.seen).length ?? 0,
   };
 }
@@ -112,7 +117,8 @@ export function useThreadTasksSync(threadId: string | null) {
   const { state, dispatch } = useApp();
   const awaiting = threadId !== null && state.approvals.some(approval => approval.thread_id === threadId);
   const running = threadId !== null && (state.running[threadId] ?? false);
-  const toolsDone = threadId === null ? 0 : (state.traces[threadId] ?? []).filter(entry => entry.ok !== undefined).length;
+  // Only tools that can change task state refresh the feed.
+  const automationEdits = threadId === null ? 0 : (state.traces[threadId] ?? []).filter(entry => entry.tool === "manage_automations" && entry.ok !== undefined).length;
   const { automations, reviews } = state;
   useEffect(() => {
     if (threadId === null) return;
@@ -122,5 +128,5 @@ export function useThreadTasksSync(threadId: string | null) {
       .then(tasks => { if (!cancelled) dispatch({ type: "tasks/loaded", threadId, tasks }); })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [dispatch, threadId, awaiting, running, toolsDone, automations, reviews]);
+  }, [dispatch, threadId, awaiting, running, automationEdits, automations, reviews]);
 }
