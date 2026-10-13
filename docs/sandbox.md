@@ -48,8 +48,15 @@ third-party MCP servers/hooks.
 
 Custom requires the tool working directory to stay inside the project root.
 YOLO permits external paths. Shell output is bounded at 32 KiB; the default
-execution timeout is 120 seconds. Child environment handling excludes provider
-credentials from normal tool launches. MCP servers can receive explicitly configured environment-variable references.
+execution timeout is 120 seconds. On timeout the whole process tree is killed:
+on Unix the child leads its own process group, which receives SIGTERM, a short
+grace period, then SIGKILL; on Windows `taskkill /T /F` ends the tree (a
+descendant that detaches from its parent is not reached). Child environment
+handling excludes provider credentials from normal tool launches. Children
+receive only `PATH`, `TMPDIR`/`TEMP`/`TMP`, `LANG`, `LC_ALL` and other `LC_*`,
+`TERM`, plus `HOME`/`USER`/`LOGNAME`/`SSH_AUTH_SOCK` on Unix or the Windows
+system/user variables; any name containing `KEY`, `TOKEN` or `SECRET` is
+dropped even if otherwise allowed. MCP servers can receive explicitly configured environment-variable references.
 Hooks receive the fixed allowlist plus `CLAUDE_PLUGIN_ROOT`, rather than a
 configurable environment map. Imported MCP servers and hooks
 begin disabled and require explicit activation; hook trust remains separate

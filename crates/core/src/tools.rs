@@ -897,14 +897,19 @@ fn run_command_blocking(
     tool: &str,
     timeout: Duration,
 ) -> Result<CommandOutput, ToolCallError> {
-    let mut child = std::process::Command::new(program)
+    let mut command = std::process::Command::new(program);
+    command
         .args(args)
         .current_dir(workdir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear()
-        .envs(scrubbed_env())
+        .envs(scrubbed_env());
+    // Own process group so a timeout can take down grandchildren too.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = command
         .spawn()
         .map_err(|e| tool_error(format!("{tool}: failed to start '{program}': {e}")))?;
 
@@ -935,11 +940,11 @@ fn run_command_blocking(
             Some(status) => break status,
             None => {
                 if Instant::now() >= deadline {
-                    let _ = child.kill();
+                    kill_process_tree(&mut child);
                     let _ = child.wait();
-                    // Detach the drain threads instead of joining: a killed
-                    // child whose pipes are held open by orphaned
-                    // grandchildren would wedge the join. The error must
+                    // Detach the drain threads instead of joining: a process
+                    // that escaped the group (e.g. called setsid) could still
+                    // hold the pipes open and wedge the join. The error must
                     // return promptly; the threads exit when the pipes close.
                     drop(stdout_thread);
                     drop(stderr_thread);
@@ -960,6 +965,45 @@ fn run_command_blocking(
         .and_then(|thread| thread.join().ok())
         .unwrap_or_default();
     Ok(combine_output(&status, &stdout, &stderr))
+}
+
+/// Kill `child` and every descendant that stayed in its process tree.
+///
+/// Unix: the child leads its own process group, so the group gets SIGTERM, a
+/// short grace period, then SIGKILL. Windows: `taskkill /T /F` walks the
+/// process tree (descendants that detached from the tree are not reached).
+fn kill_process_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let pgid = child.id() as libc::pid_t;
+        // SAFETY: killpg only sends a signal to the group we created.
+        unsafe { libc::killpg(pgid, libc::SIGTERM) };
+        let grace = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < grace {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Always follow with SIGKILL: the leader may have exited on SIGTERM
+        // while a grandchild ignored it. The group id stays valid while any
+        // member lives.
+        unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = child.kill();
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = child.kill();
+    }
 }
 
 /// Merge captured stdout/stderr into one truncated [`CommandOutput`].
@@ -992,14 +1036,16 @@ fn combine_output(
 /// matches `PATH`. Exact allowlist:
 ///
 /// - All platforms: `PATH`, `TMPDIR`, `TEMP`, `TMP`.
-/// - Unix: `HOME`, `USER`, `LOGNAME`.
+/// - Locale and terminal: `LANG`, `LC_ALL` and any `LC_*`, `TERM`.
+/// - Unix: `HOME`, `USER`, `LOGNAME`, `SSH_AUTH_SOCK` (agent socket path only;
+///   keys stay in the agent).
 /// - Windows: `SYSTEMROOT`, `SYSTEMDRIVE`, `USERNAME`, `USERPROFILE`,
 ///   `HOMEDRIVE`, `HOMEPATH`.
 ///
 /// Any variable whose *name* contains `KEY`, `TOKEN`, or `SECRET`
 /// (case-insensitive) is **never** inherited, even if it were allowlisted —
 /// the blocklist is checked first (see [`child_env_allowed`]). Values are
-/// never inspected.
+/// never inspected. Locale names never contain those words, so they pass.
 fn scrubbed_env() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     std::env::vars_os()
         .filter(|(name, _)| child_env_allowed(&name.to_string_lossy()))
@@ -1017,7 +1063,10 @@ fn child_env_allowed(name: &str) -> bool {
         return false;
     }
     const COMMON: &[&str] = &["PATH", "TMPDIR", "TEMP", "TMP"];
-    if COMMON.contains(&upper.as_str()) {
+    if COMMON.contains(&upper.as_str()) || upper == "LANG" || upper.starts_with("LC_") {
+        return true;
+    }
+    if upper == "TERM" {
         return true;
     }
     #[cfg(windows)]
@@ -1034,7 +1083,7 @@ fn child_env_allowed(name: &str) -> bool {
     }
     #[cfg(not(windows))]
     {
-        const UNIX: &[&str] = &["HOME", "USER", "LOGNAME"];
+        const UNIX: &[&str] = &["HOME", "USER", "LOGNAME", "SSH_AUTH_SOCK"];
         UNIX.contains(&upper.as_str())
     }
 }
@@ -2233,7 +2282,84 @@ mod tests {
             assert!(child_env_allowed(allowed), "{allowed} must pass");
         }
         assert!(!child_env_allowed("RANDOM_UNRELATED_VAR"));
+        #[cfg(not(windows))]
+        assert!(child_env_allowed("SSH_AUTH_SOCK"));
+        #[cfg(windows)]
         assert!(!child_env_allowed("SSH_AUTH_SOCK"));
+    }
+
+    #[test]
+    fn child_env_passes_locale_and_term_but_not_lookalikes() {
+        for allowed in [
+            "LANG",
+            "lang",
+            "LC_ALL",
+            "LC_CTYPE",
+            "lc_messages",
+            "LC_TIME",
+            "TERM",
+        ] {
+            assert!(child_env_allowed(allowed), "{allowed} must pass");
+        }
+        for denied in [
+            "LANGUAGE_SERVER",
+            "LCALL",
+            "TERMINAL",
+            "TERM_KEY",
+            "LC_SECRET",
+            "LC_TOKEN",
+            "LANG_KEY",
+            "SSH_AUTH_SOCKET",
+        ] {
+            assert!(!child_env_allowed(denied), "{denied} must be blocked");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_timeout_kills_grandchildren() {
+        let (tmp, root) = rooted_case();
+        let pidfile = root.join("grandchild.pid");
+        let script = format!("sleep 300 & echo $! > '{}'; wait", pidfile.display());
+        let tool = ShellTool::new(root, allow_all()).with_timeout(Duration::from_secs(1));
+        let err = tool
+            .execute(json!({ "command": "sh", "args": ["-c", script] }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("timed out"));
+        let pid: libc::pid_t = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // The orphaned grandchild must be gone (allow a moment for reaping).
+        let mut alive = true;
+        for _ in 0..100 {
+            // SAFETY: signal 0 only probes for existence.
+            alive = unsafe { libc::kill(pid, 0) } == 0;
+            if !alive {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        drop(tmp);
+        assert!(!alive, "grandchild {pid} survived the timeout");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_child_sees_locale_variables() {
+        let (_tmp, root) = rooted_case();
+        std::env::set_var("LC_THEMIS_PROBE", "probe-locale");
+        let result = ShellTool::new(root, allow_all())
+            .execute(json!({ "command": "env", "args": [] }))
+            .await
+            .unwrap();
+        std::env::remove_var("LC_THEMIS_PROBE");
+        assert!(result["output"]
+            .as_str()
+            .unwrap()
+            .contains("LC_THEMIS_PROBE=probe-locale"));
     }
 
     #[test]
