@@ -1,5 +1,8 @@
 use super::*;
-use crate::types::{AutomationRepeat, AutomationSchedule};
+use crate::types::{
+    AutomationOrigin, AutomationRepeat, AutomationSchedule, ThreadRunTask, ThreadTaskAutomation,
+    ThreadTaskRun, ThreadTasks, THREAD_TASKS_RECENT_LIMIT,
+};
 use chrono::{Datelike, NaiveTime, TimeZone};
 use chrono_tz::Tz;
 
@@ -15,6 +18,16 @@ impl AppState {
     /// must exist (stored canonicalized) and `next_run_at` starts at
     /// the next calendar occurrence or now + the legacy interval.
     pub async fn create_automation(&self, input: AutomationInput) -> Result<Automation, String> {
+        self.create_automation_from(input, AutomationOrigin::User)
+            .await
+    }
+
+    /// Like [`Self::create_automation`], recording who created it.
+    pub async fn create_automation_from(
+        &self,
+        input: AutomationInput,
+        origin: AutomationOrigin,
+    ) -> Result<Automation, String> {
         self.check_automation_input(&input).await?;
         let root = canonical_project_dir(&input.project_root)?;
         let now = Utc::now();
@@ -57,6 +70,7 @@ impl AppState {
             last_run_at: None,
             next_run_at,
             run_count: 0,
+            origin,
         };
         self.inner
             .automations
@@ -121,6 +135,78 @@ impl AppState {
         drop(automations);
         self.persist_automations().await;
         Ok(updated)
+    }
+
+    /// Task feed for one chat: its live run state, the automations that
+    /// continue it, and its recent finished automation runs.
+    pub async fn get_thread_tasks(&self, thread_id: &str) -> Result<ThreadTasks, String> {
+        let running = self
+            .inner
+            .threads
+            .read()
+            .await
+            .get(thread_id)
+            .ok_or_else(|| format!("unknown thread '{thread_id}'"))?
+            .running;
+        let awaiting_approval = self
+            .pending_approvals()
+            .iter()
+            .any(|request| request.thread_id == thread_id);
+        let live: HashSet<String> = self
+            .inner
+            .automation_runs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .filter(|context| context.thread_id == thread_id)
+            .map(|context| context.automation_id.clone())
+            .collect();
+        let automations = self.inner.automations.read().await;
+        let mut targeting: Vec<ThreadTaskAutomation> = automations
+            .values()
+            .filter(|automation| automation.target_thread_id.as_deref() == Some(thread_id))
+            .map(|automation| ThreadTaskAutomation {
+                id: automation.id.clone(),
+                name: automation.name.clone(),
+                enabled: automation.enabled,
+                origin: automation.origin,
+                schedule: automation.schedule.clone(),
+                interval_mins: automation.interval_mins,
+                next_run_at: automation.next_run_at.clone(),
+                last_run_at: automation.last_run_at.clone(),
+                run_count: automation.run_count,
+                running: live.contains(&automation.id),
+            })
+            .collect();
+        targeting.sort_by(|left, right| left.next_run_at.cmp(&right.next_run_at));
+        let mut recent: Vec<ThreadTaskRun> = self
+            .list_review_items(None)
+            .await
+            .into_iter()
+            .filter(|item| item.thread_id == thread_id)
+            .map(|item| ThreadTaskRun {
+                name: automations
+                    .get(&item.automation_id)
+                    .map_or(item.title, |automation| automation.name.clone()),
+                ok: !item.summary.starts_with("failed:"),
+                seen: item.status != ReviewStatus::Pending,
+                review_id: item.id,
+                automation_id: item.automation_id,
+                finished_at: item.created_at,
+                summary: item.summary,
+            })
+            .collect();
+        recent.reverse();
+        recent.truncate(THREAD_TASKS_RECENT_LIMIT);
+        Ok(ThreadTasks {
+            thread_id: thread_id.to_owned(),
+            run: ThreadRunTask {
+                running,
+                awaiting_approval,
+            },
+            automations: targeting,
+            recent,
+        })
     }
 
     /// Deletes an automation. Threads it created stay as ordinary threads

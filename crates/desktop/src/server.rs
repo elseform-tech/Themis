@@ -632,6 +632,11 @@ pub async fn dispatch(
                 .await?
         ),
         "list_automations" => output!(state.list_automations().await),
+        "get_thread_tasks" => output!(
+            state
+                .get_thread_tasks(&arg::<String>(&args, "threadId")?)
+                .await?
+        ),
         "create_automation" => output!(
             state
                 .create_automation(arg::<AutomationInput>(&args, "input")?)
