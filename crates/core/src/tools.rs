@@ -121,21 +121,50 @@ pub struct ToolAction {
     pub command: Vec<String>,
 }
 
+/// Programs whose first non-flag argument is a true subcommand, so a grant may
+/// cover later calls with the same subcommand and different flags/arguments.
+const SUBCOMMAND_PROGRAMS: &[&str] = &[
+    "cargo", "git", "npm", "pnpm", "yarn", "go", "rustup", "pip", "pip3", "uv", "poetry",
+];
+
+/// Subcommands that execute arbitrary programs or scripts; never shared.
+const EXEC_SUBCOMMANDS: &[&str] = &[
+    "run",
+    "run-script",
+    "exec",
+    "x",
+    "dlx",
+    "npx",
+    "create",
+    "tool",
+    "generate",
+    "shell",
+    "install",
+    "add",
+];
+
 impl ToolAction {
     /// Key under which an interactive "allow for this run" grant is cached.
     ///
     /// Most tools are keyed by name. For `shell` the key is the approved
-    /// command prefix: the program plus its first argument when that argument
-    /// is a plain subcommand word (no leading `-`), otherwise the program plus
-    /// the full argument list. Approving `cargo test` therefore never approves
-    /// `cargo publish`, `rm ...` or `bash -c ...`.
+    /// command: program plus first argument only for a short list of
+    /// subcommand-style CLIs ([`SUBCOMMAND_PROGRAMS`]) whose first argument is
+    /// a real subcommand that does not run arbitrary programs. Every other
+    /// program, wrapper or interpreter is keyed by its full argv, so approving
+    /// `cargo test` covers `cargo test --lib` but not `cargo run`, `rm ...`,
+    /// `sudo rm -rf /` or `find . -delete`.
     pub fn grant_key(&self) -> String {
         if self.tool != "shell" || self.command.is_empty() {
             return self.tool.clone();
         }
-        let prefix = match self.command.get(1) {
-            Some(first) if !first.starts_with('-') => &self.command[..2],
-            _ => &self.command[..],
+        let scoped = self.command.len() >= 2
+            && SUBCOMMAND_PROGRAMS.contains(&self.command[0].as_str())
+            && !self.command[1].starts_with('-')
+            && !EXEC_SUBCOMMANDS.contains(&self.command[1].as_str());
+        let prefix = if scoped {
+            &self.command[..2]
+        } else {
+            &self.command[..]
         };
         // NUL cannot occur in argv, so the join is unambiguous.
         format!("shell\0{}", prefix.join("\0"))
@@ -1017,16 +1046,24 @@ fn kill_process_tree(child: &mut std::process::Child) {
         // SAFETY: killpg only sends a signal to the group we created.
         unsafe { libc::killpg(pgid, libc::SIGTERM) };
         let grace = Instant::now() + Duration::from_millis(300);
+        let mut reaped = false;
         while Instant::now() < grace {
             if matches!(child.try_wait(), Ok(Some(_))) {
+                reaped = true;
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        // Always follow with SIGKILL: the leader may have exited on SIGTERM
-        // while a grandchild ignored it. The group id stays valid while any
-        // member lives.
-        unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        // Follow with SIGKILL: the leader may have exited on SIGTERM while a
+        // grandchild ignored it. Skip it only when the leader is reaped and
+        // the group is empty (ESRCH), so a recycled group id is never hit.
+        // SAFETY: signal 0 only probes for existence.
+        let group_gone = reaped
+            && unsafe { libc::killpg(pgid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        if !group_gone {
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        }
     }
     #[cfg(windows)]
     {

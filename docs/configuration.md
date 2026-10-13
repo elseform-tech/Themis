@@ -228,18 +228,25 @@ arguments begin with exactly those tokens (`["cargo","test"]` matches
 `cargo test --lib`, not `cargo build`, `cargo testing` or `/usr/bin/cargo test`).
 No globbing applies. `command` is valid only with `"tool": "shell"` (exact name).
 Example allow rule: `{ "tool": "shell", "command": ["cargo", "test"], "action": "allow" }`.
-Because shell receives an argv array, a deny rule such as `["rm"]` cannot be
-bypassed by shell syntax, but an absolute path or a wrapper (`bash -c`) is a
-different program; deny wrappers you do not want explicitly.
+Allow and ask rules match the program token exactly (`/bin/echo` or a project-local
+`./echo` does not match `["echo"]`, so an allow rule never widens). Deny rules also
+match the program by basename, lowercased on macOS/Windows and without
+`.exe`/`.cmd`/`.bat` on Windows, so `["rm"]` denies `rm`, `/bin/rm`, `./rm` and `RM`.
+Wrappers (`env`, `sudo`, `command`, `busybox`, `xargs`, `bash -c`) still bypass
+deny rules: this is a tool policy, not a sandbox; deny the wrappers you do not want.
 
 Project approval configuration may add deny rules only (including `command` denies). Those restrictions are
 evaluated ahead of user rules; a project cannot grant itself access. Explicit
 run overrides are caller-supplied policy. An interactive **Allow for this run** grant is
-cached within the run and cannot override a deny rule. Grants are keyed by tool and
-risk, except for `shell`: the key is the program plus its first argument when that
-argument does not start with `-` (so approving `cargo test` covers `cargo test --lib`
-but not `cargo publish` or `rm`), and the program plus its full argument list
-otherwise (so `bash -c ...` grants are exact).
+cached within the run and cannot override a deny rule. Grants are keyed by the
+action's grant key: the tool name (plus risk for configured policy) for most tools.
+For `shell` the key is program plus first argument only for subcommand-style CLIs
+(`cargo`, `git`, `npm`, `pnpm`, `yarn`, `go`, `rustup`, `pip`, `pip3`, `uv`, `poetry`)
+whose first argument is a non-flag subcommand other than an executing one (`run`,
+`run-script`, `exec`, `x`, `dlx`, `npx`, `create`, `tool`, `generate`, `shell`,
+`install`, `add`). So approving `cargo test` covers `cargo test --lib` but not
+`cargo publish` or `cargo run`. Every other program, wrapper and interpreter
+(`find`, `sudo`, `env`, `ssh`, `bash -c`, ...) is keyed by its full argv.
 Unattended CLI `ask` requests deny; use explicit policy or an interactive client.
 
 YOLO bypasses harness approval gates, filesystem root restrictions, skill tool

@@ -65,10 +65,11 @@ impl ApprovalPolicy {
                         action.tool.starts_with(prefix)
                     });
                 matches
-                    && rule
-                        .command
-                        .as_ref()
-                        .is_none_or(|prefix| command_has_prefix(&action.command, prefix))
+                    && rule.command.as_ref().is_none_or(|prefix| {
+                        command_has_prefix(&action.command, prefix)
+                            || (rule.action == PolicyAction::Deny
+                                && command_has_prefix_normalized(&action.command, prefix))
+                    })
                     && rule
                         .risk
                         .as_ref()
@@ -81,6 +82,39 @@ impl ApprovalPolicy {
 /// not `cargo testing`, `/usr/bin/cargo test` or an empty command.
 pub fn command_has_prefix(command: &[String], prefix: &[String]) -> bool {
     !prefix.is_empty() && command.len() >= prefix.len() && command[..prefix.len()] == *prefix
+}
+/// Normalized program name: basename, lowercased on macOS/Windows
+/// (case-insensitive file systems), `.exe`/`.cmd`/`.bat` stripped on Windows.
+fn normalize_program(program: &str) -> String {
+    let base = program
+        .rsplit(|c| c == '/' || (cfg!(windows) && c == '\\'))
+        .next()
+        .unwrap_or(program);
+    let mut name = if cfg!(any(target_os = "macos", windows)) {
+        base.to_lowercase()
+    } else {
+        base.to_owned()
+    };
+    if cfg!(windows) {
+        for ext in [".exe", ".cmd", ".bat"] {
+            if let Some(stem) = name.strip_suffix(ext) {
+                name = stem.to_owned();
+                break;
+            }
+        }
+    }
+    name
+}
+/// Prefix match with the program token normalized on both sides. Used only for
+/// deny rules so `/bin/rm`, `./rm` and `RM` (on case-insensitive systems) are
+/// still denied by `["rm"]`; allow/ask rules stay exact so they never widen.
+fn command_has_prefix_normalized(command: &[String], prefix: &[String]) -> bool {
+    match (command.split_first(), prefix.split_first()) {
+        (Some((program, rest)), Some((first, wanted))) => {
+            normalize_program(program) == normalize_program(first) && rest.starts_with(wanted)
+        }
+        _ => false,
+    }
 }
 fn risk_name(risk: RiskLevel) -> &'static str {
     match risk {
@@ -970,6 +1004,18 @@ mod tests {
         assert_eq!(decide(&["cargo"]), PolicyAction::Ask);
         assert_eq!(decide(&["/bin/echo", "x"]), PolicyAction::Ask);
         assert_eq!(decide(&["rm", "-rf", "x"]), PolicyAction::Deny);
+        // Deny rules also catch path-qualified spellings of the program...
+        assert_eq!(decide(&["/bin/rm", "x"]), PolicyAction::Deny);
+        assert_eq!(decide(&["./rm"]), PolicyAction::Deny);
+        // ...but allow rules never widen: a local ./echo is not `echo`.
+        assert_eq!(decide(&["./echo", "hi"]), PolicyAction::Ask);
+        assert_eq!(decide(&["/bin/echo"]), PolicyAction::Ask);
+        // Wrappers still bypass deny rules (tool policy, not a sandbox).
+        assert_eq!(decide(&["env", "rm", "x"]), PolicyAction::Ask);
+        #[cfg(any(target_os = "macos", windows))]
+        assert_eq!(decide(&["RM", "x"]), PolicyAction::Deny);
+        #[cfg(windows)]
+        assert_eq!(decide(&["rm.exe", "x"]), PolicyAction::Deny);
         // A command rule never matches a tool that carries no argv.
         let mut other = shell_action(&[]);
         other.tool = "git".into();
@@ -1026,6 +1072,23 @@ mod tests {
         // Flag-first calls are keyed by their full argv.
         assert_ne!(key(&["bash", "-c", "ls"]), key(&["bash", "-c", "rm x"]));
         assert_eq!(key(&["ls"]), key(&["ls"]));
+        // Only subcommand-style CLIs share a key across their arguments.
+        assert_eq!(key(&["cargo", "test", "--lib"]), key(&["cargo", "test"]));
+        assert_ne!(
+            key(&["find", ".", "-name", "x"]),
+            key(&["find", ".", "-delete"])
+        );
+        assert_ne!(
+            key(&["sudo", "rm", "foo"]),
+            key(&["sudo", "rm", "-rf", "/"])
+        );
+        assert_ne!(key(&["env", "X=1", "rm"]), key(&["env", "X=1", "ls"]));
+        assert_ne!(
+            key(&["cargo", "run", "--", "a"]),
+            key(&["cargo", "run", "--", "b"])
+        );
+        assert_ne!(key(&["npm", "exec", "a"]), key(&["npm", "exec", "b"]));
+        assert_ne!(key(&["ssh", "host", "ls"]), key(&["ssh", "host", "rm"]));
         let mut git = shell_action(&["status"]);
         git.tool = "git".into();
         assert_eq!(git.grant_key(), "git");
