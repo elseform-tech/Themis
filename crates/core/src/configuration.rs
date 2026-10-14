@@ -1139,10 +1139,7 @@ mod tests {
         );
         assert_eq!(key(&["git", "reset"]), key(&["git", "reset", "HEAD", "f"]));
         assert_eq!(key(&["git", "branch", "-d", "x"]), key(&["git", "branch"]));
-        assert_eq!(
-            key(&["cargo", "publish", "--dry-run"]).contains("--dry-run"),
-            true
-        );
+        assert!(key(&["cargo", "publish", "--dry-run"]).contains("--dry-run"));
         for (safe, danger) in [
             (vec!["git", "push"], vec!["git", "push", "--force"]),
             (
