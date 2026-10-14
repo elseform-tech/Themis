@@ -87,7 +87,9 @@ const KNOWN_KINDS: [&str; 4] = ["original", "original_exchange", "navigation", "
 pub struct RecallArgs {
     /// Keywords or a phrase.
     #[serde(default)]
-    #[input(description = "Keywords or exact phrase (empty only with around)")]
+    #[input(
+        description = "2-5 distinctive keywords or an exact phrase from the passage you need, not the whole question (empty only with around)"
+    )]
     pub query: String,
     /// Hits to return.
     #[serde(default)]
