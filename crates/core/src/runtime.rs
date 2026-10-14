@@ -639,7 +639,7 @@ async fn run_task_with_evidence_inner(
         let defer_for_short_reply = turn == 1
             && !forced
             && calibrated_now > semantic_threshold
-            && calibrated_now <= input_budget
+            && calibrated_now.saturating_add(forecast) <= input_budget
             && SHORT_REPLY_TURN.try_with(|short| *short).unwrap_or(false);
         if defer_for_short_reply {
             crate::context_metrics::activity("compaction_deferred_short_reply");
@@ -1542,14 +1542,18 @@ fn effective_context_budget(requested: usize) -> usize {
 tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
 tokio::task_local! { static SHORT_REPLY_TURN: bool; }
 
-/// Longest new user message, in characters, that counts as a short conversational reply.
+/// Longest new user message, in characters, that can count as a short conversational reply.
 pub const SHORT_REPLY_MAX_CHARS: usize = 200;
 
-/// Whether a new user message is short enough that a checkpoint can wait for the next
-/// substantive turn. Attachments always make a turn substantive.
+/// Whether a new user message is a short greeting, thanks or farewell with no task in it, so a
+/// checkpoint can wait for the next substantive turn. Short task messages ("fix the auth bug",
+/// "run the tests"), bare acknowledgements and anything with attachments are not.
 pub fn is_short_reply(text: &str, has_attachments: bool) -> bool {
     let text = text.trim();
-    !has_attachments && !text.is_empty() && text.chars().count() <= SHORT_REPLY_MAX_CHARS
+    !has_attachments
+        && !text.is_empty()
+        && text.chars().count() <= SHORT_REPLY_MAX_CHARS
+        && crate::social::is_social_request(text)
 }
 
 /// Marks the run's first request as a short reply so semantic compaction may wait while the
@@ -2457,7 +2461,12 @@ fn validate_checkpoint(text: &str) -> anyhow::Result<()> {
     // model keeps only what the runtime cannot record. Older five-section
     // checkpoints contain these headings in order and remain valid.
     // Checkpoints written with a "Parked work:" section use four; older ones use three.
-    let headings: &[&str] = if text.to_ascii_lowercase().contains("parked work:") {
+    let has_parked_heading = text.lines().any(|line| {
+        line.trim_start()
+            .to_ascii_lowercase()
+            .starts_with("parked work:")
+    });
+    let headings: &[&str] = if has_parked_heading {
         &[
             "goal/constraints:",
             "unresolved work:",
@@ -2699,6 +2708,14 @@ async fn execute_call(
 #[doc(hidden)]
 pub mod fuzzing {
     use super::*;
+
+    /// Social-message detection and recall terms for arbitrary UI text.
+    pub fn social_request(text: &str) -> (bool, Vec<String>) {
+        (
+            crate::social::is_social_request(text),
+            crate::social::content_terms(text),
+        )
+    }
 
     /// Restores `history` as an earlier assistant turn (possibly a checkpoint
     /// with ledger blocks), adds one tool call returning `output`, and renders
@@ -6336,14 +6353,19 @@ mod checkpoint_section_tests {
     #[test]
     fn four_section_form_requires_order_and_content() {
         assert!(validate_checkpoint(
-            "Goal/constraints: g. Unresolved work: u. Parked work: . Next action: n."
+            "Goal/constraints: g.\nUnresolved work: u.\nParked work: .\nNext action: n."
         )
         .is_err());
         assert!(validate_checkpoint(
-            "Goal/constraints: g. Parked work: p. Unresolved work: u. Next action: n."
+            "Goal/constraints: g.\nParked work: p.\nUnresolved work: u.\nNext action: n."
         )
         .is_err());
-        assert!(validate_checkpoint("Goal/constraints: g. Parked work: p.").is_err());
+        assert!(validate_checkpoint("Goal/constraints: g.\nParked work: p.").is_err());
+        // The phrase inside prose is not a heading: the three-section form applies.
+        assert!(validate_checkpoint(
+            "Goal/constraints: keep the parked work: trip. Unresolved work: u. Next action: n."
+        )
+        .is_ok());
     }
 }
 
