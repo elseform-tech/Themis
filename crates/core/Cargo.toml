@@ -36,3 +36,7 @@ required-features = ["eval"]
 [[test]]
 name = "compaction_eval"
 required-features = ["eval"]
+
+[[example]]
+name = "longform_eval"
+required-features = ["eval"]
