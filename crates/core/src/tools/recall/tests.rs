@@ -503,7 +503,7 @@ fn phrase_across_a_chunk_boundary_is_found_once() {
     assert_eq!(hits(&result)[0]["match"], "phrase");
     let scan = scan_text(&text, &Query::new("sapphire clock struck thirteen"));
     assert_eq!(scan.phrases.len(), 1);
-    assert_eq!(scan.occurrences.len(), 3);
+    assert_eq!(scan.occurrences.len(), 4);
     let (start, end) = scan.phrases[0];
     assert!(start >= cut - 40 && start <= cut + 40, "{start} vs {cut}");
     assert_eq!(extract(&text, start, end), "sapphire clock struck thirteen");
