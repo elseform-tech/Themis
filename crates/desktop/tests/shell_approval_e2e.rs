@@ -188,3 +188,133 @@ async fn allow_for_this_run_grant_is_scoped_to_the_approved_command() {
     assert!(prompts[1].contains("touch"), "{prompts:?}");
     assert!(project.join("other.txt").exists());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn allowing_git_push_does_not_allow_a_forced_push_unattended() {
+    if !common::git_available() {
+        return;
+    }
+    let (_repo, project) = common::init_repo();
+    let remote = tempfile::tempdir().unwrap();
+    common::git(remote.path(), &["init", "-q", "--bare"]);
+    common::git(
+        &project,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    let provider = mount_shell_script(vec![
+        vec!["git", "push", "origin", "HEAD:refs/heads/plain"],
+        vec!["git", "push", "--force", "origin", "HEAD:refs/heads/forced"],
+        vec!["git", "push", "origin", "+HEAD:refs/heads/plus"],
+    ])
+    .await;
+    common::use_mock_llm(&state, &provider).await;
+    let server = Server::bind(state, dir.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let root = project.to_str().unwrap();
+    let rules =
+        r#"{"approval":{"rules":[{"tool":"shell","command":["git","push"],"action":"allow"}]}}"#;
+    cli_call(
+        dir.path(),
+        "save_runtime_configuration",
+        json!({"scope":"user","projectRoot":root,"json":rules}),
+    );
+    let thread = cli_call(
+        dir.path(),
+        "create_thread",
+        json!({"projectRoot":root,"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let sent = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(dir.path())
+        .args(["thread", "send", id, "push three branches"])
+        .stdin(std::process::Stdio::null())
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        sent.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sent.stderr)
+    );
+    let has_branch = |name: &str| {
+        std::process::Command::new("git")
+            .args(["rev-parse", "--verify", "-q", &format!("refs/heads/{name}")])
+            .current_dir(remote.path())
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(has_branch("plain"), "the allowed plain push must run");
+    assert!(
+        !has_branch("forced"),
+        "--force must not ride on the git push allow rule"
+    );
+    assert!(
+        !has_branch("plus"),
+        "a +refspec force push must not ride on the allow rule"
+    );
+    assert!(String::from_utf8_lossy(&sent.stderr).contains("Tool approval denied"));
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn allowing_git_checkout_does_not_allow_discarding_local_edits_unattended() {
+    if !common::git_available() {
+        return;
+    }
+    let (_repo, project) = common::init_repo();
+    std::fs::write(project.join("README.md"), "precious local edit\n").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    let provider = mount_shell_script(vec![
+        vec!["git", "checkout", "-b", "feature"],
+        vec!["git", "checkout", "--", "README.md"],
+        vec!["git", "checkout", "."],
+    ])
+    .await;
+    common::use_mock_llm(&state, &provider).await;
+    let server = Server::bind(state, dir.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let root = project.to_str().unwrap();
+    let rules = r#"{"approval":{"rules":[{"tool":"shell","command":["git","checkout"],"action":"allow"}]}}"#;
+    cli_call(
+        dir.path(),
+        "save_runtime_configuration",
+        json!({"scope":"user","projectRoot":root,"json":rules}),
+    );
+    let thread = cli_call(
+        dir.path(),
+        "create_thread",
+        json!({"projectRoot":root,"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let sent = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(dir.path())
+        .args(["thread", "send", id, "switch branch and revert README"])
+        .stdin(std::process::Stdio::null())
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        sent.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sent.stderr)
+    );
+    let branch = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&branch.stdout).trim(), "feature");
+    assert_eq!(
+        std::fs::read_to_string(project.join("README.md")).unwrap(),
+        "precious local edit\n",
+        "checkout -- / . must not discard edits on a plain checkout allow rule"
+    );
+    assert!(String::from_utf8_lossy(&sent.stderr).contains("Tool approval denied"));
+    task.abort();
+}
