@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ThreadEventEnvelope } from "../lib/types";
+import type { ApprovalRequest, ThreadEventEnvelope } from "../lib/types";
 import { AppProvider, useApp } from "./store";
 
 const backend = vi.hoisted(() => ({
   status: vi.fn(),
   event: null as ((event: ThreadEventEnvelope) => void) | null,
   reconnect: null as (() => void) | null,
+  approval: null as ((request: ApprovalRequest) => void) | null,
+  expired: null as ((expired: { thread_id: string; approval_id: string }) => void) | null,
   automations: vi.fn(async () => [] as unknown[]),
 }));
 
@@ -32,7 +34,14 @@ vi.mock("../lib/tauri", () => ({
     backend.reconnect = callback;
     return () => { backend.reconnect = null; };
   },
-  onApprovalRequest: async () => () => {},
+  onApprovalRequest: async (callback: typeof backend.approval) => {
+    backend.approval = callback;
+    return () => { backend.approval = null; };
+  },
+  onApprovalExpired: async (callback: typeof backend.expired) => {
+    backend.expired = callback;
+    return () => { backend.expired = null; };
+  },
   onReviewItemAdded: async () => () => {},
   onThreadChanged: async () => () => {},
 }));
@@ -100,4 +109,17 @@ it("reloads automations when the agent finishes a manage_automations call", asyn
   expect(screen.getByText("none")).toBeInTheDocument();
   act(() => backend.event?.(envelope("manage_automations")));
   await screen.findByText("By agent");
+});
+
+it("removes an expired approval dialog when the backend reports the expiry", async () => {
+  function Pending() { const { state } = useApp(); return <output>{state.approvals.map(item => item.approval_id).join(",") || "no dialogs"}</output>; }
+  render(<AppProvider><Readiness /><Pending /></AppProvider>);
+  await waitFor(() => expect(backend.expired).toBeTypeOf("function"));
+  await waitFor(() => expect(backend.approval).toBeTypeOf("function"));
+  const request: ApprovalRequest = { thread_id: "t", approval_id: "a1", tool: "shell", summary: "run", risk: "execute" };
+  act(() => backend.approval?.(request));
+  await screen.findByText("a1");
+  act(() => backend.expired?.({ thread_id: "t", approval_id: "a1" }));
+  await screen.findByText("no dialogs");
+  expect(screen.getByText("Approval expired — the action was skipped")).toBeInTheDocument();
 });

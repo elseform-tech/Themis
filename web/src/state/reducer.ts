@@ -167,6 +167,7 @@ export type AppAction =
   | { type: "review/updated"; review: ReviewItem }
   | { type: "approval/enqueued"; request: ApprovalRequest }
   | { type: "approval/dequeued"; approvalId: string }
+  | { type: "approval/expired"; approvalId: string }
   | { type: "settings/loaded"; settings: Settings }
   | { type: "settings/patched"; settings: Settings }
   | { type: "secrets/loaded"; status: SecretStatus }
@@ -256,6 +257,9 @@ export function newId(prefix: string): string {
 export function resetIds(): void {
   nextId = 0;
 }
+
+/** Fixed note shown when an approval timed out and its action was skipped. */
+export const APPROVAL_EXPIRED_NOTE = "Approval expired — the action was skipped";
 
 export function pushToast(
   state: AppState,
@@ -554,6 +558,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
     }
     case "thread/running-loaded": return setThreadRunning(state, action.threadId, action.running);
     case "approval/loaded": return { ...state, approvals: action.requests };
+    case "approval/expired": {
+      // The backend already denied it after the wait ran out: drop the stale dialog and say so once.
+      if (!state.approvals.some(approval => approval.approval_id === action.approvalId)) return state;
+      const next = { ...state, approvals: state.approvals.filter(approval => approval.approval_id !== action.approvalId) };
+      return pushToast(next, APPROVAL_EXPIRED_NOTE, "warning");
+    }
     case "thread/synced": {
       const threads = state.threadsByProject[action.projectRoot] ?? [];
       return {
