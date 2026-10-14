@@ -1,0 +1,30 @@
+{
+  "turns": [
+    {
+      "id": "hi",
+      "message": "hi",
+      "kind": "greeting",
+      "social": true
+    },
+    {
+      "id": "thanks",
+      "message": "thanks!",
+      "kind": "greeting",
+      "social": true
+    },
+    {
+      "id": "nihao",
+      "message": "你好",
+      "kind": "greeting",
+      "social": true
+    },
+    {
+      "id": "howdy",
+      "message": "hey, how's it going?",
+      "kind": "greeting",
+      "social": true
+    }
+  ],
+  "markers": "(?i)lexer|scan_ident|unicode_ident|tokenizer|unicode-xid|docs/lexer|failing test|refactor",
+  "max_chars": 300
+}

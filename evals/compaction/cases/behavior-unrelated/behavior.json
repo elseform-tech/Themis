@@ -1,0 +1,33 @@
+{
+  "turns": [
+    {
+      "id": "capital",
+      "message": "What's the capital of Australia?",
+      "kind": "unrelated",
+      "social": false,
+      "must_match": [
+        "(?i)canberra"
+      ]
+    },
+    {
+      "id": "ounces",
+      "message": "Quick one: how many ounces are in a pound?",
+      "kind": "unrelated",
+      "social": false,
+      "must_match": [
+        "\\b16\\b"
+      ]
+    },
+    {
+      "id": "spelling",
+      "message": "How do you spell 'necessary'?",
+      "kind": "unrelated",
+      "social": false,
+      "must_match": [
+        "(?i)necessary"
+      ]
+    }
+  ],
+  "markers": "(?i)importer|orders_2019|rejects\\.csv|customer_id|sqlite|readme|legacy",
+  "max_chars": 500
+}
