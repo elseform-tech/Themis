@@ -54,7 +54,23 @@ impl Default for ApprovalPolicy {
     }
 }
 impl ApprovalPolicy {
+    /// First matching rule decides. `recall` reads the same saved evidence that
+    /// `read_file` can open, so a deny that covers `read_file` also denies it.
     pub fn decision(&self, action: &ToolAction) -> PolicyAction {
+        let decision = self.rule_decision(action);
+        if action.tool == "recall" && decision != PolicyAction::Deny {
+            let mirrored = ToolAction {
+                tool: "read_file".into(),
+                ..action.clone()
+            };
+            if self.rule_decision(&mirrored) == PolicyAction::Deny {
+                return PolicyAction::Deny;
+            }
+        }
+        decision
+    }
+
+    fn rule_decision(&self, action: &ToolAction) -> PolicyAction {
         self.rules
             .iter()
             .find(|rule| {
@@ -1148,6 +1164,44 @@ mod tests {
                 prop_assert_eq!(action.grant_key(), action.grant_key());
             }
         }
+    }
+
+    #[test]
+    fn a_read_file_deny_also_denies_recall() {
+        let action = |tool: &str| ToolAction {
+            command: Vec::new(),
+            tool: tool.into(),
+            summary: String::new(),
+            risk: RiskLevel::Read,
+        };
+        let deny_read_file = resolve(
+            Some(r#"{"approval":{"rules":[{"tool":"read_file","action":"deny"}]}}"#),
+            None,
+            None,
+        )
+        .unwrap()
+        .config
+        .approval;
+        assert_eq!(
+            deny_read_file.decision(&action("recall")),
+            PolicyAction::Deny
+        );
+        let deny_recall = resolve(
+            Some(r#"{"approval":{"rules":[{"tool":"recall","action":"deny"}]}}"#),
+            None,
+            None,
+        )
+        .unwrap()
+        .config
+        .approval;
+        assert_eq!(deny_recall.decision(&action("recall")), PolicyAction::Deny);
+        assert_ne!(
+            deny_recall.decision(&action("read_file")),
+            PolicyAction::Deny
+        );
+        // Defaults keep recall a no-prompt read.
+        let defaults = ApprovalPolicy::default();
+        assert_eq!(defaults.decision(&action("recall")), PolicyAction::Allow);
     }
 
     #[test]

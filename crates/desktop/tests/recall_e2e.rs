@@ -202,3 +202,64 @@ async fn cli_recall_returns_attachment_original_coordinates_without_approval() {
         .unwrap_or(false);
     assert!(!leftover, "a server process was left running");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_denied_read_file_withdraws_recall_and_the_prompt_falls_back() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"approval":{"rules":[{"tool":"read_file","action":"deny"}]}}"#,
+    )
+    .unwrap();
+    let provider = MockServer::start().await;
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let sink = seen.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            sink.lock().unwrap().push(request.body_json().unwrap());
+            ResponseTemplate::new(200).set_body_json(
+                json!({"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}),
+            )
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    cli(
+        data.path(),
+        "send_message",
+        json!({"threadId":id,"text":"hello"}),
+    );
+    let (done, _) = finish(&mut events, id).await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    let body = seen.lock().unwrap()[0].clone();
+    let names: Vec<&str> = body["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"read_file"));
+    assert!(!names.contains(&"recall"), "{names:?}");
+    let system = body["messages"][0]["content"].as_str().unwrap();
+    assert!(!system.contains("`recall`"), "{system}");
+    assert!(system.contains("search them with read_file"));
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}

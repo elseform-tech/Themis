@@ -325,14 +325,27 @@ impl AppState {
             .into_iter()
             .map(std::path::PathBuf::from)
             .collect();
-        tools.push(Box::new(themis_core::tools::recall::RecallTool::new(
-            themis_core::tools::recall::RecallScope {
-                evidence_dir: evidence_directory.clone(),
-                attachments,
-                attachment_root: Some(attachment_root),
-                project_root: snapshot.work_root.canonicalize().ok(),
-            },
-        )));
+        // A tool every call to which would be denied is not advertised; the prompt then
+        // falls back to the read_file pointer. YOLO bypasses rules.
+        let recall_probe = themis_core::tools::ToolAction {
+            command: Vec::new(),
+            tool: "recall".into(),
+            summary: String::new(),
+            risk: themis_core::tools::RiskLevel::Read,
+        };
+        let recall_denied = !yolo
+            && run_configuration.approval.decision(&recall_probe)
+                == themis_core::configuration::PolicyAction::Deny;
+        if !recall_denied {
+            tools.push(Box::new(themis_core::tools::recall::RecallTool::new(
+                themis_core::tools::recall::RecallScope {
+                    evidence_dir: evidence_directory.clone(),
+                    attachments,
+                    attachment_root: Some(attachment_root),
+                    project_root: snapshot.work_root.canonicalize().ok(),
+                },
+            )));
+        }
         let state = self.clone();
         let thread_id = thread_id.to_owned();
         let run_id = run_id.to_owned();
