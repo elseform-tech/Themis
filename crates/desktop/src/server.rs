@@ -177,6 +177,12 @@ impl EventSink for BroadcastSink {
             .send(json!({"name": "approval-request", "payload": request}));
     }
 
+    fn emit_approval_expired(&self, expired: &crate::types::ApprovalExpired) {
+        let _ = self
+            .tx
+            .send(json!({"name": "approval-expired", "payload": expired}));
+    }
+
     fn emit_review_item(&self, item: &ReviewItem) {
         let _ = self
             .tx

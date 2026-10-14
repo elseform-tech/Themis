@@ -169,22 +169,30 @@ impl AppState {
             .with_timeout(std::time::Duration::from_secs(u64::from(
                 snapshot.approval_timeout_seconds,
             )))
-            .with_read_approval(true),
+            .with_read_approval(true)
+            .with_unattended(snapshot.automation_run),
         );
+        // "Allow in this chat" grants persist for the chat: loaded now, extended
+        // by this run's answers, and inherited by later runs (including the
+        // chat's automations).
+        let grants = self.chat_grants_for(thread_id);
         // Management tools evaluate with this run's captured mode and policy and
-        // ask the user through the raw interactive hook (no run-scoped grant cache).
+        // ask the user through the raw interactive hook; chat grants are checked
+        // and extended explicitly.
         let check_approval = RunApproval {
             mode: snapshot.approval_mode,
             policy: run_configuration.approval.clone(),
+            grants: Arc::clone(&grants),
             interactive: Arc::new(AuditedApprovals {
                 inner: hook.clone(),
                 context: diagnostic_context.clone(),
             }),
         };
-        let approvals = themis_core::configuration::configured_hook(
+        let approvals = themis_core::configuration::configured_hook_with_grants(
             snapshot.approval_mode,
             run_configuration.approval.clone(),
             hook,
+            grants,
         );
         let approvals: Arc<dyn ApprovalHook> = Arc::new(AuditedApprovals {
             inner: approvals,
@@ -237,7 +245,13 @@ impl AppState {
                 match themis_core::diagnostics::ACTIVE
                     .scope(
                         diagnostic_context.clone(),
-                        self.mcp_tools(&snapshot.work_root, plugin, name, approvals.clone()),
+                        self.mcp_tools(
+                            &snapshot.work_root,
+                            plugin,
+                            name,
+                            approvals.clone(),
+                            (!yolo).then_some(&run_configuration.approval),
+                        ),
                     )
                     .await
                 {

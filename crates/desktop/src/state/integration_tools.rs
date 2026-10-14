@@ -12,12 +12,13 @@ use themis_core::tools::{
 };
 
 /// The approval mode and policy a run captured when it started, plus the
-/// interactive hook (no grant cache) used to ask about a check command.
+/// interactive hook used to ask about a check command, and the chat's grants.
 #[derive(Clone)]
 pub(super) struct RunApproval {
     pub(super) mode: ApprovalMode,
     pub(super) policy: ApprovalPolicy,
     pub(super) interactive: Arc<dyn ApprovalHook>,
+    pub(super) grants: Arc<themis_core::chat_grants::ChatGrants>,
 }
 
 impl AppState {
@@ -44,6 +45,7 @@ impl AppState {
             mode,
             policy,
             interactive: approvals.clone(),
+            grants: self.chat_grants_for(&thread_id),
         };
         self.integration_management_tools_for_run(approvals, project, thread_id, run)
     }
@@ -318,20 +320,21 @@ impl ManagementTool {
             CheckPolicy::Deny => Err("check_command is denied by the approval rules".to_owned()),
             CheckPolicy::Allow => Ok(CheckGrant::Allowed),
             CheckPolicy::Ask => {
-                let decision = self.run.interactive.approve(&ToolAction {
-                    display: None,
-                    command: argv.clone(),
-                    tool: "shell".to_owned(),
-                    summary: format!(
-                        "watch check command (runs every {} min until the watch ends): {}",
-                        input.interval_mins,
-                        argv.join(" ")
-                    ),
-                    risk: themis_core::tools::RiskLevel::Execute,
-                });
+                let mut action = super::automation::check_action(argv);
+                if self.run.grants.covers(&action) {
+                    return Ok(CheckGrant::Allowed);
+                }
+                action.summary = format!(
+                    "watch check command (runs every {} min until the watch ends)",
+                    input.interval_mins
+                );
+                let decision = self.run.interactive.approve(&action);
                 if decision == themis_core::tools::Approval::Deny {
                     Err("The user did not approve the check command, so the watch was not saved. Retry without check_command (read the file yourself on each run), or ask the user to allow this exact command.".to_owned())
                 } else {
+                    if decision == themis_core::tools::Approval::AllowAlways {
+                        self.run.grants.remember(&action);
+                    }
                     Ok(CheckGrant::Approved)
                 }
             }

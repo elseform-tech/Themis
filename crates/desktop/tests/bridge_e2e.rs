@@ -43,6 +43,7 @@ async fn drive_run(
     let outcome = tokio::time::timeout(RUN_TIMEOUT, async {
         while let Some(event) = rx.recv().await {
             match event {
+                TestEvent::Expired(expired) => panic!("unexpected expiry: {expired:?}"),
                 TestEvent::Approval(request) => {
                     assert_eq!(request.thread_id, thread_id);
                     state

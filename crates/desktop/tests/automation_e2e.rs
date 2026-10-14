@@ -88,6 +88,7 @@ async fn drive_one_run(state: &AppState, rx: &mut UnboundedReceiver<TestEvent>) 
     let (thread_id, run_id) = tokio::time::timeout(RUN_TIMEOUT, async {
         loop {
             match rx.recv().await.expect("event stream open") {
+                TestEvent::Expired(expired) => panic!("unexpected expiry: {expired:?}"),
                 TestEvent::Approval(request) => {
                     state
                         .approve_action(
@@ -261,6 +262,7 @@ async fn set_thread_skills_rejects_busy_threads() {
             .expect("event before deadline")
             .expect("stream open")
         {
+            TestEvent::Expired(expired) => panic!("unexpected expiry: {expired:?}"),
             TestEvent::Approval(request) => {
                 let busy = state
                     .set_thread_skills(thread.id.clone(), vec![skill.id.clone()])
@@ -603,6 +605,7 @@ async fn wait_for_approval_id(rx: &mut UnboundedReceiver<TestEvent>) -> String {
     tokio::time::timeout(RUN_TIMEOUT, async {
         loop {
             match rx.recv().await.expect("event stream open") {
+                TestEvent::Expired(expired) => panic!("unexpected expiry: {expired:?}"),
                 TestEvent::Approval(request) => return request.approval_id,
                 TestEvent::Thread(_) => continue,
                 TestEvent::Review(item) => panic!("unexpected review: {item:?}"),

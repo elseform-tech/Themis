@@ -51,12 +51,15 @@ impl From<themis_core::tools::RiskLevel> for RiskLevel {
     }
 }
 
-/// Approval outcome (`ApprovalDecision` in types.ts: `once|always|deny`).
+/// Approval outcome (`ApprovalDecision` in types.ts: `once|chat|deny`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ApprovalDecision {
     Once,
-    Always,
+    /// Allow now and for every later run in this chat ("Allow in this chat").
+    /// `always` is the pre-chat-grant spelling and means the same.
+    #[serde(alias = "always")]
+    Chat,
     Deny,
 }
 
@@ -66,7 +69,7 @@ impl ApprovalDecision {
     pub const fn core_approval(self) -> themis_core::tools::Approval {
         match self {
             Self::Once => themis_core::tools::Approval::AllowOnce,
-            Self::Always => themis_core::tools::Approval::AllowAlways,
+            Self::Chat => themis_core::tools::Approval::AllowAlways,
             Self::Deny => themis_core::tools::Approval::Deny,
         }
     }
@@ -76,7 +79,7 @@ impl From<CoreApprovalDecision> for ApprovalDecision {
     fn from(value: CoreApprovalDecision) -> Self {
         match value {
             CoreApprovalDecision::AllowOnce => Self::Once,
-            CoreApprovalDecision::AllowAlways => Self::Always,
+            CoreApprovalDecision::AllowAlways => Self::Chat,
             CoreApprovalDecision::Deny => Self::Deny,
         }
     }
@@ -257,14 +260,30 @@ pub struct ApprovalRequest {
     pub tool: String,
     pub summary: String,
     pub risk: RiskLevel,
-    /// What "allow for this run" covers for `shell`, as raw argv tokens (the
+    /// What "allow in this chat" covers for `shell`, as raw argv tokens (the
     /// UI must render them as data); absent for tools granted per tool name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_scope: Option<themis_core::tools::GrantScope>,
+    /// False for destructive actions: they ask every time, so the dialog
+    /// offers only "Allow once" and "Deny".
+    #[serde(default = "default_grantable")]
+    pub grantable: bool,
     /// Structured command for shell/git approvals; the UI shows this instead
     /// of the joined `summary`, which can be spoofed by argument contents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<themis_core::tools::CommandDisplay>,
+}
+
+const fn default_grantable() -> bool {
+    true
+}
+
+/// `approval-expired` payload: the dialog for `approval_id` timed out and was
+/// denied, so the UI removes it (`ApprovalExpired` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovalExpired {
+    pub thread_id: String,
+    pub approval_id: String,
 }
 
 /// One diff line kind (`DiffLineKind` in types.ts).
@@ -932,6 +951,8 @@ impl UpdateStatus {
 pub const THREAD_EVENT_NAME: &str = "thread-event";
 /// Tauri event name carrying [`ApprovalRequest`] payloads.
 pub const APPROVAL_REQUEST_NAME: &str = "approval-request";
+/// Event name for [`ApprovalExpired`].
+pub const APPROVAL_EXPIRED_NAME: &str = "approval-expired";
 /// Tauri event name carrying [`ReviewItem`] payloads.
 pub const REVIEW_ITEM_NAME: &str = "review-item-added";
 /// Tauri event name carrying [`ThreadChange`] payloads.
@@ -1030,7 +1051,7 @@ mod tests {
             assert_eq!(to_value(&event), expected, "{event:?}");
         }
         // The remaining decision spellings.
-        assert_eq!(to_value(&ApprovalDecision::Always), json!("always"));
+        assert_eq!(to_value(&ApprovalDecision::Chat), json!("chat"));
         assert_eq!(to_value(&ApprovalDecision::Deny), json!("deny"));
         assert_eq!(
             serde_json::from_value::<ApprovalDecision>(json!("once")).unwrap(),
@@ -1080,7 +1101,7 @@ mod tests {
         );
         for (core, wire) in [
             (CoreApprovalDecision::AllowOnce, ApprovalDecision::Once),
-            (CoreApprovalDecision::AllowAlways, ApprovalDecision::Always),
+            (CoreApprovalDecision::AllowAlways, ApprovalDecision::Chat),
             (CoreApprovalDecision::Deny, ApprovalDecision::Deny),
         ] {
             assert_eq!(
@@ -1145,6 +1166,7 @@ mod tests {
                 argv: vec!["cargo".to_owned(), "test".to_owned()],
                 covers_further_args: true,
             }),
+            grantable: true,
             command: None,
         };
         assert_eq!(
@@ -1156,7 +1178,18 @@ mod tests {
                 "summary": "run",
                 "risk": "execute",
                 "grant_scope": {"argv": ["cargo", "test"], "covers_further_args": true},
+                "grantable": true,
             })
+        );
+        // Requests from before chat grants had no flag and stay grantable.
+        let legacy: ApprovalRequest = serde_json::from_value(json!({
+            "thread_id": "t", "approval_id": "a", "tool": "shell", "summary": "run", "risk": "execute"
+        }))
+        .unwrap();
+        assert!(legacy.grantable);
+        assert_eq!(
+            serde_json::from_value::<ApprovalDecision>(json!("always")).unwrap(),
+            ApprovalDecision::Chat
         );
     }
 

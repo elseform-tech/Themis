@@ -8,7 +8,7 @@ use std::time::Duration;
 use themis_core::tools::{Approval, ApprovalHook, RiskLevel as CoreRisk, ToolAction};
 
 use crate::sink::EventSink;
-use crate::types::{ApprovalRequest, RiskLevel};
+use crate::types::{ApprovalExpired, ApprovalRequest, RiskLevel};
 
 /// How long [`DesktopApprovalHook::approve`] waits for a UI decision before
 /// denying (~300s per the bridge contract).
@@ -34,7 +34,10 @@ pub type PendingMap = Arc<Mutex<HashMap<String, PendingApproval>>>;
 /// - On non-git projects everything else is denied outright (read-only mode).
 /// - Otherwise an [`ApprovalRequest`] is emitted on the sink and `approve`
 ///   blocks (with [`APPROVAL_TIMEOUT`]) for [`crate::state::AppState::approve_action`]
-///   to deliver the decision. Timeout, expiry, and channel loss all deny.
+///   to deliver the decision. Timeout, expiry, and channel loss all deny; a
+///   timeout also emits an `approval-expired` event so the UI drops the dialog.
+/// - Destructive actions cannot be granted for the chat: a "chat" answer is
+///   downgraded to allow-once, and unattended runs deny them without asking.
 ///
 /// The block runs inside [`tokio::task::block_in_place`] when called on a
 /// Tokio worker so the wait never stalls the executor; Tauri's async runtime
@@ -47,6 +50,7 @@ pub struct DesktopApprovalHook {
     pending: PendingMap,
     timeout: Duration,
     confirm_reads: bool,
+    unattended: bool,
     test_decisions: Option<Arc<Mutex<VecDeque<Approval>>>>,
 }
 
@@ -65,6 +69,7 @@ impl DesktopApprovalHook {
             pending,
             timeout: APPROVAL_TIMEOUT,
             confirm_reads: false,
+            unattended: false,
             test_decisions: None,
         }
     }
@@ -79,6 +84,14 @@ impl DesktopApprovalHook {
     #[must_use]
     pub fn with_read_approval(mut self, confirm_reads: bool) -> Self {
         self.confirm_reads = confirm_reads;
+        self
+    }
+
+    /// Marks a run nobody is watching (an automation): actions that always
+    /// need a fresh answer (destructive ones) are denied instead of asked.
+    #[must_use]
+    pub fn with_unattended(mut self, unattended: bool) -> Self {
+        self.unattended = unattended;
         self
     }
 
@@ -104,6 +117,10 @@ impl ApprovalHook for DesktopApprovalHook {
         if !self.is_git && action.risk != CoreRisk::Read && !integration {
             return Approval::Deny;
         }
+        let grantable = action.grantable();
+        if self.unattended && !grantable {
+            return Approval::Deny;
+        }
         if let Some(queue) = &self.test_decisions {
             return queue
                 .lock()
@@ -119,6 +136,7 @@ impl ApprovalHook for DesktopApprovalHook {
             summary: action.summary.clone(),
             risk: RiskLevel::from(action.risk),
             grant_scope: action.grant_scope(),
+            grantable,
             command: action.display.clone(),
         };
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -143,7 +161,18 @@ impl ApprovalHook for DesktopApprovalHook {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&approval_id);
-        decision.unwrap_or(Approval::Deny)
+        match decision {
+            // Only grantable actions may be remembered for the chat.
+            Some(Approval::AllowAlways) if !grantable => Approval::AllowOnce,
+            Some(decision) => decision,
+            None => {
+                self.sink.emit_approval_expired(&ApprovalExpired {
+                    thread_id: self.thread_id.clone(),
+                    approval_id,
+                });
+                Approval::Deny
+            }
+        }
     }
 }
 
@@ -312,13 +341,97 @@ mod tests {
             hook.approve(&action("shell", CoreRisk::Execute)),
             Approval::Deny
         );
-        // The dialog was raised, then the stale entry was removed.
+        // The dialog was raised, the stale entry removed and the UI told so.
         let event = rx.try_recv().expect("approval request emitted");
-        assert!(matches!(event, TestEvent::Approval(_)), "{event:?}");
+        let TestEvent::Approval(request) = event else {
+            panic!("{event:?}");
+        };
+        let event = rx.try_recv().expect("expiry emitted");
+        let TestEvent::Expired(expired) = event else {
+            panic!("{event:?}");
+        };
+        assert_eq!(expired.approval_id, request.approval_id);
+        assert_eq!(expired.thread_id, "thread-1");
         assert!(pending
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .is_empty());
+    }
+
+    #[test]
+    fn answered_approvals_do_not_emit_an_expiry() {
+        let (hook, mut rx) = hook_with_sink(true);
+        let hook = hook.with_timeout(Duration::from_secs(30));
+        let pending = Arc::clone(&hook.pending);
+        let handle = std::thread::spawn(move || hook.approve(&action("shell", CoreRisk::Execute)));
+        let TestEvent::Approval(request) = rx.blocking_recv().unwrap() else {
+            panic!("expected a request");
+        };
+        pending
+            .lock()
+            .unwrap()
+            .remove(&request.approval_id)
+            .unwrap()
+            .sender
+            .send(Approval::Deny)
+            .unwrap();
+        assert_eq!(handle.join().unwrap(), Approval::Deny);
+        assert!(rx.try_recv().is_err(), "no expiry for an answered dialog");
+    }
+
+    fn destructive() -> ToolAction {
+        let argv: Vec<String> = ["git", "push", "--force"].map(str::to_owned).to_vec();
+        ToolAction {
+            display: None,
+            command: argv,
+            tool: "shell".into(),
+            summary: "force push".into(),
+            risk: CoreRisk::Execute,
+        }
+    }
+
+    #[test]
+    fn destructive_requests_are_not_grantable_and_ignore_chat_answers() {
+        let (hook, mut rx) = hook_with_sink(true);
+        let hook = hook.with_timeout(Duration::from_secs(30));
+        let pending = Arc::clone(&hook.pending);
+        let handle = std::thread::spawn(move || hook.approve(&destructive()));
+        let TestEvent::Approval(request) = rx.blocking_recv().unwrap() else {
+            panic!("expected a request");
+        };
+        assert!(!request.grantable);
+        pending
+            .lock()
+            .unwrap()
+            .remove(&request.approval_id)
+            .unwrap()
+            .sender
+            .send(Approval::AllowAlways)
+            .unwrap();
+        assert_eq!(handle.join().unwrap(), Approval::AllowOnce);
+        let (hook, mut rx) = hook_with_sink(true);
+        let hook = hook.with_timeout(Duration::from_millis(5));
+        hook.approve(&action("shell", CoreRisk::Execute));
+        let TestEvent::Approval(request) = rx.try_recv().unwrap() else {
+            panic!("expected a request");
+        };
+        assert!(request.grantable);
+    }
+
+    #[test]
+    fn unattended_runs_deny_destructive_actions_without_asking() {
+        let (hook, mut rx) = hook_with_sink(true);
+        let hook = hook
+            .with_unattended(true)
+            .with_timeout(Duration::from_millis(5));
+        assert_eq!(hook.approve(&destructive()), Approval::Deny);
+        assert!(rx.try_recv().is_err(), "nobody to ask");
+        // Ordinary actions still ask (and expire when nobody answers).
+        assert_eq!(
+            hook.approve(&action("shell", CoreRisk::Execute)),
+            Approval::Deny
+        );
+        assert!(matches!(rx.try_recv(), Ok(TestEvent::Approval(_))));
     }
 
     #[test]
@@ -337,7 +450,7 @@ mod tests {
         let request = loop {
             match rx.blocking_recv().expect("event stream open") {
                 TestEvent::Approval(request) => break request,
-                TestEvent::Thread(_) | TestEvent::Review(_) => continue,
+                TestEvent::Thread(_) | TestEvent::Review(_) | TestEvent::Expired(_) => continue,
             }
         };
         assert_eq!(request.thread_id, "thread-1");
@@ -373,7 +486,7 @@ mod tests {
         let request = loop {
             match rx.recv().await.expect("event stream open") {
                 TestEvent::Approval(request) => break request,
-                TestEvent::Thread(_) | TestEvent::Review(_) => continue,
+                TestEvent::Thread(_) | TestEvent::Review(_) | TestEvent::Expired(_) => continue,
             }
         };
         pending

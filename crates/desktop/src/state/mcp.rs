@@ -191,9 +191,17 @@ impl AppState {
         plugin: &Plugin,
         name: &str,
         approvals: Arc<dyn ApprovalHook>,
+        startup_rules: Option<&themis_core::configuration::ApprovalPolicy>,
     ) -> anyhow::Result<connections::McpTools> {
         let server = resolved_server(plugin, name, root);
-        connections::authorize_start(&plugin.skill_id(name), &server, approvals.as_ref())?;
+        // Enabling a connection is the consent to start it: the run asks
+        // nothing here, and only an explicit deny rule stops startup. YOLO
+        // callers pass no rules.
+        if let Some(policy) = startup_rules {
+            if connections::startup_denied(&plugin.skill_id(name), &server, policy)? {
+                anyhow::bail!("MCP startup denied");
+            }
+        }
         let entry = self.mcp_entry(root, plugin, name, server, false, false);
         let session = entry.ready().await.map_err(anyhow::Error::msg)?;
         session.tools(&plugin.skill_id(name), approvals)

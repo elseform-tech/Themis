@@ -7,8 +7,9 @@
 use tauri::{AppHandle, Emitter};
 
 use crate::types::{
-    ApprovalRequest, ReviewItem, ThreadChange, ThreadEventEnvelope, APPROVAL_REQUEST_NAME,
-    REVIEW_ITEM_NAME, THREAD_CHANGED_NAME, THREAD_EVENT_NAME,
+    ApprovalExpired, ApprovalRequest, ReviewItem, ThreadChange, ThreadEventEnvelope,
+    APPROVAL_EXPIRED_NAME, APPROVAL_REQUEST_NAME, REVIEW_ITEM_NAME, THREAD_CHANGED_NAME,
+    THREAD_EVENT_NAME,
 };
 
 /// Delivers thread, approval, and review events to whoever is listening.
@@ -17,6 +18,8 @@ pub trait EventSink: Send + Sync {
     fn emit_thread_event(&self, envelope: &ThreadEventEnvelope);
     /// Emits an `approval-request` dialog request.
     fn emit_approval_request(&self, request: &ApprovalRequest);
+    /// Emits an `approval-expired` payload: the dialog timed out and was denied.
+    fn emit_approval_expired(&self, expired: &ApprovalExpired);
     /// Emits a `review-item-added` payload.
     fn emit_review_item(&self, item: &ReviewItem);
     /// Emits a `thread-changed` payload.
@@ -47,6 +50,10 @@ impl EventSink for TauriSink {
         let _ = self.app.emit(APPROVAL_REQUEST_NAME, request);
     }
 
+    fn emit_approval_expired(&self, expired: &ApprovalExpired) {
+        let _ = self.app.emit(APPROVAL_EXPIRED_NAME, expired);
+    }
+
     fn emit_review_item(&self, item: &ReviewItem) {
         let _ = self.app.emit(REVIEW_ITEM_NAME, item);
     }
@@ -63,6 +70,8 @@ pub enum TestEvent {
     Thread(ThreadEventEnvelope),
     /// An `approval-request` payload.
     Approval(ApprovalRequest),
+    /// An `approval-expired` payload.
+    Expired(ApprovalExpired),
     /// A `review-item-added` payload.
     Review(ReviewItem),
 }
@@ -91,6 +100,10 @@ impl EventSink for ChannelSink {
 
     fn emit_approval_request(&self, request: &ApprovalRequest) {
         let _ = self.tx.send(TestEvent::Approval(request.clone()));
+    }
+
+    fn emit_approval_expired(&self, expired: &ApprovalExpired) {
+        let _ = self.tx.send(TestEvent::Expired(expired.clone()));
     }
 
     fn emit_review_item(&self, item: &ReviewItem) {
@@ -124,6 +137,7 @@ mod tests {
             summary: "run".to_owned(),
             risk: RiskLevel::Execute,
             grant_scope: None,
+            grantable: true,
             command: None,
         });
         sink.emit_review_item(&ReviewItem {
