@@ -259,3 +259,62 @@ async fn allowing_git_push_does_not_allow_a_forced_push_unattended() {
     assert!(String::from_utf8_lossy(&sent.stderr).contains("Tool approval denied"));
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn allowing_git_checkout_does_not_allow_discarding_local_edits_unattended() {
+    if !common::git_available() {
+        return;
+    }
+    let (_repo, project) = common::init_repo();
+    std::fs::write(project.join("README.md"), "precious local edit\n").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    let provider = mount_shell_script(vec![
+        vec!["git", "checkout", "-b", "feature"],
+        vec!["git", "checkout", "--", "README.md"],
+        vec!["git", "checkout", "."],
+    ])
+    .await;
+    common::use_mock_llm(&state, &provider).await;
+    let server = Server::bind(state, dir.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let root = project.to_str().unwrap();
+    let rules = r#"{"approval":{"rules":[{"tool":"shell","command":["git","checkout"],"action":"allow"}]}}"#;
+    cli_call(
+        dir.path(),
+        "save_runtime_configuration",
+        json!({"scope":"user","projectRoot":root,"json":rules}),
+    );
+    let thread = cli_call(
+        dir.path(),
+        "create_thread",
+        json!({"projectRoot":root,"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let sent = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(dir.path())
+        .args(["thread", "send", id, "switch branch and revert README"])
+        .stdin(std::process::Stdio::null())
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        sent.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sent.stderr)
+    );
+    let branch = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&branch.stdout).trim(), "feature");
+    assert_eq!(
+        std::fs::read_to_string(project.join("README.md")).unwrap(),
+        "precious local edit\n",
+        "checkout -- / . must not discard edits on a plain checkout allow rule"
+    );
+    assert!(String::from_utf8_lossy(&sent.stderr).contains("Tool approval denied"));
+    task.abort();
+}

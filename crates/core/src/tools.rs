@@ -187,11 +187,14 @@ impl ToolAction {
     }
 }
 
-/// `true` when a flag token matches one of `longs` (`--name` or `--name=value`)
-/// or, as a short-flag cluster such as `-fd`, contains one of `shorts`.
+/// `true` when a flag token names one of `longs` (`--name` or `--name=value`)
+/// or, as a short-flag cluster such as `-fd`, contains one of `shorts`. Git
+/// accepts unambiguous long-option prefixes (`--forc`), so any non-empty prefix
+/// of a listed long option counts: over-flagging only costs an extra prompt.
 fn has_flag(arg: &str, longs: &[&str], shorts: &str) -> bool {
     if let Some(long) = arg.strip_prefix("--") {
-        longs.contains(&long.split('=').next().unwrap_or(""))
+        let name = long.split('=').next().unwrap_or("");
+        !name.is_empty() && longs.iter().any(|candidate| candidate.starts_with(name))
     } else if let Some(cluster) = arg.strip_prefix('-') {
         cluster.chars().any(|c| shorts.contains(c))
     } else {
@@ -216,18 +219,37 @@ fn first_subcommand<'a>(args: &'a [String], value_flags: &[&str]) -> Option<(usi
     None
 }
 
+/// Non-flag arguments before a `--` separator.
+fn positionals(args: &[String]) -> impl Iterator<Item = &str> {
+    args.iter()
+        .map(String::as_str)
+        .take_while(|arg| *arg != "--")
+        .filter(|arg| !arg.starts_with('-'))
+}
+
 /// Whether a `git` argv (without the program name) is a destructive,
 /// history-rewriting or working-tree-discarding variant that must not share a
 /// grant or an allow rule with its harmless siblings.
 fn git_destructive(args: &[String]) -> bool {
     let Some((at, sub)) = first_subcommand(
         args,
-        &["-C", "-c", "--git-dir", "--work-tree", "--namespace"],
+        &[
+            "-C",
+            "-c",
+            "--git-dir",
+            "--work-tree",
+            "--namespace",
+            "--config-env",
+            "--super-prefix",
+            "--attr-source",
+        ],
     ) else {
         return false;
     };
     let rest = &args[at + 1..];
     let any = |longs: &[&str], shorts: &str| rest.iter().any(|a| has_flag(a, longs, shorts));
+    let has_separator = rest.iter().any(|a| a == "--");
+    let first_positional = positionals(rest).next();
     match sub {
         "push" => {
             any(
@@ -245,27 +267,58 @@ fn git_destructive(args: &[String]) -> bool {
                 .any(|a| a.starts_with(':') || (a.starts_with('+') && a.len() > 1))
         }
         "clean" => any(&["force"], "fdxX"),
-        "reset" => any(&["hard", "merge"], ""),
-        "checkout" | "switch" => any(&["force", "discard-changes", "force-create"], "fBC"),
+        "reset" => {
+            // A revision moves the branch (and `--hard` discards edits); only a
+            // bare reset, `HEAD`, `--keep` or pathspecs after `--` are safe.
+            any(&["hard", "merge"], "") || positionals(rest).any(|a| a != "HEAD")
+        }
+        // A pathspec checkout (`.`, or anything after `--`) overwrites local edits.
+        "checkout" => {
+            any(&["force", "discard-changes", "force-create"], "fBC")
+                || has_separator
+                || positionals(rest).any(|a| a == ".")
+        }
+        "switch" => any(&["force", "discard-changes", "force-create"], "fBC"),
         "restore" => {
             // Restoring the worktree overwrites local edits; only a pure
             // `--staged` restore leaves them alone.
-            let staged = any(&["staged"], "S");
+            let staged = rest.iter().any(|a| {
+                a.strip_prefix("--").is_some_and(|n| {
+                    n.len() >= 3 && "staged".starts_with(n.split('=').next().unwrap_or(""))
+                }) || (a.starts_with('-') && !a.starts_with("--") && a.contains('S'))
+            });
             let worktree = any(&["worktree"], "W");
             !staged || worktree
         }
         "branch" => any(&["force"], "DfMC"),
-        "rebase" => true,
+        "tag" => any(&["delete", "force"], "df"),
+        "commit" => any(&["amend"], ""),
+        "stash" => matches!(first_positional, Some("drop" | "clear")),
+        "reflog" => matches!(first_positional, Some("expire" | "delete")),
+        "worktree" => matches!(first_positional, Some("remove")) && any(&["force"], "f"),
+        "gc" => any(&["prune"], ""),
+        "rebase" | "update-ref" | "prune" | "filter-branch" | "filter-repo" => true,
         _ => false,
     }
 }
 
+/// `npm`-family words that publish, retract or deprecate a package. npm accepts
+/// unambiguous command abbreviations (`npm publi`), so a prefix of at least
+/// three characters matches.
+fn registry_word(arg: &str) -> bool {
+    ["publish", "unpublish", "deprecate"]
+        .iter()
+        .any(|word| arg.len() >= 3 && word.starts_with(arg))
+}
+
 /// Whether `command` (program followed by arguments) is a destructive or
 /// irreversible variant of a known CLI: `git push --force`, `git clean -fd`,
-/// `git reset --hard`, forced checkout/switch/restore, `git branch -D`,
-/// `git rebase`, and `publish`/`yank` style registry commands. Used to give
-/// such calls their own grant key and to keep broad allow rules (for example
-/// `["git","push"]`) from silently covering them.
+/// `git reset --hard`, `git checkout -- .`, forced checkout/switch/restore,
+/// `git branch -D`, `git stash drop`, `git rebase`, `git commit --amend`, and
+/// `publish`/`yank` style registry commands (found even behind value-taking
+/// options such as `pnpm --filter pkg publish`, `npm -w x publish` or
+/// `yarn npm publish`). Used to give such calls their own grant key and to keep
+/// broad allow rules (for example `["git","push"]`) from silently covering them.
 pub fn is_destructive_variant(command: &[String]) -> bool {
     let Some(program) = command.first() else {
         return false;
@@ -276,11 +329,10 @@ pub fn is_destructive_variant(command: &[String]) -> bool {
     let args = &command[1..];
     match name {
         "git" => git_destructive(args),
-        "npm" | "pnpm" | "yarn" => first_subcommand(args, &[])
-            .is_some_and(|(_, sub)| matches!(sub, "publish" | "unpublish" | "deprecate")),
-        "cargo" => {
-            first_subcommand(args, &[]).is_some_and(|(_, sub)| matches!(sub, "publish" | "yank"))
-        }
+        // Scanning every positional also covers values of options like
+        // `--filter pkg` and wrappers like `yarn workspace pkg npm publish`.
+        "npm" | "pnpm" | "yarn" => positionals(args).any(registry_word),
+        "cargo" => positionals(args).any(|arg| matches!(arg, "publish" | "yank")),
         _ => false,
     }
 }
@@ -1286,6 +1338,15 @@ pub(crate) fn spawn_failure(program: &str, args: &[String], error: &std::io::Err
     let Some(head) = parts.next() else {
         return base;
     };
+    // A path that merely contains spaces (`/Applications/My App/bin/x`) is not
+    // a command line: only suggest a split when the first token can be a
+    // program, i.e. it is not a path-like prefix that does not exist.
+    if head.contains(['/', '\\']) && !Path::new(head).exists() {
+        return format!(
+            "{base}. If this path contains spaces, check that it exists and is spelled exactly; \
+             'command' must be only the program (arguments go in 'args', one element each)"
+        );
+    }
     let argv: Vec<&str> = parts.chain(args.iter().map(String::as_str)).collect();
     let rendered = serde_json::to_string(&argv).unwrap_or_else(|_| "[]".into());
     format!(
@@ -1775,7 +1836,7 @@ impl ToolRuntime for GitTool {
         let destructive = is_destructive_variant(&command);
         let risk = match subcommand {
             _ if self.unrestricted => RiskLevel::Execute,
-            "checkout" | "branch" if destructive => RiskLevel::Destructive,
+            "checkout" | "branch" | "commit" if destructive => RiskLevel::Destructive,
             "status" | "diff" | "log" | "show" => RiskLevel::Read,
             "add" | "commit" | "checkout" | "branch" => RiskLevel::Write,
             other => {
@@ -2679,18 +2740,18 @@ mod tests {
         );
         // Existing args stay after the split tokens.
         let err = tool
-            .execute(json!({"command": "/usr/bin/which python3", "args": ["-a"]}))
+            .execute(json!({"command": "which python3", "args": ["-a"]}))
             .await
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains(r#"command: "/usr/bin/which", args: ["python3","-a"]"#),
+            err.contains(r#"command: "which", args: ["python3","-a"]"#),
             "{err}"
         );
         // Never auto-split: approval saw the exact argv that was sent.
         let seen = hook.seen();
         assert_eq!(seen[0].command, vec!["python3 -m http.server 8798"]);
-        assert_eq!(seen[1].command, vec!["/usr/bin/which python3", "-a"]);
+        assert_eq!(seen[1].command, vec!["which python3", "-a"]);
     }
 
     #[test]
@@ -2700,6 +2761,10 @@ mod tests {
         assert!(!spawn_failure("nonexistent", &[], &missing).contains("Retry"));
         assert!(!spawn_failure("a b", &[], &denied).contains("Retry"));
         assert!(spawn_failure("a  b\tc", &[], &missing).contains(r#"args: ["b","c"]"#));
+        // A missing path with spaces is not a command line: no wrong split.
+        let spaced = spawn_failure("/Applications/My App/bin/x", &[], &missing);
+        assert!(!spaced.contains("Retry exactly"), "{spaced}");
+        assert!(spaced.contains("contains spaces"), "{spaced}");
     }
 
     mod spawn_failure_props {
@@ -2715,7 +2780,9 @@ mod tests {
                 let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
                 let message = spawn_failure(&program, &args, &missing);
                 prop_assert!(message.starts_with("failed to start"));
-                if program.contains(char::is_whitespace) && program.split_whitespace().next().is_some() {
+                if program.contains(char::is_whitespace)
+                    && program.split_whitespace().next().is_some_and(|head| !head.contains(['/', '\\']))
+                {
                     let tail = message.split("args: ").nth(1).expect("hint present");
                     let argv: Vec<String> = serde_json::from_str(tail).unwrap();
                     let mut expected: Vec<String> =
@@ -3325,6 +3392,8 @@ mod tests {
             vec!["checkout", "main"],
             vec!["checkout", "-f", "main"],
             vec!["branch", "-D", "x"],
+            vec!["checkout", "--", "."],
+            vec!["commit", "--amend", "--no-edit"],
         ] {
             let _ = tool.execute(json!({ "args": args })).await;
         }
@@ -3334,7 +3403,9 @@ mod tests {
             .await
             .is_err());
         let seen = hook.seen();
-        assert_eq!(seen.len(), 4);
+        assert_eq!(seen.len(), 6);
+        assert_eq!(seen[4].risk, RiskLevel::Destructive);
+        assert_eq!(seen[5].risk, RiskLevel::Destructive);
         assert_eq!(seen[0].risk, RiskLevel::Read);
         assert_eq!(seen[1].risk, RiskLevel::Write);
         assert_eq!(seen[2].risk, RiskLevel::Destructive);

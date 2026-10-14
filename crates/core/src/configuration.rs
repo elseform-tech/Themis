@@ -1137,7 +1137,7 @@ mod tests {
             key(&["git", "clean", "-n"]),
             key(&["git", "clean", "--dry-run"])
         );
-        assert_eq!(key(&["git", "reset"]), key(&["git", "reset", "HEAD", "f"]));
+        assert_eq!(key(&["git", "reset"]), key(&["git", "reset", "HEAD"]));
         assert_eq!(key(&["git", "branch", "-d", "x"]), key(&["git", "branch"]));
         assert!(key(&["cargo", "publish", "--dry-run"]).contains("--dry-run"));
         for (safe, danger) in [
@@ -1218,6 +1218,132 @@ mod tests {
             "status".into(),
             "-f".into()
         ]));
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn unflagged_work_and_history_discarding_git_variants_are_destructive() {
+        for danger in [
+            vec!["git", "checkout", "."],
+            vec!["git", "checkout", "--", "src/a.rs"],
+            vec!["git", "checkout", "main", "--", "a"],
+            vec!["git", "stash", "drop"],
+            vec!["git", "stash", "clear"],
+            vec!["git", "-C", "d", "stash", "drop", "stash@{1}"],
+            vec!["git", "reset", "HEAD~3"],
+            vec!["git", "reset", "--soft", "abc123"],
+            vec!["git", "commit", "--amend"],
+            vec!["git", "commit", "-m", "x", "--amend"],
+            vec!["git", "tag", "-d", "v1"],
+            vec!["git", "tag", "--delete", "v1"],
+            vec!["git", "update-ref", "-d", "refs/heads/x"],
+            vec!["git", "reflog", "expire", "--expire=now", "--all"],
+            vec!["git", "reflog", "delete", "HEAD@{1}"],
+            vec!["git", "gc", "--prune=now"],
+            vec!["git", "prune"],
+            vec!["git", "filter-branch", "--all"],
+            vec!["git", "worktree", "remove", "-f", "w"],
+            vec!["git", "worktree", "remove", "--force", "w"],
+        ] {
+            assert!(is_destructive_variant(&argv(&danger)), "{danger:?}");
+        }
+        for harmless in [
+            vec!["git", "checkout", "main"],
+            vec!["git", "checkout", "-b", "feature"],
+            vec!["git", "stash"],
+            vec!["git", "stash", "list"],
+            vec!["git", "reset"],
+            vec!["git", "reset", "HEAD"],
+            vec!["git", "reset", "--keep"],
+            vec!["git", "reset", "--", "file"],
+            vec!["git", "commit", "-m", "x"],
+            vec!["git", "tag", "v1"],
+            vec!["git", "reflog"],
+            vec!["git", "gc"],
+            vec!["git", "worktree", "list"],
+            vec!["git", "worktree", "remove", "w"],
+        ] {
+            assert!(!is_destructive_variant(&argv(&harmless)), "{harmless:?}");
+        }
+        // The run-grant scenario: approving `git checkout main` never covers `git checkout -- .`.
+        let key = |parts: &[&str]| shell_action(parts).grant_key();
+        assert_ne!(
+            key(&["git", "checkout", "main"]),
+            key(&["git", "checkout", "--", "."])
+        );
+    }
+
+    #[test]
+    fn git_long_option_abbreviations_are_still_destructive() {
+        for danger in [
+            vec!["git", "reset", "--har"],
+            vec!["git", "push", "--mir"],
+            vec!["git", "push", "--dele", "origin", "x"],
+            vec!["git", "push", "--forc", "origin"],
+            vec!["git", "push", "--force-with", "origin"],
+            vec!["git", "clean", "--forc"],
+            vec!["git", "checkout", "--discard"],
+            vec!["git", "commit", "--am"],
+            vec!["git", "branch", "--forc", "x"],
+        ] {
+            assert!(is_destructive_variant(&argv(&danger)), "{danger:?}");
+        }
+        assert!(!is_destructive_variant(&argv(&[
+            "git",
+            "push",
+            "--set-upstream"
+        ])));
+        assert!(!is_destructive_variant(&argv(&[
+            "git", "restore", "--stag", "f"
+        ])));
+    }
+
+    #[test]
+    fn package_publish_is_found_behind_value_taking_options_and_abbreviations() {
+        for danger in [
+            vec!["pnpm", "--filter", "pkg", "publish"],
+            vec!["pnpm", "-F", "pkg", "publish"],
+            vec!["npm", "-w", "x", "publish"],
+            vec!["npm", "--workspace", "x", "publish"],
+            vec!["npm", "--otp", "123456", "publish"],
+            vec!["npm", "--registry", "https://r.example", "unpublish", "x"],
+            vec!["npm", "publi"],
+            vec!["npm", "pub"],
+            vec!["npm", "deprec", "x", "msg"],
+            vec!["yarn", "--cwd", "pkg", "npm", "publish"],
+            vec!["yarn", "npm", "publish"],
+            vec!["yarn", "workspace", "pkg", "npm", "publish"],
+            vec!["cargo", "--config", "k=v", "publish"],
+            vec!["cargo", "+nightly", "publish"],
+            vec!["cargo", "-Z", "unstable-options", "yank", "x"],
+        ] {
+            assert!(is_destructive_variant(&argv(&danger)), "{danger:?}");
+        }
+        for harmless in [
+            vec!["npm", "test"],
+            vec!["npm", "-w", "x", "test"],
+            vec!["yarn", "npm", "whoami"],
+            vec!["cargo", "--config", "k=v", "build"],
+            vec!["pnpm", "--filter", "pkg", "test"],
+        ] {
+            assert!(!is_destructive_variant(&argv(&harmless)), "{harmless:?}");
+        }
+        let key = |parts: &[&str]| shell_action(parts).grant_key();
+        assert_ne!(
+            key(&["yarn", "npm", "whoami"]),
+            key(&["yarn", "npm", "publish"])
+        );
+        // git `--config-env <name>=<ENV>` takes a separate value.
+        assert!(is_destructive_variant(&argv(&[
+            "git",
+            "--config-env",
+            "a=B",
+            "push",
+            "-f"
+        ])));
     }
 
     #[test]
@@ -1355,6 +1481,36 @@ mod tests {
                 } else {
                     prop_assert_eq!(danger.grant_key(), harmless.grant_key());
                 }
+            }
+
+            #[test]
+            fn any_prefix_of_a_destructive_long_option_is_destructive(
+                case in proptest::sample::select(vec![
+                    ("push", "force"), ("push", "mirror"), ("push", "delete"),
+                    ("reset", "hard"), ("clean", "force"), ("commit", "amend"),
+                    ("branch", "force"), ("tag", "delete"), ("gc", "prune"),
+                ]),
+                len in 1usize..=8,
+            ) {
+                let (sub, long) = case;
+                let prefix = &long[..len.min(long.len())];
+                let command = vec!["git".to_string(), sub.to_string(), format!("--{prefix}")];
+                prop_assert!(is_destructive_variant(&command), "{command:?}");
+            }
+
+            #[test]
+            fn registry_publish_is_found_after_any_option_prefix(
+                tool in proptest::sample::select(vec!["npm", "pnpm", "yarn"]),
+                flags in proptest::collection::vec("-{1,2}[a-z]{1,6}", 0..4),
+                values in proptest::collection::vec("[a-z0-9=]{1,6}", 0..3),
+            ) {
+                let mut command = vec![tool.to_string()];
+                for (i, flag) in flags.iter().enumerate() {
+                    command.push(flag.clone());
+                    if let Some(value) = values.get(i) { command.push(value.clone()); }
+                }
+                command.push("publish".into());
+                prop_assert!(is_destructive_variant(&command), "{command:?}");
             }
 
             #[test]
