@@ -11,14 +11,19 @@ literal text the runtime appends (tokens are bytes/4, the runtime's own estimate
 
 | Text | main | branch | change |
 | --- | --- | --- | --- |
-| Per-request system evidence text (evidence-directory manual + shell/Python paragraph) | 3,619 B (~904 tok) | 374 B (~94 tok); 427 B in the read_file fallback when `recall` is filtered out | -3,245 B |
-| Tool definition for `recall` (name, description, schema) | 0 | 1,103 B (~276 tok) | +1.1 KB |
-| Net per request | | | -2,142 B (~-535 tok) |
-| Checkpoint "Recoverable evidence" block | 1,554 B (~388 tok) | 653 B (~163 tok) | -901 B per checkpoint |
+| Per-request system evidence text (evidence-directory manual + shell/Python paragraph) | 3,619 B (~904 tok) | 692 B (~173 tok) with `recall`; 766 B in the read_file fallback | -2,927 B (-2,853 B fallback) |
+| Tool definition for `recall` (name, description, schema) | 0 | 878 B (~220 tok) | +878 B |
+| Net per request | | | -2,049 B (~-512 tok) |
+| Checkpoint "Recoverable evidence" block | 1,554 B (~388 tok) | 728 B (~182 tok) | -826 B per checkpoint |
+
+The system text grew from the first cut (374 B) after review: it now also carries the
+staleness and tool-restriction guidance and a receipt-reopen line from the removed manual,
+and a "call recall first, say so if nothing is found" rule. The tool definition was
+trimmed (1,103 B to 878 B) to keep the net saving above 2 KB.
 
 Live confirmation from the runtime's own `context_budget` event (system section,
-estimated tokens, first request of a run): main 2,510-2,511, branch 1,698-1,701
-(about -810 tokens in the system message; the tool schema is counted separately).
+estimated tokens, first request of a run, measured before the guidance was restored): main 2,510-2,511,
+branch 1,698-1,701 (the tool schema is counted separately).
 Target (>= 2 KB less per request, net of the new tool definition) is met.
 
 ## 2. Automatic checks
@@ -101,6 +106,30 @@ Files `exploratory-*.json` use a 29 KB story. They are listed for transparency:
 - `branch-new1`, `branch-new2`: imperative wording: 5/5 each; run 1 used read_file/shell
   rather than recall (calls 13, 3, 1, 1, 1), run 2 used recall for every question (2, 1, 1, 1, 1).
 - `main-run1`: 5/5 (calls 11, 1, 2, 3, 1); `main-run2`: 3/5 (calls 6, 3, 0, 0, 4).
+
+### Follow-up runs after code review (this branch tip, 3 runs each)
+
+Review asked for a stronger "recall first" rule. Wording now says: for any question about
+the exact wording, numbers, names or quotes of earlier material, call `recall` first, answer
+only from its result, and say so if nothing is found. Same 42.8 KB scenario, `review-*.json`:
+
+| Batch | Correct | `recall` used | Answers with 0 tool calls | Valid citations |
+| --- | --- | --- | --- | --- |
+| r2 (rule + guidance, previous query description) | 10/15 | 9 | 1 | 14 |
+| r3 (plus "2-5 distinctive keywords, not the whole question" in the tool schema) | 11/15 | 3 | 3 | 14 |
+| earlier branch wording, 2 runs | 7/10 | 7 | 2 | 10 |
+| main, 2 runs | 5/10 | 0 | 4 | 4 |
+
+Honest reading: the stronger rule did not measurably reduce answers made from memory
+(3 of 15 questions in r3 made no tool call and invented quotes; r2 had 1 of 15, earlier
+branch wording 2 of 10). Correctness is about 70% on this branch in every batch versus 50% on
+main (two runs), but samples are tiny and identical-prompt runs vary from 2/5 to 5/5, so the
+difference is not statistically established. Inspecting the r2 runs showed two further effects: the
+model often passes the whole question (plus the instruction suffix of the prompt) as the query, so
+earlier copies of the question rank next to the real passage; and it can invent a name even after a
+search (for example putting an invented answer in the `around` field). The keyword hint in the schema
+did not visibly help either. No ranking change was made for this (inverse-frequency weighting
+would be the next step), and nothing in the harness forces a search before an answer.
 
 ## 4. Limits and unverified
 
