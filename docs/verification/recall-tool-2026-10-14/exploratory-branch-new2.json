@@ -1,0 +1,131 @@
+{
+  "label": "branch2",
+  "binary": "/Users/cutedandelion/Documents/ChatGPT/ThemisOS-wt-recall-tool/target/debug/themis",
+  "model": "longcat-2.5-preview-free",
+  "story_bytes": 29278,
+  "steps": [
+    [
+      "story",
+      {
+        "kind": "finished",
+        "result": "received",
+        "tools": [],
+        "checkpoints": 0,
+        "system_tokens_first_request": 1701,
+        "seconds": 5.3,
+        "stderr": ""
+      }
+    ],
+    [
+      "filler",
+      {
+        "kind": "finished",
+        "result": "logged",
+        "tools": [],
+        "checkpoints": 1,
+        "system_tokens_first_request": 1701,
+        "seconds": 10.7,
+        "stderr": ""
+      }
+    ]
+  ],
+  "questions": [
+    {
+      "kind": "finished",
+      "result": "The number painted on the keeper\u2019s cottage door was **4172**.\n\nThe sentence reads: **\u201cOn the keeper's cottage the number 4172 was painted in white on the green door.\u201d**\n\nCited original user-message text: `snapshot-1791991911522071000.jsonl`, record `1`, `/content` at character `6410`.",
+      "tools": [
+        "shell",
+        "recall"
+      ],
+      "checkpoints": 1,
+      "system_tokens_first_request": 1701,
+      "seconds": 32.5,
+      "stderr": "",
+      "question": "What number was painted on the door of the keeper's cottage in the story?",
+      "correct": true,
+      "recall_used": true,
+      "tool_calls": 2,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "The ship that ran aground was the **Marigold Tern**.\n\nThe sentence reads: **\u201cThe ship that ran aground that night was the Marigold Tern, out of Skarholm.\u201d**\n\nCited original user-message text: `snapshot-1791991911522071000.jsonl`, record `1`, `/content` at character `10751`.",
+      "tools": [
+        "recall"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1701,
+      "seconds": 10.6,
+      "stderr": "",
+      "question": "What was the name of the ship that ran aground in the story?",
+      "correct": true,
+      "recall_used": true,
+      "tool_calls": 1,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "The scarf was **saffron**.\n\nThe sentence reads: **\u201cIngrid Halvorsen left behind a saffron scarf on the lighthouse stairs.\u201d**\n\nCited original user-message text: `snapshot-1791991911522071000.jsonl`, record `1`, `/content` at character `16094`.",
+      "tools": [
+        "recall"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1701,
+      "seconds": 21.3,
+      "stderr": "",
+      "question": "What colour was the scarf that Ingrid Halvorsen left behind?",
+      "correct": true,
+      "recall_used": true,
+      "tool_calls": 1,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "The harbour toll was **83 crowns** per vessel.\n\nThe sentence reads: **\u201cThe harbour toll that season was set at 83 crowns per vessel.\u201d**\n\nCited original user-message text: `snapshot-1791991911522071000.jsonl`, record `1`, `/content` at character `21406`.",
+      "tools": [
+        "recall"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1701,
+      "seconds": 13.4,
+      "stderr": "",
+      "question": "How many crowns was the harbour toll per vessel?",
+      "correct": true,
+      "recall_used": true,
+      "tool_calls": 1,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "**Orsolya Vance** hid the brass key, and it was hidden **under the third step of the bell tower**.\n\nThe sentence reads: **\u201cOrsolya Vance hid the brass key under the third step of the bell tower.\u201d**\n\nCited original user-message text: `snapshot-1791991911522071000.jsonl`, record `1`, `/content` at character `25845`.",
+      "tools": [
+        "recall"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1701,
+      "seconds": 13.5,
+      "stderr": "",
+      "question": "Who hid the brass key, and where was it hidden?",
+      "correct": true,
+      "recall_used": true,
+      "tool_calls": 1,
+      "citation": "valid"
+    }
+  ],
+  "evidence_files": [
+    "history-source-1-7-2882a859-a2ca-4bed-b12a-28c331558229.jsonl",
+    "history-source-18-39-49bfc002-d824-49fe-9332-e50fffbbd591.jsonl",
+    "history-source-40-53-ac9a4a35-14c7-4c4e-94b0-6c29df483c24.jsonl",
+    "history-source-54-67-b68278c8-57ef-4346-b418-adf4872eea4e.jsonl",
+    "history-source-68-81-c4d326f8-e627-4997-885b-0a844edeb041.jsonl",
+    "history-source-8-17-d1b8cb9b-2977-4aeb-bdc9-5502c2db8082.jsonl",
+    "snapshot-1791991911522071000.jsonl",
+    "snapshot-1791991936289743000.jsonl",
+    "snapshot-1791991940282973000.jsonl",
+    "snapshot-1791991940290364000.jsonl",
+    "snapshot-1791991961177924000.jsonl",
+    "snapshot-1791991974939902000.jsonl",
+    "snapshot-1791991994654100000.jsonl",
+    "snapshot-1791992008949732000.jsonl"
+  ]
+}

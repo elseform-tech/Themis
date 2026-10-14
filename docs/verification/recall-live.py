@@ -47,7 +47,7 @@ def story(seed=7):
     chapters = []
     for number in range(1, 13):
         sentences = []
-        for _ in range(34):
+        for _ in range(50):
             sentences.append(
                 f"The {rng.choice(ADJ)} {rng.choice(NOUNS)} {rng.choice(VERBS)} while "
                 f"{rng.choice(NAMES)} {rng.choice(VERBS)} beside the {rng.choice(ADJ)} {rng.choice(NOUNS)}."
