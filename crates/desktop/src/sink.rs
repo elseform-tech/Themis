@@ -65,8 +65,6 @@ pub enum TestEvent {
     Approval(ApprovalRequest),
     /// A `review-item-added` payload.
     Review(ReviewItem),
-    /// A `thread-changed` payload.
-    ThreadChanged(ThreadChange),
 }
 
 /// [`EventSink`] that records events on an unbounded channel for tests.
@@ -99,9 +97,8 @@ impl EventSink for ChannelSink {
         let _ = self.tx.send(TestEvent::Review(item.clone()));
     }
 
-    fn emit_thread_changed(&self, change: &ThreadChange) {
-        let _ = self.tx.send(TestEvent::ThreadChanged(change.clone()));
-    }
+    /// Thread metadata changes are covered through the server stream tests.
+    fn emit_thread_changed(&self, _change: &ThreadChange) {}
 }
 
 #[cfg(test)]

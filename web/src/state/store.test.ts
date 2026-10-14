@@ -263,10 +263,10 @@ describe("thread lifecycle events", () => {
       envelope({ kind: "assistant_text", text: "Partial" }),
       envelope({ kind: "failed", error: "LLM request failed" }),
     ];
-    const live = events.reduce(applyThreadEvent, withThread());
+    const live = events.reduce((state, e) => applyThreadEvent(state, e), withThread());
     expect(live.messages[THREAD.id]?.[0]).toMatchObject({ text: "Partial", interrupted: "failed" });
     expect(live.toasts).toHaveLength(1);
-    const reloaded = events.reduce(applyThreadEvent, withThread());
+    const reloaded = events.reduce((state, e) => applyThreadEvent(state, e), withThread());
     expect(reloaded.messages[THREAD.id]?.map(m => m.text)).toEqual(live.messages[THREAD.id]?.map(m => m.text));
   });
 
