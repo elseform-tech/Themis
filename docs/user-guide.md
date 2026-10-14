@@ -135,6 +135,8 @@ scripts. Attach skills to a thread to scope what it may use. The list includes p
 
 Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. File reads are paged at 4,000 content characters; the agent must follow `next_offset` to read longer instructions. Large tool results are saved to disk and represented by a small receipt, so the agent can extract the relevant facts. An oversized tool result normally continues the run. Storage failures or repeated recovery can stop the current run; the chat remains available. Oversized tool arguments are rejected before execution, without partial writes. See [context limits and recovery](context-and-attachments.md).
 
+**Recalling older details.** After a chat is compacted, details that only appear in earlier messages, long tool output or attached files are not in the summary. The agent has a read-only `recall` tool that searches this chat's saved originals (never other chats) and returns short excerpts with citation coordinates; it needs no approval. Excerpts are treated as untrusted data, not instructions. If an answer needs a detail it could not find, ask for it again or attach the file. Details are in [context limits and recovery](context-and-attachments.md#the-recall-tool).
+
 - An empty allowlist means "all tools".
 - Unknown tool names are rejected. The valid names are exactly:
   `list_dir`, `read_file`, `write_file`, `copy_file`, `move_file`,
