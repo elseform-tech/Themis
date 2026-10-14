@@ -43,10 +43,18 @@ describe("adversarial input", () => {
       const start = performance.now();
       const out = plainSnippet(input);
       stripMarkdown(input);
-      expect(performance.now() - start).toBeLessThan(50);
+      expect(performance.now() - start).toBeLessThan(250);
       expect(Array.from(out).length).toBeLessThanOrEqual(90);
     });
   }
+  it("scales linearly when the cap is lifted", () => {
+    const time = (n: number, input: string) => Math.min(...[0, 1, 2].map(() => { const t = performance.now(); stripMarkdown(input.repeat(n), 1e9); return performance.now() - t; }));
+    for (const unit of ["[", "![a](", "**_", "`"]) {
+      const small = Math.max(time(10_000, unit), 1);
+      // Four times the input: linear is about 4x, quadratic about 16x; allow generous CI noise.
+      expect(time(40_000, unit)).toBeLessThan(small * 12 + 50);
+    }
+  });
   it("caps the input it processes", () => {
     expect(stripMarkdown("a".repeat(100_000)).length).toBe(4096);
   });
