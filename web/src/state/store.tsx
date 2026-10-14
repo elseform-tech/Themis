@@ -38,6 +38,7 @@ import {
   openProject,
 } from "../lib/tauri";
 import { failureMessage as describeError } from "../lib/errors";
+import { reviewToast } from "../screens/reviewFlow";
 import { readSession, writeSession } from "./session";
 import { loadPhase4Lists, restoreRecentProjects } from "./boot";
 import {
@@ -224,7 +225,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const offReview = await onReviewItemAdded((item) => {
           if (cancelled) return;
           dispatch({ type: "review/added", review: item });
-          toast(dispatch, `New review item: ${item.title}`, "info");
+          toast(dispatch, reviewToast(item), "info");
           void listAutomations().then(async automations => {
             if (cancelled) return;
             dispatch({ type: "automation/loaded", automations });

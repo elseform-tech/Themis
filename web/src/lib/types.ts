@@ -274,6 +274,9 @@ export interface ReviewItem {
   title: string;
   summary: string;
   status: ReviewStatus;
+  /** Stable automation name and origin copied onto the item when the run finished. */
+  automation_name?: string;
+  automation_origin?: AutomationOrigin;
 }
 
 export interface RunHandle {
