@@ -51,8 +51,21 @@ describe("thread event stream properties", () => {
         if (event.kind === "files_changed") reported.set(run, event.files);
         if (["finished", "incomplete", "failed"].includes(event.kind)) expected.push(reported.get(run));
       }
-      const terminal = (state.messages[THREAD.id] ?? []).filter(message => message.final || message.text.startsWith("Run failed:") || message.role === "system" && !message.checkpoint);
+      const terminal = (state.messages[THREAD.id] ?? []).filter(message => (message.final && !message.interrupted) || message.text.startsWith("Run failed:") || message.role === "system" && !message.checkpoint);
       expect(terminal.map(message => message.changedFiles)).toEqual(expected);
+    }));
+  });
+});
+
+describe("interrupted runs", () => {
+  it("never lose streamed text when a run fails or is stopped", () => {
+    fc.assert(fc.property(fc.array(fc.string({ minLength: 1 }), { minLength: 1, maxLength: 6 }), fc.boolean(), (chunks, stopped) => {
+      let state = applyThreadEvent(withThread(), { thread_id: THREAD.id, run_id: "r1", event: { kind: "started", task: "t", max_turns: 3 } }, false);
+      for (const text of chunks) state = applyThreadEvent(state, { thread_id: THREAD.id, run_id: "r1", event: { kind: "assistant_text", text } }, false);
+      state = applyThreadEvent(state, { thread_id: THREAD.id, run_id: "r1", event: { kind: "failed", error: stopped ? "Stopped by you." : "boom" } }, false);
+      const kept = (state.messages[THREAD.id] ?? []).filter(message => message.interrupted);
+      if (chunks.join("").trim() === "") expect(kept).toHaveLength(0);
+      else expect(kept.map(message => message.text)).toEqual([chunks.join("")]);
     }));
   });
 });

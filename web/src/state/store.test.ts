@@ -246,6 +246,35 @@ describe("thread lifecycle events", () => {
     expect(s.messages[THREAD.id]?.[0]?.text).toMatch(/^Stopped by you/);
   });
 
+  it("keeps the partial streamed answer when the user stops the run", () => {
+    let s = applyThreadEvent(withThread(), envelope({ kind: "started", task: "t", max_turns: 3 }));
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "Half an " }));
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "answer" }));
+    s = applyThreadEvent(s, envelope({ kind: "failed", error: "Stopped by you. Completed actions remain available for review." }));
+    const rows = s.messages[THREAD.id] ?? [];
+    expect(rows[0]).toMatchObject({ role: "assistant", text: "Half an answer", final: true, interrupted: "stopped" });
+    expect(rows[1]?.text).toMatch(/^Stopped by you/);
+    expect(s.streams[THREAD.id]).toBe("");
+  });
+
+  it("keeps the partial answer on a failure and reloads the same way from history", () => {
+    const events = [
+      envelope({ kind: "started", task: "t", max_turns: 3 }),
+      envelope({ kind: "assistant_text", text: "Partial" }),
+      envelope({ kind: "failed", error: "LLM request failed" }),
+    ];
+    const live = events.reduce(applyThreadEvent, withThread());
+    expect(live.messages[THREAD.id]?.[0]).toMatchObject({ text: "Partial", interrupted: "failed" });
+    expect(live.toasts).toHaveLength(1);
+    const reloaded = events.reduce(applyThreadEvent, withThread());
+    expect(reloaded.messages[THREAD.id]?.map(m => m.text)).toEqual(live.messages[THREAD.id]?.map(m => m.text));
+  });
+
+  it("does not add an empty answer when nothing streamed", () => {
+    const s = applyThreadEvent(withThread(), envelope({ kind: "failed", error: "Stopped by you." }));
+    expect(s.messages[THREAD.id]).toHaveLength(1);
+  });
+
   it("failed appends a system error, toasts, and clears running", () => {
     let s = withThread();
     s = applyThreadEvent(

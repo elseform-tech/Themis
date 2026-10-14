@@ -451,7 +451,15 @@ export function applyThreadEvent(
     }
     case "failed": {
       const stopped = event.error.startsWith("Stopped by you.");
-      let next = appendMessage(state, threadId, {
+      // Keep what was already streamed: the user saw it, so Stop or a failure must not discard it.
+      const partial = state.streams[threadId];
+      let next = partial?.trim()
+        ? appendMessage(state, threadId, {
+          id: newId("msg"), role: "assistant", text: partial, runId, final: true, incomplete: true,
+          interrupted: stopped ? "stopped" : "failed",
+        })
+        : state;
+      next = appendMessage(next, threadId, {
         id: newId("msg"),
         role: "system",
         text: stopped ? event.error : `Run failed: ${event.error}`,

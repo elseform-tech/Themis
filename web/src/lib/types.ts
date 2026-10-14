@@ -343,6 +343,8 @@ export interface PersistedMessage {
   model?: string;
   /** Internal handoff marker; not shown as a conversation label. */
   incomplete?: boolean;
+  /** Partial answer kept after the run was stopped by the user or failed. */
+  interrupted?: 'stopped' | 'failed';
   tool?: { name: string; ok?: boolean; output?: string };
   /** Context checkpoint divider; percentages of usable context before and after. */
   checkpoint?: { before?: number; after?: number };
