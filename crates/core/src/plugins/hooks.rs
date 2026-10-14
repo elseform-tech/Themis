@@ -78,7 +78,11 @@ pub async fn run(
     let mut definition = std::collections::hash_map::DefaultHasher::new();
     serde_json::to_string(hook)?.hash(&mut definition);
     let action = ToolAction {
-        display: None,
+        display: Some(crate::tools::CommandDisplay {
+            argv: vec![hook.command.clone()],
+            cwd: Some(root.display().to_string()),
+            background: false,
+        }),
         command: Vec::new(),
         tool: format!(
             "hook_{}_{:016x}",

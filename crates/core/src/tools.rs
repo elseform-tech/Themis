@@ -237,6 +237,43 @@ impl ToolAction {
     }
 }
 
+/// Structured command for the approval dialog, from the raw model arguments
+/// of a `shell` or `git` call; `None` for every other tool. `cwd` stays
+/// `None` when the call uses the project root.
+pub fn command_display_for_call(name: &str, args: &serde_json::Value) -> Option<CommandDisplay> {
+    match name {
+        "shell" => {
+            let argv = shell_argv(args);
+            if argv.is_empty() {
+                return None;
+            }
+            Some(CommandDisplay {
+                argv,
+                cwd: args
+                    .get("cwd")
+                    .and_then(|v| v.as_str())
+                    .filter(|cwd| !cwd.is_empty() && *cwd != ".")
+                    .map(str::to_owned),
+                background: args
+                    .get("background")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            })
+        }
+        "git" => {
+            let rest = args.get("args").and_then(|v| v.as_array())?;
+            Some(CommandDisplay {
+                argv: std::iter::once("git".to_owned())
+                    .chain(rest.iter().filter_map(|v| v.as_str()).map(str::to_owned))
+                    .collect(),
+                cwd: None,
+                background: false,
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Program and arguments of a `shell` tool call, as validated arguments or raw
 /// model JSON. Empty when the call has no usable `command`.
 pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {

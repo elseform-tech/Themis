@@ -74,7 +74,7 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
         {request.command
           ? <p className="themis-approval-summary">
               Run <TokenList argv={request.command.argv} />
-              {request.command.cwd !== undefined && <> in <TokenChip token={request.command.cwd} /></>}
+              {request.command.cwd !== undefined ? <> in <TokenChip token={request.command.cwd} /></> : " in the project root"}
               {request.command.background && " in the background"}
             </p>
           : <p className="themis-approval-summary">{request.summary}</p>}

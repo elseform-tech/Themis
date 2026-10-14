@@ -2596,7 +2596,7 @@ async fn execute_call(
         Approval::AllowOnce
     } else {
         let decision = approvals.approve(&ToolAction {
-            display: None,
+            display: crate::tools::command_display_for_call(name, &approval_args),
             tool: crate::tools::integration_approval_identity(name, &approval_args),
             summary: summary.to_owned(),
             risk: crate::tools::integration_risk(name, &approval_args)
@@ -6226,6 +6226,63 @@ mod tests {
         .await;
         assert!(result.unwrap_err().contains("approval denied"));
         assert_eq!(std::fs::read_to_string(victim).unwrap(), "keep");
+    }
+
+    /// The dialog's first prompt for a shell/git call comes from this dispatch
+    /// gate, so it must carry the exact argv (not the JSON summary).
+    #[tokio::test]
+    async fn dispatch_gate_sends_exact_argv_for_shell_and_git_calls() {
+        let seen: Arc<std::sync::Mutex<Vec<ToolAction>>> = Arc::default();
+        let recorder = {
+            let seen = Arc::clone(&seen);
+            move |action: &ToolAction| {
+                seen.lock().unwrap().push(action.clone());
+                Approval::Deny
+            }
+        };
+        let hook: Arc<dyn ApprovalHook> = Arc::new(FnHook::new(recorder));
+        let root = tempfile::tempdir().unwrap();
+        let tools = crate::tools::boxed_tools(root.path(), Arc::clone(&hook)).unwrap();
+        let caching = CachingApprovals::wrap(hook);
+        let (events, _rx) = tokio::sync::mpsc::channel(16);
+        let calls = [
+            (
+                "shell",
+                serde_json::json!({"command":"rm","args":["-rf /","x\u{202e}y"],"cwd":"sub dir","background":true}),
+            ),
+            ("shell", serde_json::json!({"command":"ls","args":["-la"]})),
+            ("git", serde_json::json!({"args":["commit","-m","a b"]})),
+            ("read_file", serde_json::json!({"file_path":"a.txt"})),
+        ];
+        for (name, args) in &calls {
+            let text = args.to_string();
+            let _ = execute_call(
+                &tools,
+                &caching,
+                name,
+                &text,
+                &summarize_call(name, &text),
+                &events,
+                &AtomicBool::new(false),
+            )
+            .await;
+        }
+        let seen = seen.lock().unwrap();
+        let display = |index: usize| seen[index].display.clone();
+        let first = display(0).expect("shell display");
+        assert_eq!(first.argv, ["rm", "-rf /", "x\u{202e}y"]);
+        assert_eq!(first.cwd.as_deref(), Some("sub dir"));
+        assert!(first.background);
+        let second = display(1).expect("shell display");
+        assert_eq!(
+            (second.argv.as_slice(), second.cwd, second.background),
+            (&["ls".to_owned(), "-la".to_owned()][..], None, false)
+        );
+        assert_eq!(
+            display(2).expect("git display").argv,
+            ["git", "commit", "-m", "a b"]
+        );
+        assert!(seen[3].display.is_none());
     }
 
     #[tokio::test]

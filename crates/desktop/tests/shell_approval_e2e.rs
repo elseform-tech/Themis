@@ -202,3 +202,62 @@ async fn allow_for_this_run_grant_is_scoped_to_the_approved_command() {
         .iter()
         .all(|s| !s.as_ref().unwrap().covers_further_args));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn approval_event_carries_the_exact_argv_not_a_joined_summary() {
+    if !common::git_available() {
+        return;
+    }
+    let (_repo, project) = common::init_repo();
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    // One argument contains a space and one a bidi override: both must survive intact.
+    let provider = mount_shell_script(vec![vec!["echo", "-rf /", "x\u{202e}y"]]).await;
+    common::use_mock_llm(&state, &provider).await;
+    let thread = state
+        .create_thread(
+            project.to_string_lossy().into_owned(),
+            ProviderKind::Go,
+            Some("test-model".to_owned()),
+        )
+        .await
+        .unwrap();
+    let (sink, mut rx) = ChannelSink::channel();
+    state
+        .send_message(Arc::new(sink), thread.id.clone(), "run it".into())
+        .await
+        .unwrap();
+    let mut requests = Vec::new();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while let Some(event) = rx.recv().await {
+            match event {
+                TestEvent::Approval(request) => {
+                    requests.push(request.clone());
+                    state
+                        .approve_action(
+                            thread.id.clone(),
+                            request.approval_id.clone(),
+                            ApprovalDecision::Once,
+                        )
+                        .await
+                        .unwrap();
+                }
+                TestEvent::Thread(envelope)
+                    if matches!(
+                        envelope.event,
+                        ThreadEvent::Finished { .. } | ThreadEvent::Failed { .. }
+                    ) =>
+                {
+                    break
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("run finished");
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    let command = requests[0].command.as_ref().expect("structured command");
+    assert_eq!(command.argv, ["echo", "-rf /", "x\u{202e}y"]);
+    assert!(!command.background);
+}

@@ -192,6 +192,13 @@ describe("command display", () => {
     expect(document.querySelectorAll(".themis-approval-escape")).toHaveLength(1);
   });
 
+  it("says the project root in words when the call has no cwd", () => {
+    setup({ ...REQUEST, tool: "shell", summary: "call `shell` with {}", command: { argv: ["ls", "-la"] } });
+    expect(summaryChips()).toEqual(["ls", "-la"]);
+    expect(screen.getByText(/in the project root/)).toBeInTheDocument();
+    expect(screen.queryByText(/call `shell` with/)).toBeNull();
+  });
+
   it("shows git commands, the background note and the 12-token cap", () => {
     setup(command(["git", "commit", "-m", "msg"], "/repo", true));
     expect(screen.getByText(/in the background/)).toBeInTheDocument();
