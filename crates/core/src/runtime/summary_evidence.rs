@@ -148,9 +148,14 @@ pub(super) const MAINTENANCE_NOTE: &str = "Reopen the immutable original for mis
 /// Only a complete, non-executable harness receipt can retain its pre-offload
 /// classification. Arbitrary operational arguments use the ordinary classifier.
 pub(super) fn recovery_call(call: &ToolCall) -> bool {
+    if call.function.name == "recall" {
+        // A recall invocation, or its result when the item is one, is a copy of saved
+        // evidence unless the result includes attachment text (see `recovery_pair`).
+        return !crate::tools::recall_result_has_attachment(&call.function.arguments);
+    }
     if !matches!(
         call.function.name.as_str(),
-        "read_file" | "list_dir" | "search_file" | "shell" | "recall"
+        "read_file" | "list_dir" | "search_file" | "shell"
     ) {
         return false;
     }
@@ -197,6 +202,14 @@ pub(super) fn recovery_call(call: &ToolCall) -> bool {
     })
 }
 
+/// Whether an invocation and its (possibly missing) result are a redundant recovery copy.
+pub(super) fn recovery_pair(call: &ToolCall, result: Option<&ToolCall>) -> bool {
+    recovery_call(call)
+        && !(call.function.name == "recall"
+            && result
+                .is_some_and(|r| crate::tools::recall_result_has_attachment(&r.function.arguments)))
+}
+
 /// Exact original-derived excerpts still need their selectors for validation.
 pub(super) fn preserve_invocation(call: &ToolCall, result: &ToolCall) -> bool {
     original_excerpt(call, result).is_some()
@@ -221,7 +234,7 @@ pub(super) fn protected_entries(messages: &[ChatMessage]) -> HashSet<(usize, usi
                         if preserve_pair {
                             protected.insert(*position);
                         }
-                        if preserve_pair || !recovery_call(call) {
+                        if preserve_pair || !recovery_pair(call, Some(result)) {
                             protected.insert((message_index, result_index));
                         }
                     } else {
@@ -594,6 +607,35 @@ mod tests {
             .iter()
             .any(|v| v["evidence_kind"] == "original_derived_excerpt"));
         assert_eq!(omitted, 0);
+    }
+
+    fn recall_pair(kind: &str) -> (ToolCall, ToolCall) {
+        let call = ToolCall {
+            id: format!("recall-{kind}"),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: "recall".into(),
+                arguments: json!({"query":"lantern"}).to_string(),
+            },
+        };
+        let mut result = call.clone();
+        result.function.arguments = json!({"hits":[{"kind":kind,"excerpt":"lantern"}]}).to_string();
+        (call, result)
+    }
+
+    #[test]
+    fn recall_hits_from_attachments_are_protected_but_saved_evidence_copies_are_reducible() {
+        let (call, result) = recall_pair("snapshot");
+        let history = messages(vec![(call, result)]);
+        assert!(!protected_entries(&history).contains(&(1, 0)));
+        let (call, result) = recall_pair("history_source");
+        assert!(!protected_entries(&messages(vec![(call, result)])).contains(&(1, 0)));
+        let (call, result) = recall_pair("attachment");
+        let history = messages(vec![(call, result)]);
+        assert!(
+            protected_entries(&history).contains(&(1, 0)),
+            "attachment text is acquired content until semantic summarization consumes it"
+        );
     }
 
     #[test]

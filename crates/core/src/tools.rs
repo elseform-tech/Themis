@@ -469,12 +469,23 @@ impl ToolRuntime for GatedTool {
 }
 
 pub(crate) fn context_recovery_call(name: &str, arguments: &str) -> bool {
-    // `recall` only ever returns copies of saved originals.
-    name == "recall"
-        || (matches!(name, "read_file" | "list_dir" | "shell" | "search_file")
-            && arguments.replace('\\', "/").contains(".themis/context/"))
+    matches!(name, "read_file" | "list_dir" | "shell" | "search_file")
+        && arguments.replace('\\', "/").contains(".themis/context/")
 }
 
+/// True when a `recall` result carries a hit from an attachment original.
+///
+/// Snapshot and history-source hits are copies of saved evidence (recovery);
+/// attachment text is acquired content that no other record holds in this form,
+/// so such a result is an ordinary observation.
+pub(crate) fn recall_result_has_attachment(result: &str) -> bool {
+    serde_json::from_str::<Value>(result).is_ok_and(|value| {
+        value["kind"] == "attachment"
+            || value["hits"]
+                .as_array()
+                .is_some_and(|hits| hits.iter().any(|hit| hit["kind"] == "attachment"))
+    })
+}
 fn archive_field_kind<'a>(record: &'a Value, pointer: &str) -> &'a str {
     pointer
         .strip_prefix("/message_type/ToolResult/")

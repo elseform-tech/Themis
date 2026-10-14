@@ -587,6 +587,7 @@ async fn run_task_with_evidence_inner(
     let mut last_shell_observation = None;
     let mut unchanged_results = 0;
     let mut recovery_reads = 0;
+    let mut recall_searches = 0usize;
     let config = compaction_config();
     // Prior turns arrive as text or as checkpoint-retained messages that a
     // checkpoint already summarized; only this run's new work is unsummarized.
@@ -867,6 +868,26 @@ async fn run_task_with_evidence_inner(
                 last_shell_observation = None;
             }
             // Run-local state survives compaction. This bounds retrieval, not semantic correctness.
+            // Recall has its own bound: each search is a bounded scan, so the allowance is
+            // wider than the 64 recursive archive reads, and `around` paging is exempt
+            // (it only reads one 3,000-character page; total turns still bound the run).
+            if call.function.name == "recall" {
+                let paging = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    .is_ok_and(|v| v["around"].as_str().is_some_and(|t| t.contains('|')));
+                if !paging {
+                    recall_searches += 1;
+                    crate::context_metrics::activity("recall_searches");
+                    if recall_searches > 128 {
+                        let error = "Recall stopped: the 128-search allowance was exceeded. Originals and completed actions remain saved; answer from what was found or narrow the question.".to_owned();
+                        emit(RunEvent::Failed {
+                            error: error.clone(),
+                        })
+                        .await
+                        .ok();
+                        return Err(anyhow!(error));
+                    }
+                }
+            }
             if crate::tools::context_recovery_call(&call.function.name, &call.function.arguments) {
                 recovery_reads += 1;
                 crate::context_metrics::activity("recovery_reads");
@@ -2184,6 +2205,15 @@ async fn save_evidence(
 }
 
 fn evidence_records(messages: &[ChatMessage]) -> anyhow::Result<Vec<String>> {
+    let results = messages
+        .iter()
+        .filter_map(|message| match &message.message_type {
+            MessageType::ToolResult(results) => Some(results),
+            _ => None,
+        })
+        .flatten()
+        .map(|result| (result.id.as_str(), result))
+        .collect::<std::collections::HashMap<_, _>>();
     let recovery_ids = messages
         .iter()
         .filter_map(|message| match &message.message_type {
@@ -2191,7 +2221,9 @@ fn evidence_records(messages: &[ChatMessage]) -> anyhow::Result<Vec<String>> {
             _ => None,
         })
         .flatten()
-        .filter(|call| summary_evidence::recovery_call(call))
+        .filter(|call| {
+            summary_evidence::recovery_pair(call, results.get(call.id.as_str()).copied())
+        })
         .map(|call| call.id.as_str())
         .collect::<HashSet<_>>();
 
@@ -2726,6 +2758,42 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn archived_recall_results_are_recovery_only_without_attachment_hits() {
+        let batch = |kind: &str| {
+            let call = ToolCall {
+                id: format!("r-{kind}"),
+                call_type: "function".into(),
+                function: FunctionCall {
+                    name: "recall".into(),
+                    arguments: serde_json::json!({"query":"x"}).to_string(),
+                },
+            };
+            let mut result = call.clone();
+            result.function.arguments = serde_json::json!({"hits":[{"kind":kind}]}).to_string();
+            vec![
+                ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::ToolUse(vec![call]),
+                    content: String::new(),
+                },
+                ChatMessage {
+                    role: ChatRole::Tool,
+                    message_type: MessageType::ToolResult(vec![result]),
+                    content: String::new(),
+                },
+            ]
+        };
+        let kind_of = |kind: &str| {
+            let records = evidence_records(&batch(kind)).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&records[1]).unwrap();
+            value["evidence_kind"].as_str().unwrap().to_owned()
+        };
+        assert_eq!(kind_of("snapshot"), "recovery");
+        assert_eq!(kind_of("history_source"), "recovery");
+        assert_eq!(kind_of("attachment"), "original");
+    }
+
     fn ledger_text(
         messages: &[ChatMessage],
         bytes: usize,

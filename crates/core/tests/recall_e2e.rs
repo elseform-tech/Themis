@@ -195,3 +195,78 @@ fn recall_tool_metadata_is_stable() {
         assert!(schema["properties"][field].is_object(), "{field}");
     }
 }
+
+async fn run_scripted_recalls(calls: usize, around: bool) -> anyhow::Result<String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let server = MockServer::start().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .respond_with(move |_: &Request| {
+            let n = counter.fetch_add(1, Ordering::SeqCst);
+            if n >= calls {
+                return ResponseTemplate::new(200).set_body_json(common::final_text_body("DONE"));
+            }
+            let args = if around {
+                json!({"around": format!("x|1|/content|{n}")})
+            } else {
+                json!({"query": format!("needle{n}")})
+            };
+            ResponseTemplate::new(200).set_body_json(common::tool_call_body(
+                &format!("c{n}"),
+                "recall",
+                args,
+            ))
+        })
+        .mount(&server)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().canonicalize().unwrap();
+    let evidence = root.join(".themis/context/t");
+    std::fs::create_dir_all(&evidence).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let mut tools = boxed_tools(&root, approvals.clone()).unwrap();
+    tools.push(Box::new(RecallTool::new(RecallScope {
+        evidence_dir: evidence.clone(),
+        attachments: Vec::new(),
+        attachment_root: None,
+        project_root: Some(root.clone()),
+    })));
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8192);
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    themis_core::runtime::run_task_with_evidence(
+        llm,
+        tools,
+        "search".into(),
+        Vec::new(),
+        approvals,
+        RunPolicy {
+            total_turns: 400,
+            context_token_budget: 200_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn recall_searches_have_their_own_wider_bound() {
+    assert_eq!(run_scripted_recalls(100, false).await.unwrap(), "DONE");
+    let error = run_scripted_recalls(140, false).await.unwrap_err();
+    assert!(error.to_string().contains("128-search"), "{error}");
+}
+
+#[tokio::test]
+async fn around_paging_is_not_counted_against_the_search_bound() {
+    assert_eq!(run_scripted_recalls(140, true).await.unwrap(), "DONE");
+}
