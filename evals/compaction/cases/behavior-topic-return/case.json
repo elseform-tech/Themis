@@ -1,0 +1,14 @@
+{
+  "name": "behavior-topic-return",
+  "kind": "behavior",
+  "description": "Topic A (trip) then topic B (limiter), each followed by a compaction; the user returns to either topic.",
+  "suites": [
+    "behavior"
+  ],
+  "records": 52,
+  "chunks": [
+    24,
+    52
+  ],
+  "next_action": "Return to whichever topic the user names."
+}

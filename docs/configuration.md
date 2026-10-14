@@ -265,6 +265,45 @@ whose first argument is a non-flag subcommand other than an executing one (`run`
 `install`, `add`). So approving `cargo test` covers `cargo test --lib` but not
 `cargo publish` or `cargo run`. Every other program, wrapper and interpreter
 (`find`, `sudo`, `env`, `ssh`, `bash -c`, ...) is keyed by its full argv.
+
+**Destructive variants.** Calls that discard work or cannot be undone are keyed by
+their full argv and are never covered by a grant for their harmless sibling, nor by
+an allow rule that does not name the variant itself:
+- `git push` with `-f`/`--force`/`--force-with-lease`/`--mirror`/`--delete`/`--prune`,
+  a `:ref` or `+ref` refspec; `git clean` with `-f`/`-d`/`-x`/`-X`;
+  `git reset --hard|--merge` or `git reset <revision>`; `git checkout`/`switch` with
+  `-f`/`--force`/`--discard-changes`/`-B`/`-C`, and `git checkout` of paths
+  (`.` or anything after `--`); `git restore` of the working tree (only `--staged`
+  alone is safe); `git branch` with `-D`/`-f`/`-M`/`-C`; `git tag -d|-f`;
+  `git commit --amend`; `git stash drop|clear`; `git reflog expire|delete`;
+  `git worktree remove --force`; `git gc --prune`; and `git rebase`, `update-ref`,
+  `prune`, `filter-branch`, `filter-repo`.
+- Git accepts unambiguous long-option prefixes (`--forc`), so any prefix of a listed
+  long option counts. Global options with values (`-C dir`, `-c k=v`, `--config-env n=E`,
+  `--git-dir`, ...) do not hide the subcommand.
+- `publish`/`unpublish`/`deprecate` for `npm`, `pnpm` and `yarn` (also behind options
+  such as `pnpm --filter pkg`, `npm -w x`, `yarn npm publish`, and npm's command
+  abbreviations of at least three characters such as `npm publi`), and `publish`/`yank`
+  for `cargo` (also `cargo +nightly publish`, `cargo --config k=v publish`), including
+  `--dry-run`. Any positional argument matching is enough, so a script or package
+  that happens to be named `publish` also prompts: over-flagging costs a prompt only.
+
+So a rule `["git","push"]` allows `git push origin main` but `git push --force` falls
+through to later rules and the default (ask; denied when unattended). A rule such as
+`["git","push","--force"]` is honoured. **Deny rules match literally**: they compare
+argv tokens and do not normalize flag spellings, so denying `["git","push","--force"]`
+does not deny `git push -f`; deny the broader `["git","push"]` or list each spelling.
+A broad rule without `command` remains explicit trust. The `git` tool reports
+`["git", args...]` as its command with the same keys, and escalates destructive
+`checkout`, `branch` and `commit` calls to risk `destructive`.
+
+The `shell` tool schema asks for the program only in `command` and one `args`
+element per argument. If `command` contains whitespace and no executable of that
+exact name exists, the error returns the exact split (unless the first token is a
+nonexistent path, such as a path containing spaces, which gets a spelling hint instead) (`command: "python3", args:
+["-m","http.server","8798"]`). The call is never auto-split or rerun, so approvals
+always see the argv the model sent.
+
 Unattended CLI `ask` requests deny; use explicit policy or an interactive client.
 
 YOLO bypasses harness approval gates, filesystem root restrictions, skill tool
@@ -344,3 +383,7 @@ themis call get_context_usage '{"threadId":"THREAD","runId":"RUN"}'
 ```
 
 Omit runId for the latest snapshot; no available snapshot returns null. Diagnostic JSONL remains bounded and rotating as documented below. It records correlation IDs, pipeline/job/stage/attempt, model, sizes, estimates, provider usage, timing and outcome categories. It excludes prompts, filenames, arguments, results, document passages, provider bodies and credentials. Historical source excerpts and stage notes belong only in transcript/evidence storage. This provides backend data for a future dashboard; no raw-log viewer or new dashboard UI is added. Usage and runtime events are observations, not automatic judgments of narrative or coding correctness.
+
+## Shared-server event stream additions
+
+Besides thread, approval and review events, the server broadcasts `thread-changed` (`{kind: created|updated|removed, project_root, thread_id, thread?}`) after a successful `create_thread`, `rename_thread`, `set_thread_approval_mode`, `set_thread_effort`, `set_thread_skills` or `discard_thread`, so an open desktop window follows changes made by `themis call` or another client. It carries metadata only. The `approval-request` event carries `grant_scope` (`{argv, covers_further_args}`, shell only): the raw command prefix an "allow for this run" grant covers, matching the cached grant key. Streamed assistant text is persisted before a run's terminal event, including Stopped and failed runs.

@@ -33,6 +33,10 @@ wiremock = "0.6"
 name = "compaction_eval"
 required-features = ["eval"]
 
+[[example]]
+name = "behavior_eval"
+required-features = ["eval"]
+
 [[test]]
 name = "compaction_eval"
 required-features = ["eval"]

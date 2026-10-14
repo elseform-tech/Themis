@@ -21,7 +21,9 @@ restrictions. Explicit user/run allow rules proceed without the interactive gate
 An ask invokes the desktop/CLI approval hook. **Once** grants one action,
 **Always** remembers the grant key for this run: the tool (and risk) for most tools;
 for `shell`, program plus subcommand only for a short list of subcommand-style CLIs
-such as `cargo test`, and the exact full argv for everything else, and **Deny** rejects it.
+such as `cargo test`, and the exact full argv for everything else (including destructive
+variants such as `git push --force`, `git reset --hard` or `cargo publish`; see
+[configuration](configuration.md)), and **Deny** rejects it.
 Cached grants cannot bypass policy denies. Approval timeouts (default five minutes),
 lost clients, and unattended CLI requests deny. The interactive hook denies
 non-read actions in non-Git projects; explicit allow policy or YOLO bypasses
@@ -65,7 +67,8 @@ Shell output is bounded at 32 KiB; the default
 execution timeout is 120 seconds. On timeout the whole process tree is killed:
 on Unix the child leads its own process group, which receives SIGTERM, a short
 grace period, then SIGKILL; on Windows `taskkill /T /F` ends the tree (a
-descendant that detaches from its parent is not reached). Child environment
+descendant that detaches from its parent is not reached; CI covers the timeout and
+background-stop grandchild kill on windows-latest). Child environment
 handling excludes provider credentials from normal tool launches. Children
 receive only `PATH`, `TMPDIR`/`TEMP`/`TMP`, `LANG`, `LC_ALL` and other `LC_*`,
 `TERM`, plus `HOME`/`USER`/`LOGNAME`/`SSH_AUTH_SOCK` on Unix or the Windows

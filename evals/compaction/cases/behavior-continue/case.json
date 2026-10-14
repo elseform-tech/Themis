@@ -1,0 +1,14 @@
+{
+  "name": "behavior-continue",
+  "kind": "behavior",
+  "description": "A parked recipe and a current invoice task; a vague continue must resume the latest task.",
+  "suites": [
+    "behavior"
+  ],
+  "records": 54,
+  "chunks": [
+    24,
+    54
+  ],
+  "next_action": "Change round_cents to ROUND_HALF_UP and add test_round_half_up."
+}

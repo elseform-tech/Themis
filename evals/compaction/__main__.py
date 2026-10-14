@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 
+from . import behavior as behavior_grading
 from .report import aggregate, trial_rows, trial_summary
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +29,10 @@ def load_cases(suite, only=None):
             continue
         with open(os.path.join(directory, "probes.json"), encoding="utf-8") as handle:
             case["probes"] = json.load(handle)
+        behavior_file = os.path.join(directory, "behavior.json")
+        if os.path.isfile(behavior_file):
+            with open(behavior_file, encoding="utf-8") as handle:
+                case["behavior"] = json.load(handle)
         case["directory"] = directory
         cases.append(case)
     return cases
@@ -133,6 +138,65 @@ def regrade(args):
     return 0
 
 
+def build_behavior_runner():
+    command = ["cargo", "build", "--release", "-q", "-p", "themis-core", "--features", "eval",
+               "--example", "behavior_eval"]
+    subprocess.run(command, cwd=ROOT, check=True)
+    return [os.path.join(target_dir(), "release", "examples", "behavior_eval" + EXE)]
+
+
+def behavior(args):
+    """Behavior evals: the next user message after a compaction (greeting, unrelated, return, continue)."""
+    cases = load_cases("behavior", args.case)
+    if not cases:
+        sys.exit("no cases in suite 'behavior'")
+    runner = ([args.runner] if args.runner and os.path.exists(args.runner)
+              else shlex.split(args.runner) if args.runner else build_behavior_runner())
+    jobs = [(trial, case) for trial in range(args.trials) for case in cases]
+    rows, failures, raw = [], [], []
+
+    def work(job):
+        trial, case = job
+        command = runner + ["--case", case["directory"], "--budget", str(args.budget),
+                            "--recent", str(args.recent), "--anchors", args.anchors]
+        if args.model:
+            command += ["--model", args.model]
+        if args.base_url:
+            command += ["--base-url", args.base_url]
+        try:
+            done = subprocess.run(command, capture_output=True, text=True, timeout=args.timeout)
+            if done.returncode != 0:
+                return job, None, (done.stderr or done.stdout).strip()[-400:]
+            return job, json.loads(done.stdout), None
+        except (subprocess.TimeoutExpired, ValueError) as error:
+            return job, None, str(error)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        for (trial, case), report, error in pool.map(work, jobs):
+            if not report or report.get("valid") is False:
+                failures.append({"trial": trial, "case": case["name"], "error": error or "invalid"})
+                continue
+            graded = behavior_grading.grade_run(case, report)
+            rows += graded
+            raw.append({"trial": trial, "case": case["name"], "turns": report["turns"], "graded": graded})
+    summary = {"suite": "behavior", "anchors": args.anchors, "model": args.model, "budget": args.budget,
+               "trials_requested": args.trials, "failed_runs": failures,
+               "summary": behavior_grading.summarize(rows),
+               "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+               "git_commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
+                                            capture_output=True, text=True).stdout.strip(),
+               "note": "Live-model behavior audit; not an automated runtime check.", "details": raw}
+    out = args.out or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "results",
+        f"{datetime.date.today()}-behavior-{args.anchors}-{(args.model or 'default').replace('/', '_')}-{args.budget}.json")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    print(out)
+    return 1 if failures else 0
+
+
 def run(args):
     cases = load_cases(args.suite, args.case)
     if not cases:
@@ -195,10 +259,25 @@ def main(argv=None):
     cmd.add_argument("--timeout", type=int, default=1200)
     cmd.add_argument("--runner", default=None, help="runner command (default: build the example)")
     cmd.add_argument("--out", default=None)
+    beh = sub.add_parser("behavior", help="run the behavior evals (greeting, unrelated, return, continue)")
+    beh.add_argument("--case", action="append")
+    beh.add_argument("--trials", type=int, default=3)
+    beh.add_argument("--model", default=None)
+    beh.add_argument("--budget", type=int, default=24000)
+    beh.add_argument("--recent", type=int, default=20)
+    beh.add_argument("--anchors", choices=["old", "new"], default="new",
+                     help="old: previous desktop anchors for every message; new: skipped for social turns")
+    beh.add_argument("--base-url", default=None)
+    beh.add_argument("--jobs", type=int, default=3)
+    beh.add_argument("--timeout", type=int, default=1200)
+    beh.add_argument("--runner", default=None)
+    beh.add_argument("--out", default=None)
     again = sub.add_parser("regrade", help="re-grade a stored result offline")
     again.add_argument("result")
     again.add_argument("--out", default=None)
     args = parser.parse_args(argv)
+    if args.command == "behavior":
+        return behavior(args)
     return regrade(args) if args.command == "regrade" else run(args)
 
 

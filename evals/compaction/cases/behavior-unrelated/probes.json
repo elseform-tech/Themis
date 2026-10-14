@@ -1,0 +1,11 @@
+[
+  {
+    "id": "rejects",
+    "category": "constraint",
+    "question": "Where do skipped rows go?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "rejects\\.csv"
+    }
+  }
+]

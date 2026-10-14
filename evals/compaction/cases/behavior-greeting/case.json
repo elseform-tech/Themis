@@ -1,0 +1,14 @@
+{
+  "name": "behavior-greeting",
+  "kind": "behavior",
+  "description": "Unfinished lexer task; greetings after compaction must not resume it.",
+  "suites": [
+    "behavior"
+  ],
+  "records": 62,
+  "chunks": [
+    30,
+    62
+  ],
+  "next_action": "Fix scan_ident for combining marks, rerun the lexer tests, update docs/lexer.md."
+}

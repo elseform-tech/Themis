@@ -157,6 +157,7 @@ impl AppState {
             level: snapshot.runtime_configuration.logging.level.clone(),
         };
         let run_configuration = snapshot.runtime_configuration.clone();
+        let short_reply = snapshot.short_reply;
         let yolo = snapshot.approval_mode == themis_core::configuration::ApprovalMode::Yolo;
         let hook = Arc::new(
             DesktopApprovalHook::new(
@@ -316,6 +317,37 @@ impl AppState {
             &snapshot.work_root,
             &["context", thread_id],
         )?;
+        // Saved originals of this chat only; the tool is read-only and bounded.
+        let attachment_root = snapshot.work_root.join(".themis/attachments");
+        let attachments = self
+            .inner
+            .transcript
+            .attachment_paths(thread_id)?
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        // A tool every call to which would be denied is not advertised; the prompt then
+        // falls back to the read_file pointer. YOLO bypasses rules.
+        let recall_probe = themis_core::tools::ToolAction {
+            display: None,
+            command: Vec::new(),
+            tool: "recall".into(),
+            summary: String::new(),
+            risk: themis_core::tools::RiskLevel::Read,
+        };
+        let recall_denied = !yolo
+            && run_configuration.approval.decision(&recall_probe)
+                == themis_core::configuration::PolicyAction::Deny;
+        if !recall_denied {
+            tools.push(Box::new(themis_core::tools::recall::RecallTool::new(
+                themis_core::tools::recall::RecallScope {
+                    evidence_dir: evidence_directory.clone(),
+                    attachments,
+                    attachment_root: Some(attachment_root),
+                    project_root: snapshot.work_root.canonicalize().ok(),
+                },
+            )));
+        }
         let state = self.clone();
         let thread_id = thread_id.to_owned();
         let run_id = run_id.to_owned();
@@ -453,7 +485,7 @@ impl AppState {
                     &capacity_catalog,
                     themis_core::diagnostics::ACTIVE.scope(
                         diagnostic_context,
-                        themis_core::runtime::with_model_context_capacity(
+                        themis_core::runtime::with_short_reply_turn(short_reply, themis_core::runtime::with_model_context_capacity(
                             if endpoint_override {
                                 None
                             } else {
@@ -512,7 +544,7 @@ impl AppState {
                                     ),
                                 ),
                             ),
-                        ),
+                        )),
                     ),
                 )
                 .await
