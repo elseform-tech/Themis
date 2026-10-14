@@ -33,6 +33,274 @@ pub struct TranscriptStore {
     connection: Mutex<Connection>,
 }
 
+const REQUEST_STOP_WORDS: &[&str] = &[
+    "what",
+    "did",
+    "discuss",
+    "discussed",
+    "about",
+    "remember",
+    "recall",
+    "please",
+    "continue",
+    "that",
+    "this",
+    "then",
+    "with",
+    "have",
+    "were",
+    "earlier",
+    "task",
+    "topic",
+    "topics",
+    "the",
+    "and",
+    "from",
+    "could",
+    "would",
+    "should",
+    "again",
+];
+
+/// Greetings, thanks and farewells across common languages. Matching is exact on a
+/// lowercase token (or, for scripts written without spaces, a substring of the run).
+const SOCIAL_WORDS: &[&str] = &[
+    // English
+    "hi",
+    "hii",
+    "hello",
+    "hey",
+    "heya",
+    "hiya",
+    "yo",
+    "sup",
+    "howdy",
+    "greetings",
+    "thanks",
+    "thank",
+    "thx",
+    "ty",
+    "tysm",
+    "cheers",
+    "bye",
+    "goodbye",
+    "cya",
+    "later",
+    "morning",
+    "afternoon",
+    "evening",
+    "night",
+    "good",
+    "great",
+    "nice",
+    "cool",
+    "awesome",
+    "perfect",
+    "you",
+    "u",
+    "there",
+    "how",
+    "are",
+    "doing",
+    "whats",
+    "much",
+    "very",
+    "a",
+    "lot",
+    "thankyou",
+    "welcome",
+    "appreciate",
+    // Spanish, Portuguese, Italian, French, German, Dutch, Scandinavian, Polish, Turkish
+    "hola",
+    "gracias",
+    "adios",
+    "buenas",
+    "dias",
+    "tardes",
+    "noches",
+    "muchas",
+    "ola",
+    "obrigado",
+    "obrigada",
+    "tchau",
+    "ciao",
+    "grazie",
+    "buongiorno",
+    "salve",
+    "bonjour",
+    "salut",
+    "merci",
+    "bonsoir",
+    "hallo",
+    "danke",
+    "tschuss",
+    "tschüss",
+    "dank",
+    "dankjewel",
+    "hej",
+    "tack",
+    "tak",
+    "czesc",
+    "cześć",
+    "dziekuje",
+    "dziękuję",
+    "merhaba",
+    "tesekkurler",
+    "teşekkürler",
+    "sagol",
+    "sağol",
+    "selam",
+    // Russian, Ukrainian
+    "привет",
+    "здравствуйте",
+    "спасибо",
+    "пока",
+    "добрый",
+    "день",
+    "вечер",
+    "утро",
+    "дякую",
+    "дякуємо",
+    "привіт",
+    "дуже",
+    // Arabic, Hebrew, Hindi
+    "مرحبا",
+    "شكرا",
+    "اهلا",
+    "أهلا",
+    "سلام",
+    "שלום",
+    "תודה",
+    "नमस्ते",
+    "धन्यवाद",
+    "शुक्रिया",
+    // Chinese, Japanese, Korean (scripts without word spaces: matched inside the run)
+    "你好",
+    "您好",
+    "哈喽",
+    "嗨",
+    "谢谢",
+    "感谢",
+    "多谢",
+    "再见",
+    "拜拜",
+    "早上好",
+    "晚上好",
+    "早安",
+    "晚安",
+    "午安",
+    "謝謝",
+    "感謝",
+    "再見",
+    "こんにちは",
+    "こんばんは",
+    "おはよう",
+    "ありがとう",
+    "ありがとうございます",
+    "さようなら",
+    "どうも",
+    "안녕",
+    "안녕하세요",
+    "감사합니다",
+    "고마워",
+    "고마워요",
+    "고맙습니다",
+    "สวัสดี",
+    "ขอบคุณ",
+    "你",
+    "您",
+    "啦",
+    "啊",
+    "呀",
+    "吗",
+    "呢",
+    "吧",
+    "哈",
+    "terima",
+    "kasih",
+    "makasih",
+    "halo",
+];
+
+fn is_unspaced_script(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0x0E00..=0x0E7F
+        | 0xF900..=0xFAFF)
+}
+
+fn tokens(text: &str) -> Vec<String> {
+    text.replace(['\'', '\u{2019}'], "")
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Removes greeting/thanks phrases from a token written in an unspaced script.
+fn strip_social_phrases(token: &str) -> String {
+    let mut rest = token.to_owned();
+    let mut phrases = SOCIAL_WORDS
+        .iter()
+        .filter(|word| word.chars().any(is_unspaced_script))
+        .collect::<Vec<_>>();
+    phrases.sort_by_key(|phrase| std::cmp::Reverse(phrase.chars().count()));
+    for phrase in phrases {
+        rest = rest.replace(phrase, " ");
+    }
+    rest
+}
+
+/// True for a message that is only a greeting, thanks or farewell (any supported language,
+/// emoji and punctuation allowed). Words like "continue" or "ok" are not social: they refer
+/// back to the latest exchange.
+pub(crate) fn is_social_request(request: &str) -> bool {
+    let lower = request.trim().to_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+    let words = tokens(&lower);
+    if words.iter().any(|word| word == "continue") {
+        return false;
+    }
+    // "ok" or "do it" answer the assistant's last message; they are not social.
+    let answers = ["ok", "okay", "it", "yes", "no", "sure"];
+    if words.iter().all(|word| answers.contains(&word.as_str())) && !words.is_empty() {
+        return false;
+    }
+    words.iter().all(|word| {
+        if word.chars().any(is_unspaced_script) {
+            !strip_social_phrases(word)
+                .chars()
+                .any(char::is_alphanumeric)
+        } else {
+            SOCIAL_WORDS.contains(&word.as_str())
+        }
+    })
+}
+
+/// Content words for lexical recall: spaced scripts need three characters and a non-stop
+/// word; unspaced scripts (CJK, Thai) contribute their runs minus social phrases, two
+/// characters or more.
+fn content_terms(lower: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    for word in tokens(lower) {
+        if word.chars().any(is_unspaced_script) {
+            let rest = strip_social_phrases(&word);
+            terms.extend(
+                rest.split_whitespace()
+                    .filter(|part| part.chars().count() >= 2)
+                    .map(str::to_owned),
+            );
+        } else if word.chars().count() >= 3
+            && !REQUEST_STOP_WORDS.contains(&word.as_str())
+            && !SOCIAL_WORDS.contains(&word.as_str())
+        {
+            terms.push(word);
+        }
+    }
+    terms
+}
+
 impl TranscriptStore {
     pub fn open(path: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
@@ -469,6 +737,15 @@ impl TranscriptStore {
                 .text
                 .starts_with("Verbatim first and recent user requests (historical):")
         });
+        // A greeting or thanks carries nothing to look up; history anchors would only
+        // pull the previous task back into a conversation that has moved on.
+        if is_social_request(request) {
+            return Ok(context);
+        }
+        let present = context
+            .iter()
+            .map(|turn| turn.text.clone())
+            .collect::<Vec<_>>();
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let allowance = (max_bytes / 3).min(16000);
         let mut records = Vec::<serde_json::Value>::new();
@@ -477,7 +754,12 @@ impl TranscriptStore {
             let record = serde_json::json!({"source_seq":seq,"source_role":role,"purpose":purpose,
                 "excerpt_char_offset":offset,"verbatim_excerpt":text,"decision_status":"unclassified; read the actual wording", "historical":true});
             let size = record.to_string().len();
-            if bytes + size <= allowance && !records.iter().any(|r| r["source_seq"] == seq) {
+            // Text already verbatim in the working context needs no second copy.
+            let duplicate = !text.is_empty() && present.iter().any(|turn| turn.contains(&text));
+            if !duplicate
+                && bytes + size <= allowance
+                && !records.iter().any(|r| r["source_seq"] == seq)
+            {
                 bytes += size;
                 records.push(record);
             }
@@ -504,40 +786,8 @@ impl TranscriptStore {
             );
         }
         let lower = request.to_lowercase();
-        let stop = [
-            "what",
-            "did",
-            "discuss",
-            "discussed",
-            "about",
-            "remember",
-            "recall",
-            "please",
-            "continue",
-            "that",
-            "this",
-            "then",
-            "with",
-            "have",
-            "were",
-            "earlier",
-            "task",
-            "topic",
-            "topics",
-            "the",
-            "and",
-            "from",
-            "could",
-            "would",
-            "should",
-            "again",
-        ];
-        let mut terms = lower
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|t| t.len() >= 3 && !stop.contains(t))
-            .take(12)
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
+        let mut terms = content_terms(&lower);
+        terms.truncate(12);
         terms.sort();
         terms.dedup();
         // SQLite searches originals locally; only bounded matching passages reach the model.

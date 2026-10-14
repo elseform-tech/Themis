@@ -136,6 +136,72 @@ fn request_aware_recall_recovers_old_topics_without_replacing_latest_task() {
         "a vague follow-up must not select an older topic"
     );
     assert!(latest.len() < 8000);
+    for greeting in [
+        "hi",
+        "Thanks!",
+        "hello there, thank you",
+        "你好",
+        "谢谢你！",
+        "こんにちは",
+        "안녕하세요",
+        "Спасибо!",
+        "gracias",
+        "👋",
+    ] {
+        let greeted = store
+            .context_for_request("thread", greeting, 8000)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !greeted.contains("source_seq") && !greeted.contains("Mira"),
+            "{greeting:?} must not pull history anchors back: {greeted}"
+        );
+    }
+    // A CJK request with content still recalls by term; a mixed greeting plus content does too.
+    for request in ["你好，请回忆 amber migration", "thanks, what about amber?"] {
+        let recalled = store
+            .context_for_request("thread", request, 8000)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(recalled.contains("AMBER-794"), "{request:?}");
+    }
+}
+
+#[test]
+fn anchors_skip_exchanges_already_verbatim_in_the_working_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::open(&dir.path().join("sessions.sqlite3")).unwrap();
+    store
+        .append_user("thread", "one", "Write the cobalt narrative. Hero is Mira.")
+        .unwrap();
+    store
+        .append_event(&ThreadEventEnvelope {
+            thread_id: "thread".into(),
+            run_id: "one".into(),
+            event: ThreadEvent::Finished {
+                model: None,
+                result: "Mira waits at the cobalt bridge.".into(),
+            },
+        })
+        .unwrap();
+    let texts = store
+        .context_for_request("thread", "Continue that", 8000)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.text)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts.len(),
+        2,
+        "both exchanges are already in context: {texts:?}"
+    );
+    assert!(texts.iter().all(|text| !text.contains("source_seq")));
 }
 
 #[test]
