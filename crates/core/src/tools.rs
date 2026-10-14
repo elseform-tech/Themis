@@ -452,6 +452,8 @@ pub struct GatedTool {
     risk: RiskLevel,
     summarize: SummaryFn,
     relative_root: Option<PathBuf>,
+    /// Directory relative paths resolve against; used to confirm appends landed.
+    base_dir: Option<PathBuf>,
 }
 
 impl GatedTool {
@@ -463,6 +465,7 @@ impl GatedTool {
             risk,
             summarize: summarize_fs_call,
             relative_root: None,
+            base_dir: None,
         }
     }
 
@@ -479,12 +482,20 @@ impl GatedTool {
             risk,
             summarize,
             relative_root: None,
+            base_dir: None,
         }
     }
 
     /// Preserve project-relative paths when the underlying tool can access the filesystem.
     pub fn with_relative_root(mut self, root: PathBuf) -> Self {
         self.relative_root = Some(root);
+        self
+    }
+
+    /// Directory that relative tool paths resolve against.
+    #[must_use]
+    pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
+        self.base_dir = Some(dir);
         self
     }
 
@@ -564,9 +575,41 @@ impl ToolRuntime for GatedTool {
         if name == "read_file" {
             let result = self.inner.execute(args.clone()).await?;
             bounded_read_result(&args, result)
+        } else if name == "write_file" && args["append"].as_bool() == Some(true) {
+            // The toolkit appends through tokio's buffered file and returns
+            // without flushing, so the bytes can land after the call reports
+            // success (a reader then sees an empty file). Wait for them.
+            let target = args["file_path"].as_str().map(|path| {
+                let path = Path::new(path);
+                match &self.base_dir {
+                    Some(base) if path.is_relative() => base.join(path),
+                    _ => path.to_path_buf(),
+                }
+            });
+            let before = target
+                .as_ref()
+                .and_then(|path| std::fs::metadata(path).ok())
+                .map_or(0, |meta| meta.len());
+            let result = self.inner.execute(args).await?;
+            if let (Some(path), Some(added)) = (target, result["bytes_written"].as_u64()) {
+                await_appended(&path, before.saturating_add(added)).await;
+            }
+            Ok(result)
         } else {
             self.inner.execute(args).await
         }
+    }
+}
+
+/// Polls until `path` holds at least `expected_len` bytes (bounded at 10 s).
+async fn await_appended(path: &Path, expected_len: u64) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let len = tokio::fs::metadata(path).await.map_or(0, |meta| meta.len());
+        if len >= expected_len || Instant::now() >= deadline {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
 }
 
@@ -1840,7 +1883,8 @@ pub fn boxed_tools_for_chat(
         .map_err(|e| anyhow::anyhow!("project root '{}' is not accessible: {e}", root.display()))?;
     let root_string = canonical.to_string_lossy().into_owned();
     let gate = |tool: Box<dyn ToolT>, risk: RiskLevel| -> Box<dyn ToolT> {
-        let tool = GatedTool::new(tool, Arc::clone(&approvals), risk);
+        let tool =
+            GatedTool::new(tool, Arc::clone(&approvals), risk).with_base_dir(canonical.clone());
         Box::new(if yolo {
             tool.with_relative_root(canonical.clone())
         } else {
@@ -2572,6 +2616,51 @@ mod tests {
         assert_eq!(tool.timeout(), Duration::from_secs(120));
         let tool = tool.with_timeout(Duration::from_secs(1));
         assert_eq!(tool.timeout(), Duration::from_secs(1));
+    }
+
+    /// The toolkit's append returns before tokio's buffered write lands; the
+    /// gated call must return only once the bytes are on disk, even when the
+    /// machine is busy (many parallel appenders keep the blocking pool full).
+    #[test]
+    fn gated_append_is_durable_when_the_call_returns() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (_tmp, root) = rooted_case();
+            let tools = Arc::new(boxed_tools(&root, allow_all()).unwrap());
+            let mut jobs = Vec::new();
+            for worker in 0..8 {
+                let tools = Arc::clone(&tools);
+                let root = root.clone();
+                jobs.push(tokio::spawn(async move {
+                    let write = tools
+                        .iter()
+                        .find(|tool| tool.name() == "write_file")
+                        .unwrap();
+                    for round in 0..40 {
+                        let name = format!("w{worker}.txt");
+                        let line = format!("{round}\n");
+                        write
+                            .execute(json!({"file_path": name, "content": line, "append": true}))
+                            .await
+                            .unwrap();
+                        let text = fs::read_to_string(root.join(&name)).unwrap();
+                        assert_eq!(
+                            text.lines().count(),
+                            round + 1,
+                            "append {round} of {name} not on disk: {text:?}"
+                        );
+                    }
+                }));
+            }
+            for job in jobs {
+                job.await.unwrap();
+            }
+        });
     }
 
     #[tokio::test]
