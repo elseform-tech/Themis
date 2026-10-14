@@ -77,14 +77,14 @@ compares byte for byte).
 
 | Case | Kind | Material |
 | --- | --- | --- |
-| chronicle | narrative | 12 chapters (~137 KB): cast, places, objects, dates, quotes |
+| chronicle | narrative | 12 chapters (~136 KB): cast, places, objects, dates, quotes |
 | letters | narrative | ~73 letters (~66 KB): who-wrote-to-whom, quotes, sums and retractions |
-| meeting | narrative | 8-item transcript (~112 KB): speakers, decisions later revised |
-| api-spec | code | API design spec (~69 KB): field limits, scopes, error codes, amendments |
-| build-log | code | 8 shards of test output (~69 KB): one failing test buried in shard 5 |
-| refactor | code | 5-session tool-call history (~76 KB): bug introduced at one file:line, fixed at another |
+| meeting | narrative | 8-item transcript (~111 KB): speakers, decisions later revised |
+| api-spec | code | API design spec (~68 KB): field limits, scopes, error codes, amendments |
+| build-log | code | 8 shards of test output (~66 KB): one failing test buried in shard 5 |
+| refactor | code | 5-session tool-call history (~68 KB): bug introduced at one file:line, fixed at another |
 
-Each has 5-8 forced compactions, 8-12 detail probes, 1-2 quote probes and 2 decoys. Probe fields:
+Each has 4-8 forced compactions, 9-11 detail probes, 1-2 quote probes and 2 decoys. Probe fields:
 `fact_records` (records stating the fact; the generator asserts the evidence regex matches exactly
 these), `expected.regex`, optional `stale`, `exact` (quotes), `evidence` (regex of the original
 text), `answer_text` (literal answer, used by the offline scripted provider only).

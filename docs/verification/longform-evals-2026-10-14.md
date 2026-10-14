@@ -30,12 +30,12 @@ See `evals/longform/README.md` for how to run it, add cases and compare two buil
 
 | Case | Kind | Material | Compactions | Probes (detail / quote / decoy) |
 | --- | --- | --- | --- | --- |
-| chronicle | narrative | 12 chapters, ~137 KB | 6 | 9 / 2 / 2 |
-| letters | narrative | ~73 letters in 7 bundles, ~66 KB | 7 | 9 / 2 / 2 |
-| meeting | narrative | 8 agenda items, ~112 KB | 4 | 9 / 2 / 2 |
-| api-spec | code | 8 spec parts + amendments, ~69 KB | 7 | 10 / 2 / 2 |
-| build-log | code | 8 test shards, ~69 KB | 7 | 9 / 1 / 2 |
-| refactor | code | 5 sessions of tool calls, ~76 KB | 5 | 10 / 2 / 2 |
+| chronicle | narrative | 12 chapters, ~136 KB | 6 | 9 / 2 / 2 |
+| letters | narrative | ~73 letters in 6 bundles, ~66 KB | 6 | 9 / 2 / 2 |
+| meeting | narrative | 8 agenda items, ~111 KB | 4 | 9 / 2 / 2 |
+| api-spec | code | 7 spec parts + amendments, ~68 KB | 8 | 11 / 1 / 2 |
+| build-log | code | 8 test shards, ~66 KB | 8 | 9 / 1 / 2 |
+| refactor | code | 5 sessions of tool calls, ~68 KB | 5 | 9 / 2 / 2 |
 
 (probe counts as committed in `probes.json`; retraction and attribution probes are counted under
 detail.) Every fact is a unique generated string; the generator fails if a probe's evidence appears
@@ -97,14 +97,14 @@ checkpoint or the verbatim tail already holds the fact, so per-case numbers are 
 pooled rows are worth reading. By category (accuracy without citation): attribution 0.58, detail 0.58,
 retraction 0.67 (9 probes over 3 trials), quote 0.13.
 
-Reading the numbers: the model usually reaches the right passage but often fails to produce a
-checkable citation (only about half of original-only answers cite a snapshot record, and half of
-the correct ones cite the wrong record or a navigation copy), cannot reproduce exact quotes, and
-spends about 9 attempted calls per probe, a third of them refused (it keeps trying `python3` as the
-system prompt suggests). Two probes ended with "Repeated unchanged tool results stopped the run"
-and count as wrong. Build-log scores worst on the citation requirement because the original shard
-output lives in early snapshots, while the agent tends to cite later snapshots where the output was
-offloaded to a receipt.
+Reading the numbers: of the 47 correct answers among the 87 original-only probe answers pooled over the three trials, 11
+cited a record that does not state the fact and 10 cited nothing, so the citation requirement
+removes about 45% of correct answers. The model also cannot reproduce exact quotes (13%), spends
+about 9 attempted calls per probe, a third of them refused (it keeps trying `python3`, which the
+system prompt suggests), and two probes ended with "Repeated unchanged tool results stopped the
+run" (counted as wrong). Why build-log scores worst on the citation requirement was not
+investigated (unverified; one hypothesis is that it cites later snapshots where the shard output
+was offloaded to a receipt).
 
 ### Limitations
 
