@@ -87,6 +87,8 @@
 .themis-shimmer { background: linear-gradient(100deg, var(--themis-shimmer-base) 30%, var(--themis-shimmer-highlight) 50%, var(--themis-shimmer-base) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }
 @keyframes themis-shimmer { from { background-position: 160% 0; } to { background-position: -60% 0; } }
 .themis-thread-msg--action-waiting .themis-response > p { background: linear-gradient(100deg, var(--themis-shimmer-base) 30%, var(--themis-shimmer-highlight) 50%, var(--themis-shimmer-base) 70%); background-size: 250% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-shimmer 2.4s linear infinite; }
+/* Inline code keeps its own readable colour: the paragraph's transparent shimmer text must not leak into it. */
+.themis-thread-msg--action-waiting .themis-response :not(pre) > code, .themis-shimmer :not(pre) > code { color: var(--themis-text); -webkit-text-fill-color: currentColor; }
 .themis-thread-msg--completed .themis-response > p { animation: none; background: none; color: var(--themis-text); }
 .themis-checkpoint-divider { display: flex; align-items: center; gap: 12px; color: var(--themis-text-2); font-size: .75rem; }
 .themis-checkpoint-divider::before, .themis-checkpoint-divider::after { content: ""; flex: 1; height: 1px; background: var(--themis-border-subtle); }

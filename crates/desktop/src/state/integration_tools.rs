@@ -112,6 +112,7 @@ impl ToolRuntime for ManagementTool {
             themis_core::tools::check_approval_permitted(
                 self.approvals.as_ref(),
                 &ToolAction {
+                    display: None,
                     command: Vec::new(),
                     tool: themis_core::tools::integration_approval_identity(self.name, &args),
                     summary: format!(
@@ -145,6 +146,7 @@ impl ManagementTool {
     /// is unchanged. Every automatic decision is logged.
     fn own_chat_policy(&self, args: &Value) -> Result<(), ToolCallError> {
         let action = ToolAction {
+            display: None,
             command: Vec::new(),
             tool: themis_core::tools::integration_approval_identity(self.name, args),
             summary: format!(
@@ -317,6 +319,7 @@ impl ManagementTool {
             CheckPolicy::Allow => Ok(CheckGrant::Allowed),
             CheckPolicy::Ask => {
                 let decision = self.run.interactive.approve(&ToolAction {
+                    display: None,
                     command: argv.clone(),
                     tool: "shell".to_owned(),
                     summary: format!(

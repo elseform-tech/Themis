@@ -118,9 +118,35 @@ pub fn integration_approval_identity(name: &str, args: &Value) -> String {
     }
 }
 
+/// Structured command shown in approval UI instead of a joined string, so
+/// arguments with spaces, newlines or bidi controls cannot masquerade as a
+/// different command. Tokens are raw; renderers must treat them as data.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CommandDisplay {
+    pub argv: Vec<String>,
+    /// Working directory the command runs in, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// True for a shell command started as a background task.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background: bool,
+}
+
+fn git_display(args: &[String], root: &std::path::Path) -> CommandDisplay {
+    CommandDisplay {
+        argv: std::iter::once("git".to_owned())
+            .chain(args.iter().cloned())
+            .collect(),
+        cwd: Some(root.display().to_string()),
+        background: false,
+    }
+}
+
 /// A single proposed action awaiting an approval decision.
 #[derive(Debug, Clone)]
 pub struct ToolAction {
+    /// Structured command for shell/git approvals; `None` for other tools.
+    pub display: Option<CommandDisplay>,
     /// Tool name, e.g. `"shell"`.
     pub tool: String,
     /// One-line human-readable summary shown in approval UI.
@@ -154,6 +180,15 @@ const EXEC_SUBCOMMANDS: &[&str] = &[
     "add",
 ];
 
+/// Command prefix an "allow for this run" grant covers. Tokens are raw argv
+/// entries; callers must render them as data, never splice them into prose.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GrantScope {
+    pub argv: Vec<String>,
+    /// True when later arguments after `argv` are covered too.
+    pub covers_further_args: bool,
+}
+
 impl ToolAction {
     /// Key under which an interactive "allow for this run" grant is cached.
     ///
@@ -168,22 +203,42 @@ impl ToolAction {
     /// ([`is_destructive_variant`]) are keyed by their full argv too, so
     /// approving `git push` never covers `git push --force`.
     pub fn grant_key(&self) -> String {
-        let is_git_tool = self.tool == "git";
-        if !(self.tool == "shell" || is_git_tool) || self.command.is_empty() {
+        if !(self.tool == "shell" || self.tool == "git") || self.command.is_empty() {
             return self.tool.clone();
         }
+        let (prefix, _) = self.shell_grant_prefix();
+        // NUL cannot occur in argv, so the join is unambiguous.
+        format!("{}\0{}", self.tool, prefix.join("\0"))
+    }
+
+    /// Command prefix an "allow for this run" grant covers, and whether it is
+    /// a program + subcommand prefix (`true`) rather than the exact argv.
+    fn shell_grant_prefix(&self) -> (&[String], bool) {
         let scoped = self.command.len() >= 2
             && SUBCOMMAND_PROGRAMS.contains(&self.command[0].as_str())
             && !self.command[1].starts_with('-')
-            && (is_git_tool || !EXEC_SUBCOMMANDS.contains(&self.command[1].as_str()))
+            && (self.tool == "git" || !EXEC_SUBCOMMANDS.contains(&self.command[1].as_str()))
             && !is_destructive_variant(&self.command);
-        let prefix = if scoped {
-            &self.command[..2]
+        if scoped {
+            (&self.command[..2], true)
         } else {
-            &self.command[..]
-        };
-        // NUL cannot occur in argv, so the join is unambiguous.
-        format!("{}\0{}", self.tool, prefix.join("\0"))
+            (&self.command[..], false)
+        }
+    }
+
+    /// What an interactive grant covers, as structured data for the approval
+    /// dialog; `None` for tools keyed by name alone. Derived from the same
+    /// prefix as [`Self::grant_key`], so the two cannot disagree. A destructive
+    /// variant is covered by its exact argv only (`covers_further_args` false).
+    pub fn grant_scope(&self) -> Option<GrantScope> {
+        if self.tool != "shell" || self.command.is_empty() {
+            return None;
+        }
+        let (prefix, scoped) = self.shell_grant_prefix();
+        Some(GrantScope {
+            argv: prefix.to_vec(),
+            covers_further_args: scoped,
+        })
     }
 }
 
@@ -334,6 +389,43 @@ pub fn is_destructive_variant(command: &[String]) -> bool {
         "npm" | "pnpm" | "yarn" => positionals(args).any(registry_word),
         "cargo" => positionals(args).any(|arg| matches!(arg, "publish" | "yank")),
         _ => false,
+    }
+}
+
+/// Structured command for the approval dialog, from the raw model arguments
+/// of a `shell` or `git` call; `None` for every other tool. `cwd` stays
+/// `None` when the call uses the project root.
+pub fn command_display_for_call(name: &str, args: &serde_json::Value) -> Option<CommandDisplay> {
+    match name {
+        "shell" => {
+            let argv = shell_argv(args);
+            if argv.is_empty() {
+                return None;
+            }
+            Some(CommandDisplay {
+                argv,
+                cwd: args
+                    .get("cwd")
+                    .and_then(|v| v.as_str())
+                    .filter(|cwd| !cwd.is_empty() && *cwd != ".")
+                    .map(str::to_owned),
+                background: args
+                    .get("background")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            })
+        }
+        "git" => {
+            let rest = args.get("args").and_then(|v| v.as_array())?;
+            Some(CommandDisplay {
+                argv: std::iter::once("git".to_owned())
+                    .chain(rest.iter().filter_map(|v| v.as_str()).map(str::to_owned))
+                    .collect(),
+                cwd: None,
+                background: false,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -618,6 +710,7 @@ impl ToolRuntime for GatedTool {
         }
         let name = self.inner.name();
         let action = ToolAction {
+            display: None,
             command: Vec::new(),
             tool: name.to_owned(),
             summary: (self.summarize)(name, &args),
@@ -1632,6 +1725,11 @@ impl ToolRuntime for ShellTool {
             .chain(args.iter().cloned())
             .collect();
         let action = ToolAction {
+            display: Some(CommandDisplay {
+                argv: argv.clone(),
+                cwd: Some(workdir.display().to_string()),
+                background,
+            }),
             command: argv,
             tool: "shell".to_string(),
             summary: format!(
@@ -1746,6 +1844,7 @@ impl ToolRuntime for ApplyPatchTool {
         check_approval_permitted(
             self.approvals.as_ref(),
             &ToolAction {
+                display: None,
                 command: Vec::new(),
                 tool: "apply_patch".to_string(),
                 summary,
@@ -1849,6 +1948,7 @@ impl ToolRuntime for GitTool {
         check_approval_permitted(
             self.approvals.as_ref(),
             &ToolAction {
+                display: Some(git_display(&args, &root)),
                 command,
                 tool: "git".into(),
                 summary: format!("run `git {}`", args.join(" ")),
@@ -3115,6 +3215,7 @@ mod tests {
     #[test]
     fn approval_hooks_behave() {
         let shell = ToolAction {
+            display: None,
             command: Vec::new(),
             tool: "shell".to_string(),
             summary: "run echo".to_string(),
@@ -3131,6 +3232,7 @@ mod tests {
         });
         assert_eq!(hook.approve(&shell), Approval::Deny);
         let git = ToolAction {
+            display: None,
             command: Vec::new(),
             tool: "git".to_string(),
             summary: "status".to_string(),

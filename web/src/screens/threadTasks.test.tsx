@@ -84,6 +84,13 @@ describe("watches", () => {
     const row = groupTasks(tasks({ automations: [automation({ origin: "agent", expires_at: "2030-01-08T09:00:00Z" })] })).scheduled[0];
     expect(row?.meta).toContain(`Daily at 09:00 · Europe/Berlin · expires ${expiryLabel("2030-01-08T09:00:00Z")} · next`);
   });
+  it("shows Earlier run summaries as plain text without markdown", () => {
+    const feed = tasks({ recent: [finished({ summary: "**DONE** - `status.txt` now says ready. " + "more ".repeat(40) })] });
+    const meta = groupTasks(feed).earlier[0]?.meta ?? "";
+    expect(meta).toContain("DONE - status.txt now says ready.");
+    expect(meta).not.toMatch(/[*`]/);
+    expect(meta.endsWith("…")).toBe(true);
+  });
   it("explains why a watch ended in Earlier, newest first, with its origin", () => {
     const feed = tasks({
       recent: [finished({ review_id: "r1", automation_id: "w1", name: "Watch status.txt", origin: "agent", finished_at: "2030-01-01T20:00:00Z" })],

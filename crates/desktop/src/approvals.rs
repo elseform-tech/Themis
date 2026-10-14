@@ -118,6 +118,8 @@ impl ApprovalHook for DesktopApprovalHook {
             tool: action.tool.clone(),
             summary: action.summary.clone(),
             risk: RiskLevel::from(action.risk),
+            grant_scope: action.grant_scope(),
+            command: action.display.clone(),
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         {
@@ -166,6 +168,7 @@ mod tests {
 
     fn action(tool: &str, risk: CoreRisk) -> ToolAction {
         ToolAction {
+            display: None,
             command: Vec::new(),
             tool: tool.to_owned(),
             summary: format!("test {tool}"),
@@ -201,6 +204,35 @@ mod tests {
             hook.approve(&action("write_file", CoreRisk::Write)),
             Approval::Deny
         );
+    }
+
+    #[test]
+    fn destructive_git_dialog_carries_the_full_command() {
+        let (hook, mut rx) = hook_with_sink(true);
+        let hook = hook.with_timeout(Duration::from_millis(10));
+        let argv: Vec<String> = ["git", "push", "--force", "origin", "main"]
+            .iter()
+            .map(|t| t.to_string())
+            .collect();
+        let git = ToolAction {
+            display: Some(themis_core::tools::CommandDisplay {
+                argv: argv.clone(),
+                cwd: Some("/repo".into()),
+                background: false,
+            }),
+            command: argv.clone(),
+            tool: "shell".into(),
+            summary: "run git".into(),
+            risk: CoreRisk::Execute,
+        };
+        assert_eq!(hook.approve(&git), Approval::Deny);
+        let Ok(TestEvent::Approval(request)) = rx.try_recv() else {
+            panic!("expected an approval request");
+        };
+        assert_eq!(request.command.unwrap().argv, argv);
+        let scope = request.grant_scope.unwrap();
+        assert_eq!(scope.argv, argv);
+        assert!(!scope.covers_further_args);
     }
 
     #[test]

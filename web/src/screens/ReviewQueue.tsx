@@ -6,6 +6,7 @@ import {
   automationName,
   continueReview,
   dismissReview,
+  reviewName,
 } from "./reviewFlow";
 import "./ReviewQueue.css";
 
@@ -77,11 +78,11 @@ export function ReviewQueue() {
             {pending.map((item) => (
               <li key={item.id} className="themis-review-card">
                 <div className="themis-review-card-head">
-                  <span className="themis-review-name">{item.title}</span>
+                  <span className="themis-review-name">{reviewName(item)}</span>
                 </div>
                 <p className="themis-review-summary">{item.summary}</p>
                 <p className="themis-review-meta">
-                  {[automationName(state.automations, item.automation_id), formatTime(item.created_at)].filter((part, index) => index > 0 || part !== item.title).join(" · ")}
+                  {[automationName(state.automations, item.automation_id), formatTime(item.created_at)].filter((part, index) => index > 0 || part !== reviewName(item)).join(" · ")}
                 </p>
                 <div className="themis-review-actions">
                   <Button
@@ -118,7 +119,7 @@ export function ReviewQueue() {
               className="themis-review-card themis-review-card--done"
             >
               <div className="themis-review-card-head">
-                <span className="themis-review-name">{item.title}</span>
+                <span className="themis-review-name">{reviewName(item)}</span>
                 {item.status === "continued" ? (
                   <Badge tone="success">continued</Badge>
                 ) : (

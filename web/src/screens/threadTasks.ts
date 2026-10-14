@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { getThreadTasks } from "../lib/tauri";
 import type { AutomationOrigin, AutomationRemoval, ThreadTaskAutomation, ThreadTaskRun, ThreadTasks } from "../lib/types";
 import { useApp } from "../state/store";
+import { plainSnippet } from "../lib/plainText";
 import { scheduleLabel, shortTime } from "./Automations";
 import { countBackground } from "./backgroundTasks";
 
@@ -67,10 +68,7 @@ function removalRow(item: AutomationRemoval): TaskRow {
   };
 }
 
-function snippet(text: string): string {
-  const line = text.replace(/\s+/g, " ").trim();
-  return line.length > 90 ? `${line.slice(0, 89)}…` : line;
-}
+const snippet = (text: string): string => plainSnippet(text, 90);
 
 function runRow(run: ThreadTaskRun, kind: TaskRow["kind"], automations: ThreadTaskAutomation[]): TaskRow {
   const automation = automations.find(item => item.id === run.automation_id);

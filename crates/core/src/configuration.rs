@@ -968,6 +968,7 @@ mod tests {
             Arc::new(crate::tools::AllowAllHook),
         );
         let action = |risk| ToolAction {
+            display: None,
             command: Vec::new(),
             tool: "git".into(),
             summary: String::new(),
@@ -983,6 +984,7 @@ mod tests {
 
     fn shell_action(argv: &[&str]) -> ToolAction {
         ToolAction {
+            display: None,
             command: argv.iter().map(|t| t.to_string()).collect(),
             tool: "shell".into(),
             summary: String::new(),
@@ -1417,6 +1419,65 @@ mod tests {
     }
 
     #[test]
+    fn destructive_shell_variant_scope_is_the_exact_argv() {
+        let danger = shell_action(&["git", "push", "--force", "origin", "main"]);
+        let scope = danger.grant_scope().unwrap();
+        assert_eq!(scope.argv, ["git", "push", "--force", "origin", "main"]);
+        assert!(!scope.covers_further_args);
+        assert_eq!(
+            danger.grant_key(),
+            format!("shell\0{}", scope.argv.join("\0"))
+        );
+        let safe = shell_action(&["git", "push", "origin", "main"])
+            .grant_scope()
+            .unwrap();
+        assert_eq!(safe.argv, ["git", "push"]);
+        assert!(safe.covers_further_args);
+    }
+
+    #[test]
+    fn grant_scope_matches_grant_key_semantics() {
+        let cases: &[&[&str]] = &[
+            &["cargo", "test", "--lib"],
+            &["cargo", "run", "--", "a"],
+            &["find", ".", "-delete"],
+            &["rm", "-rf /"],
+            &["rm", "-rf", "/"],
+            &["git", "-C", "x", "status"],
+            &["echo", "a\nb`c\u{202e}"],
+        ];
+        for argv in cases {
+            let action = shell_action(argv);
+            let scope = action.grant_scope().expect("shell has a scope");
+            // The key is exactly the scope's tokens: equal scopes <=> equal keys.
+            assert_eq!(
+                action.grant_key(),
+                format!("shell\0{}", scope.argv.join("\0"))
+            );
+            assert_eq!(scope.covers_further_args, scope.argv.len() < argv.len());
+            assert_eq!(
+                scope.argv[..],
+                argv.iter().map(|t| t.to_string()).collect::<Vec<_>>()[..scope.argv.len()]
+            );
+        }
+        assert_eq!(
+            shell_action(&["cargo", "test", "--lib"])
+                .grant_scope()
+                .unwrap()
+                .argv,
+            ["cargo", "test"]
+        );
+        // Tokens stay distinct: a space inside one argument is not two arguments.
+        assert_ne!(
+            shell_action(&["rm", "-rf /"]).grant_scope(),
+            shell_action(&["rm", "-rf", "/"]).grant_scope()
+        );
+        let mut other = shell_action(&["status"]);
+        other.tool = "git".into();
+        assert_eq!(other.grant_scope(), None);
+    }
+
+    #[test]
     fn cached_shell_grant_does_not_extend_to_another_program() {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = Arc::clone(&calls);
@@ -1446,18 +1507,18 @@ mod tests {
         use proptest::prelude::*;
 
         proptest! {
-            #[test]
-            fn prefix_match_agrees_with_slice_prefix(
-                command in proptest::collection::vec(".{0,8}", 0..6),
-                prefix in proptest::collection::vec(".{0,8}", 0..6),
-            ) {
-                let expected = !prefix.is_empty() && command.starts_with(&prefix);
-                prop_assert_eq!(command_has_prefix(&command, &prefix), expected);
-                // Any non-empty prefix of the command itself always matches.
-                for n in 1..=command.len() {
-                    prop_assert!(command_has_prefix(&command, &command[..n]));
-                }
-            }
+                   #[test]
+                   fn prefix_match_agrees_with_slice_prefix(
+                       command in proptest::collection::vec(".{0,8}", 0..6),
+                       prefix in proptest::collection::vec(".{0,8}", 0..6),
+                   ) {
+                       let expected = !prefix.is_empty() && command.starts_with(&prefix);
+                       prop_assert_eq!(command_has_prefix(&command, &prefix), expected);
+                       // Any non-empty prefix of the command itself always matches.
+                       for n in 1..=command.len() {
+                           prop_assert!(command_has_prefix(&command, &command[..n]));
+                       }
+                   }
 
             #[test]
             fn destructive_flag_never_shares_the_harmless_key(
@@ -1470,7 +1531,7 @@ mod tests {
                     v
                 };
                 let mk = |command: Vec<String>| ToolAction {
-                    command, tool: "shell".into(), summary: String::new(), risk: RiskLevel::Execute,
+                    display: None, command, tool: "shell".into(), summary: String::new(), risk: RiskLevel::Execute,
                 };
                 let danger = mk(argv(&tail));
                 let harmless = mk(argv(&[]));
@@ -1521,6 +1582,7 @@ mod tests {
             #[test]
             fn grant_key_never_panics_and_is_stable(command in proptest::collection::vec(".{0,8}", 0..6)) {
                 let action = ToolAction {
+                    display: None,
                     command,
                     tool: "shell".into(),
                     summary: String::new(),
@@ -1541,6 +1603,7 @@ mod tests {
         .unwrap()
         .config;
         let action = |tool: &str| ToolAction {
+            display: None,
             command: Vec::new(),
             tool: tool.into(),
             summary: String::new(),

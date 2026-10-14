@@ -13,7 +13,7 @@ vi.mock("../lib/tauri", async importOriginal => ({
   pluginAction: vi.fn(async () => []), listPromptSkills: vi.fn(async () => []),
   getDefaultProject: vi.fn(async () => ({ name: "Themis", root: "/tmp/fixed-themis", is_git: true, is_default: true })), getSettings: vi.fn(), getSecretStatus: vi.fn(), updateSettings: vi.fn(),
   onBackendResync: vi.fn(async () => () => {}), getPendingApprovals: vi.fn(async () => []),
-  onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}),
+  onThreadEvent: vi.fn(async () => () => {}), onApprovalRequest: vi.fn(async () => () => {}), onReviewItemAdded: vi.fn(async () => () => {}), onThreadChanged: vi.fn(async () => () => {}),
   listSkills: vi.fn(async () => []), listAutomations: vi.fn(async () => []), listReviewItems: vi.fn(async () => []),
   renameThread: vi.fn(), setThreadApprovalMode: vi.fn(), setProvider: vi.fn(), setThreadEffort: vi.fn(), getThread: vi.fn(), getThreadHistory: vi.fn(async () => []), sendMessage: vi.fn(async () => ({ run_id: "test-run" })),
   openProject: vi.fn(), listThreads: vi.fn(), createProject: vi.fn(), renameProject: vi.fn(), createThread: vi.fn(), listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", effort_levels: [] }, { id: "gpt-5.6-luna", effort_levels: ["low", "medium", "high"] }]),
@@ -44,6 +44,29 @@ describe("Workspace journey", () => {
     await act(async () => finish({ "global:test:mcp:broken": { status: "failed", reason: "Could not connect" } }));
     expect(screen.getByText(/MCP broken: Could not connect/).closest(".themis-toast")).not.toBeNull();
     vi.mocked(bridge.pluginAction).mockImplementation(async () => [] as never);
+  });
+  it("shows chats created, renamed and removed through the shared server without a reload", async () => {
+    let receive!: Parameters<typeof bridge.onThreadChanged>[0];
+    vi.mocked(bridge.onThreadChanged).mockImplementationOnce(async callback => { receive = callback; return () => {}; });
+    const alpha = { name: "Alpha", root: "/tmp/alpha", is_git: true };
+    const first = { id: "first", title: "First chat", provider: "go" as const, model: "test", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [], last_activity_seq: 10 };
+    vi.mocked(bridge.getDefaultProject).mockResolvedValueOnce(alpha);
+    vi.mocked(bridge.getSettings).mockResolvedValueOnce({ ...settings, recent_roots: [alpha.root] });
+    vi.mocked(bridge.openProject).mockResolvedValue(alpha);
+    vi.mocked(bridge.listThreads).mockResolvedValue([first]);
+    vi.mocked(bridge.getThread).mockResolvedValue(first);
+    await mount();
+    const sidebar = screen.getByRole("complementary", { name: "Workspace navigation" });
+    const chats = () => [...within(sidebar).getByRole("region", { name: "Chats" }).querySelectorAll(".themis-thread-row")].map(button => button.getAttribute("aria-label"));
+    expect(chats()).toEqual(["First chat"]);
+    const made = { ...first, id: "made-by-cli", title: "Made by CLI", last_activity_seq: 20 };
+    await act(async () => receive({ kind: "created", project_root: alpha.root, thread_id: made.id, thread: made }));
+    expect(chats()).toContain("Made by CLI");
+    await act(async () => receive({ kind: "updated", project_root: alpha.root, thread_id: made.id, thread: { ...made, title: "Renamed by CLI", approval_mode: "yolo" } }));
+    expect(chats()).toContain("Renamed by CLI");
+    expect(chats()).not.toContain("Made by CLI");
+    await act(async () => receive({ kind: "removed", project_root: alpha.root, thread_id: made.id }));
+    expect(chats()).toEqual(["First chat"]);
   });
   it("lists only the chosen project's chats, most recent first, and switches projects", async () => {
     let receive!: Parameters<typeof bridge.onThreadEvent>[0];

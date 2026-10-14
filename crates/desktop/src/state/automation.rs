@@ -86,6 +86,7 @@ pub fn shell_policy_for(
         return CheckPolicy::Allow;
     }
     let action = ToolAction {
+        display: None,
         command: argv.to_vec(),
         tool: "shell".to_owned(),
         summary: format!("watch check `{}`", argv.join(" ")),
