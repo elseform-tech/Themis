@@ -114,6 +114,21 @@ class GradeTests(unittest.TestCase):
         self.assertEqual(grade(probe, "Rover"), "invented")
         self.assertEqual(grade(probe, None), "error")
 
+    def test_prose_abstentions_on_decoys(self):
+        probe = {"expect_unknown": True}
+        for abstention in ("The search returned no matches for \"tavern\" in the saved originals.",
+                           "UNKNOWN\n\nI searched the snapshot and found nothing.", "No.",
+                           "I could not find any mention of that."):
+            self.assertEqual(grade(probe, abstention), "correct_unknown", abstention)
+        self.assertEqual(grade(probe, "Session 5 is complete and the bug is fixed."), "invented")
+
+    def test_failed_requests_are_errors_but_unfinished_runs_are_wrong(self):
+        self.assertIsNone(harness.stored_answer({}))
+        self.assertIsNone(harness.stored_answer({"answer": "", "error": "LLM request failed: 429"}))
+        self.assertEqual(harness.stored_answer({"answer": "", "error": "Repeated unchanged tool results stopped the run."}), "")
+        self.assertEqual(harness.stored_answer({"answer": "x", "error": "y"}), "x")
+        self.assertEqual(grade({"expected": {"regex": "x"}}, ""), "wrong")
+
     def test_known_wrong_answers_for_every_committed_probe(self):
         for case in harness.load_cases():
             for probe in case["probes"]:
@@ -176,7 +191,7 @@ class ExclusionTests(unittest.TestCase):
         def row(i, in_context, verdict="correct"):
             return {"case": "c", "id": str(i), "category": "detail", "domain": "code", "in_context": in_context,
                     "verdict": verdict, "answer": "a", "error": None, "cite_present": True, "cite_valid": verdict == "correct",
-                    "tool_calls": 2, "used_recall": False, "requests": 3, "input_tokens": 10, "output_tokens": 2,
+                    "tool_calls": 2, "denied": 0, "used_recall": False, "requests": 3, "input_tokens": 10, "output_tokens": 2,
                     "latency_ms": 1000}
         rows = [row(1, None), row(2, None, "wrong"), row(3, "tail"), row(4, "checkpoint")]
         run = {"chunks": [{"installed": True, "tokens_after": 5}], "recall_available": False}

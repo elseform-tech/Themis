@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 from .grade import grade
-from .report import aggregate, markdown, trial_summary
+from .report import PROVIDER_FAILURE, aggregate, markdown, trial_summary
 from .validate import context_location, validate
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -86,6 +86,15 @@ def build_ref_runner(ref):
         raise
 
 
+def stored_answer(entry):
+    """The answer text, or None when the request itself failed (provider/transport error)."""
+    answer = entry.get("answer") or ""
+    if answer or not entry:
+        return answer if entry else None
+    error = (entry.get("error") or "").lower()
+    return None if any(p.lower() in error for p in PROVIDER_FAILURE) or not error else ""
+
+
 def process_run(case, report, workdir):
     """Grades one runner report and validates citations while the evidence still exists."""
     evidence = os.path.join(workdir, "project", ".themis", "context", "eval-thread")
@@ -99,7 +108,7 @@ def process_run(case, report, workdir):
     rows = []
     for probe in case["probes"]:
         entry = answers.get(probe["id"], {})
-        answer = entry.get("answer") if entry.get("finished") or entry.get("answer") else None
+        answer = stored_answer(entry)
         decoy = probe["category"] == "decoy"
         cite = {"present": False, "valid": False, "cited": []}
         if not decoy and answer:
@@ -111,7 +120,8 @@ def process_run(case, report, workdir):
             "verdict": grade(probe, answer), "answer": answer or "", "error": entry.get("error"),
             "cite_present": cite["present"], "cite_valid": cite["valid"], "cited": cite["cited"],
             "tools": tools, "tool_calls": sum(t != "update_plan" for t in tools),
-            "denied": entry.get("denied", 0), "used_recall": "recall" in tools,
+            "denied": entry.get("denied", 0),
+            "executed_tool_calls": max(0, sum(t != "update_plan" for t in tools) - entry.get("denied", 0)), "used_recall": "recall" in tools,
             "requests": entry.get("requests", 0), "input_tokens": entry.get("input_tokens"),
             "output_tokens": entry.get("output_tokens"), "latency_ms": entry.get("latency_ms", 0),
         })
@@ -219,6 +229,40 @@ def run(args):
     return 1 if failures else 0
 
 
+def regrade(args):
+    """Re-grades stored answers offline with the current grader and fixtures (citations are kept)."""
+    with open(args.result, encoding="utf-8") as handle:
+        old = json.load(handle)
+    cases = {c["name"]: c for c in load_cases("longform")}
+    results = {}
+    for item in old["details"]:
+        probes = {p["id"]: p for p in cases[item["case"]]["probes"]}
+        rows = []
+        for row in item["rows"]:
+            row = dict(row)
+            probe = probes[row["id"]]
+            failed = not row["answer"] and (not row["error"] or any(
+                p.lower() in row["error"].lower() for p in PROVIDER_FAILURE))
+            row["verdict"] = grade(probe, None if failed else row["answer"])
+            row["executed_tool_calls"] = max(0, row["tool_calls"] - row["denied"])
+            rows.append(row)
+        results[(item["trial"], item["case"])] = {
+            "chunks": item["chunks"], "rows": rows, "recall_available": "recall" in (item.get("tools_available") or []),
+            "tools_available": item.get("tools_available")}
+    summary = build_summary([cases[n] for n in old["cases"]], results, old["trials_requested"])
+    for key in ("suite", "model", "budget", "recent_messages", "max_tool_calls", "failed_runs", "build_ref",
+                "created", "git_commit"):
+        summary[key] = old.get(key)
+    summary["note"] = (old.get("note", "") + " Offline regrade of the stored answers with the current grader "
+                       "(abstention phrases extended); model output and citation checks are unchanged.").strip()
+    out = args.out or args.result
+    with open(out, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    print(markdown(summary))
+    return 0
+
+
 def show(args):
     with open(args.result, encoding="utf-8") as handle:
         print(markdown(json.load(handle)))
@@ -244,8 +288,11 @@ def main(argv=None):
     cmd.add_argument("--out", default=None)
     again = sub.add_parser("report", help="print the markdown summary of a stored result")
     again.add_argument("result")
+    redo = sub.add_parser("regrade", help="re-grade a stored result offline and rewrite it")
+    redo.add_argument("result")
+    redo.add_argument("--out", default=None)
     args = parser.parse_args(argv)
-    return show(args) if args.command == "report" else run(args)
+    return {"report": show, "regrade": regrade}.get(args.command, run)(args)
 
 
 if __name__ == "__main__":
