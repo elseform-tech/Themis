@@ -171,7 +171,10 @@ async fn short_reply_never_exceeds_the_hard_budget() {
         "paused but not finished",
         "paused but not finished as parked work",
     ] {
-        assert!(system.contains(expected), "missing {expected:?} in {system}");
+        assert!(
+            system.contains(expected),
+            "missing {expected:?} in {system}"
+        );
     }
 }
 
