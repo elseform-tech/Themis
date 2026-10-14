@@ -83,8 +83,14 @@ fn ranks_phrase_above_all_terms_above_some_terms() {
         &fx,
         100,
         &[
-            user("The harbour was quiet. Somewhere a copper kettle sang.", "original"),
-            user("A kettle of copper hung by the stove in the harbour house.", "original"),
+            user(
+                "The harbour was quiet. Somewhere a copper kettle sang.",
+                "original",
+            ),
+            user(
+                "A kettle of copper hung by the stove in the harbour house.",
+                "original",
+            ),
             user("Only a kettle appears in this one.", "original"),
         ],
     );
@@ -192,7 +198,10 @@ fn tool_results_are_decoded_once_with_coordinates() {
     write_snapshot(
         &fx,
         100,
-        &[user("run it", "original"), tool("shell", &payload, "original")],
+        &[
+            user("run it", "original"),
+            tool("shell", &payload, "original"),
+        ],
     );
     let result = run(&fx, "vault code");
     let hit = &hits(&result)[0];
@@ -293,7 +302,11 @@ fn mixed_batches_label_each_result() {
 #[test]
 fn only_confined_regular_files_are_searched() {
     let fx = fixture();
-    write_snapshot(&fx, 100, &[user("the mooring fee is nine crowns", "original")]);
+    write_snapshot(
+        &fx,
+        100,
+        &[user("the mooring fee is nine crowns", "original")],
+    );
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(
         outside.path().join("snapshot-999.jsonl"),
@@ -437,7 +450,11 @@ fn around_returns_more_context_and_enforces_kinds() {
     )
     .unwrap_err();
     assert!(error.contains("evidence_kind recovery"), "{error}");
-    for bad in ["nonsense", "x|1|/content|0", "../../etc/passwd|1|/content|0"] {
+    for bad in [
+        "nonsense",
+        "x|1|/content|0",
+        "../../etc/passwd|1|/content|0",
+    ] {
         let result = recall(
             &fx.scope,
             &RecallArgs {
@@ -454,7 +471,11 @@ fn around_returns_more_context_and_enforces_kinds() {
 fn scan_budgets_report_truncation_and_oversized_records_are_skipped() {
     let fx = fixture();
     let big = user(&"filler ".repeat(40_000), "original");
-    write_snapshot(&fx, 100, &[user("the amber door is locked", "original"), big]);
+    write_snapshot(
+        &fx,
+        100,
+        &[user("the amber door is locked", "original"), big],
+    );
     let tight = Limits {
         scan_bytes: 1 << 40,
         deadline: Duration::from_secs(5),
@@ -540,7 +561,10 @@ fn results_are_deterministic_and_empty_queries_fail() {
     write_snapshot(
         &fx,
         100,
-        &[user("alpha beta gamma", "original"), user("alpha beta", "original")],
+        &[
+            user("alpha beta gamma", "original"),
+            user("alpha beta", "original"),
+        ],
     );
     assert_eq!(run(&fx, "alpha beta"), run(&fx, "alpha beta"));
     for query in ["", "   ", "!!!"] {

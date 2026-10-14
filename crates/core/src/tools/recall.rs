@@ -571,8 +571,7 @@ fn scan_text(text: &str, query: &Query) -> FieldScan {
             }
             let end = map[e - 1] as usize + 1;
             for (term, wanted) in query.terms.iter().enumerate() {
-                if word_matches(&folded[*s..*e], wanted)
-                    && scan.occurrences.len() < MAX_OCCURRENCES
+                if word_matches(&folded[*s..*e], wanted) && scan.occurrences.len() < MAX_OCCURRENCES
                 {
                     scan.occurrences.push(Occurrence {
                         start: abs_start + start,
@@ -590,8 +589,10 @@ fn scan_text(text: &str, query: &Query) -> FieldScan {
                 })
             {
                 let (_, last_end) = spans[token + words - 1];
-                scan.phrases
-                    .push((abs_start + start, abs_start + map[last_end - 1] as usize + 1));
+                scan.phrases.push((
+                    abs_start + start,
+                    abs_start + map[last_end - 1] as usize + 1,
+                ));
             }
         }
         match (last, next_byte) {
@@ -898,7 +899,7 @@ impl Filters<'_> {
     }
 
     fn accepts_field(&self, source: &Source, display: &str, field: &RecordField) -> bool {
-        self.kinds.iter().any(|k| *k == field.evidence_kind)
+        self.kinds.contains(&field.evidence_kind)
             && (self.source.is_empty() || self.names(source, display, Some(field)))
     }
 }
@@ -1089,7 +1090,15 @@ fn scan_jsonl(source: &Source, display: &str, scan: &mut Scan) {
                 let mut record_sha = None;
                 for field in record_fields(&line) {
                     if scan.filters.accepts_field(source, display, &field) {
-                        consider_field(source, display, record, &mut record_sha, &line, &field, scan);
+                        consider_field(
+                            source,
+                            display,
+                            record,
+                            &mut record_sha,
+                            &line,
+                            &field,
+                            scan,
+                        );
                     }
                 }
             }
@@ -1174,7 +1183,14 @@ fn around(
     let (text, sha, role, evidence_kind, tool, decoded) = if is_attachment {
         let (text, sha) = read_attachment(&source.path, &mut budget)
             .ok_or("attachment is not readable text within the limits")?;
-        (text, sha, "User".to_owned(), "original".to_owned(), None, false)
+        (
+            text,
+            sha,
+            "User".to_owned(),
+            "original".to_owned(),
+            None,
+            false,
+        )
     } else {
         let file = File::open(&source.path).map_err(|e| e.to_string())?;
         let mut reader = BufReader::with_capacity(64 * 1024, file);
@@ -1208,7 +1224,7 @@ fn around(
             field.decoded,
         )
     };
-    if !kinds.iter().any(|k| *k == evidence_kind) {
+    if !kinds.contains(&evidence_kind) {
         return Err(format!(
             "the record is evidence_kind {evidence_kind}; pass kinds to include it"
         ));

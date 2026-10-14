@@ -155,7 +155,10 @@ async fn recall_finds_a_planted_original_after_compaction() {
     assert_eq!(tool_result["untrusted"], true);
     let snapshot = evidence.join(hit["snapshot"].as_str().unwrap());
     let text = std::fs::read_to_string(&snapshot).unwrap();
-    let line = text.lines().nth(hit["record"].as_u64().unwrap() as usize - 1).unwrap();
+    let line = text
+        .lines()
+        .nth(hit["record"].as_u64().unwrap() as usize - 1)
+        .unwrap();
     let record: Value = serde_json::from_str(line).unwrap();
     assert!(record["content"].as_str().unwrap().contains(SECRET));
     use sha2::{Digest, Sha256};
@@ -166,7 +169,8 @@ async fn recall_finds_a_planted_original_after_compaction() {
     assert_eq!(hit["sha256"], digest);
     let range = hit["char_range"].as_array().unwrap();
     let chars: Vec<char> = record["content"].as_str().unwrap().chars().collect();
-    let slice: String = chars[range[0].as_u64().unwrap() as usize..range[1].as_u64().unwrap() as usize]
+    let slice: String = chars
+        [range[0].as_u64().unwrap() as usize..range[1].as_u64().unwrap() as usize]
         .iter()
         .collect();
     assert_eq!(slice, hit["excerpt"].as_str().unwrap());
@@ -182,7 +186,9 @@ fn recall_tool_metadata_is_stable() {
     });
     assert_eq!(tool.name(), "recall");
     let schema = tool.args_schema();
-    let definition = json!({"name":tool.name(),"description":tool.description(),"parameters":schema}).to_string();
+    let definition =
+        json!({"name":tool.name(),"description":tool.description(),"parameters":schema})
+            .to_string();
     println!("recall tool definition bytes: {}", definition.len());
     assert!(definition.len() < 2_000, "tool definition stays small");
     for field in ["query", "limit", "kinds", "source", "around"] {

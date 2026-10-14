@@ -109,7 +109,10 @@ async fn cli_recall_returns_attachment_original_coordinates_without_approval() {
         .await;
 
     let state = AppState::new_for_test(data.path().join("settings.json"));
-    state.set_secret("go".into(), "test-key".into()).await.unwrap();
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
     state.set_go_base_url_override(Some(provider.uri()));
     let server = Server::bind(state, data.path()).await.unwrap();
     let serving = tokio::spawn(server.run());
