@@ -118,3 +118,25 @@ export async function dismissReview(
     return { ok: false, error: detail };
   }
 }
+
+/** Stable display name of a review item: the stored automation name, else the legacy "Automation <name> — <time>" title without its timestamp. */
+export function reviewName(item: Pick<ReviewItem, "title" | "automation_name">): string {
+  if (item.automation_name) return item.automation_name;
+  const legacy = /^Automation (.+?) — \d{4}-\d{2}-\d{2}T[\d:.]+Z$/.exec(item.title);
+  return legacy?.[1] ?? item.title;
+}
+
+/** "Today 14:05" for the current day, otherwise a short weekday/date and time. */
+export function friendlyTime(iso: string, now: Date = new Date()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (date.toDateString() === now.toDateString()) return `today ${time}`;
+  return `${date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} ${time}`;
+}
+
+/** Toast text for a newly added review item. */
+export function reviewToast(item: ReviewItem): string {
+  const origin = item.automation_origin === "agent" ? " (by agent)" : "";
+  return ["New review item: " + reviewName(item) + origin, friendlyTime(item.created_at)].filter(Boolean).join(" · ");
+}

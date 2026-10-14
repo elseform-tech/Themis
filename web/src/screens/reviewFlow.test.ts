@@ -19,6 +19,9 @@ import {
   continueReview,
   dismissReview,
   findThreadProject,
+  friendlyTime,
+  reviewName,
+  reviewToast,
 } from "./reviewFlow";
 
 const PROJECT: ProjectInfo = { root: "/repo", name: "repo", is_git: true };
@@ -205,5 +208,25 @@ describe("dismissReview flow", () => {
     const state = actions.reduce(reducer, base);
     expect(state.reviews[0]?.status).toBe("pending");
     expect(state.toasts[0]?.tone).toBe("danger");
+  });
+});
+
+describe("review labels", () => {
+  const base = { id: "r1", automation_id: "a1", thread_id: "t1", created_at: "2026-10-14T09:05:00Z", summary: "", status: "pending" as const };
+  it("uses the stored automation name and origin, never the raw timestamped title", () => {
+    const item = { ...base, title: "Automation Watch status.txt — 2026-10-14T09:05:00Z", automation_name: "Watch status.txt", automation_origin: "agent" as const };
+    const text = reviewToast(item);
+    expect(text).toMatch(/^New review item: Watch status\.txt \(by agent\) · /);
+    expect(text).not.toMatch(/2026-10-14T|Z$/);
+  });
+  it("recovers the name from a legacy title and falls back to the title", () => {
+    expect(reviewName({ title: "Automation Daily brief — 2026-10-14T09:05:00Z" })).toBe("Daily brief");
+    expect(reviewName({ title: "Custom" })).toBe("Custom");
+  });
+  it("formats today's time without a date", () => {
+    const now = new Date("2026-10-14T12:00:00");
+    expect(friendlyTime("2026-10-14T09:05:00", now)).toMatch(/^today /);
+    expect(friendlyTime("2026-10-10T09:05:00", now)).not.toMatch(/^today /);
+    expect(friendlyTime("bad")).toBe("");
   });
 });
