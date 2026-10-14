@@ -1,0 +1,11 @@
+[
+  {
+    "id": "decision",
+    "category": "decision",
+    "question": "Why was unicode-xid not used?",
+    "planted_at": 31,
+    "expected": {
+      "regex": "(?i)no.new.crates|constraint"
+    }
+  }
+]

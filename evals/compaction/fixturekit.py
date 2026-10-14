@@ -129,7 +129,8 @@ def prose(rng, sentences=8):
     return " ".join(out)
 
 
-def finish(case_dir, name, kind, transcript, probes, next_action, description):
+def finish(case_dir, name, kind, transcript, probes, next_action, description, suites=None,
+           behavior=None):
     """Writes transcript.jsonl, probes.json and case.json, validating probe records."""
     import os
     os.makedirs(case_dir, exist_ok=True)
@@ -152,5 +153,9 @@ def finish(case_dir, name, kind, transcript, probes, next_action, description):
         handle.write("\n")
     with open(os.path.join(case_dir, "case.json"), "w", encoding="utf-8") as handle:
         json.dump({"name": name, "kind": kind, "description": description,
-                   "suites": ["core"], "records": total, "chunks": ends, "next_action": next_action}, handle, indent=2, ensure_ascii=False)
+                   "suites": suites or ["core"], "records": total, "chunks": ends, "next_action": next_action}, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
+    if behavior is not None:
+        with open(os.path.join(case_dir, "behavior.json"), "w", encoding="utf-8") as handle:
+            json.dump(behavior, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")

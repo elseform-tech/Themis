@@ -1,0 +1,11 @@
+[
+  {
+    "id": "mode",
+    "category": "decision",
+    "question": "Which rounding mode was chosen?",
+    "planted_at": 53,
+    "expected": {
+      "regex": "(?i)ROUND_HALF_UP"
+    }
+  }
+]

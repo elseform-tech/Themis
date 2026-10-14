@@ -1,0 +1,14 @@
+{
+  "name": "behavior-unrelated",
+  "kind": "behavior",
+  "description": "Unfinished importer task; an unrelated question after compaction is answered and the task is left alone.",
+  "suites": [
+    "behavior"
+  ],
+  "records": 60,
+  "chunks": [
+    30,
+    60
+  ],
+  "next_action": "Add the customer_id index and document rejects.csv."
+}

@@ -12,6 +12,7 @@ pub mod plugins;
 pub mod providers;
 pub mod runtime;
 pub mod skills;
+pub mod social;
 pub mod tools;
 
 /// Returns the `themis-core` crate version.

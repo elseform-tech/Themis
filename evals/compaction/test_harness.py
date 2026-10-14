@@ -15,6 +15,7 @@ import threading
 import unittest
 
 from . import __main__ as harness
+from . import behavior
 from .grade import grade, matches, position
 from .report import aggregate, spread, trial_rows, trial_summary
 
@@ -169,6 +170,139 @@ class EndToEndTests(unittest.TestCase):
         self.assertGreater(result["aggregate"]["tokens_before_mean"]["mean"],
                            result["aggregate"]["tokens_after_mean"]["mean"])
         self.assertIn("early", result["aggregate"]["by_position"])
+
+
+SCRIPTED_REPLIES = [  # (last user message contains, reply)
+    ("capital of Australia", "Canberra."),
+    ("ounces", "16 ounces."),
+    ("necessary", "n-e-c-e-s-s-a-r-y."),
+    ("Lisbon", "Lisbon: March 14 to 19, 1800 euro budget, peanut allergy, staying in Alfama."),
+    ("rate limiter", "Free 60, paid 600, header X-RateLimit-Remaining, refill with the monotonic clock."),
+    ("continue", "Continuing with round_cents in totals.py: switching to ROUND_HALF_UP."),
+    ("go on", "Next: round_cents gets ROUND_HALF_UP in totals.py."),
+    ("keep going", "Adding the regression test for round_cents."),
+]
+
+
+class BehaviorMock(http.server.BaseHTTPRequestHandler):
+    """Scripted provider: answers by the last user message; `resume` makes greetings resume."""
+    resume = False
+    anchored = []
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        messages = body["messages"]
+        if "You summarize agent context" in messages[0]["content"]:
+            text = SUMMARY
+        else:
+            last = messages[-1]["content"]
+            if isinstance(last, list):
+                last = json.dumps(last)
+            type(self).anchored.append(any("Original exchange anchors" in str(m["content"]) for m in messages))
+            text = next((r for k, r in SCRIPTED_REPLIES if k in last), "Hello! How can I help?")
+            if type(self).resume and last.strip() in ("hi", "thanks!", "\u4f60\u597d"):
+                text = "Continuing the lexer work: fixing scan_ident now."
+        payload = json.dumps({"id": "x", "object": "chat.completion", "choices": [
+            {"index": 0, "message": {"role": "assistant", "content": text},
+             "finish_reason": "stop"}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
+
+class BehaviorGradeTests(unittest.TestCase):
+    CASE = {"markers": r"(?i)lexer|scan_ident", "max_chars": 300}
+
+    def test_greeting_must_be_short_toolless_and_not_resume(self):
+        spec = {"id": "hi", "kind": "greeting"}
+        ok = behavior.grade_turn(self.CASE, spec, {"reply": "Hi! What can I help with?", "tool_calls": []})
+        self.assertTrue(ok["pass"])
+        self.assertFalse(ok["resumed"])
+        for turn in ({"reply": "Resuming the lexer fix.", "tool_calls": []},
+                     {"reply": "Hello", "tool_calls": ["read_file: lexer.rs"]},
+                     {"reply": "x" * 400, "tool_calls": []},
+                     {"reply": "Hello", "tool_calls": [], "compactions": 1}):
+            self.assertFalse(behavior.grade_turn(self.CASE, spec, turn)["pass"], turn)
+
+    def test_unrelated_needs_the_answer(self):
+        spec = {"id": "q", "kind": "unrelated", "must_match": [r"(?i)canberra"]}
+        self.assertTrue(behavior.grade_turn(self.CASE, spec, {"reply": "Canberra", "tool_calls": []})["pass"])
+        self.assertFalse(behavior.grade_turn(self.CASE, spec, {"reply": "Sydney", "tool_calls": []})["pass"])
+
+    def test_return_scores_fact_share_and_continue_rejects_drift(self):
+        spec = {"id": "r", "kind": "return", "facts": [r"March 14", r"1,?800"]}
+        row = behavior.grade_turn(self.CASE, spec, {"reply": "March 14 only", "tool_calls": []})
+        self.assertEqual((row["facts_found"], row["facts_total"], row["pass"]), (1, 2, False))
+        spec = {"id": "c", "kind": "continue", "resume": r"round_cents", "wrong_topic": r"pancake"}
+        self.assertTrue(behavior.grade_turn(self.CASE, spec, {"reply": "round_cents next", "tool_calls": []})["pass"])
+        self.assertFalse(behavior.grade_turn(self.CASE, spec, {"reply": "round_cents and pancake", "tool_calls": []})["pass"])
+        self.assertFalse(behavior.grade_turn(self.CASE, spec, {"reply": "What task?", "tool_calls": []})["pass"])
+
+    def test_every_behavior_case_is_well_formed(self):
+        cases = harness.load_cases("behavior")
+        self.assertEqual(sorted(c["name"] for c in cases), [
+            "behavior-continue", "behavior-greeting", "behavior-topic-return", "behavior-unrelated"])
+        for case in cases:
+            ids = [t["id"] for t in case["behavior"]["turns"]]
+            self.assertEqual(len(ids), len(set(ids)))
+            self.assertTrue(all(t["kind"] in ("greeting", "unrelated", "return", "continue")
+                                for t in case["behavior"]["turns"]))
+        greeting = next(c for c in cases if c["name"] == "behavior-greeting")
+        self.assertTrue(any(not t["message"].isascii() for t in greeting["behavior"]["turns"]))
+        self.assertTrue(all(t["social"] for t in greeting["behavior"]["turns"]))
+
+
+@unittest.skipUnless(shutil.which("cargo"), "cargo is required to build the eval example")
+class BehaviorEndToEndTests(unittest.TestCase):
+    """Plumbing only: a scripted provider, never a quality claim about a model."""
+
+    def run_behavior(self, resume, anchors):
+        subprocess.run(["cargo", "build", "-q", "-p", "themis-core", "--features", "eval",
+                        "--example", "behavior_eval"], cwd=harness.ROOT, check=True)
+        runner = os.path.join(harness.target_dir(), "debug", "examples", "behavior_eval" + harness.EXE)
+        BehaviorMock.resume = resume
+        BehaviorMock.anchored = []
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), BehaviorMock)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "result.json")
+            code = harness.main([
+                "behavior", "--trials", "1", "--model", "mock-model", "--budget", "24000",
+                "--anchors", anchors, "--runner", runner, "--jobs", "2",
+                "--base-url", f"http://127.0.0.1:{server.server_address[1]}", "--out", out])
+            self.assertEqual(code, 0)
+            with open(out, encoding="utf-8") as handle:
+                return json.load(handle)
+
+    def test_good_model_passes_every_behavior_turn_without_tools_or_compaction(self):
+        result = self.run_behavior(resume=False, anchors="new")
+        summary = result["summary"]
+        self.assertEqual(result["failed_runs"], [])
+        self.assertEqual(summary["greeting_tool_calls"], 0)
+        self.assertEqual(summary["greeting_compactions"], 0)
+        self.assertEqual(summary["greeting_pass_rate"], 1.0)
+        self.assertEqual(summary["unwanted_resume_rate"], 0.0)
+        self.assertEqual(summary["topic_return_fact_retention"], 1.0)
+        self.assertEqual(summary["continue_resume_rate"], 1.0)
+        self.assertEqual(summary["errors"], 0)
+
+    def test_resuming_model_is_counted_and_old_anchors_are_injected_for_greetings(self):
+        result = self.run_behavior(resume=True, anchors="old")
+        self.assertEqual(result["summary"]["greeting_pass_rate"], 0.25)  # only the unscripted "howdy"
+        self.assertGreater(result["summary"]["unwanted_resume_rate"], 0.0)
+        self.assertTrue(any(BehaviorMock.anchored))
+        new = self.run_behavior(resume=False, anchors="new")
+        greeting_requests = [t for d in new["details"] if d["case"] == "behavior-greeting" for t in d["turns"]]
+        self.assertEqual(len(greeting_requests), 4)
+        # No anchor message reaches a social turn; the other cases may still carry one.
+        self.assertTrue(BehaviorMock.anchored.count(False) >= 4)
 
 
 KNOWN_WRONG = {

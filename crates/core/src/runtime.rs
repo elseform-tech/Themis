@@ -635,9 +635,25 @@ async fn run_task_with_evidence_inner(
             .min(input_budget / 8);
         let semantic_threshold = ((input_budget as f64 * config.semantic_threshold_ratio) as usize)
             .min(input_budget.saturating_sub(forecast));
-        if std::mem::take(&mut force_compaction)
-            || calibrated_tokens(&calibration, &messages, schema_tokens) > semantic_threshold
-        {
+        // A short conversational reply (greeting, thanks) does not pay for a checkpoint
+        // while the request still fits the hard budget; the next substantive turn compacts.
+        let forced = std::mem::take(&mut force_compaction);
+        let calibrated_now = calibrated_tokens(&calibration, &messages, schema_tokens);
+        let defer_for_short_reply = turn == 1
+            && !forced
+            && calibrated_now > semantic_threshold
+            && calibrated_now.saturating_add(forecast) <= input_budget
+            && SHORT_REPLY_TURN.try_with(|short| *short).unwrap_or(false);
+        if defer_for_short_reply {
+            crate::context_metrics::activity("compaction_deferred_short_reply");
+            crate::diagnostics::emit(
+                "context",
+                "compaction_deferred_short_reply",
+                "info",
+                serde_json::json!({"calibrated_message_tokens":calibrated_now,"semantic_threshold_tokens":semantic_threshold,"usable_message_tokens":input_budget}),
+            );
+        }
+        if !defer_for_short_reply && (forced || calibrated_now > semantic_threshold) {
             crate::plugins::hooks::emit_current(
                 "BeforeCompaction",
                 serde_json::json!({"event":"BeforeCompaction"}),
@@ -1547,6 +1563,27 @@ fn effective_context_budget(requested: usize) -> usize {
 }
 
 tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
+tokio::task_local! { static SHORT_REPLY_TURN: bool; }
+
+/// Longest new user message, in characters, that can count as a short conversational reply.
+pub const SHORT_REPLY_MAX_CHARS: usize = 200;
+
+/// Whether a new user message is a short greeting, thanks or farewell with no task in it, so a
+/// checkpoint can wait for the next substantive turn. Short task messages ("fix the auth bug",
+/// "run the tests"), bare acknowledgements and anything with attachments are not.
+pub fn is_short_reply(text: &str, has_attachments: bool) -> bool {
+    let text = text.trim();
+    !has_attachments
+        && !text.is_empty()
+        && text.chars().count() <= SHORT_REPLY_MAX_CHARS
+        && crate::social::is_social_request(text)
+}
+
+/// Marks the run's first request as a short reply so semantic compaction may wait while the
+/// request still fits the hard input budget. Maintenance and overflow recovery are unaffected.
+pub async fn with_short_reply_turn<F: std::future::Future>(short: bool, future: F) -> F::Output {
+    SHORT_REPLY_TURN.scope(short, future).await
+}
 tokio::task_local! { static MODEL_REQUEST_BUDGET: usize; }
 
 tokio::task_local! { pub(super) static SUMMARY_DEADLINE: tokio::time::Instant; }
@@ -1953,6 +1990,8 @@ fn checkpoint_task_state(mut state: &str) -> &str {
             .strip_prefix("Earlier context checkpoint (historical; later user requests take precedence):\n")
             .or_else(|| state.strip_prefix("Earlier context checkpoint (historical; later user requests and completed tool observations take precedence):\n"))
             .or_else(|| state.strip_prefix("Earlier context checkpoint (historical; later user requests take precedence; the task ledger records observed actions):\n"))
+            .or_else(|| state.strip_prefix("Earlier context checkpoint (historical; later user requests take precedence; the task ledger records observed actions; mention or resume this work only when the user's message continues or asks about it):\n"))
+            .or_else(|| state.strip_prefix("Earlier context checkpoint (historical; later user requests take precedence; mention or resume this work only when the user's message continues or asks about it):\n"))
             .or_else(|| state.strip_prefix("Previous task state retained unchanged as historical context; the current update is unavailable:\n"));
         match stripped {
             Some(rest) => state = rest,
@@ -2132,7 +2171,7 @@ async fn replace_context(
     compacted.push(ChatMessage {
         role: ChatRole::Assistant,
         message_type: MessageType::Text,
-        content: format!("Earlier context checkpoint (historical; later user requests take precedence; the task ledger records observed actions):\n{summary}"),
+        content: format!("Earlier context checkpoint (historical; later user requests take precedence; the task ledger records observed actions; mention or resume this work only when the user's message continues or asks about it):\n{summary}"),
     });
     compacted.extend(completed.into_iter().flatten());
     compacted.extend(retained);
@@ -2469,8 +2508,23 @@ fn validate_checkpoint(text: &str) -> anyhow::Result<()> {
     // Observed actions, reads and the plan live in the runtime task ledger; the
     // model keeps only what the runtime cannot record. Older five-section
     // checkpoints contain these headings in order and remain valid.
-    let headings = ["goal/constraints:", "unresolved work:", "next action:"];
-    validate_summary_sections(text, &headings)
+    // Checkpoints written with a "Parked work:" section use four; older ones use three.
+    let has_parked_heading = text.lines().any(|line| {
+        line.trim_start()
+            .to_ascii_lowercase()
+            .starts_with("parked work:")
+    });
+    let headings: &[&str] = if has_parked_heading {
+        &[
+            "goal/constraints:",
+            "unresolved work:",
+            "parked work:",
+            "next action:",
+        ]
+    } else {
+        &["goal/constraints:", "unresolved work:", "next action:"]
+    };
+    validate_summary_sections(text, headings)
 }
 
 fn validate_summary_sections(text: &str, headings: &[&str]) -> anyhow::Result<()> {
@@ -2554,7 +2608,7 @@ fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMes
             messages.push(ChatMessage {
                 role: ChatRole::Assistant,
                 message_type: MessageType::Text,
-                content: format!("Earlier context checkpoint (historical; later user requests take precedence):\n{summary}"),
+                content: format!("Earlier context checkpoint (historical; later user requests take precedence; mention or resume this work only when the user's message continues or asks about it):\n{summary}"),
             });
             messages.extend(recent);
         } else {
@@ -2703,6 +2757,14 @@ async fn execute_call(
 #[doc(hidden)]
 pub mod fuzzing {
     use super::*;
+
+    /// Social-message detection and recall terms for arbitrary UI text.
+    pub fn social_request(text: &str) -> (bool, Vec<String>) {
+        (
+            crate::social::is_social_request(text),
+            crate::social::content_terms(text),
+        )
+    }
 
     /// Restores `history` as an earlier assistant turn (possibly a checkpoint
     /// with ledger blocks), adds one tool call returning `output`, and renders
@@ -6437,6 +6499,40 @@ mod tests {
             .expect("direct execute allowed");
         assert_eq!(direct, serde_json::json!({"ok": true}));
         assert_eq!(consults.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_section_tests {
+    use super::validate_checkpoint;
+
+    #[test]
+    fn accepts_three_and_four_section_checkpoints() {
+        let three = "Goal/constraints: g. Unresolved work: u. Next action: n.";
+        let four = "Goal/constraints: g.\nUnresolved work: u.\nParked work: trip bug, fix in parser.rs.\nNext action: if the user continues this task, run tests.";
+        assert!(validate_checkpoint(three).is_ok());
+        assert!(validate_checkpoint(four).is_ok());
+        // Older five-section checkpoints still contain the three headings in order.
+        let five = "Goal/constraints: g. Confirmed findings: f. Completed changes/tests: c. Unresolved work: u. Next action: n.";
+        assert!(validate_checkpoint(five).is_ok());
+    }
+
+    #[test]
+    fn four_section_form_requires_order_and_content() {
+        assert!(validate_checkpoint(
+            "Goal/constraints: g.\nUnresolved work: u.\nParked work: .\nNext action: n."
+        )
+        .is_err());
+        assert!(validate_checkpoint(
+            "Goal/constraints: g.\nParked work: p.\nUnresolved work: u.\nNext action: n."
+        )
+        .is_err());
+        assert!(validate_checkpoint("Goal/constraints: g.\nParked work: p.").is_err());
+        // The phrase inside prose is not a heading: the three-section form applies.
+        assert!(validate_checkpoint(
+            "Goal/constraints: keep the parked work: trip. Unresolved work: u. Next action: n."
+        )
+        .is_ok());
     }
 }
 

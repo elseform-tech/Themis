@@ -1,0 +1,29 @@
+[
+  {
+    "id": "dates",
+    "category": "parked_topic",
+    "question": "What dates is the Lisbon trip?",
+    "planted_at": 1,
+    "expected": {
+      "regex": "(?i)March 14"
+    }
+  },
+  {
+    "id": "tier",
+    "category": "identifier",
+    "question": "How many requests per minute for the free tier?",
+    "planted_at": 25,
+    "expected": {
+      "regex": "\\b60\\b"
+    }
+  },
+  {
+    "id": "clock",
+    "category": "decision",
+    "question": "Why was the monotonic clock chosen for refills?",
+    "planted_at": 51,
+    "expected": {
+      "regex": "(?i)wall.clock"
+    }
+  }
+]

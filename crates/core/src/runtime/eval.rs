@@ -233,3 +233,103 @@ pub async fn answer_probe(
     let response = llm.chat_and_sampling(&asked, None, Some(&sampling)).await?;
     Ok(response.text().unwrap_or_default().trim().to_owned())
 }
+
+/// What one real agent turn did after a compaction.
+#[derive(Debug, Clone, Serialize)]
+pub struct BehaviorTurn {
+    pub reply: String,
+    /// Tool calls the model attempted (every call is denied; nothing executes).
+    pub tool_calls: Vec<String>,
+    /// Checkpoints installed during the turn.
+    pub compactions: usize,
+    pub error: Option<String>,
+}
+
+/// Text view of post-compaction working messages as prior conversation turns.
+/// Fixture transcripts used by behavior evals are text-only; tool records are skipped.
+pub fn history_from_messages(messages: &[ChatMessage]) -> Vec<ConversationTurn> {
+    messages
+        .iter()
+        .skip(1)
+        .filter(|message| matches!(message.message_type, MessageType::Text))
+        .map(|message| ConversationTurn {
+            role: if message.role == ChatRole::User {
+                ConversationRole::User
+            } else {
+                ConversationRole::Assistant
+            },
+            text: message.content.clone(),
+        })
+        .collect()
+}
+
+/// Runs the real agent loop for one user message on top of `history`, with the full tool set
+/// offered but every approval denied, and reports the reply, attempted tool calls and any
+/// checkpoint. `short_reply` mirrors what the desktop marks for short, attachment-free messages.
+pub async fn behavior_turn(
+    llm: &Arc<dyn LLMProvider>,
+    history: Vec<ConversationTurn>,
+    message: &str,
+    policy: EvalPolicy,
+    short_reply: bool,
+    project: &std::path::Path,
+) -> anyhow::Result<BehaviorTurn> {
+    use crate::tools::{boxed_tools, ApprovalHook, DenyAllHook};
+    let evidence = project.join(".themis/context/behavior");
+    std::fs::create_dir_all(&evidence)?;
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(DenyAllHook);
+    let (events, mut receiver) = tokio::sync::mpsc::channel(4096);
+    let collector = tokio::spawn(async move {
+        let mut seen = Vec::new();
+        while let Some(event) = receiver.recv().await {
+            seen.push(event);
+        }
+        seen
+    });
+    let result = with_short_reply_turn(
+        short_reply,
+        run_task_with_evidence(
+            llm.clone(),
+            boxed_tools(project, approvals.clone())?,
+            message.to_owned(),
+            history,
+            approvals,
+            RunPolicy {
+                total_turns: 4,
+                context_token_budget: policy.context_token_budget,
+                recent_messages: policy.recent_messages,
+            },
+            events,
+            Arc::new(AtomicBool::new(false)),
+            String::new(),
+            Some(evidence),
+        ),
+    )
+    .await;
+    let seen = collector.await?;
+    let tool_calls = seen
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::ToolCallStarted { tool, summary } => Some(format!("{tool}: {summary}")),
+            _ => None,
+        })
+        .collect();
+    let compactions = seen
+        .iter()
+        .filter(|event| matches!(event, RunEvent::ContextCheckpoint { .. }))
+        .count();
+    let last_text = seen.iter().rev().find_map(|event| match event {
+        RunEvent::AssistantText(text) => Some(text.clone()),
+        _ => None,
+    });
+    let (reply, error) = match result {
+        Ok(text) => (text, None),
+        Err(error) => (last_text.unwrap_or_default(), Some(error.to_string())),
+    };
+    Ok(BehaviorTurn {
+        reply: reply.trim().to_owned(),
+        tool_calls,
+        compactions,
+        error,
+    })
+}

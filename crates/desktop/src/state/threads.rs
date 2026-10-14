@@ -456,6 +456,7 @@ impl AppState {
                 skills: resolved,
                 plugins,
                 skill_catalog,
+                short_reply: themis_core::runtime::is_short_reply(&text, !attachments.is_empty()),
             }
         };
         if let Err(error) = self.inner.transcript.append_user_with_attachments(

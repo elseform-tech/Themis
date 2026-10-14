@@ -1,0 +1,30 @@
+{
+  "turns": [
+    {
+      "id": "continue",
+      "message": "continue",
+      "kind": "continue",
+      "social": false,
+      "resume": "(?i)round_cents|totals\\.py|ROUND_HALF_UP|half.up|regression test|invoice",
+      "wrong_topic": "(?i)buttermilk|pancake|oat milk"
+    },
+    {
+      "id": "go_on",
+      "message": "ok go on",
+      "kind": "continue",
+      "social": false,
+      "resume": "(?i)round_cents|totals\\.py|ROUND_HALF_UP|half.up|regression test|invoice",
+      "wrong_topic": "(?i)buttermilk|pancake|oat milk"
+    },
+    {
+      "id": "keep_going",
+      "message": "keep going",
+      "kind": "continue",
+      "social": false,
+      "resume": "(?i)round_cents|totals\\.py|ROUND_HALF_UP|half.up|regression test|invoice",
+      "wrong_topic": "(?i)buttermilk|pancake|oat milk"
+    }
+  ],
+  "markers": "(?i)$^",
+  "max_chars": 4000
+}

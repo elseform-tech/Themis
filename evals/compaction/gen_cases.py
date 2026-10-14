@@ -435,9 +435,142 @@ def narrative_lighthouse():
            "Collaborative novel with a character rename, a hidden secret and a hidden motive.")
 
 
+# ------------------------------------------------------------------ behavior
+# Text-only conversations whose last compaction is followed by one extra user message.
+# `behavior.json` lists those messages and how to grade the reply (see behavior.py).
+
+def turn_spec(tid, message, kind, social=False, **extra):
+    spec = {"id": tid, "message": message, "kind": kind, "social": social}
+    spec.update(extra)
+    return spec
+
+
+def chat(t, user, answer, bulk=14):
+    t.user(user)
+    t.asst(answer + " " + t.prose(bulk))
+
+
+def behavior_greeting():
+    t = Transcript(71)
+    t.scale = 3
+    t.user("Refactor the tokenizer in lexer.rs so scan_ident handles Unicode identifiers. Constraint: no new crates; keep scan_ident under 40 lines.")
+    t.asst("Plan: replace the ASCII check in scan_ident with char::is_alphanumeric plus underscore, keep the function small. " + t.prose(14))
+    for i in range(14):
+        chat(t, f"Lexer detail {i + 1}: check the edge case for identifiers with combining marks.", f"Edge case {i + 1} reviewed.")
+    t.boundary()
+    t.user("Decision: we use char::is_alphanumeric rather than the unicode-xid crate, because the no-new-crates constraint rules the crate out.")
+    c_decision = len(t.records)
+    t.asst("Recorded: is_alphanumeric, not unicode-xid, because of the no-new-crates constraint. " + t.prose(14))
+    for i in range(14):
+        chat(t, f"Test idea {i + 1} for the lexer: try identifiers mixing scripts.", f"Test idea {i + 1} noted.")
+    t.user("Run the lexer tests.")
+    t.asst("lexer::tests::unicode_ident fails: expected Ident(\"naïve\") got Error at column 3. Next I will fix scan_ident to accept the combining mark, then rerun the tests and update docs/lexer.md. " + t.prose(10))
+    probes = [P("decision", "decision", "Why was unicode-xid not used?", c_decision, regex=r"(?i)no.new.crates|constraint")]
+    behavior = {"turns": [
+        turn_spec("hi", "hi", "greeting", True),
+        turn_spec("thanks", "thanks!", "greeting", True),
+        turn_spec("nihao", "你好", "greeting", True),
+        turn_spec("howdy", "hey, how's it going?", "greeting", True),
+    ], "markers": r"(?i)lexer|scan_ident|unicode_ident|tokenizer|unicode-xid|docs/lexer|failing test|refactor",
+        "max_chars": 300}
+    finish(os.path.join(CASES, "behavior-greeting"), "behavior-greeting", "behavior", t, probes,
+           "Fix scan_ident for combining marks, rerun the lexer tests, update docs/lexer.md.",
+           "Unfinished lexer task; greetings after compaction must not resume it.",
+           suites=["behavior"], behavior=behavior)
+
+
+def behavior_unrelated():
+    t = Transcript(72)
+    t.scale = 3
+    t.user("Write an importer for data/legacy/orders_2019.csv into SQLite. Never modify the original file; skipped rows go to rejects.csv.")
+    t.asst("Plan: import from a copy, write rejects.csv for bad rows. " + t.prose(14))
+    for i in range(14):
+        chat(t, f"Importer detail {i + 1}: how should we treat the quantity column?", f"Quantity handling {i + 1}.")
+    t.boundary()
+    for i in range(14):
+        chat(t, f"Importer check {i + 1}: validate customer ids.", f"Validation {i + 1}.")
+    t.user("Status?")
+    t.asst("The importer reads a copy of orders_2019.csv and writes rejects.csv. Remaining: add the customer_id index and document the rejects.csv format in the README. " + t.prose(10))
+    probes = [P("rejects", "constraint", "Where do skipped rows go?", 1, regex=r"rejects\.csv")]
+    behavior = {"turns": [
+        turn_spec("capital", "What's the capital of Australia?", "unrelated", False, must_match=[r"(?i)canberra"]),
+        turn_spec("ounces", "Quick one: how many ounces are in a pound?", "unrelated", False, must_match=[r"\b16\b"]),
+        turn_spec("spelling", "How do you spell 'necessary'?", "unrelated", False, must_match=[r"(?i)n-?e-?c-?e-?s-?s-?a-?r-?y"]),
+    ], "markers": r"(?i)importer|orders_2019|rejects\.csv|customer_id|sqlite|readme|legacy",
+        "max_chars": 800}
+    finish(os.path.join(CASES, "behavior-unrelated"), "behavior-unrelated", "behavior", t, probes,
+           "Add the customer_id index and document rejects.csv.",
+           "Unfinished importer task; an unrelated question after compaction is answered and the task is left alone.",
+           suites=["behavior"], behavior=behavior)
+
+
+def behavior_topic_return():
+    t = Transcript(73)
+    t.scale = 3
+    t.user("Plan a trip to Lisbon with me. Dates: March 14 to March 19. Total budget 1800 euros. I have a peanut allergy. I want to stay in Alfama.")
+    c_trip = 1
+    t.asst("Noted: Lisbon, March 14-19, 1800 euro budget, peanut allergy, Alfama. " + t.prose(14))
+    for i in range(10):
+        chat(t, f"Trip detail {i + 1}: what about getting around the city?", f"Transit option {i + 1}.")
+    t.user("Park the trip for now. Let's work on the rate limiter.")
+    t.asst("Trip parked. " + t.prose(6))
+    t.boundary()
+    t.user("Rate limiter requirements: token bucket, free tier 60 requests per minute, paid tier 600. The remaining-tokens header is X-RateLimit-Remaining.")
+    c_rl = len(t.records)
+    t.asst("Recorded: token bucket, free 60/min, paid 600/min, header X-RateLimit-Remaining. " + t.prose(14))
+    for i in range(12):
+        chat(t, f"Limiter detail {i + 1}: how do we refill the bucket?", f"Refill option {i + 1}.")
+    t.user("Decision: refill on request using the monotonic clock, because wall-clock jumps broke the burst test.")
+    c_clock = len(t.records)
+    t.asst("Decided: refill on request with the monotonic clock, since wall-clock jumps broke the burst test. " + t.prose(12))
+    probes = [
+        P("dates", "parked_topic", "What dates is the Lisbon trip?", c_trip, regex=r"(?i)March 14"),
+        P("tier", "identifier", "How many requests per minute for the free tier?", c_rl, regex=r"\b60\b"),
+        P("clock", "decision", "Why was the monotonic clock chosen for refills?", c_clock, regex=r"(?i)wall.clock"),
+    ]
+    behavior = {"turns": [
+        turn_spec("back_to_trip", "Let's get back to the Lisbon trip. Remind me: what dates, total budget, food allergy and neighborhood did we settle on?", "return", False,
+                  facts=[r"(?i)March 14", r"1,?800", r"(?i)peanut", r"(?i)Alfama"]),
+        turn_spec("back_to_limiter", "Actually, back to the rate limiter: what are the two tier limits, the header name, and how do we refill?", "return", False,
+                  facts=[r"\b60\b", r"\b600\b", r"X-RateLimit-Remaining", r"(?i)monotonic"]),
+    ], "markers": r"(?i)$^", "max_chars": 1500}
+    finish(os.path.join(CASES, "behavior-topic-return"), "behavior-topic-return", "behavior", t, probes,
+           "Return to whichever topic the user names.",
+           "Topic A (trip) then topic B (limiter), each followed by a compaction; the user returns to either topic.",
+           suites=["behavior"], behavior=behavior)
+
+
+def behavior_continue():
+    t = Transcript(74)
+    t.scale = 3
+    t.user("Help me adapt a pancake recipe: I need a buttermilk substitute because I am lactose intolerant.")
+    t.asst("Use 1 cup oat milk plus 1 tablespoon lemon juice per cup of buttermilk. " + t.prose(14))
+    for i in range(10):
+        chat(t, f"Pancake tweak {i + 1}: any other change?", f"Tweak {i + 1}.")
+    t.user("Park the recipe. New task: the invoice total in totals.py is off by a cent sometimes.")
+    t.asst("Recipe parked. Looking at totals.py. " + t.prose(10))
+    t.boundary()
+    for i in range(14):
+        chat(t, f"Invoice detail {i + 1}: check how round_cents is used.", f"round_cents usage {i + 1}.")
+    t.user("Found it: round_cents uses round() which rounds half to even in some paths and half up in others. Use decimal ROUND_HALF_UP everywhere.")
+    t.asst("Plan: switch round_cents in totals.py to decimal ROUND_HALF_UP. Next I will make that change and then add a regression test test_round_half_up for 2.675. " + t.prose(10))
+    probes = [P("mode", "decision", "Which rounding mode was chosen?", len(t.records) - 1, regex=r"(?i)ROUND_HALF_UP")]
+    marker = r"(?i)round_cents|totals\.py|ROUND_HALF_UP|half.up|regression test|invoice"
+    behavior = {"turns": [
+        turn_spec("continue", "continue", "continue", False, resume=marker, wrong_topic=r"(?i)buttermilk|pancake|oat milk"),
+        turn_spec("go_on", "ok go on", "continue", False, resume=marker, wrong_topic=r"(?i)buttermilk|pancake|oat milk"),
+        turn_spec("keep_going", "keep going", "continue", False, resume=marker, wrong_topic=r"(?i)buttermilk|pancake|oat milk"),
+    ], "markers": r"(?i)$^", "max_chars": 4000}
+    finish(os.path.join(CASES, "behavior-continue"), "behavior-continue", "behavior", t, probes,
+           "Change round_cents to ROUND_HALF_UP and add test_round_half_up.",
+           "A parked recipe and a current invoice task; a vague continue must resume the latest task.",
+           suites=["behavior"], behavior=behavior)
+
+
 def main():
     for build in (coding_rate_limiter, coding_csv_migration, coding_rust_parser, parked_trip_bugfix,
-                  parked_budget_recipe, superseded_deploy_plan, constraints_api_design, narrative_lighthouse):
+                  parked_budget_recipe, superseded_deploy_plan, constraints_api_design, narrative_lighthouse,
+                  behavior_greeting, behavior_unrelated, behavior_topic_return, behavior_continue):
         build()
 
 

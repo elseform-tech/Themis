@@ -33,6 +33,9 @@ pub struct TranscriptStore {
     connection: Mutex<Connection>,
 }
 
+/// Shortest excerpt that counts as already present when it is merely contained in a turn.
+const MIN_SUBSTRING_DEDUPE_CHARS: usize = 40;
+
 impl TranscriptStore {
     pub fn open(path: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
@@ -492,6 +495,15 @@ impl TranscriptStore {
                 .text
                 .starts_with("Verbatim first and recent user requests (historical):")
         });
+        // A greeting or thanks carries nothing to look up; history anchors would only
+        // pull the previous task back into a conversation that has moved on.
+        if themis_core::social::is_social_request(request) {
+            return Ok(context);
+        }
+        let present = context
+            .iter()
+            .map(|turn| turn.text.clone())
+            .collect::<Vec<_>>();
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let allowance = (max_bytes / 3).min(16000);
         let mut records = Vec::<serde_json::Value>::new();
@@ -500,7 +512,20 @@ impl TranscriptStore {
             let record = serde_json::json!({"source_seq":seq,"source_role":role,"purpose":purpose,
                 "excerpt_char_offset":offset,"verbatim_excerpt":text,"decision_status":"unclassified; read the actual wording", "historical":true});
             let size = record.to_string().len();
-            if bytes + size <= allowance && !records.iter().any(|r| r["source_seq"] == seq) {
+            // Text already verbatim in the working context needs no second copy.
+            // Short excerpts ("yes") must match a whole turn; substring matches would hide them.
+            let duplicate = !text.trim().is_empty()
+                && present.iter().any(|turn| {
+                    if text.chars().count() >= MIN_SUBSTRING_DEDUPE_CHARS {
+                        turn.contains(&text)
+                    } else {
+                        turn.trim() == text.trim()
+                    }
+                });
+            if !duplicate
+                && bytes + size <= allowance
+                && !records.iter().any(|r| r["source_seq"] == seq)
+            {
                 bytes += size;
                 records.push(record);
             }
@@ -527,40 +552,8 @@ impl TranscriptStore {
             );
         }
         let lower = request.to_lowercase();
-        let stop = [
-            "what",
-            "did",
-            "discuss",
-            "discussed",
-            "about",
-            "remember",
-            "recall",
-            "please",
-            "continue",
-            "that",
-            "this",
-            "then",
-            "with",
-            "have",
-            "were",
-            "earlier",
-            "task",
-            "topic",
-            "topics",
-            "the",
-            "and",
-            "from",
-            "could",
-            "would",
-            "should",
-            "again",
-        ];
-        let mut terms = lower
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|t| t.len() >= 3 && !stop.contains(t))
-            .take(12)
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
+        let mut terms = themis_core::social::content_terms(&lower);
+        terms.truncate(12);
         terms.sort();
         terms.dedup();
         // SQLite searches originals locally; only bounded matching passages reach the model.

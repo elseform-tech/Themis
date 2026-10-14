@@ -1,0 +1,30 @@
+{
+  "turns": [
+    {
+      "id": "back_to_trip",
+      "message": "Let's get back to the Lisbon trip. Remind me: what dates, total budget, food allergy and neighborhood did we settle on?",
+      "kind": "return",
+      "social": false,
+      "facts": [
+        "(?i)March 14",
+        "1,?800",
+        "(?i)peanut",
+        "(?i)Alfama"
+      ]
+    },
+    {
+      "id": "back_to_limiter",
+      "message": "Actually, back to the rate limiter: what are the two tier limits, the header name, and how do we refill?",
+      "kind": "return",
+      "social": false,
+      "facts": [
+        "\\b60\\b",
+        "\\b600\\b",
+        "X-RateLimit-Remaining",
+        "(?i)monotonic"
+      ]
+    }
+  ],
+  "markers": "(?i)$^",
+  "max_chars": 1500
+}

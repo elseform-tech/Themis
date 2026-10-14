@@ -128,6 +128,8 @@ struct RunSnapshot {
     skills: Vec<themis_core::skills::Skill>,
     plugins: Vec<themis_core::plugins::Plugin>,
     skill_catalog: Vec<themis_core::skills::Skill>,
+    /// Short conversational message without attachments: a checkpoint may wait one turn.
+    short_reply: bool,
 }
 
 /// One automation run in flight: the completion registry entry that lets the
