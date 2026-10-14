@@ -157,28 +157,131 @@ const EXEC_SUBCOMMANDS: &[&str] = &[
 impl ToolAction {
     /// Key under which an interactive "allow for this run" grant is cached.
     ///
-    /// Most tools are keyed by name. For `shell` the key is the approved
-    /// command: program plus first argument only for a short list of
-    /// subcommand-style CLIs ([`SUBCOMMAND_PROGRAMS`]) whose first argument is
-    /// a real subcommand that does not run arbitrary programs. Every other
-    /// program, wrapper or interpreter is keyed by its full argv, so approving
+    /// Most tools are keyed by name. For `shell` (and the `git` tool, whose
+    /// `command` is `["git", args...]`) the key is the approved command:
+    /// program plus first argument only for a short list of subcommand-style
+    /// CLIs ([`SUBCOMMAND_PROGRAMS`]) whose first argument is a real
+    /// subcommand that does not run arbitrary programs. Every other program,
+    /// wrapper or interpreter is keyed by its full argv, so approving
     /// `cargo test` covers `cargo test --lib` but not `cargo run`, `rm ...`,
-    /// `sudo rm -rf /` or `find . -delete`.
+    /// `sudo rm -rf /` or `find . -delete`. Destructive variants
+    /// ([`is_destructive_variant`]) are keyed by their full argv too, so
+    /// approving `git push` never covers `git push --force`.
     pub fn grant_key(&self) -> String {
-        if self.tool != "shell" || self.command.is_empty() {
+        let is_git_tool = self.tool == "git";
+        if !(self.tool == "shell" || is_git_tool) || self.command.is_empty() {
             return self.tool.clone();
         }
         let scoped = self.command.len() >= 2
             && SUBCOMMAND_PROGRAMS.contains(&self.command[0].as_str())
             && !self.command[1].starts_with('-')
-            && !EXEC_SUBCOMMANDS.contains(&self.command[1].as_str());
+            && (is_git_tool || !EXEC_SUBCOMMANDS.contains(&self.command[1].as_str()))
+            && !is_destructive_variant(&self.command);
         let prefix = if scoped {
             &self.command[..2]
         } else {
             &self.command[..]
         };
         // NUL cannot occur in argv, so the join is unambiguous.
-        format!("shell\0{}", prefix.join("\0"))
+        format!("{}\0{}", self.tool, prefix.join("\0"))
+    }
+}
+
+/// `true` when a flag token matches one of `longs` (`--name` or `--name=value`)
+/// or, as a short-flag cluster such as `-fd`, contains one of `shorts`.
+fn has_flag(arg: &str, longs: &[&str], shorts: &str) -> bool {
+    if let Some(long) = arg.strip_prefix("--") {
+        longs.contains(&long.split('=').next().unwrap_or(""))
+    } else if let Some(cluster) = arg.strip_prefix('-') {
+        cluster.chars().any(|c| shorts.contains(c))
+    } else {
+        false
+    }
+}
+
+/// First argument that is not a flag (or a flag's separate value for the
+/// listed value-taking global options), with its index.
+fn first_subcommand<'a>(args: &'a [String], value_flags: &[&str]) -> Option<(usize, &'a str)> {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if value_flags.contains(&arg) {
+            index += 2;
+        } else if arg.starts_with('-') || arg.starts_with('+') {
+            index += 1;
+        } else {
+            return Some((index, arg));
+        }
+    }
+    None
+}
+
+/// Whether a `git` argv (without the program name) is a destructive,
+/// history-rewriting or working-tree-discarding variant that must not share a
+/// grant or an allow rule with its harmless siblings.
+fn git_destructive(args: &[String]) -> bool {
+    let Some((at, sub)) = first_subcommand(
+        args,
+        &["-C", "-c", "--git-dir", "--work-tree", "--namespace"],
+    ) else {
+        return false;
+    };
+    let rest = &args[at + 1..];
+    let any = |longs: &[&str], shorts: &str| rest.iter().any(|a| has_flag(a, longs, shorts));
+    match sub {
+        "push" => {
+            any(
+                &[
+                    "force",
+                    "force-with-lease",
+                    "force-if-includes",
+                    "mirror",
+                    "delete",
+                    "prune",
+                ],
+                "fd",
+            ) || rest
+                .iter()
+                .any(|a| a.starts_with(':') || (a.starts_with('+') && a.len() > 1))
+        }
+        "clean" => any(&["force"], "fdxX"),
+        "reset" => any(&["hard", "merge"], ""),
+        "checkout" | "switch" => any(&["force", "discard-changes", "force-create"], "fBC"),
+        "restore" => {
+            // Restoring the worktree overwrites local edits; only a pure
+            // `--staged` restore leaves them alone.
+            let staged = any(&["staged"], "S");
+            let worktree = any(&["worktree"], "W");
+            !staged || worktree
+        }
+        "branch" => any(&["force"], "DfMC"),
+        "rebase" => true,
+        _ => false,
+    }
+}
+
+/// Whether `command` (program followed by arguments) is a destructive or
+/// irreversible variant of a known CLI: `git push --force`, `git clean -fd`,
+/// `git reset --hard`, forced checkout/switch/restore, `git branch -D`,
+/// `git rebase`, and `publish`/`yank` style registry commands. Used to give
+/// such calls their own grant key and to keep broad allow rules (for example
+/// `["git","push"]`) from silently covering them.
+pub fn is_destructive_variant(command: &[String]) -> bool {
+    let Some(program) = command.first() else {
+        return false;
+    };
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let name = name.to_ascii_lowercase();
+    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    let args = &command[1..];
+    match name {
+        "git" => git_destructive(args),
+        "npm" | "pnpm" | "yarn" => first_subcommand(args, &[])
+            .is_some_and(|(_, sub)| matches!(sub, "publish" | "unpublish" | "deprecate")),
+        "cargo" => {
+            first_subcommand(args, &[]).is_some_and(|(_, sub)| matches!(sub, "publish" | "yank"))
+        }
+        _ => false,
     }
 }
 
@@ -1064,7 +1167,7 @@ fn run_command_blocking(
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     let mut child = command
         .spawn()
-        .map_err(|e| tool_error(format!("{tool}: failed to start '{program}': {e}")))?;
+        .map_err(|e| tool_error(format!("{tool}: {}", spawn_failure(program, args, &e))))?;
 
     let stdout_drain = child.stdout.take().map(Drain::spawn);
     let stderr_drain = child.stderr.take().map(Drain::spawn);
@@ -1125,6 +1228,28 @@ fn run_command_blocking(
         );
     }
     Ok(output)
+}
+
+/// Message for a program that could not be started. When the "program" holds
+/// whitespace and no executable of that exact name exists, the model almost
+/// certainly put a whole command line in `command`; say exactly how to split
+/// it. The call is never auto-split: approvals must see the argv as sent.
+pub(crate) fn spawn_failure(program: &str, args: &[String], error: &std::io::Error) -> String {
+    let base = format!("failed to start '{program}': {error}");
+    if error.kind() != std::io::ErrorKind::NotFound || !program.contains(char::is_whitespace) {
+        return base;
+    }
+    let mut parts = program.split_whitespace();
+    let Some(head) = parts.next() else {
+        return base;
+    };
+    let argv: Vec<&str> = parts.chain(args.iter().map(String::as_str)).collect();
+    let rendered = serde_json::to_string(&argv).unwrap_or_else(|_| "[]".into());
+    format!(
+        "{base}. 'command' must be only the program name; every argument is a separate element of 'args'. \
+         Retry exactly as: command: {}, args: {rendered}",
+        serde_json::to_string(head).unwrap_or_default()
+    )
 }
 
 /// Kill `child` and every descendant that stayed in its process tree.
@@ -1275,11 +1400,15 @@ fn truncate_output(text: &str) -> (String, bool) {
 #[derive(Debug, Clone, Serialize, Deserialize, ToolInput)]
 pub struct ShellArgs {
     /// Program to execute (resolved via `PATH`; never interpreted by a shell).
-    #[input(description = "Program to execute (resolved via PATH; no shell interpretation)")]
+    #[input(
+        description = "Program name or path ONLY, e.g. \"python3\" or \"git\" (resolved via PATH; no shell interpretation). Never include arguments or spaces here; put them in args"
+    )]
     pub command: String,
     /// Arguments passed verbatim to the program.
     #[serde(default)]
-    #[input(description = "Arguments passed verbatim to the program")]
+    #[input(
+        description = "Every argument as a separate string, passed verbatim, e.g. [\"-m\", \"http.server\", \"8000\"]. Do not join several arguments into one string"
+    )]
     pub args: Vec<String>,
     /// Working directory, relative to the project root; empty means the root.
     #[serde(default)]
@@ -1307,7 +1436,7 @@ pub struct ShellArgs {
 /// execution timeout ([`SHELL_TIMEOUT_SECS`] by default).
 #[tool(
     name = "shell",
-    description = "Run a program with explicit argv and a project-root working directory (no shell). Always requires approval. Waits for the program to finish; for dev servers and watchers pass background=true to get a task_id at once, then use the background_task tool.",
+    description = "Run a program with explicit argv and a project-root working directory (no shell). `command` is ONLY the program name; every argument is its own element of `args`. Example: command \"python3\", args [\"-m\", \"http.server\", \"8000\"] (never command \"python3 -m http.server 8000\"). Pipes, redirects and `&` are literal; use command \"sh\", args [\"-c\", \"...\"] for those. Always requires approval. Waits for the program to finish; for dev servers and watchers pass background=true to get a task_id at once, then use the background_task tool.",
     input = ShellArgs,
 )]
 pub struct ShellTool {
@@ -1598,47 +1727,30 @@ impl ToolRuntime for GitTool {
         };
         let root =
             resolve_within_root(&self.root, ".").map_err(|e| tool_error(format!("git: {e}")))?;
-        match subcommand {
-            _ if self.unrestricted => {
-                check_approval_permitted(
-                    self.approvals.as_ref(),
-                    &ToolAction {
-                        command: Vec::new(),
-                        tool: "git".into(),
-                        summary: format!("run git {}", args.join(" ")),
-                        risk: RiskLevel::Execute,
-                    },
-                )?;
-            }
-            "status" | "diff" | "log" | "show" => {
-                check_approval_permitted(
-                    self.approvals.as_ref(),
-                    &ToolAction {
-                        command: Vec::new(),
-                        tool: "git".into(),
-                        summary: format!("run git {}", args.join(" ")),
-                        risk: RiskLevel::Read,
-                    },
-                )?;
-            }
-            "add" | "commit" | "checkout" | "branch" => {
-                check_approval_permitted(
-                    self.approvals.as_ref(),
-                    &ToolAction {
-                        command: Vec::new(),
-                        tool: "git".to_string(),
-                        summary: format!("run `git {}`", args.join(" ")),
-                        risk: RiskLevel::Write,
-                    },
-                )?;
-            }
+        let mut command = vec!["git".to_string()];
+        command.extend(args.iter().cloned());
+        let destructive = is_destructive_variant(&command);
+        let risk = match subcommand {
+            _ if self.unrestricted => RiskLevel::Execute,
+            "checkout" | "branch" if destructive => RiskLevel::Destructive,
+            "status" | "diff" | "log" | "show" => RiskLevel::Read,
+            "add" | "commit" | "checkout" | "branch" => RiskLevel::Write,
             other => {
                 return Err(tool_error(format!(
                     "git: subcommand '{other}' is denied by the allowlist \
                      (allowed: status, diff, log, show, add, commit, checkout, branch)"
                 )));
             }
-        }
+        };
+        check_approval_permitted(
+            self.approvals.as_ref(),
+            &ToolAction {
+                command,
+                tool: "git".into(),
+                summary: format!("run `git {}`", args.join(" ")),
+                risk,
+            },
+        )?;
 
         let mut full_args = vec!["-C".to_string(), root.to_string_lossy().into_owned()];
         full_args.extend(args);
@@ -2462,6 +2574,70 @@ mod tests {
         assert_eq!(tool.timeout(), Duration::from_secs(1));
     }
 
+    #[tokio::test]
+    async fn shell_command_with_whole_command_line_explains_how_to_split_it() {
+        let (_tmp, root) = rooted_case();
+        let hook = Arc::new(RecordingHook::new(Approval::AllowOnce));
+        let tool = ShellTool::new(root, hook.clone());
+        let err = tool
+            .execute(json!({"command": "python3 -m http.server 8798", "args": []}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(r#"command: "python3", args: ["-m","http.server","8798"]"#),
+            "{err}"
+        );
+        // Existing args stay after the split tokens.
+        let err = tool
+            .execute(json!({"command": "/usr/bin/which python3", "args": ["-a"]}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(r#"command: "/usr/bin/which", args: ["python3","-a"]"#),
+            "{err}"
+        );
+        // Never auto-split: approval saw the exact argv that was sent.
+        let seen = hook.seen();
+        assert_eq!(seen[0].command, vec!["python3 -m http.server 8798"]);
+        assert_eq!(seen[1].command, vec!["/usr/bin/which python3", "-a"]);
+    }
+
+    #[test]
+    fn spawn_failure_hints_only_for_missing_programs_with_whitespace() {
+        let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(!spawn_failure("nonexistent", &[], &missing).contains("Retry"));
+        assert!(!spawn_failure("a b", &[], &denied).contains("Retry"));
+        assert!(spawn_failure("a  b\tc", &[], &missing).contains(r#"args: ["b","c"]"#));
+    }
+
+    mod spawn_failure_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn never_panics_and_hint_round_trips(
+                program in "[ -~]{0,20}",
+                args in proptest::collection::vec("[ -~]{0,6}", 0..4),
+            ) {
+                let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
+                let message = spawn_failure(&program, &args, &missing);
+                prop_assert!(message.starts_with("failed to start"));
+                if program.contains(char::is_whitespace) && program.split_whitespace().next().is_some() {
+                    let tail = message.split("args: ").nth(1).expect("hint present");
+                    let argv: Vec<String> = serde_json::from_str(tail).unwrap();
+                    let mut expected: Vec<String> =
+                        program.split_whitespace().skip(1).map(str::to_owned).collect();
+                    expected.extend(args.iter().cloned());
+                    prop_assert_eq!(argv, expected);
+                }
+            }
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn shell_timeout_kills_long_running_command() {
@@ -3002,6 +3178,34 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("denied"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn git_tool_reports_argv_and_escalates_forced_variants() {
+        let (_tmp, root) = rooted_case();
+        let hook = Arc::new(RecordingHook::new(Approval::Deny));
+        let tool = GitTool::new(root, hook.clone());
+        for args in [
+            vec!["status"],
+            vec!["checkout", "main"],
+            vec!["checkout", "-f", "main"],
+            vec!["branch", "-D", "x"],
+        ] {
+            let _ = tool.execute(json!({ "args": args })).await;
+        }
+        // Denied by the allowlist before any approval is consulted.
+        assert!(tool
+            .execute(json!({"args": ["push", "--force"]}))
+            .await
+            .is_err());
+        let seen = hook.seen();
+        assert_eq!(seen.len(), 4);
+        assert_eq!(seen[0].risk, RiskLevel::Read);
+        assert_eq!(seen[1].risk, RiskLevel::Write);
+        assert_eq!(seen[2].risk, RiskLevel::Destructive);
+        assert_eq!(seen[2].command, vec!["git", "checkout", "-f", "main"]);
+        assert_eq!(seen[3].risk, RiskLevel::Destructive);
+        assert_ne!(seen[1].grant_key(), seen[2].grant_key());
     }
 
     #[tokio::test]

@@ -265,6 +265,29 @@ whose first argument is a non-flag subcommand other than an executing one (`run`
 `install`, `add`). So approving `cargo test` covers `cargo test --lib` but not
 `cargo publish` or `cargo run`. Every other program, wrapper and interpreter
 (`find`, `sudo`, `env`, `ssh`, `bash -c`, ...) is keyed by its full argv.
+
+**Destructive variants.** Calls that discard work or cannot be undone are keyed by
+their full argv and are never covered by a grant for their harmless sibling, nor by
+an allow rule that does not name the variant itself: `git push` with `-f`/`--force`/
+`--force-with-lease`/`--mirror`/`--delete`/`--prune`, a `:ref` or `+ref` refspec;
+`git clean` with `-f`/`-d`/`-x`/`-X`; `git reset --hard|--merge`; `git checkout`/`switch`
+with `-f`/`--force`/`--discard-changes`/`-B`/`-C`; `git restore` of the working tree
+(only `--staged` alone is safe); `git branch` with `-D`/`-f`/`-M`/`-C`; any
+`git rebase`; and `publish`/`unpublish`/`deprecate` (`npm`, `pnpm`, `yarn`) or
+`publish`/`yank` (`cargo`), including `--dry-run` variants (key by exact argv). So a
+rule `["git","push"]` allows `git push origin main` but `git push --force` falls
+through to later rules and the default (ask; denied when unattended). A rule such as
+`["git","push","--force"]` is honoured. Deny rules are unaffected and a broad rule
+without `command` remains explicit trust. The `git` tool reports `["git", args...]`
+as its command with the same keys, and escalates forced `checkout`/`branch` calls to
+risk `destructive`.
+
+The `shell` tool schema asks for the program only in `command` and one `args`
+element per argument. If `command` contains whitespace and no executable of that
+exact name exists, the error returns the exact split (`command: "python3", args:
+["-m","http.server","8798"]`). The call is never auto-split or rerun, so approvals
+always see the argv the model sent.
+
 Unattended CLI `ask` requests deny; use explicit policy or an interactive client.
 
 YOLO bypasses harness approval gates, filesystem root restrictions, skill tool

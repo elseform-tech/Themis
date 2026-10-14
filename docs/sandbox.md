@@ -21,7 +21,9 @@ restrictions. Explicit user/run allow rules proceed without the interactive gate
 An ask invokes the desktop/CLI approval hook. **Once** grants one action,
 **Always** remembers the grant key for this run: the tool (and risk) for most tools;
 for `shell`, program plus subcommand only for a short list of subcommand-style CLIs
-such as `cargo test`, and the exact full argv for everything else, and **Deny** rejects it.
+such as `cargo test`, and the exact full argv for everything else (including destructive
+variants such as `git push --force`, `git reset --hard` or `cargo publish`; see
+[configuration](configuration.md)), and **Deny** rejects it.
 Cached grants cannot bypass policy denies. Approval timeouts (default five minutes),
 lost clients, and unattended CLI requests deny. The interactive hook denies
 non-read actions in non-Git projects; explicit allow policy or YOLO bypasses

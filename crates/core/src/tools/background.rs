@@ -547,7 +547,7 @@ impl BackgroundRegistry {
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let mut child = command
             .spawn()
-            .map_err(|error| format!("failed to start '{}': {error}", spec.program))?;
+            .map_err(|error| super::spawn_failure(&spec.program, &spec.args, &error))?;
         let argv: Vec<String> = std::iter::once(spec.program.clone())
             .chain(spec.args.iter().cloned())
             .collect();
