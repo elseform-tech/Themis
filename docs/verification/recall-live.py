@@ -63,7 +63,7 @@ def filler(seed=11):
     rng = random.Random(seed)
     return "\n".join(
         f"log {i}: {rng.choice(NOUNS)} {rng.randrange(1000, 9999)} {rng.choice(ADJ)} {rng.choice(VERBS)}"
-        for i in range(1800)
+        for i in range(500)
     )
 
 

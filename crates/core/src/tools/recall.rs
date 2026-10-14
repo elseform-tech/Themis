@@ -197,8 +197,11 @@ pub fn recall(scope: &RecallScope, args: &RecallArgs, limits: &Limits) -> Result
         }
         kinds
     };
-    if !args.around.trim().is_empty() {
-        return around(scope, args.around.trim(), &kinds, limits);
+    // Models often send every optional field with a placeholder ("0", "none"); a
+    // real token always carries `|` separators, so anything else is not an expansion.
+    let token = args.around.trim();
+    if token.contains('|') || (!token.is_empty() && args.query.trim().is_empty()) {
+        return around(scope, token, &kinds, limits);
     }
     let limit = match args.limit {
         0 => DEFAULT_LIMIT,

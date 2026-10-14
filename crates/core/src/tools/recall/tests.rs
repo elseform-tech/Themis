@@ -682,3 +682,33 @@ proptest! {
         prop_assert_eq!(once, twice);
     }
 }
+
+#[test]
+fn placeholder_around_values_do_not_block_a_search() {
+    let fx = fixture();
+    write_snapshot(
+        &fx,
+        100,
+        &[user("the tin whistle is in the drawer", "original")],
+    );
+    for placeholder in ["0", "none", "null", " "] {
+        let result = run_with(
+            &fx,
+            RecallArgs {
+                around: placeholder.into(),
+                ..args("tin whistle")
+            },
+        );
+        assert_eq!(hits(&result).len(), 1, "{placeholder}");
+    }
+    // Without a query the value is still treated as an (invalid) expansion.
+    let error = recall(
+        &fx.scope,
+        &RecallArgs {
+            around: "0".into(),
+            ..RecallArgs::default()
+        },
+        &Limits::default(),
+    );
+    assert!(error.is_err());
+}
