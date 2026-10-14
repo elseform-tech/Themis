@@ -450,5 +450,14 @@ export interface SecretStatus {
 export const THREAD_EVENT_NAME = 'thread-event';
 export const APPROVAL_REQUEST_NAME = 'approval-request';
 export const REVIEW_ITEM_NAME = 'review-item-added';
+export const THREAD_CHANGED_NAME = 'thread-changed';
+
+/** A thread was created, changed or removed through the shared server (CLI or another client). */
+export interface ThreadChange {
+  kind: 'created' | 'updated' | 'removed';
+  project_root: string;
+  thread_id: string;
+  thread?: ThreadInfo;
+}
 
 export type McpConnections = Record<string, { status: "connecting" | "connected" | "failed"; reason?: string }>;

@@ -7,8 +7,8 @@
 use tauri::{AppHandle, Emitter};
 
 use crate::types::{
-    ApprovalRequest, ReviewItem, ThreadEventEnvelope, APPROVAL_REQUEST_NAME, REVIEW_ITEM_NAME,
-    THREAD_EVENT_NAME,
+    ApprovalRequest, ReviewItem, ThreadChange, ThreadEventEnvelope, APPROVAL_REQUEST_NAME,
+    REVIEW_ITEM_NAME, THREAD_CHANGED_NAME, THREAD_EVENT_NAME,
 };
 
 /// Delivers thread, approval, and review events to whoever is listening.
@@ -19,6 +19,8 @@ pub trait EventSink: Send + Sync {
     fn emit_approval_request(&self, request: &ApprovalRequest);
     /// Emits a `review-item-added` payload.
     fn emit_review_item(&self, item: &ReviewItem);
+    /// Emits a `thread-changed` payload.
+    fn emit_thread_changed(&self, change: &ThreadChange);
 }
 
 /// [`EventSink`] backed by the running Tauri app.
@@ -48,6 +50,10 @@ impl EventSink for TauriSink {
     fn emit_review_item(&self, item: &ReviewItem) {
         let _ = self.app.emit(REVIEW_ITEM_NAME, item);
     }
+
+    fn emit_thread_changed(&self, change: &ThreadChange) {
+        let _ = self.app.emit(THREAD_CHANGED_NAME, change);
+    }
 }
 
 /// One event captured by [`ChannelSink`].
@@ -59,6 +65,8 @@ pub enum TestEvent {
     Approval(ApprovalRequest),
     /// A `review-item-added` payload.
     Review(ReviewItem),
+    /// A `thread-changed` payload.
+    ThreadChanged(ThreadChange),
 }
 
 /// [`EventSink`] that records events on an unbounded channel for tests.
@@ -89,6 +97,10 @@ impl EventSink for ChannelSink {
 
     fn emit_review_item(&self, item: &ReviewItem) {
         let _ = self.tx.send(TestEvent::Review(item.clone()));
+    }
+
+    fn emit_thread_changed(&self, change: &ThreadChange) {
+        let _ = self.tx.send(TestEvent::ThreadChanged(change.clone()));
     }
 }
 

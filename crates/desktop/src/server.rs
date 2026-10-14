@@ -14,7 +14,9 @@ use tokio::sync::broadcast;
 use crate::sink::EventSink;
 use crate::state::AppState;
 use crate::transcript::history_pages::{HistoryCursor, HistoryPage, MAX_PAGE_BYTES};
-use crate::types::{ApprovalRequest, ReviewItem, ThreadEventEnvelope};
+use crate::types::{
+    ApprovalRequest, ReviewItem, ThreadChange, ThreadChangeKind, ThreadEventEnvelope,
+};
 
 pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
 const DISCOVERY_FILE: &str = "server.json";
@@ -179,6 +181,12 @@ impl EventSink for BroadcastSink {
         let _ = self
             .tx
             .send(json!({"name": "review-item-added", "payload": item}));
+    }
+
+    fn emit_thread_changed(&self, change: &ThreadChange) {
+        let _ = self
+            .tx
+            .send(json!({"name": "thread-changed", "payload": change}));
     }
 }
 
@@ -445,8 +453,77 @@ fn arg<T: DeserializeOwned>(args: &Value, name: &str) -> Result<T, String> {
         .map_err(|err| format!("invalid {name}: {err}"))
 }
 
-/// The command names and camelCase arguments match the existing Tauri bridge.
+/// Runs one command, then tells every subscribed window about thread
+/// creation, metadata changes and removal, so an open app follows changes
+/// made through the shared server (for example `themis call create_thread`).
 pub async fn dispatch(
+    state: &AppState,
+    sink: Arc<dyn EventSink>,
+    method: &str,
+    args: Value,
+) -> Result<Value, String> {
+    let thread_id = args
+        .get("threadId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let removed_root = match (method, &thread_id) {
+        ("discard_thread", Some(id)) => state.thread_project_root(id).await,
+        _ => None,
+    };
+    let result = dispatch_command(state, Arc::clone(&sink), method, args).await;
+    if let Ok(value) = &result {
+        announce_thread_change(state, sink.as_ref(), method, value, thread_id, removed_root).await;
+    }
+    result
+}
+
+async fn announce_thread_change(
+    state: &AppState,
+    sink: &dyn EventSink,
+    method: &str,
+    value: &Value,
+    thread_id: Option<String>,
+    removed_root: Option<String>,
+) {
+    let (kind, id) = match method {
+        "create_thread" => (
+            ThreadChangeKind::Created,
+            value.get("id").and_then(Value::as_str).map(str::to_owned),
+        ),
+        "rename_thread"
+        | "set_thread_approval_mode"
+        | "set_thread_effort"
+        | "set_thread_skills" => (ThreadChangeKind::Updated, thread_id),
+        "discard_thread" => {
+            if let (Some(thread_id), Some(project_root)) = (thread_id, removed_root) {
+                sink.emit_thread_changed(&ThreadChange {
+                    kind: ThreadChangeKind::Removed,
+                    project_root,
+                    thread_id,
+                    thread: None,
+                });
+            }
+            return;
+        }
+        _ => return,
+    };
+    let Some(id) = id else { return };
+    let (Some(project_root), Ok(thread)) = (
+        state.thread_project_root(&id).await,
+        state.get_thread(&id).await,
+    ) else {
+        return;
+    };
+    sink.emit_thread_changed(&ThreadChange {
+        kind,
+        project_root,
+        thread_id: id,
+        thread: Some(thread),
+    });
+}
+
+/// The command names and camelCase arguments match the existing Tauri bridge.
+async fn dispatch_command(
     state: &AppState,
     sink: Arc<dyn EventSink>,
     method: &str,

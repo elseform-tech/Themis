@@ -33,10 +33,12 @@ import type {
   ThreadTaskBackground,
   BackgroundTaskLog,
   ThreadInfo,
+  ThreadChange,
 } from './types';
 import {
   APPROVAL_REQUEST_NAME,
   REVIEW_ITEM_NAME,
+  THREAD_CHANGED_NAME,
   THREAD_EVENT_NAME,
 } from './types';
 
@@ -302,6 +304,12 @@ export function onReviewItemAdded(
   cb: (item: ReviewItem) => void,
 ): Promise<UnlistenFn> {
   return listen<ReviewItem>(REVIEW_ITEM_NAME, (event) => cb(event.payload));
+}
+
+export function onThreadChanged(
+  cb: (change: ThreadChange) => void,
+): Promise<UnlistenFn> {
+  return listen<ThreadChange>(THREAD_CHANGED_NAME, (event) => cb(event.payload));
 }
 
 export async function attachmentFile(threadId: string, path: string): Promise<string> {

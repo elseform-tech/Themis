@@ -34,6 +34,7 @@ vi.mock("../lib/tauri", () => ({
   },
   onApprovalRequest: async () => () => {},
   onReviewItemAdded: async () => () => {},
+  onThreadChanged: async () => () => {},
 }));
 
 function Readiness() {

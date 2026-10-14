@@ -18,6 +18,7 @@ import type {
   HistoryItem,
   PersistedMessage,
   ThreadInfo,
+  ThreadChange,
   ThreadTasks,
 } from "../lib/types";
 import type { ToastItem, ToastTone } from "../components";
@@ -136,6 +137,7 @@ export type AppAction =
   | { type: "thread/updated"; projectRoot: string; thread: ThreadInfo }
   | { type: "thread/listed"; projectRoot: string; threads: ThreadInfo[] }
   | { type: "thread/removed"; projectRoot: string; threadId: string }
+  | { type: "thread/changed"; change: ThreadChange }
   | { type: "thread/merged"; threadId: string; result: MergeResult }
   | { type: "thread/send-failed"; threadId: string; error: string }
   | { type: "thread/send-cleared"; threadId: string }
@@ -599,6 +601,12 @@ export function reducer(state: AppState, action: AppAction): AppState {
               : (action.threads[0]?.id ?? null)
             : state.activeThreadId,
       };
+    }
+    case "thread/changed": {
+      const { change } = action;
+      if (change.kind === "removed") return reducer(state, { type: "thread/removed", projectRoot: change.project_root, threadId: change.thread_id });
+      // Created or updated elsewhere: upsert by id without stealing the user's current selection.
+      return change.thread ? reducer(state, { type: "thread/synced", projectRoot: change.project_root, thread: change.thread }) : state;
     }
     case "thread/removed": {
       const remaining = (state.threadsByProject[action.projectRoot] ?? []).filter(

@@ -930,6 +930,32 @@ pub const THREAD_EVENT_NAME: &str = "thread-event";
 pub const APPROVAL_REQUEST_NAME: &str = "approval-request";
 /// Tauri event name carrying [`ReviewItem`] payloads.
 pub const REVIEW_ITEM_NAME: &str = "review-item-added";
+/// Tauri event name carrying [`ThreadChange`] payloads.
+pub const THREAD_CHANGED_NAME: &str = "thread-changed";
+
+/// What happened to a thread outside the window that is showing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadChangeKind {
+    /// A thread was created (for example by `themis call create_thread`).
+    Created,
+    /// Title, approval mode, effort or skills changed.
+    Updated,
+    /// The thread was discarded.
+    Removed,
+}
+
+/// `thread-changed` payload (`ThreadChange` in types.ts). Carries metadata
+/// only, never prompts or transcripts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadChange {
+    pub kind: ThreadChangeKind,
+    pub project_root: String,
+    pub thread_id: String,
+    /// Current info; absent for `removed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<ThreadInfo>,
+}
 
 #[cfg(test)]
 mod tests {

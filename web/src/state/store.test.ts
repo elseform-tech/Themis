@@ -673,3 +673,26 @@ it("recovers stale running flags after a missed terminal event", () => {
   expect(recovered.running[THREAD.id]).toBe(false);
   expect(recovered.threadsByProject[PROJECT.root][0].running).toBe(false);
 });
+
+describe("thread/changed", () => {
+  const info = (over: Partial<typeof THREAD> = {}) => ({ ...THREAD, ...over });
+  it("upserts created and updated threads without stealing the selection", () => {
+    let s = withThread();
+    const selected = s.activeThreadId;
+    s = reducer(s, { type: "thread/changed", change: { kind: "created", project_root: PROJECT.root, thread_id: "n1", thread: info({ id: "n1", title: "From CLI" }) } });
+    expect(s.threadsByProject[PROJECT.root]?.map(t => t.id)).toEqual([THREAD.id, "n1"]);
+    expect(s.activeThreadId).toBe(selected);
+    s = reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "n1", thread: info({ id: "n1", title: "Renamed", approval_mode: "yolo" }) } });
+    const updated = s.threadsByProject[PROJECT.root]?.find(t => t.id === "n1");
+    expect(updated).toMatchObject({ title: "Renamed", approval_mode: "yolo" });
+    expect(s.threadsByProject[PROJECT.root]).toHaveLength(2);
+    // Replaying the same event is harmless.
+    expect(reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "n1", thread: updated } })).toEqual(s);
+  });
+  it("removes a thread and ignores an update without info", () => {
+    const s = withThread();
+    expect(reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "x" } })).toBe(s);
+    const removed = reducer(s, { type: "thread/changed", change: { kind: "removed", project_root: PROJECT.root, thread_id: THREAD.id } });
+    expect(removed.threadsByProject[PROJECT.root] ?? []).toEqual([]);
+  });
+});

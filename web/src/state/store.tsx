@@ -34,6 +34,7 @@ import {
   listThreads,
   onApprovalRequest,
   onReviewItemAdded,
+  onThreadChanged,
   onThreadEvent,
   openProject,
 } from "../lib/tauri";
@@ -222,6 +223,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           eventVersion++;
           dispatch({ type: "approval/enqueued", request });
         });
+        const offThreadChanged = await onThreadChanged((change) => {
+          if (cancelled) return;
+          dispatch({ type: "thread/changed", change });
+        });
         const offReview = await onReviewItemAdded((item) => {
           if (cancelled) return;
           dispatch({ type: "review/added", review: item });
@@ -241,8 +246,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           offThread();
           offApproval();
           offReview();
+          offThreadChanged();
         } else {
-          unlistens = [offThread, offApproval, offReview, offRecovery];
+          unlistens = [offThread, offApproval, offReview, offThreadChanged, offRecovery];
           recoverState.current = () => { clearTimeout(retry); void recover(); };
           if (restoredSession.current) recoverState.current();
         }
