@@ -522,7 +522,7 @@ fn phrase_across_a_chunk_boundary_is_found_once() {
     let result = run(&fx, "sapphire clock struck thirteen");
     assert_eq!(hits(&result).len(), 1, "{result}");
     assert_eq!(hits(&result)[0]["match"], "phrase");
-    let scan = scan_text(&text, &Query::new("sapphire clock struck thirteen"));
+    let scan = scan_text(&text, &Query::new("sapphire clock struck thirteen"), None);
     assert_eq!(scan.phrases.len(), 1);
     assert_eq!(scan.occurrences.len(), 4);
     let (start, end) = scan.phrases[0];
@@ -593,7 +593,7 @@ fn query_folding_handles_stopwords_and_prefixes() {
     assert_eq!(query.terms[0], vec!['l', 'a', 'n', 't', 'e', 'r', 'n']);
     let all_stop = Query::new("the of");
     assert_eq!(all_stop.terms.len(), 2);
-    let scan = scan_text("Three lanterns hung; one Lantern fell.", &query);
+    let scan = scan_text("Three lanterns hung; one Lantern fell.", &query, None);
     assert_eq!(scan.occurrences.len(), 2);
 }
 
@@ -634,8 +634,8 @@ proptest! {
         let mut consumed = 0u64;
         let mut lines = Vec::new();
         loop {
-            match read_line_capped(&mut reader, &mut buffer, cap, &mut consumed).unwrap() {
-                Line::End => break,
+            match read_line_capped(&mut reader, &mut buffer, cap, &mut consumed, &ReadLimit::NONE).unwrap() {
+                Line::End | Line::Exhausted => break,
                 Line::Complete => lines.push(Some(buffer.clone())),
                 Line::Oversize => lines.push(None),
             }
@@ -664,7 +664,7 @@ proptest! {
         let q = Query::new(&query);
         prop_assume!(!q.terms.is_empty());
         let total = text.chars().count();
-        let scan = scan_text(&text, &q);
+        let scan = scan_text(&text, &q, None);
         for o in &scan.occurrences {
             prop_assert!(o.start < o.end && o.end <= total);
         }
@@ -711,4 +711,83 @@ fn placeholder_around_values_do_not_block_a_search() {
         &Limits::default(),
     );
     assert!(error.is_err());
+}
+
+#[test]
+fn the_byte_budget_is_enforced_inside_a_single_huge_line() {
+    // One 5 MB line with no newline: the reader stops at the budget instead of
+    // consuming the line, and never holds more than the cap.
+    let huge = vec![b'a'; 5 * 1024 * 1024];
+    let mut reader = BufReader::with_capacity(8192, Cursor::new(huge.clone()));
+    let mut buffer = Vec::new();
+    let mut consumed = 0u64;
+    let limit = ReadLimit {
+        max_bytes: 100_000,
+        deadline: None,
+    };
+    let outcome =
+        read_line_capped(&mut reader, &mut buffer, 1 << 20, &mut consumed, &limit).unwrap();
+    assert_eq!(outcome, Line::Exhausted);
+    assert_eq!(consumed, 100_000);
+    assert!(buffer.is_empty());
+    // A whole-slice reader (one giant fill_buf) is clamped too.
+    let mut cursor = Cursor::new(huge);
+    let mut consumed = 0u64;
+    let outcome =
+        read_line_capped(&mut cursor, &mut buffer, 1 << 20, &mut consumed, &limit).unwrap();
+    assert_eq!(outcome, Line::Exhausted);
+    assert_eq!(consumed, 100_000);
+    // An expired deadline stops before any byte is read.
+    let expired = ReadLimit {
+        max_bytes: u64::MAX,
+        deadline: Some(Instant::now()),
+    };
+    let mut consumed = 0u64;
+    let mut cursor = Cursor::new(b"abc\n".to_vec());
+    let outcome = read_line_capped(&mut cursor, &mut buffer, 16, &mut consumed, &expired).unwrap();
+    assert_eq!((outcome, consumed), (Line::Exhausted, 0));
+}
+
+#[test]
+fn match_caps_are_reported_in_truncated_scan() {
+    let fx = fixture();
+    // More than MAX_OCCURRENCES matches of one term in a single record.
+    let text = "ember ".repeat(MAX_OCCURRENCES + 500);
+    write_snapshot(&fx, 100, &[user(&text, "original")]);
+    let result = run(&fx, "ember");
+    assert_eq!(result["truncated_scan"], true);
+    assert!(result["truncated_reasons"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("occurrence_cap")));
+    assert_eq!(hits(&result).len(), 1, "identical windows dedupe");
+    let scan = scan_text(&text, &Query::new("ember"), None);
+    assert!(scan.capped);
+    assert!(scan.phrases.len() <= MAX_OCCURRENCES);
+    assert!(scan.occurrences.len() <= MAX_OCCURRENCES);
+}
+
+proptest! {
+    #[test]
+    fn byte_budget_bounds_consumption_for_any_input(
+        input in proptest::collection::vec(any::<u8>(), 0..400),
+        budget in 0u64..450,
+        cap in 0usize..64,
+        chunk in 1usize..32,
+    ) {
+        let mut reader = BufReader::with_capacity(chunk, Cursor::new(input.clone()));
+        let mut buffer = Vec::new();
+        let mut consumed = 0u64;
+        let limit = ReadLimit { max_bytes: budget, deadline: None };
+        loop {
+            match read_line_capped(&mut reader, &mut buffer, cap, &mut consumed, &limit).unwrap() {
+                Line::End | Line::Exhausted => break,
+                _ => {}
+            }
+            prop_assert!(consumed <= budget);
+            prop_assert!(buffer.len() <= cap);
+        }
+        prop_assert!(consumed <= budget);
+        prop_assert!(consumed <= input.len() as u64);
+    }
 }

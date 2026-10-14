@@ -3,7 +3,7 @@
 #![no_main]
 use libfuzzer_sys::{arbitrary, fuzz_target};
 use themis_core::tools::recall::{
-    read_line_capped, record_fields, recall, Limits, Line, RecallArgs, RecallScope, EXCERPT_CHARS,
+    read_line_capped, record_fields, recall, Limits, Line, ReadLimit, RecallArgs, RecallScope, EXCERPT_CHARS,
     MAX_LIMIT,
 };
 
@@ -13,13 +13,16 @@ struct Input<'a> {
     query: &'a str,
     source: &'a str,
     around: &'a str,
+    budget: u16,
 }
 
 fuzz_target!(|input: Input| {
     let mut cursor = std::io::Cursor::new(input.snapshot);
+    let limit = ReadLimit { max_bytes: u64::from(input.budget), deadline: None };
     let (mut line, mut bytes) = (Vec::new(), 0u64);
-    while let Ok(Line::Complete | Line::Oversize) = read_line_capped(&mut cursor, &mut line, 4096, &mut bytes) {
+    while let Ok(Line::Complete | Line::Oversize) = read_line_capped(&mut cursor, &mut line, 4096, &mut bytes, &limit) {
         assert!(line.len() <= 4096);
+        assert!(bytes <= u64::from(input.budget));
         for field in record_fields(&line) {
             assert!(field.pointer.starts_with('/'));
         }

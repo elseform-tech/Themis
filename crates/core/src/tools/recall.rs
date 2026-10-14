@@ -335,6 +335,29 @@ pub enum Line {
     Oversize,
     /// End of input (no bytes read).
     End,
+    /// The byte or time budget ran out, possibly in the middle of a line.
+    Exhausted,
+}
+
+/// Budget a bounded line read must respect, even inside one huge line.
+#[derive(Debug, Clone, Copy)]
+pub struct ReadLimit {
+    /// Stop once this many bytes have been consumed in total.
+    pub max_bytes: u64,
+    /// Stop at this instant.
+    pub deadline: Option<Instant>,
+}
+
+impl ReadLimit {
+    /// No budget (tests and tools that bound input elsewhere).
+    pub const NONE: Self = Self {
+        max_bytes: u64::MAX,
+        deadline: None,
+    };
+
+    fn spent(&self, bytes: u64) -> bool {
+        bytes >= self.max_bytes || self.deadline.is_some_and(|d| Instant::now() >= d)
+    }
 }
 
 /// Reads one `\n`-terminated line into `buffer`, holding at most `cap` bytes.
@@ -347,15 +370,23 @@ pub fn read_line_capped<R: BufRead>(
     buffer: &mut Vec<u8>,
     cap: usize,
     bytes: &mut u64,
+    limit: &ReadLimit,
 ) -> std::io::Result<Line> {
     buffer.clear();
     let mut oversize = false;
     let mut any = false;
     loop {
+        if limit.spent(*bytes) {
+            buffer.clear();
+            return Ok(Line::Exhausted);
+        }
         let available = reader.fill_buf()?;
         if available.is_empty() {
             break;
         }
+        // Never consume past the byte budget, however large the buffered chunk is.
+        let room = usize::try_from(limit.max_bytes - *bytes).unwrap_or(usize::MAX);
+        let available = &available[..available.len().min(room)];
         any = true;
         let (take, done) = match available.iter().position(|b| *b == b'\n') {
             Some(position) => (position + 1, true),
@@ -535,15 +566,24 @@ struct Occurrence {
 struct FieldScan {
     occurrences: Vec<Occurrence>,
     phrases: Vec<(usize, usize)>,
+    /// More matches existed than were kept.
+    capped: bool,
+    /// The deadline passed before the whole field was scanned.
+    timed_out: bool,
 }
 
 /// Finds term and phrase occurrences in `text`, scanning long text in
-/// overlapping chunks so memory stays bounded.
-fn scan_text(text: &str, query: &Query) -> FieldScan {
+/// overlapping chunks so memory stays bounded. Both match lists are capped at
+/// [`MAX_OCCURRENCES`] (`capped`), and `deadline` stops between chunks.
+fn scan_text(text: &str, query: &Query, deadline: Option<Instant>) -> FieldScan {
     let mut scan = FieldScan::default();
     let mut byte_start = 0usize;
     let mut abs_start = 0usize;
     loop {
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            scan.timed_out = true;
+            break;
+        }
         let rest = &text[byte_start..];
         let mut chars = Vec::new();
         let mut next_byte = None;
@@ -574,13 +614,16 @@ fn scan_text(text: &str, query: &Query) -> FieldScan {
             }
             let end = map[e - 1] as usize + 1;
             for (term, wanted) in query.terms.iter().enumerate() {
-                if word_matches(&folded[*s..*e], wanted) && scan.occurrences.len() < MAX_OCCURRENCES
-                {
-                    scan.occurrences.push(Occurrence {
-                        start: abs_start + start,
-                        end: abs_start + end,
-                        term,
-                    });
+                if word_matches(&folded[*s..*e], wanted) {
+                    if scan.occurrences.len() < MAX_OCCURRENCES {
+                        scan.occurrences.push(Occurrence {
+                            start: abs_start + start,
+                            end: abs_start + end,
+                            term,
+                        });
+                    } else {
+                        scan.capped = true;
+                    }
                 }
             }
             let words = query.phrase.len();
@@ -591,11 +634,15 @@ fn scan_text(text: &str, query: &Query) -> FieldScan {
                     word_matches(&folded[s..e], &query.phrase[offset])
                 })
             {
-                let (_, last_end) = spans[token + words - 1];
-                scan.phrases.push((
-                    abs_start + start,
-                    abs_start + map[last_end - 1] as usize + 1,
-                ));
+                if scan.phrases.len() < MAX_OCCURRENCES {
+                    let (_, last_end) = spans[token + words - 1];
+                    scan.phrases.push((
+                        abs_start + start,
+                        abs_start + map[last_end - 1] as usize + 1,
+                    ));
+                } else {
+                    scan.capped = true;
+                }
             }
         }
         match (last, next_byte) {
@@ -863,6 +910,13 @@ impl Budget {
         false
     }
 
+    fn read_limit(&self) -> ReadLimit {
+        ReadLimit {
+            max_bytes: self.limits.scan_bytes,
+            deadline: Some(self.started + self.limits.deadline),
+        }
+    }
+
     fn note(&mut self, reason: &'static str) {
         if !self.truncated.contains(&reason) {
             self.truncated.push(reason);
@@ -1014,7 +1068,17 @@ fn consider_field(
     field: &RecordField,
     scan: &mut Scan,
 ) {
-    let found = scan_text(&field.text, scan.query);
+    let found = scan_text(
+        &field.text,
+        scan.query,
+        Some(scan.budget.started + scan.budget.limits.deadline),
+    );
+    if found.capped {
+        scan.budget.note("occurrence_cap");
+    }
+    if found.timed_out {
+        scan.budget.note("time_budget");
+    }
     if found.occurrences.is_empty() {
         return;
     }
@@ -1080,8 +1144,13 @@ fn scan_jsonl(source: &Source, display: &str, scan: &mut Scan) {
             break;
         }
         let cap = scan.budget.limits.record_bytes;
-        match read_line_capped(&mut reader, &mut line, cap, &mut scan.budget.bytes) {
+        let limit = scan.budget.read_limit();
+        match read_line_capped(&mut reader, &mut line, cap, &mut scan.budget.bytes, &limit) {
             Ok(Line::End) | Err(_) => break,
+            Ok(Line::Exhausted) => {
+                scan.budget.exhausted();
+                break;
+            }
             Ok(Line::Oversize) => {
                 record += 1;
                 scan.records += 1;
@@ -1204,10 +1273,12 @@ fn around(
                 return Err("scan budget exhausted before the record".into());
             }
             let cap = limits.record_bytes;
-            match read_line_capped(&mut reader, &mut line, cap, &mut budget.bytes)
+            let read_limit = budget.read_limit();
+            match read_line_capped(&mut reader, &mut line, cap, &mut budget.bytes, &read_limit)
                 .map_err(|e| e.to_string())?
             {
                 Line::End => return Err("record not found".into()),
+                Line::Exhausted => return Err("scan budget exhausted before the record".into()),
                 Line::Oversize | Line::Complete => number += 1,
             }
         }
