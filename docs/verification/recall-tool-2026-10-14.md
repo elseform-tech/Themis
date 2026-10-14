@@ -11,10 +11,10 @@ literal text the runtime appends (tokens are bytes/4, the runtime's own estimate
 
 | Text | main | branch | change |
 | --- | --- | --- | --- |
-| Per-request system evidence text (evidence-directory manual + shell/Python paragraph) | 3,619 B (~904 tok) | 268 B at first cut, 400 B final imperative wording (~100 tok) | about -3.2 KB |
+| Per-request system evidence text (evidence-directory manual + shell/Python paragraph) | 3,619 B (~904 tok) | 374 B (~94 tok); 427 B in the read_file fallback when `recall` is filtered out | -3,245 B |
 | Tool definition for `recall` (name, description, schema) | 0 | 1,103 B (~276 tok) | +1.1 KB |
-| Net per request | | | about -2.1 KB (~-520 tok) |
-| Checkpoint "Recoverable evidence" block | 1,554 B (~388 tok) | 640 B (~160 tok) | about -0.9 KB per checkpoint |
+| Net per request | | | -2,142 B (~-535 tok) |
+| Checkpoint "Recoverable evidence" block | 1,554 B (~388 tok) | 653 B (~163 tok) | -901 B per checkpoint |
 
 Live confirmation from the runtime's own `context_budget` event (system section,
 estimated tokens, first request of a run): main 2,510-2,511, branch 1,698-1,701
