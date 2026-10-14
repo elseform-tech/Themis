@@ -1,0 +1,179 @@
+[
+  {
+    "id": "longform-meeting-01",
+    "category": "retraction",
+    "question": "What is the final agreed funding for harbour dredging after the chair's revision (in thousand crowns)?",
+    "fact_records": [
+      1
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])250(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "revises the earlier decision: harbour\\ dredging is now funded at 250",
+    "answer_text": "250",
+    "stale": [
+      "(?<![\\w.-])22(?![\\w-]|\\.\\d)"
+    ]
+  },
+  {
+    "id": "longform-meeting-02",
+    "category": "retraction",
+    "question": "What is the final agreed funding for the ferry timetable after the chair's revision (in thousand crowns)?",
+    "fact_records": [
+      3
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])306(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "revises the earlier decision: the\\ ferry\\ timetable is now funded at 306",
+    "answer_text": "306",
+    "stale": [
+      "(?<![\\w.-])95(?![\\w-]|\\.\\d)"
+    ]
+  },
+  {
+    "id": "longform-meeting-03",
+    "category": "retraction",
+    "question": "What is the final agreed funding for the lighthouse repairs after the chair's revision (in thousand crowns)?",
+    "fact_records": [
+      7
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])251(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "revises the earlier decision: the\\ lighthouse\\ repairs is now funded at 251",
+    "answer_text": "251",
+    "stale": [
+      "(?<![\\w.-])23(?![\\w-]|\\.\\d)"
+    ]
+  },
+  {
+    "id": "longform-meeting-04",
+    "category": "detail",
+    "question": "What start date was first recorded by the chair for harbour dredging before it was revised?",
+    "fact_records": [
+      1
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])14th\\s+of\\s+Frostmoon,\\s+1412(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "chair records the decision: harbour\\ dredging[^\\n]*(?<![\\w.-])14th\\s+of\\s+Frostmoon,\\s+1412(?![\\w-]|\\.\\d)",
+    "answer_text": "14th of Frostmoon, 1412"
+  },
+  {
+    "id": "longform-meeting-05",
+    "category": "detail",
+    "question": "What start date was first recorded by the chair for the grain levy before it was revised?",
+    "fact_records": [
+      5
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])1st\\s+of\\s+Sunmoon,\\s+1412(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "chair records the decision: the\\ grain\\ levy[^\\n]*(?<![\\w.-])1st\\s+of\\s+Sunmoon,\\s+1412(?![\\w-]|\\.\\d)",
+    "answer_text": "1st of Sunmoon, 1412"
+  },
+  {
+    "id": "longform-meeting-06",
+    "category": "detail",
+    "question": "What start date was first recorded by the chair for the market charter before it was revised?",
+    "fact_records": [
+      11
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])27th\\s+of\\s+Frostmoon,\\s+1412(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "chair records the decision: the\\ market\\ charter[^\\n]*(?<![\\w.-])27th\\s+of\\s+Frostmoon,\\s+1412(?![\\w-]|\\.\\d)",
+    "answer_text": "27th of Frostmoon, 1412"
+  },
+  {
+    "id": "longform-meeting-07",
+    "category": "attribution",
+    "question": "Who proposed the original funding for the ferry timetable?",
+    "fact_records": [
+      3
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Wilmot\\s+Fairweather(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "Wilmot\\ Fairweather: I propose we fund the\\ ferry\\ timetable",
+    "answer_text": "Wilmot Fairweather"
+  },
+  {
+    "id": "longform-meeting-08",
+    "category": "attribution",
+    "question": "Who proposed the original funding for the lighthouse repairs?",
+    "fact_records": [
+      7
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Ruadh\\s+Quillfeather(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "Ruadh\\ Quillfeather: I propose we fund the\\ lighthouse\\ repairs",
+    "answer_text": "Ruadh Quillfeather"
+  },
+  {
+    "id": "longform-meeting-09",
+    "category": "attribution",
+    "question": "Who proposed the original funding for the market charter?",
+    "fact_records": [
+      11
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Teodor\\s+Valmont(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "Teodor\\ Valmont: I propose we fund the\\ market\\ charter",
+    "answer_text": "Teodor Valmont"
+  },
+  {
+    "id": "longform-meeting-10",
+    "category": "quote",
+    "question": "What exactly did Xanthe Thornwick say when objecting to the the grain levy schedule? Quote the sentence verbatim.",
+    "fact_records": [
+      5
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Ledger\\s+hatchet\\s+velvet\\s+rusted\\s+yoke\\s+astrolabe(?![\\w-]|\\.\\d)"
+    },
+    "exact": "Ledger hatchet velvet rusted yoke astrolabe",
+    "evidence": "(?<![\\w.-])Ledger\\s+hatchet\\s+velvet\\s+rusted\\s+yoke\\s+astrolabe(?![\\w-]|\\.\\d)",
+    "answer_text": "Ledger hatchet velvet rusted yoke astrolabe"
+  },
+  {
+    "id": "longform-meeting-11",
+    "category": "quote",
+    "question": "What exactly did Silas Trevelyan say when objecting to the school funding schedule? Quote the sentence verbatim.",
+    "fact_records": [
+      9
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Gannet\\s+amber\\s+kettle\\s+oaken\\s+locket\\s+bugle(?![\\w-]|\\.\\d)"
+    },
+    "exact": "Gannet amber kettle oaken locket bugle",
+    "evidence": "(?<![\\w.-])Gannet\\s+amber\\s+kettle\\s+oaken\\s+locket\\s+bugle(?![\\w-]|\\.\\d)",
+    "answer_text": "Gannet amber kettle oaken locket bugle"
+  },
+  {
+    "id": "longform-meeting-12",
+    "category": "decoy",
+    "question": "What did the committee decide about the museum roof?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "\\bmuseum\\b",
+      "\\broof\\b"
+    ]
+  },
+  {
+    "id": "longform-meeting-13",
+    "category": "decoy",
+    "question": "Which member abstained from the vote on the grain levy?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "\\babstain",
+      "\\bvote\\b",
+      "\\bballot\\b"
+    ]
+  }
+]

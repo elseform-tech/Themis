@@ -1,0 +1,171 @@
+[
+  {
+    "id": "longform-chronicle-01",
+    "category": "detail",
+    "question": "Which vessel carried Merrick Lindqvist into Greywater on the 7th of Frostmoon, 1403?",
+    "fact_records": [
+      1
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Plover\\s+of\\s+Fenhallow(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])Plover\\s+of\\s+Fenhallow(?![\\w-]|\\.\\d)",
+    "answer_text": "Plover of Fenhallow"
+  },
+  {
+    "id": "longform-chronicle-02",
+    "category": "quote",
+    "question": "What exactly did Gideon Valmont tell Merrick Lindqvist at Millbrook on the 25th of Frostmoon, 1403? Quote the sentence verbatim.",
+    "fact_records": [
+      1
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Satchel\\s+astrolabe\\s+thimble\\s+folded\\s+slate\\s+spindle(?![\\w-]|\\.\\d)"
+    },
+    "exact": "Satchel astrolabe thimble folded slate spindle",
+    "evidence": "(?<![\\w.-])Satchel\\s+astrolabe\\s+thimble\\s+folded\\s+slate\\s+spindle(?![\\w-]|\\.\\d)",
+    "answer_text": "Satchel astrolabe thimble folded slate spindle"
+  },
+  {
+    "id": "longform-chronicle-03",
+    "category": "detail",
+    "question": "In the Chronicle, which object did Ilse Carrow give to Gideon Valmont at Fenhallow?",
+    "fact_records": [
+      3
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])rusted\\s+whistle(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])rusted\\s+whistle(?![\\w-]|\\.\\d)",
+    "answer_text": "rusted whistle"
+  },
+  {
+    "id": "longform-chronicle-04",
+    "category": "quote",
+    "question": "What exactly did Brannoch Dunmore tell Tavish Carrow at Millbrook on the 4th of Seedmoon, 1403? Quote the sentence verbatim.",
+    "fact_records": [
+      5
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Jar\\s+marble\\s+gilded\\s+tankard\\s+silver\\s+sealed(?![\\w-]|\\.\\d)"
+    },
+    "exact": "Jar marble gilded tankard silver sealed",
+    "evidence": "(?<![\\w.-])Jar\\s+marble\\s+gilded\\s+tankard\\s+silver\\s+sealed(?![\\w-]|\\.\\d)",
+    "answer_text": "Jar marble gilded tankard silver sealed"
+  },
+  {
+    "id": "longform-chronicle-05",
+    "category": "detail",
+    "question": "Which vessel carried Ivor Stannard into Vellacott on the 13th of Seedmoon, 1403?",
+    "fact_records": [
+      7
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Kittiwake\\s+of\\s+Saltmere(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])Kittiwake\\s+of\\s+Saltmere(?![\\w-]|\\.\\d)",
+    "answer_text": "Kittiwake of Saltmere"
+  },
+  {
+    "id": "longform-chronicle-06",
+    "category": "detail",
+    "question": "Which vessel carried Leontine Valmont into Highmoor on the 15th of Rainmoon, 1403?",
+    "fact_records": [
+      9
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Godwit\\s+of\\s+Fenhallow(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])Godwit\\s+of\\s+Fenhallow(?![\\w-]|\\.\\d)",
+    "answer_text": "Godwit of Fenhallow"
+  },
+  {
+    "id": "longform-chronicle-07",
+    "category": "detail",
+    "question": "How many crates did Tavish Carrow count at Dunlow on the 28th of Rainmoon, 1403?",
+    "fact_records": [
+      11
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])6317(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])6317(?![\\w-]|\\.\\d)",
+    "answer_text": "6317"
+  },
+  {
+    "id": "longform-chronicle-08",
+    "category": "detail",
+    "question": "On what date did Ilse Carrow quit Cinderford, leaving Brannoch Mortimer to explain?",
+    "fact_records": [
+      13
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])6th\\s+of\\s+Harvestmoon,\\s+1403(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])6th\\s+of\\s+Harvestmoon,\\s+1403(?![\\w-]|\\.\\d)",
+    "answer_text": "6th of Harvestmoon, 1403"
+  },
+  {
+    "id": "longform-chronicle-09",
+    "category": "detail",
+    "question": "How many lanterns did Perrin Dunmore count at Saltmere on the 20th of Harvestmoon, 1403?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])4533(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])4533(?![\\w-]|\\.\\d)",
+    "answer_text": "4533"
+  },
+  {
+    "id": "longform-chronicle-10",
+    "category": "detail",
+    "question": "How many crates did Tobias Gallagher count at Cinderford on the 3rd of Embermoon, 1403?",
+    "fact_records": [
+      17
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])5189(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])5189(?![\\w-]|\\.\\d)",
+    "answer_text": "5189"
+  },
+  {
+    "id": "longform-chronicle-11",
+    "category": "detail",
+    "question": "How many crates did Zephra Vance count at Highmoor on the 11th of Mistmoon, 1403?",
+    "fact_records": [
+      19
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])9679(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])9679(?![\\w-]|\\.\\d)",
+    "answer_text": "9679"
+  },
+  {
+    "id": "longform-chronicle-12",
+    "category": "decoy",
+    "question": "What was the name of the ferryman's dog in the Chronicle?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "\\bdog\\b",
+      "\\bhound\\b",
+      "\\bferryman\\b"
+    ]
+  },
+  {
+    "id": "longform-chronicle-13",
+    "category": "decoy",
+    "question": "How much did the tavern at Saltmere charge for a night's lodging?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "\\blodging\\b",
+      "\\btavern\\b",
+      "\\binn\\b"
+    ]
+  }
+]

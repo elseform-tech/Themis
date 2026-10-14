@@ -1,0 +1,21 @@
+{
+  "name": "longform-build-log",
+  "kind": "code",
+  "description": "Eight shards of noisy cargo test output (~110 KB) with one failing test buried in shard 5.",
+  "suites": [
+    "longform"
+  ],
+  "records": 26,
+  "chunks": [
+    7,
+    10,
+    13,
+    16,
+    19,
+    22,
+    25,
+    26
+  ],
+  "material_bytes": 66130,
+  "next_action": ""
+}

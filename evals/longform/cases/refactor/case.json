@@ -1,0 +1,18 @@
+{
+  "name": "longform-refactor",
+  "kind": "code",
+  "description": "Five-session refactor history (tool calls over ~20 files) with a bug introduced at one file:line and fixed at another.",
+  "suites": [
+    "longform"
+  ],
+  "records": 66,
+  "chunks": [
+    18,
+    28,
+    46,
+    56,
+    66
+  ],
+  "material_bytes": 68048,
+  "next_action": ""
+}

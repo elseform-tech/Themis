@@ -1,0 +1,21 @@
+{
+  "name": "longform-api-spec",
+  "kind": "code",
+  "description": "Long synthetic REST API design spec (~80 KB) with exact field names, limits, error codes and amendments.",
+  "suites": [
+    "longform"
+  ],
+  "records": 18,
+  "chunks": [
+    4,
+    6,
+    8,
+    10,
+    12,
+    14,
+    16,
+    18
+  ],
+  "material_bytes": 67872,
+  "next_action": ""
+}

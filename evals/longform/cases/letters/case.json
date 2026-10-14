@@ -1,0 +1,19 @@
+{
+  "name": "longform-letters",
+  "kind": "narrative",
+  "description": "Sixty-odd synthetic letters among nine correspondents, with amounts, appointments, quotes and retractions.",
+  "suites": [
+    "longform"
+  ],
+  "records": 14,
+  "chunks": [
+    4,
+    6,
+    8,
+    10,
+    12,
+    14
+  ],
+  "material_bytes": 65545,
+  "next_action": ""
+}

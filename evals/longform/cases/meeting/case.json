@@ -1,0 +1,17 @@
+{
+  "name": "longform-meeting",
+  "kind": "narrative",
+  "description": "Three-hour synthetic steering-committee transcript with speaker attribution and reversed decisions.",
+  "suites": [
+    "longform"
+  ],
+  "records": 16,
+  "chunks": [
+    4,
+    8,
+    12,
+    16
+  ],
+  "material_bytes": 111458,
+  "next_action": ""
+}
