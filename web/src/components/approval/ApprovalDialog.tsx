@@ -19,6 +19,14 @@ const RISK_TONE: Record<RiskLevel, BadgeTone> = {
   destructive: "danger",
 };
 
+/** Says exactly what "Allow for this run" grants; keep in sync with `ToolAction::grant_key`. */
+export function grantHint(request: ApprovalRequest): string {
+  if (request.tool === "shell" && request.grant_scope) {
+    return `Allow for this run covers \`${request.grant_scope}\` until this run ends. Other commands still ask.`;
+  }
+  return "Allow for this run covers this tool until this run ends.";
+}
+
 export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps) {
   useEffect(() => {
     if (!open) return;
@@ -45,7 +53,7 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
           <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
         </div>
         <p className="themis-approval-summary">{request.summary}</p>
-        <p className="themis-thread-hint">Run-wide permission applies to this tool and risk level until this run ends.</p>
+        <p className="themis-thread-hint">{grantHint(request)}</p>
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>
             Allow once (1)

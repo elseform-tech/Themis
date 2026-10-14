@@ -114,6 +114,7 @@ mod tests {
             tool: "shell".to_owned(),
             summary: "run".to_owned(),
             risk: RiskLevel::Execute,
+            grant_scope: String::new(),
         });
         sink.emit_review_item(&ReviewItem {
             id: "r".to_owned(),

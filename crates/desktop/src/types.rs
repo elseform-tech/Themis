@@ -257,6 +257,10 @@ pub struct ApprovalRequest {
     pub tool: String,
     pub summary: String,
     pub risk: RiskLevel,
+    /// What "allow for this run" covers for `shell` (for example
+    /// `cargo test …`); empty for tools granted per tool name.
+    #[serde(default)]
+    pub grant_scope: String,
 }
 
 /// One diff line kind (`DiffLineKind` in types.ts).
@@ -1107,6 +1111,7 @@ mod tests {
             tool: "shell".to_owned(),
             summary: "run".to_owned(),
             risk: RiskLevel::Execute,
+            grant_scope: "cargo test …".to_owned(),
         };
         assert_eq!(
             to_value(&request),
@@ -1116,6 +1121,7 @@ mod tests {
                 "tool": "shell",
                 "summary": "run",
                 "risk": "execute",
+                "grant_scope": "cargo test …",
             })
         );
     }

@@ -1095,6 +1095,17 @@ mod tests {
     }
 
     #[test]
+    fn grant_scope_describes_what_a_grant_covers() {
+        let scope = |argv: &[&str]| shell_action(argv).grant_scope();
+        assert_eq!(scope(&["cargo", "test", "--lib"]), "cargo test …");
+        assert_eq!(scope(&["find", ".", "-delete"]), "find . -delete");
+        assert_eq!(scope(&["cargo", "run", "--", "a"]), "cargo run -- a");
+        let mut other = shell_action(&["status"]);
+        other.tool = "git".into();
+        assert_eq!(other.grant_scope(), "");
+    }
+
+    #[test]
     fn cached_shell_grant_does_not_extend_to_another_program() {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = Arc::clone(&calls);

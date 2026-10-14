@@ -74,3 +74,17 @@ it.each([["manage_integrations_save_Some(Write)_123", "Manage integrations"], ["
   fireEvent.click(screen.getByRole("button", { name: "Allow once (1)" }));
   expect(onDecide).toHaveBeenCalledWith("once");
 });
+
+describe("grant hint", () => {
+  it("names the shell command a run grant covers", () => {
+    setup({ ...REQUEST, tool: "shell", grant_scope: "cargo test …" });
+    expect(screen.getByText(/Allow for this run covers `cargo test …`/)).toBeInTheDocument();
+    expect(screen.getByText(/Other commands still ask/)).toBeInTheDocument();
+    expect(screen.queryByText(/risk level/)).toBeNull();
+  });
+
+  it("describes a per-tool grant for other tools", () => {
+    setup({ ...REQUEST, tool: "write_file" });
+    expect(screen.getByText("Allow for this run covers this tool until this run ends.")).toBeInTheDocument();
+  });
+});

@@ -118,6 +118,7 @@ impl ApprovalHook for DesktopApprovalHook {
             tool: action.tool.clone(),
             summary: action.summary.clone(),
             risk: RiskLevel::from(action.risk),
+            grant_scope: action.grant_scope(),
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         {

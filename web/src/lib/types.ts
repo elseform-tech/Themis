@@ -358,6 +358,8 @@ export interface ApprovalRequest {
   tool: string;
   summary: string;
   risk: RiskLevel;
+  /** What "allow for this run" covers for shell (e.g. "cargo test …"); empty otherwise. */
+  grant_scope?: string;
 }
 
 export type DiffLineKind = 'context' | 'add' | 'del';

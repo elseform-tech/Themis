@@ -168,17 +168,39 @@ impl ToolAction {
         if self.tool != "shell" || self.command.is_empty() {
             return self.tool.clone();
         }
+        let (prefix, _) = self.shell_grant_prefix();
+        // NUL cannot occur in argv, so the join is unambiguous.
+        format!("shell\0{}", prefix.join("\0"))
+    }
+
+    /// Command prefix an "allow for this run" grant covers, and whether it is
+    /// a program + subcommand prefix (`true`) rather than the exact argv.
+    fn shell_grant_prefix(&self) -> (&[String], bool) {
         let scoped = self.command.len() >= 2
             && SUBCOMMAND_PROGRAMS.contains(&self.command[0].as_str())
             && !self.command[1].starts_with('-')
             && !EXEC_SUBCOMMANDS.contains(&self.command[1].as_str());
-        let prefix = if scoped {
-            &self.command[..2]
+        if scoped {
+            (&self.command[..2], true)
         } else {
-            &self.command[..]
-        };
-        // NUL cannot occur in argv, so the join is unambiguous.
-        format!("shell\0{}", prefix.join("\0"))
+            (&self.command[..], false)
+        }
+    }
+
+    /// Human-readable description of what [`Self::grant_key`] covers, for the
+    /// approval dialog. Empty for tools keyed by name alone; for `shell` the
+    /// covered command, ending in `…` when later arguments are also covered.
+    pub fn grant_scope(&self) -> String {
+        if self.tool != "shell" || self.command.is_empty() {
+            return String::new();
+        }
+        let (prefix, scoped) = self.shell_grant_prefix();
+        let text = prefix.join(" ");
+        if scoped {
+            format!("{text} …")
+        } else {
+            text
+        }
     }
 }
 
