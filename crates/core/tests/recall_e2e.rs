@@ -182,6 +182,9 @@ fn recall_tool_metadata_is_stable() {
     });
     assert_eq!(tool.name(), "recall");
     let schema = tool.args_schema();
+    let definition = json!({"name":tool.name(),"description":tool.description(),"parameters":schema}).to_string();
+    println!("recall tool definition bytes: {}", definition.len());
+    assert!(definition.len() < 2_000, "tool definition stays small");
     for field in ["query", "limit", "kinds", "source", "around"] {
         assert!(schema["properties"][field].is_object(), "{field}");
     }
