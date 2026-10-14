@@ -255,8 +255,9 @@ deny rules: this is a tool policy, not a sandbox; deny the wrappers you do not w
 
 Project approval configuration may add deny rules only (including `command` denies). Those restrictions are
 evaluated ahead of user rules; a project cannot grant itself access. Explicit
-run overrides are caller-supplied policy. An interactive **Allow for this run** grant is
-cached within the run and cannot override a deny rule. Grants are keyed by the
+run overrides are caller-supplied policy. An interactive **Allow in this chat** grant
+is saved for the chat (see below), applies at once to the active run and to every later
+run of that chat, and cannot override a deny rule. Grants are keyed by the
 action's grant key: the tool name (plus risk for configured policy) for most tools.
 For `shell` the key is program plus first argument only for subcommand-style CLIs
 (`cargo`, `git`, `npm`, `pnpm`, `yarn`, `go`, `rustup`, `pip`, `pip3`, `uv`, `poetry`)
@@ -264,7 +265,31 @@ whose first argument is a non-flag subcommand other than an executing one (`run`
 `run-script`, `exec`, `x`, `dlx`, `npx`, `create`, `tool`, `generate`, `shell`,
 `install`, `add`). So approving `cargo test` covers `cargo test --lib` but not
 `cargo publish` or `cargo run`. Every other program, wrapper and interpreter
-(`find`, `sudo`, `env`, `ssh`, `bash -c`, ...) is keyed by its full argv.
+(`find`, `sudo`, `env`, `ssh`, `bash -c`, ...) is keyed by its full argv. All tools of one
+MCP server share one key (the server id inside the generated `mcp_<server id><tool id>_<tool>`
+name), so one grant on any tool of that server covers its other tools; a different server,
+or the same server after its plugin revision changes, asks again.
+
+**Chat grants.** The approval dialog offers **Allow once**, **Allow in this chat** and
+**Deny**. *Allow in this chat* runs the action now and saves the grant to the chat's own
+file, `chat_grants/<chat id>.json` in the app data directory (beside `threads.json`). Format:
+`{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<16 hex>","risk":"network"}]}`;
+`command` is the covered argv prefix (shell and git only), `server` marks a whole-MCP-server
+grant, and `risk` is `read`, `write`, `execute` or `network`. Limits: 256 grants, 256 KiB.
+The file is loaded when a run starts (configuration and approval mode are still captured once
+per run); a grant made during a run applies immediately to that run and is saved for later
+runs. It is untrusted input: unknown fields, a wrong version, an oversized file, a destructive
+command or any invalid entry make the whole file ignored (a fixed `chat_grants_ignored`
+diagnostic with the reason, never the contents), which can only remove permissions. A chat's
+automations and watches post into the same chat and inherit its grants; a watch's
+`check_command` follows normal shell policy plus the chat's grants. Deny rules always beat a
+grant, and YOLO is unchanged. Discarding a chat, or deleting its project, removes its file.
+**To undo** a grant, edit or delete its entry in the chat's file, or start a new chat; there is
+deliberately no UI for this, and the composer shield stays YOLO/Custom only.
+Destructive actions (the variants below and the `destructive` risk class such as
+`delete_file`) are never offered for the chat, never stored and never matched: the dialog
+shows only **Allow once** and **Deny** with a fixed explanation, an "allow in this chat"
+answer is downgraded to once, and an unattended automation run denies them without asking.
 
 **Destructive variants.** Calls that discard work or cannot be undone are keyed by
 their full argv and are never covered by a grant for their harmless sibling, nor by
@@ -364,7 +389,7 @@ previous benchmark results are dated reports, not automatic runtime audits.
 
 ## Background MCP connections
 
-The app starts enabled global and selected-project MCP connections asynchronously on entry. Enabling a connection authorizes initialization and tool discovery; imported connections still start disabled. Explicit user/project approval denials prevent background startup. Calls from a chat continue to use that run's captured approval policy and approval mode, including when they reuse an existing transport. Startup has a 30-second deadline per server and failures are isolated. Definitions remain in the existing integration registry; transports and observed status are ephemeral shared-server state. Changing or disabling a definition releases its idle connection while active runs retain their immutable snapshot.
+The app starts enabled global and selected-project MCP connections asynchronously on entry. Enabling a connection authorizes initialization and tool discovery; imported connections still start disabled. Runs no longer show a "Connect MCP server" prompt: explicit user/project deny rules for `mcp_start_*` (or the server) still prevent startup, in the background and in a run, and YOLO ignores rules as before. Tool calls are separate approvals; one **Allow in this chat** covers the server's other tools. Calls from a chat continue to use that run's captured approval policy and approval mode, including when they reuse an existing transport. Startup has a 30-second deadline per server and failures are isolated. Definitions remain in the existing integration registry; transports and observed status are ephemeral shared-server state. Changing or disabling a definition releases its idle connection while active runs retain their immutable snapshot.
 
 The shared `plugin_action` API accepts `mcp_status` with `projectRoot`. `connect: true` reconciles enabled definitions and starts missing connections without waiting; `retry: true` also retries failed connections. Without those flags it only reads observed status. This supports CLI verification through `themis call plugin_action`. App entry, project selection and server reconnection trigger initialization automatically.
 
@@ -386,4 +411,4 @@ Omit runId for the latest snapshot; no available snapshot returns null. Diagnost
 
 ## Shared-server event stream additions
 
-Besides thread, approval and review events, the server broadcasts `thread-changed` (`{kind: created|updated|removed, project_root, thread_id, thread?}`) after a successful `create_thread`, `rename_thread`, `set_thread_approval_mode`, `set_thread_effort`, `set_thread_skills` or `discard_thread`, so an open desktop window follows changes made by `themis call` or another client. It carries metadata only. The `approval-request` event carries `grant_scope` (`{argv, covers_further_args}`, shell only): the raw command prefix an "allow for this run" grant covers, matching the cached grant key. Streamed assistant text is persisted before a run's terminal event, including Stopped and failed runs.
+Besides thread, approval and review events, the server broadcasts `thread-changed` (`{kind: created|updated|removed, project_root, thread_id, thread?}`) after a successful `create_thread`, `rename_thread`, `set_thread_approval_mode`, `set_thread_effort`, `set_thread_skills` or `discard_thread`, so an open desktop window follows changes made by `themis call` or another client. It carries metadata only. The `approval-request` event carries `grant_scope` (`{argv, covers_further_args}`, shell only): the raw command prefix an "allow in this chat" grant covers, matching the stored grant key. It also carries `grantable` (`false` for destructive actions, which only offer Allow once and Deny) and the `approve_action` decision is `once`, `chat` (formerly `always`, still accepted) or `deny`. When a dialog times out the server emits `approval-expired` (`{thread_id, approval_id}`) after denying it, so clients remove the stale dialog. Streamed assistant text is persisted before a run's terminal event, including Stopped and failed runs.

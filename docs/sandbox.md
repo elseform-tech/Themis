@@ -19,13 +19,15 @@ argv prefix to scope `shell` rules (for example allow `["cargo","test"]`). Proje
 restrictions. Explicit user/run allow rules proceed without the interactive gate.
 
 An ask invokes the desktop/CLI approval hook. **Once** grants one action,
-**Always** remembers the grant key for this run: the tool (and risk) for most tools;
-for `shell`, program plus subcommand only for a short list of subcommand-style CLIs
-such as `cargo test`, and the exact full argv for everything else (including destructive
-variants such as `git push --force`, `git reset --hard` or `cargo publish`; see
-[configuration](configuration.md)), and **Deny** rejects it.
-Cached grants cannot bypass policy denies. Approval timeouts (default five minutes),
-lost clients, and unattended CLI requests deny. The interactive hook denies
+**Allow in this chat** also remembers the grant key for every later run of the same chat
+(stored in `chat_grants/<chat id>.json`; see [configuration](configuration.md)): the tool (and
+risk) for most tools, one key for all tools of an MCP server; for `shell`, program plus
+subcommand only for a short list of subcommand-style CLIs such as `cargo test`, and the exact
+full argv for everything else. Destructive variants such as `git push --force`, `git reset
+--hard` or `cargo publish` and the destructive risk class are never remembered: they ask
+every time and the dialog offers only Once and **Deny**.
+Chat grants cannot bypass policy denies. Approval timeouts (default five minutes, after which
+the dialog is removed with a short note), lost clients, and unattended CLI requests deny. The interactive hook denies
 non-read actions in non-Git projects; explicit allow policy or YOLO bypasses
 that interactive restriction. A non-Git folder is not an OS-enforced read-only
 sandbox.
@@ -155,8 +157,8 @@ A watch's `check_command` (see [automations](automations.md)) is a scheduled
 and deny rules. Creating or updating an automation is approval-free for the agent's
 own chat; executing a program is not. In Custom mode an `ask` becomes an approval of
 the exact argv in the creating run, asked as a `shell` action (command-scoped
-rules, the non-git refusal, no grant cache) using the mode and policy that run captured,
+rules, the non-git refusal; the chat's saved grants count) using the mode and policy that run captured,
 stored with the automation and invalidated by any change; the scheduler never prompts and pauses a watch that lacks approval or whose
 policy now denies. Policy is re-evaluated before every execution, so a later deny
-rule or a switch from YOLO to Custom stops the check. Run-scoped grants do not persist. Deny rules also still reject an agent's own-chat
+rule or a switch from YOLO to Custom stops the check. A chat's saved grants count like an allow rule for non-destructive checks and are re-read before every execution, so removing one stops the check. Deny rules also still reject an agent's own-chat
 automation lifecycle actions (`manage_automations*`); `ask` proceeds without a prompt.

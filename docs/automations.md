@@ -122,9 +122,10 @@ time and again before every execution:
   (`Paused · check command denied by approval rules`).
 - Ask (the Custom default): the agent's create or update triggers an approval
   prompt in that interactive run, asked as a `shell` action with the exact argv
-  (summary "watch check command ...: argv"), so command-scoped rules apply and a
-  non-git project refuses it like the shell tool. No run-scoped grant cache is
-  used: "Always allow" for one argv never covers another. The decision uses the
+  (the dialog shows the argv as structured tokens), so command-scoped rules apply and a
+  non-git project refuses it like the shell tool. A saved chat grant that covers the argv
+  (and is not a destructive variant) counts as approval; **Allow in this chat** on this
+  prompt saves one for the command family. The decision uses the
   mode and policy the run captured when it started. Declined or unattended (for example `themis thread send` without a
   terminal) means the call fails with an error the agent relays and nothing is
   saved; the agent can create the watch without `check_command` instead. The
@@ -138,7 +139,9 @@ time and again before every execution:
   run (update with the same `check_command`).
 - A later deny rule, or switching the chat from YOLO to Custom, takes effect at
   the next execution; an allow-rule or YOLO watch has no stored approval, so it
-  stops then. "Allow for this run" grants never carry into scheduled checks.
+  stops then. Chat grants are consulted at each scheduled check, so deleting the
+  grant from the chat's file stops it. An automation run in the chat inherits its
+  grants; destructive variants are denied there without asking, because nobody can answer.
 - A check created by the user in the UI or CLI counts as the user's own approval
   of that argv (deny rules still apply).
 
