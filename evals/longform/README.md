@@ -18,19 +18,27 @@ originals.
    (the app layout). It writes the post-compaction working messages to `<scratch>/context.json`.
 2. For each probe it starts an agent turn (`runtime::eval::answer_probe_agent`) from the stored
    checkpoint (summary plus recent messages, exactly the durable form the app resumes from) with
-   the question. Policy: read tools run; shell only for `grep rg cat head tail wc ls jq nl cut tr`
-   (no interpreters, `sed`, `awk`, `find`, writes); at most `--max-calls` (default 8) tool actions;
-   everything else is refused. The scratch project is a fresh temp dir outside the repository and
-   is deleted afterwards. This is a guard for that directory, not a sandbox.
+   the question. Policy: read tools run; shell only for `grep rg cat head tail wc ls jq nl cut tr`;
+   no interpreters, `sed`, `awk`, `find`, `git` or writes; every path-like argument must resolve
+   inside the scratch project (refusals are recorded in `refused_paths`); at most `--max-calls`
+   (default 8) tool actions. The runner gets an isolated `HOME`/`TMPDIR`, only the fixture inputs
+   (probes stripped to id and question) are copied to scratch, and on macOS it is wrapped in
+   `sandbox-exec` (`--sandbox off` to disable; network is not restricted, non-macOS has no sandbox).
+   The scratch project is a fresh temp dir outside the repository, deleted afterwards. If the build
+   has the `recall` tool (`crates/core/src/tools/recall.rs`), the harness compiles it into the
+   eval toolset (`--cfg eval_recall`).
 3. The Python harness (`python3 -m evals.longform run`) then, per probe:
    - **in-context exclusion**: if the probe's evidence regex matches one working message of the
      post-compaction context, the fact is not original-only; the probe is recorded as
      `in_context` (`checkpoint` or `tail`) and excluded from the headline (its accuracy is
      reported separately);
    - grades the answer deterministically (anchored regexes; quotes need the exact wording, case
-     sensitive; superseded values listed first count as `stale`; decoys need `UNKNOWN`);
-   - validates the **citation**: the answer must name `snapshot-N.jsonl` and a record number whose
-     line is an original (not navigation/recovery) record that states the fact.
+     sensitive; superseded values listed first count as `stale`; an answer that also names another
+     planted value is `hedged` and wrong; decoys need a real abstention: a leading `UNKNOWN`, or a
+     first sentence that says nothing was found and names no candidate);
+   - validates the **citation**: the answer must name at most 3 records `snapshot-N.jsonl` + number
+     whose line is an original (not navigation/recovery) record that states the fact; longer lists
+     are invalid. Stored errors are reduced to a class and HTTP status (no provider text).
 4. Reports mean +- sample SD over trials. Trials whose compaction did not install are `invalid`
    and excluded.
 
@@ -43,7 +51,7 @@ python3 -m evals.longform report evals/longform/results/<file>.json   # markdown
 ```
 
 Options: `--case NAME` (repeatable), `--jobs N`, `--recent N`, `--max-calls N`, `--timeout S`,
-`--base-url URL` (mock provider), `--out FILE`. Results go to `evals/longform/results/`.
+`--base-url URL` (mock provider), `--sandbox auto|off`, `--out FILE`. Results go to `evals/longform/results/`.
 
 ## Compare two builds
 

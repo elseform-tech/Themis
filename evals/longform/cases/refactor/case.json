@@ -6,6 +6,20 @@
     "longform"
   ],
   "records": 66,
+  "tokens": [
+    "290",
+    "349",
+    "444",
+    "5434",
+    "9667",
+    "abacus lacquered candelabrum shearwater godwit casket",
+    "marble polished etched spyglass nutmeg-grater ledger",
+    "price_cart_gross_86",
+    "price_cart_gross_95",
+    "price_order_gross_81",
+    "tests/test_tiers.py::test_first_tier_rounding_12",
+    "wherry rattle inkwell satchel polished"
+  ],
   "chunks": [
     18,
     28,

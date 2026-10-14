@@ -159,7 +159,8 @@ class Case:
         size = sum(len(text) for text in decoded)
         with open(os.path.join(root, "case.json"), "w", encoding="utf-8") as handle:
             json.dump({"name": self.name, "kind": self.kind, "description": self.description,
-                       "suites": ["longform"], "records": total, "chunks": chunk_ends,
+                       "suites": ["longform"], "records": total,
+                       "tokens": sorted(self.unique.used), "chunks": chunk_ends,
                        "material_bytes": size, "next_action": next_action},
                       handle, indent=2, ensure_ascii=False)
             handle.write("\n")

@@ -387,7 +387,7 @@ impl crate::tools::ApprovalHook for ReadPolicy {
 /// that starts from the post-compaction `messages`. `project` is the tools' root and
 /// `evidence` must be a directory inside it (the app's `.themis/context/<thread>` layout).
 /// At most `max_calls` tool actions may run; the turn is also bounded in model turns.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, unexpected_cfgs)]
 pub async fn answer_probe_agent(
     llm: &Arc<dyn LLMProvider>,
     messages: &[ChatMessage],

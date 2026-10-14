@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -21,12 +22,17 @@ from . import __main__ as harness
 from . import gen_cases
 from .grade import grade
 from .kit import anchored
-from .report import aggregate, trial_summary
+from .report import aggregate, classify_error, trial_summary
 from .validate import context_location, parse_citations, record_text, validate
 
 SUMMARY = ("Goal/constraints: keep the fixture facts. Confirmed findings: scripted checkpoint. "
            "Completed changes/tests: observed actions only. Unresolved work: finish the request. "
            "Next action: continue from recorded state.")
+
+
+def read_normalized(path):
+    with open(path, "rb") as handle:
+        return handle.read().replace(b"\r\n", b"\n")
 
 
 class GeneratorTests(unittest.TestCase):
@@ -41,8 +47,7 @@ class GeneratorTests(unittest.TestCase):
                 gen_cases.CASES = original
             for name in sorted(os.listdir(scratch)):
                 for part in ("transcript.jsonl", "probes.json", "case.json"):
-                    fresh, committed = (open(os.path.join(root, name, part), "rb").read().replace(b"\r\n", b"\n")
-                                        for root in (scratch, original))
+                    fresh, committed = (read_normalized(os.path.join(root, name, part)) for root in (scratch, original))
                     self.assertEqual(fresh, committed, f"{name}/{part} is stale; run python3 -m evals.longform.gen_cases")
 
     def test_case_shape(self):
@@ -113,6 +118,22 @@ class GradeTests(unittest.TestCase):
         self.assertEqual(grade(probe, "Rover"), "invented")
         self.assertEqual(grade(probe, None), "error")
 
+    def test_hedged_answers_are_wrong(self):
+        probe = {"question": "What did X count?", "expected": {"regex": anchored("5013")}}
+        pool = ["5013", "6024", "brass lantern"]
+        self.assertEqual(grade(probe, "5013", pool), "correct")
+        self.assertEqual(grade(probe, "It was 5013 or 6024.", pool), "hedged")
+        self.assertEqual(grade(probe, "5013, plus a brass lantern", pool), "hedged")
+        self.assertEqual(grade({**probe, "question": "Did 6024 matter? What did X count?"}, "Not 6024: 5013", pool), "correct")
+        stale = {**probe, "stale": [anchored("6024")]}
+        self.assertEqual(grade(stale, "5013 (it was 6024 before)", pool), "correct")
+
+    def test_abstentions_must_lead_or_name_no_candidate(self):
+        probe = {"expect_unknown": True}
+        for invented in ("The limit was 4096 (not mentioned elsewhere)", "The limit was X (not mentioned elsewhere)",
+                         "It is 4096, though the log does not say more.", "Rover. The material never mentions a dog."):
+            self.assertEqual(grade(probe, invented), "invented", invented)
+
     def test_prose_abstentions_on_decoys(self):
         probe = {"expect_unknown": True}
         for abstention in ("The search returned no matches for \"tavern\" in the saved originals.",
@@ -134,9 +155,13 @@ class GradeTests(unittest.TestCase):
                 if probe["category"] == "decoy":
                     self.assertEqual(grade(probe, "A confident invented answer 12345"), "invented")
                 else:
-                    self.assertEqual(grade(probe, probe["answer_text"]), "correct", probe["id"])
+                    self.assertEqual(grade(probe, probe["answer_text"], case["tokens"]), "correct", probe["id"])
                     for wrong in ("UNKNOWN", "12345", "I could not find it."):
-                        self.assertNotIn(grade(probe, wrong), ("correct",), (probe["id"], wrong))
+                        self.assertNotIn(grade(probe, wrong, case["tokens"]), ("correct",), (probe["id"], wrong))
+                    # Two planted values (the right one plus another unique token) is a hedge.
+                    other = next(t for t in case["tokens"] if t not in probe["question"].lower()
+                                 and not re.search(probe["expected"]["regex"], t, re.I))
+                    self.assertEqual(grade(probe, f"{probe['answer_text']} or {other}", case["tokens"]), "hedged", probe["id"])
 
 
 class CitationTests(unittest.TestCase):
@@ -170,9 +195,65 @@ class CitationTests(unittest.TestCase):
         self.assertFalse(validate(self.dir, self.probe, answer + "9")["valid"])  # no such record
         missing = validate(self.dir, self.probe, "Citation: snapshot-999.jsonl record 1")
         self.assertEqual((missing["present"], missing["valid"]), (True, False))
-        self.assertEqual(validate(self.dir, self.probe, "no cite"), {"present": False, "valid": False, "cited": []})
+        self.assertEqual(validate(self.dir, self.probe, "no cite"), {"present": False, "valid": False, "count": 0, "over_cap": False, "cited": []})
         self.assertTrue(validate(self.dir, {"evidence": r"lib\.rs:812:17"}, answer + "3")["valid"])
+
+    def test_shotgun_citations_are_capped(self):
+        three = "Citation: snapshot-111.jsonl records 9, 2, 1"
+        self.assertTrue(validate(self.dir, self.probe, three)["valid"])
+        four = "Citation: snapshot-111.jsonl records 9, 8, 2, 1"
+        result = validate(self.dir, self.probe, four)
+        self.assertFalse(result["valid"])
+        self.assertTrue(result["over_cap"])
+        self.assertEqual(result["count"], 4)
+        self.assertFalse(validate(self.dir, self.probe, "snapshot-111.jsonl records 1-9")["valid"])
         self.assertIsNone(record_text(json.dumps({"evidence_kind": "recovery", "content": "x"})))
+
+
+class SafetyTests(unittest.TestCase):
+    def test_errors_are_reduced_to_a_class_and_status(self):
+        raw = 'LLM request failed: Provider returned HTTP 429 Too Many Requests. Raw response: {"secret":"sk-abc"}'
+        self.assertEqual(classify_error(raw), "provider_request:429")
+        self.assertEqual(classify_error("Response Format Error: Failed to decode ... Raw response: {...}"), "provider_response")
+        self.assertEqual(classify_error("Repeated unchanged tool results stopped the run."), "tool_loop")
+        self.assertEqual(classify_error("boom at /Users/me/x"), "other")
+        self.assertIsNone(classify_error(None))
+        for cls in ("provider_request:429", "timeout", "other"):
+            self.assertNotIn("sk-", cls)
+        self.assertIsNone(harness.stored_answer({"answer": "", "error": "LLM request failed: 500"}))
+
+    def test_runner_inputs_never_contain_the_answer_key(self):
+        case = harness.load_cases("longform", ["longform-build-log"])[0]
+        with tempfile.TemporaryDirectory() as scratch:
+            inputs = harness.scratch_inputs(case, scratch)
+            with open(os.path.join(inputs, "probes.json"), encoding="utf-8") as handle:
+                text = handle.read()
+            self.assertEqual(sorted(json.loads(text)[0]), ["id", "question"])
+            self.assertNotIn("answer_text", text)
+
+    def test_environment_is_isolated(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            env = harness.isolated_env(scratch)
+            self.assertTrue(env["HOME"].startswith(scratch) and env["TMPDIR"].startswith(scratch))
+            self.assertNotIn("USER", env)
+            self.assertEqual(set(env) - {"PATH", "OPENCODE_KEY", "SYSTEMROOT", "SYSTEMDRIVE", "SSL_CERT_FILE", "SSL_CERT_DIR"},
+                             {"HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "TMPDIR", "TEMP", "TMP"})
+
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("sandbox-exec"), "macOS sandbox-exec only")
+    def test_sandbox_blocks_reads_under_users(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            runner = os.path.join(scratch, "runner")
+            open(runner, "w").close()
+            prefix = harness.sandbox_wrapper([runner], scratch, "auto")
+            self.assertEqual(prefix[0], "sandbox-exec")
+            ok = subprocess.run(prefix + ["/bin/cat", runner], capture_output=True)
+            self.assertEqual(ok.returncode, 0)
+            home_file = os.path.expanduser("~/.zshrc")
+            if os.path.exists(home_file):
+                blocked = subprocess.run(prefix + ["/bin/cat", home_file], capture_output=True)
+                self.assertNotEqual(blocked.returncode, 0)
+        self.assertEqual(harness.sandbox_wrapper(["/nonexistent"], "/tmp", "auto"), [])
+        self.assertEqual(harness.sandbox_wrapper([sys.executable], "/tmp", "off"), [])
 
 
 class ExclusionTests(unittest.TestCase):
@@ -214,8 +295,12 @@ class Scripted(http.server.BaseHTTPRequestHandler):
             message = {"role": "assistant", "content": SUMMARY}
             finish = "stop"
         elif body["messages"][-1]["role"] != "tool":
-            call = {"id": "call_1", "type": "function", "function": {
-                "name": "list_dir", "arguments": json.dumps({"directory_path": ".themis/context/eval-thread"})}}
+            name, arguments = "list_dir", {"directory_path": ".themis/context/eval-thread"}
+            if self.mode == "snoop":  # try to read the fixture inputs next to the project by absolute path
+                directory = json.loads(re.search(r"Recoverable evidence directory: (\"[^\"]+\")", system).group(1))
+                workdir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(directory))))
+                name, arguments = "shell", {"command": "cat", "args": [os.path.join(workdir, "inputs", "probes.json")]}
+            call = {"id": "call_1", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}
             message = {"role": "assistant", "content": None, "tool_calls": [call]}
             finish = "tool_calls"
         else:
@@ -232,7 +317,7 @@ class Scripted(http.server.BaseHTTPRequestHandler):
     def answer(self, body):
         question = next(m["content"] for m in reversed(body["messages"]) if m["role"] == "user").split("Question: ", 1)[1]
         probe = self.probes[question]
-        if probe["category"] == "decoy" or self.mode == "ignorant":
+        if probe["category"] == "decoy" or self.mode in ("ignorant", "snoop"):
             return "UNKNOWN"
         directory = json.loads(re.search(r"Recoverable evidence directory: (\"[^\"]+\")", body["messages"][0]["content"]).group(1))
         cite = ""
@@ -304,6 +389,14 @@ class EndToEndTests(unittest.TestCase):
                 self.assertEqual(row["verdict"], "unknown")
         summary = harness.build_summary([self.case], {(0, self.case["name"]): ignorant}, 1)
         self.assertEqual(summary["aggregate"]["overall"]["headline_correct_with_valid_citation"]["mean"], 0.0)
+
+    def test_reading_the_inputs_by_absolute_path_is_refused_and_recorded(self):
+        report = self.run_mode("snoop")
+        self.assertTrue(report["rows"])
+        for row in report["rows"]:
+            self.assertGreaterEqual(row["denied"], 1, row)
+            self.assertTrue(any(p.endswith("probes.json") for p in row["refused_paths"]), row)
+            self.assertEqual(row["executed_tool_calls"], 0)
 
     def test_scratch_workdirs_are_removed(self):
         before = {n for n in os.listdir(tempfile.gettempdir()) if n.startswith("longform-run-")}

@@ -1,16 +1,36 @@
 """Rows -> per-trial metrics -> mean +- SD across trials, and the markdown summary."""
 
+import re
 import statistics
 
 from evals.compaction.report import spread
 
-PROVIDER_FAILURE = ("LLM request failed", "Provider", "timed out", "rate limit", "429", "connection")
+# Redacted error classes (never provider bodies); the first two are request failures, not agent failures.
+INFRASTRUCTURE_CLASSES = ("provider_request", "provider_response", "timeout")
+
+
+def classify_error(text):
+    """Reduces raw error text to a class and an HTTP status; nothing else is kept (no bodies, no paths)."""
+    if not text:
+        return None
+    lowered = text.lower()
+    status = re.search(r"\b(?:http|status|code)\D{0,6}([45]\d\d)\b|\b([45]\d\d)\b(?= (?:too many|bad|unauthor|forbidden|not found|internal|service))", lowered)
+    status = next((g for g in status.groups() if g), None) if status else None
+    for name, needles in (("timeout", ("timed out", "timeout")),
+                          ("provider_response", ("response format error", "decode", "truncated")),
+                          ("provider_request", ("llm request failed", "provider", "rate limit", "connection", "request failed")),
+                          ("tool_loop", ("repeated unchanged tool results",)),
+                          ("stopped", ("stopped by you",)),
+                          ("turn_limit", ("max turns", "turn limit", "maximum number of turns"))):
+        if any(n in lowered for n in needles):
+            return f"{name}:{status}" if status else name
+    return "other"
 
 
 def is_infrastructure_error(row):
     """A provider/transport failure (excluded from accuracy); a run that merely failed to answer is not."""
     error = row.get("error") or ""
-    return row["verdict"] == "error" or (not row["answer"] and any(p.lower() in error.lower() for p in PROVIDER_FAILURE))
+    return row["verdict"] == "error" or (not row["answer"] and error.startswith(INFRASTRUCTURE_CLASSES))
 
 
 def _rate(count, total):
@@ -31,9 +51,12 @@ def accuracy_block(rows):
         "headline_correct_with_valid_citation": _rate(sum(r["verdict"] == "correct" and r["cite_valid"] for r in rows), n),
         "accuracy_no_citation_requirement": _rate(len(correct), n),
         "citation_present_rate": _rate(sum(r["cite_present"] for r in rows), n),
+        "citations_over_cap_rate": _rate(sum(r.get("cite_over_cap", False) for r in rows), n),
+        "mean_citations_per_answer": _mean(r.get("cite_count", 0) for r in rows if r["cite_present"]),
+        "hedged_rate": _rate(sum(r["verdict"] == "hedged" for r in rows), n),
         "citation_valid_rate_of_correct": _rate(sum(r["cite_valid"] for r in correct), len(correct)),
         "unknown_rate": _rate(sum(r["verdict"] == "unknown" for r in rows), n),
-        "stale_or_wrong_rate": _rate(sum(r["verdict"] in ("stale", "wrong") for r in rows), n),
+        "stale_or_wrong_rate": _rate(sum(r["verdict"] in ("stale", "wrong", "hedged") for r in rows), n),
     }
 
 
@@ -135,6 +158,7 @@ def markdown(summary):
         lines.append(f"| {label} | {fmt(block['probes'], False)} | **{fmt(block['headline_correct_with_valid_citation'])}** | "
                      f"{fmt(block['accuracy_no_citation_requirement'])} | {fmt(block['citation_valid_rate_of_correct'])} | {fmt(block['unknown_rate'])} |")
     lines += ["", "| Other metric | Value |", "| --- | --- |",
+              f"| Hedged answers (two planted values; counted wrong) / citations over the cap of 3 | {fmt(agg['overall']['hedged_rate'])} / {fmt(agg['overall']['citations_over_cap_rate'])} |",
               f"| Exact-quote accuracy (original-only) | {fmt(agg.get('quote_exact_accuracy'))} |",
               f"| Decoy hallucination rate | {fmt(agg.get('decoy_hallucination_rate'))} |",
               f"| Probes excluded as in-context (checkpoint / tail) | {fmt(agg['excluded_in_context'], False)} ({fmt(agg['excluded_in_context_checkpoint'], False)} / {fmt(agg['excluded_in_context_tail'], False)}) |",

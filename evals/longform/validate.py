@@ -6,6 +6,7 @@ import re
 
 from evals.longform.kit import flatten
 
+MAX_CITATIONS = 3  # more cited records than this is shotgun citing and is invalid
 CITATION = re.compile(r"(snapshot-\d+\.jsonl)[^\d\n]{0,40}?(\d+(?:\s*[-,]\s*\d+)*)", re.IGNORECASE)
 
 
@@ -45,9 +46,12 @@ def record_text(line):
 
 
 def validate(evidence_dir, probe, answer):
-    """{'present': any snapshot citation, 'valid': one resolves to an original record stating the fact}."""
+    """{'present': any snapshot citation, 'valid': one of at most MAX_CITATIONS cited records is an original stating the fact}."""
     cited = parse_citations(answer)
-    result = {"present": bool(cited), "valid": False, "cited": [f"{n}:{r}" for n, r in cited[:8]]}
+    result = {"present": bool(cited), "valid": False, "count": len(cited), "over_cap": len(cited) > MAX_CITATIONS,
+              "cited": [f"{n}:{r}" for n, r in cited[:8]]}
+    if result["over_cap"]:
+        return result
     cache = {}
     for name, number in cited:
         path = os.path.join(evidence_dir, os.path.basename(name))

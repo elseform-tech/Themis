@@ -13,41 +13,41 @@
   "aggregate": {
     "by_category": {
       "attribution": {
-        "mean": 0.5833,
-        "sd": 0.1443,
-        "min": 0.5,
-        "max": 0.75,
+        "mean": 0.25,
+        "sd": 0.25,
+        "min": 0.0,
+        "max": 0.5,
         "n": 3
       },
       "detail": {
-        "mean": 0.5752,
-        "sd": 0.0987,
-        "min": 0.4706,
-        "max": 0.6667,
+        "mean": 0.4566,
+        "sd": 0.1201,
+        "min": 0.3529,
+        "max": 0.5882,
         "n": 3
       },
       "quote": {
-        "mean": 0.1333,
-        "sd": 0.2309,
+        "mean": 0.0667,
+        "sd": 0.1155,
         "min": 0.0,
-        "max": 0.4,
+        "max": 0.2,
         "n": 3
       },
       "retraction": {
-        "mean": 0.6667,
-        "sd": 0.5774,
+        "mean": 0.4444,
+        "sd": 0.3849,
         "min": 0.0,
-        "max": 1.0,
+        "max": 0.6667,
         "n": 3
       }
     },
     "by_domain": {
       "code": {
         "accuracy_no_citation_requirement": {
-          "mean": 0.4824,
-          "sd": 0.1426,
-          "min": 0.4,
-          "max": 0.6471,
+          "mean": 0.3817,
+          "sd": 0.0423,
+          "min": 0.3333,
+          "max": 0.4118,
           "n": 3
         },
         "citation_present_rate": {
@@ -58,17 +58,38 @@
           "n": 3
         },
         "citation_valid_rate_of_correct": {
-          "mean": 0.5152,
-          "sd": 0.0262,
+          "mean": 0.6048,
+          "sd": 0.1072,
           "min": 0.5,
-          "max": 0.5455,
+          "max": 0.7143,
+          "n": 3
+        },
+        "citations_over_cap_rate": {
+          "mean": 0.0222,
+          "sd": 0.0385,
+          "min": 0.0,
+          "max": 0.0667,
           "n": 3
         },
         "headline_correct_with_valid_citation": {
-          "mean": 0.251,
-          "sd": 0.0883,
+          "mean": 0.2314,
+          "sd": 0.0543,
           "min": 0.2,
-          "max": 0.3529,
+          "max": 0.2941,
+          "n": 3
+        },
+        "hedged_rate": {
+          "mean": 0.1007,
+          "sd": 0.1213,
+          "min": 0.0,
+          "max": 0.2353,
+          "n": 3
+        },
+        "mean_citations_per_answer": {
+          "mean": 1.3532,
+          "sd": 0.4169,
+          "min": 1.0833,
+          "max": 1.8333,
           "n": 3
         },
         "probes": {
@@ -79,26 +100,26 @@
           "n": 3
         },
         "stale_or_wrong_rate": {
-          "mean": 0.2588,
-          "sd": 0.0787,
-          "min": 0.1765,
-          "max": 0.3333,
+          "mean": 0.3817,
+          "sd": 0.0423,
+          "min": 0.3333,
+          "max": 0.4118,
           "n": 3
         },
         "unknown_rate": {
-          "mean": 0.2588,
-          "sd": 0.0787,
+          "mean": 0.2366,
+          "sd": 0.0521,
           "min": 0.1765,
-          "max": 0.3333,
+          "max": 0.2667,
           "n": 3
         }
       },
       "narrative": {
         "accuracy_no_citation_requirement": {
-          "mean": 0.6093,
-          "sd": 0.2172,
-          "min": 0.3846,
-          "max": 0.8182,
+          "mean": 0.3932,
+          "sd": 0.2145,
+          "min": 0.2308,
+          "max": 0.6364,
           "n": 3
         },
         "citation_present_rate": {
@@ -109,17 +130,38 @@
           "n": 3
         },
         "citation_valid_rate_of_correct": {
-          "mean": 0.5778,
-          "sd": 0.2341,
-          "min": 0.3333,
-          "max": 0.8,
+          "mean": 0.6508,
+          "sd": 0.3574,
+          "min": 0.2857,
+          "max": 1.0,
+          "n": 3
+        },
+        "citations_over_cap_rate": {
+          "mean": 0.0,
+          "sd": 0.0,
+          "min": 0.0,
+          "max": 0.0,
           "n": 3
         },
         "headline_correct_with_valid_citation": {
-          "mean": 0.3345,
-          "sd": 0.1449,
-          "min": 0.2308,
-          "max": 0.5,
+          "mean": 0.2161,
+          "sd": 0.0847,
+          "min": 0.1538,
+          "max": 0.3125,
+          "n": 3
+        },
+        "hedged_rate": {
+          "mean": 0.1904,
+          "sd": 0.118,
+          "min": 0.0769,
+          "max": 0.3125,
+          "n": 3
+        },
+        "mean_citations_per_answer": {
+          "mean": 1.0,
+          "sd": 0.0,
+          "min": 1.0,
+          "max": 1.0,
           "n": 3
         },
         "probes": {
@@ -130,17 +172,17 @@
           "n": 3
         },
         "stale_or_wrong_rate": {
-          "mean": 0.2721,
-          "sd": 0.1032,
-          "min": 0.1818,
-          "max": 0.3846,
+          "mean": 0.4626,
+          "sd": 0.0994,
+          "min": 0.3636,
+          "max": 0.5625,
           "n": 3
         },
         "unknown_rate": {
-          "mean": 0.1186,
-          "sd": 0.1155,
+          "mean": 0.1442,
+          "sd": 0.1547,
           "min": 0.0,
-          "max": 0.2308,
+          "max": 0.3077,
           "n": 3
         }
       }
@@ -167,10 +209,10 @@
       "n": 3
     },
     "decoy_hallucination_rate": {
-      "mean": 0.1111,
-      "sd": 0.0962,
-      "min": 0.0,
-      "max": 0.1667,
+      "mean": 0.25,
+      "sd": 0.0833,
+      "min": 0.1667,
+      "max": 0.3333,
       "n": 3
     },
     "decoy_probes": {
@@ -202,10 +244,10 @@
       "n": 3
     },
     "in_context_accuracy": {
-      "mean": 0.7688,
-      "sd": 0.0468,
-      "min": 0.725,
-      "max": 0.8182,
+      "mean": 0.5608,
+      "sd": 0.041,
+      "min": 0.5263,
+      "max": 0.6061,
       "n": 3
     },
     "mean_executed_tool_calls": {
@@ -259,10 +301,10 @@
     },
     "overall": {
       "accuracy_no_citation_requirement": {
-        "mean": 0.5354,
-        "sd": 0.127,
-        "min": 0.3929,
-        "max": 0.6364,
+        "mean": 0.3831,
+        "sd": 0.1085,
+        "min": 0.2857,
+        "max": 0.5,
         "n": 3
       },
       "citation_present_rate": {
@@ -273,17 +315,38 @@
         "n": 3
       },
       "citation_valid_rate_of_correct": {
-        "mean": 0.5374,
-        "sd": 0.1335,
-        "min": 0.4,
-        "max": 0.6667,
+        "mean": 0.6143,
+        "sd": 0.2245,
+        "min": 0.3846,
+        "max": 0.8333,
+        "n": 3
+      },
+      "citations_over_cap_rate": {
+        "mean": 0.0128,
+        "sd": 0.0222,
+        "min": 0.0,
+        "max": 0.0385,
         "n": 3
       },
       "headline_correct_with_valid_citation": {
-        "mean": 0.2898,
-        "sd": 0.1168,
-        "min": 0.2143,
-        "max": 0.4242,
+        "mean": 0.2246,
+        "sd": 0.0682,
+        "min": 0.1786,
+        "max": 0.303,
+        "n": 3
+      },
+      "hedged_rate": {
+        "mean": 0.1404,
+        "sd": 0.1147,
+        "min": 0.0714,
+        "max": 0.2727,
+        "n": 3
+      },
+      "mean_citations_per_answer": {
+        "mean": 1.1905,
+        "sd": 0.2291,
+        "min": 1.0455,
+        "max": 1.4545,
         "n": 3
       },
       "probes": {
@@ -294,10 +357,10 @@
         "n": 3
       },
       "stale_or_wrong_rate": {
-        "mean": 0.2676,
-        "sd": 0.0547,
-        "min": 0.2121,
-        "max": 0.3214,
+        "mean": 0.4199,
+        "sd": 0.0698,
+        "min": 0.3462,
+        "max": 0.4848,
         "n": 3
       },
       "unknown_rate": {
@@ -323,10 +386,10 @@
       "n": 3
     },
     "quote_exact_accuracy": {
-      "mean": 0.1333,
-      "sd": 0.2309,
+      "mean": 0.0667,
+      "sd": 0.1155,
       "min": 0.0,
-      "max": 0.4,
+      "max": 0.2,
       "n": 3
     },
     "quote_probes": {
@@ -349,47 +412,56 @@
     {
       "overall": {
         "probes": 26,
-        "headline_correct_with_valid_citation": 0.23076923076923078,
-        "accuracy_no_citation_requirement": 0.5769230769230769,
+        "headline_correct_with_valid_citation": 0.19230769230769232,
+        "accuracy_no_citation_requirement": 0.5,
         "citation_present_rate": 0.4230769230769231,
-        "citation_valid_rate_of_correct": 0.4,
+        "citations_over_cap_rate": 0.038461538461538464,
+        "mean_citations_per_answer": 1.4545454545454546,
+        "hedged_rate": 0.07692307692307693,
+        "citation_valid_rate_of_correct": 0.38461538461538464,
         "unknown_rate": 0.15384615384615385,
-        "stale_or_wrong_rate": 0.2692307692307692
+        "stale_or_wrong_rate": 0.34615384615384615
       },
       "by_domain": {
         "narrative": {
           "probes": 11,
-          "headline_correct_with_valid_citation": 0.2727272727272727,
-          "accuracy_no_citation_requirement": 0.8181818181818182,
+          "headline_correct_with_valid_citation": 0.18181818181818182,
+          "accuracy_no_citation_requirement": 0.6363636363636364,
           "citation_present_rate": 0.45454545454545453,
-          "citation_valid_rate_of_correct": 0.3333333333333333,
+          "citations_over_cap_rate": 0.0,
+          "mean_citations_per_answer": 1.0,
+          "hedged_rate": 0.18181818181818182,
+          "citation_valid_rate_of_correct": 0.2857142857142857,
           "unknown_rate": 0.0,
-          "stale_or_wrong_rate": 0.18181818181818182
+          "stale_or_wrong_rate": 0.36363636363636365
         },
         "code": {
           "probes": 15,
           "headline_correct_with_valid_citation": 0.2,
           "accuracy_no_citation_requirement": 0.4,
           "citation_present_rate": 0.4,
+          "citations_over_cap_rate": 0.06666666666666667,
+          "mean_citations_per_answer": 1.8333333333333333,
+          "hedged_rate": 0.0,
           "citation_valid_rate_of_correct": 0.5,
           "unknown_rate": 0.26666666666666666,
           "stale_or_wrong_rate": 0.3333333333333333
         }
       },
       "by_category": {
-        "attribution": 0.5,
+        "attribution": 0.25,
         "detail": 0.5882352941176471,
         "quote": 0.0,
-        "retraction": 1.0
+        "retraction": 0.6666666666666666
       },
       "quote_exact_accuracy": 0.0,
       "quote_probes": 2,
-      "decoy_hallucination_rate": 0.16666666666666666,
+      "decoy_hallucination_rate": 0.3333333333333333,
       "decoy_probes": 12,
       "excluded_in_context": 40,
       "excluded_in_context_checkpoint": 23,
       "excluded_in_context_tail": 17,
-      "in_context_accuracy": 0.725,
+      "in_context_accuracy": 0.55,
       "mean_tool_calls": 9.166666666666666,
       "mean_executed_tool_calls": 5.756410256410256,
       "probes_with_refused_calls": 0.6794871794871795,
@@ -408,47 +480,56 @@
     {
       "overall": {
         "probes": 28,
-        "headline_correct_with_valid_citation": 0.21428571428571427,
-        "accuracy_no_citation_requirement": 0.39285714285714285,
+        "headline_correct_with_valid_citation": 0.17857142857142858,
+        "accuracy_no_citation_requirement": 0.2857142857142857,
         "citation_present_rate": 0.5,
-        "citation_valid_rate_of_correct": 0.5454545454545454,
+        "citations_over_cap_rate": 0.0,
+        "mean_citations_per_answer": 1.0714285714285714,
+        "hedged_rate": 0.07142857142857142,
+        "citation_valid_rate_of_correct": 0.625,
         "unknown_rate": 0.2857142857142857,
-        "stale_or_wrong_rate": 0.32142857142857145
+        "stale_or_wrong_rate": 0.42857142857142855
       },
       "by_domain": {
         "narrative": {
           "probes": 13,
-          "headline_correct_with_valid_citation": 0.23076923076923078,
-          "accuracy_no_citation_requirement": 0.38461538461538464,
+          "headline_correct_with_valid_citation": 0.15384615384615385,
+          "accuracy_no_citation_requirement": 0.23076923076923078,
           "citation_present_rate": 0.5384615384615384,
-          "citation_valid_rate_of_correct": 0.6,
-          "unknown_rate": 0.23076923076923078,
-          "stale_or_wrong_rate": 0.38461538461538464
+          "citations_over_cap_rate": 0.0,
+          "mean_citations_per_answer": 1.0,
+          "hedged_rate": 0.07692307692307693,
+          "citation_valid_rate_of_correct": 0.6666666666666666,
+          "unknown_rate": 0.3076923076923077,
+          "stale_or_wrong_rate": 0.46153846153846156
         },
         "code": {
           "probes": 15,
           "headline_correct_with_valid_citation": 0.2,
-          "accuracy_no_citation_requirement": 0.4,
+          "accuracy_no_citation_requirement": 0.3333333333333333,
           "citation_present_rate": 0.4666666666666667,
-          "citation_valid_rate_of_correct": 0.5,
-          "unknown_rate": 0.3333333333333333,
-          "stale_or_wrong_rate": 0.26666666666666666
+          "citations_over_cap_rate": 0.0,
+          "mean_citations_per_answer": 1.1428571428571428,
+          "hedged_rate": 0.06666666666666667,
+          "citation_valid_rate_of_correct": 0.6,
+          "unknown_rate": 0.26666666666666666,
+          "stale_or_wrong_rate": 0.4
         }
       },
       "by_category": {
-        "attribution": 0.75,
-        "detail": 0.47058823529411764,
+        "attribution": 0.5,
+        "detail": 0.35294117647058826,
         "quote": 0.0,
         "retraction": 0.0
       },
       "quote_exact_accuracy": 0.0,
       "quote_probes": 4,
-      "decoy_hallucination_rate": 0.0,
+      "decoy_hallucination_rate": 0.16666666666666666,
       "decoy_probes": 12,
       "excluded_in_context": 38,
       "excluded_in_context_checkpoint": 21,
       "excluded_in_context_tail": 17,
-      "in_context_accuracy": 0.7631578947368421,
+      "in_context_accuracy": 0.5263157894736842,
       "mean_tool_calls": 8.871794871794872,
       "mean_executed_tool_calls": 5.935897435897436,
       "probes_with_refused_calls": 0.7692307692307693,
@@ -467,47 +548,56 @@
     {
       "overall": {
         "probes": 33,
-        "headline_correct_with_valid_citation": 0.42424242424242425,
-        "accuracy_no_citation_requirement": 0.6363636363636364,
+        "headline_correct_with_valid_citation": 0.30303030303030304,
+        "accuracy_no_citation_requirement": 0.36363636363636365,
         "citation_present_rate": 0.6666666666666666,
-        "citation_valid_rate_of_correct": 0.6666666666666666,
+        "citations_over_cap_rate": 0.0,
+        "mean_citations_per_answer": 1.0454545454545454,
+        "hedged_rate": 0.2727272727272727,
+        "citation_valid_rate_of_correct": 0.8333333333333334,
         "unknown_rate": 0.15151515151515152,
-        "stale_or_wrong_rate": 0.21212121212121213
+        "stale_or_wrong_rate": 0.48484848484848486
       },
       "by_domain": {
         "narrative": {
           "probes": 16,
-          "headline_correct_with_valid_citation": 0.5,
-          "accuracy_no_citation_requirement": 0.625,
+          "headline_correct_with_valid_citation": 0.3125,
+          "accuracy_no_citation_requirement": 0.3125,
           "citation_present_rate": 0.625,
-          "citation_valid_rate_of_correct": 0.8,
+          "citations_over_cap_rate": 0.0,
+          "mean_citations_per_answer": 1.0,
+          "hedged_rate": 0.3125,
+          "citation_valid_rate_of_correct": 1.0,
           "unknown_rate": 0.125,
-          "stale_or_wrong_rate": 0.25
+          "stale_or_wrong_rate": 0.5625
         },
         "code": {
           "probes": 17,
-          "headline_correct_with_valid_citation": 0.35294117647058826,
-          "accuracy_no_citation_requirement": 0.6470588235294118,
+          "headline_correct_with_valid_citation": 0.29411764705882354,
+          "accuracy_no_citation_requirement": 0.4117647058823529,
           "citation_present_rate": 0.7058823529411765,
-          "citation_valid_rate_of_correct": 0.5454545454545454,
+          "citations_over_cap_rate": 0.0,
+          "mean_citations_per_answer": 1.0833333333333333,
+          "hedged_rate": 0.23529411764705882,
+          "citation_valid_rate_of_correct": 0.7142857142857143,
           "unknown_rate": 0.17647058823529413,
-          "stale_or_wrong_rate": 0.17647058823529413
+          "stale_or_wrong_rate": 0.4117647058823529
         }
       },
       "by_category": {
-        "attribution": 0.5,
-        "detail": 0.6666666666666666,
-        "quote": 0.4,
-        "retraction": 1.0
+        "attribution": 0.0,
+        "detail": 0.42857142857142855,
+        "quote": 0.2,
+        "retraction": 0.6666666666666666
       },
-      "quote_exact_accuracy": 0.4,
+      "quote_exact_accuracy": 0.2,
       "quote_probes": 5,
-      "decoy_hallucination_rate": 0.16666666666666666,
+      "decoy_hallucination_rate": 0.25,
       "decoy_probes": 12,
       "excluded_in_context": 33,
       "excluded_in_context_checkpoint": 16,
       "excluded_in_context_tail": 17,
-      "in_context_accuracy": 0.8181818181818182,
+      "in_context_accuracy": 0.6060606060606061,
       "mean_tool_calls": 9.448717948717949,
       "mean_executed_tool_calls": 5.769230769230769,
       "probes_with_refused_calls": 0.7435897435897436,
@@ -655,7 +745,9 @@
           "input_tokens": 93292,
           "output_tokens": 1018,
           "latency_ms": 48548,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -683,7 +775,9 @@
           "input_tokens": 45297,
           "output_tokens": 1026,
           "latency_ms": 61408,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -710,7 +804,9 @@
           "input_tokens": 33029,
           "output_tokens": 607,
           "latency_ms": 25196,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -773,7 +869,9 @@
           "input_tokens": 32442,
           "output_tokens": 495,
           "latency_ms": 25408,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -803,7 +901,9 @@
           "input_tokens": 74733,
           "output_tokens": 897,
           "latency_ms": 39151,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -830,7 +930,9 @@
           "input_tokens": 32991,
           "output_tokens": 488,
           "latency_ms": 21932,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -838,7 +940,7 @@
           "category": "retraction",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "After the amendments, the rate limit for PATCH /v3/ledgers/{id} is 737 requests per 60 seconds per tenant.\nCitation: .themis/context/eval-thread/snapshot-1791990604993614000.jsonl record 9",
           "error": null,
           "cite_present": true,
@@ -857,7 +959,9 @@
           "input_tokens": 32494,
           "output_tokens": 604,
           "latency_ms": 22294,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -923,7 +1027,9 @@
           "input_tokens": 52460,
           "output_tokens": 878,
           "latency_ms": 42222,
-          "executed_tool_calls": 6
+          "executed_tool_calls": 6,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -960,7 +1066,9 @@
           "input_tokens": 179835,
           "output_tokens": 3379,
           "latency_ms": 115302,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -968,7 +1076,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "checkpoint",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "I've recorded all nine parts of the Harbour API v3 design spec, including the three rate-limit amendments from part 9 that supersede the earlier values for PATCH /v3/ledgers/{id}, GET /v3/exports/{id}, and GET /v3/invoices (list).\n\nWhat remains: the quiz hasn't started yet, and for the header question I was unable to locate the specific requirement in the available snapshot material — the searches for \"X-Themis-Memo-Ttl-54\", \"header\", \"mutating\", and related terms returned no matches in the records I could access.\n\nNext steps: you can begin the quiz whenever ready, and if the header detail is important, you may want to re-share the relevant spec section so I can confirm the exact wording.",
           "error": null,
           "cite_present": false,
@@ -1003,7 +1111,7 @@
           "category": "decoy",
           "domain": "code",
           "in_context": null,
-          "verdict": "correct_unknown",
+          "verdict": "invented",
           "answer": "I've searched the recoverable evidence directory for any mention of payload size limits. The search covered all snapshot files for terms like \"payload\", \"megabyte\", and \"max_payload\" — no matches were found in any of the original spec material.\n\nUNKNOWN\n\nThe Harbour API v3 design specs (parts 1–9) do not specify a maximum payload size in megabytes for the API gateway. The specs cover endpoint definitions, field names, character limits, scopes, rate limits, error codes, and behavioral rules, but contain no gateway-level payload size constraint.",
           "error": null,
           "cite_present": false,
@@ -1263,7 +1371,9 @@
           "input_tokens": 71628,
           "output_tokens": 1192,
           "latency_ms": 15003,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -1508,7 +1618,9 @@
           "input_tokens": 192863,
           "output_tokens": 6504,
           "latency_ms": 56472,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 2,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -1555,7 +1667,9 @@
           "input_tokens": 152368,
           "output_tokens": 5507,
           "latency_ms": 71226,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 5,
+          "cite_over_cap": true
         },
         {
           "case": "longform-build-log",
@@ -1733,7 +1847,9 @@
           "input_tokens": 94737,
           "output_tokens": 1298,
           "latency_ms": 51071,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -1916,7 +2032,9 @@
           "input_tokens": 219175,
           "output_tokens": 11598,
           "latency_ms": 289998,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -2083,7 +2201,9 @@
           "input_tokens": 39188,
           "output_tokens": 1186,
           "latency_ms": 32158,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -2091,7 +2211,7 @@
           "category": "decoy",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct_unknown",
+          "verdict": "invented",
           "answer": "The compacted record doesn't state a dog’s name, and the available filename search found no matching chapter file. I’m checking the saved original text directly before answering.\nSaved originals searched. There is no mention of a ferryman’s dog in the Chronicle.",
           "error": null,
           "cite_present": false,
@@ -2257,7 +2377,9 @@
           "input_tokens": 139539,
           "output_tokens": 3612,
           "latency_ms": 126001,
-          "executed_tool_calls": 6
+          "executed_tool_calls": 6,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -2289,7 +2411,9 @@
           "input_tokens": 137073,
           "output_tokens": 4038,
           "latency_ms": 115950,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -2297,7 +2421,7 @@
           "category": "retraction",
           "domain": "narrative",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The corrected amount finally stated for the amber thimble was **679 guineas** — Letter 70 from Perrin Everard to Wystan Hartwell (25th of Mistmoon, 1411) says: \"Pray disregard the sum I gave in my letter of the 27th of Seedmoon, 1411 about the amber thimble: I miscounted, and the correct amount owed is 679 guineas.\"\n\nCitation: .themis/context/eval-thread/snapshot-1791990968555021000.jsonl record 7",
           "error": null,
           "cite_present": true,
@@ -2319,7 +2443,9 @@
           "input_tokens": 135170,
           "output_tokens": 8325,
           "latency_ms": 193780,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -2347,7 +2473,9 @@
           "input_tokens": 63002,
           "output_tokens": 841,
           "latency_ms": 51857,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -2355,7 +2483,7 @@
           "category": "detail",
           "domain": "narrative",
           "in_context": "checkpoint",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "Zephra Lockhart asked Perrin Everard to bring the enamelled sundial to the Saltmere meeting on the 9th of Frostmoon, 1411, stating \"do bring the enamelled sundial, and nothing else\" in her letter of the 12th of Frostmoon, 1411.\n\nCitation: .themis/context/eval-thread/snapshot-1791990360239978000.jsonl record 1",
           "error": null,
           "cite_present": true,
@@ -2376,7 +2504,9 @@
           "input_tokens": 74464,
           "output_tokens": 1113,
           "latency_ms": 41647,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -2427,7 +2557,7 @@
           "category": "detail",
           "domain": "narrative",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "Zephra Lockhart asked Yarrow Stannard to bring the stitched oilcan (\"do bring the stitched oilcan, and nothing else\"), in Letter 68 (dated 20th of Mistmoon, 1411), which fixed the meeting at Greywater on the 18th of Mistmoon, 1411.\n\nCitation: .themis/context/eval-thread/snapshot-1791990766633687000.jsonl record 9",
           "error": null,
           "cite_present": true,
@@ -2450,7 +2580,9 @@
           "input_tokens": 114105,
           "output_tokens": 3917,
           "latency_ms": 126145,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -2527,7 +2659,9 @@
           "input_tokens": 63882,
           "output_tokens": 1173,
           "latency_ms": 33522,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -2593,7 +2727,9 @@
           "input_tokens": 46782,
           "output_tokens": 603,
           "latency_ms": 21470,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -2731,7 +2867,7 @@
           "category": "retraction",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "Based on the checkpoint summary, the final agreed funding for harbour dredging after the chair's revision is **250 thousand crowns** (revised by Rowena Nankivell on the 14th of Harvestmoon, 1412; the original 22 thousand figure was withdrawn).\n\nI attempted to verify this against the saved snapshot files but was unable to access them due to tool restrictions. The checkpoint explicitly states this figure, so I'm reporting it as recorded there.\n\n**What remains:** Independent verification of the 250k figure against the original transcript records.\n\n**Concrete next step:** If you need confirmation beyond the checkpoint, the original segment 1 transcript should be reopened to verify the exact wording of Rowena Nankivell's revision statement.",
           "error": null,
           "cite_present": false,
@@ -2823,7 +2959,9 @@
           "input_tokens": 83287,
           "output_tokens": 1207,
           "latency_ms": 46628,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -2889,7 +3027,9 @@
           "input_tokens": 145817,
           "output_tokens": 2519,
           "latency_ms": 86414,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -2920,7 +3060,9 @@
           "input_tokens": 105263,
           "output_tokens": 1454,
           "latency_ms": 49526,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -2964,7 +3106,9 @@
           "input_tokens": 207579,
           "output_tokens": 4426,
           "latency_ms": 196406,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -3007,7 +3151,7 @@
           "category": "attribution",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "Teodor Valmont proposed the original funding for the market charter at 52 thousand crowns, with work starting on the 27th of Frostmoon, 1412.  \nCitation: .themis/context/eval-thread/snapshot-1791990653301483000.jsonl record 5",
           "error": null,
           "cite_present": true,
@@ -3028,7 +3172,9 @@
           "input_tokens": 43075,
           "output_tokens": 647,
           "latency_ms": 24068,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -3036,7 +3182,7 @@
           "category": "quote",
           "domain": "narrative",
           "in_context": "checkpoint",
-          "verdict": "unknown",
+          "verdict": "wrong",
           "answer": "I found the grain levy transcript in the latest snapshot. Segment 3 contains Xanthe Thornwick's objection at 11:38:20, but the runtime relevance hint omits 4935 bytes in the middle, so the exact original record must be read to confirm the verbatim wording. Reading the record now.\n\nI am sorry, but I don't have enough information to complete this task. I was unable to determine the exact verbatim wording from the available material.",
           "error": null,
           "cite_present": false,
@@ -3088,7 +3234,9 @@
           "input_tokens": 41366,
           "output_tokens": 995,
           "latency_ms": 29324,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -3132,7 +3280,7 @@
           "in_context": null,
           "verdict": "invented",
           "answer": "",
-          "error": "Repeated unchanged tool results stopped the run. Completed actions and evidence remain saved; evidence recovery can continue in a new run with a narrower unresolved question.",
+          "error": "tool_loop",
           "cite_present": false,
           "cite_valid": false,
           "cited": [],
@@ -3278,7 +3426,9 @@
           "input_tokens": 11203,
           "output_tokens": 128,
           "latency_ms": 6099,
-          "executed_tool_calls": 0
+          "executed_tool_calls": 0,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -3303,7 +3453,9 @@
           "input_tokens": 11207,
           "output_tokens": 687,
           "latency_ms": 29323,
-          "executed_tool_calls": 0
+          "executed_tool_calls": 0,
+          "cite_count": 2,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -3330,7 +3482,9 @@
           "input_tokens": 36980,
           "output_tokens": 322,
           "latency_ms": 20633,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -3338,7 +3492,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The expected total was 5434 (the test got 9667 instead).\n\nCitation: /var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/longform-run-ghm50mn8/project/.themis/context/eval-thread/snapshot-1791990416409262000.jsonl record 18",
           "error": null,
           "cite_present": true,
@@ -3359,7 +3513,9 @@
           "input_tokens": 58340,
           "output_tokens": 949,
           "latency_ms": 41657,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -3367,7 +3523,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The code actually produced 9667 (the assertion was `assert 9667 == 5434`).\n\nCitation: /var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/longform-run-ghm50mn8/project/.themis/context/eval-thread/snapshot-1791990447112426000.jsonl record 11",
           "error": null,
           "cite_present": true,
@@ -3383,7 +3539,9 @@
           "input_tokens": 11202,
           "output_tokens": 254,
           "latency_ms": 7380,
-          "executed_tool_calls": 0
+          "executed_tool_calls": 0,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -3483,7 +3641,9 @@
           "input_tokens": 11203,
           "output_tokens": 261,
           "latency_ms": 26396,
-          "executed_tool_calls": 0
+          "executed_tool_calls": 0,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -3545,7 +3705,9 @@
           "input_tokens": 37008,
           "output_tokens": 490,
           "latency_ms": 100668,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -3715,7 +3877,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": null,
-          "verdict": "unknown",
+          "verdict": "wrong",
           "answer": "I searched the saved snapshots for the `vessel_label_id` field definition on the ledgers get endpoint. The latest snapshot (part 9) only contains the three rate-limit amendments, and a targeted search for `vessel_label_id` returned no matches there. The original ledgers endpoint spec with its field definitions would be in an earlier snapshot (parts 1–4), which I did not locate in this pass.\n\n**Answer:** UNKNOWN — the field length for `vessel_label_id` was not found in the material I was able to inspect.\n\n**Next step:** Reopen the earlier snapshot records covering parts 1–4 of the spec, where the `GET /v3/ledgers/{id}` endpoint and its request fields were originally defined, to read the exact maximum character length for that field.",
           "error": null,
           "cite_present": false,
@@ -3771,7 +3933,9 @@
           "input_tokens": 34779,
           "output_tokens": 747,
           "latency_ms": 22868,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -3779,7 +3943,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The `carrier_cursor_key` field of `GET /v3/routes` (list) has a maximum length of **3776 characters** (region pinned, default 45). This is stated in the original part 8 user message, which I read in full to confirm the value split across the record's paging boundary.\n\nCitation: .themis/context/eval-thread/snapshot-1791991509140828000.jsonl record 9",
           "error": null,
           "cite_present": true,
@@ -3803,7 +3967,9 @@
           "input_tokens": 65531,
           "output_tokens": 1532,
           "latency_ms": 51442,
-          "executed_tool_calls": 6
+          "executed_tool_calls": 6,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -3839,7 +4005,9 @@
           "input_tokens": 122374,
           "output_tokens": 1889,
           "latency_ms": 62461,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -3847,7 +4015,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The error code is `ERR_ROUTES_CREATE_7572`. I located it in the supplied part 8 spec; no remaining work is needed. Next step: send the quiz question or another endpoint to check.",
           "error": null,
           "cite_present": false,
@@ -3906,7 +4074,9 @@
           "input_tokens": 87823,
           "output_tokens": 809,
           "latency_ms": 34844,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -3949,7 +4119,7 @@
           "category": "retraction",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "All nine parts of the Harbour API (v3) spec are recorded, including the Part 9 amendments, so nothing is missing on the spec side. The current rate limit for PATCH /v3/ledgers/{id} (update) is 737 requests per 60 seconds per tenant, per the amendment that supersedes the earlier text.\n\nOne caveat: when I tried to re-open the saved original containing Part 9 to attach a citation, access to that file was denied, so this figure rests on the recorded spec text rather than a re-verified source. If you want it re-confirmed from the original, you may need to re-grant access.\n\nWhat remains: your quiz. Send the questions whenever you're ready and I'll answer from the recorded details.",
           "error": null,
           "cite_present": false,
@@ -3987,7 +4157,7 @@
           "category": "retraction",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "**791** requests per 120 seconds per tenant.\n\nExact wording: \"GET /v3/exports/{id} (get): the rate limit is now 791 requests per 120 seconds per tenant.\"\n\nCitation: .themis/context/eval-thread/snapshot-1791991663921381000.jsonl record 9",
           "error": null,
           "cite_present": true,
@@ -4012,7 +4182,9 @@
           "input_tokens": 105555,
           "output_tokens": 1769,
           "latency_ms": 68522,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -4020,7 +4192,7 @@
           "category": "retraction",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The current rate limit for GET /v3/invoices (list) after the amendments is 466 requests per 120 seconds per tenant.\n\nThat value comes from the part 9 amendment text, which supersedes the earlier figure. I attempted to confirm the exact snapshot record and line number to cite, but the evidence files were not accessible through my available reads this time, so I can't honestly supply a `Citation:` line — I won't invent a coordinate.\n\nWhat remains: nothing further is needed to answer the rate-limit question. If you want, I can retry reading the snapshot file to pin down the record number for a proper citation.",
           "error": null,
           "cite_present": false,
@@ -4365,7 +4537,9 @@
           "input_tokens": 118997,
           "output_tokens": 1377,
           "latency_ms": 62379,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -4454,7 +4628,9 @@
           "input_tokens": 28441,
           "output_tokens": 467,
           "latency_ms": 15255,
-          "executed_tool_calls": 0
+          "executed_tool_calls": 0,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -4462,7 +4638,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The shard with the failure (index, `index::merge::tests::probe_l3_retry`) had **21 ignored** tests.\n\nCitation: /var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/longform-run-1lls5oae/project/.themis/context/eval-thread/snapshot-1791991429459952000.jsonl record 8",
           "error": null,
           "cite_present": true,
@@ -4478,7 +4654,9 @@
           "input_tokens": 14106,
           "output_tokens": 142,
           "latency_ms": 5137,
-          "executed_tool_calls": 0
+          "executed_tool_calls": 0,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -4518,7 +4696,9 @@
           "input_tokens": 143066,
           "output_tokens": 2970,
           "latency_ms": 98310,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 2,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -4796,7 +4976,9 @@
           "input_tokens": 83344,
           "output_tokens": 1256,
           "latency_ms": 44811,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -4869,7 +5051,9 @@
           "input_tokens": 194243,
           "output_tokens": 2645,
           "latency_ms": 103222,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -4937,7 +5121,9 @@
           "input_tokens": 98290,
           "output_tokens": 1402,
           "latency_ms": 183778,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -4999,7 +5185,9 @@
           "input_tokens": 184421,
           "output_tokens": 3150,
           "latency_ms": 105852,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 4,
+          "cite_over_cap": true
         },
         {
           "case": "longform-chronicle",
@@ -5028,7 +5216,9 @@
           "input_tokens": 64014,
           "output_tokens": 796,
           "latency_ms": 41641,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -5060,7 +5250,9 @@
           "input_tokens": 109538,
           "output_tokens": 1231,
           "latency_ms": 57556,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -5112,7 +5304,9 @@
           "input_tokens": 51668,
           "output_tokens": 608,
           "latency_ms": 28253,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -5120,7 +5314,7 @@
           "category": "decoy",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct_unknown",
+          "verdict": "invented",
           "answer": "Based on my thorough reading of all 12 chapters of The Saltmere Chronicle, there is no mention of a ferryman's dog anywhere in the text. The Chronicle follows characters like Merrick Lindqvist, Ilse Carrow, Gideon Valmont, and others through their travels, coded messages, and encounters, but no ferryman or dog is ever named or referenced.\n\nUNKNOWN",
           "error": null,
           "cite_present": false,
@@ -5290,7 +5484,9 @@
           "input_tokens": 93191,
           "output_tokens": 1451,
           "latency_ms": 52687,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -5324,7 +5520,9 @@
           "input_tokens": 164794,
           "output_tokens": 8910,
           "latency_ms": 208713,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -5358,7 +5556,9 @@
           "input_tokens": 154323,
           "output_tokens": 7600,
           "latency_ms": 174283,
-          "executed_tool_calls": 6
+          "executed_tool_calls": 6,
+          "cite_count": 2,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -5387,7 +5587,9 @@
           "input_tokens": 81074,
           "output_tokens": 860,
           "latency_ms": 35293,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -5420,7 +5622,9 @@
           "input_tokens": 163442,
           "output_tokens": 7331,
           "latency_ms": 238679,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -5454,7 +5658,9 @@
           "input_tokens": 127952,
           "output_tokens": 1470,
           "latency_ms": 60288,
-          "executed_tool_calls": 6
+          "executed_tool_calls": 6,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -5462,7 +5668,7 @@
           "category": "detail",
           "domain": "narrative",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "Zephra Lockhart asked Yarrow Stannard to bring the stitched oilcan.\n\nThe relevant note (from Zephra to Yarrow Stannard, \"Appointment at Greywater,\" ending \"-- Zephra\") reads: \"I shall wait for you at Greywater on the 18th of Mistmoon, 1411; do bring the stitched oilcan, and nothing else.\"\n\nCitation: .themis/context/eval-thread/snapshot-1791992737960942000.jsonl record 7",
           "error": null,
           "cite_present": true,
@@ -5487,7 +5693,9 @@
           "input_tokens": 166708,
           "output_tokens": 7077,
           "latency_ms": 181083,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -5522,7 +5730,9 @@
           "input_tokens": 190082,
           "output_tokens": 8512,
           "latency_ms": 224701,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -5573,7 +5783,7 @@
           "category": "quote",
           "domain": "narrative",
           "in_context": "checkpoint",
-          "verdict": "unknown",
+          "verdict": "wrong",
           "answer": "The 4 small snapshot files each hold only one record (metadata/notes), and the main large snapshot starts at Letter 39 with no mention of Frostmoon or \"Amber velvet\". The letter from Yarrow Stannard dated 15th Frostmoon 1411 (Letter 2 per the ledger) is not present in any saved original here, so I cannot verify the quoted wording.\n\nUNKNOWN",
           "error": null,
           "cite_present": false,
@@ -5628,7 +5838,9 @@
           "input_tokens": 44387,
           "output_tokens": 551,
           "latency_ms": 22367,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -5781,7 +5993,9 @@
           "input_tokens": 128955,
           "output_tokens": 1105,
           "latency_ms": 51362,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -5885,7 +6099,7 @@
           "category": "detail",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "I found the grain levy discussion in transcript segment 3 (snapshot-1791992454722462000.jsonl record 5), but my retrieved excerpt was truncated at timestamp [10:15:46] and did not reach the [10:19:57] line where the chair recorded the initial decision. Based on the earlier context, the proposed start date was the 1st of Sunmoon, 1412, before being revised to the 28th of Rainmoon, 1412.\n\nWhat remains: I need to read further into record 5 (past character offset 9985) to confirm the exact wording of the start date the chair first recorded.",
           "error": null,
           "cite_present": true,
@@ -5914,7 +6128,9 @@
           "input_tokens": 196094,
           "output_tokens": 2943,
           "latency_ms": 111051,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -5972,7 +6188,7 @@
           "category": "attribution",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "unknown",
           "answer": "UNKNOWN\n\nI was unable to verify the ferry timetable proposal from the saved original snapshots. The checkpoint summary attributes the proposal to Wilmot Fairweather, but the original transcript segment containing the ferry timetable discussion was not found in the accessible snapshot files.",
           "error": null,
           "cite_present": false,
@@ -6037,7 +6253,9 @@
           "input_tokens": 99470,
           "output_tokens": 3624,
           "latency_ms": 128702,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -6065,7 +6283,9 @@
           "input_tokens": 54971,
           "output_tokens": 1103,
           "latency_ms": 45381,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -6138,7 +6358,9 @@
           "input_tokens": 117141,
           "output_tokens": 2813,
           "latency_ms": 93546,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -6181,7 +6403,7 @@
           "category": "decoy",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct_unknown",
+          "verdict": "invented",
           "answer": "Based on my search of the snapshot file, the grain levy is agenda item 3 (segment 3), and the checkpoint records its full decision chain: Teodor Valmont proposed 64k crowns, Ruadh Quillfeather recorded, Xanthe Thornwick presented new figures of 239k, and Ruadh Quillfeather revised. No abstention is mentioned anywhere in the grain levy segment. My search for \"abstain\" in this snapshot file returned no matches, and the grain levy segment itself is not contained in this snapshot (which holds segments 5 and 6). The original material never states that any member abstained from the vote on the grain levy.\n\nUNKNOWN\n\nCitation: .themis/context/eval-thread/snapshot-1791992663355626000.jsonl record 1",
           "error": null,
           "cite_present": false,
@@ -6312,7 +6534,9 @@
           "input_tokens": 50145,
           "output_tokens": 2450,
           "latency_ms": 18972,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 2,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -6345,7 +6569,9 @@
           "input_tokens": 115946,
           "output_tokens": 2148,
           "latency_ms": 26976,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -6371,7 +6597,9 @@
           "input_tokens": 23763,
           "output_tokens": 491,
           "latency_ms": 7526,
-          "executed_tool_calls": 1
+          "executed_tool_calls": 1,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -6379,7 +6607,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "`tests/test_tiers.py::test_first_tier_rounding_12` caught it, asserting price == 5434 but getting 9667.\n\nCitation: .themis/context/eval-thread/snapshot-1791992680734367000.jsonl record 11",
           "error": null,
           "cite_present": true,
@@ -6397,7 +6625,9 @@
           "input_tokens": 23714,
           "output_tokens": 293,
           "latency_ms": 4585,
-          "executed_tool_calls": 1
+          "executed_tool_calls": 1,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -6405,7 +6635,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The failing test `test_first_tier_rounding_12` expected a total of 5434 (actual was 9667).\n\nCitation: .themis/context/eval-thread/snapshot-1791992680734367000.jsonl record 11",
           "error": null,
           "cite_present": true,
@@ -6424,7 +6654,9 @@
           "input_tokens": 35931,
           "output_tokens": 429,
           "latency_ms": 6881,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -6432,7 +6664,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The failing test showed the code produced 9667 (assert 9667 == 5434).\n\nCitation: .themis/context/eval-thread/snapshot-1791992680734367000.jsonl record 11",
           "error": null,
           "cite_present": true,
@@ -6450,7 +6682,9 @@
           "input_tokens": 23712,
           "output_tokens": 314,
           "latency_ms": 5073,
-          "executed_tool_calls": 1
+          "executed_tool_calls": 1,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -6546,7 +6780,9 @@
           "input_tokens": 35779,
           "output_tokens": 506,
           "latency_ms": 6881,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -6608,7 +6844,9 @@
           "input_tokens": 35901,
           "output_tokens": 423,
           "latency_ms": 8352,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -6805,7 +7043,9 @@
           "input_tokens": 69094,
           "output_tokens": 518,
           "latency_ms": 28232,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -6833,7 +7073,9 @@
           "input_tokens": 55722,
           "output_tokens": 1038,
           "latency_ms": 37624,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -6841,7 +7083,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The `carrier_cursor_key` field of GET /v3/routes (list) has a maximum length of 3776 characters (it also has a default of 45 and the field is described as \"Region the record is pinned to\").\n\nCitation: .themis/context/eval-thread/snapshot-1791992867927437000.jsonl record 7",
           "error": null,
           "cite_present": true,
@@ -6863,7 +7105,9 @@
           "input_tokens": 68689,
           "output_tokens": 666,
           "latency_ms": 30467,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -6898,7 +7142,9 @@
           "input_tokens": 165173,
           "output_tokens": 1415,
           "latency_ms": 60551,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -6968,7 +7214,9 @@
           "input_tokens": 69606,
           "output_tokens": 660,
           "latency_ms": 34439,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -6995,7 +7243,9 @@
           "input_tokens": 40154,
           "output_tokens": 826,
           "latency_ms": 28583,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -7003,7 +7253,7 @@
           "category": "retraction",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The current rate limit for PATCH /v3/ledgers/{id} (update) is 737 requests per 60 seconds per tenant.\nCitation: .themis/context/eval-thread/snapshot-1791992867927437000.jsonl record 9",
           "error": null,
           "cite_present": true,
@@ -7021,7 +7271,9 @@
           "input_tokens": 26265,
           "output_tokens": 663,
           "latency_ms": 23808,
-          "executed_tool_calls": 1
+          "executed_tool_calls": 1,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -7029,7 +7281,7 @@
           "category": "retraction",
           "domain": "code",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The amendment directly supersedes the earlier text, so the current limit is 791 requests per 120 seconds per tenant for GET /v3/exports/{id} (get). The original record confirms this: \"GET /v3/exports/{id} (get): the rate limit is now 791 requests per 120 seconds per tenant.\"\n\nThe current rate limit for GET /v3/exports/{id} (get) after the amendments is 791 requests per 120 seconds per tenant.\n\nCitation: .themis/context/eval-thread/snapshot-1791992867927437000.jsonl record 9",
           "error": null,
           "cite_present": true,
@@ -7050,7 +7302,9 @@
           "input_tokens": 74904,
           "output_tokens": 1079,
           "latency_ms": 37035,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -7079,7 +7333,9 @@
           "input_tokens": 67960,
           "output_tokens": 1418,
           "latency_ms": 50094,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -7087,7 +7343,7 @@
           "category": "quote",
           "domain": "code",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The exact rule sentence in the global rules is: \"Every mutating request must carry the `X-Themis-Memo-Ttl-54` header.\" The spec also quotes: \"Cudgel rattle casket sundial velvet jade tuning-fork.\"\n\nCitation: .themis/context/eval-thread/snapshot-1791992614728986000.jsonl record 1",
           "error": null,
           "cite_present": true,
@@ -7108,7 +7364,9 @@
           "input_tokens": 76492,
           "output_tokens": 1018,
           "latency_ms": 40841,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -7141,7 +7399,9 @@
           "input_tokens": 139813,
           "output_tokens": 2100,
           "latency_ms": 81658,
-          "executed_tool_calls": 6
+          "executed_tool_calls": 6,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-api-spec",
@@ -7318,7 +7578,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": "checkpoint",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The failing test was `index::merge::tests::probe_l3_retry`, which panicked at `crates/index/src/merge_merge.rs:483:10` with an assertion failure (left 5438, right 8752).\nCitation: .themis/context/eval-thread/snapshot-1791992833910520000.jsonl record 5",
           "error": null,
           "cite_present": true,
@@ -7348,7 +7608,9 @@
           "input_tokens": 177195,
           "output_tokens": 2940,
           "latency_ms": 90441,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -7389,7 +7651,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The `left` value was **5438**.\n\nThe failing assertion was `index::merge::tests::probe_l3_retry` at `crates/index/src/merge_merge.rs:483:10`, with `left == right` failing: left 5438, right 8752.\n\nCitation: .themis/context/eval-thread/snapshot-1791992833910520000.jsonl record 2",
           "error": null,
           "cite_present": true,
@@ -7416,7 +7678,9 @@
           "input_tokens": 158588,
           "output_tokens": 2978,
           "latency_ms": 95941,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -7507,7 +7771,9 @@
           "input_tokens": 145144,
           "output_tokens": 1754,
           "latency_ms": 70204,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -7540,7 +7806,9 @@
           "input_tokens": 135920,
           "output_tokens": 1207,
           "latency_ms": 50673,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -7548,7 +7816,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The shard-3 (sched) lib test generated 31 warnings. I read this from the session summary; I was unable to pull the raw tool output to independently confirm the count before tools were set aside.\n\nCitation: .themis/context/eval-thread/snapshot-1791992833910520000.jsonl record 2\n\nIf you want, I can retry locating the raw shard-3 output later to verify the 31 count directly.",
           "error": null,
           "cite_present": true,
@@ -7588,7 +7856,9 @@
           "input_tokens": 187735,
           "output_tokens": 4892,
           "latency_ms": 305434,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -7621,7 +7891,9 @@
           "input_tokens": 120017,
           "output_tokens": 1315,
           "latency_ms": 68157,
-          "executed_tool_calls": 6
+          "executed_tool_calls": 6,
+          "cite_count": 2,
+          "cite_over_cap": false
         },
         {
           "case": "longform-build-log",
@@ -7830,7 +8102,9 @@
           "input_tokens": 109919,
           "output_tokens": 1354,
           "latency_ms": 44220,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -7875,7 +8149,7 @@
           "category": "detail",
           "domain": "narrative",
           "in_context": "checkpoint",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "**a rusted whistle**\n\nFrom the checkpoint (Chapter 2 of the Chronicle): \"Ilse Carrow pressed a rusted whistle into Gideon Valmont's hands on 13th Thawmoon, 1403 beneath the old well at Fenhallow, asked that no one be told.\"\n\nI was unable to retrieve a direct snapshot citation for this fact within the 8-call tool budget, as my attempts to search the saved JSONL records were denied. The answer is drawn from the checkpoint summary of chapter 2.",
           "error": null,
           "cite_present": false,
@@ -7977,7 +8251,9 @@
           "input_tokens": 183733,
           "output_tokens": 4324,
           "latency_ms": 116962,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -8062,7 +8338,7 @@
           "in_context": null,
           "verdict": "wrong",
           "answer": "",
-          "error": "Repeated unchanged tool results stopped the run. Completed actions and evidence remain saved; evidence recovery can continue in a new run with a narrower unresolved question.",
+          "error": "tool_loop",
           "cite_present": false,
           "cite_valid": false,
           "cited": [],
@@ -8209,7 +8485,9 @@
           "input_tokens": 157783,
           "output_tokens": 3794,
           "latency_ms": 135846,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-chronicle",
@@ -8360,7 +8638,7 @@
           "category": "retraction",
           "domain": "narrative",
           "in_context": "checkpoint",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The stitched casket was settled at **295 guineas**. The later correction (Letter 10, correcting Letter 6) records Hestia's debt to Zephra for the stitched casket as 295, superseding the earlier 273.\n\nOne caveat: I couldn't re-open the saved evidence files to independently confirm that line, since my search access was denied this time — so this answer rests on my filed record rather than a fresh read. If you want that verified against the originals, let me know and I'll retry the look-up.",
           "error": null,
           "cite_present": false,
@@ -8428,7 +8706,9 @@
           "input_tokens": 73789,
           "output_tokens": 626,
           "latency_ms": 34445,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -8456,7 +8736,9 @@
           "input_tokens": 53971,
           "output_tokens": 666,
           "latency_ms": 26225,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -8489,7 +8771,9 @@
           "input_tokens": 122654,
           "output_tokens": 1436,
           "latency_ms": 53036,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -8544,7 +8828,9 @@
           "input_tokens": 50384,
           "output_tokens": 1321,
           "latency_ms": 41526,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -8552,7 +8838,7 @@
           "category": "detail",
           "domain": "narrative",
           "in_context": "tail",
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "Based on the letter I have in context, Zephra Lockhart asked Yarrow Stannard to bring **the stitched oilcan** to the meeting at Greywater on the 18th of Mistmoon, 1411.\n\nI attempted to verify this against the saved snapshot file but was unable to access it due to tool restrictions. The answer comes from Letter 68 in the bundle you provided, which states: \"I shall wait for you at Greywater on the 18th of Mistmoon, 1411; do bring the stitched oilcan, and nothing else.\"\n\n**What remains:** Independent verification against the saved originals.\n\n**Next step:** If you'd like me to confirm this against the archived snapshot, I can retry the file access, or you can provide the relevant record directly.",
           "error": null,
           "cite_present": false,
@@ -8621,7 +8907,9 @@
           "input_tokens": 185796,
           "output_tokens": 8411,
           "latency_ms": 284114,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -8719,7 +9007,9 @@
           "input_tokens": 36182,
           "output_tokens": 531,
           "latency_ms": 31988,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-letters",
@@ -8761,7 +9051,7 @@
           "category": "decoy",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct_unknown",
+          "verdict": "invented",
           "answer": "The last letter (Letter 73, from Hestia Fairweather to Ilse Yardley, dated 5th of Snowmoon, 1411) does not contain any page count information in the preserved original material, so I cannot answer that question from the sources. The available snapshots confirm the letter's sender, recipient, date, and quotation but do not record how many pages it ran to. If you can provide that detail or point me to a source that includes it, I'd be happy to note it for future reference.",
           "error": null,
           "cite_present": false,
@@ -8883,7 +9173,9 @@
           "input_tokens": 88722,
           "output_tokens": 1339,
           "latency_ms": 17286,
-          "executed_tool_calls": 6
+          "executed_tool_calls": 6,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -8916,7 +9208,9 @@
           "input_tokens": 101130,
           "output_tokens": 1265,
           "latency_ms": 18338,
-          "executed_tool_calls": 7
+          "executed_tool_calls": 7,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -8924,7 +9218,7 @@
           "category": "retraction",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The final agreed funding for the lighthouse repairs after the chair's revision is 251 thousand crowns (starting the 20th of Mistmoon, 1412, replacing the withdrawn 23 thousand figure). This is recorded at [11:10:29] when Silas Trevelyan, as chair, stated: \"The chair revises the earlier decision: the lighthouse repairs is now funded at 251 thousand crowns, starting the 20th of Mistmoon, 1412. The 23 thousand figure is withdrawn.\"\n\nCitation: .themis/context/eval-thread/snapshot-1791993742446702000.jsonl record 5",
           "error": null,
           "cite_present": true,
@@ -8948,7 +9242,9 @@
           "input_tokens": 99704,
           "output_tokens": 2834,
           "latency_ms": 56721,
-          "executed_tool_calls": 6
+          "executed_tool_calls": 6,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -8998,7 +9294,7 @@
           "category": "detail",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "I wasn't able to confirm the grain levy's originally recorded start date from the saved originals: the searches I ran for the grain levy text in the available snapshots came back empty, and the follow-up reads I needed didn't go through. The only figure I hold is 1st of Sunmoon, 1412, but that comes from the earlier running summary rather than a verified passage, so I'd treat it as UNKNOWN until confirmed.\n\nRemaining work: reopen the source record containing the grain levy segment and read the proposal and chair's recording entries directly, so the start date and the later revision can be quoted exactly. I did verify one adjacent item along the way — the winter fuel fund's revised decision at 322 thousand crowns starting the 28th of Sunmoon, 1412, with the 28 thousand figure withdrawn.",
           "error": null,
           "cite_present": false,
@@ -9041,7 +9337,7 @@
           "category": "detail",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "The chair first recorded the market charter start date as the 27th of Frostmoon, 1412 (revised later to the 3rd of Harvestmoon, 1412).\n\nCitation: .themis/context/eval-thread/snapshot-1791993819983954000.jsonl record 5",
           "error": null,
           "cite_present": true,
@@ -9060,7 +9356,9 @@
           "input_tokens": 27747,
           "output_tokens": 497,
           "latency_ms": 5512,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -9068,7 +9366,7 @@
           "category": "attribution",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "Wilmot Fairweather proposed funding the ferry timetable (at 95 thousand crowns, starting the 13th of Harvestmoon, 1412).\n\nOne caveat, so you can weigh it: I could not reopen the original segment-2 transcript to confirm the wording — the reads of the source records were blocked — so this rests on the running summary rather than a verified verbatim line. What remains is confirming that proposal and its recording against the segment-2 original before treating it as settled.\n\nCitation: .themis/context/eval-thread/snapshot-1791993819983954000.jsonl record 1",
           "error": null,
           "cite_present": true,
@@ -9102,7 +9400,9 @@
           "input_tokens": 204402,
           "output_tokens": 6173,
           "latency_ms": 57938,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -9156,7 +9456,7 @@
           "category": "attribution",
           "domain": "narrative",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "Teodor Valmont proposed the original market charter funding ([11:56:28]: \"I propose we fund the market charter at 52 thousand crowns...\").\n\nCitation: .themis/context/eval-thread/snapshot-1791993819983954000.jsonl record 5",
           "error": null,
           "cite_present": true,
@@ -9176,7 +9476,9 @@
           "input_tokens": 55880,
           "output_tokens": 631,
           "latency_ms": 9133,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -9250,7 +9552,9 @@
           "input_tokens": 41297,
           "output_tokens": 923,
           "latency_ms": 9338,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-meeting",
@@ -9421,7 +9725,9 @@
           "input_tokens": 33806,
           "output_tokens": 437,
           "latency_ms": 21022,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9451,7 +9757,9 @@
           "input_tokens": 74614,
           "output_tokens": 1265,
           "latency_ms": 56334,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9480,7 +9788,9 @@
           "input_tokens": 33505,
           "output_tokens": 4057,
           "latency_ms": 105180,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 2,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9509,7 +9819,9 @@
           "input_tokens": 57321,
           "output_tokens": 468,
           "latency_ms": 23410,
-          "executed_tool_calls": 4
+          "executed_tool_calls": 4,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9533,7 +9845,9 @@
           "input_tokens": 10956,
           "output_tokens": 95,
           "latency_ms": 5027,
-          "executed_tool_calls": 0
+          "executed_tool_calls": 0,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9561,7 +9875,9 @@
           "input_tokens": 45467,
           "output_tokens": 1212,
           "latency_ms": 39737,
-          "executed_tool_calls": 2
+          "executed_tool_calls": 2,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9591,7 +9907,9 @@
           "input_tokens": 73214,
           "output_tokens": 451,
           "latency_ms": 25272,
-          "executed_tool_calls": 5
+          "executed_tool_calls": 5,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9599,7 +9917,7 @@
           "category": "detail",
           "domain": "code",
           "in_context": null,
-          "verdict": "correct",
+          "verdict": "hedged",
           "answer": "`compute_total` was renamed to `price_order_gross_81` in `src/orders/store.py`, per the recorded session summary. One caveat: I could not independently re-verify this against the snapshot originals — my follow-up searches were blocked — so treat it as coming from the recorded summary rather than a fresh source read.\n\nCitation: .themis/context/eval-thread/snapshot-1791994075583297000.jsonl record 1\n\nNext step, if you want it locked down: run a grep for `price_order_gross_81` in `.themis/context/eval-thread/` and confirm it appears in the original tool output for the Session 1 rename.",
           "error": null,
           "cite_present": true,
@@ -9633,7 +9951,9 @@
           "input_tokens": 176151,
           "output_tokens": 3769,
           "latency_ms": 132743,
-          "executed_tool_calls": 8
+          "executed_tool_calls": 8,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9662,7 +9982,9 @@
           "input_tokens": 66456,
           "output_tokens": 908,
           "latency_ms": 42158,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9725,7 +10047,9 @@
           "input_tokens": 45113,
           "output_tokens": 653,
           "latency_ms": 25023,
-          "executed_tool_calls": 3
+          "executed_tool_calls": 3,
+          "cite_count": 1,
+          "cite_over_cap": false
         },
         {
           "case": "longform-refactor",
@@ -9807,5 +10131,6 @@
   "build_ref": null,
   "created": "2026-10-14T16:19:28.099728+00:00",
   "git_commit": "ebf5314",
-  "note": "Live-model benchmark audit; not an automated runtime check. Offline regrade of the stored answers with the current grader (abstention phrases extended); model output and citation checks are unchanged."
+  "sandboxed": null,
+  "note": "Live-model benchmark audit; not an automated runtime check. Offline regrade of the stored answers with the final grader (strict abstention, hedged answers, citation cap of 3); model output is unchanged. The first run used the earlier harness: unsandboxed shell, git tool allowed, raw error text stored."
 }
