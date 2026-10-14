@@ -2658,6 +2658,52 @@ mod tests {
         );
     }
 
+    /// Number of `ping.exe` processes whose command line carries `-n <marker> `.
+    #[cfg(windows)]
+    fn windows_ping_count(marker: &str) -> usize {
+        let script = format!(
+            "@(Get-CimInstance Win32_Process -Filter \"Name='ping.exe'\" | \
+             Where-Object {{ $_.CommandLine -like '*-n {marker} *' }}).Count"
+        );
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .expect("powershell must be available");
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("unexpected powershell output: {out:?}"))
+    }
+
+    /// Windows counterpart of the Unix process-group test: `cmd /c ping` makes
+    /// `ping.exe` a grandchild of the tool, and the timeout must end it too.
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shell_timeout_kills_the_grandchild_process_tree_on_windows() {
+        let (_tmp, root) = rooted_case();
+        let tool = ShellTool::new(root, allow_all()).with_timeout(Duration::from_secs(8));
+        let marker = "3101";
+        let running = tokio::spawn(async move {
+            tool.execute(json!({
+                "command": "cmd",
+                "args": ["/c", format!("ping -n {marker} 127.0.0.1")],
+            }))
+            .await
+        });
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while windows_ping_count(marker) == 0 {
+            assert!(Instant::now() < deadline, "grandchild never started");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        let message = running.await.unwrap().unwrap_err().to_string();
+        assert!(message.contains("timed out"), "{message}");
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while windows_ping_count(marker) != 0 {
+            assert!(Instant::now() < deadline, "grandchild survived the timeout");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn shell_env_is_scrubbed() {
