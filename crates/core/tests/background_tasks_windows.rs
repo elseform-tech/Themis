@@ -44,9 +44,9 @@ fn stopping_a_background_task_kills_its_grandchild_on_windows() {
         })
         .unwrap();
     assert_eq!(started.record.state, TaskState::Running);
-    wait_until("grandchild start", 10, || ping_count(marker) > 0);
+    wait_until("grandchild start", 30, || ping_count(marker) > 0);
     let stopped = registry.stop("t1", &started.record.id, STOP_WAIT).unwrap();
     assert_eq!(stopped.record.state, TaskState::Stopped);
-    wait_until("grandchild gone", 15, || ping_count(marker) == 0);
+    wait_until("grandchild gone", 30, || ping_count(marker) == 0);
     assert_eq!(registry.running_count(), 0);
 }

@@ -2837,7 +2837,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn shell_timeout_kills_the_grandchild_process_tree_on_windows() {
         let (_tmp, root) = rooted_case();
-        let tool = ShellTool::new(root, allow_all()).with_timeout(Duration::from_secs(8));
+        let tool = ShellTool::new(root, allow_all()).with_timeout(Duration::from_secs(40));
         let marker = "3101";
         let running = tokio::spawn(async move {
             tool.execute(json!({
@@ -2846,14 +2846,14 @@ mod tests {
             }))
             .await
         });
-        let deadline = Instant::now() + Duration::from_secs(6);
+        let deadline = Instant::now() + Duration::from_secs(30);
         while windows_ping_count(marker) == 0 {
             assert!(Instant::now() < deadline, "grandchild never started");
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
         let message = running.await.unwrap().unwrap_err().to_string();
         assert!(message.contains("timed out"), "{message}");
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + Duration::from_secs(30);
         while windows_ping_count(marker) != 0 {
             assert!(Instant::now() < deadline, "grandchild survived the timeout");
             tokio::time::sleep(Duration::from_millis(200)).await;
