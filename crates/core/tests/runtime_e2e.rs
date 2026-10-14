@@ -1931,6 +1931,8 @@ struct CalibrationRun {
     result: anyhow::Result<String>,
     events: Vec<RunEvent>,
     summary_requests: usize,
+    /// `max_tokens` of each compaction summary request, in order.
+    summary_max_tokens: Vec<u64>,
     ordinary_requests: usize,
     evidence: std::path::PathBuf,
     _project: tempfile::TempDir,
@@ -2017,6 +2019,11 @@ async fn calibration_run_turns(
         result,
         events,
         summary_requests: requests.iter().filter(|r| is_summary(r)).count(),
+        summary_max_tokens: requests
+            .iter()
+            .filter(|r| is_summary(r))
+            .filter_map(|r| r.body_json::<serde_json::Value>().unwrap()["max_tokens"].as_u64())
+            .collect(),
         ordinary_requests: requests.iter().filter(|r| !is_summary(r)).count(),
         evidence,
         _project: project,
@@ -2138,6 +2145,15 @@ async fn ratio_rising_on_the_last_turn_compacts_before_the_handoff() {
         checkpoints(&run.events),
         1,
         "the post-loop fit check must compact against the updated ratio"
+    );
+    // The summary allowance derives from the compaction budget. Left at the
+    // calibrated budget (stale ratio) it is 2275; with the raw budget refreshed
+    // for the 3.0x ratio it is 610.
+    assert_eq!(run.summary_max_tokens.len(), 1);
+    assert!(
+        run.summary_max_tokens[0] < 1000,
+        "compaction must use the raw budget for the updated ratio: {:?}",
+        run.summary_max_tokens
     );
     assert!(run
         .events
