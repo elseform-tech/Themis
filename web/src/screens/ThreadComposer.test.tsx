@@ -143,3 +143,37 @@ describe("ThreadComposer", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("composer focus and shortcuts", () => {
+  it("never lets typed letters change the approval mode or reach the shield", () => {
+    const onApprovalModeChange = vi.fn();
+    const view = composer(false);
+    view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);
+    const select = screen.getByRole("combobox", { name: "Approval mode", hidden: true });
+    for (const key of ["y", "c", "Y", "o"]) expect(fireEvent.keyDown(select, { key })).toBe(false);
+    expect(onApprovalModeChange).not.toHaveBeenCalled();
+    // Arrow keys and Space stay available for explicit keyboard use.
+    expect(fireEvent.keyDown(select, { key: "ArrowDown" })).toBe(true);
+    expect(fireEvent.keyDown(select, { key: " " })).toBe(true);
+  });
+  it("does not move focus to the shield on a mouse press, but still toggles it on click", () => {
+    composer(false);
+    const summary = screen.getByText("Custom", { selector: "summary span" }).closest("summary")!;
+    expect(fireEvent.mouseDown(summary)).toBe(false);
+    const details = summary.closest("details")!;
+    expect(details.open).toBe(false);
+    details.open = true;
+    expect(details.open).toBe(true);
+  });
+  it("focuses the text area when the composer box is clicked outside a control", () => {
+    composer(false);
+    const editor = screen.getByRole("textbox", { name: "Message" });
+    const box = editor.closest(".themis-thread-composer")!;
+    expect(document.activeElement).not.toBe(editor);
+    fireEvent.click(box);
+    expect(document.activeElement).toBe(editor);
+    (editor as HTMLElement).blur();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(document.activeElement).not.toBe(editor);
+  });
+});

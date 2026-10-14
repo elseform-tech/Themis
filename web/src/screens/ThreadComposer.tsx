@@ -5,6 +5,7 @@ import type { Attachment } from "../lib/tauri";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
 import type { ContextBudget, ThreadInfo } from "../lib/types";
+import { isBareCharacterKey } from "../lib/keyboard";
 import { ContextMeter } from "./ContextMeter";
 
 interface ThreadComposerProps {
@@ -82,6 +83,11 @@ export function ThreadComposer({
     window.addEventListener("keydown", stopShortcut, true);
     return () => window.removeEventListener("keydown", stopShortcut, true);
   }, [running, stopping, thread.id]);
+  // A click on the box's padding or quiet areas focuses the text area; real controls keep their own behaviour.
+  function focusEditorFromBox(event: React.MouseEvent<HTMLDivElement>) {
+    if ((event.target as Element).closest("button, summary, a, select, input, textarea, details, label, ul, [role='textbox']")) return;
+    event.currentTarget.querySelector<HTMLElement>(".themis-prompt-editor")?.focus();
+  }
   function insertTrigger(trigger: "/" | "@", menu: HTMLElement | null) {
     menu?.closest("details")?.removeAttribute("open");
     onDraftChange(`${draft}${draft === "" || draft.endsWith(" ") || draft.endsWith("\n") ? "" : " "}${trigger}`);
@@ -89,7 +95,7 @@ export function ThreadComposer({
   return (
     <>
       {sendError && <p className="themis-thread-senderror" role="alert">{sendError}</p>}
-      <div className={`themis-thread-composer${hero ? " themis-thread-composer--hero" : ""}${running ? " is-running" : ""}`}>
+      <div onClick={focusEditorFromBox} className={`themis-thread-composer${hero ? " themis-thread-composer--hero" : ""}${running ? " is-running" : ""}`}>
         {running && <span className="themis-composer-ring" aria-hidden="true" />}
         {!secretConfigured && !running && (
           <p className="themis-thread-hint">
@@ -124,12 +130,12 @@ export function ThreadComposer({
             </div>
           </details>
           <details className="themis-composer-permissions" data-mode={thread.approval_mode ?? "custom"}>
-            <summary aria-label={`Permissions: ${thread.approval_mode === "yolo" ? "YOLO" : "Custom"}`} title={thread.approval_mode === "yolo" ? "YOLO bypasses harness tool restrictions for the next run" : "Custom applies your rules and asks for tool approvals"}>
+            <summary onMouseDown={event => event.preventDefault()} aria-label={`Permissions: ${thread.approval_mode === "yolo" ? "YOLO" : "Custom"}`} title={thread.approval_mode === "yolo" ? "YOLO bypasses harness tool restrictions for the next run" : "Custom applies your rules and asks for tool approvals"}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 3 4 6.5V12c0 4.5 8 9 8 9s8-4.5 8-9V6.5Z" /></svg>
               <span>{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>
             </summary>
             <div className="themis-permissions-panel"><p>{thread.approval_mode === "yolo" ? "Bypass harness tool restrictions." : "Apply your rules and ask for tool approvals."} Changes apply to the next run.</p>
-              <label><select aria-label="Approval mode" value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
+              <label><select aria-label="Approval mode" onKeyDown={event => { if (isBareCharacterKey(event.nativeEvent) && event.key !== " ") event.preventDefault(); }} value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
             </div>
           </details>
 

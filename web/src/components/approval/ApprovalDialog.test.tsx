@@ -123,3 +123,23 @@ describe("grant hint", () => {
     expect(screen.getByText("Allow for this run covers this tool until this run ends.")).toBeInTheDocument();
   });
 });
+
+describe("single-key shortcuts", () => {
+  it("ignores digits typed into the composer or another field", () => {
+    const { onDecide } = setup();
+    const composer = document.createElement("div");
+    composer.className = "themis-thread-composer";
+    const editor = document.createElement("div");
+    editor.setAttribute("role", "textbox");
+    composer.append(editor);
+    const input = document.createElement("input");
+    document.body.append(composer, input);
+    for (const target of [editor, composer, input]) fireEvent.keyDown(target, { key: "2" });
+    expect(onDecide).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: "2", metaKey: true });
+    expect(onDecide).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: "2" });
+    expect(onDecide).toHaveBeenCalledWith("always");
+    composer.remove(); input.remove();
+  });
+});

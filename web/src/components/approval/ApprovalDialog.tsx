@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import type { ApprovalDecision, ApprovalRequest, RiskLevel } from "../../lib/types";
+import { singleKeyShortcutAllowed } from "../../lib/keyboard";
 import { Badge, type BadgeTone } from "../primitives/Badge";
 import { Button } from "../primitives/Button";
 import { Dialog } from "../primitives/Dialog";
@@ -58,6 +59,8 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
   useEffect(() => {
     if (!open) return;
     function onKeyDown(event: KeyboardEvent) {
+      // Digits decide the approval only when they are not being typed into the composer or another field.
+      if (!singleKeyShortcutAllowed(event)) return;
       if (event.key === "1") onDecide("once");
       else if (event.key === "2") onDecide("always");
       else if (event.key === "3") onDecide("deny");
