@@ -150,7 +150,7 @@ pub(super) const MAINTENANCE_NOTE: &str = "Reopen the immutable original for mis
 pub(super) fn recovery_call(call: &ToolCall) -> bool {
     if !matches!(
         call.function.name.as_str(),
-        "read_file" | "list_dir" | "search_file" | "shell"
+        "read_file" | "list_dir" | "search_file" | "shell" | "recall"
     ) {
         return false;
     }

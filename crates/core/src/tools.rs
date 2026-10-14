@@ -14,6 +14,7 @@
 
 pub mod background;
 mod patch;
+pub mod recall;
 
 use patch::*;
 
@@ -468,8 +469,10 @@ impl ToolRuntime for GatedTool {
 }
 
 pub(crate) fn context_recovery_call(name: &str, arguments: &str) -> bool {
-    matches!(name, "read_file" | "list_dir" | "shell" | "search_file")
-        && arguments.replace('\\', "/").contains(".themis/context/")
+    // `recall` only ever returns copies of saved originals.
+    name == "recall"
+        || (matches!(name, "read_file" | "list_dir" | "shell" | "search_file")
+            && arguments.replace('\\', "/").contains(".themis/context/"))
 }
 
 fn archive_field_kind<'a>(record: &'a Value, pointer: &str) -> &'a str {

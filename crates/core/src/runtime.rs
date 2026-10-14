@@ -297,7 +297,7 @@ fn risk_for(tool: &str) -> RiskLevel {
         return RiskLevel::Network;
     }
     match tool {
-        "read_file" | "list_dir" | "search_file" => RiskLevel::Read,
+        "read_file" | "list_dir" | "search_file" | "recall" => RiskLevel::Read,
         "shell" => RiskLevel::Execute,
         "delete_file" => RiskLevel::Destructive,
         _ => RiskLevel::Write,
@@ -789,7 +789,7 @@ async fn run_task_with_evidence_inner(
             // ponytail: exact observations only; semantic progress needs a separate audit.
             if matches!(
                 call.function.name.as_str(),
-                "read_file" | "list_dir" | "search_file" | "shell"
+                "read_file" | "list_dir" | "search_file" | "shell" | "recall"
             ) {
                 let value = serde_json::from_str::<serde_json::Value>(&result.function.arguments)
                     .unwrap_or_default();
