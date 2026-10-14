@@ -103,6 +103,8 @@ export interface AppState {
   diffs: Record<string, DiffState | null>;
   comments: Record<string, ThreadComment[]>;
   approvals: ApprovalRequest[];
+  /** Recently removed thread ids, so a late event cannot resurrect them. */
+  removedThreadIds: string[];
   merges: Record<string, LastMerge>;
   /** Latest send failure per thread (cleared on next successful send). */
   sendErrors: Record<string, string>;
@@ -224,6 +226,7 @@ export const initialState: AppState = {
   diffs: {},
   comments: {},
   approvals: [],
+  removedThreadIds: [],
   merges: {},
   sendErrors: {},
   skills: [],
@@ -605,8 +608,13 @@ export function reducer(state: AppState, action: AppAction): AppState {
     case "thread/changed": {
       const { change } = action;
       if (change.kind === "removed") return reducer(state, { type: "thread/removed", projectRoot: change.project_root, threadId: change.thread_id });
-      // Created or updated elsewhere: upsert by id without stealing the user's current selection.
-      return change.thread ? reducer(state, { type: "thread/synced", projectRoot: change.project_root, thread: change.thread }) : state;
+      const known = state.threadsByProject[change.project_root];
+      // Only follow projects already open in this window, and never bring back a thread removed here.
+      if (!change.thread || known === undefined || state.removedThreadIds.includes(change.thread_id)) return state;
+      const exists = known.some(thread => thread.id === change.thread_id);
+      if (change.kind === "updated" && !exists) return state;
+      // `created` replaces an existing entry in place, so a replayed event is not duplicated.
+      return reducer(state, { type: "thread/synced", projectRoot: change.project_root, thread: change.thread });
     }
     case "thread/removed": {
       const remaining = (state.threadsByProject[action.projectRoot] ?? []).filter(
@@ -630,8 +638,18 @@ export function reducer(state: AppState, action: AppAction): AppState {
       delete restMerges[action.threadId];
       const restErrors = { ...state.sendErrors };
       delete restErrors[action.threadId];
+      const without = <T,>(record: Record<string, T>): Record<string, T> => {
+        const { [action.threadId]: _gone, ...rest } = record;
+        return rest;
+      };
       return {
         ...state,
+        running: without(state.running),
+        streams: without(state.streams),
+        traces: without(state.traces),
+        compacting: without(state.compacting),
+        approvals: state.approvals.filter(approval => approval.thread_id !== action.threadId),
+        removedThreadIds: [...state.removedThreadIds, action.threadId].slice(-200),
         threadsByProject: {
           ...state.threadsByProject,
           [action.projectRoot]: remaining,

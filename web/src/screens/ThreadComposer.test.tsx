@@ -150,7 +150,12 @@ describe("composer focus and shortcuts", () => {
     const view = composer(false);
     view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);
     const select = screen.getByRole("combobox", { name: "Approval mode", hidden: true });
-    for (const key of ["y", "c", "Y", "o"]) expect(fireEvent.keyDown(select, { key })).toBe(false);
+    for (const key of ["y", "c", "Y", "C"]) expect(fireEvent.keyDown(select, { key })).toBe(false);
+    // Other keys, IME composition and modified keys keep their native behaviour.
+    expect(fireEvent.keyDown(select, { key: "o" })).toBe(true);
+    expect(fireEvent.keyDown(select, { key: "Process" })).toBe(true);
+    expect(fireEvent.keyDown(select, { key: "y", isComposing: true })).toBe(true);
+    expect(fireEvent.keyDown(select, { key: "c", metaKey: true })).toBe(true);
     expect(onApprovalModeChange).not.toHaveBeenCalled();
     // Arrow keys and Space stay available for explicit keyboard use.
     expect(fireEvent.keyDown(select, { key: "ArrowDown" })).toBe(true);
@@ -162,8 +167,10 @@ describe("composer focus and shortcuts", () => {
     expect(fireEvent.mouseDown(summary)).toBe(false);
     const details = summary.closest("details")!;
     expect(details.open).toBe(false);
-    details.open = true;
+    fireEvent.click(summary);
     expect(details.open).toBe(true);
+    fireEvent.click(summary);
+    expect(details.open).toBe(false);
   });
   it("focuses the text area when the composer box is clicked outside a control", () => {
     composer(false);
@@ -173,6 +180,10 @@ describe("composer focus and shortcuts", () => {
     fireEvent.click(box);
     expect(document.activeElement).toBe(editor);
     (editor as HTMLElement).blur();
+    const summary = screen.getByText("Custom", { selector: "summary span" }).closest("summary")!;
+    fireEvent.click(summary);
+    fireEvent.click(summary.closest("details")!.querySelector(".themis-permissions-panel p")!);
+    expect(document.activeElement).not.toBe(editor);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(document.activeElement).not.toBe(editor);
   });

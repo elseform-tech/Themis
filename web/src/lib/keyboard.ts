@@ -15,3 +15,8 @@ export function isBareCharacterKey(event: Pick<KeyboardEvent, "key" | "metaKey" 
 export function singleKeyShortcutAllowed(event: KeyboardEvent): boolean {
   return !event.isComposing && isBareCharacterKey(event) && !isTextEntryTarget(event.target);
 }
+
+/** The letters that jump the Approval mode select to YOLO or Custom; blocked so stray typing cannot change the mode. */
+export function isModeInitial(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey">): boolean {
+  return isBareCharacterKey(event) && /^[yc]$/i.test(event.key);
+}

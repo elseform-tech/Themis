@@ -696,3 +696,35 @@ describe("thread/changed", () => {
     expect(removed.threadsByProject[PROJECT.root] ?? []).toEqual([]);
   });
 });
+
+describe("thread/changed edge cases", () => {
+  const info = (id: string) => ({ ...THREAD, id });
+  it("ignores projects that are not open and never resurrects a removed thread", () => {
+    let s = withThread();
+    const elsewhere = reducer(s, { type: "thread/changed", change: { kind: "created", project_root: "/other", thread_id: "x", thread: info("x") } });
+    expect(elsewhere.threadsByProject["/other"]).toBeUndefined();
+    s = reducer(s, { type: "thread/removed", projectRoot: PROJECT.root, threadId: THREAD.id });
+    for (const kind of ["updated", "created"] as const) {
+      s = reducer(s, { type: "thread/changed", change: { kind, project_root: PROJECT.root, thread_id: THREAD.id, thread: info(THREAD.id) } });
+    }
+    expect(s.threadsByProject[PROJECT.root]).toEqual([]);
+  });
+  it("does not add an update for a thread this window never listed, and dedupes created", () => {
+    let s = withThread();
+    s = reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "ghost", thread: info("ghost") } });
+    expect(s.threadsByProject[PROJECT.root]).toHaveLength(1);
+    const created = { kind: "created" as const, project_root: PROJECT.root, thread_id: "n", thread: info("n") };
+    s = reducer(reducer(s, { type: "thread/changed", change: created }), { type: "thread/changed", change: created });
+    expect(s.threadsByProject[PROJECT.root]?.filter(t => t.id === "n")).toHaveLength(1);
+  });
+  it("clears run state, streams, traces and approvals when a thread is removed", () => {
+    let s = applyThreadEvent(withThread(), envelope({ kind: "started", task: "t", max_turns: 2 }));
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "hi" }));
+    s = reducer(s, { type: "approval/enqueued", request: { thread_id: THREAD.id, approval_id: "a", tool: "shell", summary: "", risk: "execute" } });
+    s = reducer(s, { type: "thread/changed", change: { kind: "removed", project_root: PROJECT.root, thread_id: THREAD.id } });
+    expect(s.running[THREAD.id]).toBeUndefined();
+    expect(s.streams[THREAD.id]).toBeUndefined();
+    expect(s.traces[THREAD.id]).toBeUndefined();
+    expect(s.approvals).toEqual([]);
+  });
+});

@@ -5,7 +5,7 @@ import type { Attachment } from "../lib/tauri";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
 import type { ContextBudget, ThreadInfo } from "../lib/types";
-import { isBareCharacterKey } from "../lib/keyboard";
+import { isModeInitial } from "../lib/keyboard";
 import { ContextMeter } from "./ContextMeter";
 
 interface ThreadComposerProps {
@@ -85,7 +85,7 @@ export function ThreadComposer({
   }, [running, stopping, thread.id]);
   // A click on the box's padding or quiet areas focuses the text area; real controls keep their own behaviour.
   function focusEditorFromBox(event: React.MouseEvent<HTMLDivElement>) {
-    if ((event.target as Element).closest("button, summary, a, select, input, textarea, details, label, ul, [role='textbox']")) return;
+    if ((event.target as Element).closest("button, summary, a, select, input, textarea, details, label, ul, [role='textbox'], .themis-permissions-panel, .themis-composer-menu")) return;
     event.currentTarget.querySelector<HTMLElement>(".themis-prompt-editor")?.focus();
   }
   function insertTrigger(trigger: "/" | "@", menu: HTMLElement | null) {
@@ -135,7 +135,7 @@ export function ThreadComposer({
               <span>{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>
             </summary>
             <div className="themis-permissions-panel"><p>{thread.approval_mode === "yolo" ? "Bypass harness tool restrictions." : "Apply your rules and ask for tool approvals."} Changes apply to the next run.</p>
-              <label><select aria-label="Approval mode" onKeyDown={event => { if (isBareCharacterKey(event.nativeEvent) && event.key !== " ") event.preventDefault(); }} value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
+              <label><select aria-label="Approval mode" onKeyDown={event => { if (!event.nativeEvent.isComposing && isModeInitial(event.nativeEvent)) event.preventDefault(); }} value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
             </div>
           </details>
 
