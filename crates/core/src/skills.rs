@@ -348,7 +348,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
         let built: Vec<String> = tools.iter().map(|tool| tool.name().to_owned()).collect();
-        assert_eq!(known_tool_names(), built);
+        // `recall` needs a chat's evidence, so it is added per run, not by boxed_tools.
+        let known: Vec<String> = known_tool_names()
+            .into_iter()
+            .filter(|name| name != "recall")
+            .collect();
+        assert_eq!(known, built);
     }
 
     #[test]

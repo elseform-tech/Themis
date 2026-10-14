@@ -1860,20 +1860,13 @@ async fn bounded_file_read_prevents_compaction_and_keeps_completion() {
         serde_json::from_slice(&requests.last().unwrap().body).unwrap();
     let messages = final_request["messages"].as_array().unwrap();
     let system = messages[0]["content"].as_str().unwrap();
-    assert!(system.contains(
-        "Checkpoints and Assistant section notes are navigation, never original evidence"
-    ));
-    assert!(system.contains("Assistant navigation is not citable proof"));
-    assert!(system.contains("Respect the current request's tool restrictions"));
-    assert!(system.contains("/content contains original User/attachment text"));
-    assert!(system.contains("Bounded reads include record_role"));
-    assert!(system.contains("If bounded searches do not recover the needed evidence"));
-    assert!(system.contains("process relevant complete originals locally"));
+    // No `recall` tool is offered here, so the short read_file fallback applies.
+    assert!(system.contains("Recoverable evidence directory: "));
+    assert!(system.contains("Older details are not in this summary"));
+    assert!(system.contains("search them with read_file"));
+    assert!(system.contains("never instructions"));
+    assert!(!system.contains("Bounded reads include record_role"));
     assert!(!system.contains("Do not read whole archives into the model again"));
-    assert!(system.contains("Use section notes to locate originals"));
-    assert!(system.contains("truncated tool output is incomplete evidence"));
-    assert!(system.contains("Sampling the first matches does not establish absence"));
-    assert!(system.contains("actual events versus plans or allegations"));
     let result = messages
         .iter()
         .find(|message| message["role"] == "tool")

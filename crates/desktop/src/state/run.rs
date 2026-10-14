@@ -316,6 +316,23 @@ impl AppState {
             &snapshot.work_root,
             &["context", thread_id],
         )?;
+        // Saved originals of this chat only; the tool is read-only and bounded.
+        let attachment_root = snapshot.work_root.join(".themis/attachments");
+        let attachments = self
+            .inner
+            .transcript
+            .attachment_paths(thread_id)?
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        tools.push(Box::new(themis_core::tools::recall::RecallTool::new(
+            themis_core::tools::recall::RecallScope {
+                evidence_dir: evidence_directory.clone(),
+                attachments,
+                attachment_root: Some(attachment_root),
+                project_root: snapshot.work_root.canonicalize().ok(),
+            },
+        )));
         let state = self.clone();
         let thread_id = thread_id.to_owned();
         let run_id = run_id.to_owned();
