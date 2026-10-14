@@ -190,6 +190,13 @@ async fn allow_for_this_run_grant_is_scoped_to_the_approved_command() {
     assert!(prompts[1].contains("touch"), "{prompts:?}");
     assert!(project.join("other.txt").exists());
     // The approval event tells the UI what the grant covers: the exact argv
-    // for non-subcommand programs.
-    assert_eq!(scopes, ["echo one", "touch other.txt"]);
+    // for non-subcommand programs, as structured tokens.
+    let argvs: Vec<Vec<String>> = scopes
+        .iter()
+        .map(|s| s.as_ref().unwrap().argv.clone())
+        .collect();
+    assert_eq!(argvs, [vec!["echo", "one"], vec!["touch", "other.txt"]]);
+    assert!(scopes
+        .iter()
+        .all(|s| !s.as_ref().unwrap().covers_further_args));
 }

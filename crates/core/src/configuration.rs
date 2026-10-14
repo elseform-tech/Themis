@@ -1095,14 +1095,45 @@ mod tests {
     }
 
     #[test]
-    fn grant_scope_describes_what_a_grant_covers() {
-        let scope = |argv: &[&str]| shell_action(argv).grant_scope();
-        assert_eq!(scope(&["cargo", "test", "--lib"]), "cargo test …");
-        assert_eq!(scope(&["find", ".", "-delete"]), "find . -delete");
-        assert_eq!(scope(&["cargo", "run", "--", "a"]), "cargo run -- a");
+    fn grant_scope_matches_grant_key_semantics() {
+        let cases: &[&[&str]] = &[
+            &["cargo", "test", "--lib"],
+            &["cargo", "run", "--", "a"],
+            &["find", ".", "-delete"],
+            &["rm", "-rf /"],
+            &["rm", "-rf", "/"],
+            &["git", "-C", "x", "status"],
+            &["echo", "a\nb`c\u{202e}"],
+        ];
+        for argv in cases {
+            let action = shell_action(argv);
+            let scope = action.grant_scope().expect("shell has a scope");
+            // The key is exactly the scope's tokens: equal scopes <=> equal keys.
+            assert_eq!(
+                action.grant_key(),
+                format!("shell\0{}", scope.argv.join("\0"))
+            );
+            assert_eq!(scope.covers_further_args, scope.argv.len() < argv.len());
+            assert_eq!(
+                scope.argv[..],
+                argv.iter().map(|t| t.to_string()).collect::<Vec<_>>()[..scope.argv.len()]
+            );
+        }
+        assert_eq!(
+            shell_action(&["cargo", "test", "--lib"])
+                .grant_scope()
+                .unwrap()
+                .argv,
+            ["cargo", "test"]
+        );
+        // Tokens stay distinct: a space inside one argument is not two arguments.
+        assert_ne!(
+            shell_action(&["rm", "-rf /"]).grant_scope(),
+            shell_action(&["rm", "-rf", "/"]).grant_scope()
+        );
         let mut other = shell_action(&["status"]);
         other.tool = "git".into();
-        assert_eq!(other.grant_scope(), "");
+        assert_eq!(other.grant_scope(), None);
     }
 
     #[test]

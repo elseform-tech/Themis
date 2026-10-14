@@ -257,10 +257,10 @@ pub struct ApprovalRequest {
     pub tool: String,
     pub summary: String,
     pub risk: RiskLevel,
-    /// What "allow for this run" covers for `shell` (for example
-    /// `cargo test …`); empty for tools granted per tool name.
-    #[serde(default)]
-    pub grant_scope: String,
+    /// What "allow for this run" covers for `shell`, as raw argv tokens (the
+    /// UI must render them as data); absent for tools granted per tool name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_scope: Option<themis_core::tools::GrantScope>,
 }
 
 /// One diff line kind (`DiffLineKind` in types.ts).
@@ -1111,7 +1111,10 @@ mod tests {
             tool: "shell".to_owned(),
             summary: "run".to_owned(),
             risk: RiskLevel::Execute,
-            grant_scope: "cargo test …".to_owned(),
+            grant_scope: Some(themis_core::tools::GrantScope {
+                argv: vec!["cargo".to_owned(), "test".to_owned()],
+                covers_further_args: true,
+            }),
         };
         assert_eq!(
             to_value(&request),
@@ -1121,7 +1124,7 @@ mod tests {
                 "tool": "shell",
                 "summary": "run",
                 "risk": "execute",
-                "grant_scope": "cargo test …",
+                "grant_scope": {"argv": ["cargo", "test"], "covers_further_args": true},
             })
         );
     }

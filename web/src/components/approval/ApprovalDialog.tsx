@@ -19,12 +19,39 @@ const RISK_TONE: Record<RiskLevel, BadgeTone> = {
   destructive: "danger",
 };
 
-/** Says exactly what "Allow for this run" grants; keep in sync with `ToolAction::grant_key`. */
-export function grantHint(request: ApprovalRequest): string {
-  if (request.tool === "shell" && request.grant_scope) {
-    return `Allow for this run covers \`${request.grant_scope}\` until this run ends. Other commands still ask.`;
+const MAX_TOKENS = 12;
+const MAX_TOKEN_CHARS = 80;
+// Control, format (bidi, zero-width), separator and other non-printing characters.
+const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}\p{Co}\p{Cn}]/gu;
+
+/** One argv token made safe to show: hidden characters become visible U+ markers, long tokens are cut, whitespace-bearing tokens are quoted. */
+export function displayToken(token: string): string {
+  const chars = Array.from(token);
+  const cut = chars.length > MAX_TOKEN_CHARS;
+  let text = chars.slice(0, MAX_TOKEN_CHARS).join("").replace(HIDDEN, ch =>
+    ch === " " ? ch : `⟨U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`);
+  const needsQuotes = token === "" || /[\s"'`]/u.test(token);
+  if (needsQuotes) text = `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return cut ? `${text}…(+${chars.length - MAX_TOKEN_CHARS} chars)` : text;
+}
+
+/** Says exactly what "Allow for this run" grants. Sentence text is fixed; argv tokens render only as separate escaped chips. Keep in sync with `ToolAction::grant_key`. */
+export function GrantHint({ request }: { request: ApprovalRequest }) {
+  const scope = request.grant_scope;
+  if (request.tool !== "shell" || !scope || scope.argv.length === 0) {
+    return <>Allow for this run covers this tool until this run ends.</>;
   }
-  return "Allow for this run covers this tool until this run ends.";
+  const shown = scope.argv.slice(0, MAX_TOKENS);
+  const hidden = scope.argv.length - shown.length;
+  return (
+    <>
+      Allow for this run covers the command{" "}
+      {shown.map((token, index) => <code key={index} className="themis-approval-token">{displayToken(token)}</code>)}
+      {hidden > 0 && <span> …(+{hidden} more)</span>}
+      {scope.covers_further_args && <span> and any further arguments</span>}
+      {" "}until this run ends. Other commands still ask.
+    </>
+  );
 }
 
 export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps) {
@@ -53,7 +80,7 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
           <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
         </div>
         <p className="themis-approval-summary">{request.summary}</p>
-        <p className="themis-thread-hint">{grantHint(request)}</p>
+        <p className="themis-thread-hint"><GrantHint request={request} /></p>
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>
             Allow once (1)

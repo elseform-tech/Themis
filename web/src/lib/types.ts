@@ -361,8 +361,8 @@ export interface ApprovalRequest {
   tool: string;
   summary: string;
   risk: RiskLevel;
-  /** What "allow for this run" covers for shell (e.g. "cargo test …"); empty otherwise. */
-  grant_scope?: string;
+  /** What "allow for this run" covers for shell, as raw argv tokens; render as data only. */
+  grant_scope?: { argv: string[]; covers_further_args: boolean };
 }
 
 export type DiffLineKind = 'context' | 'add' | 'del';

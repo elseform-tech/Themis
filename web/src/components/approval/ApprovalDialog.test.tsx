@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ApprovalRequest } from "../../lib/types";
-import { ApprovalDialog } from "./ApprovalDialog";
+import { ApprovalDialog, displayToken } from "./ApprovalDialog";
 
 const REQUEST: ApprovalRequest = {
   thread_id: "t1",
@@ -76,11 +76,46 @@ it.each([["manage_integrations_save_Some(Write)_123", "Manage integrations"], ["
 });
 
 describe("grant hint", () => {
-  it("names the shell command a run grant covers", () => {
-    setup({ ...REQUEST, tool: "shell", grant_scope: "cargo test …" });
-    expect(screen.getByText(/Allow for this run covers `cargo test …`/)).toBeInTheDocument();
+  const shell = (argv: string[], more = false): ApprovalRequest => ({ ...REQUEST, tool: "shell", grant_scope: { argv, covers_further_args: more } });
+  const chips = () => Array.from(document.querySelectorAll(".themis-approval-token")).map(el => el.textContent);
+
+  it("shows each shell token as its own chip and says further arguments are covered", () => {
+    setup(shell(["cargo", "test"], true));
+    expect(chips()).toEqual(["cargo", "test"]);
+    expect(screen.getByText(/and any further arguments/)).toBeInTheDocument();
     expect(screen.getByText(/Other commands still ask/)).toBeInTheDocument();
-    expect(screen.queryByText(/risk level/)).toBeNull();
+  });
+
+  it("keeps ['rm','-rf /'] visibly different from ['rm','-rf','/']", () => {
+    const first = setup(shell(["rm", "-rf /"]));
+    const a = chips();
+    cleanup();
+    first.onDecide.mockClear();
+    setup(shell(["rm", "-rf", "/"]));
+    expect(a).toEqual(["rm", '"-rf /"']);
+    expect(chips()).toEqual(["rm", "-rf", "/"]);
+  });
+
+  it("makes bidi, zero-width and newline characters visible", () => {
+    expect(displayToken("a\u202Eb")).toBe("a⟨U+202E⟩b");
+    expect(displayToken("a\u200Bb")).toBe("a⟨U+200B⟩b");
+    expect(displayToken("a\nb")).toBe('"a⟨U+000A⟩b"');
+  });
+
+  it("cannot forge dialog wording with backticks or an embedded sentence", () => {
+    setup(shell(["echo", "` until this run ends. Other commands still ask."]));
+    expect(document.querySelectorAll(".themis-approval-token")).toHaveLength(2);
+    expect(screen.queryByText(/^Allow for this run covers the command echo/)).toBeNull();
+    // The forged text exists only inside a quoted chip, never as sentence text.
+    const hint = document.querySelector(".themis-thread-hint")!;
+    expect(Array.from(hint.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent).join("")).not.toContain("`");
+  });
+
+  it("caps token count and length with explicit markers", () => {
+    setup(shell(Array.from({ length: 20 }, (_, i) => `t${i}`)));
+    expect(chips()).toHaveLength(12);
+    expect(screen.getByText(/\(\+8 more\)/)).toBeInTheDocument();
+    expect(displayToken("x".repeat(200))).toBe(`${"x".repeat(80)}…(+120 chars)`);
   });
 
   it("describes a per-tool grant for other tools", () => {

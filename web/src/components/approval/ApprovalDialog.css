@@ -30,3 +30,4 @@
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+.themis-approval-token { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--themis-text); margin: 0 2px; overflow-wrap: anywhere; }

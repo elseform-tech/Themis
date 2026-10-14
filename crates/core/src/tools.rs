@@ -154,6 +154,15 @@ const EXEC_SUBCOMMANDS: &[&str] = &[
     "add",
 ];
 
+/// Command prefix an "allow for this run" grant covers. Tokens are raw argv
+/// entries; callers must render them as data, never splice them into prose.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GrantScope {
+    pub argv: Vec<String>,
+    /// True when later arguments after `argv` are covered too.
+    pub covers_further_args: bool,
+}
+
 impl ToolAction {
     /// Key under which an interactive "allow for this run" grant is cached.
     ///
@@ -187,20 +196,18 @@ impl ToolAction {
         }
     }
 
-    /// Human-readable description of what [`Self::grant_key`] covers, for the
-    /// approval dialog. Empty for tools keyed by name alone; for `shell` the
-    /// covered command, ending in `…` when later arguments are also covered.
-    pub fn grant_scope(&self) -> String {
+    /// What an interactive grant covers, as structured data for the approval
+    /// dialog; `None` for tools keyed by name alone. Derived from the same
+    /// prefix as [`Self::grant_key`], so the two cannot disagree.
+    pub fn grant_scope(&self) -> Option<GrantScope> {
         if self.tool != "shell" || self.command.is_empty() {
-            return String::new();
+            return None;
         }
         let (prefix, scoped) = self.shell_grant_prefix();
-        let text = prefix.join(" ");
-        if scoped {
-            format!("{text} …")
-        } else {
-            text
-        }
+        Some(GrantScope {
+            argv: prefix.to_vec(),
+            covers_further_args: scoped,
+        })
     }
 }
 
