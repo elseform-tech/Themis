@@ -328,6 +328,7 @@ impl AppState {
         // A tool every call to which would be denied is not advertised; the prompt then
         // falls back to the read_file pointer. YOLO bypasses rules.
         let recall_probe = themis_core::tools::ToolAction {
+            display: None,
             command: Vec::new(),
             tool: "recall".into(),
             summary: String::new(),

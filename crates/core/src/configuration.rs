@@ -1612,6 +1612,7 @@ mod tests {
     #[test]
     fn a_read_file_deny_also_denies_recall() {
         let action = |tool: &str| ToolAction {
+            display: None,
             command: Vec::new(),
             tool: tool.into(),
             summary: String::new(),
