@@ -94,6 +94,11 @@ class GradeTests(unittest.TestCase):
         self.assertEqual(grade(probe, "Brass slate lantern"), "wrong")
         self.assertEqual(grade(probe, "UNKNOWN"), "unknown")
 
+    def test_rambling_dumps_that_contain_the_value_do_not_pass(self):
+        probe = {"expected": {"regex": anchored("8752")}}
+        self.assertEqual(grade(probe, "right: 8752"), "correct")
+        self.assertEqual(grade(probe, "Summary of all shards. " * 60 + "right: 8752"), "wrong")
+
     def test_stale_value_first_is_stale(self):
         probe = {"expected": {"regex": anchored("361")}, "stale": [anchored("790")]}
         self.assertEqual(grade(probe, "361 guineas"), "correct")

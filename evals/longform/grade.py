@@ -17,6 +17,9 @@ def normalize(text):
     return " ".join(text.translate(QUOTES).split())
 
 
+MAX_ANSWER_CHARS = 800  # the prompt asks for one short sentence; a dump that names the value is not an answer
+
+
 def grade(probe, answer):
     """One verdict: correct, unknown, stale, wrong, invented, correct_unknown or error."""
     if answer is None:
@@ -26,6 +29,8 @@ def grade(probe, answer):
         return "correct_unknown" if abstains(text) else "invented"
     if UNKNOWN.match(text):
         return "unknown"
+    if len(text) > MAX_ANSWER_CHARS:
+        return "wrong"
     if "exact" in probe:
         # Exact wording is required: case-sensitive, whitespace and quote-style normalised.
         return "correct" if normalize(probe["exact"]) in normalize(text) else (

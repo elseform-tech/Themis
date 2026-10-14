@@ -107,6 +107,7 @@ def aggregate(trials):
 
 
 def fmt(stat, percent=True):
+    stat = stat if isinstance(stat, dict) else None
     if not stat:
         return "n/a"
     scale = 100 if percent else 1
@@ -124,14 +125,18 @@ def markdown(summary):
              f"invalid runs: {len(summary['invalid_runs'])}; failed runs: {len(summary['failed_runs'])}. Mean ± SD over trials.", "",
              "| Group | Original-only probes | Correct + valid citation (headline) | Correct, no citation requirement | Citation valid (of correct) | Unknown |",
              "| --- | --- | --- | --- | --- | --- |"]
-    for label, block in (("narrative", agg["by_domain"]["narrative"]), ("code", agg["by_domain"]["code"]), ("all", agg["overall"])):
+    for label, block in (("narrative", agg["by_domain"].get("narrative")), ("code", agg["by_domain"].get("code")),
+                         ("all", agg["overall"])):
+        block = block or {}
+        block = {k: block.get(k) for k in ("probes", "headline_correct_with_valid_citation", "accuracy_no_citation_requirement",
+                                           "citation_valid_rate_of_correct", "unknown_rate")}
         lines.append(f"| {label} | {fmt(block['probes'], False)} | **{fmt(block['headline_correct_with_valid_citation'])}** | "
                      f"{fmt(block['accuracy_no_citation_requirement'])} | {fmt(block['citation_valid_rate_of_correct'])} | {fmt(block['unknown_rate'])} |")
     lines += ["", "| Other metric | Value |", "| --- | --- |",
-              f"| Exact-quote accuracy (original-only) | {fmt(agg['quote_exact_accuracy'])} |",
-              f"| Decoy hallucination rate | {fmt(agg['decoy_hallucination_rate'])} |",
+              f"| Exact-quote accuracy (original-only) | {fmt(agg.get('quote_exact_accuracy'))} |",
+              f"| Decoy hallucination rate | {fmt(agg.get('decoy_hallucination_rate'))} |",
               f"| Probes excluded as in-context (checkpoint / tail) | {fmt(agg['excluded_in_context'], False)} ({fmt(agg['excluded_in_context_checkpoint'], False)} / {fmt(agg['excluded_in_context_tail'], False)}) |",
-              f"| Accuracy on in-context probes (secondary) | {fmt(agg['in_context_accuracy'])} |",
+              f"| Accuracy on in-context probes (secondary) | {fmt(agg.get('in_context_accuracy'))} |",
               f"| Mean tool calls per probe | {fmt(agg['mean_tool_calls'], False)} |",
               f"| `recall` available / used (share of probes) | {agg['recall_available']} / {fmt(agg['recall_used_rate'])} |",
               f"| Mean provider requests per probe | {fmt(agg['mean_requests'], False)} |",
