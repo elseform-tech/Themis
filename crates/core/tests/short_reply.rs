@@ -19,6 +19,7 @@ struct Outcome {
     events: Vec<RunEvent>,
     summary_requests: usize,
     ordinary_requests: usize,
+    summary_systems: Vec<String>,
     _project: tempfile::TempDir,
 }
 
@@ -103,6 +104,14 @@ async fn run(packets: usize, message: &str, short: bool) -> Outcome {
         events,
         summary_requests: requests.iter().filter(|r| is_summary(r)).count(),
         ordinary_requests: requests.iter().filter(|r| !is_summary(r)).count(),
+        summary_systems: requests
+            .iter()
+            .filter(|r| is_summary(r))
+            .map(|r| {
+                let body: serde_json::Value = r.body_json().unwrap();
+                body["messages"][0]["content"].as_str().unwrap().to_owned()
+            })
+            .collect(),
         _project: project,
     }
 }
@@ -152,6 +161,18 @@ async fn short_reply_never_exceeds_the_hard_budget() {
     assert!(outcome.checkpoints() >= 1);
     let budget = outcome.first_budget();
     assert!(budget.used_tokens <= budget.usable_tokens);
+    // The constructed checkpoint request asks for the four sections, parked work and reasons.
+    let system = &outcome.summary_systems[0];
+    for expected in [
+        "Goal/constraints:, Unresolved work:, Parked work:, Next action:",
+        "if the user continues this task",
+        "every decision with its reason",
+        "scan the whole span",
+        "paused but not finished",
+        "paused but not finished as parked work",
+    ] {
+        assert!(system.contains(expected), "missing {expected:?} in {system}");
+    }
 }
 
 #[tokio::test]
