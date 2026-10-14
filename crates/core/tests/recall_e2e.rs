@@ -120,8 +120,11 @@ async fn recall_finds_a_planted_original_after_compaction() {
     let system = main.last().unwrap()["messages"][0]["content"]
         .as_str()
         .unwrap();
-    assert!(system.contains("Use the `recall` tool to search this chat's saved originals"));
+    assert!(system.contains("call the `recall` tool first"));
     assert!(!system.contains("Bounded reads include record_role"));
+    assert!(system.contains("call the `recall` tool first"));
+    assert!(system.contains("Archived observations may be stale"));
+    assert!(system.contains("tool restrictions"));
     assert!(main[0]["tools"]
         .as_array()
         .unwrap()

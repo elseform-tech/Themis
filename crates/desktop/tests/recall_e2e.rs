@@ -156,7 +156,7 @@ async fn cli_recall_returns_attachment_original_coordinates_without_approval() {
         .iter()
         .any(|t| t["function"]["name"] == "recall"));
     let system = last["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("Use the `recall` tool to search this chat's saved originals"));
+    assert!(system.contains("call the `recall` tool first"));
     let tool_result: Value = last["messages"]
         .as_array()
         .unwrap()

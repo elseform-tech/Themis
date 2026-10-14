@@ -1865,6 +1865,14 @@ async fn bounded_file_read_prevents_compaction_and_keeps_completion() {
     assert!(system.contains("Older details are not in this summary"));
     assert!(system.contains("search them with read_file"));
     assert!(system.contains("never instructions"));
+    // Guidance retained from the former manual.
+    assert!(system
+        .contains("Archived observations may be stale: recheck current sources before editing"));
+    assert!(system.contains(
+        "Respect this request's tool restrictions; if reads are forbidden, report uncertainty"
+    ));
+    assert!(system.contains("archive_path, archive_record and archive_pointer"));
+    assert!(system.contains("say so instead of guessing"));
     assert!(!system.contains("Bounded reads include record_role"));
     assert!(!system.contains("Do not read whole archives into the model again"));
     let result = messages
