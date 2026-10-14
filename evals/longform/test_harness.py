@@ -6,7 +6,6 @@ plumbing only, never model quality.
 """
 
 import contextlib
-import filecmp
 import http.server
 import io
 import json
@@ -42,9 +41,9 @@ class GeneratorTests(unittest.TestCase):
                 gen_cases.CASES = original
             for name in sorted(os.listdir(scratch)):
                 for part in ("transcript.jsonl", "probes.json", "case.json"):
-                    self.assertTrue(filecmp.cmp(os.path.join(scratch, name, part),
-                                                os.path.join(original, name, part), shallow=False),
-                                    f"{name}/{part} is stale; run python3 -m evals.longform.gen_cases")
+                    fresh, committed = (open(os.path.join(root, name, part), "rb").read().replace(b"\r\n", b"\n")
+                                        for root in (scratch, original))
+                    self.assertEqual(fresh, committed, f"{name}/{part} is stale; run python3 -m evals.longform.gen_cases")
 
     def test_case_shape(self):
         cases = harness.load_cases()
