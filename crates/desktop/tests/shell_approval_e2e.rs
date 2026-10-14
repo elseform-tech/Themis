@@ -154,12 +154,14 @@ async fn allow_for_this_run_grant_is_scoped_to_the_approved_command() {
         .unwrap();
     let mut prompts = Vec::new();
     let mut scopes = Vec::new();
+    let mut commands = Vec::new();
     let outcome = tokio::time::timeout(Duration::from_secs(60), async {
         while let Some(event) = rx.recv().await {
             match event {
                 TestEvent::Approval(request) => {
                     prompts.push(request.summary.clone());
                     scopes.push(request.grant_scope.clone());
+                    commands.push(request.command.clone());
                     state
                         .approve_action(
                             thread.id.clone(),

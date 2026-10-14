@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ApprovalRequest } from "../../lib/types";
 import { ApprovalDialog, displayToken } from "./ApprovalDialog";
@@ -18,6 +18,7 @@ function setup(request: ApprovalRequest = REQUEST) {
 }
 
 describe("ApprovalDialog", () => {
+  afterEach(() => { vi.useRealTimers(); });
   it("shows tool, summary, and risk badge", () => {
     setup();
     expect(screen.getByText("shell.exec")).toBeInTheDocument();
@@ -45,7 +46,9 @@ describe("ApprovalDialog", () => {
   });
 
   it("maps keyboard 1/2/3 to once/always/deny", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup();
+    vi.advanceTimersByTime(600);
     fireEvent.keyDown(document, { key: "1" });
     expect(onDecide).toHaveBeenCalledWith("once");
     fireEvent.keyDown(document, { key: "2" });
@@ -97,8 +100,8 @@ describe("grant hint", () => {
   });
 
   it("makes bidi, zero-width and newline characters visible", () => {
-    expect(displayToken("a\u202Eb")).toBe("a⟨U+202E⟩b");
-    expect(displayToken("a\u200Bb")).toBe("a⟨U+200B⟩b");
+    expect(displayToken("a\u202Eb")).toBe('"a⟨U+202E⟩b"');
+    expect(displayToken("a\u200Bb")).toBe('"a⟨U+200B⟩b"');
     expect(displayToken("a\nb")).toBe('"a⟨U+000A⟩b"');
   });
 
@@ -125,8 +128,24 @@ describe("grant hint", () => {
 });
 
 describe("single-key shortcuts", () => {
-  it("ignores digits typed into the composer or another field", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  it("ignores digits typed during the first 500 ms and held-down repeats", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup();
+    fireEvent.keyDown(document.body, { key: "2" }); // typed into the composer just as the dialog opened
+    vi.advanceTimersByTime(499);
+    fireEvent.keyDown(document.body, { key: "2" });
+    expect(onDecide).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(2);
+    fireEvent.keyDown(document.body, { key: "2", repeat: true });
+    expect(onDecide).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: "2" });
+    expect(onDecide).toHaveBeenCalledWith("always");
+  });
+  it("ignores digits typed into the composer or another field", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { onDecide } = setup();
+    vi.advanceTimersByTime(600);
     const composer = document.createElement("div");
     composer.className = "themis-thread-composer";
     const editor = document.createElement("div");
@@ -141,5 +160,44 @@ describe("single-key shortcuts", () => {
     fireEvent.keyDown(document.body, { key: "2" });
     expect(onDecide).toHaveBeenCalledWith("always");
     composer.remove(); input.remove();
+  });
+});
+
+describe("command display", () => {
+  const command = (argv: string[], cwd = "/tmp/project", background = false): ApprovalRequest => ({
+    ...REQUEST, tool: "shell", summary: "run `rm -rf /` in /tmp/project", command: { argv, cwd, background },
+  });
+  const summaryChips = () => Array.from(document.querySelectorAll(".themis-approval-summary .themis-approval-token")).map(el => el.textContent);
+
+  it("renders shell and git commands from argv, never the joined summary", () => {
+    setup(command(["rm", "-rf", "/"]));
+    expect(summaryChips()).toEqual(["rm", "-rf", "/", "/tmp/project"]);
+    expect(screen.queryByText(/run `rm -rf \/`/)).toBeNull();
+  });
+
+  it("keeps ['rm','-rf /'] and ['rm','-rf','/'] distinct in the summary", () => {
+    setup(command(["rm", "-rf /"]));
+    expect(summaryChips().slice(0, 2)).toEqual(["rm", '"-rf /"']);
+  });
+
+  it("makes newline, bidi and look-alike controls visible in the summary", () => {
+    setup(command(["echo", "a\nb", "x\u202Ey", "q\u0338", "\u3164", "\u2800", "v\uFE0F"], "/tmp/pro\u202Eject"));
+    const chips = summaryChips();
+    expect(chips).toEqual(['echo', '"a⟨U+000A⟩b"', '"x⟨U+202E⟩y"', '"q⟨U+0338⟩"', '"⟨U+3164⟩"', '"⟨U+2800⟩"', '"v⟨U+FE0F⟩"', '"/tmp/pro⟨U+202E⟩ject"']);
+  });
+
+  it("escapes a literal escape-looking token so it cannot imitate a hidden character", () => {
+    expect(displayToken("a⟨U+202E⟩b")).toBe('"a⟨U+27E8⟩U+202E⟨U+27E9⟩b"');
+    setup(command(["echo", "x\u202Ey"]));
+    expect(document.querySelectorAll(".themis-approval-escape")).toHaveLength(1);
+  });
+
+  it("shows git commands, the background note and the 12-token cap", () => {
+    setup(command(["git", "commit", "-m", "msg"], "/repo", true));
+    expect(screen.getByText(/in the background/)).toBeInTheDocument();
+    cleanup();
+    setup(command(Array.from({ length: 20 }, (_, i) => `a${i}`)));
+    expect(summaryChips()).toHaveLength(13);
+    expect(screen.getByText(/\(\+8 more\)/)).toBeInTheDocument();
   });
 });

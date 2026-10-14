@@ -365,6 +365,8 @@ export interface ApprovalRequest {
   risk: RiskLevel;
   /** What "allow for this run" covers for shell, as raw argv tokens; render as data only. */
   grant_scope?: { argv: string[]; covers_further_args: boolean };
+  /** Structured command for shell/git approvals; show this instead of the joined summary. */
+  command?: { argv: string[]; cwd?: string; background?: boolean };
 }
 
 export type DiffLineKind = 'context' | 'add' | 'del';

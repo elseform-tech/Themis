@@ -2596,6 +2596,7 @@ async fn execute_call(
         Approval::AllowOnce
     } else {
         let decision = approvals.approve(&ToolAction {
+            display: None,
             tool: crate::tools::integration_approval_identity(name, &approval_args),
             summary: summary.to_owned(),
             risk: crate::tools::integration_risk(name, &approval_args)
@@ -3550,6 +3551,7 @@ mod tests {
 
     fn action(tool: &str) -> ToolAction {
         ToolAction {
+            display: None,
             command: Vec::new(),
             tool: tool.to_owned(),
             summary: "test".to_owned(),

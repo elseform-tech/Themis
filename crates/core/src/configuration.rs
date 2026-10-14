@@ -961,6 +961,7 @@ mod tests {
             Arc::new(crate::tools::AllowAllHook),
         );
         let action = |risk| ToolAction {
+            display: None,
             command: Vec::new(),
             tool: "git".into(),
             summary: String::new(),
@@ -976,6 +977,7 @@ mod tests {
 
     fn shell_action(argv: &[&str]) -> ToolAction {
         ToolAction {
+            display: None,
             command: argv.iter().map(|t| t.to_string()).collect(),
             tool: "shell".into(),
             summary: String::new(),
@@ -1166,30 +1168,31 @@ mod tests {
         use proptest::prelude::*;
 
         proptest! {
-            #[test]
-            fn prefix_match_agrees_with_slice_prefix(
-                command in proptest::collection::vec(".{0,8}", 0..6),
-                prefix in proptest::collection::vec(".{0,8}", 0..6),
-            ) {
-                let expected = !prefix.is_empty() && command.starts_with(&prefix);
-                prop_assert_eq!(command_has_prefix(&command, &prefix), expected);
-                // Any non-empty prefix of the command itself always matches.
-                for n in 1..=command.len() {
-                    prop_assert!(command_has_prefix(&command, &command[..n]));
-                }
-            }
+                   #[test]
+                   fn prefix_match_agrees_with_slice_prefix(
+                       command in proptest::collection::vec(".{0,8}", 0..6),
+                       prefix in proptest::collection::vec(".{0,8}", 0..6),
+                   ) {
+                       let expected = !prefix.is_empty() && command.starts_with(&prefix);
+                       prop_assert_eq!(command_has_prefix(&command, &prefix), expected);
+                       // Any non-empty prefix of the command itself always matches.
+                       for n in 1..=command.len() {
+                           prop_assert!(command_has_prefix(&command, &command[..n]));
+                       }
+                   }
 
-            #[test]
-            fn grant_key_never_panics_and_is_stable(command in proptest::collection::vec(".{0,8}", 0..6)) {
-                let action = ToolAction {
-                    command,
-                    tool: "shell".into(),
-                    summary: String::new(),
-                    risk: RiskLevel::Execute,
-                };
-                prop_assert_eq!(action.grant_key(), action.grant_key());
-            }
-        }
+                   #[test]
+                   fn grant_key_never_panics_and_is_stable(command in proptest::collection::vec(".{0,8}", 0..6)) {
+                       let action = ToolAction {
+        display: None,
+                           command,
+                           tool: "shell".into(),
+                           summary: String::new(),
+                           risk: RiskLevel::Execute,
+                       };
+                       prop_assert_eq!(action.grant_key(), action.grant_key());
+                   }
+               }
     }
 
     #[test]
@@ -1202,6 +1205,7 @@ mod tests {
         .unwrap()
         .config;
         let action = |tool: &str| ToolAction {
+            display: None,
             command: Vec::new(),
             tool: tool.into(),
             summary: String::new(),

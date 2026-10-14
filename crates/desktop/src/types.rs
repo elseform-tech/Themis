@@ -261,6 +261,10 @@ pub struct ApprovalRequest {
     /// UI must render them as data); absent for tools granted per tool name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_scope: Option<themis_core::tools::GrantScope>,
+    /// Structured command for shell/git approvals; the UI shows this instead
+    /// of the joined `summary`, which can be spoofed by argument contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<themis_core::tools::CommandDisplay>,
 }
 
 /// One diff line kind (`DiffLineKind` in types.ts).
@@ -1141,6 +1145,7 @@ mod tests {
                 argv: vec!["cargo".to_owned(), "test".to_owned()],
                 covers_further_args: true,
             }),
+            command: None,
         };
         assert_eq!(
             to_value(&request),

@@ -119,6 +119,7 @@ impl ApprovalHook for DesktopApprovalHook {
             summary: action.summary.clone(),
             risk: RiskLevel::from(action.risk),
             grant_scope: action.grant_scope(),
+            command: action.display.clone(),
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         {
@@ -167,6 +168,7 @@ mod tests {
 
     fn action(tool: &str, risk: CoreRisk) -> ToolAction {
         ToolAction {
+            display: None,
             command: Vec::new(),
             tool: tool.to_owned(),
             summary: format!("test {tool}"),
