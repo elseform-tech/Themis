@@ -146,7 +146,8 @@ fn request_aware_recall_recovers_old_topics_without_replacing_latest_task() {
         "안녕하세요",
         "Спасибо!",
         "gracias",
-        "👋",
+        "नमस्ते",
+        "hi 👋",
     ] {
         let greeted = store
             .context_for_request("thread", greeting, 8000)
@@ -158,6 +159,26 @@ fn request_aware_recall_recovers_old_topics_without_replacing_latest_task() {
         assert!(
             !greeted.contains("source_seq") && !greeted.contains("Mira"),
             "{greeting:?} must not pull history anchors back: {greeted}"
+        );
+    }
+    // Task messages and bare acknowledgements keep the latest-exchange anchor.
+    for request in [
+        "hi, fix the auth bug",
+        "thanks - now also rename the cobalt bridge",
+        "perfect",
+        "great, continue",
+        "ok",
+    ] {
+        let kept = store
+            .context_for_request("thread", request, 8000)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            kept.contains("Mira"),
+            "{request:?} must keep anchors: {kept}"
         );
     }
     // A CJK request with content still recalls by term; a mixed greeting plus content does too.
@@ -414,4 +435,31 @@ async fn followup_after_restart_receives_prior_conversation() {
     assert!(messages
         .iter()
         .any(|message| message["role"] == "assistant" && message["content"] == "Noted"));
+}
+
+#[test]
+fn short_excerpts_are_not_dropped_because_a_summary_mentions_the_word() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TranscriptStore::open(&dir.path().join("sessions.sqlite3")).unwrap();
+    store.append_user("thread", "one", "yes").unwrap();
+    store
+        .append_event(&ThreadEventEnvelope {
+            thread_id: "thread".into(),
+            run_id: "one".into(),
+            event: ThreadEvent::ContextCheckpoint {
+                summary: "The user said yes and we proceeded with the plan.".into(),
+            },
+        })
+        .unwrap();
+    let texts = store
+        .context_for_request("thread", "Continue that", 8000)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        texts.contains("\"verbatim_excerpt\":\"yes\""),
+        "short anchor was deduplicated against a substring: {texts}"
+    );
 }
