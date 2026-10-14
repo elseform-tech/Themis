@@ -153,11 +153,13 @@ async fn allow_for_this_run_grant_is_scoped_to_the_approved_command() {
         .await
         .unwrap();
     let mut prompts = Vec::new();
+    let mut scopes = Vec::new();
     let outcome = tokio::time::timeout(Duration::from_secs(60), async {
         while let Some(event) = rx.recv().await {
             match event {
                 TestEvent::Approval(request) => {
                     prompts.push(request.summary.clone());
+                    scopes.push(request.grant_scope.clone());
                     state
                         .approve_action(
                             thread.id.clone(),
@@ -187,4 +189,7 @@ async fn allow_for_this_run_grant_is_scoped_to_the_approved_command() {
     assert!(prompts[0].contains("echo"), "{prompts:?}");
     assert!(prompts[1].contains("touch"), "{prompts:?}");
     assert!(project.join("other.txt").exists());
+    // The approval event tells the UI what the grant covers: the exact argv
+    // for non-subcommand programs.
+    assert_eq!(scopes, ["echo one", "touch other.txt"]);
 }
