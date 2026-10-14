@@ -19,6 +19,7 @@ inside the normal suites, on every platform, with reproducible shrinking.
 | Diffs | Arbitrary text never panics the parser; well-formed diffs round-trip; change detection reports exactly the differing files; readable files are NUL-free UTF-8 | `crates/desktop/src/diff.rs` |
 | Recall | Arbitrary bytes never panic the record parser or bounded line reader; lines stay under the cap and reassemble; scan ranges stay in bounds | `crates/core/src/tools/recall/tests.rs` |
 | Social messages | Any UI text never panics greeting detection or recall terms; terms bounded and sorted; social-only input is social (also repeated) with no terms; any non-social ASCII word makes it a task | `crates/core/src/social.rs` |
+| Chat grants | Arbitrary text never panics the grant-file parser; anything it accepts is valid, bounded and never destructive, and never matches a destructive action | `crates/core/src/chat_grants.rs` |
 | Web state | Any event stream keeps running state consistent and attaches edited files to the right reply; prompt tokens rebuild exactly | `web/src/state/reducer.property.test.ts` |
 
 ## Fuzz targets (nightly CI)
@@ -34,6 +35,7 @@ internal parsers through the off-by-default `fuzzing` feature of
 | `ledger_restore` | Checkpoint history, tool name, arguments and output, budget |
 | `recall_search` | Arbitrary bytes as a saved JSONL snapshot, plus query, source filter and `around` token for the `recall` tool |
 | `provider_wire` | Model tool arguments and provider JSON for all response/stream converters |
+| `chat_grants` | Arbitrary bytes as a chat's `chat_grants/<id>.json`: accepted entries are valid, bounded and never destructive |
 | `social_request` | UI message text for greeting/thanks detection and recall terms: bounded output, a non-social word always makes a task |
 
 ```sh

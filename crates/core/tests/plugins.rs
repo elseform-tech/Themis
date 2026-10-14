@@ -360,6 +360,75 @@ async fn hooks_require_approval_and_can_block_before_events() {
 }
 
 #[tokio::test]
+async fn mcp_tool_names_identify_their_server_for_chat_grants() {
+    use themis_core::{
+        plugins::connections::{tools, McpServer},
+        tools::{mcp_server_id, AllowAllHook},
+    };
+    let server = mcp_with_instructions(None).await;
+    let root = tempfile::tempdir().unwrap();
+    let config = McpServer {
+        url: Some(server.uri()),
+        ..Default::default()
+    };
+    let (first, _) = tools(
+        "g--docs--1--srv",
+        &config,
+        root.path(),
+        std::sync::Arc::new(AllowAllHook),
+    )
+    .await
+    .unwrap();
+    let (second, _) = tools(
+        "g--docs--2--srv",
+        &config,
+        root.path(),
+        std::sync::Arc::new(AllowAllHook),
+    )
+    .await
+    .unwrap();
+    let id = |tools: &[Box<dyn themis_core::tools::ToolT>]| {
+        mcp_server_id(tools[0].name()).map(str::to_owned)
+    };
+    assert!(id(&first).is_some(), "{}", first[0].name());
+    // A different server identity (here another plugin revision) is not covered.
+    assert_ne!(id(&first), id(&second));
+}
+
+#[test]
+fn mcp_startup_is_blocked_only_by_an_explicit_deny_rule() {
+    use themis_core::configuration::{ApprovalPolicy, ApprovalRule, PolicyAction};
+    use themis_core::plugins::connections::{startup_action, startup_denied, McpServer};
+    let local = McpServer {
+        command: Some("npx".into()),
+        args: vec!["-y".into(), "server with space".into()],
+        ..Default::default()
+    };
+    let ask = ApprovalPolicy {
+        default: PolicyAction::Ask,
+        rules: Vec::new(),
+    };
+    assert!(!startup_denied("fixture", &local, &ask).unwrap());
+    let deny = ApprovalPolicy {
+        default: PolicyAction::Ask,
+        rules: vec![ApprovalRule {
+            tool: "mcp_start_*".into(),
+            action: PolicyAction::Deny,
+            risk: None,
+            command: None,
+        }],
+    };
+    assert!(startup_denied("fixture", &local, &deny).unwrap());
+    // The startup action shows its command as structured tokens, not a joined string.
+    let action = startup_action("fixture", &local).unwrap();
+    assert_eq!(
+        action.display.unwrap().argv,
+        ["npx", "-y", "server with space"]
+    );
+    assert!(!action.summary.contains("server with space"));
+}
+
+#[tokio::test]
 async fn mcp_startup_denial_prevents_process_execution() {
     use themis_core::{
         plugins::connections::{tools, McpServer},

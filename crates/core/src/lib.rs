@@ -5,6 +5,7 @@
 //! agent features land.
 
 pub mod calibration;
+pub mod chat_grants;
 pub mod configuration;
 pub mod context_metrics;
 pub mod diagnostics;

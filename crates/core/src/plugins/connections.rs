@@ -1,5 +1,5 @@
 //! MCP JSON-RPC transport with bounded calls and approval-gated agent tools.
-use crate::tools::{ApprovalHook, RiskLevel, ToolAction, ToolRuntime, ToolT};
+use crate::tools::{ApprovalHook, CommandDisplay, RiskLevel, ToolAction, ToolRuntime, ToolT};
 use anyhow::{bail, Context};
 use autoagents::async_trait;
 use autoagents::core::tool::ToolCallError;
@@ -454,25 +454,46 @@ pub async fn tools(
 }
 
 pub fn startup_action(name: &str, server: &McpServer) -> anyhow::Result<ToolAction> {
+    let transport = server
+        .command
+        .as_ref()
+        .or(server.url.as_ref())
+        .context("Missing MCP transport")?;
+    // Local servers show their structured command, never a joined string.
+    let display = server.command.as_ref().map(|command| CommandDisplay {
+        argv: std::iter::once(command.clone())
+            .chain(server.args.iter().cloned())
+            .collect(),
+        cwd: None,
+        background: true,
+    });
     Ok(ToolAction {
-        display: None,
+        display,
         command: Vec::new(),
         tool: format!("mcp_start_{name}"),
-        summary: format!(
-            "Connect MCP server: {} {:?}",
-            server
-                .command
-                .as_ref()
-                .or(server.url.as_ref())
-                .context("Missing MCP transport")?,
-            server.args
-        ),
+        summary: if server.command.is_some() {
+            "Connect local MCP server".to_owned()
+        } else {
+            format!("Connect remote MCP server {transport}")
+        },
         risk: if server.command.is_some() {
             RiskLevel::Execute
         } else {
             RiskLevel::Network
         },
     })
+}
+
+/// Whether an explicit deny rule blocks starting this server. Enabling a
+/// connection is the consent to start it, so a run asks nothing here; only a
+/// deny rule stops it. YOLO callers skip this check.
+pub fn startup_denied(
+    name: &str,
+    server: &McpServer,
+    policy: &crate::configuration::ApprovalPolicy,
+) -> anyhow::Result<bool> {
+    let action = startup_action(name, server)?;
+    Ok(policy.decision(&action) == crate::configuration::PolicyAction::Deny)
 }
 
 pub fn authorize_start(
@@ -597,13 +618,24 @@ fn connection_error_category(error: &anyhow::Error) -> &'static str {
     }
 }
 
+/// Generated tool name tail: `<16 hex server id><8 hex tool id>_<tool>`. The
+/// server id depends only on `namespace`, so a chat grant can cover every tool
+/// of one server (see [`crate::tools::mcp_server_id`]); the tool id keeps
+/// names unique when long tool names are truncated.
 pub fn tool_identity(namespace: &str, component: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    (namespace, component).hash(&mut hash);
+    use sha2::{Digest, Sha256};
+    let server = Sha256::digest(namespace.as_bytes());
+    let tool = Sha256::digest([namespace.as_bytes(), b"\0", component.as_bytes()].concat());
     format!(
-        "{:016x}_{}",
-        hash.finish(),
+        "{}{}_{}",
+        server[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
+        tool[..4]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
         component.chars().take(32).collect::<String>()
     )
 }

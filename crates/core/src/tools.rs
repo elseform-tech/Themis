@@ -159,6 +159,18 @@ pub struct ToolAction {
     pub command: Vec<String>,
 }
 
+/// The server a connected MCP tool belongs to, read from its generated name
+/// (`mcp_<16 hex server id><8 hex tool id>_<tool>`, see
+/// `plugins::connections::tool_identity`). One chat grant covers every tool of
+/// the server. Startup actions (`mcp_start_*`) and other names have none.
+pub fn mcp_server_id(tool: &str) -> Option<&str> {
+    let rest = tool.strip_prefix("mcp_")?;
+    let hex = |text: &str| text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    let (server, tail) = (rest.get(..16)?, rest.get(16..)?);
+    let (tool_id, after) = (tail.get(..8)?, tail.get(8..)?);
+    (hex(server) && hex(tool_id) && after.starts_with('_')).then_some(server)
+}
+
 /// Programs whose first non-flag argument is a true subcommand, so a grant may
 /// cover later calls with the same subcommand and different flags/arguments.
 const SUBCOMMAND_PROGRAMS: &[&str] = &[
@@ -181,7 +193,7 @@ const EXEC_SUBCOMMANDS: &[&str] = &[
     "add",
 ];
 
-/// Command prefix an "allow for this run" grant covers. Tokens are raw argv
+/// Command prefix an "allow in this chat" grant covers. Tokens are raw argv
 /// entries; callers must render them as data, never splice them into prose.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GrantScope {
@@ -191,7 +203,7 @@ pub struct GrantScope {
 }
 
 impl ToolAction {
-    /// Key under which an interactive "allow for this run" grant is cached.
+    /// Key under which an interactive "allow in this chat" grant is stored.
     ///
     /// Most tools are keyed by name. For `shell` (and the `git` tool, whose
     /// `command` is `["git", args...]`) the key is the approved command:
@@ -204,6 +216,9 @@ impl ToolAction {
     /// ([`is_destructive_variant`]) are keyed by their full argv too, so
     /// approving `git push` never covers `git push --force`.
     pub fn grant_key(&self) -> String {
+        if let Some(server) = mcp_server_id(&self.tool) {
+            return format!("mcp\0{server}");
+        }
         if !(self.tool == "shell" || self.tool == "git") || self.command.is_empty() {
             return self.tool.clone();
         }
@@ -212,7 +227,14 @@ impl ToolAction {
         format!("{}\0{}", self.tool, prefix.join("\0"))
     }
 
-    /// Command prefix an "allow for this run" grant covers, and whether it is
+    /// Whether a chat grant may cover this action. Destructive actions (the
+    /// `Destructive` risk class and [`is_destructive_variant`] commands) are
+    /// asked about every time and are never stored or matched by a grant.
+    pub fn grantable(&self) -> bool {
+        self.risk != RiskLevel::Destructive && !is_destructive_variant(&self.command)
+    }
+
+    /// Command prefix an "allow in this chat" grant covers, and whether it is
     /// a program + subcommand prefix (`true`) rather than the exact argv.
     fn shell_grant_prefix(&self) -> (&[String], bool) {
         let scoped = self.command.len() >= 2
@@ -225,6 +247,14 @@ impl ToolAction {
         } else {
             (&self.command[..], false)
         }
+    }
+
+    /// The command prefix a chat grant stores for `shell`/`git` actions.
+    pub fn grant_scope_argv(&self) -> Option<Vec<String>> {
+        if !(self.tool == "shell" || self.tool == "git") || self.command.is_empty() {
+            return None;
+        }
+        Some(self.shell_grant_prefix().0.to_vec())
     }
 
     /// What an interactive grant covers, as structured data for the approval

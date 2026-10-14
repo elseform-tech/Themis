@@ -1,4 +1,5 @@
 //! Versioned runtime configuration and immutable per-run approval policy.
+use crate::chat_grants::ChatGrants;
 use crate::tools::{is_destructive_variant, Approval, ApprovalHook, RiskLevel, ToolAction};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -153,32 +154,25 @@ struct ConfiguredHook {
     mode: ApprovalMode,
     policy: ApprovalPolicy,
     interactive: Arc<dyn ApprovalHook>,
-    allowed: std::sync::Mutex<std::collections::HashSet<(String, &'static str)>>, // (grant key, risk)
+    grants: Arc<ChatGrants>,
 }
 impl ApprovalHook for ConfiguredHook {
     fn approve(&self, action: &ToolAction) -> Approval {
         if self.mode == ApprovalMode::Yolo {
             return Approval::AllowOnce;
         }
+        // Rules decide first, so a deny rule always beats a chat grant.
         match self.policy.decision(action) {
             PolicyAction::Allow => Approval::AllowOnce,
             PolicyAction::Deny => Approval::Deny,
             PolicyAction::Ask => {
-                let key = (action.grant_key(), risk_name(action.risk));
-                if self
-                    .allowed
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .contains(&key)
-                {
+                if self.grants.covers(action) {
                     return Approval::AllowOnce;
                 }
                 match self.interactive.approve(action) {
                     Approval::AllowAlways => {
-                        self.allowed
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .insert(key);
+                        // Destructive actions are allowed this once only.
+                        self.grants.remember(action);
                         Approval::AllowOnce
                     }
                     decision => decision,
@@ -188,16 +182,28 @@ impl ApprovalHook for ConfiguredHook {
     }
 }
 /// Wrap the existing UI approval hook; automatic decisions are never cached by tool name.
+/// Grants made through it last as long as the hook (one run).
 pub fn configured_hook(
     mode: ApprovalMode,
     policy: ApprovalPolicy,
     interactive: Arc<dyn ApprovalHook>,
 ) -> Arc<dyn ApprovalHook> {
+    configured_hook_with_grants(mode, policy, interactive, ChatGrants::in_memory())
+}
+
+/// Like [`configured_hook`], with the chat's grants: stored grants are honored
+/// where the policy asks, and an "allow in this chat" answer is saved to them.
+pub fn configured_hook_with_grants(
+    mode: ApprovalMode,
+    policy: ApprovalPolicy,
+    interactive: Arc<dyn ApprovalHook>,
+    grants: Arc<ChatGrants>,
+) -> Arc<dyn ApprovalHook> {
     Arc::new(ConfiguredHook {
         mode,
         policy,
         interactive,
-        allowed: Default::default(),
+        grants,
     })
 }
 
@@ -1516,6 +1522,119 @@ mod tests {
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         hook.approve(&shell_action(&["rm", "-rf", "x"]));
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    fn counting_hook(
+        calls: &Arc<std::sync::atomic::AtomicUsize>,
+        answer: Approval,
+    ) -> Arc<dyn ApprovalHook> {
+        let calls = calls.clone();
+        Arc::new(crate::tools::FnHook::new(move |_| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            answer
+        }))
+    }
+
+    #[test]
+    fn chat_grant_made_in_one_run_covers_a_later_run_of_the_same_chat_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let chat = dir.path().join("chat-a.json");
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let run = |path: &std::path::Path| {
+            configured_hook_with_grants(
+                ApprovalMode::Custom,
+                ApprovalPolicy::default(),
+                counting_hook(&calls, Approval::AllowAlways),
+                ChatGrants::load(path),
+            )
+        };
+        let first = run(&chat);
+        first.approve(&shell_action(&["cargo", "test"]));
+        // Covered at once inside the same run.
+        first.approve(&shell_action(&["cargo", "test", "-q"]));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // A second run of the same chat loads the saved grant.
+        run(&chat).approve(&shell_action(&["cargo", "test", "--lib"]));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Another chat asks again.
+        run(&dir.path().join("chat-b.json")).approve(&shell_action(&["cargo", "test"]));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // A different command family in the same chat also asks.
+        run(&chat).approve(&shell_action(&["cargo", "run"]));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn destructive_variants_ask_every_time_despite_a_chat_grant() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chat.json");
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hook = configured_hook_with_grants(
+            ApprovalMode::Custom,
+            ApprovalPolicy::default(),
+            counting_hook(&calls, Approval::AllowAlways),
+            ChatGrants::load(&path),
+        );
+        let forced = shell_action(&["git", "push", "--force", "origin", "main"]);
+        assert_eq!(hook.approve(&forced), Approval::AllowOnce);
+        assert_eq!(hook.approve(&forced), Approval::AllowOnce);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let mut delete = shell_action(&["x"]);
+        delete.tool = "delete_file".into();
+        delete.command.clear();
+        delete.risk = RiskLevel::Destructive;
+        hook.approve(&delete);
+        hook.approve(&delete);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+        assert!(!path.exists(), "nothing destructive is ever stored");
+    }
+
+    #[test]
+    fn deny_rules_beat_chat_grants() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chat.json");
+        let grants = ChatGrants::load(&path);
+        assert!(grants.remember(&shell_action(&["rm", "-rf", "build"])));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let policy = resolve(
+            Some(r#"{"approval":{"rules":[{"tool":"shell","command":["rm"],"action":"deny"}]}}"#),
+            None,
+            None,
+        )
+        .unwrap()
+        .config
+        .approval;
+        let hook = configured_hook_with_grants(
+            ApprovalMode::Custom,
+            policy,
+            counting_hook(&calls, Approval::AllowOnce),
+            grants,
+        );
+        assert_eq!(
+            hook.approve(&shell_action(&["rm", "-rf", "build"])),
+            Approval::Deny
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn invalid_grant_file_never_widens_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chat.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"grants":[{"tool":"shell","command":["echo"],"risk":"execute"},{"tool":"shell","command":[],"risk":"execute"}]}"#,
+        )
+        .unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hook = configured_hook_with_grants(
+            ApprovalMode::Custom,
+            ApprovalPolicy::default(),
+            counting_hook(&calls, Approval::Deny),
+            ChatGrants::load(&path),
+        );
+        assert_eq!(hook.approve(&shell_action(&["echo", "x"])), Approval::Deny);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     mod prop {
