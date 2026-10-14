@@ -157,6 +157,7 @@ impl AppState {
             level: snapshot.runtime_configuration.logging.level.clone(),
         };
         let run_configuration = snapshot.runtime_configuration.clone();
+        let short_reply = snapshot.short_reply;
         let yolo = snapshot.approval_mode == themis_core::configuration::ApprovalMode::Yolo;
         let hook = Arc::new(
             DesktopApprovalHook::new(
@@ -453,7 +454,7 @@ impl AppState {
                     &capacity_catalog,
                     themis_core::diagnostics::ACTIVE.scope(
                         diagnostic_context,
-                        themis_core::runtime::with_model_context_capacity(
+                        themis_core::runtime::with_short_reply_turn(short_reply, themis_core::runtime::with_model_context_capacity(
                             if endpoint_override {
                                 None
                             } else {
@@ -512,7 +513,7 @@ impl AppState {
                                     ),
                                 ),
                             ),
-                        ),
+                        )),
                     ),
                 )
                 .await
