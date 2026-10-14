@@ -236,6 +236,10 @@ def build_summary(cases, results, trials_requested):
 
 def run(args):
     cases = load_cases("longform", args.case)
+    if args.probe:
+        for case in cases:
+            case["probes"] = [p for p in case["probes"] if p["id"] in args.probe]
+        cases = [c for c in cases if c["probes"]]
     if not cases:
         sys.exit("no cases selected")
     cleanup = None
@@ -337,6 +341,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     cmd = sub.add_parser("run", help="run every case x trial in agent mode and grade it")
     cmd.add_argument("--case", action="append", help="restrict to this case name (repeatable)")
+    cmd.add_argument("--probe", action="append", help="restrict to this probe id (repeatable; smoke runs)")
     cmd.add_argument("--trials", type=int, default=3)
     cmd.add_argument("--model", default=None)
     cmd.add_argument("--budget", type=int, default=24000)

@@ -630,3 +630,86 @@ mod agent_policy_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod file_tool_confinement_tests {
+    use crate::tools::{boxed_tools_for_chat, AllowAllHook};
+    use autoagents::core::tool::ToolT;
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+
+    async fn call(tools: &[Box<dyn ToolT>], name: &str, args: Value) -> String {
+        let tool = tools.iter().find(|tool| tool.name() == name).unwrap();
+        match tool.execute(args).await {
+            Ok(value) => value.to_string(),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    /// The eval agent's file tools (the same ones the app uses) must not reveal anything
+    /// outside the scratch project, whether by absolute path, `..` or a symlink.
+    #[tokio::test]
+    async fn read_list_and_search_cannot_leave_the_project() {
+        let scratch = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "ANSWER-KEY-7731").unwrap();
+        let project = scratch.path().join("project");
+        std::fs::create_dir_all(project.join(".themis/context/t")).unwrap();
+        std::fs::write(project.join(".themis/context/t/s.jsonl"), "inside-fact").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), project.join("link")).unwrap();
+        let tools =
+            boxed_tools_for_chat(&project, Arc::new(AllowAllHook), false, None, None).unwrap();
+        let secret = outside
+            .path()
+            .join("secret.txt")
+            .to_string_lossy()
+            .into_owned();
+        let secret_dir = outside.path().to_string_lossy().into_owned();
+        let mut attempts = vec![
+            ("read_file", json!({"file_path": secret})),
+            ("read_file", json!({"file_path": "../../secret.txt"})),
+            (
+                "read_file",
+                json!({"file_path": format!("../{}/secret.txt", outside.path().file_name().unwrap().to_string_lossy())}),
+            ),
+            ("list_dir", json!({"directory_path": secret_dir})),
+            ("list_dir", json!({"directory_path": ".."})),
+            (
+                "search_file",
+                json!({"directory": secret_dir, "pattern": "ANSWER"}),
+            ),
+            (
+                "search_file",
+                json!({"directory": "..", "pattern": "ANSWER"}),
+            ),
+        ];
+        #[cfg(unix)]
+        attempts.extend([
+            ("read_file", json!({"file_path": "link/secret.txt"})),
+            ("list_dir", json!({"directory_path": "link"})),
+            (
+                "search_file",
+                json!({"directory": "link", "pattern": "ANSWER"}),
+            ),
+            (
+                "search_file",
+                json!({"directory": ".", "pattern": "ANSWER"}),
+            ),
+        ]);
+        for (name, args) in attempts {
+            let output = call(&tools, name, args.clone()).await;
+            assert!(
+                !output.contains("ANSWER-KEY-7731") && !output.contains("secret.txt\""),
+                "{name} {args} leaked: {output}"
+            );
+        }
+        let inside = call(
+            &tools,
+            "read_file",
+            json!({"file_path": ".themis/context/t/s.jsonl"}),
+        )
+        .await;
+        assert!(inside.contains("inside-fact"), "{inside}");
+    }
+}
