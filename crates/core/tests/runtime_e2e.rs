@@ -1931,6 +1931,8 @@ struct CalibrationRun {
     result: anyhow::Result<String>,
     events: Vec<RunEvent>,
     summary_requests: usize,
+    /// `max_tokens` of each compaction summary request, in order.
+    summary_max_tokens: Vec<u64>,
     ordinary_requests: usize,
     evidence: std::path::PathBuf,
     _project: tempfile::TempDir,
@@ -2017,6 +2019,11 @@ async fn calibration_run_turns(
         result,
         events,
         summary_requests: requests.iter().filter(|r| is_summary(r)).count(),
+        summary_max_tokens: requests
+            .iter()
+            .filter(|r| is_summary(r))
+            .filter_map(|r| r.body_json::<serde_json::Value>().unwrap()["max_tokens"].as_u64())
+            .collect(),
         ordinary_requests: requests.iter().filter(|r| !is_summary(r)).count(),
         evidence,
         _project: project,
@@ -2139,6 +2146,15 @@ async fn ratio_rising_on_the_last_turn_compacts_before_the_handoff() {
         1,
         "the post-loop fit check must compact against the updated ratio"
     );
+    // The summary allowance derives from the compaction budget. Left at the
+    // calibrated budget (stale ratio) it is 2275; with the raw budget refreshed
+    // for the 3.0x ratio it is 610.
+    assert_eq!(run.summary_max_tokens.len(), 1);
+    assert!(
+        run.summary_max_tokens[0] < 1000,
+        "compaction must use the raw budget for the updated ratio: {:?}",
+        run.summary_max_tokens
+    );
     assert!(run
         .events
         .iter()
@@ -2147,4 +2163,90 @@ async fn ratio_rising_on_the_last_turn_compacts_before_the_handoff() {
         .events
         .iter()
         .any(|event| matches!(event, RunEvent::Failed { .. })));
+}
+
+/// A model that puts the whole command line in `command` gets an error that
+/// says exactly how to split it; the scripted provider reads that error and
+/// re-issues the call as instructed, which then succeeds.
+#[tokio::test]
+async fn shell_call_with_whole_command_line_self_corrects_from_the_error() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let requests = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&requests);
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(move |request: &wiremock::Request| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            let body: serde_json::Value = request.body_json().unwrap();
+            let last = body["messages"].as_array().unwrap().last().unwrap();
+            let text = last["content"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| last["content"].to_string())
+                .replace("\\\"", "\"");
+            if let Some(rest) = text.split("Retry exactly as: command: ").nth(1) {
+                let (program, args) = rest.split_once(", args: ").expect("hint shape");
+                let end = args.find(']').unwrap() + 1;
+                let args: serde_json::Value = serde_json::from_str(&args[..end]).unwrap();
+                let program: String = serde_json::from_str(program).unwrap();
+                ResponseTemplate::new(200).set_body_json(common::tool_call_body(
+                    "fixed",
+                    "shell",
+                    json!({"command": program, "args": args}),
+                ))
+            } else if text.contains("\"success\":true") || text.contains("success\": true") {
+                ResponseTemplate::new(200).set_body_json(common::final_text_body("done"))
+            } else {
+                ResponseTemplate::new(200).set_body_json(common::tool_call_body(
+                    "bad",
+                    "shell",
+                    json!({"command": "git --version", "args": []}),
+                ))
+            }
+        })
+        .mount(&server)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let answer = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Print the git version".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 6,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "done");
+    let events = common::drain(&mut rx).await;
+    let finished: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::ToolCallFinished { ok, output, .. } => Some((*ok, output.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished.len(), 2, "{finished:?}");
+    assert!(!finished[0].0);
+    assert!(finished[0].1.contains("command: \"git\""), "{finished:?}");
+    assert!(finished[1].0, "corrected call must succeed: {finished:?}");
 }

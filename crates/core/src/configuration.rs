@@ -1,5 +1,5 @@
 //! Versioned runtime configuration and immutable per-run approval policy.
-use crate::tools::{Approval, ApprovalHook, RiskLevel, ToolAction};
+use crate::tools::{is_destructive_variant, Approval, ApprovalHook, RiskLevel, ToolAction};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -66,9 +66,16 @@ impl ApprovalPolicy {
                     });
                 matches
                     && rule.command.as_ref().is_none_or(|prefix| {
-                        command_has_prefix(&action.command, prefix)
-                            || (rule.action == PolicyAction::Deny
-                                && command_has_prefix_normalized(&action.command, prefix))
+                        // A broad allow (`["git","push"]`) must not silently cover
+                        // a destructive variant (`git push --force`) unless the
+                        // rule itself names that variant.
+                        let covers_variant = rule.action != PolicyAction::Allow
+                            || !is_destructive_variant(&action.command)
+                            || is_destructive_variant(prefix);
+                        covers_variant
+                            && (command_has_prefix(&action.command, prefix)
+                                || (rule.action == PolicyAction::Deny
+                                    && command_has_prefix_normalized(&action.command, prefix)))
                     })
                     && rule
                         .risk
@@ -1091,9 +1098,341 @@ mod tests {
         );
         assert_ne!(key(&["npm", "exec", "a"]), key(&["npm", "exec", "b"]));
         assert_ne!(key(&["ssh", "host", "ls"]), key(&["ssh", "host", "rm"]));
-        let mut git = shell_action(&["status"]);
+        let mut git = shell_action(&[]);
         git.tool = "git".into();
         assert_eq!(git.grant_key(), "git");
+        // The git tool carries `["git", args...]`: subcommand-scoped, but
+        // destructive checkout/branch variants get their own key.
+        let git_key = |argv: &[&str]| {
+            let mut action = shell_action(argv);
+            action.tool = "git".into();
+            action.grant_key()
+        };
+        assert_eq!(git_key(&["git", "add", "a"]), git_key(&["git", "add", "b"]));
+        assert_eq!(
+            git_key(&["git", "checkout", "main"]),
+            git_key(&["git", "checkout", "dev"])
+        );
+        assert_ne!(
+            git_key(&["git", "checkout", "main"]),
+            git_key(&["git", "checkout", "-f", "main"])
+        );
+        assert_ne!(
+            git_key(&["git", "branch"]),
+            git_key(&["git", "branch", "-D", "x"])
+        );
+        assert_ne!(
+            git_key(&["git", "add", "a"]),
+            shell_action(&["git", "add", "a"]).grant_key()
+        );
+    }
+
+    #[test]
+    fn destructive_variants_get_their_own_grant_key() {
+        let key = |argv: &[&str]| shell_action(argv).grant_key();
+        // Harmless siblings still share a key.
+        assert_eq!(
+            key(&["git", "push"]),
+            key(&["git", "push", "origin", "main"])
+        );
+        assert_eq!(
+            key(&["git", "clean", "-n"]),
+            key(&["git", "clean", "--dry-run"])
+        );
+        assert_eq!(key(&["git", "reset"]), key(&["git", "reset", "HEAD"]));
+        assert_eq!(key(&["git", "branch", "-d", "x"]), key(&["git", "branch"]));
+        assert!(key(&["cargo", "publish", "--dry-run"]).contains("--dry-run"));
+        for (safe, danger) in [
+            (vec!["git", "push"], vec!["git", "push", "--force"]),
+            (
+                vec!["git", "push"],
+                vec!["git", "push", "-f", "origin", "main"],
+            ),
+            (
+                vec!["git", "push"],
+                vec!["git", "push", "--force-with-lease"],
+            ),
+            (vec!["git", "push"], vec!["git", "push", "--mirror"]),
+            (
+                vec!["git", "push"],
+                vec!["git", "push", "--delete", "origin", "x"],
+            ),
+            (vec!["git", "push"], vec!["git", "push", "origin", ":x"]),
+            (vec!["git", "push"], vec!["git", "push", "origin", "+main"]),
+            (vec!["git", "push"], vec!["git", "push", "-fu"]),
+            (vec!["git", "clean", "-n"], vec!["git", "clean", "-fdx"]),
+            (vec!["git", "clean", "-n"], vec!["git", "clean", "-nd"]),
+            (vec!["git", "reset"], vec!["git", "reset", "--hard"]),
+            (
+                vec!["git", "checkout", "main"],
+                vec!["git", "checkout", "-f", "main"],
+            ),
+            (
+                vec!["git", "checkout", "main"],
+                vec!["git", "checkout", "--force", "main"],
+            ),
+            (
+                vec!["git", "switch", "main"],
+                vec!["git", "switch", "--discard-changes", "main"],
+            ),
+            (
+                vec!["git", "restore", "--staged", "f"],
+                vec!["git", "restore", "f"],
+            ),
+            (vec!["git", "branch"], vec!["git", "branch", "-D", "x"]),
+            (
+                vec!["git", "branch"],
+                vec!["git", "branch", "--delete", "--force", "x"],
+            ),
+            (vec!["git", "log"], vec!["git", "rebase", "main"]),
+            (vec!["npm", "test"], vec!["npm", "publish"]),
+            (vec!["pnpm", "test"], vec!["pnpm", "publish", "--tag", "x"]),
+            (vec!["yarn", "test"], vec!["yarn", "publish"]),
+            (vec!["cargo", "build"], vec!["cargo", "publish"]),
+            (vec!["cargo", "build"], vec!["cargo", "yank", "x"]),
+        ] {
+            assert_ne!(key(&safe), key(&danger), "{safe:?} vs {danger:?}");
+            assert!(
+                is_destructive_variant(&danger.iter().map(|t| t.to_string()).collect::<Vec<_>>()),
+                "{danger:?}"
+            );
+        }
+        // Different destructive calls do not share a key with each other either.
+        assert_ne!(
+            key(&["git", "push", "--force", "origin", "a"]),
+            key(&["git", "push", "--force", "origin", "b"])
+        );
+        // Global options before the subcommand do not hide the variant.
+        assert!(is_destructive_variant(&[
+            "git".into(),
+            "-C".into(),
+            "d".into(),
+            "push".into(),
+            "-f".into()
+        ]));
+        assert!(is_destructive_variant(&[
+            "/usr/bin/GIT.exe".into(),
+            "reset".into(),
+            "--hard".into()
+        ]));
+        assert!(!is_destructive_variant(&[
+            "git".into(),
+            "status".into(),
+            "-f".into()
+        ]));
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn unflagged_work_and_history_discarding_git_variants_are_destructive() {
+        for danger in [
+            vec!["git", "checkout", "."],
+            vec!["git", "checkout", "--", "src/a.rs"],
+            vec!["git", "checkout", "main", "--", "a"],
+            vec!["git", "stash", "drop"],
+            vec!["git", "stash", "clear"],
+            vec!["git", "-C", "d", "stash", "drop", "stash@{1}"],
+            vec!["git", "reset", "HEAD~3"],
+            vec!["git", "reset", "--soft", "abc123"],
+            vec!["git", "commit", "--amend"],
+            vec!["git", "commit", "-m", "x", "--amend"],
+            vec!["git", "tag", "-d", "v1"],
+            vec!["git", "tag", "--delete", "v1"],
+            vec!["git", "update-ref", "-d", "refs/heads/x"],
+            vec!["git", "reflog", "expire", "--expire=now", "--all"],
+            vec!["git", "reflog", "delete", "HEAD@{1}"],
+            vec!["git", "gc", "--prune=now"],
+            vec!["git", "prune"],
+            vec!["git", "filter-branch", "--all"],
+            vec!["git", "worktree", "remove", "-f", "w"],
+            vec!["git", "worktree", "remove", "--force", "w"],
+        ] {
+            assert!(is_destructive_variant(&argv(&danger)), "{danger:?}");
+        }
+        for harmless in [
+            vec!["git", "checkout", "main"],
+            vec!["git", "checkout", "-b", "feature"],
+            vec!["git", "stash"],
+            vec!["git", "stash", "list"],
+            vec!["git", "reset"],
+            vec!["git", "reset", "HEAD"],
+            vec!["git", "reset", "--keep"],
+            vec!["git", "reset", "--", "file"],
+            vec!["git", "commit", "-m", "x"],
+            vec!["git", "tag", "v1"],
+            vec!["git", "reflog"],
+            vec!["git", "gc"],
+            vec!["git", "worktree", "list"],
+            vec!["git", "worktree", "remove", "w"],
+        ] {
+            assert!(!is_destructive_variant(&argv(&harmless)), "{harmless:?}");
+        }
+        // The run-grant scenario: approving `git checkout main` never covers `git checkout -- .`.
+        let key = |parts: &[&str]| shell_action(parts).grant_key();
+        assert_ne!(
+            key(&["git", "checkout", "main"]),
+            key(&["git", "checkout", "--", "."])
+        );
+    }
+
+    #[test]
+    fn git_long_option_abbreviations_are_still_destructive() {
+        for danger in [
+            vec!["git", "reset", "--har"],
+            vec!["git", "push", "--mir"],
+            vec!["git", "push", "--dele", "origin", "x"],
+            vec!["git", "push", "--forc", "origin"],
+            vec!["git", "push", "--force-with", "origin"],
+            vec!["git", "clean", "--forc"],
+            vec!["git", "checkout", "--discard"],
+            vec!["git", "commit", "--am"],
+            vec!["git", "branch", "--forc", "x"],
+        ] {
+            assert!(is_destructive_variant(&argv(&danger)), "{danger:?}");
+        }
+        assert!(!is_destructive_variant(&argv(&[
+            "git",
+            "push",
+            "--set-upstream"
+        ])));
+        assert!(!is_destructive_variant(&argv(&[
+            "git", "restore", "--stag", "f"
+        ])));
+    }
+
+    #[test]
+    fn package_publish_is_found_behind_value_taking_options_and_abbreviations() {
+        for danger in [
+            vec!["pnpm", "--filter", "pkg", "publish"],
+            vec!["pnpm", "-F", "pkg", "publish"],
+            vec!["npm", "-w", "x", "publish"],
+            vec!["npm", "--workspace", "x", "publish"],
+            vec!["npm", "--otp", "123456", "publish"],
+            vec!["npm", "--registry", "https://r.example", "unpublish", "x"],
+            vec!["npm", "publi"],
+            vec!["npm", "pub"],
+            vec!["npm", "deprec", "x", "msg"],
+            vec!["yarn", "--cwd", "pkg", "npm", "publish"],
+            vec!["yarn", "npm", "publish"],
+            vec!["yarn", "workspace", "pkg", "npm", "publish"],
+            vec!["cargo", "--config", "k=v", "publish"],
+            vec!["cargo", "+nightly", "publish"],
+            vec!["cargo", "-Z", "unstable-options", "yank", "x"],
+        ] {
+            assert!(is_destructive_variant(&argv(&danger)), "{danger:?}");
+        }
+        for harmless in [
+            vec!["npm", "test"],
+            vec!["npm", "-w", "x", "test"],
+            vec!["yarn", "npm", "whoami"],
+            vec!["cargo", "--config", "k=v", "build"],
+            vec!["pnpm", "--filter", "pkg", "test"],
+        ] {
+            assert!(!is_destructive_variant(&argv(&harmless)), "{harmless:?}");
+        }
+        let key = |parts: &[&str]| shell_action(parts).grant_key();
+        assert_ne!(
+            key(&["yarn", "npm", "whoami"]),
+            key(&["yarn", "npm", "publish"])
+        );
+        // git `--config-env <name>=<ENV>` takes a separate value.
+        assert!(is_destructive_variant(&argv(&[
+            "git",
+            "--config-env",
+            "a=B",
+            "push",
+            "-f"
+        ])));
+    }
+
+    #[test]
+    fn allow_rule_for_git_push_does_not_cover_forced_push() {
+        let config = resolve(
+            Some(r#"{"approval":{"rules":[{"tool":"shell","command":["git","push"],"action":"allow"}]}}"#),
+            None,
+            None,
+        )
+        .unwrap();
+        let policy = config.config.approval.clone();
+        let decide = |argv: &[&str]| policy.decision(&shell_action(argv));
+        assert_eq!(decide(&["git", "push"]), PolicyAction::Allow);
+        assert_eq!(
+            decide(&["git", "push", "origin", "main"]),
+            PolicyAction::Allow
+        );
+        for argv in [
+            ["git", "push", "--force"].as_slice(),
+            &["git", "push", "origin", "main", "-f"],
+            &["git", "push", "origin", ":old"],
+        ] {
+            assert_eq!(decide(argv), PolicyAction::Ask, "{argv:?}");
+        }
+        // A rule that names the variant explicitly is honored.
+        let explicit = resolve(
+            Some(r#"{"approval":{"rules":[{"tool":"shell","command":["git","push","--force"],"action":"allow"}]}}"#),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            explicit
+                .config
+                .approval
+                .decision(&shell_action(&["git", "push", "--force", "origin"])),
+            PolicyAction::Allow
+        );
+        // Deny rules are unaffected.
+        let deny = resolve(
+            Some(r#"{"approval":{"rules":[{"tool":"shell","command":["git","push"],"action":"deny"}]}}"#),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            deny.config
+                .approval
+                .decision(&shell_action(&["git", "push", "--force"])),
+            PolicyAction::Deny
+        );
+    }
+
+    #[test]
+    fn approving_git_push_once_always_still_asks_for_force_push() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let hook = configured_hook(
+            ApprovalMode::Custom,
+            ApprovalPolicy::default(),
+            Arc::new(crate::tools::FnHook::new(move |_: &ToolAction| {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Approval::AllowAlways
+            })),
+        );
+        hook.approve(&shell_action(&["git", "push"]));
+        hook.approve(&shell_action(&["git", "push", "origin", "main"]));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        hook.approve(&shell_action(&["git", "push", "--force"]));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn destructive_shell_variant_scope_is_the_exact_argv() {
+        let danger = shell_action(&["git", "push", "--force", "origin", "main"]);
+        let scope = danger.grant_scope().unwrap();
+        assert_eq!(scope.argv, ["git", "push", "--force", "origin", "main"]);
+        assert!(!scope.covers_further_args);
+        assert_eq!(
+            danger.grant_key(),
+            format!("shell\0{}", scope.argv.join("\0"))
+        );
+        let safe = shell_action(&["git", "push", "origin", "main"])
+            .grant_scope()
+            .unwrap();
+        assert_eq!(safe.argv, ["git", "push"]);
+        assert!(safe.covers_further_args);
     }
 
     #[test]
@@ -1181,18 +1520,77 @@ mod tests {
                        }
                    }
 
-                   #[test]
-                   fn grant_key_never_panics_and_is_stable(command in proptest::collection::vec(".{0,8}", 0..6)) {
-                       let action = ToolAction {
-        display: None,
-                           command,
-                           tool: "shell".into(),
-                           summary: String::new(),
-                           risk: RiskLevel::Execute,
-                       };
-                       prop_assert_eq!(action.grant_key(), action.grant_key());
-                   }
-               }
+            #[test]
+            fn destructive_flag_never_shares_the_harmless_key(
+                sub in proptest::sample::select(vec!["push", "clean", "reset", "checkout", "branch"]),
+                tail in proptest::collection::vec("[a-z/:+.-]{0,6}", 0..4),
+            ) {
+                let argv = |extra: &[String]| {
+                    let mut v = vec!["git".to_string(), sub.to_string()];
+                    v.extend(extra.iter().cloned());
+                    v
+                };
+                let mk = |command: Vec<String>| ToolAction {
+                    display: None, command, tool: "shell".into(), summary: String::new(), risk: RiskLevel::Execute,
+                };
+                let danger = mk(argv(&tail));
+                let harmless = mk(argv(&[]));
+                if is_destructive_variant(&danger.command) {
+                    prop_assert_ne!(danger.grant_key(), harmless.grant_key());
+                    // Full argv: never shorter than the whole command.
+                    prop_assert_eq!(danger.grant_key().split('\0').count(), 1 + danger.command.len());
+                } else {
+                    prop_assert_eq!(danger.grant_key(), harmless.grant_key());
+                }
+            }
+
+            #[test]
+            fn any_prefix_of_a_destructive_long_option_is_destructive(
+                case in proptest::sample::select(vec![
+                    ("push", "force"), ("push", "mirror"), ("push", "delete"),
+                    ("reset", "hard"), ("clean", "force"), ("commit", "amend"),
+                    ("branch", "force"), ("tag", "delete"), ("gc", "prune"),
+                ]),
+                len in 1usize..=8,
+            ) {
+                let (sub, long) = case;
+                let prefix = &long[..len.min(long.len())];
+                let command = vec!["git".to_string(), sub.to_string(), format!("--{prefix}")];
+                prop_assert!(is_destructive_variant(&command), "{command:?}");
+            }
+
+            #[test]
+            fn registry_publish_is_found_after_any_option_prefix(
+                tool in proptest::sample::select(vec!["npm", "pnpm", "yarn"]),
+                flags in proptest::collection::vec("-{1,2}[a-z]{1,6}", 0..4),
+                values in proptest::collection::vec("[a-z0-9=]{1,6}", 0..3),
+            ) {
+                let mut command = vec![tool.to_string()];
+                for (i, flag) in flags.iter().enumerate() {
+                    command.push(flag.clone());
+                    if let Some(value) = values.get(i) { command.push(value.clone()); }
+                }
+                command.push("publish".into());
+                prop_assert!(is_destructive_variant(&command), "{command:?}");
+            }
+
+            #[test]
+            fn is_destructive_variant_never_panics(command in proptest::collection::vec(".{0,8}", 0..6)) {
+                let _ = is_destructive_variant(&command);
+            }
+
+            #[test]
+            fn grant_key_never_panics_and_is_stable(command in proptest::collection::vec(".{0,8}", 0..6)) {
+                let action = ToolAction {
+                    display: None,
+                    command,
+                    tool: "shell".into(),
+                    summary: String::new(),
+                    risk: RiskLevel::Execute,
+                };
+                prop_assert_eq!(action.grant_key(), action.grant_key());
+            }
+        }
     }
 
     #[test]

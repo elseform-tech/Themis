@@ -192,6 +192,16 @@ describe("command display", () => {
     expect(document.querySelectorAll(".themis-approval-escape")).toHaveLength(1);
   });
 
+  it("shows the full `git push --force` command and an exact-argv grant", () => {
+    const argv = ["git", "push", "--force", "origin", "main"];
+    setup({ ...command(argv, "/repo"), grant_scope: { argv, covers_further_args: false }, risk: "destructive" });
+    expect(summaryChips()).toEqual([...argv, "/repo"]);
+    // Summary chips (argv + cwd) followed by the grant hint's exact-argv chips.
+    const all = Array.from(document.querySelectorAll(".themis-approval-token")).map(el => el.textContent);
+    expect(all).toEqual([...argv, "/repo", ...argv]);
+    expect(screen.queryByText(/and any further arguments/)).toBeNull();
+  });
+
   it("says the project root in words when the call has no cwd", () => {
     setup({ ...REQUEST, tool: "shell", summary: "call `shell` with {}", command: { argv: ["ls", "-la"] } });
     expect(summaryChips()).toEqual(["ls", "-la"]);
