@@ -791,3 +791,67 @@ proptest! {
         prop_assert!(consumed <= input.len() as u64);
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn symlinked_sources_are_not_opened() {
+    let fx = fixture();
+    let real = fx.evidence.join("real.txt");
+    std::fs::write(&real, "{}").unwrap();
+    let link = fx.evidence.join("snapshot-7.jsonl");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert!(open_regular(&link).is_none());
+    assert!(open_regular(&real).is_some());
+    assert!(open_regular(&fx.evidence).is_none());
+}
+
+#[test]
+fn around_stays_under_the_delivery_budget_and_pages_contiguously() {
+    let fx = fixture();
+    // Control characters escape to six bytes each in JSON.
+    let text = "\u{1}".repeat(5000) + &"needle ".repeat(10) + &"\u{2}".repeat(5000);
+    write_snapshot(&fx, 100, &[user(&text, "original")]);
+    let result = run(&fx, "needle");
+    let token = hits(&result)[0]["around"].as_str().unwrap().to_owned();
+    let page = run_with(
+        &fx,
+        RecallArgs {
+            around: token,
+            ..RecallArgs::default()
+        },
+    );
+    assert!(
+        page.to_string().len() <= RESULT_BYTES,
+        "{}",
+        page.to_string().len()
+    );
+    let (s, e) = range(&page);
+    assert!(e > s);
+    let next = run_with(
+        &fx,
+        RecallArgs {
+            around: page["after"].as_str().unwrap().into(),
+            ..RecallArgs::default()
+        },
+    );
+    assert_eq!(
+        range(&next).0,
+        e,
+        "the next page starts where this one ended"
+    );
+}
+
+#[test]
+fn identical_text_from_different_roles_is_not_deduplicated() {
+    let fx = fixture();
+    write_snapshot(
+        &fx,
+        100,
+        &[
+            user("the copper bell rings at noon", "original"),
+            assistant("the copper bell rings at noon", "original_exchange"),
+        ],
+    );
+    let result = run(&fx, "copper bell noon");
+    assert_eq!(hits(&result).len(), 2, "{result}");
+}

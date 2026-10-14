@@ -781,6 +781,31 @@ fn confined_file(path: &Path, root: &Path) -> bool {
         .is_ok_and(|resolved| resolved.starts_with(root))
 }
 
+/// Opens a source for reading without following a final symlink and checks the
+/// opened handle (not just the earlier listing) is a regular file.
+fn open_regular(path: &Path) -> Option<File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    #[cfg(not(unix))]
+    if std::fs::symlink_metadata(path)
+        .ok()?
+        .file_type()
+        .is_symlink()
+    {
+        return None;
+    }
+    Some(file)
+}
+
 fn evidence_sources(scope: &RecallScope) -> (Vec<Source>, bool) {
     let mut sources = Vec::new();
     let Ok(directory) = scope.evidence_dir.canonicalize() else {
@@ -1090,7 +1115,15 @@ fn consider_field(
         let start = end.saturating_sub(EXCERPT_CHARS).min(window.start);
         let end = (start + EXCERPT_CHARS).min(total_chars);
         let excerpt = extract(&field.text, start, end);
-        let digest: [u8; 32] = Sha256::digest(excerpt.as_bytes()).into();
+        // Same text from a different role or evidence kind is a different observation.
+        let digest: [u8; 32] = Sha256::new()
+            .chain_update(field.role.as_bytes())
+            .chain_update([0])
+            .chain_update(field.evidence_kind.as_bytes())
+            .chain_update([0])
+            .chain_update(excerpt.as_bytes())
+            .finalize()
+            .into();
         if !scan.seen.insert(digest) {
             continue;
         }
@@ -1133,7 +1166,7 @@ fn consider_field(
 }
 
 fn scan_jsonl(source: &Source, display: &str, scan: &mut Scan) {
-    let Ok(file) = File::open(&source.path) else {
+    let Some(file) = open_regular(&source.path) else {
         return;
     };
     let mut reader = BufReader::with_capacity(64 * 1024, file);
@@ -1191,8 +1224,7 @@ fn read_attachment(path: &Path, budget: &mut Budget) -> Option<(String, String)>
         return None;
     }
     let mut bytes = Vec::new();
-    File::open(path)
-        .ok()?
+    open_regular(path)?
         .take(MAX_ATTACHMENT_BYTES + 1)
         .read_to_end(&mut bytes)
         .ok()?;
@@ -1264,7 +1296,7 @@ fn around(
             false,
         )
     } else {
-        let file = File::open(&source.path).map_err(|e| e.to_string())?;
+        let file = open_regular(&source.path).ok_or("source is not a regular file")?;
         let mut reader = BufReader::with_capacity(64 * 1024, file);
         let mut line = Vec::new();
         let mut number = 0u64;
@@ -1305,27 +1337,35 @@ fn around(
     }
     let total = text.chars().count();
     let start = center.saturating_sub(AROUND_CHARS / 3).min(total);
-    let end = (start + AROUND_CHARS).min(total);
+    let mut end = (start + AROUND_CHARS).min(total);
     let link = |offset: usize| format!("{path}|{record}|{pointer}|{offset}");
-    Ok(json!({
-        "untrusted": true,
-        "note": UNTRUSTED_NOTE,
-        "excerpt": extract(&text, start, end),
-        "source": source.name,
-        "kind": source.kind.label(),
-        "path": path,
-        "record": (!is_attachment).then_some(record),
-        "pointer": pointer,
-        "char_range": [start, end],
-        "total_chars": total,
-        "decoded": decoded,
-        "role": role,
-        "tool": tool,
-        "evidence_kind": evidence_kind,
-        "sha256": sha,
-        "before": (start > 0).then(|| link(start.saturating_sub(AROUND_CHARS / 2))),
-        "after": (end < total).then(|| link(end + AROUND_CHARS / 2)),
-    }))
+    loop {
+        let result = json!({
+            "untrusted": true,
+            "note": UNTRUSTED_NOTE,
+            "excerpt": extract(&text, start, end),
+            "source": source.name,
+            "kind": source.kind.label(),
+            "path": path,
+            "record": (!is_attachment).then_some(record),
+            "pointer": pointer,
+            "char_range": [start, end],
+            "total_chars": total,
+            "decoded": decoded,
+            "role": role,
+            "tool": tool,
+            "evidence_kind": evidence_kind,
+            "sha256": sha,
+            // Neighbouring pages start exactly where this one ends or begins.
+            "before": (start > 0).then(|| link(start.saturating_sub(AROUND_CHARS * 2 / 3))),
+            "after": (end < total).then(|| link(end + AROUND_CHARS / 3)),
+        });
+        // Escaping can inflate an excerpt; stay under the result delivery budget.
+        if result.to_string().len() <= RESULT_BYTES || end <= start + 1 {
+            return Ok(result);
+        }
+        end = start + (end - start) * 3 / 4;
+    }
 }
 
 #[cfg(test)]
