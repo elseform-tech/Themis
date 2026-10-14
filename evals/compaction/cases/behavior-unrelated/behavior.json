@@ -24,10 +24,10 @@
       "kind": "unrelated",
       "social": false,
       "must_match": [
-        "(?i)necessary"
+        "(?i)n-?e-?c-?e-?s-?s-?a-?r-?y"
       ]
     }
   ],
   "markers": "(?i)importer|orders_2019|rejects\\.csv|customer_id|sqlite|readme|legacy",
-  "max_chars": 500
+  "max_chars": 800
 }

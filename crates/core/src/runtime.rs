@@ -1949,6 +1949,8 @@ fn checkpoint_task_state(mut state: &str) -> &str {
             .strip_prefix("Earlier context checkpoint (historical; later user requests take precedence):\n")
             .or_else(|| state.strip_prefix("Earlier context checkpoint (historical; later user requests and completed tool observations take precedence):\n"))
             .or_else(|| state.strip_prefix("Earlier context checkpoint (historical; later user requests take precedence; the task ledger records observed actions):\n"))
+            .or_else(|| state.strip_prefix("Earlier context checkpoint (historical; later user requests take precedence; the task ledger records observed actions; mention or resume this work only when the user's message continues or asks about it):\n"))
+            .or_else(|| state.strip_prefix("Earlier context checkpoint (historical; later user requests take precedence; mention or resume this work only when the user's message continues or asks about it):\n"))
             .or_else(|| state.strip_prefix("Previous task state retained unchanged as historical context; the current update is unavailable:\n"));
         match stripped {
             Some(rest) => state = rest,
@@ -2128,7 +2130,7 @@ async fn replace_context(
     compacted.push(ChatMessage {
         role: ChatRole::Assistant,
         message_type: MessageType::Text,
-        content: format!("Earlier context checkpoint (historical; later user requests take precedence; the task ledger records observed actions):\n{summary}"),
+        content: format!("Earlier context checkpoint (historical; later user requests take precedence; the task ledger records observed actions; mention or resume this work only when the user's message continues or asks about it):\n{summary}"),
     });
     compacted.extend(completed.into_iter().flatten());
     compacted.extend(retained);
@@ -2549,7 +2551,7 @@ fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMes
             messages.push(ChatMessage {
                 role: ChatRole::Assistant,
                 message_type: MessageType::Text,
-                content: format!("Earlier context checkpoint (historical; later user requests take precedence):\n{summary}"),
+                content: format!("Earlier context checkpoint (historical; later user requests take precedence; mention or resume this work only when the user's message continues or asks about it):\n{summary}"),
             });
             messages.extend(recent);
         } else {

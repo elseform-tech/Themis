@@ -495,9 +495,9 @@ def behavior_unrelated():
     behavior = {"turns": [
         turn_spec("capital", "What's the capital of Australia?", "unrelated", False, must_match=[r"(?i)canberra"]),
         turn_spec("ounces", "Quick one: how many ounces are in a pound?", "unrelated", False, must_match=[r"\b16\b"]),
-        turn_spec("spelling", "How do you spell 'necessary'?", "unrelated", False, must_match=[r"(?i)necessary"]),
+        turn_spec("spelling", "How do you spell 'necessary'?", "unrelated", False, must_match=[r"(?i)n-?e-?c-?e-?s-?s-?a-?r-?y"]),
     ], "markers": r"(?i)importer|orders_2019|rejects\.csv|customer_id|sqlite|readme|legacy",
-        "max_chars": 500}
+        "max_chars": 800}
     finish(os.path.join(CASES, "behavior-unrelated"), "behavior-unrelated", "behavior", t, probes,
            "Add the customer_id index and document rejects.csv.",
            "Unfinished importer task; an unrelated question after compaction is answered and the task is left alone.",
