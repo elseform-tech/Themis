@@ -246,6 +246,35 @@ describe("thread lifecycle events", () => {
     expect(s.messages[THREAD.id]?.[0]?.text).toMatch(/^Stopped by you/);
   });
 
+  it("keeps the partial streamed answer when the user stops the run", () => {
+    let s = applyThreadEvent(withThread(), envelope({ kind: "started", task: "t", max_turns: 3 }));
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "Half an " }));
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "answer" }));
+    s = applyThreadEvent(s, envelope({ kind: "failed", error: "Stopped by you. Completed actions remain available for review." }));
+    const rows = s.messages[THREAD.id] ?? [];
+    expect(rows[0]).toMatchObject({ role: "assistant", text: "Half an answer", final: true, interrupted: "stopped" });
+    expect(rows[1]?.text).toMatch(/^Stopped by you/);
+    expect(s.streams[THREAD.id]).toBe("");
+  });
+
+  it("keeps the partial answer on a failure and reloads the same way from history", () => {
+    const events = [
+      envelope({ kind: "started", task: "t", max_turns: 3 }),
+      envelope({ kind: "assistant_text", text: "Partial" }),
+      envelope({ kind: "failed", error: "LLM request failed" }),
+    ];
+    const live = events.reduce((state, e) => applyThreadEvent(state, e), withThread());
+    expect(live.messages[THREAD.id]?.[0]).toMatchObject({ text: "Partial", interrupted: "failed" });
+    expect(live.toasts).toHaveLength(1);
+    const reloaded = events.reduce((state, e) => applyThreadEvent(state, e), withThread());
+    expect(reloaded.messages[THREAD.id]?.map(m => m.text)).toEqual(live.messages[THREAD.id]?.map(m => m.text));
+  });
+
+  it("does not add an empty answer when nothing streamed", () => {
+    const s = applyThreadEvent(withThread(), envelope({ kind: "failed", error: "Stopped by you." }));
+    expect(s.messages[THREAD.id]).toHaveLength(1);
+  });
+
   it("failed appends a system error, toasts, and clears running", () => {
     let s = withThread();
     s = applyThreadEvent(
@@ -643,4 +672,59 @@ it("recovers stale running flags after a missed terminal event", () => {
   const recovered = reducer(running, { type: "thread/running-loaded", threadId: THREAD.id, running: false });
   expect(recovered.running[THREAD.id]).toBe(false);
   expect(recovered.threadsByProject[PROJECT.root][0].running).toBe(false);
+});
+
+describe("thread/changed", () => {
+  const info = (over: Partial<typeof THREAD> = {}) => ({ ...THREAD, ...over });
+  it("upserts created and updated threads without stealing the selection", () => {
+    let s = withThread();
+    const selected = s.activeThreadId;
+    s = reducer(s, { type: "thread/changed", change: { kind: "created", project_root: PROJECT.root, thread_id: "n1", thread: info({ id: "n1", title: "From CLI" }) } });
+    expect(s.threadsByProject[PROJECT.root]?.map(t => t.id)).toEqual([THREAD.id, "n1"]);
+    expect(s.activeThreadId).toBe(selected);
+    s = reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "n1", thread: info({ id: "n1", title: "Renamed", approval_mode: "yolo" }) } });
+    const updated = s.threadsByProject[PROJECT.root]?.find(t => t.id === "n1");
+    expect(updated).toMatchObject({ title: "Renamed", approval_mode: "yolo" });
+    expect(s.threadsByProject[PROJECT.root]).toHaveLength(2);
+    // Replaying the same event is harmless.
+    expect(reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "n1", thread: updated } })).toEqual(s);
+  });
+  it("removes a thread and ignores an update without info", () => {
+    const s = withThread();
+    expect(reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "x" } })).toBe(s);
+    const removed = reducer(s, { type: "thread/changed", change: { kind: "removed", project_root: PROJECT.root, thread_id: THREAD.id } });
+    expect(removed.threadsByProject[PROJECT.root] ?? []).toEqual([]);
+  });
+});
+
+describe("thread/changed edge cases", () => {
+  const info = (id: string) => ({ ...THREAD, id });
+  it("ignores projects that are not open and never resurrects a removed thread", () => {
+    let s = withThread();
+    const elsewhere = reducer(s, { type: "thread/changed", change: { kind: "created", project_root: "/other", thread_id: "x", thread: info("x") } });
+    expect(elsewhere.threadsByProject["/other"]).toBeUndefined();
+    s = reducer(s, { type: "thread/removed", projectRoot: PROJECT.root, threadId: THREAD.id });
+    for (const kind of ["updated", "created"] as const) {
+      s = reducer(s, { type: "thread/changed", change: { kind, project_root: PROJECT.root, thread_id: THREAD.id, thread: info(THREAD.id) } });
+    }
+    expect(s.threadsByProject[PROJECT.root]).toEqual([]);
+  });
+  it("does not add an update for a thread this window never listed, and dedupes created", () => {
+    let s = withThread();
+    s = reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "ghost", thread: info("ghost") } });
+    expect(s.threadsByProject[PROJECT.root]).toHaveLength(1);
+    const created = { kind: "created" as const, project_root: PROJECT.root, thread_id: "n", thread: info("n") };
+    s = reducer(reducer(s, { type: "thread/changed", change: created }), { type: "thread/changed", change: created });
+    expect(s.threadsByProject[PROJECT.root]?.filter(t => t.id === "n")).toHaveLength(1);
+  });
+  it("clears run state, streams, traces and approvals when a thread is removed", () => {
+    let s = applyThreadEvent(withThread(), envelope({ kind: "started", task: "t", max_turns: 2 }));
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "hi" }));
+    s = reducer(s, { type: "approval/enqueued", request: { thread_id: THREAD.id, approval_id: "a", tool: "shell", summary: "", risk: "execute" } });
+    s = reducer(s, { type: "thread/changed", change: { kind: "removed", project_root: PROJECT.root, thread_id: THREAD.id } });
+    expect(s.running[THREAD.id]).toBeUndefined();
+    expect(s.streams[THREAD.id]).toBeUndefined();
+    expect(s.traces[THREAD.id]).toBeUndefined();
+    expect(s.approvals).toEqual([]);
+  });
 });

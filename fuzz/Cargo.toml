@@ -43,6 +43,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "recall_search"
+path = "fuzz_targets/recall_search.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "social_request"
 path = "fuzz_targets/social_request.rs"
 test = false

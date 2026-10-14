@@ -65,6 +65,14 @@ impl AppState {
         Ok(info)
     }
 
+    /// Project root key under which `thread_id` is listed, if the thread exists.
+    pub async fn thread_project_root(&self, thread_id: &str) -> Option<String> {
+        let threads = self.inner.threads.read().await;
+        threads
+            .get(thread_id)
+            .map(|record| record.project_root.to_string_lossy().into_owned())
+    }
+
     /// Returns the current info for `thread_id`.
     pub async fn get_thread(&self, thread_id: &str) -> Result<ThreadInfo, String> {
         let threads = self.inner.threads.read().await;

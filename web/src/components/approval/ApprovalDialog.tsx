@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 import type { ApprovalDecision, ApprovalRequest, RiskLevel } from "../../lib/types";
+import { singleKeyShortcutAllowed } from "../../lib/keyboard";
+import { TokenChip, TokenList } from "./CommandTokens";
 import { Badge, type BadgeTone } from "../primitives/Badge";
 import { Button } from "../primitives/Button";
 import { Dialog } from "../primitives/Dialog";
@@ -19,10 +21,35 @@ const RISK_TONE: Record<RiskLevel, BadgeTone> = {
   destructive: "danger",
 };
 
+/** Says exactly what "Allow for this run" grants. Sentence text is fixed; argv tokens render only as separate escaped chips. Keep in sync with `ToolAction::grant_key`. */
+export { displayToken } from "./CommandTokens";
+
+export function GrantHint({ request }: { request: ApprovalRequest }) {
+  const scope = request.grant_scope;
+  if (request.tool !== "shell" || !scope || scope.argv.length === 0) {
+    return <>Allow for this run covers this tool until this run ends.</>;
+  }
+  return (
+    <>
+      Allow for this run covers the command{" "}
+      <TokenList argv={scope.argv} />
+      {scope.covers_further_args && <span> and any further arguments</span>}
+      {" "}until this run ends. Other commands still ask.
+    </>
+  );
+}
+
+const SHORTCUT_DELAY_MS = 500;
+
 export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps) {
   useEffect(() => {
     if (!open) return;
+    // Keys typed just before the dialog appeared (for example digits in the composer) must not decide it.
+    const openedAt = Date.now();
     function onKeyDown(event: KeyboardEvent) {
+      if (event.repeat || Date.now() - openedAt < SHORTCUT_DELAY_MS) return;
+      // Digits decide the approval only when they are not being typed into the composer or another field.
+      if (!singleKeyShortcutAllowed(event)) return;
       if (event.key === "1") onDecide("once");
       else if (event.key === "2") onDecide("always");
       else if (event.key === "3") onDecide("deny");
@@ -44,8 +71,14 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
           <span className="themis-approval-tool">{request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : request.tool}</span>
           <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
         </div>
-        <p className="themis-approval-summary">{request.summary}</p>
-        <p className="themis-thread-hint">Run-wide permission applies to this tool and risk level until this run ends.</p>
+        {request.command
+          ? <p className="themis-approval-summary">
+              Run <TokenList argv={request.command.argv} />
+              {request.command.cwd !== undefined ? <> in <TokenChip token={request.command.cwd} /></> : " in the project root"}
+              {request.command.background && " in the background"}
+            </p>
+          : <p className="themis-approval-summary">{request.summary}</p>}
+        <p className="themis-thread-hint"><GrantHint request={request} /></p>
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>
             Allow once (1)

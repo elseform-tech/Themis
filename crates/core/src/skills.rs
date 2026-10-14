@@ -24,7 +24,7 @@ pub const MAX_SCRIPTS_TOTAL_BYTES: usize = 65536;
 /// (`shell`, `background_task`, `apply_patch`, `git`) and the `autoagents-toolkit` filesystem
 /// tool names (`list_dir`, `read_file`, `write_file`, `copy_file`,
 /// `move_file`, `delete_file`, `create_dir`, `search_file`).
-const KNOWN_TOOL_NAMES: [&str; 12] = [
+const KNOWN_TOOL_NAMES: [&str; 13] = [
     "list_dir",
     "read_file",
     "write_file",
@@ -35,6 +35,7 @@ const KNOWN_TOOL_NAMES: [&str; 12] = [
     "search_file",
     "shell",
     "background_task",
+    "recall",
     "apply_patch",
     "git",
 ];
@@ -189,10 +190,11 @@ pub fn filter_tools(tools: Vec<Box<dyn ToolT>>, skills: &[Skill]) -> Vec<Box<dyn
                 return true;
             }
             // Managing a background task is part of granting `shell`.
-            let granted = if name == "background_task" {
-                "shell"
-            } else {
-                name
+            // Recalling saved originals is a read of the chat's own evidence.
+            let granted = match name {
+                "background_task" => "shell",
+                "recall" => "read_file",
+                name => name,
             };
             skills.iter().all(|skill| {
                 skill.allowed_tools.is_empty()
@@ -346,7 +348,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
         let built: Vec<String> = tools.iter().map(|tool| tool.name().to_owned()).collect();
-        assert_eq!(known_tool_names(), built);
+        // `recall` needs a chat's evidence, so it is added per run, not by boxed_tools.
+        let known: Vec<String> = known_tool_names()
+            .into_iter()
+            .filter(|name| name != "recall")
+            .collect();
+        assert_eq!(known, built);
     }
 
     #[test]

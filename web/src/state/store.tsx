@@ -34,10 +34,12 @@ import {
   listThreads,
   onApprovalRequest,
   onReviewItemAdded,
+  onThreadChanged,
   onThreadEvent,
   openProject,
 } from "../lib/tauri";
 import { failureMessage as describeError } from "../lib/errors";
+import { reviewToast } from "../screens/reviewFlow";
 import { readSession, writeSession } from "./session";
 import { loadPhase4Lists, restoreRecentProjects } from "./boot";
 import {
@@ -221,10 +223,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           eventVersion++;
           dispatch({ type: "approval/enqueued", request });
         });
+        const offThreadChanged = await onThreadChanged((change) => {
+          if (cancelled) return;
+          dispatch({ type: "thread/changed", change });
+        });
         const offReview = await onReviewItemAdded((item) => {
           if (cancelled) return;
           dispatch({ type: "review/added", review: item });
-          toast(dispatch, `New review item: ${item.title}`, "info");
+          toast(dispatch, reviewToast(item), "info");
           void listAutomations().then(async automations => {
             if (cancelled) return;
             dispatch({ type: "automation/loaded", automations });
@@ -240,8 +246,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           offThread();
           offApproval();
           offReview();
+          offThreadChanged();
         } else {
-          unlistens = [offThread, offApproval, offReview, offRecovery];
+          unlistens = [offThread, offApproval, offReview, offThreadChanged, offRecovery];
           recoverState.current = () => { clearTimeout(retry); void recover(); };
           if (restoredSession.current) recoverState.current();
         }

@@ -18,6 +18,7 @@ import type {
   HistoryItem,
   PersistedMessage,
   ThreadInfo,
+  ThreadChange,
   ThreadTasks,
 } from "../lib/types";
 import type { ToastItem, ToastTone } from "../components";
@@ -102,6 +103,8 @@ export interface AppState {
   diffs: Record<string, DiffState | null>;
   comments: Record<string, ThreadComment[]>;
   approvals: ApprovalRequest[];
+  /** Recently removed thread ids, so a late event cannot resurrect them. */
+  removedThreadIds: string[];
   merges: Record<string, LastMerge>;
   /** Latest send failure per thread (cleared on next successful send). */
   sendErrors: Record<string, string>;
@@ -136,6 +139,7 @@ export type AppAction =
   | { type: "thread/updated"; projectRoot: string; thread: ThreadInfo }
   | { type: "thread/listed"; projectRoot: string; threads: ThreadInfo[] }
   | { type: "thread/removed"; projectRoot: string; threadId: string }
+  | { type: "thread/changed"; change: ThreadChange }
   | { type: "thread/merged"; threadId: string; result: MergeResult }
   | { type: "thread/send-failed"; threadId: string; error: string }
   | { type: "thread/send-cleared"; threadId: string }
@@ -222,6 +226,7 @@ export const initialState: AppState = {
   diffs: {},
   comments: {},
   approvals: [],
+  removedThreadIds: [],
   merges: {},
   sendErrors: {},
   skills: [],
@@ -451,7 +456,15 @@ export function applyThreadEvent(
     }
     case "failed": {
       const stopped = event.error.startsWith("Stopped by you.");
-      let next = appendMessage(state, threadId, {
+      // Keep what was already streamed: the user saw it, so Stop or a failure must not discard it.
+      const partial = state.streams[threadId];
+      let next = partial?.trim()
+        ? appendMessage(state, threadId, {
+          id: newId("msg"), role: "assistant", text: partial, runId, final: true, incomplete: true,
+          interrupted: stopped ? "stopped" : "failed",
+        })
+        : state;
+      next = appendMessage(next, threadId, {
         id: newId("msg"),
         role: "system",
         text: stopped ? event.error : `Run failed: ${event.error}`,
@@ -592,6 +605,17 @@ export function reducer(state: AppState, action: AppAction): AppState {
             : state.activeThreadId,
       };
     }
+    case "thread/changed": {
+      const { change } = action;
+      if (change.kind === "removed") return reducer(state, { type: "thread/removed", projectRoot: change.project_root, threadId: change.thread_id });
+      const known = state.threadsByProject[change.project_root];
+      // Only follow projects already open in this window, and never bring back a thread removed here.
+      if (!change.thread || known === undefined || state.removedThreadIds.includes(change.thread_id)) return state;
+      const exists = known.some(thread => thread.id === change.thread_id);
+      if (change.kind === "updated" && !exists) return state;
+      // `created` replaces an existing entry in place, so a replayed event is not duplicated.
+      return reducer(state, { type: "thread/synced", projectRoot: change.project_root, thread: change.thread });
+    }
     case "thread/removed": {
       const remaining = (state.threadsByProject[action.projectRoot] ?? []).filter(
         (t) => t.id !== action.threadId,
@@ -614,8 +638,18 @@ export function reducer(state: AppState, action: AppAction): AppState {
       delete restMerges[action.threadId];
       const restErrors = { ...state.sendErrors };
       delete restErrors[action.threadId];
+      const without = <T,>(record: Record<string, T>): Record<string, T> => {
+        const { [action.threadId]: _gone, ...rest } = record;
+        return rest;
+      };
       return {
         ...state,
+        running: without(state.running),
+        streams: without(state.streams),
+        traces: without(state.traces),
+        compacting: without(state.compacting),
+        approvals: state.approvals.filter(approval => approval.thread_id !== action.threadId),
+        removedThreadIds: [...state.removedThreadIds, action.threadId].slice(-200),
         threadsByProject: {
           ...state.threadsByProject,
           [action.projectRoot]: remaining,

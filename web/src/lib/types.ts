@@ -274,6 +274,9 @@ export interface ReviewItem {
   title: string;
   summary: string;
   status: ReviewStatus;
+  /** Stable automation name and origin copied onto the item when the run finished. */
+  automation_name?: string;
+  automation_origin?: AutomationOrigin;
 }
 
 export interface RunHandle {
@@ -340,6 +343,8 @@ export interface PersistedMessage {
   model?: string;
   /** Internal handoff marker; not shown as a conversation label. */
   incomplete?: boolean;
+  /** Partial answer kept after the run was stopped by the user or failed. */
+  interrupted?: 'stopped' | 'failed';
   tool?: { name: string; ok?: boolean; output?: string };
   /** Context checkpoint divider; percentages of usable context before and after. */
   checkpoint?: { before?: number; after?: number };
@@ -358,6 +363,10 @@ export interface ApprovalRequest {
   tool: string;
   summary: string;
   risk: RiskLevel;
+  /** What "allow for this run" covers for shell, as raw argv tokens; render as data only. */
+  grant_scope?: { argv: string[]; covers_further_args: boolean };
+  /** Structured command for shell/git approvals; show this instead of the joined summary. */
+  command?: { argv: string[]; cwd?: string; background?: boolean };
 }
 
 export type DiffLineKind = 'context' | 'add' | 'del';
@@ -443,5 +452,14 @@ export interface SecretStatus {
 export const THREAD_EVENT_NAME = 'thread-event';
 export const APPROVAL_REQUEST_NAME = 'approval-request';
 export const REVIEW_ITEM_NAME = 'review-item-added';
+export const THREAD_CHANGED_NAME = 'thread-changed';
+
+/** A thread was created, changed or removed through the shared server (CLI or another client). */
+export interface ThreadChange {
+  kind: 'created' | 'updated' | 'removed';
+  project_root: string;
+  thread_id: string;
+  thread?: ThreadInfo;
+}
 
 export type McpConnections = Record<string, { status: "connecting" | "connected" | "failed"; reason?: string }>;

@@ -11,3 +11,7 @@ it("does not shimmer streamed replies when no tool is pending", () => {
   expect(styles).toMatch(/\.themis-thread-msg--action-waiting \.themis-response > p/);
   expect(styles).not.toMatch(/\.themis-thread-msg--live \.themis-response > p/);
 });
+
+it("keeps inline code readable inside shimmering progress notes", () => {
+  expect(styles).toMatch(/\.themis-thread-msg--action-waiting \.themis-response :not\(pre\) > code[^{]*\{[^}]*color:\s*var\(--themis-text\)/s);
+});

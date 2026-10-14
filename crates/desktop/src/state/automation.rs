@@ -86,6 +86,7 @@ pub fn shell_policy_for(
         return CheckPolicy::Allow;
     }
     let action = ToolAction {
+        display: None,
         command: argv.to_vec(),
         tool: "shell".to_owned(),
         summary: format!("watch check `{}`", argv.join(" ")),
@@ -1710,5 +1711,73 @@ mod schedule_tests {
             "Nightly build"
         );
         assert_eq!(title_without_stamp("Custom"), "Custom");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod stale_snapshot_tests {
+    use super::*;
+    use crate::sink::ChannelSink;
+
+    /// A tick that selected an automation as due can lose the race to another
+    /// pass that already ran its check and advanced the schedule. Once the
+    /// loser takes the in-flight guard it must re-read the automation and
+    /// leave without running the check a second time.
+    #[tokio::test]
+    async fn a_stale_due_snapshot_does_not_rerun_the_check() {
+        let data = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(data.path().join("settings.json"));
+        let (sink, _rx) = ChannelSink::channel();
+        let sink: Arc<dyn EventSink> = Arc::new(sink);
+        // Failing to start the model run (no catalog for the effort) keeps the
+        // test offline; the check still runs once and the slot is recorded.
+        let created = state
+            .create_automation(AutomationInput {
+                name: "stale".into(),
+                project_root: project.path().to_string_lossy().into(),
+                target_thread_id: None,
+                provider: ProviderKind::Go,
+                model: "fixture".into(),
+                reasoning_effort: Some("high".into()),
+                skill_ids: vec![],
+                interval_mins: 2,
+                schedule: None,
+                task: "Report".into(),
+                enabled: true,
+                watch: WatchSettings {
+                    check_command: Some(vec![
+                        "sh".into(),
+                        "-c".into(),
+                        "echo x >> count.txt; echo changed".into(),
+                    ]),
+                    ..WatchSettings::default()
+                },
+            })
+            .await
+            .unwrap();
+        let due = state
+            .set_automation_next_run_for_test(&created.id, "2001-01-01T00:00:00Z".into())
+            .await
+            .unwrap();
+        let runs = || {
+            std::fs::read_to_string(project.path().join("count.txt"))
+                .map(|text| text.lines().count())
+                .unwrap_or(0)
+        };
+
+        // Both ticks selected the same due snapshot; the first one wins.
+        state.process_due_automation(&sink, due.clone()).await;
+        assert_eq!(runs(), 1);
+        let advanced = state.list_automations().await.remove(0);
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&advanced.next_run_at).unwrap() > Utc::now(),
+            "first pass advances the schedule"
+        );
+
+        // The second tick still holds the stale (due) snapshot.
+        state.process_due_automation(&sink, due).await;
+        assert_eq!(runs(), 1, "stale snapshot must not re-run the check");
+        assert_eq!(state.list_automations().await.remove(0).run_count, 1);
     }
 }

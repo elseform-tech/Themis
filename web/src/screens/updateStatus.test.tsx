@@ -22,6 +22,7 @@ vi.mock("../lib/tauri", () => ({
   mergeThread: vi.fn(),
   onApprovalRequest: vi.fn(),
   onReviewItemAdded: vi.fn(),
+  onThreadChanged: vi.fn(async () => () => {}),
   onThreadEvent: vi.fn(),
   openProject: vi.fn(),
   setSecret: vi.fn(),

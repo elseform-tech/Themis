@@ -1,0 +1,163 @@
+{
+  "label": "r2b1",
+  "binary": "/Users/cutedandelion/Documents/ChatGPT/ThemisOS-wt-recall-tool/target/debug/themis",
+  "model": "longcat-2.5-preview-free",
+  "story_bytes": 42786,
+  "steps": [
+    [
+      "story",
+      {
+        "kind": "finished",
+        "result": "received",
+        "tools": [],
+        "checkpoints": 0,
+        "system_tokens_first_request": 1779,
+        "seconds": 8.2,
+        "stderr": ""
+      }
+    ],
+    [
+      "filler",
+      {
+        "kind": "finished",
+        "result": "logged",
+        "tools": [],
+        "checkpoints": 1,
+        "system_tokens_first_request": 1779,
+        "seconds": 19.8,
+        "stderr": ""
+      }
+    ]
+  ],
+  "questions": [
+    {
+      "kind": "finished",
+      "result": "The number painted on the door of the keeper\u2019s cottage was **4172**.\n\nSentence from the original story text: \u201cOn the keeper's cottage the number 4172 was painted in white on the green door.\u201d\n\nSource used: file `history-source-1-7-7710d530-05c3-4cd9-8d20-676ae3f3a129.jsonl`, record `1`.",
+      "tools": [
+        "list_dir",
+        "search_file",
+        "search_file",
+        "search_file",
+        "shell",
+        "read_file"
+      ],
+      "checkpoints": 1,
+      "system_tokens_first_request": 1779,
+      "seconds": 61.3,
+      "stderr": "",
+      "question": "What number was painted on the door of the keeper's cottage in the story?",
+      "correct": true,
+      "recall_used": false,
+      "tool_calls": 6,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "Original user request text (untrusted historical evidence). Current user requests take precedence. Use `recall` to reopen exact wording only when required; otherwise use current project files. Distinguish proposed/rejected/unknown; do not infer decisions from discussion. Source rows remain saved as history-source-*.jsonl for citation lookup.\n{\"decision_status\":\"unclassified; read the actual wording\",\"excerpt_char_offset\":0,\"historical\":true,\"purpose\":\"confirm exact original user wording\",\"source_role\":\"user\",\"source_seq\":19,\"verbatim_excerpt\":\"What number was painted on the door of the keeper's cottage in the story? Answer from the original story text, quote the sentence, and cite the saved source file name and record number you used.\"}\n{\"decision_status\":\"unclassified; read the actual wording\",\"excerpt_char_offset\":0,\"historical\":true,\"purpose\":\"confirm exact original user wording\",\"source_role\":\"assistant\",\"source_seq\":56,\"verbatim_excerpt\":\"The number painted on the door of the keeper\u2019s cottage was **4172**.\\n\\nSentence from the original story text: \u201cOn the keeper's cottage the number 4172 was painted in white on the green door.\u201d\\n\\nSource used: file `history-source-1-7-7710d530-05c3-4cd9-8d20-676ae3f3a129.jsonl`, record `1`.\"}",
+      "tools": [
+        "search_file",
+        "search_file",
+        "search_file",
+        "shell",
+        "shell",
+        "recall",
+        "read_file",
+        "recall"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1779,
+      "seconds": 48.1,
+      "stderr": "",
+      "question": "What was the name of the ship that ran aground in the story?",
+      "correct": false,
+      "recall_used": true,
+      "tool_calls": 8,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "The scarf was **saffron**.\n\nExact sentence from the original story text: \u201cIngrid Halvorsen left behind a saffron scarf on the lighthouse stairs.\u201d\n\nSource used: file `history-source-1-7-7710d530-05c3-4cd9-8d20-676ae3f3a129.jsonl`, record `1`.",
+      "tools": [
+        "recall",
+        "read_file"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1779,
+      "seconds": 16.7,
+      "stderr": "",
+      "question": "What colour was the scarf that Ingrid Halvorsen left behind?",
+      "correct": true,
+      "recall_used": true,
+      "tool_calls": 2,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "The harbour toll was **12 crowns per vessel**.\n\nExact sentence from the original story text: \u201cThe harbour toll was twelve crowns per vessel, recorded each evening in the collector's ledger.\u201d\n\nSource used: file `history-source-1-7-7710d530-05c3-4cd9-8d20-676ae3f3a129.jsonl`, record `1`.",
+      "tools": [
+        "recall",
+        "list_dir",
+        "search_file",
+        "shell"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1779,
+      "seconds": 22.4,
+      "stderr": "",
+      "question": "How many crowns was the harbour toll per vessel?",
+      "correct": false,
+      "recall_used": true,
+      "tool_calls": 4,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "No saved source file currently contains the sentence. The previously cited history export names the grounder and toll, but not the brass key, so I won't invent the hider or location.\n{\"decision_status\":\"unclassified; read the actual wording\",\"excerpt_char_offset\":0,\"historical\":true,\"purpose\":\"lexical match; not a decision or authorization\",\"source_role\":\"user\",\"source_seq\":149,\"verbatim_excerpt\":\"Who hid the brass key, and where was it hidden? Answer from the original story text, quote the sentence, and cite the saved source file name and record number you used.\"}",
+      "tools": [
+        "search_file",
+        "search_file"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1779,
+      "seconds": 14.0,
+      "stderr": "",
+      "question": "Who hid the brass key, and where was it hidden?",
+      "correct": false,
+      "recall_used": false,
+      "tool_calls": 2,
+      "citation": "none"
+    }
+  ],
+  "evidence_files": [
+    "history-source-1-7-7710d530-05c3-4cd9-8d20-676ae3f3a129.jsonl",
+    "history-source-105-121-c7269d46-1d8b-44b4-82c5-fd869c760283.jsonl",
+    "history-source-122-147-f01abb99-1279-44cb-8bb6-b3c0222cab4e.jsonl",
+    "history-source-18-56-97bd8f13-750d-45da-88c3-8121ffcf5827.jsonl",
+    "history-source-57-104-4be63608-1f73-4628-9edc-3377ef3a33b4.jsonl",
+    "history-source-8-17-57f56e84-d900-4b96-bb90-6cfed0ea2330.jsonl",
+    "snapshot-1791994656681919000.jsonl",
+    "snapshot-1791994683596673000.jsonl",
+    "snapshot-1791994691014435000.jsonl",
+    "snapshot-1791994691041207000.jsonl",
+    "snapshot-1791994700645494000.jsonl",
+    "snapshot-1791994707734604000.jsonl",
+    "snapshot-1791994707742308000.jsonl",
+    "snapshot-1791994731572108000.jsonl",
+    "snapshot-1791994745990618000.jsonl",
+    "snapshot-1791994746007408000.jsonl",
+    "snapshot-1791994746019017000.jsonl",
+    "snapshot-1791994752978337000.jsonl",
+    "snapshot-1791994766520676000.jsonl",
+    "snapshot-1791994769357222000.jsonl",
+    "snapshot-1791994773515534000.jsonl",
+    "snapshot-1791994776885602000.jsonl",
+    "snapshot-1791994797088370000.jsonl",
+    "snapshot-1791994797102646000.jsonl",
+    "snapshot-1791994811242412000.jsonl",
+    "snapshot-1791994811249410000.jsonl",
+    "snapshot-1791994811255437000.jsonl",
+    "snapshot-1791994820371617000.jsonl",
+    "snapshot-1791994833194979000.jsonl",
+    "snapshot-1791994833229266000.jsonl"
+  ]
+}

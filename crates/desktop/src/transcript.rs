@@ -357,6 +357,29 @@ impl TranscriptStore {
             .map_err(|e| format!("commit conversation: {e}"))
     }
 
+    /// Distinct attachment paths this chat's user messages referenced, oldest first.
+    pub fn attachment_paths(&self, thread_id: &str) -> Result<Vec<String>, String> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let mut statement = connection
+            .prepare("SELECT item FROM history WHERE thread_id = ?1 AND item LIKE '%\"attachments\"%' ORDER BY seq")
+            .map_err(|e| format!("read attachments: {e}"))?;
+        let rows = statement
+            .query_map([thread_id], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("read attachments: {e}"))?;
+        let mut paths: Vec<String> = Vec::new();
+        for row in rows {
+            let text = row.map_err(|e| format!("read attachments: {e}"))?;
+            if let Ok(HistoryItem::User { attachments, .. }) = serde_json::from_str(&text) {
+                for path in attachments {
+                    if !paths.contains(&path) {
+                        paths.push(path);
+                    }
+                }
+            }
+        }
+        Ok(paths)
+    }
+
     pub fn history(&self, thread_id: &str) -> Result<Vec<HistoryItem>, String> {
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let mut statement = connection

@@ -7,8 +7,8 @@
 use tauri::{AppHandle, Emitter};
 
 use crate::types::{
-    ApprovalRequest, ReviewItem, ThreadEventEnvelope, APPROVAL_REQUEST_NAME, REVIEW_ITEM_NAME,
-    THREAD_EVENT_NAME,
+    ApprovalRequest, ReviewItem, ThreadChange, ThreadEventEnvelope, APPROVAL_REQUEST_NAME,
+    REVIEW_ITEM_NAME, THREAD_CHANGED_NAME, THREAD_EVENT_NAME,
 };
 
 /// Delivers thread, approval, and review events to whoever is listening.
@@ -19,6 +19,8 @@ pub trait EventSink: Send + Sync {
     fn emit_approval_request(&self, request: &ApprovalRequest);
     /// Emits a `review-item-added` payload.
     fn emit_review_item(&self, item: &ReviewItem);
+    /// Emits a `thread-changed` payload.
+    fn emit_thread_changed(&self, change: &ThreadChange);
 }
 
 /// [`EventSink`] backed by the running Tauri app.
@@ -47,6 +49,10 @@ impl EventSink for TauriSink {
 
     fn emit_review_item(&self, item: &ReviewItem) {
         let _ = self.app.emit(REVIEW_ITEM_NAME, item);
+    }
+
+    fn emit_thread_changed(&self, change: &ThreadChange) {
+        let _ = self.app.emit(THREAD_CHANGED_NAME, change);
     }
 }
 
@@ -90,6 +96,9 @@ impl EventSink for ChannelSink {
     fn emit_review_item(&self, item: &ReviewItem) {
         let _ = self.tx.send(TestEvent::Review(item.clone()));
     }
+
+    /// Thread metadata changes are covered through the server stream tests.
+    fn emit_thread_changed(&self, _change: &ThreadChange) {}
 }
 
 #[cfg(test)]
@@ -114,6 +123,8 @@ mod tests {
             tool: "shell".to_owned(),
             summary: "run".to_owned(),
             risk: RiskLevel::Execute,
+            grant_scope: None,
+            command: None,
         });
         sink.emit_review_item(&ReviewItem {
             id: "r".to_owned(),

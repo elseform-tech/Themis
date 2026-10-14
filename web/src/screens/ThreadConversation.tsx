@@ -266,7 +266,7 @@ function Message({ message, threadId, activeRunId, skills, plugins }: { message:
           {!!message.changedFiles?.length && <EditedFiles files={message.changedFiles} />}
           {(message.final || !message.runId) && <div className="themis-response-actions">
             <CopyButton text={message.text} />
-            <small className="themis-response-model">{message.model ?? "Model not recorded"}</small>
+            <small className="themis-response-model">{message.interrupted === "stopped" ? "Stopped by you" : message.interrupted === "failed" ? "Interrupted by an error" : message.model ?? "Model not recorded"}</small>
           </div>}
         </>
       ) : (

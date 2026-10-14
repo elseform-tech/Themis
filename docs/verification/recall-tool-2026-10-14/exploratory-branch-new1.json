@@ -1,0 +1,157 @@
+{
+  "label": "branch1",
+  "binary": "/Users/cutedandelion/Documents/ChatGPT/ThemisOS-wt-recall-tool/target/debug/themis",
+  "model": "longcat-2.5-preview-free",
+  "story_bytes": 29278,
+  "steps": [
+    [
+      "story",
+      {
+        "kind": "finished",
+        "result": "received",
+        "tools": [],
+        "checkpoints": 0,
+        "system_tokens_first_request": 1701,
+        "seconds": 10.3,
+        "stderr": ""
+      }
+    ],
+    [
+      "filler",
+      {
+        "kind": "finished",
+        "result": "logged",
+        "tools": [],
+        "checkpoints": 1,
+        "system_tokens_first_request": 1701,
+        "seconds": 12.0,
+        "stderr": ""
+      }
+    ]
+  ],
+  "questions": [
+    {
+      "kind": "finished",
+      "result": "The number painted on the door of the keeper's cottage was **4172**.\n\nThe sentence from the story reads:\n\n> \"On the keeper's cottage the number 4172 was painted in white on the green door.\"\n\n**Source:** File `history-source-1-7-ee76d9e8-8780-4343-9b0d-0657a077589f.jsonl`, record 1 (the User message containing the original story text). The same sentence also appears in `snapshot-1791991916596019000.jsonl`, record 1.",
+      "tools": [
+        "list_dir",
+        "list_dir",
+        "list_dir",
+        "list_dir",
+        "read_file",
+        "read_file",
+        "read_file",
+        "shell",
+        "shell",
+        "read_file",
+        "read_file",
+        "read_file",
+        "read_file"
+      ],
+      "checkpoints": 1,
+      "system_tokens_first_request": 1701,
+      "seconds": 95.1,
+      "stderr": "",
+      "question": "What number was painted on the door of the keeper's cottage in the story?",
+      "correct": true,
+      "recall_used": false,
+      "tool_calls": 13,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "The ship that ran aground was the **Marigold Tern**.\n\nThe sentence from the story reads:\n\n> \"The ship that ran aground that night was the Marigold Tern, out of Skarholm.\"\n\n**Source:** File `history-source-1-7-ee76d9e8-8780-4343-9b0d-0657a077589f.jsonl`, record 1 (the User message containing the original story text). The same sentence also appears in `snapshot-1791991916596019000.jsonl`, record 1.",
+      "tools": [
+        "read_file",
+        "read_file",
+        "read_file"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1701,
+      "seconds": 26.9,
+      "stderr": "",
+      "question": "What was the name of the ship that ran aground in the story?",
+      "correct": true,
+      "recall_used": false,
+      "tool_calls": 3,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "The scarf that Ingrid Halvorsen left behind was **saffron**.\n\nThe sentence from the story reads:\n\n> \"Ingrid Halvorsen left behind a saffron scarf on the lighthouse stairs.\"\n\n**Source:** File `history-source-1-7-ee76d9e8-8780-4343-9b0d-0657a077589f.jsonl`, record 1 (the User message containing the original story text). The same sentence also appears in `snapshot-1791991916596019000.jsonl`, record 1.",
+      "tools": [
+        "read_file"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1701,
+      "seconds": 16.7,
+      "stderr": "",
+      "question": "What colour was the scarf that Ingrid Halvorsen left behind?",
+      "correct": true,
+      "recall_used": false,
+      "tool_calls": 1,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "The harbour toll was **83 crowns per vessel**.\n\nThe sentence from the story reads:\n\n> \"The harbour toll that season was set at 83 crowns per vessel.\"\n\n**Source:** File `history-source-1-7-ee76d9e8-8780-4343-9b0d-0657a077589f.jsonl`, record 1 (the User message containing the original story text).",
+      "tools": [
+        "read_file"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1701,
+      "seconds": 9.7,
+      "stderr": "",
+      "question": "How many crowns was the harbour toll per vessel?",
+      "correct": true,
+      "recall_used": false,
+      "tool_calls": 1,
+      "citation": "valid"
+    },
+    {
+      "kind": "finished",
+      "result": "**Orsolya Vance** hid the brass key, and it was hidden **under the third step of the bell tower**.\n\nThe sentence from the story reads:\n\n> \"Orsolya Vance hid the brass key under the third step of the bell tower.\"\n\n**Source:** File `history-source-1-7-ee76d9e8-8780-4343-9b0d-0657a077589f.jsonl`, record 1 (the User message containing the original story text).",
+      "tools": [
+        "read_file"
+      ],
+      "checkpoints": 0,
+      "system_tokens_first_request": 1701,
+      "seconds": 16.1,
+      "stderr": "",
+      "question": "Who hid the brass key, and where was it hidden?",
+      "correct": true,
+      "recall_used": false,
+      "tool_calls": 1,
+      "citation": "valid"
+    }
+  ],
+  "evidence_files": [
+    "history-source-1-7-ee76d9e8-8780-4343-9b0d-0657a077589f.jsonl",
+    "history-source-103-115-e8320615-47f0-40fb-a3ab-8fe27b811c22.jsonl",
+    "history-source-116-128-e3165279-3bd8-402a-9734-a8d3c0e90a83.jsonl",
+    "history-source-18-81-a01d8cfe-c23b-4962-886f-c2eb9e23ef55.jsonl",
+    "history-source-8-17-dd3428f5-5960-4538-9812-807ad374b3b0.jsonl",
+    "history-source-82-102-b8b4bd26-0caa-463f-bc33-1f2a3ffdbf8c.jsonl",
+    "snapshot-1791991916596019000.jsonl",
+    "snapshot-1791991941127322000.jsonl",
+    "snapshot-1791991941142573000.jsonl",
+    "snapshot-1791991947201060000.jsonl",
+    "snapshot-1791991947216612000.jsonl",
+    "snapshot-1791991953479411000.jsonl",
+    "snapshot-1791991953486284000.jsonl",
+    "snapshot-1791991953490827000.jsonl",
+    "snapshot-1791991953500262000.jsonl",
+    "snapshot-1791991981930359000.jsonl",
+    "snapshot-1791991981938990000.jsonl",
+    "snapshot-1791991991390621000.jsonl",
+    "snapshot-1791991991412402000.jsonl",
+    "snapshot-1791991991429429000.jsonl",
+    "snapshot-1791992014620174000.jsonl",
+    "snapshot-1791992033143671000.jsonl",
+    "snapshot-1791992040544209000.jsonl",
+    "snapshot-1791992040551394000.jsonl",
+    "snapshot-1791992059416542000.jsonl",
+    "snapshot-1791992072976160000.jsonl",
+    "snapshot-1791992088895960000.jsonl"
+  ]
+}
