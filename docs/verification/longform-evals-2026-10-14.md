@@ -158,3 +158,56 @@ snapshots where the shard output was offloaded to a receipt).
   boundaries, and the summarizer and answerer are the same free model.
 - Not covered: thinking models, other providers, UI behavior (no desktop/browser verification was
   needed or done).
+
+## Recall comparison: main vs `codex/recall-tool` (benchmark audit, not an automated check)
+
+Same settings for both sides: `longcat-2.5-preview-free`, 24k budget, `--recent 20`, 8 tool calls per
+probe, same fixtures, final grader, 3 trials x 6 cases each, both sides run **in parallel**
+(4 jobs each, started together) under the final confinement (isolated HOME, stripped inputs,
+`sandbox-exec`; a one-probe live smoke confirmed TLS to the provider works inside the sandbox).
+Side A is the eval harness over current main tools (`target/release` build, no `recall`); side B is
+`--build-ref codex/recall-tool` (178af8e) with `--cfg eval_recall`, so the agent also has the read-only
+`recall` tool. Files: `evals/longform/results/2026-10-14-compare-main-longcat-2.5-preview-free-24000.json`
+and `...-compare-recall-...json`. This also replaces the earlier main baseline above (which predates
+the confinement) as the reference for main: **15.7% ± 4.2** headline overall.
+
+**One invalid run:** recall trial 3 `api-spec` (a compaction request failed with a provider response
+format error), so it is excluded; recall therefore has 17 valid runs against main's 18.
+
+| Mean ± SD over 3 trials | main | recall | difference |
+| --- | --- | --- | --- |
+| Original-only probes per trial (narrative / code) | 22.3 ± 0.6 / 15.7 ± 1.5 | 20.0 ± 2.6 / 13.7 ± 1.2 | |
+| **Correct with valid citation, narrative** | **13.3% ± 7.3** | **59.6% ± 28.5** | +46 points |
+| **Correct with valid citation, code** | **19.3% ± 1.9** | **26.5% ± 9.7** | +7 points |
+| **Correct with valid citation, all** | **15.7% ± 4.2** | **47.2% ± 14.9** | +31.5 points |
+| Correct, no citation requirement (narrative / code / all) | 20.8 / 40.3 / 28.8% | 68.8 / 43.8 / 59.3% | +48 / +3.5 / +30.5 |
+| Valid citation, of correct (all) | 55.3% ± 6.5 | 78.3% ± 14.6 | +23 points |
+| Answered UNKNOWN (all) | 14.2% ± 7.9 | 7.9% ± 6.4 | |
+| Hedged (all) | 16.6% ± 3.5 | 7.8% ± 2.9 | |
+| Decoy hallucination | 23.0% ± 5.6 | 19.4% ± 21.0 | within noise |
+| Exact-quote accuracy | 22.2% ± 38.5 | 60.0% ± 37.6 | large SD, 2 to 3 probes/trial |
+| Excluded as in-context per trial (checkpoint / tail) | 27.7 (10.7 / 17.0) | 28.3 (13.7 / 14.7) | |
+| Accuracy on in-context probes | 63.4% ± 15.4 | 79.7% ± 2.0 | |
+| Tool calls per probe, attempted / executed | 9.1 ± 1.7 / 5.6 ± 0.6 | 5.7 ± 0.9 / 4.3 ± 0.4 | |
+| Probes with a refused call | 73.6% ± 13.2 | 44.6% ± 10.2 | |
+| Provider requests per probe | 8.2 ± 1.0 | 5.9 ± 0.8 | |
+| Input / output tokens per probe | 111,645 ± 13,341 / 2,343 ± 398 | 77,863 ± 9,733 / 1,436 ± 164 | about 30% fewer |
+| Latency per probe | 68.9 s ± 13.8 | 46.8 s ± 14.4 | |
+| Probe infrastructure errors per trial (excluded) | 0.7 ± 1.2 | 0.0 | |
+
+**recall usage (recall side):** `recall` was called in 60.5% ± 5.1 of probes. Among original-only
+probes, accuracy was 62% (headline 52%) when recall was used (79 probes pooled over trials) and 50%
+(headline 32%) when it was not (22 probes); small groups, and use is not randomized. On main the
+`recall` tool did not exist (0%).
+
+**refused_paths:** main 2 of 234 probe answers recorded a refused out-of-project argument (`/usr/bin/grep`
+and `/dev/null`, both harmless); recall 0 of 220. No attempt to read the answer key, home directory or
+other sensitive paths was recorded on either side.
+
+**Noise threshold.** With 3 trials the SDs are 2 to 29 points, so only differences of roughly 20
+points or more are meaningful. The overall (+31.5) and narrative (+46) headline differences exceed
+that threshold; the code difference (+7) does not. Two caveats: the narrative recall SD is 28.5
+points (one trial scored far higher than another), and the original-only probe sets differ between
+sides (each side's own summary decides what is in context), though the excluded counts are close.
+Neither side meets the 80% target (recall 47.2% overall, 59.6% narrative, 26.5% code).
+

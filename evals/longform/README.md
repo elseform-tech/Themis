@@ -101,3 +101,10 @@ To add a case: write a builder with `Case(...)` in `gen_narrative.py`/`gen_code.
 tokens via `case.unique`, register it in `gen_cases.py`, regenerate and commit. Keep every answer a
 unique string (the generator fails when the evidence appears in other records), at least three
 chunk boundaries, and decoys whose keywords never appear.
+
+## Recorded results
+
+- `results/2026-10-14-longcat-2.5-preview-free-24000.json`: first main baseline (predates the confinement; regraded).
+- `results/2026-10-14-compare-main-...json` and `...-compare-recall-...json`: main vs `codex/recall-tool`
+  under the final confinement, run in parallel (see `docs/verification/longform-evals-2026-10-14.md`).
+  Reproduce with `--runner` pointing at a runner built from each tree, or `--build-ref codex/recall-tool`.
