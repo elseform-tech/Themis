@@ -333,3 +333,484 @@ pub async fn behavior_turn(
         error,
     })
 }
+
+/// Result of answering one probe with a real agent turn that has tools.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentAnswer {
+    /// Final assistant text (empty when the run produced none).
+    pub answer: String,
+    /// Names of every tool call the agent issued, in order (including `update_plan`).
+    pub tools: Vec<String>,
+    /// Tool calls the allow-read policy refused (including calls past the cap).
+    pub denied: usize,
+    /// Shell arguments the policy refused because they leave the scratch project (bounded,
+    /// truncated), so a harness can flag attempts to read outside it.
+    pub refused_paths: Vec<String>,
+    /// Tool names the build offered, so a harness can tell whether `recall` existed.
+    pub tools_available: Vec<String>,
+    /// Provider requests issued by this turn (answer requests plus any compaction).
+    pub requests: u64,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub latency_ms: u128,
+    /// Whether the run ended with a plain-text answer (not failed, stopped or incomplete).
+    pub finished: bool,
+    pub error: Option<String>,
+}
+
+/// Allow-read approval policy for agent-mode probes: read tools run, a short list of
+/// non-writing shell programs run, everything else is refused, and at most `max_calls`
+/// actions run in total. The caller must pass a fresh scratch project outside the repository;
+/// this is a guard for that scratch directory, not a sandbox.
+struct ReadPolicy {
+    /// Canonical scratch project root; every path-like shell argument must stay inside it.
+    project: std::path::PathBuf,
+    refused_paths: std::sync::Mutex<Vec<String>>,
+    used: std::sync::atomic::AtomicUsize,
+    denied: std::sync::atomic::AtomicUsize,
+    max_calls: usize,
+}
+
+/// Programs that cannot write files or run other programs from their arguments. Interpreters
+/// (`python3`, `awk`), `sed`, `find`, `sort -o` and `uniq OUT` are deliberately absent.
+const READ_ONLY_PROGRAMS: &[&str] = &[
+    "grep", "rg", "cat", "head", "tail", "wc", "ls", "jq", "nl", "cut", "tr",
+];
+
+fn read_only_program(command: &[String]) -> bool {
+    let Some(program) = command.first() else {
+        return false;
+    };
+    let program = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    READ_ONLY_PROGRAMS.contains(&program)
+        && !command
+            .iter()
+            .skip(1)
+            .any(|arg| arg.starts_with("--pre") || arg.starts_with("--hostname-bin"))
+}
+
+/// The part of a flag that could be a path: `--file=/x` -> `/x`, `-f/x` -> `/x`, `-rn` -> ``.
+fn flag_value(flag: &str) -> &str {
+    match flag.split_once('=') {
+        Some((_, value)) => value,
+        None => flag
+            .trim_start_matches('-')
+            .trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '-'),
+    }
+}
+
+/// Resolves `candidate` against the project root and refuses anything outside it: `~`, `..`
+/// components, absolute paths elsewhere, and existing paths whose canonical form (symlinks
+/// followed) leaves the project.
+fn confined(project: &std::path::Path, candidate: &str) -> bool {
+    use std::path::Component;
+    if candidate.starts_with('~') {
+        return false;
+    }
+    let path = std::path::Path::new(candidate);
+    if path
+        .components()
+        .any(|part| matches!(part, Component::ParentDir))
+    {
+        return false;
+    }
+    let full = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        project.join(path)
+    };
+    // Canonicalize the longest existing ancestor so a symlinked directory cannot hide an escape.
+    let mut existing = full.as_path();
+    while !existing.exists() {
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => return false,
+        }
+    }
+    existing
+        .canonicalize()
+        .is_ok_and(|real| real.starts_with(project))
+}
+
+/// First argument of a read-only shell command that is not confined to the project, if any.
+fn escaping_argument<'a>(project: &std::path::Path, command: &'a [String]) -> Option<&'a str> {
+    command.iter().skip(1).find_map(|arg| {
+        let candidate = if arg.starts_with('-') {
+            let value = flag_value(arg);
+            let pathlike = value.contains('/') || value.starts_with('~') || value.starts_with("..");
+            if !pathlike {
+                return None;
+            }
+            value
+        } else {
+            arg.as_str()
+        };
+        (!confined(project, candidate)).then_some(arg.as_str())
+    })
+}
+
+impl crate::tools::ApprovalHook for ReadPolicy {
+    fn approve(&self, action: &crate::tools::ToolAction) -> crate::tools::Approval {
+        use crate::tools::{Approval, RiskLevel};
+        let permitted = match action.risk {
+            RiskLevel::Read => true,
+            RiskLevel::Execute => {
+                action.tool == "shell"
+                    && read_only_program(&action.command)
+                    && match escaping_argument(&self.project, &action.command) {
+                        None => true,
+                        Some(argument) => {
+                            if let Ok(mut refused) = self.refused_paths.lock() {
+                                if refused.len() < 8 {
+                                    refused.push(argument.chars().take(120).collect());
+                                }
+                            }
+                            false
+                        }
+                    }
+            }
+            // `git` is deliberately refused: `--output=` writes anywhere and `--no-index` reads anywhere.
+            _ => false,
+        };
+        let permitted = permitted && action.tool != "git";
+        let within_cap = permitted && self.used.fetch_add(1, Ordering::SeqCst) < self.max_calls;
+        if within_cap {
+            Approval::AllowOnce
+        } else {
+            self.denied.fetch_add(1, Ordering::SeqCst);
+            Approval::Deny
+        }
+    }
+}
+
+/// Answers `question` with a real agent turn (default toolset under an allow-read policy)
+/// that starts from the post-compaction `messages`. `project` is the tools' root and
+/// `evidence` must be a directory inside it (the app's `.themis/context/<thread>` layout).
+/// At most `max_calls` tool actions may run; the turn is also bounded in model turns.
+#[allow(clippy::too_many_arguments, unexpected_cfgs)]
+pub async fn answer_probe_agent(
+    llm: &Arc<dyn LLMProvider>,
+    messages: &[ChatMessage],
+    question: &str,
+    project: &std::path::Path,
+    evidence: &std::path::Path,
+    policy: EvalPolicy,
+    max_calls: usize,
+) -> anyhow::Result<AgentAnswer> {
+    // Mirror the durable checkpoint the app stores: summary, then every other non-system
+    // message in order (the active request may precede the checkpoint message).
+    let checkpoint = messages
+        .iter()
+        .position(|message| message.content.starts_with("Earlier context checkpoint"))
+        .ok_or_else(|| anyhow!("post-compaction context has no checkpoint to continue from"))?;
+    let (_, summary) = messages[checkpoint]
+        .content
+        .split_once(":\n")
+        .ok_or_else(|| anyhow!("malformed checkpoint message"))?;
+    let mut saved = format!("{summary}\nRecent completed context:\n");
+    for (index, message) in messages.iter().enumerate().skip(1) {
+        if index != checkpoint {
+            saved.push_str(&serde_json::to_string(message)?);
+            saved.push('\n');
+        }
+    }
+    let history = vec![ConversationTurn {
+        role: ConversationRole::Checkpoint,
+        text: saved,
+    }];
+    let hook = Arc::new(ReadPolicy {
+        project: project.canonicalize()?,
+        refused_paths: Default::default(),
+        used: Default::default(),
+        denied: Default::default(),
+        max_calls,
+    });
+    #[allow(unused_mut)]
+    let mut tools = crate::tools::boxed_tools_for_chat(project, hook.clone(), false, None, None)?;
+    // Builds that register the `recall` tool for chats (cfg set by the Python harness when
+    // `tools/recall.rs` exists in the tree) give the eval agent the same read-only tool, scoped
+    // to the same evidence directory as the file tools.
+    #[cfg(eval_recall)]
+    tools.push(Box::new(crate::tools::recall::RecallTool::new(
+        crate::tools::recall::RecallScope {
+            evidence_dir: evidence.to_owned(),
+            attachments: Vec::new(),
+            attachment_root: None,
+            project_root: project.canonicalize().ok(),
+        },
+    )));
+    let tools_available = tools.iter().map(|tool| tool.name().to_owned()).collect();
+    let (events, mut sink) = tokio::sync::mpsc::channel(1024);
+    let collector = tokio::spawn(async move {
+        let (mut tools, mut finished, mut error, mut metrics) =
+            (Vec::new(), None, None, serde_json::Value::Null);
+        while let Some(event) = sink.recv().await {
+            match event {
+                RunEvent::ToolCallStarted { tool, .. } => tools.push(tool),
+                RunEvent::ContextUsage { metrics: latest } => metrics = latest,
+                RunEvent::Finished { result } => finished = Some(result),
+                RunEvent::Incomplete { result } => error = Some(format!("incomplete: {result}")),
+                RunEvent::Failed { error: failure } => error = Some(failure),
+                _ => {}
+            }
+        }
+        (tools, finished, error, metrics)
+    });
+    let task = format!("Memory check. Earlier material in this conversation was compacted; the saved originals are under {} (project-relative). Answer the question below. The checkpoint is only a lossy summary: when it does not state the exact detail, search and read the saved originals with your tools (at most {max_calls} tool calls) instead of guessing. Reply with the answer in one short sentence, or exactly UNKNOWN if the original material never says. For a quote question copy the wording exactly. After the answer add one line per supporting source in the form `Citation: <file path> record <number>` using the snapshot file and its record (line) number where you read the fact. Do not cite a checkpoint.\n\nQuestion: {question}",
+        evidence
+            .strip_prefix(project)
+            .unwrap_or(evidence)
+            .display()
+    );
+    let started = std::time::Instant::now();
+    let result = run_task_with_evidence(
+        llm.clone(),
+        tools,
+        task,
+        history,
+        hook.clone(),
+        RunPolicy {
+            total_turns: max_calls + 4,
+            context_token_budget: policy.context_token_budget,
+            recent_messages: policy.recent_messages,
+        },
+        events,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence.to_owned()),
+    )
+    .await;
+    let latency_ms = started.elapsed().as_millis();
+    let (tools, finished, event_error, metrics) = collector.await?;
+    let (answer, error) = match (result, finished) {
+        (Ok(text), _) => (text, None),
+        (Err(error), Some(text)) => (text, Some(error.to_string())),
+        (Err(error), None) => (
+            String::new(),
+            Some(event_error.unwrap_or_else(|| error.to_string())),
+        ),
+    };
+    Ok(AgentAnswer {
+        finished: error.is_none() && !answer.trim().is_empty(),
+        answer: answer.trim().to_owned(),
+        tools,
+        denied: hook.denied.load(Ordering::SeqCst),
+        refused_paths: hook
+            .refused_paths
+            .lock()
+            .map(|paths| paths.clone())
+            .unwrap_or_default(),
+        tools_available,
+        requests: metrics["total_requests"].as_u64().unwrap_or(0),
+        input_tokens: metrics["provider_input_tokens"].as_u64(),
+        output_tokens: metrics["provider_output_tokens"].as_u64(),
+        latency_ms,
+        error,
+    })
+}
+
+#[cfg(test)]
+mod agent_policy_tests {
+    use super::*;
+    use crate::tools::{Approval, ApprovalHook, RiskLevel, ToolAction};
+
+    fn action(tool: &str, risk: RiskLevel, command: &[&str]) -> ToolAction {
+        ToolAction {
+            display: None,
+            tool: tool.into(),
+            summary: String::new(),
+            risk,
+            command: command.iter().map(|part| (*part).to_owned()).collect(),
+        }
+    }
+
+    fn policy(project: &std::path::Path, max_calls: usize) -> ReadPolicy {
+        ReadPolicy {
+            project: project.canonicalize().unwrap(),
+            refused_paths: Default::default(),
+            used: Default::default(),
+            denied: Default::default(),
+            max_calls,
+        }
+    }
+
+    #[test]
+    fn only_non_writing_programs_run_and_calls_are_capped() {
+        let scratch = tempfile::tempdir().unwrap();
+        let hook = policy(scratch.path(), 2);
+        let shell = |command: &[&str]| hook.approve(&action("shell", RiskLevel::Execute, command));
+        for refused in [
+            &["python3", "-c", "open('x','w')"][..],
+            &["awk", "BEGIN{system(\"id\")}"],
+            &["sed", "-i", "s/a/b/", "f"],
+            &["find", ".", "-delete"],
+            &["rg", "--pre", "sh", "x"],
+            &["rm", "-rf", "."],
+            &[],
+        ] {
+            assert_eq!(shell(refused), Approval::Deny, "{refused:?}");
+        }
+        assert_eq!(shell(&["grep", "-rn", "x", "."]), Approval::AllowOnce);
+        assert_eq!(
+            hook.approve(&action("read_file", RiskLevel::Read, &[])),
+            Approval::AllowOnce
+        );
+        // The third permitted action exceeds the cap of two.
+        assert_eq!(shell(&["cat", "f"]), Approval::Deny);
+        assert_eq!(
+            hook.approve(&action("write_file", RiskLevel::Write, &[])),
+            Approval::Deny
+        );
+        assert_eq!(hook.denied.load(Ordering::SeqCst), 9);
+    }
+
+    #[test]
+    fn git_is_refused_even_for_read_subcommands() {
+        let scratch = tempfile::tempdir().unwrap();
+        let hook = policy(scratch.path(), 8);
+        for args in [
+            &["log", "--output=/tmp/x"][..],
+            &["show", "--output=x"],
+            &["diff", "--no-index", "/etc/passwd", "x"],
+            &["status"],
+        ] {
+            let mut tool_action = action("git", RiskLevel::Read, &[]);
+            tool_action.summary = format!("run git {}", args.join(" "));
+            assert_eq!(hook.approve(&tool_action), Approval::Deny, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn shell_arguments_cannot_leave_the_scratch_project() {
+        let scratch = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "answer key").unwrap();
+        std::fs::create_dir_all(scratch.path().join(".themis/context/t")).unwrap();
+        std::fs::write(scratch.path().join(".themis/context/t/s.jsonl"), "{}").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), scratch.path().join("link")).unwrap();
+        let hook = policy(scratch.path(), 100);
+        let shell = |command: &[&str]| hook.approve(&action("shell", RiskLevel::Execute, command));
+        let secret = outside.path().join("secret.txt");
+        let secret = secret.to_str().unwrap();
+        for refused in [
+            &["cat", secret][..],
+            &["grep", "-r", "key", outside.path().to_str().unwrap()],
+            &["rg", "--files", "/"],
+            &["cat", "../secret.txt"],
+            &["cat", ".themis/../../x"],
+            &["cat", "~/.zsh_history"],
+            &["grep", "-f", secret, "x"],
+            &["grep", "--file=/etc/passwd", "x"],
+            &["grep", "-f/etc/passwd", "x"],
+            &["head", "--lines=3", "/etc/hosts"],
+            #[cfg(unix)]
+            &["cat", "link/secret.txt"],
+            #[cfg(unix)]
+            &["grep", "-r", "key", "link"],
+        ] {
+            assert_eq!(shell(refused), Approval::Deny, "{refused:?}");
+        }
+        assert!(!hook.refused_paths.lock().unwrap().is_empty());
+        for allowed in [
+            &["grep", "-rn", "merge", ".themis/context/t"][..],
+            &["cat", ".themis/context/t/s.jsonl"],
+            &["rg", "-n", "--max-count=3", "needle", "."],
+            &[
+                "wc",
+                "-l",
+                scratch
+                    .path()
+                    .join(".themis/context/t/s.jsonl")
+                    .to_str()
+                    .unwrap(),
+            ],
+            &["grep", "-c", "-A", "3", "pattern/with/slash", ".themis"],
+        ] {
+            assert_eq!(shell(allowed), Approval::AllowOnce, "{allowed:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod file_tool_confinement_tests {
+    use crate::tools::{boxed_tools_for_chat, AllowAllHook};
+    use autoagents::core::tool::ToolT;
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+
+    async fn call(tools: &[Box<dyn ToolT>], name: &str, args: Value) -> String {
+        let tool = tools.iter().find(|tool| tool.name() == name).unwrap();
+        match tool.execute(args).await {
+            Ok(value) => value.to_string(),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    /// The eval agent's file tools (the same ones the app uses) must not reveal anything
+    /// outside the scratch project, whether by absolute path, `..` or a symlink.
+    #[tokio::test]
+    async fn read_list_and_search_cannot_leave_the_project() {
+        let scratch = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "ANSWER-KEY-7731").unwrap();
+        let project = scratch.path().join("project");
+        std::fs::create_dir_all(project.join(".themis/context/t")).unwrap();
+        std::fs::write(project.join(".themis/context/t/s.jsonl"), "inside-fact").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), project.join("link")).unwrap();
+        let tools =
+            boxed_tools_for_chat(&project, Arc::new(AllowAllHook), false, None, None).unwrap();
+        let secret = outside
+            .path()
+            .join("secret.txt")
+            .to_string_lossy()
+            .into_owned();
+        let secret_dir = outside.path().to_string_lossy().into_owned();
+        let mut attempts = vec![
+            ("read_file", json!({"file_path": secret})),
+            ("read_file", json!({"file_path": "../../secret.txt"})),
+            (
+                "read_file",
+                json!({"file_path": format!("../{}/secret.txt", outside.path().file_name().unwrap().to_string_lossy())}),
+            ),
+            ("list_dir", json!({"directory_path": secret_dir})),
+            ("list_dir", json!({"directory_path": ".."})),
+            (
+                "search_file",
+                json!({"directory": secret_dir, "pattern": "ANSWER"}),
+            ),
+            (
+                "search_file",
+                json!({"directory": "..", "pattern": "ANSWER"}),
+            ),
+        ];
+        #[cfg(unix)]
+        attempts.extend([
+            ("read_file", json!({"file_path": "link/secret.txt"})),
+            ("list_dir", json!({"directory_path": "link"})),
+            (
+                "search_file",
+                json!({"directory": "link", "pattern": "ANSWER"}),
+            ),
+            (
+                "search_file",
+                json!({"directory": ".", "pattern": "ANSWER"}),
+            ),
+        ]);
+        for (name, args) in attempts {
+            let output = call(&tools, name, args.clone()).await;
+            assert!(
+                !output.contains("ANSWER-KEY-7731") && !output.contains("secret.txt\""),
+                "{name} {args} leaked: {output}"
+            );
+        }
+        let inside = call(
+            &tools,
+            "read_file",
+            json!({"file_path": ".themis/context/t/s.jsonl"}),
+        )
+        .await;
+        assert!(inside.contains("inside-fact"), "{inside}");
+    }
+}

@@ -1,0 +1,169 @@
+[
+  {
+    "id": "longform-refactor-01",
+    "category": "detail",
+    "question": "At which file and line was the tier-skipping bug introduced during the refactor? Answer as path:line.",
+    "fact_records": [
+      25
+    ],
+    "expected": {
+      "regex": "(?<![\\w-])rounding\\.py\\W{1,12}(?:line\\W{0,3})?187(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "first changed line 187\\n--- a/src/pricing/rounding\\.py",
+    "answer_text": "src/pricing/rounding.py:187"
+  },
+  {
+    "id": "longform-refactor-02",
+    "category": "detail",
+    "question": "What was the exact buggy loop header that was introduced in session 2?",
+    "fact_records": [
+      25
+    ],
+    "expected": {
+      "regex": "range\\(\\s*1\\s*,\\s*len\\(tiers\\)\\s*\\)"
+    },
+    "evidence": "\\+\\ \\ \\ \\ for\\ step\\ in\\ range\\(1,\\ len\\(tiers\\)\\):",
+    "answer_text": "for step in range(1, len(tiers)):"
+  },
+  {
+    "id": "longform-refactor-03",
+    "category": "detail",
+    "question": "At which line of rounding.py (after the later import additions) was the bug finally fixed?",
+    "fact_records": [
+      61
+    ],
+    "expected": {
+      "regex": "(?<![\\w-])rounding\\.py\\W{1,12}(?:line\\W{0,3})?190(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "first changed line 190\\n--- a/src/pricing/rounding\\.py",
+    "answer_text": "src/pricing/rounding.py:190"
+  },
+  {
+    "id": "longform-refactor-04",
+    "category": "detail",
+    "question": "Which test caught the tier bug, and what was its full pytest id?",
+    "fact_records": [
+      49
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])tests/test_tiers\\.py::test_first_tier_rounding_12(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])tests/test_tiers\\.py::test_first_tier_rounding_12(?![\\w-]|\\.\\d)",
+    "answer_text": "tests/test_tiers.py::test_first_tier_rounding_12"
+  },
+  {
+    "id": "longform-refactor-05",
+    "category": "detail",
+    "question": "In the failing tier test, what total did the assertion expect?",
+    "fact_records": [
+      49
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])5434(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "assert 9667 == 5434",
+    "answer_text": "5434"
+  },
+  {
+    "id": "longform-refactor-06",
+    "category": "detail",
+    "question": "In the failing tier test, what total did the code actually produce?",
+    "fact_records": [
+      49
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])9667(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "assert 9667 == 5434",
+    "answer_text": "9667"
+  },
+  {
+    "id": "longform-refactor-07",
+    "category": "detail",
+    "question": "What did `compute_total` get renamed to in src/billing/invoice.py?",
+    "fact_records": [
+      9
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])price_cart_gross_95(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])price_cart_gross_95(?![\\w-]|\\.\\d)",
+    "answer_text": "price_cart_gross_95"
+  },
+  {
+    "id": "longform-refactor-08",
+    "category": "detail",
+    "question": "What did `compute_total` get renamed to in src/orders/store.py?",
+    "fact_records": [
+      13
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])price_order_gross_81(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])price_order_gross_81(?![\\w-]|\\.\\d)",
+    "answer_text": "price_order_gross_81"
+  },
+  {
+    "id": "longform-refactor-09",
+    "category": "detail",
+    "question": "How many tests passed in the final full pytest run of the last session?",
+    "fact_records": [
+      63
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])349(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?m)^349 passed",
+    "answer_text": "349"
+  },
+  {
+    "id": "longform-refactor-10",
+    "category": "quote",
+    "question": "What was the exact commit message of the session 1 refactor commit? Quote it verbatim.",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])refactor:\\s+marble\\s+polished\\s+etched\\s+spyglass\\s+nutmeg\\-grater\\s+ledger(?![\\w-]|\\.\\d)"
+    },
+    "exact": "refactor: marble polished etched spyglass nutmeg-grater ledger",
+    "evidence": "(?<![\\w.-])refactor:\\s+marble\\s+polished\\s+etched\\s+spyglass\\s+nutmeg\\-grater\\s+ledger(?![\\w-]|\\.\\d)",
+    "answer_text": "refactor: marble polished etched spyglass nutmeg-grater ledger"
+  },
+  {
+    "id": "longform-refactor-11",
+    "category": "quote",
+    "question": "What was the exact assertion message in the failing tier test? Quote it verbatim.",
+    "fact_records": [
+      49
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])wherry\\s+rattle\\s+inkwell\\s+satchel\\s+polished(?![\\w-]|\\.\\d)"
+    },
+    "exact": "wherry rattle inkwell satchel polished",
+    "evidence": "(?<![\\w.-])wherry\\s+rattle\\s+inkwell\\s+satchel\\s+polished(?![\\w-]|\\.\\d)",
+    "answer_text": "wherry rattle inkwell satchel polished"
+  },
+  {
+    "id": "longform-refactor-12",
+    "category": "decoy",
+    "question": "Which database migration was applied during the refactor?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "\\bmigration\\b",
+      "\\balembic\\b"
+    ]
+  },
+  {
+    "id": "longform-refactor-13",
+    "category": "decoy",
+    "question": "What was the CI pipeline run id of the final green build?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "\\bpipeline\\b",
+      "\\bCI run\\b"
+    ]
+  }
+]

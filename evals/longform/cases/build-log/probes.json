@@ -1,0 +1,157 @@
+[
+  {
+    "id": "longform-build-log-01",
+    "category": "detail",
+    "question": "Which test failed in the workspace test run?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])index::merge::tests::probe_l3_retry(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])index::merge::tests::probe_l3_retry(?![\\w-]|\\.\\d)",
+    "answer_text": "index::merge::tests::probe_l3_retry"
+  },
+  {
+    "id": "longform-build-log-02",
+    "category": "detail",
+    "question": "At which file, line and column did the failing test panic? Answer as path:line:col.",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w-])merge_merge\\.rs\\W{1,12}(?:line\\W{0,3})?483(?![\\w-]|\\.\\d)\\W{0,3}10?"
+    },
+    "evidence": "panicked at crates/index/src/merge_merge\\.rs:483:10",
+    "answer_text": "crates/index/src/merge_merge.rs:483:10"
+  },
+  {
+    "id": "longform-build-log-03",
+    "category": "detail",
+    "question": "In the failing assertion, what was the `left` value?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])5438(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "left: 5438\\n right: 8752",
+    "answer_text": "5438"
+  },
+  {
+    "id": "longform-build-log-04",
+    "category": "detail",
+    "question": "In the failing assertion, what was the `right` value?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])8752(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "left: 5438\\n right: 8752",
+    "answer_text": "8752"
+  },
+  {
+    "id": "longform-build-log-05",
+    "category": "detail",
+    "question": "Which crate's shard contained the failing test?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w-])index(?![\\w-])"
+    },
+    "evidence": "\\$ cargo test -p index --no-fail-fast(?s:.*)index::merge::tests::probe_l3_retry stdout",
+    "answer_text": "index"
+  },
+  {
+    "id": "longform-build-log-06",
+    "category": "detail",
+    "question": "How many tests were ignored in the shard that had the failure?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])21(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "failed; 21 ignored",
+    "answer_text": "21"
+  },
+  {
+    "id": "longform-build-log-07",
+    "category": "detail",
+    "question": "Which test failed once but passed on retry?",
+    "fact_records": [
+      6
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])net::scan::tests::merge_l1_overlap(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])net::scan::tests::merge_l1_overlap(?![\\w-]|\\.\\d)",
+    "answer_text": "net::scan::tests::merge_l1_overlap"
+  },
+  {
+    "id": "longform-build-log-08",
+    "category": "detail",
+    "question": "How many warnings did the lib test of the shard-3 crate generate?",
+    "fact_records": [
+      9
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])31(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "generated 31 warnings",
+    "answer_text": "31"
+  },
+  {
+    "id": "longform-build-log-09",
+    "category": "detail",
+    "question": "Which rustc version string was printed at the start of the first shard?",
+    "fact_records": [
+      3
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])rustc\\s+1\\.94\\.0\\s+\\(2b63370a\\s+2026\\-07\\-24\\)(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])rustc\\s+1\\.94\\.0\\s+\\(2b63370a\\s+2026\\-07\\-24\\)(?![\\w-]|\\.\\d)",
+    "answer_text": "rustc 1.94.0 (2b63370a 2026-07-24)"
+  },
+  {
+    "id": "longform-build-log-10",
+    "category": "quote",
+    "question": "What is the exact message text of the failing assertion (after 'left == right failed:')? Quote it verbatim.",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])skerry\\s+petrel\\s+slate\\s+yoke\\s+plover(?![\\w-]|\\.\\d)"
+    },
+    "exact": "skerry petrel slate yoke plover",
+    "evidence": "(?<![\\w.-])skerry\\s+petrel\\s+slate\\s+yoke\\s+plover(?![\\w-]|\\.\\d)",
+    "answer_text": "skerry petrel slate yoke plover"
+  },
+  {
+    "id": "longform-build-log-11",
+    "category": "decoy",
+    "question": "What was the segfault address reported in the test log?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "segfault",
+      "SIGSEGV"
+    ]
+  },
+  {
+    "id": "longform-build-log-12",
+    "category": "decoy",
+    "question": "Which CI runner image executed these shards?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "runner image",
+      "ubuntu-",
+      "macos-",
+      "windows-"
+    ]
+  }
+]

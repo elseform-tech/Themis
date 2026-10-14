@@ -1,0 +1,32 @@
+{
+  "name": "longform-refactor",
+  "kind": "code",
+  "description": "Five-session refactor history (tool calls over ~20 files) with a bug introduced at one file:line and fixed at another.",
+  "suites": [
+    "longform"
+  ],
+  "records": 66,
+  "tokens": [
+    "290",
+    "349",
+    "444",
+    "5434",
+    "9667",
+    "abacus lacquered candelabrum shearwater godwit casket",
+    "marble polished etched spyglass nutmeg-grater ledger",
+    "price_cart_gross_86",
+    "price_cart_gross_95",
+    "price_order_gross_81",
+    "tests/test_tiers.py::test_first_tier_rounding_12",
+    "wherry rattle inkwell satchel polished"
+  ],
+  "chunks": [
+    18,
+    28,
+    46,
+    56,
+    66
+  ],
+  "material_bytes": 68048,
+  "next_action": ""
+}

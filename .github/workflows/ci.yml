@@ -56,6 +56,10 @@ jobs:
           python-version: "3.13"
       - name: Compaction eval harness (offline end-to-end)
         run: python -m unittest evals.compaction.test_harness
+      - name: Long-form recall eval (offline - generator, grader, citations, scripted agent run)
+        run: |
+          cargo test -p themis-core --features eval --lib agent_policy
+          python -m unittest evals.longform.test_harness
 
   rust-coverage:
     runs-on: ubuntu-latest

@@ -1,0 +1,191 @@
+[
+  {
+    "id": "longform-api-spec-01",
+    "category": "detail",
+    "question": "In the Harbour API spec, what is the maximum length (in characters) of the `vessel_label_id` field of GET /v3/ledgers/{id} (get)?",
+    "fact_records": [
+      1
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])96(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "`vessel_label_id` \\(string, max 96 chars\\)",
+    "answer_text": "96"
+  },
+  {
+    "id": "longform-api-spec-02",
+    "category": "detail",
+    "question": "In the Harbour API spec, what is the maximum length (in characters) of the `bin_memo_ref` field of GET /v3/routes/{id} (get)?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])1745(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "`bin_memo_ref` \\(string, max 1745 chars\\)",
+    "answer_text": "1745"
+  },
+  {
+    "id": "longform-api-spec-03",
+    "category": "detail",
+    "question": "In the Harbour API spec, what is the maximum length (in characters) of the `carrier_cursor_key` field of GET /v3/routes (list)?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])3776(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "`carrier_cursor_key` \\(string, max 3776 chars\\)",
+    "answer_text": "3776"
+  },
+  {
+    "id": "longform-api-spec-04",
+    "category": "detail",
+    "question": "What error code does POST /v3/ledgers (create) return on HTTP 404?",
+    "fact_records": [
+      1
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])ERR_LEDGERS_CREATE_2976(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])ERR_LEDGERS_CREATE_2976(?![\\w-]|\\.\\d)",
+    "answer_text": "ERR_LEDGERS_CREATE_2976"
+  },
+  {
+    "id": "longform-api-spec-05",
+    "category": "detail",
+    "question": "What error code does POST /v3/routes (create) return on HTTP 400?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])ERR_ROUTES_CREATE_7572(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])ERR_ROUTES_CREATE_7572(?![\\w-]|\\.\\d)",
+    "answer_text": "ERR_ROUTES_CREATE_7572"
+  },
+  {
+    "id": "longform-api-spec-06",
+    "category": "detail",
+    "question": "Which OAuth scope does the list operation on /v3/ledgers require?",
+    "fact_records": [
+      1
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])ledgers\\.list\\.s7219(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])ledgers\\.list\\.s7219(?![\\w-]|\\.\\d)",
+    "answer_text": "ledgers.list.s7219"
+  },
+  {
+    "id": "longform-api-spec-07",
+    "category": "detail",
+    "question": "Which OAuth scope does the list operation on /v3/routes require?",
+    "fact_records": [
+      15
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])routes\\.list\\.s2351(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])routes\\.list\\.s2351(?![\\w-]|\\.\\d)",
+    "answer_text": "routes.list.s2351"
+  },
+  {
+    "id": "longform-api-spec-08",
+    "category": "retraction",
+    "question": "What is the current rate limit (requests) for PATCH /v3/ledgers/{id} (update) after the amendments?",
+    "fact_records": [
+      17
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])737(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])737(?![\\w-]|\\.\\d)",
+    "answer_text": "737",
+    "stale": [
+      "(?<![\\w.-])171(?![\\w-]|\\.\\d)"
+    ]
+  },
+  {
+    "id": "longform-api-spec-09",
+    "category": "retraction",
+    "question": "What is the current rate limit (requests) for GET /v3/exports/{id} (get) after the amendments?",
+    "fact_records": [
+      17
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])791(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])791(?![\\w-]|\\.\\d)",
+    "answer_text": "791",
+    "stale": [
+      "(?<![\\w.-])432(?![\\w-]|\\.\\d)"
+    ]
+  },
+  {
+    "id": "longform-api-spec-10",
+    "category": "retraction",
+    "question": "What is the current rate limit (requests) for GET /v3/invoices (list) after the amendments?",
+    "fact_records": [
+      17
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])466(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])466(?![\\w-]|\\.\\d)",
+    "answer_text": "466",
+    "stale": [
+      "(?<![\\w.-])290(?![\\w-]|\\.\\d)"
+    ]
+  },
+  {
+    "id": "longform-api-spec-11",
+    "category": "quote",
+    "question": "What is the exact rule sentence quoted in the global rules of the spec? Quote it verbatim.",
+    "fact_records": [
+      1
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])Cudgel\\s+rattle\\s+casket\\s+sundial\\s+velvet\\s+jade\\s+tuning\\-fork(?![\\w-]|\\.\\d)"
+    },
+    "exact": "Cudgel rattle casket sundial velvet jade tuning-fork",
+    "evidence": "(?<![\\w.-])Cudgel\\s+rattle\\s+casket\\s+sundial\\s+velvet\\s+jade\\s+tuning\\-fork(?![\\w-]|\\.\\d)",
+    "answer_text": "Cudgel rattle casket sundial velvet jade tuning-fork"
+  },
+  {
+    "id": "longform-api-spec-12",
+    "category": "detail",
+    "question": "Which HTTP header must every mutating request carry?",
+    "fact_records": [
+      1
+    ],
+    "expected": {
+      "regex": "(?<![\\w.-])X\\-Themis\\-Memo\\-Ttl\\-54(?![\\w-]|\\.\\d)"
+    },
+    "evidence": "(?<![\\w.-])X\\-Themis\\-Memo\\-Ttl\\-54(?![\\w-]|\\.\\d)",
+    "answer_text": "X-Themis-Memo-Ttl-54"
+  },
+  {
+    "id": "longform-api-spec-13",
+    "category": "decoy",
+    "question": "What is the maximum payload size in megabytes accepted by the Harbour API gateway?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "\\bmegabytes?\\b",
+      "\\bMB\\b",
+      "\\bpayload size\\b"
+    ]
+  },
+  {
+    "id": "longform-api-spec-14",
+    "category": "decoy",
+    "question": "Which TLS cipher suite does the Harbour API require?",
+    "fact_records": [],
+    "expect_unknown": true,
+    "absent": [
+      "\\bcipher\\b",
+      "\\bTLS\\b"
+    ]
+  }
+]
