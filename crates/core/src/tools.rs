@@ -4420,6 +4420,19 @@ mod tests {
             "a  b\nc\na b\n"
         );
 
+        // A tab-indented context line missing its leading space is still matched as context.
+        fs::write(
+            root.join("Makefile"),
+            "build:\n\tcargo build\n\ntest:\n\tcargo test  \n",
+        )
+        .unwrap();
+        let tabbed = "--- a/Makefile\n+++ b/Makefile\n@@ -1,5 +1,5 @@\n build:\n-\tcargo build\n+\tcargo build --locked\n \n test:\n\tcargo test  \n";
+        tool.execute(json!({ "patch": tabbed })).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("Makefile")).unwrap(),
+            "build:\n\tcargo build --locked\n\ntest:\n\tcargo test  \n"
+        );
+
         // Text that is not in the file at all is still refused.
         let missing = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-nowhere\n+x\n";
         assert!(tool.execute(json!({ "patch": missing })).await.is_err());

@@ -167,6 +167,9 @@ pub(super) fn parse_hunk_line(line: &str) -> anyhow::Result<HunkLine> {
         ' ' => Ok(HunkLine::Context(text.to_owned())),
         '-' => Ok(HunkLine::Remove(text.to_owned())),
         '+' => Ok(HunkLine::Add(text.to_owned())),
+        // Models drop the leading space on tab-indented context lines. Such a line is still
+        // context: it has to match the file exactly, so a wrong guess fails as before.
+        '\t' => Ok(HunkLine::Context(line.to_owned())),
         _ => anyhow::bail!("malformed patch: unexpected hunk line '{line}'"),
     }
 }
