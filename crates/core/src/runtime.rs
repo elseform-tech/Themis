@@ -34,6 +34,8 @@ mod maintenance;
 mod pending;
 mod summary_evidence;
 mod summary_job;
+#[cfg(feature = "eval")]
+pub mod tool_eval;
 
 use crate::skills::{compose_task, filter_tools, Skill};
 use crate::tools::{Approval, ApprovalHook, RiskLevel, ToolAction};
@@ -2752,7 +2754,10 @@ async fn execute_call(
         return Err("Stopped by you".to_owned());
     }
     if decision == Approval::Deny {
-        return Err(format!("approval denied for '{name}': {summary}"));
+        return Err(format!(
+            "approval denied for '{name}': {summary} {}",
+            crate::tools::REFUSAL_NOTE
+        ));
     }
     let parsed: serde_json::Value = match serde_json::from_str(args) {
         Ok(parsed) => parsed,

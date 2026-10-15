@@ -712,15 +712,52 @@ pub fn command_display_for_call(name: &str, args: &serde_json::Value) -> Option<
 /// Program and arguments of a `shell` tool call, as validated arguments or raw
 /// model JSON. Empty when the call has no usable `command`.
 pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
-    let Some(program) = args.get("command").and_then(|v| v.as_str()) else {
-        return Vec::new();
-    };
+    let program = args
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     let mut argv = vec![program.to_owned()];
     if let Some(rest) = args.get("args").and_then(|v| v.as_array()) {
         argv.extend(rest.iter().filter_map(|v| v.as_str()).map(str::to_owned));
     }
+    let argv = normalize_argv(argv);
+    if argv.first().is_none_or(|program| program.trim().is_empty()) {
+        return Vec::new();
+    }
     argv
 }
+
+/// Repairs the two argv shapes models commonly send, before approval, so the
+/// person approves exactly what runs: an empty `command` with the program as
+/// the first of `args`, and the program repeated as the first argument
+/// (`command: "python3", args: ["python3", "x.py"]`, or its full path).
+/// `echo`/`printf` keep a repeated word, since printing it is plausible.
+pub fn normalize_argv(mut argv: Vec<String>) -> Vec<String> {
+    if argv.len() > 1 && argv[0].trim().is_empty() {
+        argv.remove(0);
+    }
+    let base = |word: &str| {
+        Path::new(word)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    if argv.len() > 1 && !matches!(base(&argv[0]).as_str(), "echo" | "printf") {
+        let (program, first) = (&argv[0], &argv[1]);
+        let same = program == first
+            || (Path::new(first).is_absolute() && base(first) == base(program))
+            || (Path::new(program).is_absolute() && base(program) == *first);
+        if same {
+            argv.remove(1);
+        }
+    }
+    argv
+}
+
+/// Appended to every refusal the agent sees: a refused action must not be reached
+/// another way (a live run restored a file with `git show ... >` after `git reset
+/// --hard` was refused, losing the same uncommitted change).
+pub const REFUSAL_NOTE: &str = "Do not reach the same result another way (for example with shell or another tool); tell the user it was not allowed and ask how to proceed.";
 
 /// Decides whether a proposed [`ToolAction`] may run.
 ///
@@ -794,7 +831,7 @@ fn check_approval(hook: &dyn ApprovalHook, action: &ToolAction) -> Result<(), To
     match hook.approve(action) {
         Approval::AllowOnce | Approval::AllowAlways => Ok(()),
         Approval::Deny => Err(tool_error(format!(
-            "approval denied for '{}': {}",
+            "approval denied for '{}': {} {REFUSAL_NOTE}",
             action.tool, action.summary
         ))),
     }
@@ -2162,6 +2199,9 @@ impl ToolRuntime for ShellTool {
             background,
             background_timeout_secs,
         } = serde_json::from_value(args)?;
+        let mut argv = normalize_argv(std::iter::once(command).chain(args).collect());
+        let command = argv.remove(0);
+        let args = argv;
         if command.trim().is_empty() {
             return Err(tool_error("shell: 'command' must not be empty".to_string()));
         }
@@ -2529,7 +2569,7 @@ impl ToolRuntime for GitTool {
             other => {
                 return Err(tool_error(format!(
                     "git: subcommand '{other}' is denied by the allowlist \
-                     (allowed: status, diff, log, show, add, commit, checkout, branch)"
+                     (allowed: status, diff, log, show, add, commit, checkout, branch). {REFUSAL_NOTE}"
                 )));
             }
         };
@@ -3309,10 +3349,15 @@ mod tests {
             json!({"file_path":"evidence.jsonl","find":""}),
             json!({"file_path":"evidence.jsonl","json_pointer":"/content"}),
             json!({"file_path":"evidence.jsonl","jsonl_record":2,"json_pointer":"/missing"}),
-            json!({"file_path":root.join("evidence.jsonl"),"offset":0}),
         ] {
             assert!(tool.execute(args).await.is_err());
         }
+        // An absolute path inside the project reads like the relative one.
+        let absolute = tool
+            .execute(json!({"file_path":root.join("evidence.jsonl"),"offset":0}))
+            .await
+            .unwrap();
+        assert_eq!(absolute["content"], first["content"]);
         assert!(hook
             .seen()
             .iter()
@@ -3565,6 +3610,93 @@ mod tests {
         let spaced = spawn_failure("/Applications/My App/bin/x", &[], &missing);
         assert!(!spaced.contains("Retry exactly"), "{spaced}");
         assert!(spaced.contains("contains spaces"), "{spaced}");
+    }
+
+    #[test]
+    fn argv_repairs_the_shapes_models_send() {
+        let v = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        // Program repeated as the first argument, plainly or as a path.
+        assert_eq!(
+            normalize_argv(v(&["python3", "python3", "x.py"])),
+            v(&["python3", "x.py"])
+        );
+        assert_eq!(
+            normalize_argv(v(&["python3", "/usr/bin/python3", "x.py"])),
+            v(&["python3", "x.py"])
+        );
+        assert_eq!(
+            normalize_argv(v(&["/usr/bin/git", "git", "status"])),
+            v(&["/usr/bin/git", "status"])
+        );
+        // Empty command with the program in args.
+        assert_eq!(
+            normalize_argv(v(&["", "grep", "-c", "x", "f"])),
+            v(&["grep", "-c", "x", "f"])
+        );
+        // Ordinary commands and echo of its own name are left alone.
+        assert_eq!(normalize_argv(v(&["git", "status"])), v(&["git", "status"]));
+        assert_eq!(normalize_argv(v(&["echo", "echo"])), v(&["echo", "echo"]));
+        assert_eq!(
+            normalize_argv(v(&["python3", "-c", "print(1)"])),
+            v(&["python3", "-c", "print(1)"])
+        );
+        // The approval argv and the executed argv agree.
+        let raw = serde_json::json!({"command": "", "args": ["python3", "python3", "x.py"]});
+        assert_eq!(shell_argv(&raw), v(&["python3", "x.py"]));
+        assert!(shell_argv(&serde_json::json!({"command": "", "args": []})).is_empty());
+    }
+
+    #[tokio::test]
+    async fn refusals_tell_the_agent_not_to_work_around_them() {
+        let project = tempfile::tempdir().unwrap();
+        let denied = ShellTool::new(project.path().to_owned(), Arc::new(DenyAllHook))
+            .execute(serde_json::json!({"command": "ls"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(denied.contains(REFUSAL_NOTE), "{denied}");
+        let git = GitTool::new(project.path().to_owned(), Arc::new(AllowAllHook))
+            .execute(serde_json::json!({"args": ["reset", "--hard"]}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            git.contains("allowlist") && git.contains(REFUSAL_NOTE),
+            "{git}"
+        );
+    }
+
+    mod normalize_argv_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Repair only ever drops one leading duplicate or an empty program: the rest of
+            /// the command keeps its order and nothing is added.
+            #[test]
+            fn repair_only_removes_a_leading_duplicate(
+                argv in proptest::collection::vec(prop_oneof![
+                    Just(String::new()), Just("python3".to_owned()), Just("/usr/bin/python3".to_owned()),
+                    Just("echo".to_owned()), "[a-z./-]{1,8}",
+                ], 1..6),
+            ) {
+                let repaired = normalize_argv(argv.clone());
+                prop_assert!(argv.len() - repaired.len() <= 2);
+                // An order-preserving subsequence of the input.
+                let mut rest = argv.iter();
+                prop_assert!(repaired.iter().all(|word| rest.any(|original| original == word)));
+                // A real program is kept as the program.
+                if !argv[0].trim().is_empty() {
+                    prop_assert_eq!(&repaired[0], &argv[0]);
+                }
+                // Everything after the program and its possible duplicate is untouched.
+                let start = if argv[0].trim().is_empty() { 3 } else { 2 };
+                if argv.len() > start {
+                    let tail = &argv[start..];
+                    prop_assert_eq!(&repaired[repaired.len() - tail.len()..], tail);
+                }
+            }
+        }
     }
 
     mod project_relative_props {
