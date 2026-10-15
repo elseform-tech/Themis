@@ -271,7 +271,9 @@ fn tool_results_are_decoded_once_with_coordinates() {
             ..args("vault code")
         },
     );
-    assert!(hits(&none).is_empty());
+    // A filter that matches nothing falls back to the default search, and says so.
+    assert_eq!(hits(&none).len(), 1);
+    assert!(none["filters_ignored"].is_string(), "{none}");
 }
 
 #[test]
@@ -422,7 +424,8 @@ fn attachments_must_live_in_the_attachment_directory() {
             ..args("beekeeper")
         },
     );
-    assert!(hits(&other).is_empty());
+    assert_eq!(hits(&other).len(), 1);
+    assert!(other["filters_ignored"].is_string(), "{other}");
     let more = run_with(
         &fx,
         RecallArgs {
@@ -915,4 +918,52 @@ proptest! {
             }
         }
     }
+}
+
+#[test]
+fn guessed_filters_that_match_nothing_fall_back_to_the_default_search() {
+    // A live free-model run asked for `kinds: ["original"]` and `source: "original_exchange"`
+    // (a kind name), got 0 hits three times and told the user the detail was never said.
+    let fx = fixture();
+    write_snapshot(
+        &fx,
+        100,
+        &[user(
+            "the rollback codename is HERON-42, rotation on Thursday",
+            "original_exchange",
+        )],
+    );
+    let guessed = run_with(
+        &fx,
+        RecallArgs {
+            query: "HERON-42 rotation".into(),
+            kinds: vec!["original".into()],
+            source: "original_exchange".into(),
+            ..RecallArgs::default()
+        },
+    );
+    assert_eq!(hits(&guessed).len(), 1, "{guessed}");
+    assert!(guessed["filters_ignored"].is_string(), "{guessed}");
+    // Filters that do match are honoured without the note.
+    let honoured = run_with(
+        &fx,
+        RecallArgs {
+            query: "HERON-42".into(),
+            source: "User".into(),
+            ..RecallArgs::default()
+        },
+    );
+    assert_eq!(hits(&honoured).len(), 1, "{honoured}");
+    assert!(honoured.get("filters_ignored").is_none(), "{honoured}");
+    // Nothing anywhere stays an honest empty result.
+    let missing = run_with(
+        &fx,
+        RecallArgs {
+            query: "PELICAN-7".into(),
+            kinds: vec!["original".into()],
+            ..RecallArgs::default()
+        },
+    );
+    assert!(hits(&missing).is_empty());
+    assert!(missing.get("filters_ignored").is_none(), "{missing}");
 }
