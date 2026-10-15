@@ -258,7 +258,7 @@ describe("command display", () => {
     });
     expect(screen.getByRole("dialog", { name: "Run outside the sandbox?" })).toBeInTheDocument();
     expect(screen.getByText("shell (outside the sandbox)")).toBeInTheDocument();
-    expect(screen.getByText(/The sandbox blocked it/)).toHaveTextContent("writing to /Users/me/x is blocked⟨U+202E⟩: only the project is writable");
+    expect(screen.getByText(/The sandbox blocked it/)).toHaveTextContent("writing to /Users/me/x is blocked⟨U+202E⟩: only the project is writable. Outside the sandbox");
     expect(screen.getByText(/run outside the sandbox in later runs of this chat/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Allow in this chat (2)" }));
     expect(onDecide).toHaveBeenLastCalledWith("chat");

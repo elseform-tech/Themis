@@ -53,7 +53,7 @@ export function PermissionsSummary({ view }: { view: EffectivePermissions }) {
         </dl>
       </section>
 
-      {view.validation_error && <p role="alert" className="themis-form-error">Configuration is invalid, so runs are refused until it is fixed: {view.validation_error}</p>}
+      {view.validation_error && <p role="alert" className="themis-form-error">Configuration is invalid, so runs are refused until it is fixed: {view.validation_error.replace(/^runtime configuration: (invalid runtime configuration: )?/, "")}</p>}
 
       {approval && <section className="themis-settings-section" aria-label="Rules">
         <h3 className="themis-settings-subtitle">Rules, first match wins</h3>

@@ -627,7 +627,14 @@ pub fn check_file(content: &str) -> Option<FileIssue> {
     };
     let positioned = |error: serde_json::Error| {
         Some(FileIssue {
-            message: error.to_string(),
+            // The position is reported separately; drop serde's trailing copy.
+            message: {
+                let text = error.to_string();
+                let suffix = format!(" at line {} column {}", error.line(), error.column());
+                text.strip_suffix(&suffix)
+                    .map(str::to_owned)
+                    .unwrap_or(text)
+            },
             line: Some(error.line()).filter(|line| *line > 0),
             column: (error.line() > 0).then_some(error.column()),
         })
@@ -1388,6 +1395,7 @@ mod tests {
         let issue = check_file("{\n  \"sandbox\": {\n    \"netwrk\": \"block\"\n  }\n}").unwrap();
         assert_eq!(issue.line, Some(3), "{issue:?}");
         assert!(issue.message.contains("netwrk"), "{issue:?}");
+        assert!(!issue.message.contains(" at line "), "{issue:?}");
         let issue = check_file("[]").unwrap();
         assert_eq!(issue.line, Some(1));
         assert!(check_file("/* open").is_some());

@@ -107,6 +107,11 @@ describe("PermissionsSummary", () => {
     expect(chat.getByText("/data/chat_grants/t1.json")).toBeInTheDocument();
   });
 
+  it("shows a validation error without the doubled configuration prefix", () => {
+    render(<PermissionsSummary view={{ ...VIEW, validation_error: "runtime configuration: invalid runtime configuration: unknown field `sandbx`" }} />);
+    expect(screen.getAllByRole("alert")[0]).toHaveTextContent("Configuration is invalid, so runs are refused until it is fixed: unknown field `sandbx`");
+  });
+
   it("explains an unavailable sandbox and a blocked network", () => {
     render(<PermissionsSummary view={{ ...VIEW, sandbox: { ...VIEW.sandbox!, state: "unavailable", backend: null, summary: "Not available on this system (Windows)", network: "block" } }} />);
     expect(screen.getByText("Not available")).toBeInTheDocument();

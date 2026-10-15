@@ -92,7 +92,7 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
               {request.command.background && " in the background"}
             </p>
           : <p className="themis-approval-summary">{request.summary}</p>}
-        {outside && <p className="themis-approval-summary">The sandbox blocked it{blocked ? <>: <SafeText text={blocked} /></> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</p>}
+        {outside && <p className="themis-approval-summary">The sandbox blocked it{blocked ? <>: <SafeText text={blocked} />.</> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</p>}
         <p className="themis-thread-hint"><GrantHint request={request} /></p>
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>
