@@ -42,19 +42,27 @@ def _mean(values):
     return statistics.fmean(values) if values else None
 
 
+def _supported(row):
+    """Grounded in what the agent read; results from before tool outputs were recorded fall back
+    to the old answer-citation check."""
+    value = row.get("grounded")
+    return row.get("cite_valid", False) if value is None else value
+
+
 def accuracy_block(rows):
     """Metrics over original-only (not in context) non-decoy probes of one group."""
     n = len(rows)
     correct = [r for r in rows if r["verdict"] == "correct"]
     return {
         "probes": n,
-        "headline_correct_with_valid_citation": _rate(sum(r["verdict"] == "correct" and r["cite_valid"] for r in rows), n),
-        "accuracy_no_citation_requirement": _rate(len(correct), n),
+        "headline_correct_and_grounded": _rate(sum(r["verdict"] == "correct" and _supported(r) for r in rows), n),
+        "accuracy_no_grounding_requirement": _rate(len(correct), n),
+        "grounded_rate_of_correct": _rate(sum(_supported(r) for r in correct), len(correct)),
+        "source_leak_rate": _rate(sum(r.get("leak", False) for r in rows), n),
         "citation_present_rate": _rate(sum(r["cite_present"] for r in rows), n),
         "citations_over_cap_rate": _rate(sum(r.get("cite_over_cap", False) for r in rows), n),
         "mean_citations_per_answer": _mean(r.get("cite_count", 0) for r in rows if r["cite_present"]),
         "hedged_rate": _rate(sum(r["verdict"] == "hedged" for r in rows), n),
-        "citation_valid_rate_of_correct": _rate(sum(r["cite_valid"] for r in correct), len(correct)),
         "unknown_rate": _rate(sum(r["verdict"] == "unknown" for r in rows), n),
         "stale_or_wrong_rate": _rate(sum(r["verdict"] in ("stale", "wrong", "hedged") for r in rows), n),
     }
@@ -73,7 +81,7 @@ def trial_summary(rows, runs):
     return {
         "overall": accuracy_block(original),
         "by_domain": by_domain,
-        "by_category": {c: accuracy_block([r for r in original if r["category"] == c])["accuracy_no_citation_requirement"]
+        "by_category": {c: accuracy_block([r for r in original if r["category"] == c])["accuracy_no_grounding_requirement"]
                         for c in sorted({r["category"] for r in original})},
         "quote_exact_accuracy": _rate(sum(r["verdict"] == "correct" for r in quotes), len(quotes)),
         "quote_probes": len(quotes),
@@ -148,15 +156,16 @@ def markdown(summary):
     lines = [f"# Long-form recall: {summary.get('model')} @ {summary.get('budget')} tokens",
              "", f"Trials with data: {summary['trials_with_data']}/{summary['trials_requested']}; "
              f"invalid runs: {len(summary['invalid_runs'])}; failed runs: {len(summary['failed_runs'])}. Mean ± SD over trials.", "",
-             "| Group | Original-only probes | Correct + valid citation (headline) | Correct, no citation requirement | Citation valid (of correct) | Unknown |",
-             "| --- | --- | --- | --- | --- | --- |"]
+             "| Group | Original-only probes | Correct + grounded (headline) | Correct, no grounding requirement | Grounded (of correct) | Unknown | Source leaked |",
+             "| --- | --- | --- | --- | --- | --- | --- |"]
     for label, block in (("narrative", agg["by_domain"].get("narrative")), ("code", agg["by_domain"].get("code")),
                          ("all", agg["overall"])):
         block = block or {}
-        block = {k: block.get(k) for k in ("probes", "headline_correct_with_valid_citation", "accuracy_no_citation_requirement",
-                                           "citation_valid_rate_of_correct", "unknown_rate")}
-        lines.append(f"| {label} | {fmt(block['probes'], False)} | **{fmt(block['headline_correct_with_valid_citation'])}** | "
-                     f"{fmt(block['accuracy_no_citation_requirement'])} | {fmt(block['citation_valid_rate_of_correct'])} | {fmt(block['unknown_rate'])} |")
+        block = {k: block.get(k) for k in ("probes", "headline_correct_and_grounded", "accuracy_no_grounding_requirement",
+                                           "grounded_rate_of_correct", "unknown_rate", "source_leak_rate")}
+        lines.append(f"| {label} | {fmt(block['probes'], False)} | **{fmt(block['headline_correct_and_grounded'])}** | "
+                     f"{fmt(block['accuracy_no_grounding_requirement'])} | {fmt(block['grounded_rate_of_correct'])} | {fmt(block['unknown_rate'])} | "
+                     f"{fmt(block['source_leak_rate'])} |")
     lines += ["", "| Other metric | Value |", "| --- | --- |",
               f"| Hedged answers (two planted values; counted wrong) / citations over the cap of 3 | {fmt(agg['overall']['hedged_rate'])} / {fmt(agg['overall']['citations_over_cap_rate'])} |",
               f"| Exact-quote accuracy (original-only) | {fmt(agg.get('quote_exact_accuracy'))} |",

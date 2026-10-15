@@ -354,6 +354,18 @@ pub async fn behavior_turn(
     })
 }
 
+/// What one tool call returned to the agent during a probe (bounded), so a harness can
+/// check that a correct answer was grounded in material the agent actually read.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolOutput {
+    pub tool: String,
+    pub ok: bool,
+    pub output: String,
+}
+
+/// Bytes of each tool output kept in a probe report.
+const TOOL_OUTPUT_KEEP: usize = 16_384;
+
 /// Result of answering one probe with a real agent turn that has tools.
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentAnswer {
@@ -361,6 +373,8 @@ pub struct AgentAnswer {
     pub answer: String,
     /// Names of every tool call the agent issued, in order (including `update_plan`).
     pub tools: Vec<String>,
+    /// What each finished tool call returned, in order (each bounded to 16 KiB).
+    pub tool_outputs: Vec<ToolOutput>,
     /// Tool calls the allow-read policy refused (including calls past the cap).
     pub denied: usize,
     /// Shell arguments the policy refused because they leave the scratch project (bounded,
@@ -562,11 +576,16 @@ pub async fn answer_probe_agent(
     let tools_available = tools.iter().map(|tool| tool.name().to_owned()).collect();
     let (events, mut sink) = tokio::sync::mpsc::channel(1024);
     let collector = tokio::spawn(async move {
-        let (mut tools, mut finished, mut error, mut metrics) =
-            (Vec::new(), None, None, serde_json::Value::Null);
+        let (mut tools, mut outputs, mut finished, mut error, mut metrics) =
+            (Vec::new(), Vec::new(), None, None, serde_json::Value::Null);
         while let Some(event) = sink.recv().await {
             match event {
                 RunEvent::ToolCallStarted { tool, .. } => tools.push(tool),
+                RunEvent::ToolCallFinished { tool, ok, output } => outputs.push(ToolOutput {
+                    tool,
+                    ok,
+                    output: super::take_char_prefix(&output, TOOL_OUTPUT_KEEP).0,
+                }),
                 RunEvent::ContextUsage { metrics: latest } => metrics = latest,
                 RunEvent::Finished { result } => finished = Some(result),
                 RunEvent::Incomplete { result } => error = Some(format!("incomplete: {result}")),
@@ -574,9 +593,9 @@ pub async fn answer_probe_agent(
                 _ => {}
             }
         }
-        (tools, finished, error, metrics)
+        (tools, outputs, finished, error, metrics)
     });
-    let task = format!("Memory check. Earlier material in this conversation was compacted; the saved originals are under {} (project-relative). Answer the question below. The checkpoint is only a lossy summary: when it does not state the exact detail, search and read the saved originals with your tools (at most {max_calls} tool calls) instead of guessing. Reply with the answer in one short sentence, or exactly UNKNOWN if the original material never says. For a quote question copy the wording exactly. After the answer add one line per supporting source in the form `Citation: <file path> record <number>` using the snapshot file and its record (line) number where you read the fact. Do not cite a checkpoint.\n\nQuestion: {question}",
+    let task = format!("Memory check. Earlier material in this conversation was compacted; the saved originals are under {} (project-relative). Answer the question below. The checkpoint is only a lossy summary: when it does not state the exact detail, search and read the saved originals with your tools (at most {max_calls} tool calls) instead of guessing. Reply as you would to the user: the answer in one short sentence, or exactly UNKNOWN if the original material never says. For a quote question copy the wording exactly. Do not mention files, paths, record numbers or how you searched.\n\nQuestion: {question}",
         evidence
             .strip_prefix(project)
             .unwrap_or(evidence)
@@ -601,7 +620,7 @@ pub async fn answer_probe_agent(
     )
     .await;
     let latency_ms = started.elapsed().as_millis();
-    let (tools, finished, event_error, metrics) = collector.await?;
+    let (tools, tool_outputs, finished, event_error, metrics) = collector.await?;
     let (answer, error) = match (result, finished) {
         (Ok(text), _) => (text, None),
         (Err(error), Some(text)) => (text, Some(error.to_string())),
@@ -614,6 +633,7 @@ pub async fn answer_probe_agent(
         finished: error.is_none() && !answer.trim().is_empty(),
         answer: answer.trim().to_owned(),
         tools,
+        tool_outputs,
         denied: hook.denied.load(Ordering::SeqCst),
         refused_paths: hook
             .refused_paths
