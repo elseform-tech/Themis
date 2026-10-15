@@ -7,8 +7,8 @@ REASONS = [
     ("refused", re.compile(r"approval denied|not approved|refused", re.I)),
     ("bad_arguments", re.compile(r"invalid (type|value|argument)|missing field|unknown field|expected (a|an|one)|"
                                  r"failed to parse|must (be|not)|requires|unknown (kind|tool)|is not allowed", re.I)),
-    ("wrong_path", re.compile(r"absolute paths|no such file|not found|does not exist|outside|escapes", re.I)),
     ("patch_format", re.compile(r"hunk|patch|context (line|mismatch)|@@", re.I)),
+    ("wrong_path", re.compile(r"absolute paths|no such file|not found|does not exist|outside|escapes", re.I)),
 ]
 
 
