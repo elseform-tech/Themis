@@ -5146,7 +5146,11 @@ mod tests {
     #[tokio::test]
     async fn storage_failure_preserves_context_without_manual_retry() {
         use wiremock::MockServer;
-        for failure in ["archive", "unwritable"] {
+        // A read-only directory does not refuse new files on Windows.
+        let failures = ["archive"]
+            .into_iter()
+            .chain((!cfg!(windows)).then_some("unwritable"));
+        for failure in failures {
             let server = MockServer::start().await;
             let llm = crate::providers::resolve(
                 &crate::providers::ProviderConfig::new(

@@ -253,8 +253,18 @@ async fn cli_long_chat_compacts_recalls_an_original_and_greets_without_recap() {
     assert!(system.contains(
         "A greeting, thanks or small talk gets a short reply in kind: do not recap, summarize or resume earlier or parked work unless the user asks about it"
     ));
+    // No anchor is injected for the greeting itself (earlier turns may keep their own).
+    let messages = request["messages"].as_array().unwrap();
+    assert_eq!(messages.last().unwrap()["content"], "hi");
+    let before_greeting = &messages[messages.len() - 2];
+    assert!(
+        !before_greeting["content"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("Original exchange anchors"),
+        "{before_greeting}"
+    );
     let wire = serde_json::to_string(&request["messages"]).unwrap();
-    assert!(!wire.contains("Original exchange anchors"), "{wire}");
     assert!(wire.contains(
         "mention or resume this work only when the user's message continues or asks about it"
     ));
