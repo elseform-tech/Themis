@@ -57,10 +57,11 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
       if (event.repeat || Date.now() - openedAt < SHORTCUT_DELAY_MS) return;
       // Digits decide the approval only when they are not being typed into the composer or another field.
       if (!singleKeyShortcutAllowed(event)) return;
-      // Destructive requests offer only Allow once (1) and Deny (2).
+      // Numbering is stable: 1 Allow once, 2 Allow in this chat, 3 Deny. Requests that
+      // cannot be allowed for the chat offer only 1 and 3, so a held 2 never denies.
       if (event.key === "1") onDecide("once");
-      else if (event.key === "2") onDecide(grantable ? "chat" : "deny");
-      else if (event.key === "3" && grantable) onDecide("deny");
+      else if (event.key === "2" && grantable) onDecide("chat");
+      else if (event.key === "3") onDecide("deny");
     }
     document.addEventListener("keydown", onKeyDown);
     return () => {
@@ -97,7 +98,7 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
             </Button>
           )}
           <Button variant="danger" onClick={() => onDecide("deny")}>
-            Deny ({grantable ? 3 : 2})
+            Deny (3)
           </Button>
         </div>
       </div>

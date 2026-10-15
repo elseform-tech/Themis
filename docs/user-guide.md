@@ -123,7 +123,7 @@ When a rule asks, the dialog shows the tool, summary, and risk:
 - **Deny (3)** — refuse; the agent sees the denial and adapts or stops.
 
 Destructive actions (force pushes, discarding changes, deleting files and similar) always
-ask: their dialog shows only **Allow once (1)** and **Deny (2)**. Deny rules always win over
+ask: their dialog shows only **Allow once (1)** and **Deny (3)**. Deny rules always win over
 chat grants. Grants live in the chat's own file, `chat_grants/<chat id>.json` in the app data
 folder; to undo one, remove its entry (or delete the file) or start a new chat. Enabling an MCP
 connection is the permission to start it, so no start prompt appears.

@@ -51,19 +51,19 @@ describe("ApprovalDialog", () => {
     const { onDecide } = setup({ ...REQUEST, risk: "destructive", grantable: false });
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
     expect(screen.getByText("This kind of action always asks, so it cannot be allowed for the chat.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Deny (2)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Deny (3)" }));
     expect(onDecide).toHaveBeenLastCalledWith("deny");
     fireEvent.click(screen.getByRole("button", { name: "Allow once (1)" }));
     expect(onDecide).toHaveBeenLastCalledWith("once");
   });
 
-  it("maps destructive keyboard 1/2 to once/deny and ignores 3", () => {
+  it("keeps the numbering stable for destructive requests: 1 once, 3 deny, 2 does nothing", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup({ ...REQUEST, risk: "destructive", grantable: false });
     vi.advanceTimersByTime(600);
-    fireEvent.keyDown(document, { key: "3" });
-    expect(onDecide).not.toHaveBeenCalled();
     fireEvent.keyDown(document, { key: "2" });
+    expect(onDecide).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "3" });
     expect(onDecide).toHaveBeenLastCalledWith("deny");
     fireEvent.keyDown(document, { key: "1" });
     expect(onDecide).toHaveBeenLastCalledWith("once");
