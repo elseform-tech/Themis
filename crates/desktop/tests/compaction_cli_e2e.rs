@@ -60,7 +60,7 @@ async fn send(
         "send_message",
         json!({"threadId":id,"text":text,"reasoningEffort":null}),
     );
-    tokio::time::timeout(std::time::Duration::from_secs(90), async {
+    tokio::time::timeout(std::time::Duration::from_secs(600), async {
         let mut kinds = Vec::new();
         loop {
             let item = Client::next_event(events).await.unwrap();
@@ -339,6 +339,123 @@ async fn cli_failed_checkpoint_keeps_the_working_context_and_the_next_run_still_
         .to_string_lossy()
         .starts_with("pending-job-")));
 
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
+/// Live journey with the free model; run explicitly (never in CI):
+/// `THEMIS_LIVE_COMPACTION=1 OPENCODE_KEY=... HOME=<scratch> cargo test -p themis-desktop
+/// --test compaction_cli_e2e live_ -- --ignored --nocapture`. Uses an isolated data directory
+/// and project under `THEMIS_LIVE_DIR` (a fresh directory) and prints what it observed.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live model; needs THEMIS_LIVE_COMPACTION=1 and OPENCODE_KEY"]
+async fn live_free_model_compacts_recalls_and_greets() {
+    if std::env::var("THEMIS_LIVE_COMPACTION").as_deref() != Ok("1") {
+        return;
+    }
+    let root = std::path::PathBuf::from(std::env::var("THEMIS_LIVE_DIR").unwrap());
+    let (data, project) = (root.join("data"), root.join("project"));
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(project.join(".themis")).unwrap();
+    std::fs::write(
+        project.join(".themis/config.jsonc"),
+        r#"{"context_token_budget":24000,"recent_messages":4,"total_turns":12}"#,
+    )
+    .unwrap();
+    // An in-memory store holds OPENCODE_KEY for this process only; the keychain is not read.
+    let state = AppState::new_for_test(data.join("settings.json"));
+    state
+        .set_secret("go".into(), std::env::var("OPENCODE_KEY").unwrap())
+        .await
+        .unwrap();
+    let server = Server::bind(state, &data).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.clone());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        &data,
+        "create_thread",
+        json!({"projectRoot":project,"provider":"go","model":"longcat-2.5-preview-free"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    let mut log = Vec::new();
+    let opening = "Please remember two things for later: the vault code for project Heron is TEAL-4482, and we decided to store invoices in PostgreSQL because of its JSONB support. Reply with one short sentence.";
+    let (done, _) = send(&data, &mut events, &id, opening).await;
+    log.push(json!({"message":"opening","kind":done["kind"],"reply":done["result"]}));
+    let mut checkpoints = 0;
+    for index in 0..10 {
+        let topic = if index < 5 {
+            "release notes"
+        } else {
+            "garden plan"
+        };
+        // A detail nobody asked to remember, buried mid-draft, so the checkpoint is unlikely
+        // to keep it and the answer has to come from the saved originals.
+        let buried = if index == 1 {
+            " The beta build server is named KESTREL-77."
+        } else {
+            ""
+        };
+        let text = format!(
+            "Here is part {index} of my {topic} draft. Reply only with: noted part {index}.\n{}{buried} {}",
+            format!("The {topic} paragraph {index} describes routine items, owners and dates in plain prose. ").repeat(45),
+            format!("The {topic} paragraph {index} continues with more routine items in plain prose. ").repeat(45)
+        );
+        let (done, kinds) = send(&data, &mut events, &id, &text).await;
+        let compacted = kinds.iter().filter(|k| *k == "context_checkpoint").count();
+        checkpoints += compacted;
+        log.push(json!({"message":format!("{topic} {index}"),"kind":done["kind"],"checkpoints":compacted}));
+        if checkpoints >= 2 {
+            break;
+        }
+    }
+    let (answer, kinds) = send(&data, &mut events, &id, "In my release notes draft, what was the name of the beta build server? Answer with the name and cite the saved snapshot file and record you read it from.").await;
+    let tools = kinds.iter().filter(|k| *k == "tool_started").count();
+    let reply = answer["result"].as_str().unwrap_or_default().to_owned();
+    // A valid citation names a snapshot record that is an original stating the fact.
+    let evidence = project.join(".themis/context").join(&id);
+    let snapshot = reply
+        .split(|c: char| c.is_whitespace() || "`'\"()[]*,:".contains(c))
+        .find_map(|word| {
+            word.rsplit('/')
+                .next()
+                .filter(|name| name.starts_with("snapshot-") && name.ends_with(".jsonl"))
+        })
+        .map(str::to_owned);
+    let record = reply
+        .to_lowercase()
+        .split("record")
+        .skip(1)
+        .find_map(|rest| {
+            rest.trim_start_matches([' ', '#', ':'])
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+                .and_then(|n| n.parse::<usize>().ok())
+        });
+    let cited = snapshot.as_ref().zip(record).and_then(|(name, record)| {
+        let text = std::fs::read_to_string(evidence.join(name)).ok()?;
+        serde_json::from_str::<Value>(text.lines().nth(record.checked_sub(1)?)?).ok()
+    });
+    let citation_valid = cited.as_ref().is_some_and(|line| {
+        line["evidence_kind"] == "original" && line.to_string().contains("KESTREL-77")
+    });
+    log.push(json!({"message":"recall question","kind":answer["kind"],"tools_started":tools,"correct":reply.contains("KESTREL-77"),"citation":{"snapshot":snapshot,"record":record,"valid":citation_valid},"reply":reply}));
+    let (greeting, kinds) = send(&data, &mut events, &id, "hi").await;
+    let hello = greeting["result"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    let recap = [
+        "release", "garden", "heron", "draft", "teal", "kestrel", "notes",
+    ]
+    .iter()
+    .any(|word| hello.contains(word));
+    log.push(json!({"message":"hi","kind":greeting["kind"],"checkpoints":kinds.iter().filter(|k| *k == "context_checkpoint").count(),"tools_started":kinds.iter().filter(|k| *k == "tool_started").count(),"mentions_parked_work":recap,"reply":greeting["result"]}));
+    println!(
+        "LIVE {}",
+        serde_json::to_string_pretty(&json!({"thread":id,"checkpoints":checkpoints,"steps":log}))
+            .unwrap()
+    );
     client.call("shutdown", json!({})).await.unwrap();
     serving.await.unwrap().unwrap();
 }
