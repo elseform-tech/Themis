@@ -435,26 +435,6 @@ async fn stage_with_legacy(
     Ok(summary)
 }
 
-pub(super) async fn summarize(
-    llm: &Arc<dyn LLMProvider>,
-    messages: &[ChatMessage],
-    current: &str,
-    budget: usize,
-    allowance: u32,
-    evidence: &std::path::Path,
-) -> anyhow::Result<String> {
-    summarize_for(
-        llm,
-        messages,
-        current,
-        budget,
-        allowance,
-        evidence,
-        Purpose::Context,
-    )
-    .await
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn summarize_for(
     llm: &Arc<dyn LLMProvider>,

@@ -13,8 +13,11 @@
 //! - bounded work: files are stream-read line by line (an oversized record is
 //!   skipped, not loaded), long fields are scanned in overlapping chunks, and a
 //!   byte and time budget stops the scan with `truncated_scan: true`;
-//! - deterministic ranking: exact phrase, then all terms, then some terms;
-//!   ties break by recency (newer snapshot, later record) and coordinates;
+//! - deterministic ranking: exact phrase first, then passages by the summed
+//!   inverse document frequency of the terms they match (a rare term counts
+//!   more than several common ones, so a whole question still finds the
+//!   distinctive passage), then all terms before some terms; ties break by
+//!   recency (newer snapshot, later record) and coordinates;
 //! - identical excerpts are reported once, from the newest source containing
 //!   them;
 //! - excerpts are untrusted data. Results carry coordinates that stay valid
@@ -658,6 +661,8 @@ fn scan_text(text: &str, query: &Query, deadline: Option<Instant>) -> FieldScan 
 struct Window {
     tier: u8,
     distinct: usize,
+    /// Bit per query term matched inside the passage.
+    mask: u32,
     start: usize,
     end: usize,
 }
@@ -700,6 +705,7 @@ fn best_windows(scan: &FieldScan, terms: usize) -> Vec<Window> {
             let candidate = Window {
                 tier,
                 distinct,
+                mask,
                 start,
                 end,
             };
@@ -893,6 +899,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 struct Candidate {
     tier: u8,
     distinct: usize,
+    mask: u32,
     recency: u128,
     record: u64,
     pointer: String,
@@ -988,6 +995,22 @@ struct Scan<'a> {
     candidates: Vec<Candidate>,
     seen: HashSet<[u8; 32]>,
     records: u64,
+    /// Searched fields, and how many of them contain each query term.
+    fields: u64,
+    document_frequency: Vec<u64>,
+}
+
+/// Inverse document frequency of each query term over the searched fields
+/// (BM25 form, always positive), in thousandths so ranking keys stay integral.
+fn term_weights(fields: u64, document_frequency: &[u64]) -> Vec<u64> {
+    document_frequency
+        .iter()
+        .map(|&found| {
+            let rest = fields.saturating_sub(found) as f64;
+            // A matched term always counts, even when every field contains it.
+            (((1.0 + (rest + 0.5) / (found as f64 + 0.5)).ln() * 1000.0).round() as u64).max(1)
+        })
+        .collect()
 }
 
 fn search(
@@ -1010,6 +1033,8 @@ fn search(
         candidates: Vec::new(),
         seen: HashSet::new(),
         records: 0,
+        fields: 0,
+        document_frequency: vec![0; query.terms.len()],
     };
     let (mut sources, too_many_files) = evidence_sources(scope);
     if too_many_files {
@@ -1037,9 +1062,28 @@ fn search(
         }
     }
     let total = scan.candidates.len();
+    let weights = term_weights(scan.fields, &scan.document_frequency);
+    let weight = |mask: u32| -> u64 {
+        weights
+            .iter()
+            .enumerate()
+            .filter(|(term, _)| mask & (1 << term) != 0)
+            .map(|(_, weight)| weight)
+            .sum()
+    };
     scan.candidates.sort_by(|a, b| {
-        (b.tier, b.distinct, b.recency, b.record)
-            .cmp(&(a.tier, a.distinct, a.recency, a.record))
+        let key = |c: &Candidate| {
+            (
+                c.tier == 3,
+                weight(c.mask),
+                c.tier,
+                c.distinct,
+                c.recency,
+                c.record,
+            )
+        };
+        key(b)
+            .cmp(&key(a))
             .then_with(|| a.pointer.cmp(&b.pointer))
             .then_with(|| a.start.cmp(&b.start))
     });
@@ -1087,6 +1131,7 @@ fn consider_field(
     field: &RecordField,
     scan: &mut Scan,
 ) {
+    scan.fields += 1;
     let found = scan_text(
         &field.text,
         scan.query,
@@ -1100,6 +1145,13 @@ fn consider_field(
     }
     if found.occurrences.is_empty() {
         return;
+    }
+    let present = found
+        .occurrences
+        .iter()
+        .fold(0u32, |mask, occurrence| mask | 1 << occurrence.term);
+    for (term, count) in scan.document_frequency.iter_mut().enumerate() {
+        *count += u64::from(present & (1 << term) != 0);
     }
     let total_chars = field.text.chars().count();
     for window in best_windows(&found, scan.query.terms.len()) {
@@ -1132,6 +1184,7 @@ fn consider_field(
         scan.candidates.push(Candidate {
             tier: window.tier,
             distinct: window.distinct,
+            mask: window.mask,
             recency: source.recency,
             record,
             pointer: field.pointer.clone(),

@@ -108,3 +108,8 @@ chunk boundaries, and decoys whose keywords never appear.
 - `results/2026-10-14-compare-main-...json` and `...-compare-recall-...json`: main vs `codex/recall-tool`
   under the final confinement, run in parallel (see `docs/verification/longform-evals-2026-10-14.md`).
   Reproduce with `--runner` pointing at a runner built from each tree, or `--build-ref codex/recall-tool`.
+- `results/2026-10-15-compare-main-c34da50-...json` and `...-compare-simplify-...json`: main vs
+  `codex/simplify-compaction` (one summary request per checkpoint, recall-first system text,
+  inverse-frequency recall ranking); `...-ablate-single-pass-meeting-build-log-...json` is the
+  single-pass ablation on the two cases whose context checkpoints used to stage. See
+  `docs/verification/simplify-compaction-2026-10-15.md`.

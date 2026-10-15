@@ -39,7 +39,9 @@ Run a single case directly with
 Per probe: `correct` (an `any_of` substring or the `regex` matches, case-insensitive),
 `unknown` (answered `UNKNOWN` for a fact that was in the conversation: forgotten),
 `stale` (matches a `stale` pattern of a superseded value and not the current one),
-`wrong` (neither), `error` (provider failure). Decoy probes ask for facts that were never
+`wrong` (neither), `error` (provider failure). A truncated probe answer is retried once
+with a larger output cap; remaining `error` probes are counted under `probe_errors` and excluded
+from every retention rate, since a failed request says nothing about what the checkpoint kept. Decoy probes ask for facts that were never
 stated; any answer other than `UNKNOWN` counts as `invented`.
 
 Reported, as mean and sample SD (plus min/max) across trials: **summary-only retention (the
@@ -88,7 +90,7 @@ shape and the Rust test replays every case.
 measures what the agent does with the next user message after a compaction. The
 `behavior_eval` example (feature `eval`) compacts a text-only conversation like the retention
 runner, then plays every turn of `behavior.json` through the real agent loop (all tools offered,
-every approval denied) on top of the post-compaction context, and reports the reply, attempted
+every approval denied; `recall` is offered as in the app when the tree has it) on top of the post-compaction context, and reports the reply, attempted
 tool calls and checkpoints. Cases use `"suites": ["behavior"]`:
 
 - `behavior-greeting`: "hi", "thanks!", "你好", "hey, how's it going?" after an unfinished task:
@@ -105,3 +107,12 @@ text is already in the working context. The desktop store itself is covered by
 `crates/desktop/tests/transcript_store.rs`. Grading (`behavior.py`) is lexical. CI only runs the
 scripted-provider versions (`evals.compaction.test_harness`), which prove plumbing, not model
 behavior.
+
+## Recorded results (2026-10-15)
+
+`results/2026-10-15-*` hold the simplify-compaction benchmark audit: `...-main-c34da50` (main plus
+the harness changes), `...-ablate-single-pass`, `...-ablate-lean-prompt` (ablation toggles in
+`docs/verification/simplify-compaction-2026-10-15/ablation-toggles.patch`), `...-simplify` (the
+branch) and parked-case reruns, plus `behavior-main-c34da50` and `behavior-simplify`. These use
+the current grader (probe request errors excluded), so compare them with each other rather than
+with the 2026-10-13/14 files. See `docs/verification/simplify-compaction-2026-10-15.md`.

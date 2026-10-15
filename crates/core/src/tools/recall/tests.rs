@@ -107,6 +107,45 @@ fn ranks_phrase_above_all_terms_above_some_terms() {
 }
 
 #[test]
+fn rare_terms_outrank_common_ones_when_the_whole_question_is_the_query() {
+    let fx = fixture();
+    let mut lines = vec![user("Note: Zanzibar keeps the spare keys.", "original")];
+    for index in 0..8 {
+        lines.push(user(
+            &format!("Meeting {index}: the budget office was discussed again."),
+            "original",
+        ));
+    }
+    write_snapshot(&fx, 100, &lines);
+    // A whole question: common words ("meeting", "budget") must not bury the rare one.
+    let result = run(
+        &fx,
+        "In which meeting about the budget was the Zanzibar office mentioned?",
+    );
+    let hits = hits(&result);
+    assert_eq!(hits[0]["record"], 1, "{result}");
+    assert_eq!(hits[0]["match"], "some_terms");
+}
+
+#[test]
+fn ranking_stays_deterministic_with_weighted_terms() {
+    let fx = fixture();
+    write_snapshot(
+        &fx,
+        100,
+        &[
+            user("alpha beta", "original"),
+            user("alpha gamma", "original"),
+            user("beta gamma", "original"),
+        ],
+    );
+    let first = run(&fx, "alpha beta gamma");
+    for _ in 0..3 {
+        assert_eq!(run(&fx, "alpha beta gamma")["hits"], first["hits"]);
+    }
+}
+
+#[test]
 fn identical_text_across_snapshots_is_reported_from_the_newest() {
     let fx = fixture();
     let line = user(
@@ -854,4 +893,26 @@ fn identical_text_from_different_roles_is_not_deduplicated() {
     );
     let result = run(&fx, "copper bell noon");
     assert_eq!(hits(&result).len(), 2, "{result}");
+}
+
+proptest! {
+    #[test]
+    fn term_weights_are_positive_and_favour_rarer_terms(
+        fields in 0u64..1_000_000,
+        mut found in proptest::collection::vec(0u64..1_000_000, 1..16),
+    ) {
+        for count in &mut found {
+            *count = (*count).min(fields);
+        }
+        let weights = term_weights(fields, &found);
+        prop_assert_eq!(weights.len(), found.len());
+        for (a, wa) in found.iter().zip(&weights) {
+            prop_assert!(*wa > 0);
+            for (b, wb) in found.iter().zip(&weights) {
+                if a < b {
+                    prop_assert!(wa >= wb);
+                }
+            }
+        }
+    }
 }
