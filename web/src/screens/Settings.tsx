@@ -218,7 +218,7 @@ export function SettingsScreen() {
           <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div>{provider === "go" && <p className="themis-settings-hint">Saved in macOS Keychain. An OPENCODE_KEY in your environment also works, and Forget key does not remove it.</p>}</details></div>)}
         </section>
       </>}
-      {section === "Permissions" && <PermissionsSettings projectRoot={state.activeProjectRoot} threadId={state.activeThreadId} />}
+      {section === "Permissions" && <PermissionsSettings />}
       {section === "Advanced" && <section className="themis-settings-section" aria-label="Advanced settings">
         <h3 className="themis-settings-subtitle">Run limits</h3>
         <Input id="themis-total-turns" label="Turn limit" type="number" min={1} max={2000} value={form.max_total_turns} onChange={event => setForm(f => ({ ...f, max_total_turns: Number(event.target.value) }))} onBlur={() => { if (form.max_total_turns !== state.settings.max_total_turns) void save({ max_total_turns: form.max_total_turns }); }} />

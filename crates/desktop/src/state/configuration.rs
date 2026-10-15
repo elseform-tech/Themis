@@ -74,6 +74,36 @@ impl AppState {
         Ok(resolved)
     }
 
+    /// The global `runtime.jsonc`, created with [`RUNTIME_CONFIG_STARTER`]
+    /// when it does not exist yet. An existing file is never touched.
+    pub fn ensure_runtime_config(&self) -> Result<PathBuf, String> {
+        let path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create '{}': {e}", parent.display()))?;
+        }
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                file.write_all(RUNTIME_CONFIG_STARTER.as_bytes())
+                    .map_err(|e| format!("write '{}': {e}", path.display()))?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(format!("create '{}': {error}", path.display())),
+        }
+        Ok(path)
+    }
+
+    /// Opens the global `runtime.jsonc` (creating the starter if needed) as
+    /// plain text in the system's text editor. It opens nothing else.
+    pub fn open_runtime_config(&self) -> Result<(), String> {
+        spawn_text_editor(&self.ensure_runtime_config()?)
+    }
+
     pub fn get_runtime_configuration(&self, project_root: Option<String>) -> Result<Value, String> {
         let project = project_root
             .as_deref()
@@ -215,9 +245,52 @@ impl AppState {
     }
 }
 
+/// Written once when Settings opens a `runtime.jsonc` that does not exist:
+/// every setting is commented out, so it changes nothing until edited.
+pub const RUNTIME_CONFIG_STARTER: &str = r#"// Themis settings for every project. Changes apply from the next run.
+// Remove the // in front of a line to use it. Reference: docs/configuration.md
+// and docs/sandbox.md.
+{
+  // "approval": {
+  //   "rules": [
+  //     { "tool": "shell", "command": ["cargo", "test"], "action": "allow" },
+  //     { "tool": "shell", "command": ["git", "push"], "action": "deny" }
+  //   ]
+  // },
+  // "sandbox": {
+  //   "enabled": true,
+  //   "backend": "auto",
+  //   "network": "allow",
+  //   "writable_paths": []
+  // }
+}
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runtime_config_starter_changes_nothing_and_is_never_rewritten() {
+        let temporary = tempfile::tempdir().unwrap();
+        let state = AppState::new_for_test(temporary.path().join("settings.json"));
+        let path = state.ensure_runtime_config().unwrap();
+        assert_eq!(path, temporary.path().join("runtime.jsonc"));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            RUNTIME_CONFIG_STARTER
+        );
+        // The starter is valid and every setting in it is commented out.
+        let starter = state.runtime_configuration(None, None).unwrap();
+        let defaults = configuration::resolve(None, None, None).unwrap();
+        assert_eq!(
+            serde_json::to_value(&starter.config).unwrap(),
+            serde_json::to_value(&defaults.config).unwrap()
+        );
+        // An existing file, even an invalid one, is left exactly as it is.
+        std::fs::write(&path, "{ my edits").unwrap();
+        state.ensure_runtime_config().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ my edits");
+    }
     #[test]
     fn project_level_does_not_change_global_logger_when_user_saves() {
         let temporary = tempfile::tempdir().unwrap();

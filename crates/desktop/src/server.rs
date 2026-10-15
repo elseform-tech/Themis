@@ -728,6 +728,8 @@ async fn dispatch_command(
                 .set_thread_effort(arg(&args, "threadId")?, arg(&args, "effort")?)
                 .await?
         ),
+        "ensure_runtime_config" => output!(state.ensure_runtime_config()?),
+        "open_runtime_config" => done!(state.open_runtime_config()),
         "open_in_editor" => done!(
             state
                 .open_in_editor(arg(&args, "path")?, arg(&args, "line")?)

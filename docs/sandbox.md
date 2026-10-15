@@ -172,16 +172,15 @@ asks you.
 
 ### Seeing the effective permissions
 
-**Settings → Permissions** is a read-only view, re-read each time it opens. It
-keeps to what varies: the current mode, the rules in evaluation order with
-their source (Built-in, User, Project), the sandbox status and why, and while
-it is on the network policy, any extra writable paths you configured and the
-secret folders; the configuration files with any problem and its line; and,
-when the chat has grants, what is **Allowed in this chat** with the file to
-edit. Fixed facts (temp and protected absolute paths, what the sandbox covers,
-other systems' backends) are on this page, not in the app. Nothing there can
-be edited. `themis permissions [PROJECT] [--thread ID] [--json]` prints the
-full view, including those fixed facts, from the shared app server.
+**Settings → Permissions** shows the global `runtime.jsonc` with an **Open**
+action, which opens it as plain text in your text editor (writing a starter
+with every setting commented out if the file does not exist yet; an existing
+file is never changed). Below it, it lists only problems: an invalid file
+with its line, a named sandbox that is not available, no sandbox on this
+system, or the sandbox turned off. Project files and chat grants are not
+shown there. `themis permissions [PROJECT] [--thread ID] [--json]` prints the
+full effective view, including project rules, the sandbox details and the
+chat's grants, from the shared app server.
 
 ## Custom mode
 

@@ -152,9 +152,9 @@ sandbox?** with **Allow once (1)**, **Allow in this chat (2)** and **Deny (3)**;
 allowing runs the same command again without the sandbox. In **YOLO** nothing is
 asked and the agent is told the sandbox blocked it. The sandbox is configured
 only in the `sandbox` block of your `runtime.jsonc` (projects can only tighten
-it). **Settings → Permissions** shows the effective rules, the sandbox status,
-the configuration files and what this chat may do, read-only; `themis
-permissions` prints the same. See [sandbox](sandbox.md) for details and limits.
+it). **Settings → Permissions** opens that file (creating a commented-out
+starter the first time) and shows any problem with it; `themis permissions`
+prints the full effective view. See [sandbox](sandbox.md) for details and limits.
 
 ## Skills
 

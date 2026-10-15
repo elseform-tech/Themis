@@ -393,9 +393,12 @@ evaluation order, each with `source` `default`, `user`, `project` or `run`, the
 chosen backend and why, network and whether it is enforced, writable, protected
 and secret paths, every backend's availability, what is and is not covered, and
 the source of each sandbox field) and `chat` (the chat's grants and the grants
-file path). Settings → Permissions renders it without any edit control, and
-`themis permissions [PROJECT] [--thread ID] [--json]` prints the same view (the
-current directory when neither is given). `get_runtime_configuration` also
+file path). `themis permissions [PROJECT] [--thread ID] [--json]` prints it (the
+current directory when neither is given); Settings → Permissions uses only its
+global problems. `ensure_runtime_config` returns the global `runtime.jsonc` path,
+first writing a starter with every setting commented out when the file does not
+exist (never changing an existing file); `open_runtime_config` does the same and
+opens that file as plain text in the system text editor. `get_runtime_configuration` also
 returns `rule_sources` beside the resolved configuration.
 
 ## Diagnostics

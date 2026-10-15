@@ -966,6 +966,27 @@ fn next_run_due(next_run_at: &str, now: chrono::DateTime<Utc>) -> bool {
     }
 }
 
+/// Opens `target` as plain text: `open -t` on macOS (the default text
+/// editor, whatever app `.jsonc` is bound to), `xdg-open` on Linux and
+/// Notepad on Windows.
+pub(crate) fn spawn_text_editor(target: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg("-t");
+        command
+    };
+    #[cfg(target_os = "linux")]
+    let mut command = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("notepad.exe");
+    command
+        .arg(target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("failed to open '{}': {err}", target.display()))
+}
+
 #[cfg(target_os = "macos")]
 fn spawn_opener(target: &Path) -> Result<(), String> {
     std::process::Command::new("open")

@@ -592,3 +592,37 @@ async fn cli_permissions_view_matches_the_shared_server() {
     );
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_ensure_runtime_config_writes_the_starter_once() {
+    let fx = fixture();
+    let path = fx.data.join("runtime.jsonc");
+    assert!(!path.exists());
+    let server = Server::bind(fx.state.clone(), &fx.data).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let call = |data: PathBuf| move || cli(&data, &["call", "ensure_runtime_config", "{}"]);
+    let (ok, stdout, stderr) = tokio::task::spawn_blocking(call(fx.data.clone()))
+        .await
+        .unwrap();
+    assert!(ok, "{stderr}");
+    let printed: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(printed, json!(path.display().to_string()));
+    let starter = std::fs::read_to_string(&path).unwrap();
+    assert!(starter.contains("// \"sandbox\": {"), "{starter}");
+    let view = fx
+        .state
+        .get_effective_permissions(None, None)
+        .await
+        .unwrap();
+    assert_eq!(view["files"][0]["status"], "loaded");
+    std::fs::write(&path, r#"{"sandbox":{"network":"block"}}"#).unwrap();
+    let (ok, _, stderr) = tokio::task::spawn_blocking(call(fx.data.clone()))
+        .await
+        .unwrap();
+    assert!(ok, "{stderr}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        r#"{"sandbox":{"network":"block"}}"#
+    );
+    task.abort();
+}

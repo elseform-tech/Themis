@@ -54,6 +54,7 @@ export function listPromptSkills(projectRoot?: string | null): Promise<PromptSki
 export function pluginAction<T>(args: Record<string, unknown>): Promise<T> { return invoke("plugin_action", args); }
 
 /** Read-only effective permissions (rules, sandbox, config files, chat grants), re-read on every call. */
+export function openRuntimeConfig(): Promise<void> { return invoke("open_runtime_config"); }
 export function getEffectivePermissions(projectRoot: string | null, threadId: string | null): Promise<EffectivePermissions> { return invoke("get_effective_permissions", { projectRoot, threadId }); }
 
 export function getWorkspace(projectRoot: string, pullRequests = false): Promise<WorkspaceInfo> { return invoke("get_workspace", { projectRoot, pullRequests }); }
