@@ -99,7 +99,13 @@ async fn every_fixture_compacts_and_answers_through_the_runtime() {
                 "{dir:?} chunk {}: {:?}",
                 chunk.chunk, chunk.error
             );
-            assert!(chunk.tokens_after < chunk.tokens_before, "{dir:?}");
+            // A forced checkpoint over no more records than the verbatim tail keeps them all
+            // and only adds the summary; every larger chunk must shrink.
+            assert!(
+                chunk.tokens_after < chunk.tokens_before || chunk.records_before <= 20,
+                "{dir:?} chunk {}",
+                chunk.chunk
+            );
             assert!(chunk.requests >= 1, "{dir:?}: stage count not recorded");
         }
         assert!(outcome
