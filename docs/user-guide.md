@@ -129,11 +129,32 @@ folder; to undo one, remove its entry (or delete the file) or start a new chat. 
 connection is the permission to start it, so no start prompt appears.
 
 Approval timeouts deny pending requests and remove the dialog with a short note. Reopening the app restores requests still pending in the running backend. With no explicit approval
-configuration, **Ask before read tools** still controls reads. **YOLO** bypasses
-harness approval and tool restrictions, including the filesystem root and Git
-allowlist. Mode and configuration changes apply to the next run; active runs
-keep their captured policy. See [configuration](configuration.md) for examples
-and [sandbox](sandbox.md) for the enforcement boundary.
+configuration, **Ask before read tools** still controls reads. **YOLO** means no
+approval prompts: it bypasses harness approval and tool restrictions, including
+the filesystem root and Git allowlist, but the sandbox still applies. Mode and
+configuration changes apply to the next run; active runs keep their captured
+policy. See [configuration](configuration.md) for examples and
+[sandbox](sandbox.md) for the enforcement boundary.
+
+### The sandbox
+
+Commands the agent runs (shell commands, background tasks, the git tool and
+automation checks) run inside an operating-system sandbox in both Custom and
+YOLO: Seatbelt on macOS, bubblewrap or Landlock on Linux; Windows has none yet.
+They can write only inside the project, temporary folders and any folders you
+list in `sandbox.writable_paths`; they cannot read secret folders such as
+`~/.ssh` or `~/.aws`, and they can never change Themis' own settings, chat grants
+or the project's `.themis/` folder. Network access is allowed unless you set
+`"network": "block"`.
+
+When the sandbox blocks a command in **Custom**, a dialog asks **Run outside the
+sandbox?** with **Allow once (1)**, **Allow in this chat (2)** and **Deny (3)**;
+allowing runs the same command again without the sandbox. In **YOLO** nothing is
+asked and the agent is told the sandbox blocked it. The sandbox is configured
+only in the `sandbox` block of your `runtime.jsonc` (projects can only tighten
+it). **Settings → Permissions** shows the effective rules, the sandbox status,
+the configuration files and what this chat may do, read-only; `themis
+permissions` prints the same. See [sandbox](sandbox.md) for details and limits.
 
 ## Skills
 
@@ -257,8 +278,9 @@ Entered keys stay in macOS Keychain until you forget them. Go also reads
 
 **Why is my project read-only?**
 Custom mode disables the desktop composer for non-Git folders. The shield
-remains available; selecting YOLO enables sending. See [sandbox](sandbox.md)
-for backend policy and the limits of tool-level restrictions.
+remains available; selecting YOLO enables sending (the sandbox still applies).
+See [sandbox](sandbox.md) for backend policy and the limits of tool-level
+restrictions.
 
 **How do I integrate changes?**
 Changes already affect the selected project checkout. Use your Git client to

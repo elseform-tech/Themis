@@ -12,6 +12,7 @@ import type {
   Diagnostics,
   DiffState,
   DirListing,
+  EffectivePermissions,
   FileView,
   WorkspaceInfo,
   GoModel,
@@ -51,6 +52,9 @@ function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise
 
 export function listPromptSkills(projectRoot?: string | null): Promise<PromptSkill[]> { return invoke("list_prompt_skills", { projectRoot: projectRoot ?? null }); }
 export function pluginAction<T>(args: Record<string, unknown>): Promise<T> { return invoke("plugin_action", args); }
+
+/** Read-only effective permissions (rules, sandbox, config files, chat grants), re-read on every call. */
+export function getEffectivePermissions(projectRoot: string | null, threadId: string | null): Promise<EffectivePermissions> { return invoke("get_effective_permissions", { projectRoot, threadId }); }
 
 export function getWorkspace(projectRoot: string, pullRequests = false): Promise<WorkspaceInfo> { return invoke("get_workspace", { projectRoot, pullRequests }); }
 export function listProjectDir(projectRoot: string, path: string): Promise<DirListing> { return invoke("list_project_dir", { projectRoot, path }); }

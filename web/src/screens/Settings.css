@@ -163,7 +163,19 @@
 .themis-settings-key { padding-top: 14px; }
 .themis-permissions { display: grid; gap: 8px; font-size: .875rem; }
 .themis-permissions dt { font-weight: 550; }
-.themis-permissions dd { margin: 0 0 12px; color: var(--themis-text-2); }
+.themis-permissions dd { margin: 0 0 12px; color: var(--themis-text-2); min-width: 0; }
+.themis-permissions dt { display: flex; align-items: center; gap: 8px; }
+.themis-permissions-rules, .themis-permissions-paths, .themis-permissions-files { list-style: none; margin: 0; padding: 0; display: grid; font-size: .875rem; }
+.themis-permissions-rule { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--themis-border-subtle); }
+.themis-permissions-rule-text { min-width: 0; overflow-wrap: anywhere; }
+.themis-permissions-rule code, .themis-permissions-paths code { font-family: ui-monospace, monospace; font-size: .8125rem; color: var(--themis-text); }
+.themis-permissions-index { color: var(--themis-text-2); }
+.themis-permissions-source { flex: none; color: var(--themis-text-2); font-size: .75rem; }
+.themis-permissions-paths { gap: 4px; }
+.themis-permissions-path { font-family: ui-monospace, monospace; font-size: .8125rem; color: var(--themis-text); overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; cursor: text; }
+.themis-permissions-files li { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--themis-border-subtle); }
+.themis-permissions-file-head { display: flex; align-items: center; gap: 8px; }
+.themis-permissions-error { color: var(--themis-danger); font-size: .8125rem; overflow-wrap: anywhere; }
 .themis-settings-key-form { flex-wrap: wrap; }
 .themis-settings-key-form .themis-input-wrap { flex: 1; min-width: 160px; }
 

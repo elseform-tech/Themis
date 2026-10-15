@@ -60,3 +60,17 @@ export function TokenList({ argv }: { argv: string[] }): ReactNode {
   const hidden = argv.length - shown.length;
   return <>{shown.map((token, index) => <TokenChip key={index} token={token} />)}{hidden > 0 && <span> …(+{hidden} more)</span>}</>;
 }
+
+/** Untrusted plain text (for example a path from program output) with hidden characters escaped like tokens, unquoted and capped. */
+export function SafeText({ text, max = 300 }: { text: string; max?: number }) {
+  const chars = Array.from(text);
+  const shown = chars.slice(0, max);
+  const parts: TokenPart[] = [];
+  for (const ch of shown) {
+    const literal = isLiteral(ch);
+    const piece = literal ? ch : escapeOf(ch);
+    const last = parts[parts.length - 1];
+    if (last && last.escaped === !literal) last.text += piece; else parts.push({ text: piece, escaped: !literal });
+  }
+  return <>{parts.map((part, index) => part.escaped ? <span key={index} className="themis-approval-escape">{part.text}</span> : part.text)}{chars.length > max && `…(+${chars.length - max} chars)`}</>;
+}
