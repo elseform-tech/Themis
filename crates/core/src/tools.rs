@@ -18,6 +18,8 @@ pub mod recall;
 
 use patch::*;
 
+use crate::sandbox::SandboxPlan;
+
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
@@ -131,6 +133,11 @@ pub struct CommandDisplay {
     /// True for a shell command started as a background task.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub background: bool,
+    /// Set when the sandbox blocked this command and the request asks to run
+    /// it outside the sandbox: why it was blocked (from the command's output;
+    /// render as untrusted text).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_blocked: Option<String>,
 }
 
 fn git_display(args: &[String], root: &std::path::Path) -> CommandDisplay {
@@ -140,6 +147,7 @@ fn git_display(args: &[String], root: &std::path::Path) -> CommandDisplay {
             .collect(),
         cwd: Some(root.display().to_string()),
         background: false,
+        sandbox_blocked: None,
     }
 }
 
@@ -250,7 +258,7 @@ impl ToolAction {
         if let Some(server) = mcp_server_id(&self.tool) {
             return format!("mcp\0{server}");
         }
-        if !(self.tool == "shell" || self.tool == "git") || self.command.is_empty() {
+        if !is_command_tool(&self.tool) || self.command.is_empty() {
             return self.tool.clone();
         }
         let (prefix, _) = self.shell_grant_prefix();
@@ -284,7 +292,7 @@ impl ToolAction {
 
     /// The command prefix a chat grant stores for `shell`/`git` actions.
     pub fn grant_scope_argv(&self) -> Option<Vec<String>> {
-        if !(self.tool == "shell" || self.tool == "git") || self.command.is_empty() {
+        if !is_command_tool(&self.tool) || self.command.is_empty() {
             return None;
         }
         Some(self.shell_grant_prefix().0.to_vec())
@@ -295,7 +303,7 @@ impl ToolAction {
     /// prefix as [`Self::grant_key`], so the two cannot disagree. A destructive
     /// variant is covered by its exact argv only (`covers_further_args` false).
     pub fn grant_scope(&self) -> Option<GrantScope> {
-        if self.tool != "shell" || self.command.is_empty() {
+        if !(self.tool == "shell" || self.tool == UNSANDBOXED_TOOL) || self.command.is_empty() {
             return None;
         }
         let (prefix, scoped) = self.shell_grant_prefix();
@@ -304,6 +312,12 @@ impl ToolAction {
             covers_further_args: scoped,
         })
     }
+}
+
+/// Tools whose grants and rules are keyed by an argv (`shell`, `git` and
+/// running a blocked command outside the sandbox).
+pub fn is_command_tool(tool: &str) -> bool {
+    matches!(tool, "shell" | "git" | UNSANDBOXED_TOOL)
 }
 
 /// `true` when a flag token names one of `longs` (`--name` or `--name=value`)
@@ -430,29 +444,229 @@ fn registry_word(arg: &str) -> bool {
         .any(|word| arg.len() >= 3 && word.starts_with(arg))
 }
 
+/// Ordinary `npm`/`pnpm`/`yarn` subcommands. Once one of these is reached, later
+/// arguments are its own operands (`npm test publish` runs the tests), so the
+/// registry scan stops there. Words that run another command (`run`, `exec`,
+/// `dlx`, `npm`, `workspace`, ...) are deliberately absent: the scan continues
+/// through them, so `yarn workspace pkg npm publish` and `npm run publish` (a
+/// script that likely publishes) still count.
+const NODE_SUBCOMMANDS: &[&str] = &[
+    "test",
+    "t",
+    "tst",
+    "install",
+    "i",
+    "ci",
+    "add",
+    "remove",
+    "rm",
+    "uninstall",
+    "un",
+    "update",
+    "up",
+    "upgrade",
+    "build",
+    "start",
+    "stop",
+    "restart",
+    "ls",
+    "list",
+    "ll",
+    "la",
+    "outdated",
+    "audit",
+    "view",
+    "info",
+    "show",
+    "search",
+    "init",
+    "link",
+    "ln",
+    "pack",
+    "prune",
+    "dedupe",
+    "why",
+    "explain",
+    "config",
+    "cache",
+    "doctor",
+    "help",
+    "version",
+    "whoami",
+    "login",
+    "logout",
+    "rebuild",
+    "fund",
+    "ping",
+    "prefix",
+    "root",
+    "bin",
+    "bugs",
+    "docs",
+    "edit",
+    "explore",
+    "star",
+    "stars",
+    "unstar",
+    "completion",
+    "import",
+    "store",
+    "env",
+    "patch",
+    "licenses",
+    "plugin",
+    "constraints",
+    "lint",
+    "format",
+    "dev",
+    "serve",
+    "typecheck",
+    "check",
+    "clean",
+    "set",
+    "get",
+];
+
+/// Ordinary `cargo` subcommands (and common plugins); see [`NODE_SUBCOMMANDS`].
+const CARGO_SUBCOMMANDS: &[&str] = &[
+    "build",
+    "b",
+    "check",
+    "c",
+    "clean",
+    "doc",
+    "d",
+    "new",
+    "init",
+    "add",
+    "remove",
+    "rm",
+    "run",
+    "r",
+    "test",
+    "t",
+    "bench",
+    "update",
+    "search",
+    "install",
+    "uninstall",
+    "fmt",
+    "clippy",
+    "tree",
+    "metadata",
+    "fix",
+    "vendor",
+    "package",
+    "locate-project",
+    "generate-lockfile",
+    "fetch",
+    "help",
+    "version",
+    "report",
+    "miri",
+    "nextest",
+    "llvm-cov",
+    "expand",
+    "watch",
+    "audit",
+    "deny",
+    "outdated",
+    "info",
+    "fuzz",
+    "login",
+    "logout",
+];
+
+/// Whether a package-manager argv publishes, retracts or deprecates a package.
+/// Every positional is scanned (option values such as `--filter pkg` or
+/// `--otp 123456` are skipped as unknown words) until an ordinary subcommand is
+/// reached, so `cargo test publish` or `npm test -- publish` are harmless while
+/// `pnpm --filter pkg publish` and `cargo +nightly publish` are not.
+fn registry_publish(program: &str, args: &[String]) -> bool {
+    let cargo = program == "cargo";
+    let mut after_flag = false;
+    for arg in args
+        .iter()
+        .map(String::as_str)
+        .take_while(|arg| *arg != "--")
+    {
+        if arg.starts_with('-') {
+            after_flag = true;
+            continue;
+        }
+        // A word right after a flag may be that flag's value (`npm -w test
+        // publish`), so it is never taken as the subcommand that ends the scan.
+        let maybe_value = std::mem::replace(&mut after_flag, false);
+        let destructive = if cargo {
+            matches!(arg, "publish" | "yank")
+        } else {
+            registry_word(arg)
+        };
+        if destructive {
+            return true;
+        }
+        let ordinary = if cargo {
+            CARGO_SUBCOMMANDS
+        } else {
+            NODE_SUBCOMMANDS
+        };
+        if !maybe_value && ordinary.contains(&arg) {
+            return false;
+        }
+    }
+    false
+}
+
+/// `rm` with a recursive flag (`-r`, `-R`, `--recursive`, or a cluster such as
+/// `-rf`) before a `--` separator.
+fn rm_recursive(args: &[String]) -> bool {
+    args.iter()
+        .take_while(|arg| *arg != "--")
+        .any(|arg| match arg.strip_prefix("--") {
+            Some(long) => long == "recursive",
+            None => arg.starts_with('-') && arg[1..].chars().any(|c| c == 'r' || c == 'R'),
+        })
+}
+
+/// Basename of a program token, lowercased, without a Windows `.exe` suffix.
+fn program_basename(program: &str) -> String {
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let name = name.to_ascii_lowercase();
+    name.strip_suffix(".exe").map(str::to_owned).unwrap_or(name)
+}
+
 /// Whether `command` (program followed by arguments) is a destructive or
 /// irreversible variant of a known CLI: `git push --force`, `git clean -fd`,
 /// `git reset --hard`, `git checkout -- .`, forced checkout/switch/restore,
-/// `git branch -D`, `git stash drop`, `git rebase`, `git commit --amend`, and
-/// `publish`/`yank` style registry commands (found even behind value-taking
-/// options such as `pnpm --filter pkg publish`, `npm -w x publish` or
-/// `yarn npm publish`). Used to give such calls their own grant key and to keep
-/// broad allow rules (for example `["git","push"]`) from silently covering them.
+/// `git branch -D`, `git stash drop`, `git rebase`, `git commit --amend`,
+/// recursive `rm` (`rm -rf`), and `publish`/`yank` style registry commands
+/// (found even behind value-taking options such as `pnpm --filter pkg publish`,
+/// `npm -w x publish` or `yarn npm publish`, but not as an operand of another
+/// subcommand such as `cargo test publish`). Such calls get their own grant
+/// key, the `destructive` risk class, and are not covered by broad allow
+/// rules (for example `["git","push"]` or a `shell` rule without `command`).
 pub fn is_destructive_variant(command: &[String]) -> bool {
     let Some(program) = command.first() else {
         return false;
     };
-    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
-    let name = name.to_ascii_lowercase();
-    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    let name = program_basename(program);
     let args = &command[1..];
-    match name {
+    match name.as_str() {
         "git" => git_destructive(args),
-        // Scanning every positional also covers values of options like
-        // `--filter pkg` and wrappers like `yarn workspace pkg npm publish`.
-        "npm" | "pnpm" | "yarn" => positionals(args).any(registry_word),
-        "cargo" => positionals(args).any(|arg| matches!(arg, "publish" | "yank")),
+        "rm" => rm_recursive(args),
+        "npm" | "pnpm" | "yarn" | "cargo" => registry_publish(&name, args),
         _ => false,
+    }
+}
+
+/// Risk class of a `shell` (or `git`) argv: destructive variants
+/// ([`is_destructive_variant`]) are [`RiskLevel::Destructive`], everything
+/// else runs as [`RiskLevel::Execute`].
+pub fn shell_risk(command: &[String]) -> RiskLevel {
+    if is_destructive_variant(command) {
+        RiskLevel::Destructive
+    } else {
+        RiskLevel::Execute
     }
 }
 
@@ -477,6 +691,7 @@ pub fn command_display_for_call(name: &str, args: &serde_json::Value) -> Option<
                     .get("background")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
+                sandbox_blocked: None,
             })
         }
         "git" => {
@@ -487,6 +702,7 @@ pub fn command_display_for_call(name: &str, args: &serde_json::Value) -> Option<
                     .collect(),
                 cwd: None,
                 background: false,
+                sandbox_blocked: None,
             })
         }
         _ => None,
@@ -662,6 +878,8 @@ pub struct GatedTool {
     relative_root: Option<PathBuf>,
     /// Directory relative paths resolve against; used to confirm appends landed.
     base_dir: Option<PathBuf>,
+    /// Paths the sandbox protects from Themis' own file tools.
+    guard: Option<Arc<crate::sandbox::FileGuard>>,
 }
 
 impl GatedTool {
@@ -674,6 +892,7 @@ impl GatedTool {
             summarize: summarize_fs_call,
             relative_root: None,
             base_dir: None,
+            guard: None,
         }
     }
 
@@ -691,6 +910,7 @@ impl GatedTool {
             summarize,
             relative_root: None,
             base_dir: None,
+            guard: None,
         }
     }
 
@@ -707,9 +927,49 @@ impl GatedTool {
         self
     }
 
+    /// Refuses reads of secret locations and writes to protected folders.
+    #[must_use]
+    pub fn with_guard(mut self, guard: Option<Arc<crate::sandbox::FileGuard>>) -> Self {
+        self.guard = guard;
+        self
+    }
+
     /// The risk level this wrapper gates under.
     pub fn risk(&self) -> RiskLevel {
         self.risk
+    }
+
+    /// Applies the sandbox file guard to every path argument of `args`.
+    fn check_guard(&self, name: &str, args: &Value) -> Result<(), ToolCallError> {
+        let Some(guard) = &self.guard else {
+            return Ok(());
+        };
+        for key in [
+            "path",
+            "file_path",
+            "directory_path",
+            "source_path",
+            "destination_path",
+            "directory",
+        ] {
+            let Some(path) = args.get(key).and_then(Value::as_str) else {
+                continue;
+            };
+            let path = Path::new(path);
+            let path = match &self.base_dir {
+                Some(base) if path.is_relative() => base.join(path),
+                _ => path.to_path_buf(),
+            };
+            let read_only =
+                self.risk == RiskLevel::Read || (name == "copy_file" && key == "source_path");
+            let checked = if read_only {
+                guard.check_read(&path)
+            } else {
+                guard.check_write(&path)
+            };
+            checked.map_err(|e| tool_error(format!("{name}: {e}")))?;
+        }
+        Ok(())
     }
 }
 
@@ -781,6 +1041,7 @@ impl ToolRuntime for GatedTool {
             risk: self.risk,
         };
         check_approval_permitted(self.approvals.as_ref(), &action)?;
+        self.check_guard(name, &args)?;
         if name == "read_file" {
             let result = self.inner.execute(args.clone()).await?;
             bounded_read_result(&args, result)
@@ -1308,6 +1569,7 @@ async fn run_command(
     workdir: PathBuf,
     tool: &'static str,
     cancel: Option<Arc<AtomicBool>>,
+    sandbox: Option<Arc<SandboxPlan>>,
 ) -> Result<CommandOutput, ToolCallError> {
     run_command_with_timeout(
         program,
@@ -1316,6 +1578,7 @@ async fn run_command(
         tool,
         Duration::from_secs(SHELL_TIMEOUT_SECS),
         cancel,
+        sandbox,
     )
     .await
 }
@@ -1330,12 +1593,14 @@ pub struct CheckOutput {
 }
 
 /// Runs a watch check through the shell runner (argv only, scrubbed
-/// environment, own process group, kill deadline, bounded output). Approval is
-/// decided by the caller; this performs no policy check.
+/// environment, own process group, kill deadline, bounded output), inside
+/// `sandbox` when given. Approval is decided by the caller; this performs no
+/// policy check, and a sandbox denial is never escalated (nobody is asked).
 pub async fn run_check_command(
     argv: Vec<String>,
     workdir: PathBuf,
     timeout: Duration,
+    sandbox: Option<Arc<SandboxPlan>>,
 ) -> Result<CheckOutput, ToolCallError> {
     let mut parts = argv.into_iter();
     let program = parts
@@ -1343,8 +1608,24 @@ pub async fn run_check_command(
         .filter(|program| !program.trim().is_empty())
         .ok_or_else(|| tool_error("check: command must not be empty".to_string()))?;
     // Scheduled checks belong to no run, so there is no Stop flag; the timeout still kills them.
-    let out =
-        run_command_with_timeout(program, parts.collect(), workdir, "check", timeout, None).await?;
+    if let Some(refusal) = sandbox.as_ref().and_then(|plan| plan.refusal()) {
+        return Err(tool_error(format!("check: {refusal}")));
+    }
+    let mut out = run_command_with_timeout(
+        program,
+        parts.collect(),
+        workdir.clone(),
+        "check",
+        timeout,
+        None,
+        sandbox.clone(),
+    )
+    .await?;
+    if let Some(plan) = &sandbox {
+        if let Some(reason) = plan.denial(out.success, &out.output, &workdir) {
+            out.output.push_str(&sandbox_note(&reason, false));
+        }
+    }
     Ok(CheckOutput {
         exit_code: out.exit_code,
         output: out.output,
@@ -1361,9 +1642,18 @@ async fn run_command_with_timeout(
     tool: &'static str,
     timeout: Duration,
     cancel: Option<Arc<AtomicBool>>,
+    sandbox: Option<Arc<SandboxPlan>>,
 ) -> Result<CommandOutput, ToolCallError> {
     tokio::task::spawn_blocking(move || {
-        run_command_blocking(&program, &args, &workdir, tool, timeout, cancel.as_deref())
+        run_command_blocking(
+            &program,
+            &args,
+            &workdir,
+            tool,
+            timeout,
+            cancel.as_deref(),
+            sandbox.as_deref(),
+        )
     })
     .await
     .map_err(|e| tool_error(format!("{tool}: execution task failed: {e}")))?
@@ -1417,10 +1707,12 @@ fn run_command_blocking(
     tool: &str,
     timeout: Duration,
     cancel: Option<&AtomicBool>,
+    sandbox: Option<&SandboxPlan>,
 ) -> Result<CommandOutput, ToolCallError> {
-    let mut command = std::process::Command::new(program);
+    let prepared = prepare_command(program, args, sandbox)
+        .map_err(|e| tool_error(format!("{tool}: {}", spawn_failure(program, args, &e))))?;
+    let mut command = prepared.command();
     command
-        .args(args)
         .current_dir(workdir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1493,6 +1785,36 @@ fn run_command_blocking(
         );
     }
     Ok(output)
+}
+
+/// `program args` wrapped for `sandbox` (unchanged without one). The program is
+/// resolved against the scrubbed child `PATH`, the one the child would use.
+pub(crate) fn prepare_command(
+    program: &str,
+    args: &[String],
+    sandbox: Option<&SandboxPlan>,
+) -> std::io::Result<crate::sandbox::Prepared> {
+    let path = scrubbed_env()
+        .into_iter()
+        .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case("PATH"))
+        .map(|(_, value)| value);
+    match sandbox {
+        Some(plan) => plan.prepare(program, args, path.as_deref()),
+        None => crate::sandbox::SandboxPlan::unsandboxed(program, args),
+    }
+}
+
+/// Text appended to a command's output when the sandbox blocked it.
+fn sandbox_note(reason: &str, escalation_denied: bool) -> String {
+    if escalation_denied {
+        format!(
+            "\n[Themis sandbox blocked this command: {reason}. Running it outside the sandbox was not approved.]"
+        )
+    } else {
+        format!(
+            "\n[Themis sandbox blocked this command: {reason}. The sandbox still applies without approval prompts; work inside the project or a temporary folder, or ask the user to run it.]"
+        )
+    }
 }
 
 /// Message for a program that could not be started. When the "program" holds
@@ -1720,6 +2042,8 @@ pub struct ShellTool {
     unrestricted: bool,
     background: Option<background::BackgroundScope>,
     cancel: Option<Arc<AtomicBool>>,
+    sandbox: Option<Arc<SandboxPlan>>,
+    escalate: bool,
 }
 
 impl ShellTool {
@@ -1732,7 +2056,20 @@ impl ShellTool {
             unrestricted: false,
             background: None,
             cancel: None,
+            sandbox: None,
+            escalate: false,
         }
+    }
+
+    /// Runs commands inside `plan`. With `escalate` (Custom mode) a command the
+    /// sandbox blocked is offered to run outside it through the approval hook
+    /// (tool [`UNSANDBOXED_TOOL`]); without it (YOLO) the failure, with a short
+    /// explanation, goes back to the agent.
+    #[must_use]
+    pub fn with_sandbox(mut self, plan: Arc<SandboxPlan>, escalate: bool) -> Self {
+        self.sandbox = Some(plan);
+        self.escalate = escalate;
+        self
     }
 
     /// Enables `background: true`, owned by the chat in `scope`.
@@ -1806,7 +2143,9 @@ impl ToolRuntime for ShellTool {
                 argv: argv.clone(),
                 cwd: Some(workdir.display().to_string()),
                 background,
+                sandbox_blocked: None,
             }),
+            risk: shell_risk(&argv),
             command: argv,
             tool: "shell".to_string(),
             summary: format!(
@@ -1815,7 +2154,6 @@ impl ToolRuntime for ShellTool {
                 workdir.display(),
                 if background { " in the background" } else { "" }
             ),
-            risk: RiskLevel::Execute,
         };
         if background && self.background.is_none() {
             return Err(tool_error(
@@ -1823,29 +2161,131 @@ impl ToolRuntime for ShellTool {
             ));
         }
         check_approval_permitted(self.approvals.as_ref(), &action)?;
+        if let Some(refusal) = self.sandbox.as_ref().and_then(|plan| plan.refusal()) {
+            return Err(tool_error(format!("shell: {refusal}")));
+        }
 
         if background {
             let scope = self.background.clone().expect("checked above");
             return scope
-                .start(command, args, workdir, background_timeout_secs)
+                .start(
+                    command,
+                    args,
+                    workdir,
+                    background_timeout_secs,
+                    self.sandbox.clone(),
+                )
                 .await;
         }
-        let out = run_command_with_timeout(
-            command,
-            args,
-            workdir,
-            "shell",
-            self.timeout,
-            self.cancel.clone(),
-        )
-        .await?;
-        Ok(json!({
-            "success": out.success,
-            "exit_code": out.exit_code,
-            "output": out.output,
-            "truncated": out.truncated,
-        }))
+        let run = |sandbox: Option<Arc<SandboxPlan>>| {
+            run_command_with_timeout(
+                command.clone(),
+                args.clone(),
+                workdir.clone(),
+                "shell",
+                self.timeout,
+                self.cancel.clone(),
+                sandbox,
+            )
+        };
+        let out = run(self.sandbox.clone()).await?;
+        let result = sandbox_outcome(
+            out,
+            self.sandbox.as_deref(),
+            self.escalate,
+            self.approvals.as_ref(),
+            &action,
+            &workdir,
+        );
+        match result {
+            SandboxOutcome::Done(value) => Ok(value),
+            SandboxOutcome::RunOutside => {
+                let out = run(None).await?;
+                let mut value = command_json(&out);
+                value["ran_outside_sandbox"] = json!(true);
+                Ok(value)
+            }
+        }
     }
+}
+
+/// Approval identity for running a command outside the sandbox after the
+/// sandbox blocked it. Its grants and rules are separate from `shell`: an
+/// approval to run `cargo test` does not approve running it unsandboxed.
+pub const UNSANDBOXED_TOOL: &str = "shell_unsandboxed";
+
+/// What to do with a finished sandboxed command.
+enum SandboxOutcome {
+    Done(Value),
+    /// The person approved running it again outside the sandbox.
+    RunOutside,
+}
+
+fn command_json(out: &CommandOutput) -> Value {
+    json!({
+        "success": out.success,
+        "exit_code": out.exit_code,
+        "output": out.output,
+        "truncated": out.truncated,
+    })
+}
+
+/// Inspects a finished command run under `sandbox`: when the sandbox blocked
+/// it, either asks (`escalate`, Custom mode) whether to run it outside the
+/// sandbox, or explains the block to the agent (YOLO). The escalation request
+/// is the original action renamed to [`UNSANDBOXED_TOOL`], so its grant key
+/// follows the usual shell rules and destructive commands stay non-grantable.
+fn sandbox_outcome(
+    mut out: CommandOutput,
+    sandbox: Option<&SandboxPlan>,
+    escalate: bool,
+    approvals: &dyn ApprovalHook,
+    action: &ToolAction,
+    workdir: &Path,
+) -> SandboxOutcome {
+    let Some(plan) = sandbox else {
+        return SandboxOutcome::Done(command_json(&out));
+    };
+    let Some(reason) = plan.denial(out.success, &out.output, workdir) else {
+        if plan.may_have_blocked(out.success, &out.output) {
+            out.output.push_str(
+                "\n[note: this command ran in the Themis sandbox, which blocks writes outside the project and temporary folders and reads of secret folders. If that caused this failure, change the approach or ask the user.]",
+            );
+        }
+        return SandboxOutcome::Done(command_json(&out));
+    };
+    if escalate {
+        let mut display = action.display.clone().unwrap_or(CommandDisplay {
+            argv: action.command.clone(),
+            cwd: Some(workdir.display().to_string()),
+            background: false,
+            sandbox_blocked: None,
+        });
+        display.sandbox_blocked = Some(reason.clone());
+        let request = ToolAction {
+            tool: UNSANDBOXED_TOOL.to_owned(),
+            summary: format!(
+                "Run outside the sandbox? `{}` was blocked: {reason}",
+                action.command.join(" ")
+            ),
+            display: Some(display),
+            // Leaving the sandbox is at least an execution, whatever the
+            // original call was (a read-only `git status` must not escalate
+            // as a read that policies and dialogs pass silently).
+            risk: match action.risk {
+                RiskLevel::Destructive => RiskLevel::Destructive,
+                _ => RiskLevel::Execute,
+            },
+            ..action.clone()
+        };
+        if check_approval(approvals, &request).is_ok() {
+            return SandboxOutcome::RunOutside;
+        }
+    }
+    out.output.push_str(&sandbox_note(&reason, escalate));
+    let mut value = command_json(&out);
+    value["sandbox_blocked"] = json!(reason);
+    SandboxOutcome::Done(value)
 }
 
 // ---------------------------------------------------------------------------
@@ -1880,6 +2320,7 @@ pub struct ApplyPatchTool {
     root: PathBuf,
     approvals: Arc<dyn ApprovalHook>,
     unrestricted: bool,
+    guard: Option<Arc<crate::sandbox::FileGuard>>,
 }
 
 impl ApplyPatchTool {
@@ -1893,7 +2334,15 @@ impl ApplyPatchTool {
             root,
             approvals,
             unrestricted: false,
+            guard: None,
         }
+    }
+
+    /// Refuses patches touching paths the sandbox protects.
+    #[must_use]
+    pub fn with_guard(mut self, guard: Option<Arc<crate::sandbox::FileGuard>>) -> Self {
+        self.guard = guard;
+        self
     }
 
     /// The project root this tool is scoped to.
@@ -1928,6 +2377,13 @@ impl ToolRuntime for ApplyPatchTool {
                 risk: RiskLevel::Write,
             },
         )?;
+        if let Some(guard) = &self.guard {
+            for file in &plan {
+                guard
+                    .check_write(&file.path)
+                    .map_err(|e| tool_error(format!("apply_patch: {e}. No files were changed.")))?;
+            }
+        }
         let mut changed = Vec::with_capacity(plan.len());
         for file in &plan {
             commit_planned_file(file).map_err(|e| tool_error(format!("apply_patch: {e}")))?;
@@ -1976,6 +2432,8 @@ pub struct GitTool {
     root: PathBuf,
     approvals: Arc<dyn ApprovalHook>,
     unrestricted: bool,
+    sandbox: Option<Arc<SandboxPlan>>,
+    escalate: bool,
 }
 
 impl GitTool {
@@ -1989,7 +2447,17 @@ impl GitTool {
             root,
             approvals,
             unrestricted: false,
+            sandbox: None,
+            escalate: false,
         }
+    }
+
+    /// Runs git inside `plan`; see [`ShellTool::with_sandbox`].
+    #[must_use]
+    pub fn with_sandbox(mut self, plan: Arc<SandboxPlan>, escalate: bool) -> Self {
+        self.sandbox = Some(plan);
+        self.escalate = escalate;
+        self
     }
 
     /// The project root this tool is scoped to.
@@ -2022,26 +2490,46 @@ impl ToolRuntime for GitTool {
                 )));
             }
         };
-        check_approval_permitted(
-            self.approvals.as_ref(),
-            &ToolAction {
-                display: Some(git_display(&args, &root)),
-                command,
-                tool: "git".into(),
-                summary: format!("run `git {}`", args.join(" ")),
-                risk,
-            },
-        )?;
+        let action = ToolAction {
+            display: Some(git_display(&args, &root)),
+            command,
+            tool: "git".into(),
+            summary: format!("run `git {}`", args.join(" ")),
+            risk,
+        };
+        check_approval_permitted(self.approvals.as_ref(), &action)?;
+        if let Some(refusal) = self.sandbox.as_ref().and_then(|plan| plan.refusal()) {
+            return Err(tool_error(format!("git: {refusal}")));
+        }
 
         let mut full_args = vec!["-C".to_string(), root.to_string_lossy().into_owned()];
         full_args.extend(args);
-        let out = run_command("git".to_string(), full_args, root, "git", None).await?;
-        Ok(json!({
-            "success": out.success,
-            "exit_code": out.exit_code,
-            "output": out.output,
-            "truncated": out.truncated,
-        }))
+        let out = run_command(
+            "git".to_string(),
+            full_args.clone(),
+            root.clone(),
+            "git",
+            None,
+            self.sandbox.clone(),
+        )
+        .await?;
+        match sandbox_outcome(
+            out,
+            self.sandbox.as_deref(),
+            self.escalate,
+            self.approvals.as_ref(),
+            &action,
+            &root,
+        ) {
+            SandboxOutcome::Done(value) => Ok(value),
+            SandboxOutcome::RunOutside => {
+                let out =
+                    run_command("git".to_string(), full_args, root, "git", None, None).await?;
+                let mut value = command_json(&out);
+                value["ran_outside_sandbox"] = json!(true);
+                Ok(value)
+            }
+        }
     }
 }
 
@@ -2116,13 +2604,57 @@ pub fn boxed_tools_for_chat(
     background: Option<background::BackgroundScope>,
     cancel: Option<Arc<AtomicBool>>,
 ) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
+    boxed_tools_for_run(
+        root,
+        approvals,
+        ToolOptions {
+            yolo,
+            background,
+            cancel,
+            sandbox: None,
+        },
+    )
+}
+
+/// Per-run options for [`boxed_tools_for_run`].
+#[derive(Default)]
+pub struct ToolOptions {
+    /// YOLO: no approval prompts, unrestricted paths and git subcommands.
+    pub yolo: bool,
+    /// Lets `shell` start background tasks owned by this chat.
+    pub background: Option<background::BackgroundScope>,
+    /// Kills a running blocking `shell` command when set (Stop).
+    pub cancel: Option<Arc<AtomicBool>>,
+    /// The run's captured sandbox for `shell`, background tasks and `git`, and
+    /// its file guard for the in-process file tools. In Custom mode a command
+    /// the sandbox blocked asks to run outside it; in YOLO it never asks.
+    pub sandbox: Option<Arc<SandboxPlan>>,
+}
+
+/// The coding toolset for one run (see [`boxed_tools`]).
+pub fn boxed_tools_for_run(
+    root: &Path,
+    approvals: Arc<dyn ApprovalHook>,
+    options: ToolOptions,
+) -> anyhow::Result<Vec<Box<dyn ToolT>>> {
+    let ToolOptions {
+        yolo,
+        background,
+        cancel,
+        sandbox,
+    } = options;
+    let guard = sandbox
+        .as_ref()
+        .and_then(|plan| plan.file_guard(yolo))
+        .map(Arc::new);
     let canonical = root
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("project root '{}' is not accessible: {e}", root.display()))?;
     let root_string = canonical.to_string_lossy().into_owned();
     let gate = |tool: Box<dyn ToolT>, risk: RiskLevel| -> Box<dyn ToolT> {
-        let tool =
-            GatedTool::new(tool, Arc::clone(&approvals), risk).with_base_dir(canonical.clone());
+        let tool = GatedTool::new(tool, Arc::clone(&approvals), risk)
+            .with_base_dir(canonical.clone())
+            .with_guard(guard.clone());
         Box::new(if yolo {
             tool.with_relative_root(canonical.clone())
         } else {
@@ -2203,15 +2735,20 @@ pub fn boxed_tools_for_chat(
     if let Some(cancel) = cancel {
         shell = shell.with_cancel(cancel);
     }
+    let mut git =
+        GitTool::new(canonical.clone(), approvals.clone()).with_unrestricted_commands(yolo);
+    if let Some(plan) = sandbox {
+        shell = shell.with_sandbox(Arc::clone(&plan), !yolo);
+        git = git.with_sandbox(plan, !yolo);
+    }
     tools.push(Box::new(shell));
     tools.push(Box::new(background::BackgroundTool::new(background)));
     tools.push(Box::new(
-        ApplyPatchTool::new(canonical.clone(), Arc::clone(&approvals))
-            .with_unrestricted_paths(yolo),
+        ApplyPatchTool::new(canonical, Arc::clone(&approvals))
+            .with_unrestricted_paths(yolo)
+            .with_guard(guard),
     ));
-    tools.push(Box::new(
-        GitTool::new(canonical, approvals).with_unrestricted_commands(yolo),
-    ));
+    tools.push(Box::new(git));
     Ok(tools)
 }
 
@@ -3649,5 +4186,479 @@ mod tests {
         let boxes = autoagents::core::tool::shared_tools_to_boxes(&shared);
         assert_eq!(boxes.len(), 12);
         assert_eq!(boxes[8].name(), "shell");
+    }
+
+    /// Commands under a real sandbox backend on this machine; every test is
+    /// skipped (with the reason) where no backend is usable.
+    #[cfg(unix)]
+    mod sandboxed {
+        use super::*;
+        use crate::sandbox::{Availability, Enforcement, PlanInputs, SandboxConfig, SandboxPlan};
+
+        struct Env {
+            _dir: tempfile::TempDir,
+            root: PathBuf,
+            outside: PathBuf,
+            app: PathBuf,
+            home: PathBuf,
+        }
+
+        /// Folders outside the temporary folder (which stays writable).
+        fn env() -> Env {
+            let base = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/sandbox-tests");
+            fs::create_dir_all(&base).unwrap();
+            let dir = tempfile::tempdir_in(&base).unwrap();
+            let make = |name: &str| {
+                let path = dir.path().join(name);
+                fs::create_dir_all(&path).unwrap();
+                path.canonicalize().unwrap()
+            };
+            let (root, outside, app, home) =
+                (make("root"), make("outside"), make("app"), make("home"));
+            fs::create_dir_all(home.join(".ssh")).unwrap();
+            fs::write(home.join(".ssh/id"), "secret").unwrap();
+            fs::write(app.join("runtime.jsonc"), "{}").unwrap();
+            Env {
+                _dir: dir,
+                root,
+                outside,
+                app,
+                home,
+            }
+        }
+
+        fn plan(env: &Env, json: &str) -> Arc<SandboxPlan> {
+            let config: SandboxConfig = serde_json::from_str(json).unwrap();
+            Arc::new(SandboxPlan::new(PlanInputs {
+                config: &config,
+                project_root: &env.root,
+                app_data: Some(&env.app),
+                home: Some(&env.home),
+            }))
+        }
+
+        fn active(env: &Env) -> Option<Arc<SandboxPlan>> {
+            let plan = plan(env, "{}");
+            if plan.is_active() {
+                Some(plan)
+            } else {
+                eprintln!("skipping sandboxed tool test: {:?}", plan.enforcement());
+                None
+            }
+        }
+
+        fn sh(script: &str) -> Value {
+            json!({"command": "sh", "args": ["-c", script]})
+        }
+
+        #[tokio::test]
+        async fn yolo_reports_a_block_to_the_agent_without_asking() {
+            let env = env();
+            let Some(plan) = active(&env) else { return };
+            let hook = Arc::new(RecordingHook::new(Approval::AllowOnce));
+            let tool = ShellTool::new(env.root.clone(), hook.clone())
+                .with_unrestricted_paths(true)
+                .with_sandbox(plan, false);
+            let inside = tool.execute(sh("echo ok > inside.txt")).await.unwrap();
+            assert_eq!(inside["success"], true, "{inside}");
+            assert!(env.root.join("inside.txt").exists());
+            let target = env.outside.join("x.txt");
+            let result = tool
+                .execute(sh(&format!("echo x > '{}'", target.display())))
+                .await
+                .unwrap();
+            assert_eq!(result["success"], false);
+            assert!(!target.exists());
+            let output = result["output"].as_str().unwrap();
+            assert!(
+                output.contains("Themis sandbox blocked this command"),
+                "{output}"
+            );
+            assert!(result["sandbox_blocked"].is_string(), "{result}");
+            // Only the two shell calls were checked; nothing asked to escalate.
+            assert!(hook.seen().iter().all(|action| action.tool == "shell"));
+        }
+
+        #[tokio::test]
+        async fn custom_asks_to_run_outside_and_allow_once_reruns_unsandboxed() {
+            let env = env();
+            let Some(plan) = active(&env) else { return };
+            let hook = Arc::new(RecordingHook::new(Approval::AllowOnce));
+            let tool = ShellTool::new(env.root.clone(), hook.clone()).with_sandbox(plan, true);
+            let target = env.outside.join("escalated.txt");
+            let result = tool
+                .execute(sh(&format!("echo x > '{}'", target.display())))
+                .await
+                .unwrap();
+            assert_eq!(result["success"], true, "{result}");
+            assert_eq!(result["ran_outside_sandbox"], true);
+            assert!(target.exists());
+            let seen = hook.seen();
+            let escalation = seen
+                .iter()
+                .find(|a| a.tool == UNSANDBOXED_TOOL)
+                .expect("escalation asked");
+            assert_eq!(escalation.command[0], "sh");
+            let blocked = escalation
+                .display
+                .as_ref()
+                .unwrap()
+                .sandbox_blocked
+                .clone()
+                .unwrap();
+            assert!(blocked.contains("escalated.txt"), "{blocked}");
+            assert!(escalation.grantable());
+            assert_eq!(
+                escalation.grant_scope().unwrap().argv,
+                escalation.command,
+                "grant keyed like other shell commands"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_denied_escalation_keeps_the_failure_and_says_so() {
+            let env = env();
+            let Some(plan) = active(&env) else { return };
+            let hook = Arc::new(FnHook::new(|action: &ToolAction| {
+                if action.tool == UNSANDBOXED_TOOL {
+                    Approval::Deny
+                } else {
+                    Approval::AllowOnce
+                }
+            }));
+            let tool = ShellTool::new(env.root.clone(), hook).with_sandbox(plan, true);
+            let target = env.outside.join("denied.txt");
+            let result = tool
+                .execute(sh(&format!("echo x > '{}'", target.display())))
+                .await
+                .unwrap();
+            assert_eq!(result["success"], false);
+            assert!(!target.exists());
+            assert!(result["output"]
+                .as_str()
+                .unwrap()
+                .contains("was not approved"));
+        }
+
+        #[tokio::test]
+        async fn destructive_escalations_cannot_be_granted_for_the_chat() {
+            let env = env();
+            let Some(plan) = active(&env) else { return };
+            let victim = env.outside.join("tree");
+            fs::create_dir_all(victim.join("sub")).unwrap();
+            let hook = Arc::new(RecordingHook::new(Approval::Deny));
+            let tool = ShellTool::new(
+                env.root.clone(),
+                Arc::new(FnHook::new({
+                    let hook = hook.clone();
+                    move |action: &ToolAction| {
+                        hook.approve(action);
+                        if action.tool == UNSANDBOXED_TOOL {
+                            Approval::Deny
+                        } else {
+                            Approval::AllowOnce
+                        }
+                    }
+                })),
+            )
+            .with_sandbox(plan, true);
+            let result = tool
+                .execute(json!({"command": "rm", "args": ["-rf", victim.to_string_lossy()]}))
+                .await
+                .unwrap();
+            assert_eq!(result["success"], false, "{result}");
+            assert!(victim.exists());
+            let escalation = hook
+                .seen()
+                .into_iter()
+                .find(|a| a.tool == UNSANDBOXED_TOOL)
+                .expect("asked");
+            assert_eq!(escalation.risk, RiskLevel::Destructive);
+            assert!(!escalation.grantable());
+        }
+
+        #[tokio::test]
+        async fn secrets_and_app_data_stay_out_of_reach() {
+            let env = env();
+            let Some(plan) = active(&env) else { return };
+            let tool = ShellTool::new(env.root.clone(), allow_all())
+                .with_unrestricted_paths(true)
+                .with_sandbox(plan, false);
+            let read = tool
+                .execute(sh(&format!("cat '{}'", env.home.join(".ssh/id").display())))
+                .await
+                .unwrap();
+            assert_eq!(read["success"], false);
+            assert!(!read["output"].as_str().unwrap().contains("secret\n"));
+            let config = env.app.join("runtime.jsonc");
+            let write = tool
+                .execute(sh(&format!(
+                    "echo '{{\"approval\":{{}}}}' > '{}'",
+                    config.display()
+                )))
+                .await
+                .unwrap();
+            assert_eq!(write["success"], false);
+            assert_eq!(fs::read_to_string(&config).unwrap(), "{}");
+        }
+
+        #[tokio::test]
+        async fn git_tool_runs_inside_the_sandbox() {
+            if !std::process::Command::new("git")
+                .arg("--version")
+                .output()
+                .is_ok_and(|o| o.status.success())
+            {
+                return;
+            }
+            let env = env();
+            let Some(plan) = active(&env) else { return };
+            let status = std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&env.root)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let git = GitTool::new(env.root.clone(), allow_all())
+                .with_unrestricted_commands(true)
+                .with_sandbox(plan, false);
+            let ok = git
+                .execute(json!({"args": ["status", "--short"]}))
+                .await
+                .unwrap();
+            assert_eq!(ok["success"], true, "{ok}");
+            let target = env.outside.join("gitconfig");
+            let blocked = git
+                .execute(json!({"args": ["config", "--file", target.to_string_lossy(), "user.name", "x"]}))
+                .await
+                .unwrap();
+            assert_eq!(blocked["success"], false, "{blocked}");
+            assert!(!target.exists());
+        }
+
+        #[tokio::test]
+        async fn background_tasks_run_inside_the_sandbox() {
+            let env = env();
+            let Some(plan) = active(&env) else { return };
+            let registry = background::BackgroundRegistry::in_memory();
+            let tool = ShellTool::new(env.root.clone(), allow_all())
+                .with_unrestricted_paths(true)
+                .with_background(background::BackgroundScope::new(
+                    Arc::clone(&registry),
+                    "t1",
+                ))
+                .with_sandbox(plan, true);
+            let target = env.outside.join("bg.txt");
+            let started = tool
+                .execute(json!({"command": "sh", "args": ["-c", format!("echo x > '{}'; echo done", target.display())], "background": true}))
+                .await
+                .unwrap();
+            assert_eq!(started["sandboxed"], true, "{started}");
+            let id = started["task_id"].as_str().unwrap().to_owned();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                let view = registry.status("t1", &id).unwrap();
+                if view.record.state != background::TaskState::Running || Instant::now() > deadline
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert!(!target.exists(), "background task escaped the sandbox");
+        }
+
+        #[test]
+        fn a_read_only_call_escalates_as_execute_and_only_a_person_lets_it_out() {
+            let env = env();
+            let Some(plan) = active(&env) else { return };
+            let outside = env.outside.join("x");
+            let blocked = || CommandOutput {
+                success: false,
+                exit_code: Some(1),
+                output: format!("error: {}: Operation not permitted", outside.display()),
+                truncated: false,
+            };
+            let status = ToolAction {
+                display: None,
+                command: vec!["git".into(), "status".into()],
+                tool: "git".into(),
+                summary: "run `git status`".into(),
+                risk: RiskLevel::Read,
+            };
+            let run = |policy: &str, answer: Approval, unattended: bool| {
+                let asked = Arc::new(std::sync::Mutex::new(Vec::<ToolAction>::new()));
+                let interactive = Arc::new(FnHook::new({
+                    let asked = asked.clone();
+                    move |action: &ToolAction| {
+                        asked.lock().unwrap().push(action.clone());
+                        if unattended {
+                            Approval::Deny
+                        } else {
+                            answer
+                        }
+                    }
+                }));
+                let policy = crate::configuration::resolve(Some(policy), None, None)
+                    .unwrap()
+                    .config
+                    .approval;
+                let hook = crate::configuration::configured_hook(
+                    crate::configuration::ApprovalMode::Custom,
+                    policy,
+                    interactive,
+                );
+                let outcome = sandbox_outcome(
+                    blocked(),
+                    Some(&plan),
+                    true,
+                    hook.as_ref(),
+                    &status,
+                    &env.root,
+                );
+                let asked = asked.lock().unwrap().clone();
+                (matches!(outcome, SandboxOutcome::RunOutside), asked)
+            };
+            // The default policy allows reads, but the escape is an execution and asks.
+            let (outside_run, asked) = run("{}", Approval::Deny, false);
+            assert!(!outside_run);
+            assert_eq!(asked.len(), 1);
+            assert_eq!(asked[0].tool, UNSANDBOXED_TOOL);
+            assert_eq!(asked[0].risk, RiskLevel::Execute);
+            for broad in [
+                r#"{"approval":{"rules":[{"tool":"*","action":"allow"}]}}"#,
+                r#"{"approval":{"rules":[{"tool":"shell*","action":"allow"}]}}"#,
+                r#"{"approval":{"rules":[{"tool":"*","risk":"execute","action":"allow"}]}}"#,
+            ] {
+                let (outside_run, asked) = run(broad, Approval::Deny, false);
+                assert!(!outside_run, "{broad}");
+                assert_eq!(asked.len(), 1, "{broad}");
+            }
+            // Unattended (nobody answers): stays inside.
+            assert!(!run("{}", Approval::AllowOnce, true).0);
+            // A person's Allow once lets it out; a deny rule refuses without asking.
+            assert!(run("{}", Approval::AllowOnce, false).0);
+            let (outside_run, asked) = run(
+                r#"{"approval":{"rules":[{"tool":"*","action":"deny"}]}}"#,
+                Approval::AllowOnce,
+                false,
+            );
+            assert!(!outside_run && asked.is_empty());
+        }
+
+        #[tokio::test]
+        async fn an_unusable_configured_backend_fails_closed() {
+            let env = env();
+            let backend = if cfg!(target_os = "macos") {
+                "seatbelt"
+            } else {
+                "bubblewrap"
+            };
+            let config: SandboxConfig =
+                serde_json::from_str(&format!(r#"{{"backend":"{backend}"}}"#)).unwrap();
+            let plan = Arc::new(SandboxPlan::with_availability(
+                PlanInputs {
+                    config: &config,
+                    project_root: &env.root,
+                    app_data: Some(&env.app),
+                    home: Some(&env.home),
+                },
+                |_| Availability::no("missing for this test"),
+            ));
+            assert!(matches!(plan.enforcement(), Enforcement::FailClosed(..)));
+            let tool =
+                ShellTool::new(env.root.clone(), allow_all()).with_sandbox(Arc::clone(&plan), true);
+            let error = tool
+                .execute(sh("echo hi > ran.txt"))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(backend), "{error}");
+            assert!(!env.root.join("ran.txt").exists());
+            let git =
+                GitTool::new(env.root.clone(), allow_all()).with_sandbox(Arc::clone(&plan), true);
+            assert!(git.execute(json!({"args": ["status"]})).await.is_err());
+            let check = run_check_command(
+                vec!["true".into()],
+                env.root.clone(),
+                Duration::from_secs(5),
+                Some(plan),
+            )
+            .await;
+            assert!(check.is_err());
+            // `auto` with nothing usable never blocks: commands run as before.
+            let auto = Arc::new(SandboxPlan::with_availability(
+                PlanInputs {
+                    config: &SandboxConfig::default(),
+                    project_root: &env.root,
+                    app_data: Some(&env.app),
+                    home: Some(&env.home),
+                },
+                |_| Availability::no("missing for this test"),
+            ));
+            let tool = ShellTool::new(env.root.clone(), allow_all()).with_sandbox(auto, true);
+            assert_eq!(
+                tool.execute(sh("echo hi > ran.txt")).await.unwrap()["success"],
+                true
+            );
+            assert!(env.root.join("ran.txt").exists());
+        }
+
+        #[tokio::test]
+        async fn file_tools_never_touch_app_data_or_secrets() {
+            let env = env();
+            let unavailable = Arc::new(SandboxPlan::with_availability(
+                PlanInputs {
+                    config: &SandboxConfig::default(),
+                    project_root: &env.root,
+                    app_data: Some(&env.app),
+                    home: Some(&env.home),
+                },
+                |_| Availability::no("not needed for in-process guards"),
+            ));
+            let tools = boxed_tools_for_run(
+                &env.root,
+                allow_all(),
+                ToolOptions {
+                    yolo: true,
+                    sandbox: Some(unavailable),
+                    ..ToolOptions::default()
+                },
+            )
+            .unwrap();
+            let config = env.app.join("runtime.jsonc");
+            let error = find_tool(&tools, "write_file")
+                .execute(json!({"file_path": config.to_string_lossy(), "content": "{\"sandbox\":{\"enabled\":false}}", "append": false}))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("Themis settings"), "{error}");
+            assert_eq!(fs::read_to_string(&config).unwrap(), "{}");
+            let error = find_tool(&tools, "read_file")
+                .execute(json!({"file_path": env.home.join(".ssh/id").to_string_lossy()}))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("secret"), "{error}");
+            let project_config = env.root.join(".themis/config.jsonc");
+            assert!(find_tool(&tools, "write_file")
+                .execute(json!({"file_path": project_config.to_string_lossy(), "content": "{}", "append": false}))
+                .await
+                .is_err());
+            let patch = format!(
+                "--- /dev/null\n+++ {}\n@@ -0,0 +1 @@\n+x\n",
+                env.app.join("new.json").display()
+            );
+            assert!(find_tool(&tools, "apply_patch")
+                .execute(json!({"patch": patch}))
+                .await
+                .is_err());
+            assert!(!env.app.join("new.json").exists());
+            // Ordinary project files still work.
+            find_tool(&tools, "write_file")
+                .execute(json!({"file_path": "notes.txt", "content": "hi", "append": false}))
+                .await
+                .unwrap();
+            assert!(env.root.join("notes.txt").exists());
+        }
     }
 }

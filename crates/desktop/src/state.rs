@@ -14,6 +14,7 @@ pub(crate) mod configuration;
 mod integration_tools;
 mod mcp;
 mod mcp_consent;
+mod permissions;
 mod plugins;
 mod preferences;
 mod projects;
@@ -207,6 +208,10 @@ struct AppStateInner {
     diagnostics: Arc<themis_core::diagnostics::DiagnosticLog>,
     secrets: Arc<dyn SecretStore>,
     go_base_url_override: std::sync::Mutex<Option<String>>,
+    /// Test seam: home folder for sandbox plans (`None` uses `$HOME`).
+    sandbox_home: std::sync::Mutex<Option<PathBuf>>,
+    /// Test seam: every sandbox backend counts as missing.
+    sandbox_backends_unavailable: AtomicBool,
     go_catalog: tokio::sync::RwLock<Vec<themis_core::providers::GoModel>>,
     worktrees_root: PathBuf,
     registry_path: PathBuf,
@@ -374,6 +379,8 @@ impl AppState {
                 diagnostics,
                 secrets,
                 go_base_url_override: std::sync::Mutex::new(None),
+                sandbox_home: std::sync::Mutex::new(None),
+                sandbox_backends_unavailable: AtomicBool::new(false),
                 go_catalog: tokio::sync::RwLock::new(Vec::new()),
                 worktrees_root,
                 registry_path,
@@ -957,6 +964,27 @@ fn next_run_due(next_run_at: &str, now: chrono::DateTime<Utc>) -> bool {
         Ok(stamp) => stamp <= now,
         Err(_) => true,
     }
+}
+
+/// Opens `target` as plain text: `open -t` on macOS (the default text
+/// editor, whatever app `.jsonc` is bound to), `xdg-open` on Linux and
+/// Notepad on Windows.
+pub(crate) fn spawn_text_editor(target: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg("-t");
+        command
+    };
+    #[cfg(target_os = "linux")]
+    let mut command = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("notepad.exe");
+    command
+        .arg(target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("failed to open '{}': {err}", target.display()))
 }
 
 #[cfg(target_os = "macos")]

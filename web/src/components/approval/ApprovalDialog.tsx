@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import type { ApprovalDecision, ApprovalRequest, RiskLevel } from "../../lib/types";
+import { UNSANDBOXED_TOOL } from "../../lib/types";
 import { singleKeyShortcutAllowed } from "../../lib/keyboard";
-import { TokenChip, TokenList } from "./CommandTokens";
+import { SafeText, TokenChip, TokenList } from "./CommandTokens";
 import { Badge, type BadgeTone } from "../primitives/Badge";
 import { Button } from "../primitives/Button";
 import { Dialog } from "../primitives/Dialog";
@@ -32,14 +33,16 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   if (request.tool.startsWith("mcp_")) {
     return <>Allow in this chat covers every tool of this MCP server in later runs of this chat.</>;
   }
-  if (request.tool !== "shell" || !scope || scope.argv.length === 0) {
+  const outside = request.tool === UNSANDBOXED_TOOL;
+  if ((request.tool !== "shell" && !outside) || !scope || scope.argv.length === 0) {
     return <>Allow in this chat covers this tool in later runs of this chat.</>;
   }
   return (
     <>
-      Allow in this chat covers the command{" "}
+      Allow in this chat {outside ? "lets" : "covers"} the command{" "}
       <TokenList argv={scope.argv} />
       {scope.covers_further_args && <span> and any further arguments</span>}
+      {outside ? " run outside the sandbox" : ""}
       {" "}in later runs of this chat. Other commands still ask.
     </>
   );
@@ -49,6 +52,8 @@ const SHORTCUT_DELAY_MS = 500;
 
 export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps) {
   const grantable = request.grantable !== false;
+  const outside = request.tool === UNSANDBOXED_TOOL;
+  const blocked = request.command?.sandbox_blocked;
   useEffect(() => {
     if (!open) return;
     // Keys typed just before the dialog appeared (for example digits in the composer) must not decide it.
@@ -72,12 +77,12 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
   return (
     <Dialog
       open={open}
-      title="Approval required"
+      title={outside ? "Run outside the sandbox?" : "Approval required"}
       onClose={() => onDecide("deny")}
     >
       <div className="themis-approval">
         <div className="themis-approval-row">
-          <span className="themis-approval-tool">{request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : request.tool}</span>
+          <span className="themis-approval-tool">{outside ? "shell (outside the sandbox)" : request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : request.tool}</span>
           <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
         </div>
         {request.command
@@ -87,6 +92,7 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
               {request.command.background && " in the background"}
             </p>
           : <p className="themis-approval-summary">{request.summary}</p>}
+        {outside && <p className="themis-approval-summary">The sandbox blocked it{blocked ? <>: <SafeText text={blocked} />.</> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</p>}
         <p className="themis-thread-hint"><GrantHint request={request} /></p>
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>

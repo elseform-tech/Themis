@@ -43,6 +43,8 @@ Commands:
   skill                         List, save, verify, delete, or ask agent to create skills
   mcp | hook                    Manage plugin connections and lifecycle hooks
   doctor [--json] [--deep]       Read-only local diagnostics
+  permissions [PROJECT] [--thread ID] [--json]
+                                Effective approval rules, sandbox and chat grants (read-only)
   providers                     Select OpenCode Go and enter a hidden API key
   auth status                   Report key availability only
   thread create PROJECT [MODEL]  Create a shared desktop conversation
@@ -100,7 +102,16 @@ pub async fn run() -> Result<(), String> {
     if words.first().is_some_and(|word| {
         matches!(
             word.as_str(),
-            "thread" | "chat" | "models" | "call" | "auth" | "plugin" | "skill" | "mcp" | "hook"
+            "thread"
+                | "chat"
+                | "models"
+                | "call"
+                | "auth"
+                | "plugin"
+                | "skill"
+                | "mcp"
+                | "hook"
+                | "permissions"
         )
     }) {
         ensure_server(&client, &directory).await?;
@@ -133,6 +144,9 @@ pub async fn run() -> Result<(), String> {
         } else {
             Ok(())
         };
+    }
+    if words.first().is_some_and(|word| word == "permissions") {
+        return permissions(&client, &words[1..]).await;
     }
     let result = match words.as_slice() {
         [kind, create, id, request] if kind == "skill" && create == "create" => {
@@ -314,6 +328,230 @@ pub async fn run() -> Result<(), String> {
         serde_json::to_string(&result).map_err(|err| err.to_string())?
     );
     Ok(())
+}
+
+/// `themis permissions [PROJECT] [--thread ID] [--json]`: the same read-only
+/// view as Settings → Permissions, from the shared app server.
+async fn permissions(client: &Client, words: &[String]) -> Result<(), String> {
+    let mut project = None;
+    let mut thread = None;
+    let mut as_json = false;
+    let mut rest = words.iter();
+    while let Some(word) = rest.next() {
+        match word.as_str() {
+            "--json" => as_json = true,
+            "--thread" => thread = Some(rest.next().ok_or_else(|| usage().to_owned())?.clone()),
+            other if !other.starts_with("--") && project.is_none() => {
+                project = Some(other.to_owned())
+            }
+            _ => return Err(usage().to_owned()),
+        }
+    }
+    if project.is_none() && thread.is_none() {
+        project = std::env::current_dir()
+            .ok()
+            .map(|dir| dir.to_string_lossy().into_owned());
+    }
+    let view = client
+        .call(
+            "get_effective_permissions",
+            json!({"projectRoot": project, "threadId": thread}),
+        )
+        .await?;
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&view).map_err(|error| error.to_string())?
+        );
+    } else {
+        print!("{}", render_permissions(&view));
+    }
+    Ok(())
+}
+
+fn text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// Human-readable form of `get_effective_permissions`.
+pub fn render_permissions(view: &Value) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let source = |name: &str| match name {
+        "default" => "Built-in",
+        "user" => "User file",
+        "project" => "Project file",
+        "run" => "Run override",
+        _ => "Unknown",
+    };
+    if let Some(root) = view["project_root"].as_str() {
+        let _ = writeln!(out, "Project: {root}");
+    }
+    match view["mode"].as_str() {
+        Some("yolo") => {
+            let _ = writeln!(
+                out,
+                "Mode: YOLO (this chat): no approval prompts; the sandbox still applies"
+            );
+        }
+        Some(_) => {
+            let _ = writeln!(
+                out,
+                "Mode: Custom (this chat): rules below decide, otherwise Themis asks"
+            );
+        }
+        None => {
+            let _ = writeln!(out, "Mode: Custom by default; YOLO means no approval prompts, the sandbox still applies");
+        }
+    }
+    if let Some(error) = view["validation_error"].as_str() {
+        let _ = writeln!(
+            out,
+            "\nConfiguration is invalid; runs are refused until it is fixed:\n  {error}"
+        );
+    }
+    let approval = &view["approval"];
+    if let Some(rules) = approval["rules"].as_array() {
+        let _ = writeln!(out, "\nRules (first match wins):");
+        for (index, rule) in rules.iter().enumerate() {
+            let mut line = format!(
+                "  {}. {} {}",
+                index + 1,
+                text(&rule["action"]),
+                text(&rule["tool"])
+            );
+            if let Some(risk) = rule["risk"].as_str() {
+                let _ = write!(line, " risk={risk}");
+            }
+            if let Some(command) = rule["command"].as_array() {
+                let argv: Vec<String> = command.iter().map(text).collect();
+                let _ = write!(
+                    line,
+                    " command={}",
+                    serde_json::to_string(&argv).unwrap_or_default()
+                );
+            }
+            let _ = writeln!(
+                out,
+                "{line}  [{}]",
+                source(rule["source"].as_str().unwrap_or(""))
+            );
+        }
+        let _ = writeln!(
+            out,
+            "  Otherwise: {}  [{}]",
+            text(&approval["default"]),
+            source(approval["default_source"].as_str().unwrap_or("default"))
+        );
+        let added = approval["project_rule_count"].as_u64().unwrap_or(0);
+        if added > 0 {
+            let _ = writeln!(out, "  +{added} deny rules from this project");
+        }
+    }
+    let sandbox = &view["sandbox"];
+    if sandbox.is_object() {
+        let _ = writeln!(out, "\nSandbox: {}", text(&sandbox["summary"]));
+        let network = text(&sandbox["network"]);
+        let note = sandbox["network_note"]
+            .as_str()
+            .map(|note| format!(" ({note})"))
+            .unwrap_or_default();
+        let _ = writeln!(out, "  Network: {network}{note}");
+        if let Some(paths) = sandbox["writable_paths"].as_array() {
+            let _ = writeln!(
+                out,
+                "  Writable: {}",
+                paths.iter().map(text).collect::<Vec<_>>().join(", ")
+            );
+        }
+        if let Some(paths) = sandbox["protected_paths"].as_array() {
+            let _ = writeln!(
+                out,
+                "  Never writable: {}",
+                paths.iter().map(text).collect::<Vec<_>>().join(", ")
+            );
+        }
+        if let Some(paths) = sandbox["secret_paths"].as_array() {
+            let _ = writeln!(
+                out,
+                "  Never readable: {}",
+                paths.iter().map(text).collect::<Vec<_>>().join(", ")
+            );
+        }
+        if let Some(backends) = sandbox["backends"].as_array() {
+            for backend in backends {
+                let state = if backend["available"] == true {
+                    "available"
+                } else {
+                    "not available"
+                };
+                let detail = if backend["supported_here"] == true {
+                    text(&backend["detail"])
+                } else {
+                    format!("{} only", text(&backend["os"]))
+                };
+                let _ = writeln!(out, "  {}: {state} ({detail})", text(&backend["label"]));
+            }
+        }
+    }
+    let _ = writeln!(out, "\nConfiguration files:");
+    for file in view["files"].as_array().into_iter().flatten() {
+        let scope = if file["scope"] == "user" {
+            "User"
+        } else {
+            "Project"
+        };
+        let _ = writeln!(
+            out,
+            "  {scope}: {} ({})",
+            text(&file["path"]),
+            text(&file["status"])
+        );
+        if file["error"].is_object() {
+            let error = &file["error"];
+            let position = match (error["line"].as_u64(), error["column"].as_u64()) {
+                (Some(line), Some(column)) => format!("line {line}, column {column}: "),
+                (Some(line), None) => format!("line {line}: "),
+                _ => String::new(),
+            };
+            let _ = writeln!(out, "    {position}{}", text(&error["message"]));
+        }
+    }
+    let chat = &view["chat"];
+    if chat.is_object() {
+        let _ = writeln!(
+            out,
+            "\nAllowed in this chat ({}):",
+            text(&chat["grants_path"])
+        );
+        let grants = chat["grants"].as_array().cloned().unwrap_or_default();
+        if grants.is_empty() {
+            let _ = writeln!(out, "  nothing yet");
+        }
+        for grant in grants {
+            let what = if let Some(server) = grant["server"].as_str() {
+                format!("every tool of MCP server {server}")
+            } else if let Some(command) = grant["command"].as_array().filter(|c| !c.is_empty()) {
+                format!(
+                    "{} {}",
+                    text(&grant["tool"]),
+                    serde_json::to_string(&command.iter().map(text).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                )
+            } else {
+                text(&grant["tool"])
+            };
+            let _ = writeln!(out, "  {what} ({})", text(&grant["risk"]));
+        }
+        if let Some(warning) = chat["warning"].as_str() {
+            let _ = writeln!(out, "  The grant file was ignored: {warning}");
+        }
+    }
+    out
 }
 
 async fn configure_provider(client: &Client) -> Result<(), String> {

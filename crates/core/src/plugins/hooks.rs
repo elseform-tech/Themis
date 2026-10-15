@@ -82,6 +82,7 @@ pub async fn run(
             argv: vec![hook.command.clone()],
             cwd: Some(root.display().to_string()),
             background: false,
+            sandbox_blocked: None,
         }),
         command: Vec::new(),
         tool: format!(

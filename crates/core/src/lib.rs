@@ -12,6 +12,7 @@ pub mod diagnostics;
 pub mod plugins;
 pub mod providers;
 pub mod runtime;
+pub mod sandbox;
 pub mod skills;
 pub mod social;
 pub mod tools;

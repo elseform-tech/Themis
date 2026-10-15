@@ -375,7 +375,79 @@ export interface ApprovalRequest {
   /** False for destructive actions: they ask every time, so only Allow once and Deny are offered. */
   grantable?: boolean;
   /** Structured command for shell/git approvals; show this instead of the joined summary. */
-  command?: { argv: string[]; cwd?: string; background?: boolean };
+  command?: {
+    argv: string[];
+    cwd?: string;
+    background?: boolean;
+    /** Set when the sandbox blocked this command and the request asks to run it outside the sandbox: why (untrusted text). */
+    sandbox_blocked?: string;
+  };
+}
+
+/** Tool name of a request to run a sandbox-blocked command outside the sandbox. */
+export const UNSANDBOXED_TOOL = "shell_unsandboxed";
+
+export type RuleSource = "default" | "user" | "project" | "run";
+
+export interface EffectiveRule {
+  tool: string;
+  action: "allow" | "ask" | "deny";
+  risk?: string | null;
+  command?: string[] | null;
+  source: RuleSource;
+}
+
+export interface ConfigFileIssue { message: string; line?: number | null; column?: number | null }
+
+export interface ConfigFileStatus {
+  scope: "user" | "project";
+  path: string;
+  status: "loaded" | "missing" | "invalid" | "unreadable";
+  error?: ConfigFileIssue | null;
+}
+
+export interface SandboxBackendInfo {
+  id: string;
+  label: string;
+  os: string;
+  supported_here: boolean;
+  available: boolean;
+  detail: string;
+}
+
+export interface SandboxStatus {
+  enabled: boolean;
+  state: "on" | "off" | "unavailable" | "blocked";
+  backend?: string | null;
+  summary: string;
+  reason: string;
+  network: "allow" | "block";
+  network_enforced: boolean;
+  network_note?: string | null;
+  writable_paths: string[];
+  configured_writable_paths: string[];
+  protected_paths: string[];
+  secret_paths: string[];
+  backends: SandboxBackendInfo[];
+  covers: string[];
+  not_covered: string[];
+}
+
+export interface ChatGrant { tool: string; command?: string[]; server?: string; risk: string }
+
+export interface EffectivePermissions {
+  project_root?: string | null;
+  mode?: "custom" | "yolo" | null;
+  validation_error?: string | null;
+  files: ConfigFileStatus[];
+  approval?: {
+    default: "allow" | "ask" | "deny";
+    default_source: RuleSource;
+    rules: EffectiveRule[];
+    project_rule_count: number;
+  } | null;
+  sandbox?: SandboxStatus | null;
+  chat?: { thread_id: string; grants_path?: string | null; grants: ChatGrant[]; warning?: string | null } | null;
 }
 
 export type DiffLineKind = 'context' | 'add' | 'del';

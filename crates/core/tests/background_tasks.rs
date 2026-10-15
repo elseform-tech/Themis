@@ -21,6 +21,7 @@ fn spec(thread: &str, script: &str, dir: &Path, timeout_secs: u64) -> StartSpec 
         args: vec!["-c".to_owned(), script.to_owned()],
         workdir: dir.to_path_buf(),
         timeout_secs,
+        sandbox: None,
     }
 }
 

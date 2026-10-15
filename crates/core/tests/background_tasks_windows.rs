@@ -41,6 +41,7 @@ fn stopping_a_background_task_kills_its_grandchild_on_windows() {
             args: vec!["/c".into(), format!("ping -n {marker} 127.0.0.1")],
             workdir: dir.path().to_path_buf(),
             timeout_secs: 0,
+            sandbox: None,
         })
         .unwrap();
     assert_eq!(started.record.state, TaskState::Running);

@@ -74,33 +74,47 @@ impl ApprovalPolicy {
     fn rule_decision(&self, action: &ToolAction) -> PolicyAction {
         self.rules
             .iter()
-            .find(|rule| {
-                let matches = rule
-                    .tool
-                    .strip_suffix('*')
-                    .map_or(rule.tool == action.tool, |prefix| {
-                        action.tool.starts_with(prefix)
-                    });
-                matches
-                    && rule.command.as_ref().is_none_or(|prefix| {
-                        // A broad allow (`["git","push"]`) must not silently cover
-                        // a destructive variant (`git push --force`) unless the
-                        // rule itself names that variant.
-                        let covers_variant = rule.action != PolicyAction::Allow
-                            || !is_destructive_variant(&action.command)
-                            || is_destructive_variant(prefix);
-                        covers_variant
-                            && (command_has_prefix(&action.command, prefix)
-                                || (rule.action == PolicyAction::Deny
-                                    && command_has_prefix_normalized(&action.command, prefix)))
-                    })
-                    && rule
-                        .risk
-                        .as_ref()
-                        .is_none_or(|risk| risk == risk_name(action.risk))
-            })
+            .find(|rule| rule_matches(rule, action))
             .map_or(self.default, |rule| rule.action)
     }
+}
+/// Whether `rule` applies to `action` (tool name or `*` prefix, command
+/// prefix with deny-only widening, risk).
+fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
+    let matches = rule
+        .tool
+        .strip_suffix('*')
+        .map_or(rule.tool == action.tool, |prefix| {
+            action.tool.starts_with(prefix)
+        });
+    matches
+        && match rule.command.as_ref() {
+            // A broad allow without `command` is trust in the tool,
+            // not in its destructive variants (`git push --force`,
+            // `rm -rf`): those need a rule that names them or an
+            // explicit `"risk": "destructive"`.
+            None => {
+                rule.action != PolicyAction::Allow
+                    || rule.risk.as_deref() == Some("destructive")
+                    || !is_destructive_variant(&action.command)
+            }
+            Some(prefix) => {
+                // A broad allow (`["git","push"]`) must not silently cover
+                // a destructive variant (`git push --force`) unless the
+                // rule itself names that variant.
+                let covers_variant = rule.action != PolicyAction::Allow
+                    || !is_destructive_variant(&action.command)
+                    || is_destructive_variant(prefix);
+                covers_variant
+                    && (command_has_prefix(&action.command, prefix)
+                        || (rule.action == PolicyAction::Deny
+                            && deny_matches(&action.command, prefix)))
+            }
+        }
+        && rule
+            .risk
+            .as_ref()
+            .is_none_or(|risk| risk == risk_name(action.risk))
 }
 /// Exact token-prefix match: `["cargo","test"]` matches `cargo test --lib` but
 /// not `cargo testing`, `/usr/bin/cargo test` or an empty command.
@@ -129,16 +143,102 @@ fn normalize_program(program: &str) -> String {
     }
     name
 }
-/// Prefix match with the program token normalized on both sides. Used only for
-/// deny rules so `/bin/rm`, `./rm` and `RM` (on case-insensitive systems) are
-/// still denied by `["rm"]`; allow/ask rules stay exact so they never widen.
-fn command_has_prefix_normalized(command: &[String], prefix: &[String]) -> bool {
-    match (command.split_first(), prefix.split_first()) {
-        (Some((program, rest)), Some((first, wanted))) => {
-            normalize_program(program) == normalize_program(first) && rest.starts_with(wanted)
-        }
-        _ => false,
+/// Deny-rule match: the program token is normalized on both sides (so `/bin/rm`,
+/// `./rm` and `RM` on case-insensitive systems are still denied by `["rm"]`) and
+/// flags are compared by meaning rather than spelling (see [`flag_present`]):
+/// the rule's non-flag tokens must begin the command's non-flag tokens, and each
+/// flag the rule names must appear anywhere in the command before `--`. So
+/// `["git","push","--force"]` also denies `git push -f origin main` and
+/// `git push origin --force`, and `["rm","-rf"]` denies `rm -fr x` and
+/// `rm -r -f x`. Deny rules may only widen this way; allow/ask rules stay exact.
+fn deny_matches(command: &[String], prefix: &[String]) -> bool {
+    let (Some((program, rest)), Some((first, wanted))) =
+        (command.split_first(), prefix.split_first())
+    else {
+        return false;
+    };
+    let program = normalize_program(program);
+    if program != normalize_program(first) {
+        return false;
     }
+    if rest.starts_with(wanted) {
+        return true;
+    }
+    let before_separator: Vec<&str> = rest
+        .iter()
+        .map(String::as_str)
+        .take_while(|arg| *arg != "--")
+        .collect();
+    let is_flag = |token: &str| token.len() > 1 && token.starts_with('-');
+    let mut words = before_separator.iter().filter(|arg| !is_flag(arg));
+    wanted
+        .iter()
+        .filter(|token| !is_flag(token))
+        .all(|token| words.next() == Some(&token.as_str()))
+        && wanted
+            .iter()
+            .filter(|token| is_flag(token))
+            .all(|flag| flag_present(&program, flag, &before_separator))
+}
+
+/// Short/long spellings with one meaning for a program, used only to widen deny
+/// rules: `(program, long name, short letters)`.
+const FLAG_EQUIVALENTS: &[(&str, &str, &str)] = &[
+    ("git", "force", "f"),
+    ("git", "delete", "d"),
+    ("git", "all", "a"),
+    ("git", "recursive", "r"),
+    ("rm", "force", "f"),
+    ("rm", "recursive", "rR"),
+    ("rm", "dir", "d"),
+    ("cp", "force", "f"),
+    ("cp", "recursive", "rR"),
+    ("mv", "force", "f"),
+    ("chmod", "recursive", "R"),
+    ("chown", "recursive", "R"),
+];
+
+/// Whether the command (tokens before `--`) carries `flag` under any equivalent
+/// spelling: the exact token, `--name=value` for `--name`, a short-flag cluster
+/// containing every letter of a short rule flag (`-rf` covers `-f`, `-fr`,
+/// `-r -f`), or the short/long equivalent from [`FLAG_EQUIVALENTS`].
+fn flag_present(program: &str, flag: &str, args: &[&str]) -> bool {
+    let shorts: String = args
+        .iter()
+        .filter(|arg| arg.starts_with('-') && !arg.starts_with("--"))
+        .flat_map(|arg| arg.chars().skip(1))
+        .collect();
+    let has_long = |name: &str| {
+        args.iter().any(|arg| {
+            arg.strip_prefix("--")
+                .is_some_and(|long| long == name || long.starts_with(&format!("{name}=")))
+        })
+    };
+    if args.contains(&flag) {
+        return true;
+    }
+    if let Some(long) = flag.strip_prefix("--") {
+        let name = long.split('=').next().unwrap_or(long);
+        if long == name && has_long(name) {
+            return true;
+        }
+        return long == name
+            && FLAG_EQUIVALENTS
+                .iter()
+                .filter(|(p, l, _)| *p == program && *l == name)
+                .any(|(_, _, letters)| letters.chars().any(|c| shorts.contains(c)));
+    }
+    let letters = &flag[1..];
+    !letters.is_empty()
+        && letters.chars().all(|letter| {
+            shorts.contains(letter)
+                || FLAG_EQUIVALENTS
+                    .iter()
+                    .filter(|(p, _, short)| *p == program && short.contains(letter))
+                    .any(|(_, long, short)| {
+                        has_long(long) || short.chars().any(|c| shorts.contains(c))
+                    })
+        })
 }
 fn risk_name(risk: RiskLevel) -> &'static str {
     match risk {
@@ -158,6 +258,9 @@ struct ConfiguredHook {
 }
 impl ApprovalHook for ConfiguredHook {
     fn approve(&self, action: &ToolAction) -> Approval {
+        if action.tool == crate::tools::UNSANDBOXED_TOOL {
+            return self.approve_escape(action);
+        }
         if self.mode == ApprovalMode::Yolo {
             return Approval::AllowOnce;
         }
@@ -181,6 +284,54 @@ impl ApprovalHook for ConfiguredHook {
         }
     }
 }
+impl ConfiguredHook {
+    /// Running a sandbox-blocked command outside the sandbox needs a person:
+    /// a dialog answer, a chat grant they made for `shell_unsandboxed`, or a
+    /// rule naming `shell_unsandboxed` exactly. Wildcard, prefix and risk-only
+    /// allow rules never cover it (deny rules of any shape still deny), the
+    /// default action is never an allow, and YOLO (which never asks) denies.
+    fn approve_escape(&self, action: &ToolAction) -> Approval {
+        if self.mode == ApprovalMode::Yolo {
+            return Approval::Deny;
+        }
+        match self.policy.escape_decision(action) {
+            PolicyAction::Deny => return Approval::Deny,
+            PolicyAction::Allow if action.grantable() => return Approval::AllowOnce,
+            _ => {}
+        }
+        if self.grants.covers(action) {
+            return Approval::AllowOnce;
+        }
+        match self.interactive.approve(action) {
+            Approval::AllowAlways => {
+                self.grants.remember(action);
+                Approval::AllowOnce
+            }
+            decision => decision,
+        }
+    }
+}
+
+impl ApprovalPolicy {
+    /// Decision for a `shell_unsandboxed` escape: the first deny rule that
+    /// matches (normal matching, wildcards included) or the first allow/ask
+    /// rule whose tool is exactly `shell_unsandboxed`, in order; otherwise ask
+    /// (a `deny` default denies, an `allow` default still asks).
+    pub fn escape_decision(&self, action: &ToolAction) -> PolicyAction {
+        for rule in &self.rules {
+            let exact = rule.tool == crate::tools::UNSANDBOXED_TOOL;
+            if (rule.action == PolicyAction::Deny || exact) && rule_matches(rule, action) {
+                return rule.action;
+            }
+        }
+        if self.default == PolicyAction::Deny {
+            PolicyAction::Deny
+        } else {
+            PolicyAction::Ask
+        }
+    }
+}
+
 /// Wrap the existing UI approval hook; automatic decisions are never cached by tool name.
 /// Grants made through it last as long as the hook (one run).
 pub fn configured_hook(
@@ -325,6 +476,8 @@ pub struct RuntimeConfig {
     pub schema: Option<String>,
     pub schema_version: u32,
     pub approval: ApprovalPolicy,
+    /// OS sandbox for commands the agent runs; see [`crate::sandbox`].
+    pub sandbox: crate::sandbox::SandboxConfig,
     pub compaction: CompactionConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_token_budget: Option<usize>,
@@ -342,6 +495,7 @@ impl Default for RuntimeConfig {
             schema: None,
             schema_version: 1,
             approval: ApprovalPolicy::default(),
+            sandbox: crate::sandbox::SandboxConfig::default(),
             compaction: CompactionConfig::default(),
             context_token_budget: None,
             recent_messages: None,
@@ -353,9 +507,22 @@ impl Default for RuntimeConfig {
 pub struct ResolvedConfig {
     pub config: RuntimeConfig,
     pub provenance: BTreeMap<String, String>,
+    /// Where each of `config.approval.rules` came from, in the same order:
+    /// `default` (built-in), `user`, `project` or `run`.
+    #[serde(default)]
+    pub rule_sources: Vec<String>,
 }
 
 pub fn parse(content: &str) -> Result<Value> {
+    let bytes = strip_jsonc(content)?;
+    let value: Value = serde_json::from_slice(&bytes).context("invalid configuration JSONC")?;
+    ensure!(value.is_object(), "configuration must be an object");
+    Ok(value)
+}
+
+/// JSONC text as plain JSON bytes: comments and trailing commas become spaces,
+/// so byte offsets, lines and columns stay those of the original file.
+fn strip_jsonc(content: &str) -> Result<Vec<u8>> {
     ensure!(content.len() <= 1024 * 1024, "configuration exceeds 1 MiB");
     let mut bytes = content.as_bytes().to_vec();
     let mut i = 0;
@@ -434,9 +601,73 @@ pub fn parse(content: &str) -> Result<Value> {
             bytes[i] = b' ';
         }
     }
-    let value: Value = serde_json::from_slice(&bytes).context("invalid configuration JSONC")?;
-    ensure!(value.is_object(), "configuration must be an object");
-    Ok(value)
+    Ok(bytes)
+}
+
+/// A problem in one configuration file, with its position when known.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FileIssue {
+    pub message: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+}
+
+/// Syntax and schema check of one configuration file on its own (comments,
+/// JSON syntax, unknown fields, wrong types), with line and column.
+pub fn check_file(content: &str) -> Option<FileIssue> {
+    let bytes = match strip_jsonc(content) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return Some(FileIssue {
+                message: format!("{error:#}"),
+                line: None,
+                column: None,
+            })
+        }
+    };
+    let positioned = |error: serde_json::Error| {
+        Some(FileIssue {
+            // The position is reported separately; drop serde's trailing copy.
+            message: {
+                let text = error.to_string();
+                let suffix = format!(" at line {} column {}", error.line(), error.column());
+                text.strip_suffix(&suffix)
+                    .map(str::to_owned)
+                    .unwrap_or(text)
+            },
+            line: Some(error.line()).filter(|line| *line > 0),
+            column: (error.line() > 0).then_some(error.column()),
+        })
+    };
+    let value: Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(error) => return positioned(error),
+    };
+    if !value.is_object() {
+        return Some(FileIssue {
+            message: "configuration must be an object".into(),
+            line: Some(1),
+            column: None,
+        });
+    }
+    if let Err(error) = serde_json::from_slice::<RuntimeConfig>(&bytes) {
+        return positioned(error);
+    }
+    None
+}
+
+/// Line of the setting a validation message names (`sandbox.backend must ...`
+/// points at the line with `"backend"`), when the file mentions it.
+pub fn locate_error_line(content: &str, message: &str) -> Option<usize> {
+    let field = message
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+        .find(|word| word.contains('.') && word.chars().next().is_some_and(char::is_alphabetic))?;
+    let key = field.rsplit('.').next().filter(|key| !key.is_empty())?;
+    let quoted = format!("\"{key}\"");
+    content
+        .lines()
+        .position(|line| line.contains(&quoted))
+        .map(|index| index + 1)
 }
 fn merge(
     target: &mut Value,
@@ -479,9 +710,19 @@ pub fn resolve(
     let mut value = Value::Object(Default::default());
     let mut provenance = BTreeMap::new();
     merge(&mut value, defaults, "default", "", &mut provenance);
+    let mut rule_sources = vec!["default".to_owned(); ApprovalPolicy::default().rules.len()];
     for (origin, content) in [("user", user), ("project", project), ("run", explicit)] {
         if let Some(content) = content {
             let mut layer = parse(content)?;
+            if origin != "user" {
+                // Project and run layers may only tighten the sandbox.
+                if let Some(sandbox) = layer.get("sandbox") {
+                    let current: crate::sandbox::SandboxConfig =
+                        serde_json::from_value(value["sandbox"].clone())
+                            .context("invalid sandbox configuration")?;
+                    crate::sandbox::check_restriction(&current, sandbox, origin)?;
+                }
+            }
             if origin == "project" {
                 if let Some(policy) = layer.as_object_mut().and_then(|m| m.remove("approval")) {
                     let mut policy = policy;
@@ -498,6 +739,9 @@ pub fn resolve(
                     );
                     let mut current: ApprovalPolicy =
                         serde_json::from_value(value["approval"].clone())?;
+                    let added =
+                        policy.rules.len() + usize::from(policy.default == PolicyAction::Deny);
+                    rule_sources.splice(0..0, std::iter::repeat_n("project".to_owned(), added));
                     let mut rules = policy.rules;
                     rules.extend(current.rules);
                     current.rules = rules;
@@ -523,13 +767,25 @@ pub fn resolve(
                     }
                 }
             }
+            if let Some(rules) = layer
+                .get("approval")
+                .and_then(|approval| approval.get("rules"))
+                .and_then(Value::as_array)
+            {
+                rule_sources = vec![origin.to_owned(); rules.len()];
+            }
             merge(&mut value, layer, origin, "", &mut provenance);
         }
     }
     let config: RuntimeConfig =
         serde_json::from_value(value).context("invalid runtime configuration")?;
     validate(&config)?;
-    Ok(ResolvedConfig { config, provenance })
+    rule_sources.resize(config.approval.rules.len(), "default".to_owned());
+    Ok(ResolvedConfig {
+        config,
+        provenance,
+        rule_sources,
+    })
 }
 pub fn validate_relative_paths(paths: &[String]) -> Result<()> {
     ensure!(
@@ -559,6 +815,7 @@ pub fn validate_relative_paths(paths: &[String]) -> Result<()> {
 }
 
 pub fn validate(config: &RuntimeConfig) -> Result<()> {
+    crate::sandbox::validate(&config.sandbox)?;
     validate_relative_paths(&config.skills.paths)?;
     validate_relative_paths(&config.instructions)?;
     ensure!(
@@ -651,8 +908,8 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         );
         if let Some(command) = &rule.command {
             ensure!(
-                rule.tool == "shell",
-                "approval rule command is only valid with tool \"shell\""
+                rule.tool == "shell" || rule.tool == crate::tools::UNSANDBOXED_TOOL,
+                "approval rule command is only valid with tool \"shell\" or \"shell_unsandboxed\""
             );
             ensure!(
                 !command.is_empty() && command.len() <= 16,
@@ -746,6 +1003,12 @@ pub fn schema() -> Value {
                     "risk":{"enum":["read","write","execute","network","destructive"]},
                     "command":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}}
                 }}}
+            }},
+            "sandbox":{"type":"object","additionalProperties":false,"properties":{
+                "enabled":{"type":"boolean","default":true},
+                "backend":{"enum":["auto","seatbelt","bubblewrap","landlock"],"default":"auto"},
+                "network":{"enum":["allow","block"],"default":"allow"},
+                "writable_paths":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024},"default":[]}
             }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":1800,"default":900},
@@ -1011,6 +1274,241 @@ mod tests {
             tool: "shell".into(),
             summary: String::new(),
             risk: RiskLevel::Execute,
+        }
+    }
+
+    fn decide(rules: &str, argv: &[&str]) -> PolicyAction {
+        let policy = resolve(Some(rules), None, None).unwrap().config.approval;
+        let mut action = shell_action(argv);
+        action.risk = crate::tools::shell_risk(&action.command);
+        policy.decision(&action)
+    }
+
+    #[test]
+    fn sandbox_defaults_layering_and_provenance() {
+        let defaults = resolve(None, None, None).unwrap();
+        assert!(defaults.config.sandbox.enabled);
+        assert_eq!(
+            defaults.config.sandbox.network,
+            crate::sandbox::NetworkPolicy::Allow
+        );
+        assert_eq!(defaults.provenance["sandbox.enabled"], "default");
+        let user = r#"{"sandbox":{"writable_paths":["~/.cargo","/opt/cache"]}}"#;
+        let project = r#"{"sandbox":{"network":"block","writable_paths":["~/.cargo"]}}"#;
+        let resolved = resolve(Some(user), Some(project), None).unwrap();
+        assert_eq!(
+            resolved.config.sandbox.network,
+            crate::sandbox::NetworkPolicy::Block
+        );
+        assert_eq!(resolved.config.sandbox.writable_paths, vec!["~/.cargo"]);
+        assert_eq!(resolved.provenance["sandbox.network"], "project");
+        assert_eq!(resolved.provenance["sandbox.writable_paths"], "project");
+        for (layer, needle) in [
+            (
+                r#"{"sandbox":{"enabled":false}}"#,
+                "cannot disable the sandbox",
+            ),
+            (
+                r#"{"sandbox":{"writable_paths":["/etc"]}}"#,
+                "cannot add sandbox.writable_paths",
+            ),
+            (
+                r#"{"sandbox":{"backend":"landlock"}}"#,
+                "cannot change sandbox.backend",
+            ),
+        ] {
+            let error = format!("{:#}", resolve(Some(user), Some(layer), None).unwrap_err());
+            assert!(error.contains(needle), "{error}");
+            // A run override is held to the same rule.
+            let error = format!("{:#}", resolve(Some(user), None, Some(layer)).unwrap_err());
+            assert!(error.contains(needle), "{error}");
+        }
+        let blocked = r#"{"sandbox":{"network":"block"}}"#;
+        assert!(resolve(
+            Some(blocked),
+            Some(r#"{"sandbox":{"network":"allow"}}"#),
+            None
+        )
+        .is_err());
+        // The user file may do anything valid, including turning it off.
+        assert!(
+            !resolve(Some(r#"{"sandbox":{"enabled":false}}"#), None, None)
+                .unwrap()
+                .config
+                .sandbox
+                .enabled
+        );
+        assert!(resolve(
+            Some(r#"{"sandbox":{"writable_paths":["relative"]}}"#),
+            None,
+            None
+        )
+        .is_err());
+        assert!(resolve(Some(r#"{"sandbox":{"mystery":1}}"#), None, None).is_err());
+        let other_os = if cfg!(target_os = "macos") {
+            "bubblewrap"
+        } else {
+            "seatbelt"
+        };
+        let error = format!(
+            "{:#}",
+            resolve(
+                Some(&format!(r#"{{"sandbox":{{"backend":"{other_os}"}}}}"#)),
+                None,
+                None
+            )
+            .unwrap_err()
+        );
+        assert!(error.contains("not supported"), "{error}");
+        assert!(schema()["properties"]["sandbox"]["properties"]["backend"]["enum"].is_array());
+    }
+
+    #[test]
+    fn rule_sources_follow_the_layers() {
+        let resolved = resolve(None, None, None).unwrap();
+        assert_eq!(resolved.rule_sources, vec!["default"]);
+        let user = r#"{"approval":{"rules":[{"tool":"shell","command":["cargo","test"],"action":"allow"},{"tool":"*","risk":"read","action":"allow"}]}}"#;
+        let project = r#"{"approval":{"rules":[{"tool":"git","action":"deny"},{"tool":"shell","command":["rm"],"action":"deny"}]}}"#;
+        let resolved = resolve(Some(user), Some(project), None).unwrap();
+        assert_eq!(
+            resolved.rule_sources,
+            vec!["project", "project", "user", "user"]
+        );
+        assert_eq!(resolved.config.approval.rules.len(), 4);
+        let resolved = resolve(None, Some(project), None).unwrap();
+        assert_eq!(resolved.rule_sources, vec!["project", "project", "default"]);
+        let deny_all = r#"{"approval":{"default":"deny"}}"#;
+        let resolved = resolve(None, Some(deny_all), None).unwrap();
+        assert_eq!(resolved.rule_sources, vec!["project", "default"]);
+    }
+
+    #[test]
+    fn configuration_file_problems_carry_their_line() {
+        assert_eq!(
+            check_file("{\n  // fine\n  \"logging\": {\"level\": \"info\"},\n}"),
+            None
+        );
+        let issue =
+            check_file("{\n  \"sandbox\": {\n    \"enabled\": tru, \"network\": \"block\"\n  }\n}")
+                .unwrap();
+        assert_eq!(issue.line, Some(3), "{issue:?}");
+        let issue = check_file("{\n  \"sandbox\": {\n    \"netwrk\": \"block\"\n  }\n}").unwrap();
+        assert_eq!(issue.line, Some(3), "{issue:?}");
+        assert!(issue.message.contains("netwrk"), "{issue:?}");
+        assert!(!issue.message.contains(" at line "), "{issue:?}");
+        let issue = check_file("[]").unwrap();
+        assert_eq!(issue.line, Some(1));
+        assert!(check_file("/* open").is_some());
+        let text = "{\n  \"sandbox\": {\n    \"backend\": \"landlock\"\n  }\n}";
+        assert_eq!(
+            locate_error_line(text, "sandbox.backend \"landlock\" is not supported"),
+            Some(3)
+        );
+        assert_eq!(locate_error_line(text, "no field here"), None);
+    }
+
+    #[test]
+    fn deny_rules_match_equivalent_flag_spellings() {
+        let deny = r#"{"approval":{"default":"allow","rules":[
+            {"tool":"shell","command":["git","push","--force"],"action":"deny"},
+            {"tool":"shell","command":["rm","-rf"],"action":"deny"}]}}"#;
+        for denied in [
+            vec!["git", "push", "--force"],
+            vec!["git", "push", "-f", "origin", "main"],
+            vec!["git", "push", "origin", "main", "--force"],
+            vec!["/usr/bin/git", "push", "--force=yes"],
+            vec!["rm", "-rf", "build"],
+            vec!["rm", "-fr", "build"],
+            vec!["rm", "-r", "-f", "build"],
+            vec!["rm", "--recursive", "--force", "build"],
+            vec!["rm", "-Rf", "build"],
+        ] {
+            assert_eq!(decide(deny, &denied), PolicyAction::Deny, "{denied:?}");
+        }
+        for allowed in [
+            vec!["git", "push", "origin", "main"],
+            vec!["git", "pull", "--force"],
+            vec!["rm", "-r", "build"],
+            vec!["rm", "file", "--", "-rf"],
+        ] {
+            assert_ne!(decide(deny, &allowed), PolicyAction::Deny, "{allowed:?}");
+        }
+    }
+
+    #[test]
+    fn broad_shell_allow_does_not_cover_destructive_variants() {
+        let broad = r#"{"approval":{"rules":[{"tool":"shell","action":"allow"}]}}"#;
+        assert_eq!(decide(broad, &["cargo", "test"]), PolicyAction::Allow);
+        for variant in [
+            vec!["git", "push", "--force"],
+            vec!["git", "reset", "--hard"],
+            vec!["git", "clean", "-fdx"],
+            vec!["rm", "-rf", "target"],
+            vec!["cargo", "publish"],
+        ] {
+            assert_eq!(decide(broad, &variant), PolicyAction::Ask, "{variant:?}");
+        }
+        let wildcard = r#"{"approval":{"rules":[{"tool":"*","action":"allow"}]}}"#;
+        assert_eq!(decide(wildcard, &["rm", "-rf", "x"]), PolicyAction::Ask);
+        let explicit =
+            r#"{"approval":{"rules":[{"tool":"shell","risk":"destructive","action":"allow"}]}}"#;
+        assert_eq!(decide(explicit, &["rm", "-rf", "x"]), PolicyAction::Allow);
+        let execute =
+            r#"{"approval":{"rules":[{"tool":"shell","risk":"execute","action":"allow"}]}}"#;
+        assert_eq!(
+            decide(execute, &["git", "reset", "--hard"]),
+            PolicyAction::Ask
+        );
+        assert_eq!(decide(execute, &["git", "status"]), PolicyAction::Allow);
+    }
+
+    #[test]
+    fn shell_destructive_variants_carry_the_destructive_risk() {
+        for variant in [
+            vec!["git", "push", "--force"],
+            vec!["git", "reset", "--hard"],
+            vec!["git", "clean", "-fdx"],
+            vec!["rm", "-rf", "/tmp/x"],
+            vec!["rm", "--recursive", "x"],
+        ] {
+            assert_eq!(
+                crate::tools::shell_risk(&argv(&variant)),
+                RiskLevel::Destructive,
+                "{variant:?}"
+            );
+        }
+        for ordinary in [
+            vec!["rm", "file"],
+            vec!["rm", "-f", "file"],
+            vec!["ls", "-R"],
+        ] {
+            assert_eq!(
+                crate::tools::shell_risk(&argv(&ordinary)),
+                RiskLevel::Execute,
+                "{ordinary:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn publish_words_as_operands_of_other_subcommands_are_harmless() {
+        for harmless in [
+            vec!["cargo", "test", "publish"],
+            vec!["cargo", "test", "--", "publish"],
+            vec!["cargo", "build", "-p", "publish"],
+            vec!["cargo", "run", "--bin", "yank"],
+            vec!["npm", "test", "publish"],
+            vec!["pnpm", "install", "publisher"],
+            vec!["yarn", "add", "deprecated-pkg"],
+        ] {
+            assert!(!is_destructive_variant(&argv(&harmless)), "{harmless:?}");
+        }
+        for danger in [
+            vec!["npm", "run", "publish"],
+            vec!["cargo", "publish", "--dry-run"],
+            vec!["pnpm", "-r", "publish"],
+        ] {
+            assert!(is_destructive_variant(&argv(&danger)), "{danger:?}");
         }
     }
 
@@ -1535,6 +2033,102 @@ mod tests {
         }))
     }
 
+    fn escape(argv: &[&str]) -> ToolAction {
+        let mut action = shell_action(argv);
+        action.tool = crate::tools::UNSANDBOXED_TOOL.into();
+        action
+    }
+
+    /// Decision for an escape under `rules`, with an interactive hook that
+    /// answers `answer`; returns the decision and how often a person was asked.
+    fn escape_with(
+        rules: &str,
+        mode: ApprovalMode,
+        answer: Approval,
+        grants: Arc<ChatGrants>,
+    ) -> (Approval, usize) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let policy = resolve(Some(rules), None, None).unwrap().config.approval;
+        let hook = configured_hook_with_grants(mode, policy, counting_hook(&calls, answer), grants);
+        let decision = hook.approve(&escape(&["touch", "/outside"]));
+        (decision, calls.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    #[test]
+    fn broad_allow_rules_never_let_a_command_leave_the_sandbox() {
+        for rules in [
+            r#"{"approval":{"rules":[{"tool":"*","action":"allow"}]}}"#,
+            r#"{"approval":{"rules":[{"tool":"shell*","action":"allow"}]}}"#,
+            r#"{"approval":{"rules":[{"tool":"*","risk":"execute","action":"allow"}]}}"#,
+            r#"{"approval":{"default":"allow","rules":[]}}"#,
+            "{}",
+        ] {
+            // Without a person (the dialog denies) it never runs outside...
+            let (decision, asked) = escape_with(
+                rules,
+                ApprovalMode::Custom,
+                Approval::Deny,
+                ChatGrants::in_memory(),
+            );
+            assert_eq!(decision, Approval::Deny, "{rules}");
+            assert_eq!(asked, 1, "a person is asked: {rules}");
+            // ...and the person's Allow once is what lets it.
+            let (decision, _) = escape_with(
+                rules,
+                ApprovalMode::Custom,
+                Approval::AllowOnce,
+                ChatGrants::in_memory(),
+            );
+            assert_eq!(decision, Approval::AllowOnce, "{rules}");
+        }
+    }
+
+    #[test]
+    fn deny_rules_of_any_shape_refuse_the_escape_without_asking() {
+        for rules in [
+            r#"{"approval":{"rules":[{"tool":"*","action":"deny"}]}}"#,
+            r#"{"approval":{"rules":[{"tool":"shell_unsandboxed","action":"deny"}]}}"#,
+            r#"{"approval":{"default":"deny","rules":[]}}"#,
+        ] {
+            let (decision, asked) = escape_with(
+                rules,
+                ApprovalMode::Custom,
+                Approval::AllowOnce,
+                ChatGrants::in_memory(),
+            );
+            assert_eq!((decision, asked), (Approval::Deny, 0), "{rules}");
+        }
+    }
+
+    #[test]
+    fn only_a_grant_an_exact_rule_or_a_person_lets_a_command_leave() {
+        let grants = ChatGrants::in_memory();
+        assert!(grants.remember(&escape(&["touch", "/outside"])));
+        let (decision, asked) = escape_with("{}", ApprovalMode::Custom, Approval::Deny, grants);
+        assert_eq!((decision, asked), (Approval::AllowOnce, 0));
+        // A plain `shell` grant for the same argv does not cover the escape.
+        let shell_only = ChatGrants::in_memory();
+        assert!(shell_only.remember(&shell_action(&["touch", "/outside"])));
+        let (decision, asked) = escape_with("{}", ApprovalMode::Custom, Approval::Deny, shell_only);
+        assert_eq!((decision, asked), (Approval::Deny, 1));
+        let exact = r#"{"approval":{"rules":[{"tool":"shell_unsandboxed","command":["touch"],"action":"allow"}]}}"#;
+        let (decision, asked) = escape_with(
+            exact,
+            ApprovalMode::Custom,
+            Approval::Deny,
+            ChatGrants::in_memory(),
+        );
+        assert_eq!((decision, asked), (Approval::AllowOnce, 0));
+        // YOLO never asks, so it never leaves the sandbox either.
+        let (decision, asked) = escape_with(
+            "{}",
+            ApprovalMode::Yolo,
+            Approval::AllowOnce,
+            ChatGrants::in_memory(),
+        );
+        assert_eq!((decision, asked), (Approval::Deny, 0));
+    }
+
     #[test]
     fn chat_grant_made_in_one_run_covers_a_later_run_of_the_same_chat_only() {
         let dir = tempfile::tempdir().unwrap();
@@ -1594,7 +2188,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("chat.json");
         let grants = ChatGrants::load(&path);
-        assert!(grants.remember(&shell_action(&["rm", "-rf", "build"])));
+        assert!(grants.remember(&shell_action(&["rm", "build.log"])));
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let policy = resolve(
             Some(r#"{"approval":{"rules":[{"tool":"shell","command":["rm"],"action":"deny"}]}}"#),
@@ -1611,7 +2205,7 @@ mod tests {
             grants,
         );
         assert_eq!(
-            hook.approve(&shell_action(&["rm", "-rf", "build"])),
+            hook.approve(&shell_action(&["rm", "build.log"])),
             Approval::Deny
         );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -1654,6 +2248,34 @@ mod tests {
                            prop_assert!(command_has_prefix(&command, &command[..n]));
                        }
                    }
+
+            #[test]
+            fn deny_matching_only_widens_exact_prefixes(
+                command in proptest::collection::vec("-{0,2}[a-zA-Z]{0,4}", 0..7),
+                prefix in proptest::collection::vec("-{0,2}[a-zA-Z]{0,4}", 0..5),
+            ) {
+                // Never panics, and every exact prefix match is also a deny match.
+                let widened = deny_matches(&command, &prefix);
+                if command_has_prefix(&command, &prefix) {
+                    prop_assert!(widened, "{command:?} {prefix:?}");
+                }
+            }
+
+            #[test]
+            fn deny_flags_match_in_any_order_and_cluster(
+                letters in proptest::sample::subsequence(vec!['r', 'f', 'v', 'i'], 1..=4),
+                split in proptest::bool::ANY,
+            ) {
+                let rule: Vec<String> = vec!["rm".into(), format!("-{}", letters.iter().collect::<String>())];
+                let mut command = vec!["rm".to_string()];
+                if split {
+                    command.extend(letters.iter().rev().map(|c| format!("-{c}")));
+                } else {
+                    command.push(format!("-{}", letters.iter().rev().collect::<String>()));
+                }
+                command.push("target".into());
+                prop_assert!(deny_matches(&command, &rule), "{command:?} {rule:?}");
+            }
 
             #[test]
             fn destructive_flag_never_shares_the_harmless_key(

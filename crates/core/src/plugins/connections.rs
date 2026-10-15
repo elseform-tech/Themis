@@ -466,6 +466,7 @@ pub fn startup_action(name: &str, server: &McpServer) -> anyhow::Result<ToolActi
             .collect(),
         cwd: None,
         background: true,
+        sandbox_blocked: None,
     });
     Ok(ToolAction {
         display,
