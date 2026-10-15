@@ -156,7 +156,7 @@ async fn cli_recall_returns_attachment_original_coordinates_without_approval() {
         .iter()
         .any(|t| t["function"]["name"] == "recall"));
     let system = last["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("call the `recall` tool first"));
+    assert!(system.contains("call the `recall` tool with 2-5 distinctive keywords"));
     let tool_result: Value = last["messages"]
         .as_array()
         .unwrap()
@@ -259,7 +259,7 @@ async fn cli_denied_read_file_withdraws_recall_and_the_prompt_falls_back() {
     assert!(!names.contains(&"recall"), "{names:?}");
     let system = body["messages"][0]["content"].as_str().unwrap();
     assert!(!system.contains("`recall`"), "{system}");
-    assert!(system.contains("search them with read_file"));
+    assert!(system.contains("search the snapshot-*.jsonl originals there first"));
     client.call("shutdown", json!({})).await.unwrap();
     serving.await.unwrap().unwrap();
 }
