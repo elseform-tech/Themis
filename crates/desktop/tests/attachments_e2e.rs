@@ -1906,7 +1906,8 @@ async fn cli_suspends_after_required_summary_failure_without_degraded_continuati
         .contains("/retry-compaction"));
     assert_eq!(std::fs::read_to_string(&source).unwrap(), text);
     let evidence = root.join(".themis/context").join(id);
-    assert!(std::fs::read_dir(&evidence).unwrap().any(|entry| entry
+    // The saved snapshot below is the job input; no duplicate pending copy is written.
+    assert!(!std::fs::read_dir(&evidence).unwrap().any(|entry| entry
         .unwrap()
         .file_name()
         .to_string_lossy()

@@ -1652,18 +1652,14 @@ async fn compact_context_with_evidence(
         "info",
         serde_json::json!({"estimated_input_tokens":estimated_tokens(messages),"context_token_budget":policy.context_token_budget,"deadline_ms":timeout.as_millis()}),
     );
+    // The saved snapshot is the job's exact input: originals, not a separate pending copy.
     let mut archived = None;
-    let mut pending_saved = false;
-    let pending_directory = evidence_directory.clone();
-    let pending_id = pending::id(messages)?;
     let result = until_stopped(
         SUMMARY_DEADLINE.scope(
             tokio::time::Instant::now() + timeout,
             tokio::time::timeout(timeout, async {
                 if let Some(directory) = evidence_directory {
                     archived = Some(save_evidence(&directory, messages).await?);
-                    pending::save_job(&directory, messages)?;
-                    pending_saved = true;
                 }
                 Box::pin(compact_context_inner(
                     llm, messages, policy, events, &archived,
@@ -1678,10 +1674,6 @@ async fn compact_context_with_evidence(
     match result {
         Ok(Ok(installed)) => {
             crate::context_metrics::activity("compaction_completed");
-            if let Some(directory) = pending_directory {
-                // Cleanup failure cannot invalidate an already installed checkpoint.
-                let _ = pending::complete(&directory, &pending_id);
-            }
             crate::diagnostics::emit(
                 "compaction",
                 "completed",
@@ -1696,23 +1688,21 @@ async fn compact_context_with_evidence(
                 "compaction",
                 "summary_failed",
                 "warn",
-                serde_json::json!({"duration_ms":started.elapsed().as_millis(),"deadline_exceeded":failure.is_err(),"originals_saved":archived.is_some(),"pending_job_saved":pending_saved}),
+                serde_json::json!({"duration_ms":started.elapsed().as_millis(),"deadline_exceeded":failure.is_err(),"originals_saved":archived.is_some()}),
             );
             check_stopped(stopped, events).await?;
-            if pending_saved {
-                if let Some((_, snapshot)) = &archived {
-                    if let Some(progress) = suspended_progress(messages, policy, snapshot) {
-                        let published = events
-                            .send(RunEvent::ContextSuspended { progress })
-                            .await
-                            .is_ok();
-                        crate::diagnostics::emit(
-                            "compaction",
-                            "suspended_progress",
-                            "info",
-                            serde_json::json!({"published":published,"context_replaced":false}),
-                        );
-                    }
+            if let Some((_, snapshot)) = &archived {
+                if let Some(progress) = suspended_progress(messages, policy, snapshot) {
+                    let published = events
+                        .send(RunEvent::ContextSuspended { progress })
+                        .await
+                        .is_ok();
+                    crate::diagnostics::emit(
+                        "compaction",
+                        "suspended_progress",
+                        "info",
+                        serde_json::json!({"published":published,"context_replaced":false}),
+                    );
                 }
             }
             let result = match failure {
@@ -5124,7 +5114,7 @@ mod tests {
     #[tokio::test]
     async fn storage_failure_preserves_context_without_manual_retry() {
         use wiremock::MockServer;
-        for failure in ["archive", "job"] {
+        for failure in ["archive", "unwritable"] {
             let server = MockServer::start().await;
             let llm = crate::providers::resolve(
                 &crate::providers::ProviderConfig::new(
@@ -5146,12 +5136,14 @@ mod tests {
                 "Continue".into(),
             );
             let before = serde_json::to_value(&messages).unwrap();
-            let job_id = pending::id(&messages).unwrap();
             if failure == "archive" {
                 std::fs::write(&evidence, "cannot hold evidence").unwrap();
             } else {
+                // A read-only evidence directory refuses the snapshot itself.
                 std::fs::create_dir(&evidence).unwrap();
-                std::fs::create_dir(evidence.join(format!("pending-job-{job_id}.json"))).unwrap();
+                let mut permissions = std::fs::metadata(&evidence).unwrap().permissions();
+                permissions.set_readonly(true);
+                std::fs::set_permissions(&evidence, permissions).unwrap();
             }
             let (tx, mut rx) = tokio::sync::mpsc::channel(16);
             let error = compact_context_with_evidence(
@@ -5178,12 +5170,17 @@ mod tests {
                 "{failure}: {error}"
             );
             assert!(!error.contains("/retry-compaction"), "{failure}: {error}");
-            assert!(pending::restore(&evidence, messages[0].clone(), &job_id).is_err());
-            assert_eq!(
-                error.contains("Originals saved on disk"),
-                failure != "archive",
+            assert!(
+                error.contains("Originals were not saved on disk"),
                 "{failure}: {error}"
             );
+            if failure == "unwritable" {
+                let mut permissions = std::fs::metadata(&evidence).unwrap().permissions();
+                #[allow(clippy::permissions_set_readonly_false)]
+                permissions.set_readonly(false);
+                std::fs::set_permissions(&evidence, permissions).unwrap();
+                assert_eq!(std::fs::read_dir(&evidence).unwrap().count(), 0);
+            }
         }
     }
 
@@ -5209,7 +5206,6 @@ mod tests {
             }],
             "Continue".into(),
         );
-        let job_id = pending::id(&messages).unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         compact_context_with_evidence(
             &llm,
@@ -5229,10 +5225,14 @@ mod tests {
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
         assert!(std::iter::from_fn(|| rx.try_recv().ok())
             .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })));
-        assert!(!directory
-            .path()
-            .join(format!("pending-job-{job_id}.json"))
-            .exists());
+        // The snapshot is the only job input written; no pending copy is left behind.
+        assert!(!std::fs::read_dir(directory.path())
+            .unwrap()
+            .any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("pending-job-")));
         assert!(
             obsolete.is_dir(),
             "obsolete artifacts must not be rewritten"
