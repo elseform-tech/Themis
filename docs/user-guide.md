@@ -171,6 +171,15 @@ Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. F
   `list_dir`, `read_file`, `write_file`, `copy_file`, `move_file`,
   `delete_file`, `create_dir`, `search_file`, `shell`, `apply_patch`, `git`.
 
+The file tools accept an absolute path when it lies inside the project (it is
+used as the matching project-relative path); paths outside the project stay
+refused. `read_file` on an ordinary file ignores the archive-only
+`jsonl_record`/`json_pointer` options and says so. `shell` repairs the two
+command shapes models often send (the program repeated as the first argument,
+or an empty `command` with the program in `args`) before approval, so the
+approval dialog shows exactly what runs. When an action is refused, the agent is
+told not to reach the same result another way and to ask you instead.
+
 ## Automations and the review queue
 
 The **Automations** tab schedules recurring work with a name, interval in
