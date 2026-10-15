@@ -363,6 +363,8 @@ pub struct StartSpec {
     pub workdir: PathBuf,
     /// Per-task deadline in seconds; 0 selects the default.
     pub timeout_secs: u64,
+    /// Sandbox the task runs in (the run's captured plan); `None` runs it as is.
+    pub sandbox: Option<Arc<crate::sandbox::SandboxPlan>>,
 }
 
 /// Tracks background tasks for every chat of one app server.
@@ -534,9 +536,13 @@ impl BackgroundRegistry {
                 self.max_total
             ));
         }
-        let mut command = std::process::Command::new(&spec.program);
+        if let Some(refusal) = spec.sandbox.as_ref().and_then(|plan| plan.refusal()) {
+            return Err(refusal);
+        }
+        let prepared = super::prepare_command(&spec.program, &spec.args, spec.sandbox.as_deref())
+            .map_err(|error| super::spawn_failure(&spec.program, &spec.args, &error))?;
+        let mut command = prepared.command();
         command
-            .args(&spec.args)
             .current_dir(&spec.workdir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -897,14 +903,17 @@ impl BackgroundScope {
         args: Vec<String>,
         workdir: PathBuf,
         timeout_secs: u64,
+        sandbox: Option<Arc<crate::sandbox::SandboxPlan>>,
     ) -> Result<Value, ToolCallError> {
         let registry = Arc::clone(&self.registry);
+        let sandboxed = sandbox.as_ref().is_some_and(|plan| plan.is_active());
         let spec = StartSpec {
             thread_id: self.thread_id.clone(),
             program,
             args,
             workdir,
             timeout_secs,
+            sandbox,
         };
         let view = tokio::task::spawn_blocking(move || registry.start(spec))
             .await
@@ -917,6 +926,7 @@ impl BackgroundScope {
             "pid": view.record.pid,
             "command": view.summary,
             "timeout_secs": view.record.timeout_secs,
+            "sandboxed": sandboxed,
             "next": "Use background_task (status | log | stop) with this task_id. It keeps running after this turn and stops when the chat is deleted or Themis quits.",
         }))
     }

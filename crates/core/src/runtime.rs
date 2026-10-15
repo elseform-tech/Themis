@@ -2706,6 +2706,7 @@ async fn execute_call(
                     argv: argv.clone(),
                     cwd: None,
                     background: false,
+                    sandbox_blocked: None,
                 }),
                 None => crate::tools::command_display_for_call(name, &approval_args),
             },

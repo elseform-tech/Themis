@@ -551,6 +551,11 @@ async fn dispatch_command(
     }
     match method {
         "get_runtime_configuration" => state.get_runtime_configuration(arg(&args, "projectRoot")?),
+        "get_effective_permissions" => {
+            state
+                .get_effective_permissions(arg(&args, "projectRoot")?, arg(&args, "threadId")?)
+                .await
+        }
         "save_runtime_configuration" => state.save_runtime_configuration(
             &arg::<String>(&args, "scope")?,
             arg(&args, "projectRoot")?,

@@ -422,6 +422,8 @@ pub struct RuntimeConfig {
     pub schema: Option<String>,
     pub schema_version: u32,
     pub approval: ApprovalPolicy,
+    /// OS sandbox for commands the agent runs; see [`crate::sandbox`].
+    pub sandbox: crate::sandbox::SandboxConfig,
     pub compaction: CompactionConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_token_budget: Option<usize>,
@@ -439,6 +441,7 @@ impl Default for RuntimeConfig {
             schema: None,
             schema_version: 1,
             approval: ApprovalPolicy::default(),
+            sandbox: crate::sandbox::SandboxConfig::default(),
             compaction: CompactionConfig::default(),
             context_token_budget: None,
             recent_messages: None,
@@ -450,9 +453,22 @@ impl Default for RuntimeConfig {
 pub struct ResolvedConfig {
     pub config: RuntimeConfig,
     pub provenance: BTreeMap<String, String>,
+    /// Where each of `config.approval.rules` came from, in the same order:
+    /// `default` (built-in), `user`, `project` or `run`.
+    #[serde(default)]
+    pub rule_sources: Vec<String>,
 }
 
 pub fn parse(content: &str) -> Result<Value> {
+    let bytes = strip_jsonc(content)?;
+    let value: Value = serde_json::from_slice(&bytes).context("invalid configuration JSONC")?;
+    ensure!(value.is_object(), "configuration must be an object");
+    Ok(value)
+}
+
+/// JSONC text as plain JSON bytes: comments and trailing commas become spaces,
+/// so byte offsets, lines and columns stay those of the original file.
+fn strip_jsonc(content: &str) -> Result<Vec<u8>> {
     ensure!(content.len() <= 1024 * 1024, "configuration exceeds 1 MiB");
     let mut bytes = content.as_bytes().to_vec();
     let mut i = 0;
@@ -531,9 +547,66 @@ pub fn parse(content: &str) -> Result<Value> {
             bytes[i] = b' ';
         }
     }
-    let value: Value = serde_json::from_slice(&bytes).context("invalid configuration JSONC")?;
-    ensure!(value.is_object(), "configuration must be an object");
-    Ok(value)
+    Ok(bytes)
+}
+
+/// A problem in one configuration file, with its position when known.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FileIssue {
+    pub message: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+}
+
+/// Syntax and schema check of one configuration file on its own (comments,
+/// JSON syntax, unknown fields, wrong types), with line and column.
+pub fn check_file(content: &str) -> Option<FileIssue> {
+    let bytes = match strip_jsonc(content) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return Some(FileIssue {
+                message: format!("{error:#}"),
+                line: None,
+                column: None,
+            })
+        }
+    };
+    let positioned = |error: serde_json::Error| {
+        Some(FileIssue {
+            message: error.to_string(),
+            line: Some(error.line()).filter(|line| *line > 0),
+            column: (error.line() > 0).then_some(error.column()),
+        })
+    };
+    let value: Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(error) => return positioned(error),
+    };
+    if !value.is_object() {
+        return Some(FileIssue {
+            message: "configuration must be an object".into(),
+            line: Some(1),
+            column: None,
+        });
+    }
+    if let Err(error) = serde_json::from_slice::<RuntimeConfig>(&bytes) {
+        return positioned(error);
+    }
+    None
+}
+
+/// Line of the setting a validation message names (`sandbox.backend must ...`
+/// points at the line with `"backend"`), when the file mentions it.
+pub fn locate_error_line(content: &str, message: &str) -> Option<usize> {
+    let field = message
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+        .find(|word| word.contains('.') && word.chars().next().is_some_and(char::is_alphabetic))?;
+    let key = field.rsplit('.').next().filter(|key| !key.is_empty())?;
+    let quoted = format!("\"{key}\"");
+    content
+        .lines()
+        .position(|line| line.contains(&quoted))
+        .map(|index| index + 1)
 }
 fn merge(
     target: &mut Value,
@@ -576,9 +649,19 @@ pub fn resolve(
     let mut value = Value::Object(Default::default());
     let mut provenance = BTreeMap::new();
     merge(&mut value, defaults, "default", "", &mut provenance);
+    let mut rule_sources = vec!["default".to_owned(); ApprovalPolicy::default().rules.len()];
     for (origin, content) in [("user", user), ("project", project), ("run", explicit)] {
         if let Some(content) = content {
             let mut layer = parse(content)?;
+            if origin != "user" {
+                // Project and run layers may only tighten the sandbox.
+                if let Some(sandbox) = layer.get("sandbox") {
+                    let current: crate::sandbox::SandboxConfig =
+                        serde_json::from_value(value["sandbox"].clone())
+                            .context("invalid sandbox configuration")?;
+                    crate::sandbox::check_restriction(&current, sandbox, origin)?;
+                }
+            }
             if origin == "project" {
                 if let Some(policy) = layer.as_object_mut().and_then(|m| m.remove("approval")) {
                     let mut policy = policy;
@@ -595,6 +678,9 @@ pub fn resolve(
                     );
                     let mut current: ApprovalPolicy =
                         serde_json::from_value(value["approval"].clone())?;
+                    let added =
+                        policy.rules.len() + usize::from(policy.default == PolicyAction::Deny);
+                    rule_sources.splice(0..0, std::iter::repeat_n("project".to_owned(), added));
                     let mut rules = policy.rules;
                     rules.extend(current.rules);
                     current.rules = rules;
@@ -620,13 +706,25 @@ pub fn resolve(
                     }
                 }
             }
+            if let Some(rules) = layer
+                .get("approval")
+                .and_then(|approval| approval.get("rules"))
+                .and_then(Value::as_array)
+            {
+                rule_sources = vec![origin.to_owned(); rules.len()];
+            }
             merge(&mut value, layer, origin, "", &mut provenance);
         }
     }
     let config: RuntimeConfig =
         serde_json::from_value(value).context("invalid runtime configuration")?;
     validate(&config)?;
-    Ok(ResolvedConfig { config, provenance })
+    rule_sources.resize(config.approval.rules.len(), "default".to_owned());
+    Ok(ResolvedConfig {
+        config,
+        provenance,
+        rule_sources,
+    })
 }
 pub fn validate_relative_paths(paths: &[String]) -> Result<()> {
     ensure!(
@@ -656,6 +754,7 @@ pub fn validate_relative_paths(paths: &[String]) -> Result<()> {
 }
 
 pub fn validate(config: &RuntimeConfig) -> Result<()> {
+    crate::sandbox::validate(&config.sandbox)?;
     validate_relative_paths(&config.skills.paths)?;
     validate_relative_paths(&config.instructions)?;
     ensure!(
@@ -748,8 +847,8 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         );
         if let Some(command) = &rule.command {
             ensure!(
-                rule.tool == "shell",
-                "approval rule command is only valid with tool \"shell\""
+                rule.tool == "shell" || rule.tool == crate::tools::UNSANDBOXED_TOOL,
+                "approval rule command is only valid with tool \"shell\" or \"shell_unsandboxed\""
             );
             ensure!(
                 !command.is_empty() && command.len() <= 16,
@@ -843,6 +942,12 @@ pub fn schema() -> Value {
                     "risk":{"enum":["read","write","execute","network","destructive"]},
                     "command":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}}
                 }}}
+            }},
+            "sandbox":{"type":"object","additionalProperties":false,"properties":{
+                "enabled":{"type":"boolean","default":true},
+                "backend":{"enum":["auto","seatbelt","bubblewrap","landlock"],"default":"auto"},
+                "network":{"enum":["allow","block"],"default":"allow"},
+                "writable_paths":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024},"default":[]}
             }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":1800,"default":900},
@@ -1116,6 +1221,128 @@ mod tests {
         let mut action = shell_action(argv);
         action.risk = crate::tools::shell_risk(&action.command);
         policy.decision(&action)
+    }
+
+    #[test]
+    fn sandbox_defaults_layering_and_provenance() {
+        let defaults = resolve(None, None, None).unwrap();
+        assert!(defaults.config.sandbox.enabled);
+        assert_eq!(
+            defaults.config.sandbox.network,
+            crate::sandbox::NetworkPolicy::Allow
+        );
+        assert_eq!(defaults.provenance["sandbox.enabled"], "default");
+        let user = r#"{"sandbox":{"writable_paths":["~/.cargo","/opt/cache"]}}"#;
+        let project = r#"{"sandbox":{"network":"block","writable_paths":["~/.cargo"]}}"#;
+        let resolved = resolve(Some(user), Some(project), None).unwrap();
+        assert_eq!(
+            resolved.config.sandbox.network,
+            crate::sandbox::NetworkPolicy::Block
+        );
+        assert_eq!(resolved.config.sandbox.writable_paths, vec!["~/.cargo"]);
+        assert_eq!(resolved.provenance["sandbox.network"], "project");
+        assert_eq!(resolved.provenance["sandbox.writable_paths"], "project");
+        for (layer, needle) in [
+            (
+                r#"{"sandbox":{"enabled":false}}"#,
+                "cannot disable the sandbox",
+            ),
+            (
+                r#"{"sandbox":{"writable_paths":["/etc"]}}"#,
+                "cannot add sandbox.writable_paths",
+            ),
+            (
+                r#"{"sandbox":{"backend":"landlock"}}"#,
+                "cannot change sandbox.backend",
+            ),
+        ] {
+            let error = format!("{:#}", resolve(Some(user), Some(layer), None).unwrap_err());
+            assert!(error.contains(needle), "{error}");
+            // A run override is held to the same rule.
+            let error = format!("{:#}", resolve(Some(user), None, Some(layer)).unwrap_err());
+            assert!(error.contains(needle), "{error}");
+        }
+        let blocked = r#"{"sandbox":{"network":"block"}}"#;
+        assert!(resolve(
+            Some(blocked),
+            Some(r#"{"sandbox":{"network":"allow"}}"#),
+            None
+        )
+        .is_err());
+        // The user file may do anything valid, including turning it off.
+        assert!(
+            !resolve(Some(r#"{"sandbox":{"enabled":false}}"#), None, None)
+                .unwrap()
+                .config
+                .sandbox
+                .enabled
+        );
+        assert!(resolve(
+            Some(r#"{"sandbox":{"writable_paths":["relative"]}}"#),
+            None,
+            None
+        )
+        .is_err());
+        assert!(resolve(Some(r#"{"sandbox":{"mystery":1}}"#), None, None).is_err());
+        let other_os = if cfg!(target_os = "macos") {
+            "bubblewrap"
+        } else {
+            "seatbelt"
+        };
+        let error = format!(
+            "{:#}",
+            resolve(
+                Some(&format!(r#"{{"sandbox":{{"backend":"{other_os}"}}}}"#)),
+                None,
+                None
+            )
+            .unwrap_err()
+        );
+        assert!(error.contains("not supported"), "{error}");
+        assert!(schema()["properties"]["sandbox"]["properties"]["backend"]["enum"].is_array());
+    }
+
+    #[test]
+    fn rule_sources_follow_the_layers() {
+        let resolved = resolve(None, None, None).unwrap();
+        assert_eq!(resolved.rule_sources, vec!["default"]);
+        let user = r#"{"approval":{"rules":[{"tool":"shell","command":["cargo","test"],"action":"allow"},{"tool":"*","risk":"read","action":"allow"}]}}"#;
+        let project = r#"{"approval":{"rules":[{"tool":"git","action":"deny"},{"tool":"shell","command":["rm"],"action":"deny"}]}}"#;
+        let resolved = resolve(Some(user), Some(project), None).unwrap();
+        assert_eq!(
+            resolved.rule_sources,
+            vec!["project", "project", "user", "user"]
+        );
+        assert_eq!(resolved.config.approval.rules.len(), 4);
+        let resolved = resolve(None, Some(project), None).unwrap();
+        assert_eq!(resolved.rule_sources, vec!["project", "project", "default"]);
+        let deny_all = r#"{"approval":{"default":"deny"}}"#;
+        let resolved = resolve(None, Some(deny_all), None).unwrap();
+        assert_eq!(resolved.rule_sources, vec!["project", "default"]);
+    }
+
+    #[test]
+    fn configuration_file_problems_carry_their_line() {
+        assert_eq!(
+            check_file("{\n  // fine\n  \"logging\": {\"level\": \"info\"},\n}"),
+            None
+        );
+        let issue =
+            check_file("{\n  \"sandbox\": {\n    \"enabled\": tru, \"network\": \"block\"\n  }\n}")
+                .unwrap();
+        assert_eq!(issue.line, Some(3), "{issue:?}");
+        let issue = check_file("{\n  \"sandbox\": {\n    \"netwrk\": \"block\"\n  }\n}").unwrap();
+        assert_eq!(issue.line, Some(3), "{issue:?}");
+        assert!(issue.message.contains("netwrk"), "{issue:?}");
+        let issue = check_file("[]").unwrap();
+        assert_eq!(issue.line, Some(1));
+        assert!(check_file("/* open").is_some());
+        let text = "{\n  \"sandbox\": {\n    \"backend\": \"landlock\"\n  }\n}";
+        assert_eq!(
+            locate_error_line(text, "sandbox.backend \"landlock\" is not supported"),
+            Some(3)
+        );
+        assert_eq!(locate_error_line(text, "no field here"), None);
     }
 
     #[test]

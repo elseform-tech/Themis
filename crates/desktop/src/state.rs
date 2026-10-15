@@ -14,6 +14,7 @@ pub(crate) mod configuration;
 mod integration_tools;
 mod mcp;
 mod mcp_consent;
+mod permissions;
 mod plugins;
 mod preferences;
 mod projects;
@@ -207,6 +208,10 @@ struct AppStateInner {
     diagnostics: Arc<themis_core::diagnostics::DiagnosticLog>,
     secrets: Arc<dyn SecretStore>,
     go_base_url_override: std::sync::Mutex<Option<String>>,
+    /// Test seam: home folder for sandbox plans (`None` uses `$HOME`).
+    sandbox_home: std::sync::Mutex<Option<PathBuf>>,
+    /// Test seam: every sandbox backend counts as missing.
+    sandbox_backends_unavailable: AtomicBool,
     go_catalog: tokio::sync::RwLock<Vec<themis_core::providers::GoModel>>,
     worktrees_root: PathBuf,
     registry_path: PathBuf,
@@ -374,6 +379,8 @@ impl AppState {
                 diagnostics,
                 secrets,
                 go_base_url_override: std::sync::Mutex::new(None),
+                sandbox_home: std::sync::Mutex::new(None),
+                sandbox_backends_unavailable: AtomicBool::new(false),
                 go_catalog: tokio::sync::RwLock::new(Vec::new()),
                 worktrees_root,
                 registry_path,

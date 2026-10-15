@@ -31,7 +31,8 @@ pub struct GrantEntry {
     /// Tool name (`shell`, `git`, `write_file`, ...). For a server-wide grant
     /// this is the fixed word `mcp`.
     pub tool: String,
-    /// Approved argv prefix for `shell` and `git`; empty for every other tool.
+    /// Approved argv prefix for `shell`, `git` and `shell_unsandboxed`; empty
+    /// for every other tool.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command: Vec<String>,
     /// Server identity for a grant covering all tools of one MCP server.
@@ -76,7 +77,7 @@ impl GrantEntry {
                 server: Some(server.to_owned()),
                 risk: risk_label(action.risk).to_owned(),
             }
-        } else if action.tool == "shell" || action.tool == "git" {
+        } else if crate::tools::is_command_tool(&action.tool) {
             let scope = action.grant_scope_argv()?;
             Self {
                 tool: action.tool.clone(),
@@ -129,7 +130,7 @@ impl GrantEntry {
             }
             (Some(_), _) => return Err("server is only valid for mcp"),
             (None, "mcp") => return Err("mcp grant needs a server"),
-            (None, "shell" | "git") => {
+            (None, "shell" | "git" | crate::tools::UNSANDBOXED_TOOL) => {
                 if self.command.is_empty() {
                     return Err("command grant needs a command");
                 }
@@ -140,7 +141,7 @@ impl GrantEntry {
             }
             (None, _) => {
                 if !self.command.is_empty() {
-                    return Err("command is only valid for shell and git");
+                    return Err("command is only valid for shell, git and shell_unsandboxed");
                 }
             }
         }
@@ -227,6 +228,14 @@ impl ChatGrants {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// The stored grants, in file order.
+    pub fn entries(&self) -> Vec<GrantEntry> {
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Whether a stored grant covers `action`. Destructive actions never match.
@@ -355,6 +364,30 @@ mod tests {
         assert!(grants.covers(&shell(&["cargo", "test", "--lib"])));
         assert!(!grants.covers(&shell(&["cargo", "run"])));
         assert!(!grants.covers(&shell(&["rm", "-rf", "x"])));
+    }
+
+    #[test]
+    fn running_outside_the_sandbox_is_its_own_grant() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chat.json");
+        let grants = ChatGrants::load(&path);
+        let mut outside = shell(&["npm", "install"]);
+        outside.tool = crate::tools::UNSANDBOXED_TOOL.into();
+        assert!(grants.remember(&outside));
+        assert!(grants.covers(&outside));
+        // Approving the escape does not approve the sandboxed command, or vice versa.
+        assert!(!grants.covers(&shell(&["npm", "install"])));
+        let reloaded = ChatGrants::load(&path);
+        assert!(reloaded.covers(&outside));
+        assert_eq!(reloaded.entries()[0].tool, "shell_unsandboxed");
+        let mut destructive = shell(&["rm", "-rf", "/x"]);
+        destructive.tool = crate::tools::UNSANDBOXED_TOOL.into();
+        assert!(!grants.remember(&destructive));
+        assert!(parse_grants(r#"{"version":1,"grants":[{"tool":"shell_unsandboxed","command":["rm","-rf","x"],"risk":"execute"}]}"#).is_err());
+        assert!(parse_grants(
+            r#"{"version":1,"grants":[{"tool":"shell_unsandboxed","command":[],"risk":"execute"}]}"#
+        )
+        .is_err());
     }
 
     #[test]

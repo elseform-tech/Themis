@@ -85,7 +85,7 @@ impl AppState {
             .as_ref()
             .map(|root| root.join(".themis/config.jsonc"));
         Ok(
-            json!({"config":resolved.as_ref().ok().map(|r|&r.config),"provenance":resolved.as_ref().ok().map(|r|&r.provenance),"validation_error":resolved.as_ref().err(),"user_path":user_path,"project_path":project_path,
+            json!({"config":resolved.as_ref().ok().map(|r|&r.config),"provenance":resolved.as_ref().ok().map(|r|&r.provenance),"rule_sources":resolved.as_ref().ok().map(|r|&r.rule_sources),"validation_error":resolved.as_ref().err(),"user_path":user_path,"project_path":project_path,
             "user_json":read_optional(&user_path)?.unwrap_or_else(||"{}".into()),"project_json":project_path.as_ref().zip(project.as_ref()).map(|(p,root)|read_project(p,root)).transpose()?.flatten().unwrap_or_else(||"{}".into()),
             "schema":configuration::schema()}),
         )

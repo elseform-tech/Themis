@@ -248,6 +248,7 @@ mod tests {
                 argv: argv.clone(),
                 cwd: Some("/repo".into()),
                 background: false,
+                sandbox_blocked: None,
             }),
             command: argv.clone(),
             tool: "shell".into(),
