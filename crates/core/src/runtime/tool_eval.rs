@@ -92,7 +92,6 @@ pub async fn run_tool_task(
     task: &str,
     options: ToolTaskOptions,
 ) -> anyhow::Result<ToolTaskReport> {
-    let evidence = options.evidence.as_deref();
     let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowNonDestructive);
     let registry = crate::tools::background::BackgroundRegistry::in_memory();
     #[allow(unused_mut)]
@@ -107,7 +106,7 @@ pub async fn run_tool_task(
         None,
     )?;
     #[cfg(eval_recall)]
-    if let Some(evidence) = evidence {
+    if let Some(evidence) = options.evidence.as_deref() {
         tools.push(Box::new(crate::tools::recall::RecallTool::new(
             crate::tools::recall::RecallScope {
                 evidence_dir: evidence.to_owned(),

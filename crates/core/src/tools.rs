@@ -745,8 +745,8 @@ pub fn normalize_argv(mut argv: Vec<String>) -> Vec<String> {
     if argv.len() > 1 && !matches!(base(&argv[0]).as_str(), "echo" | "printf") {
         let (program, first) = (&argv[0], &argv[1]);
         let same = program == first
-            || (Path::new(first).is_absolute() && base(first) == base(program))
-            || (Path::new(program).is_absolute() && base(program) == *first);
+            || (Path::new(first).has_root() && base(first) == base(program))
+            || (Path::new(program).has_root() && base(program) == *first);
         if same {
             argv.remove(1);
         }
