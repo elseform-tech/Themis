@@ -653,7 +653,38 @@ async fn run_task_with_evidence_inner(
                 serde_json::json!({"calibrated_message_tokens":calibrated_now,"semantic_threshold_tokens":semantic_threshold,"usable_message_tokens":input_budget}),
             );
         }
+        // The context budget the composer meter and checkpoint divider show.
+        let budget_now = |messages: &[ChatMessage]| {
+            let raw_used = estimated_tokens(messages);
+            let used = calibration.messages(raw_used, schema_tokens);
+            ContextBudget {
+                budget_tokens: policy.context_token_budget,
+                usable_tokens: input_budget,
+                used_tokens: used,
+                tool_definition_tokens: schema_tokens,
+                output_reserve_tokens: answer_reserve,
+                safety_margin_tokens: safety_margin,
+                maintenance_at_tokens: (input_budget as f64 * config.maintenance_threshold_ratio)
+                    as usize,
+                compaction_at_tokens: semantic_threshold,
+                compaction_soon: used.saturating_add(calibrated_growth.saturating_mul(2))
+                    > semantic_threshold,
+                breakdown: context_breakdown(messages),
+                raw_estimated_tokens: Some(raw_used),
+                provider_input_tokens: last_reported_input,
+                calibration_ratio_milli: calibration
+                    .ratio()
+                    .map(|ratio| (ratio * 1000.0).round() as u32),
+            }
+        };
         if !defer_for_short_reply && (forced || calibrated_now > semantic_threshold) {
+            // Report the size that triggered the checkpoint (including this turn's new
+            // input), so its divider reads "before → after" rather than the last turn's size.
+            if policy.context_token_budget != usize::MAX {
+                emit(RunEvent::ContextBudget(budget_now(&messages)))
+                    .await
+                    .ok();
+            }
             crate::plugins::hooks::emit_current(
                 "BeforeCompaction",
                 serde_json::json!({"event":"BeforeCompaction"}),
@@ -700,29 +731,9 @@ async fn run_task_with_evidence_inner(
             emit(RunEvent::ContextUsage { metrics }).await.ok();
         }
         if policy.context_token_budget != usize::MAX {
-            let raw_used = estimated_tokens(&messages);
-            let used = calibration.messages(raw_used, schema_tokens);
-            emit(RunEvent::ContextBudget(ContextBudget {
-                budget_tokens: policy.context_token_budget,
-                usable_tokens: input_budget,
-                used_tokens: used,
-                tool_definition_tokens: schema_tokens,
-                output_reserve_tokens: answer_reserve,
-                safety_margin_tokens: safety_margin,
-                maintenance_at_tokens: (input_budget as f64 * config.maintenance_threshold_ratio)
-                    as usize,
-                compaction_at_tokens: semantic_threshold,
-                compaction_soon: used.saturating_add(calibrated_growth.saturating_mul(2))
-                    > semantic_threshold,
-                breakdown: context_breakdown(&messages),
-                raw_estimated_tokens: Some(raw_used),
-                provider_input_tokens: last_reported_input,
-                calibration_ratio_milli: calibration
-                    .ratio()
-                    .map(|ratio| (ratio * 1000.0).round() as u32),
-            }))
-            .await
-            .ok();
+            emit(RunEvent::ContextBudget(budget_now(&messages)))
+                .await
+                .ok();
         }
         crate::diagnostics::emit(
             "context",
