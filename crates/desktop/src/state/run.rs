@@ -276,6 +276,9 @@ impl AppState {
                                 "required authentication or environment variable is unavailable"
                             }
                             "MCP startup denied" => "startup approval was denied",
+                            "MCP startup needs your approval" => {
+                                "it has not been enabled by you since its definition last changed"
+                            }
                             "Unsupported MCP protocol version" => "server protocol is unsupported",
                             _ => "connection or tool discovery failed",
                         };

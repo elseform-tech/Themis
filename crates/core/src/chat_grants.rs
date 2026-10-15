@@ -353,6 +353,17 @@ mod tests {
     }
 
     #[test]
+    fn enabling_a_command_mcp_server_is_never_grantable() {
+        let mut action = shell(&["sh", "-c", "exit 0"]);
+        action.command.clear();
+        action.tool = crate::tools::MCP_COMMAND_APPROVAL_TOOL.into();
+        assert!(!action.grantable());
+        let grants = ChatGrants::in_memory();
+        assert!(!grants.remember(&action));
+        assert!(!grants.covers(&action));
+    }
+
+    #[test]
     fn server_grant_covers_every_tool_of_that_server_only() {
         let grants = ChatGrants::in_memory();
         assert!(grants.remember(&mcp("00112233445566aa", "one")));

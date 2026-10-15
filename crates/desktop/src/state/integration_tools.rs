@@ -7,6 +7,7 @@ use crate::types::AutomationOrigin;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use themis_core::configuration::{ApprovalMode, ApprovalPolicy, PolicyAction};
+use themis_core::plugins::connections::McpServer;
 use themis_core::tools::{
     async_trait, ApprovalHook, ToolAction, ToolCallError, ToolRuntime, ToolT,
 };
@@ -139,10 +140,131 @@ impl ToolRuntime for ManagementTool {
         if args["action"].as_str().unwrap_or("list") == "list" {
             args["action"] = "inventory".into();
         }
-        self.state.plugin_action(args).await.map_err(error)
+        let effects = self.mcp_command_effects(&args)?;
+        let approved = self.approve_mcp_command(&effects)?;
+        self.state
+            .plugin_action_for_agent(args, approved)
+            .await
+            .map_err(error)
     }
 }
 impl ManagementTool {
+    /// Command-based MCP connections this call would newly enable or change:
+    /// the app launches their command on the next start, so the person must
+    /// approve that exact command. Imports, installs and updates leave
+    /// connections disabled or unapproved and need no such prompt.
+    fn mcp_command_effects(&self, args: &Value) -> Result<Vec<(String, McpServer)>, ToolCallError> {
+        let scope = args["scope"].as_str().unwrap_or("global");
+        let wanted: Vec<(String, McpServer)> = match args["action"].as_str().unwrap_or("list") {
+            "save" => {
+                let spec: Result<themis_core::plugins::PluginSpec, _> =
+                    serde_json::from_value(args["spec"].clone());
+                spec.map(|spec| {
+                    spec.mcp
+                        .into_iter()
+                        .filter(|(_, server)| server.enabled)
+                        .collect()
+                })
+                .unwrap_or_default()
+            }
+            "set_component_enabled" if args["kind"] == "mcp" && args["enabled"] == true => {
+                self.stored_mcp(scope, args["name"].as_str(), args["id"].as_str())
+            }
+            "enable" => self.stored_mcp(scope, args["name"].as_str(), None),
+            _ => Vec::new(),
+        };
+        let root = self
+            .project
+            .canonicalize()
+            .unwrap_or_else(|_| self.project.clone());
+        let root = root.as_path();
+        let plugin = if args["action"] == "save" {
+            args["spec"]["name"].as_str()
+        } else {
+            args["name"].as_str()
+        }
+        .unwrap_or_default();
+        let effects: Vec<(String, McpServer)> = wanted
+            .into_iter()
+            .filter(|(_, server)| server.command.is_some() && server.enabled)
+            .filter(|(name, server)| {
+                !self
+                    .state
+                    .mcp_definition_consented(root, scope, plugin, name, server)
+            })
+            .collect();
+        if effects.len() > 1 {
+            return Err(error(
+                "Change one command-based MCP connection per call so its exact command can be approved",
+            ));
+        }
+        Ok(effects)
+    }
+
+    fn stored_mcp(
+        &self,
+        scope: &str,
+        plugin: Option<&str>,
+        id: Option<&str>,
+    ) -> Vec<(String, McpServer)> {
+        self.state
+            .plugin_store(Some(self.project.clone()))
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| p.scope == scope && Some(p.spec.name.as_str()) == plugin)
+            .flat_map(|p| p.spec.mcp.into_iter())
+            .filter(|(name, _)| id.is_none_or(|id| id == name))
+            .map(|(name, mut server)| {
+                server.enabled = true;
+                (name, server)
+            })
+            .collect()
+    }
+
+    /// Asks about the exact command, every time and never remembered for the
+    /// chat. YOLO is the person's explicit trust and an allow rule is theirs
+    /// too; a deny rule refuses. Returns the connection names now approved.
+    fn approve_mcp_command(
+        &self,
+        effects: &[(String, McpServer)],
+    ) -> Result<Vec<String>, ToolCallError> {
+        let Some((name, server)) = effects.first() else {
+            return Ok(Vec::new());
+        };
+        let command = server.command.clone().unwrap_or_default();
+        let action = ToolAction {
+            display: Some(themis_core::tools::CommandDisplay {
+                argv: std::iter::once(command)
+                    .chain(server.args.iter().cloned())
+                    .collect(),
+                cwd: None,
+                background: false,
+            }),
+            command: Vec::new(),
+            tool: themis_core::tools::MCP_COMMAND_APPROVAL_TOOL.to_owned(),
+            summary: "Enable a command-based MCP connection".to_owned(),
+            risk: themis_core::tools::RiskLevel::Execute,
+        };
+        let allowed = if self.run.mode == ApprovalMode::Yolo {
+            true
+        } else {
+            match self.run.policy.decision(&action) {
+                PolicyAction::Allow => true,
+                PolicyAction::Deny => false,
+                PolicyAction::Ask => {
+                    self.run.interactive.approve(&action) != themis_core::tools::Approval::Deny
+                }
+            }
+        };
+        if !allowed {
+            return Err(error(
+                "approval denied for 'manage_integrations': the MCP connection command was not approved",
+            ));
+        }
+        Ok(vec![name.clone()])
+    }
+
     /// Own-chat lifecycle never prompts, but the captured policy still applies:
     /// a deny rule rejects, ask proceeds silently (the user's decision), YOLO
     /// is unchanged. Every automatic decision is logged.

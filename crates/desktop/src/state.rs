@@ -13,6 +13,7 @@ mod chat_grants;
 pub(crate) mod configuration;
 mod integration_tools;
 mod mcp;
+mod mcp_consent;
 mod plugins;
 mod preferences;
 mod projects;

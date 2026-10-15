@@ -159,6 +159,11 @@ pub struct ToolAction {
     pub command: Vec<String>,
 }
 
+/// Approval identity for an agent enabling, creating or changing a command-based
+/// MCP connection. The command is new code the app will launch, so it is shown as
+/// structured argv, asked every time and never covered by a chat grant.
+pub const MCP_COMMAND_APPROVAL_TOOL: &str = "manage_integrations_mcp_command";
+
 /// The server a connected MCP tool belongs to, read from its generated name
 /// (`mcp_<16 hex server id><8 hex tool id>_<tool>`, see
 /// `plugins::connections::tool_identity`). One chat grant covers every tool of
@@ -231,7 +236,9 @@ impl ToolAction {
     /// `Destructive` risk class and [`is_destructive_variant`] commands) are
     /// asked about every time and are never stored or matched by a grant.
     pub fn grantable(&self) -> bool {
-        self.risk != RiskLevel::Destructive && !is_destructive_variant(&self.command)
+        self.risk != RiskLevel::Destructive
+            && !is_destructive_variant(&self.command)
+            && self.tool != MCP_COMMAND_APPROVAL_TOOL
     }
 
     /// Command prefix an "allow in this chat" grant covers, and whether it is
