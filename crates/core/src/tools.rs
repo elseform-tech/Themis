@@ -973,6 +973,28 @@ impl GatedTool {
     }
 }
 
+/// `path` relative to `base` when it is absolute and lies under `base`; `None` otherwise.
+/// The path is resolved first (the file, or its parent for a new file), so `/var/..` vs
+/// `/private/var/..` spellings match and a symlink pointing outside the project does not;
+/// the caller's root-scoped tool still validates the relative result.
+fn project_relative(base: &Path, path: &Path) -> Option<String> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let base = base.canonicalize().ok()?;
+    let resolved = path.canonicalize().ok().or_else(|| {
+        let parent = path.parent()?.canonicalize().ok()?;
+        Some(parent.join(path.file_name()?))
+    })?;
+    let rest = resolved.strip_prefix(&base).ok()?;
+    let rest = rest.to_string_lossy().into_owned();
+    Some(if rest.is_empty() {
+        ".".to_owned()
+    } else {
+        rest
+    })
+}
+
 impl std::fmt::Debug for GatedTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GatedTool")
@@ -1029,6 +1051,27 @@ impl ToolRuntime for GatedTool {
                     if !Path::new(path).is_absolute() {
                         args[key] = Value::String(root.join(path).to_string_lossy().into_owned());
                     }
+                }
+            }
+        } else if let Some(base) = &self.base_dir {
+            // Root-scoped tools take project-relative paths only. Models often pass the
+            // absolute path they were shown (e.g. the evidence directory); an absolute path
+            // inside the project becomes relative, and the toolkit still validates the rest
+            // (traversal, symlinks). Paths outside the project are left to be refused.
+            for key in [
+                "path",
+                "file_path",
+                "directory_path",
+                "source_path",
+                "destination_path",
+                "directory",
+            ] {
+                if let Some(relative) = args
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .and_then(|path| project_relative(base, Path::new(path)))
+                {
+                    args[key] = Value::String(relative);
                 }
             }
         }
@@ -2769,6 +2812,49 @@ pub fn shared_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn absolute_paths_inside_the_project_read_like_relative_ones() {
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("notes.txt"), "the HERON-42 note").unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "outside").unwrap();
+        let tools = boxed_tools(project.path(), Arc::new(AllowAllHook)).unwrap();
+        let read = tools
+            .iter()
+            .find(|tool| tool.name() == "read_file")
+            .unwrap();
+        let canonical = project.path().canonicalize().unwrap();
+        for path in [
+            project.path().join("notes.txt"),
+            canonical.join("notes.txt"),
+        ] {
+            let result = read
+                .execute(serde_json::json!({"file_path": path}))
+                .await
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            assert!(result.to_string().contains("HERON-42"), "{result}");
+        }
+        // Outside the project, directly or by climbing out, stays refused.
+        let escape = canonical.join("..").join(
+            outside
+                .path()
+                .canonicalize()
+                .unwrap()
+                .strip_prefix(canonical.parent().unwrap())
+                .unwrap_or(outside.path())
+                .join("secret.txt"),
+        );
+        for path in [outside.path().join("secret.txt"), escape] {
+            assert!(
+                read.execute(serde_json::json!({"file_path": path}))
+                    .await
+                    .is_err(),
+                "{} must be refused",
+                path.display()
+            );
+        }
+    }
     use std::fs;
     use tempfile::tempdir;
 
@@ -3479,6 +3565,34 @@ mod tests {
         let spaced = spawn_failure("/Applications/My App/bin/x", &[], &missing);
         assert!(!spaced.contains("Retry exactly"), "{spaced}");
         assert!(spaced.contains("contains spaces"), "{spaced}");
+    }
+
+    mod project_relative_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Whatever absolute path a model sends, a mapped result never climbs out of the
+            /// project and always names the same place inside it.
+            #[test]
+            fn mapped_paths_stay_inside_the_project(
+                parts in proptest::collection::vec(prop_oneof![
+                    Just("..".to_owned()), Just(".".to_owned()), "[a-z]{1,6}",
+                ], 0..6),
+            ) {
+                let project = tempfile::tempdir().unwrap();
+                let base = project.path().canonicalize().unwrap();
+                std::fs::create_dir_all(base.join("a/b")).unwrap();
+                let candidate = parts.iter().fold(base.clone(), |path, part| path.join(part));
+                if let Some(relative) = project_relative(&base, &candidate) {
+                    prop_assert!(!Path::new(&relative).components().any(|c| c == std::path::Component::ParentDir));
+                    prop_assert!(!Path::new(&relative).is_absolute());
+                    let mapped = base.join(&relative);
+                    let resolved = mapped.canonicalize().unwrap_or(mapped);
+                    prop_assert!(resolved.starts_with(&base), "{} -> {}", candidate.display(), resolved.display());
+                }
+            }
+        }
     }
 
     mod spawn_failure_props {
