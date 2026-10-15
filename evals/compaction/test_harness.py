@@ -104,6 +104,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(summary["by_position"]["early"], 0.0)  # headline basis
         self.assertEqual(summary["by_position_overall"]["late"], 1.0)
 
+    def test_probe_request_errors_are_counted_but_not_scored(self):
+        run = self.run_report({"a": "x", "b": None, "d": "UNKNOWN"})
+        run["answers"][1]["error"] = "Generic Error : Provider response was truncated"
+        summary = trial_summary(trial_rows(self.case(), run), [run])
+        self.assertEqual(summary["overall_retention"], 1.0)
+        self.assertEqual(summary["probe_errors"], 1)
+
     def test_invalid_runs_are_excluded_and_reported(self):
         good = self.run_report({"a": "x", "b": "new", "d": "UNKNOWN"})
         bad = dict(self.run_report({"a": "x", "b": "new", "d": "UNKNOWN"}), valid=False)

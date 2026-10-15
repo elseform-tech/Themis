@@ -4,7 +4,9 @@ import statistics
 
 from .grade import position
 
-SCORED = ("correct", "unknown", "stale", "wrong", "error")
+# Probe request failures (provider errors after the eval's own retry) say nothing about what
+# the checkpoint kept; they are counted under `probe_errors` and excluded from retention.
+SCORED = ("correct", "unknown", "stale", "wrong")
 
 
 def spread(values):

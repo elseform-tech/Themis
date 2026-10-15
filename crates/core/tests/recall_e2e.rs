@@ -120,9 +120,14 @@ async fn recall_finds_a_planted_original_after_compaction() {
     let system = main.last().unwrap()["messages"][0]["content"]
         .as_str()
         .unwrap();
-    assert!(system.contains("call the `recall` tool first"));
+    // The wire system message: recall guidance with keyword advice, the greeting rule, and
+    // no JSONL/read_file recovery recipe while recall is offered.
+    assert!(system.contains("call the `recall` tool with 2-5 distinctive keywords"));
+    assert!(system.contains("A checkpoint is a lossy paraphrase, not a source"));
+    assert!(system.contains("do not recap, summarize or resume earlier or parked work"));
     assert!(!system.contains("Bounded reads include record_role"));
-    assert!(system.contains("call the `recall` tool first"));
+    assert!(!system.contains("decode_tool_payload"));
+    assert!(!system.contains("evidence_kind recovery"));
     assert!(system.contains("Archived observations may be stale"));
     assert!(system.contains("tool restrictions"));
     assert!(main[0]["tools"]

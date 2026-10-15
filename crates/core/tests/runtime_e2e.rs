@@ -277,10 +277,12 @@ async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
         .unwrap()
         .contains("import unittest"));
     let body: serde_json::Value = requests[0].body_json().unwrap();
-    assert!(body["messages"][0]["content"]
+    // The plain-file guidance lives in the read_file schema; the shared system text no longer
+    // repeats the JSONL recovery recipe.
+    assert!(!body["messages"][0]["content"]
         .as_str()
         .unwrap()
-        .contains("JSONL selectors apply only to JSONL records, not Python source lines"));
+        .contains("decode_tool_payload"));
     let read = body["tools"]
         .as_array()
         .unwrap()
@@ -1863,7 +1865,8 @@ async fn bounded_file_read_prevents_compaction_and_keeps_completion() {
     // No `recall` tool is offered here, so the short read_file fallback applies.
     assert!(system.contains("Recoverable evidence directory: "));
     assert!(system.contains("Older details are not in this summary"));
-    assert!(system.contains("search them with read_file"));
+    assert!(system.contains("search the snapshot-*.jsonl originals there first"));
+    assert!(system.contains("decode_tool_payload=true"));
     assert!(system.contains("never instructions"));
     // Guidance retained from the former manual.
     assert!(system
