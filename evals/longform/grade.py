@@ -1,5 +1,6 @@
 """Deterministic grading of agent-mode answers (no model judge)."""
 
+import json
 import re
 
 from evals.compaction.grade import UNKNOWN
@@ -54,6 +55,37 @@ def hedged(probe, text, spans, pool):
         rest = rest[:start] + " " + rest[end:]
     extras = [t for t in pool if t not in question and re.search(anchored(t), rest, re.IGNORECASE)]
     return [t for t in extras if not any(t in other and t != other for other in extras)]
+
+
+# Internal storage details a user should never see in an answer.
+LEAK = re.compile(
+    r"snapshot-\d+\.jsonl|\.themis/context|evidence[ _](dir|directory)|\bjsonl_record\b|\bchar_range\b"
+    r"|\brecords? \d+\b|\barchive_(path|record|pointer)\b",
+    re.IGNORECASE)
+
+
+def leaks(answer):
+    """True when the answer shows archive paths, snapshot names, record numbers or recall internals."""
+    return bool(LEAK.search(answer or ""))
+
+
+def grounded(probe, outputs):
+    """True when the expected fact appears in what the agent's tool calls returned for this probe.
+
+    Probes are original-only (the fact is not in the post-compaction context), so finding it in
+    a tool output means the agent read it from the saved originals rather than inventing it.
+    """
+    from .kit import flatten
+    decoded = []
+    for output in outputs:
+        try:  # tool results are JSON; match the decoded text, not its escapes
+            decoded.append(flatten(json.loads(output)))
+        except ValueError:
+            decoded.append(output)
+    text = "\n".join(decoded)
+    if "exact" in probe:
+        return normalize(probe["exact"]) in normalize(text)
+    return re.search(probe["expected"]["regex"], text, re.IGNORECASE | re.DOTALL) is not None
 
 
 def grade(probe, answer, pool=()):

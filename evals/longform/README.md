@@ -36,9 +36,13 @@ originals.
      sensitive; superseded values listed first count as `stale`; an answer that also names another
      planted value is `hedged` and wrong; decoys need a real abstention: a leading `UNKNOWN`, or a
      first sentence that says nothing was found and names no candidate);
-   - validates the **citation**: the answer must name at most 3 records `snapshot-N.jsonl` + number
-     whose line is an original (not navigation/recovery) record that states the fact; longer lists
-     are invalid. Stored errors are reduced to a class and HTTP status (no provider text).
+   - checks **grounding**: a correct answer counts only if the expected fact appears in what the
+     agent's own tool calls returned during that probe (decoded JSON, at most 16 KiB per call).
+     Probes are original-only, so the fact can only have come from the saved originals. Answers
+     do not cite sources: the agent is told never to show archive paths or record numbers, and
+     any answer that does (`snapshot-N.jsonl`, `.themis/context`, `record N`, `char_range`, ...)
+     counts as a **source leak**. Stored errors are reduced to a class and HTTP status (no
+     provider text).
 4. Reports mean +- sample SD over trials. Trials whose compaction did not install are `invalid`
    and excluded.
 
@@ -69,11 +73,12 @@ Run both builds with the same `--model/--budget/--trials` and compare the headli
 
 ## Grading and metrics
 
-Headline: **original-only detail accuracy with a valid citation**, narrative vs code (over probes
-not answerable from the post-compaction context). Also reported: accuracy without the citation
-requirement, citation present/valid rates, `unknown` and wrong rates, exact-quote accuracy, decoy
+Headline: **original-only detail accuracy, grounded in what the agent read**, narrative vs code
+(over probes not answerable from the post-compaction context). Also reported: accuracy without the
+grounding requirement, grounded share of correct answers, source-leak rate, `unknown` and wrong
+rates, exact-quote accuracy, decoy
 hallucination rate, in-context counts and accuracy, mean tool calls, `recall` use, requests,
-tokens, latency, and provider/transport errors (excluded, listed). Lexical grading limits: a correct
+tokens, latency, and provider/transport errors (excluded, listed). Result files from before 2026-10-15 graded answer citations instead; their rows have no `grounded` field and the report falls back to `cite_valid`, so compare old and new headlines with care. Lexical grading limits: a correct
 paraphrase that avoids the pattern is scored wrong, and a hedged answer that leads with the right
 value passes even if it later mentions the superseded one.
 

@@ -20,7 +20,7 @@ import unittest
 
 from . import __main__ as harness
 from . import gen_cases
-from .grade import grade
+from .grade import grade, grounded, leaks
 from .kit import anchored
 from .report import aggregate, classify_error, trial_summary
 from .validate import context_location, parse_citations, record_text, validate
@@ -164,6 +164,23 @@ class GradeTests(unittest.TestCase):
                     self.assertEqual(grade(probe, f"{probe['answer_text']} or {other}", case["tokens"]), "hedged", probe["id"])
 
 
+class SourceTests(unittest.TestCase):
+    PROBE = {"expected": {"regex": r"(?<![\w.-])rustc\s+1\.94\.0(?![\w-]|\.\d)"}}
+
+    def test_grounded_reads_decoded_tool_output(self):
+        self.assertTrue(grounded(self.PROBE, [json.dumps({"content": "log\nrustc 1.94.0 ok"})]))
+        self.assertTrue(grounded(self.PROBE, ["plain rustc 1.94.0 text"]))
+        self.assertFalse(grounded(self.PROBE, [json.dumps({"entries": ["snapshot-1.jsonl"]})]))
+        self.assertTrue(grounded({"exact": "Ship it  now"}, [json.dumps({"excerpt": "she said Ship it now"})]))
+
+    def test_leaks_flag_internal_storage_details(self):
+        for answer in ("HERON-42 (snapshot-1792.jsonl)", "see .themis/context/abc", "records 1 and 7",
+                       "found at char_range 3..9", "jsonl_record 4", "archive_path x"):
+            self.assertTrue(leaks(answer), answer)
+        for answer in ("HERON-42, rotation on Thursday.", "You mentioned it earlier in this chat.", "UNKNOWN", ""):
+            self.assertFalse(leaks(answer), answer)
+
+
 class CitationTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -277,7 +294,7 @@ class ExclusionTests(unittest.TestCase):
         run = {"chunks": [{"installed": True, "tokens_after": 5}], "recall_available": False}
         summary = trial_summary(rows, [run])
         self.assertEqual(summary["overall"]["probes"], 2)
-        self.assertEqual(summary["overall"]["headline_correct_with_valid_citation"], 0.5)
+        self.assertEqual(summary["overall"]["headline_correct_and_grounded"], 0.5)
         self.assertEqual((summary["excluded_in_context_tail"], summary["excluded_in_context_checkpoint"]), (1, 1))
         self.assertEqual(aggregate([summary, summary])["overall"]["probes"]["mean"], 2)
 
@@ -296,11 +313,23 @@ class Scripted(http.server.BaseHTTPRequestHandler):
             finish = "stop"
         elif body["messages"][-1]["role"] != "tool":
             name, arguments = "list_dir", {"directory_path": ".themis/context/eval-thread"}
+            source = self.source(body) if self.mode == "perfect" else None
+            if source:  # read the original record that states the fact, as a real agent would
+                name, arguments = "read_file", {"file_path": f".themis/context/eval-thread/{source[0]}", "jsonl_record": source[1],
+                                                "json_pointer": source[2], "decode_tool_payload": source[2] != "/content"}
             if self.mode == "snoop":  # try to read the fixture inputs next to the project by absolute path
                 directory = json.loads(re.search(r"Recoverable evidence directory: (\"[^\"]+\")", system).group(1))
                 workdir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(directory))))
                 name, arguments = "shell", {"command": "cat", "args": [os.path.join(workdir, "inputs", "probes.json")]}
             call = {"id": "call_1", "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}
+            message = {"role": "assistant", "content": None, "tool_calls": [call]}
+            finish = "tool_calls"
+        elif self.mode == "perfect" and (page := self.next_page(body)) is not None:
+            source = self.source(body)  # the fact is further into the record: read the next page
+            arguments = {"file_path": f".themis/context/eval-thread/{source[0]}", "jsonl_record": source[1],
+                         "json_pointer": source[2], "decode_tool_payload": source[2] != "/content", "offset": page}
+            call = {"id": f"call_{len(body['messages'])}", "type": "function",
+                    "function": {"name": "read_file", "arguments": json.dumps(arguments)}}
             message = {"role": "assistant", "content": None, "tool_calls": [call]}
             finish = "tool_calls"
         else:
@@ -314,22 +343,49 @@ class Scripted(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def answer(self, body):
+    def probe(self, body):
         question = next(m["content"] for m in reversed(body["messages"]) if m["role"] == "user").split("Question: ", 1)[1]
-        probe = self.probes[question]
-        if probe["category"] == "decoy" or self.mode in ("ignorant", "snoop"):
-            return "UNKNOWN"
+        return self.probes[question]
+
+    def next_page(self, body):
+        """The offset of the next page when the last read did not yet reach the probe's fact."""
+        probe = self.probe(body)
+        if "evidence" not in probe:
+            return None
+        try:
+            result = json.loads(body["messages"][-1]["content"])
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(result, dict) or re.search(probe["evidence"], result.get("content", ""), re.I | re.S):
+            return None
+        return result.get("next_offset")
+
+    def source(self, body):
+        """(snapshot name, record number, JSON pointer) of the first original stating the fact, or None."""
+        probe = self.probe(body)
+        if probe["category"] == "decoy":
+            return None
         directory = json.loads(re.search(r"Recoverable evidence directory: (\"[^\"]+\")", body["messages"][0]["content"]).group(1))
-        cite = ""
         for name in sorted(os.listdir(directory)):
             if not name.endswith(".jsonl"):
                 continue
             with open(os.path.join(directory, name), encoding="utf-8") as handle:
                 for number, line in enumerate(handle, 1):
                     text = record_text(line)
-                    if text and re.search(probe["evidence"], text, re.I | re.S) and not cite:
-                        cite = f"\nCitation: .themis/context/eval-thread/{name} record {number if self.mode == 'perfect' else number + 1000}"
-        return probe["answer_text"] + cite
+                    if text and re.search(probe["evidence"], text, re.I | re.S):
+                        tool = json.loads(line).get("role") == "Tool"
+                        return name, number, "/message_type/ToolResult/0/function/arguments" if tool else "/content"
+        return None
+
+    def answer(self, body):
+        probe = self.probe(body)
+        if probe["category"] == "decoy" or self.mode in ("ignorant", "snoop"):
+            return "UNKNOWN"
+        if self.mode == "leaky":
+            name, number, _ = self.source(body) or ("snapshot-1.jsonl", 1, "")
+            return f"{probe['answer_text']} (from .themis/context/eval-thread/{name} record {number})"
+        # "perfect" read the original first; "guess" only listed the folder and answers anyway.
+        return probe["answer_text"]
 
     def log_message(self, *args):
         pass
@@ -359,36 +415,44 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(len(report["rows"]), len(self.case["probes"]))
         return report
 
-    def test_perfect_agent_scores_and_is_cited(self):
+    def test_perfect_agent_scores_and_is_grounded(self):
         report = self.run_mode("perfect")
         self.assertGreaterEqual(len(report["chunks"]), 3)
         original = [r for r in report["rows"] if r["category"] != "decoy" and r["in_context"] is None]
         self.assertGreaterEqual(len(original), 5)  # the mock summary keeps no facts
         for row in original:
             self.assertEqual(row["verdict"], "correct", row)
-            self.assertTrue(row["cite_valid"], row)
+            self.assertTrue(row["grounded"], row)
+            self.assertFalse(row["leak"], row)
             self.assertGreaterEqual(row["tool_calls"], 1)
         decoys = [r for r in report["rows"] if r["category"] == "decoy"]
         self.assertTrue(decoys and all(r["verdict"] == "correct_unknown" for r in decoys))
         summary = harness.build_summary([self.case], {(0, self.case["name"]): report}, 1)
         overall = summary["aggregate"]["overall"]
-        self.assertEqual(overall["headline_correct_with_valid_citation"]["mean"], 1.0)
+        self.assertEqual(overall["headline_correct_and_grounded"]["mean"], 1.0)
+        self.assertEqual(overall["source_leak_rate"]["mean"], 0.0)
         self.assertEqual(summary["aggregate"]["decoy_hallucination_rate"]["mean"], 0.0)
         self.assertFalse(summary["aggregate"]["recall_available"])
 
-    def test_wrong_citations_and_ignorance_do_not_pass(self):
-        bad = self.run_mode("bad-citation")
-        for row in bad["rows"]:
+    def test_guesses_leaks_and_ignorance_do_not_pass(self):
+        guess = self.run_mode("guess")
+        for row in guess["rows"]:
             if row["category"] != "decoy" and row["in_context"] is None:
                 self.assertEqual(row["verdict"], "correct")
-                self.assertTrue(row["cite_present"])
-                self.assertFalse(row["cite_valid"], row)
+                self.assertFalse(row["grounded"], row)  # right answer, but nothing it read said so
+        summary = harness.build_summary([self.case], {(0, self.case["name"]): guess}, 1)
+        self.assertEqual(summary["aggregate"]["overall"]["headline_correct_and_grounded"]["mean"], 0.0)
+        leaky = self.run_mode("leaky")
+        rows = [r for r in leaky["rows"] if r["category"] != "decoy" and r["in_context"] is None]
+        self.assertTrue(rows and all(r["leak"] for r in rows))
+        summary = harness.build_summary([self.case], {(0, self.case["name"]): leaky}, 1)
+        self.assertEqual(summary["aggregate"]["overall"]["source_leak_rate"]["mean"], 1.0)
         ignorant = self.run_mode("ignorant")
         for row in ignorant["rows"]:
             if row["category"] != "decoy":
                 self.assertEqual(row["verdict"], "unknown")
         summary = harness.build_summary([self.case], {(0, self.case["name"]): ignorant}, 1)
-        self.assertEqual(summary["aggregate"]["overall"]["headline_correct_with_valid_citation"]["mean"], 0.0)
+        self.assertEqual(summary["aggregate"]["overall"]["headline_correct_and_grounded"]["mean"], 0.0)
 
     def test_reading_the_inputs_by_absolute_path_is_refused_and_recorded(self):
         report = self.run_mode("snoop")

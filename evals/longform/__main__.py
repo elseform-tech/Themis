@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-from .grade import grade
+from .grade import grade, grounded, leaks
 from .report import INFRASTRUCTURE_CLASSES, aggregate, classify_error, markdown, trial_summary
 from .validate import MAX_CITATIONS, context_location, validate
 
@@ -122,12 +122,17 @@ def process_run(case, report, workdir):
         if not decoy and answer:
             cite = validate(evidence, probe, answer)
         tools = entry.get("tools", [])
+        outputs = entry.get("tool_outputs")
+        support = None
+        if not decoy and outputs is not None:
+            support = grounded(probe, [o["output"] for o in outputs if o.get("ok") and o.get("tool") != "update_plan"])
         rows.append({
             "case": case["name"], "id": probe["id"], "category": probe["category"], "domain": case["kind"],
             "in_context": None if decoy else context_location(messages, probe),
             "verdict": grade(probe, answer, pool), "answer": answer or "", "error": entry.get("error"),
             "cite_present": cite["present"], "cite_valid": cite["valid"], "cited": cite["cited"],
             "cite_count": cite.get("count", 0), "cite_over_cap": cite.get("over_cap", False),
+            "grounded": support, "leak": leaks(answer),
             "refused_paths": entry.get("refused_paths", []),
             "tools": tools, "tool_calls": sum(t != "update_plan" for t in tools),
             "denied": entry.get("denied", 0),
