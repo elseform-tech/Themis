@@ -106,15 +106,21 @@ impl DesktopApprovalHook {
 
 impl ApprovalHook for DesktopApprovalHook {
     fn approve(&self, action: &ToolAction) -> Approval {
-        if action.risk == CoreRisk::Read && !self.confirm_reads {
+        let escape = action.tool == themis_core::tools::UNSANDBOXED_TOOL;
+        if action.risk == CoreRisk::Read && !self.confirm_reads && !escape {
             return Approval::AllowOnce;
+        }
+        // Leaving the sandbox needs a person watching: automations never ask
+        // for it (an existing chat grant was already checked by the caller).
+        if escape && self.unattended {
+            return Approval::Deny;
         }
         let integration = action.tool.starts_with("mcp_")
             || action.tool.starts_with("hook_")
             || action.tool.starts_with("manage_integrations_")
             || action.tool.starts_with("manage_automations_")
             || matches!(action.tool.as_str(), "list_plugins" | "save_skill");
-        if !self.is_git && action.risk != CoreRisk::Read && !integration {
+        if !self.is_git && (escape || (action.risk != CoreRisk::Read && !integration)) {
             return Approval::Deny;
         }
         let grantable = action.grantable();
@@ -248,6 +254,7 @@ mod tests {
                 argv: argv.clone(),
                 cwd: Some("/repo".into()),
                 background: false,
+                sandbox_blocked: None,
             }),
             command: argv.clone(),
             tool: "shell".into(),
@@ -262,6 +269,39 @@ mod tests {
         let scope = request.grant_scope.unwrap();
         assert_eq!(scope.argv, argv);
         assert!(!scope.covers_further_args);
+    }
+
+    fn escape(risk: CoreRisk) -> ToolAction {
+        let mut action = action(themis_core::tools::UNSANDBOXED_TOOL, risk);
+        action.command = vec!["git".into(), "status".into()];
+        action
+    }
+
+    #[test]
+    fn leaving_the_sandbox_is_never_approved_by_a_shortcut() {
+        // The read shortcut does not apply: a dialog is raised (and expires).
+        let (hook, mut rx) = hook_with_sink(true);
+        let hook = hook.with_timeout(Duration::from_millis(10));
+        assert_eq!(hook.approve(&escape(CoreRisk::Read)), Approval::Deny);
+        assert!(matches!(rx.try_recv(), Ok(TestEvent::Approval(_))));
+        // Unattended runs never ask for it.
+        let (hook, mut rx) = hook_with_sink(true);
+        let hook = hook
+            .with_unattended(true)
+            .with_test_decisions(vec![Approval::AllowOnce]);
+        assert_eq!(hook.approve(&escape(CoreRisk::Execute)), Approval::Deny);
+        assert!(rx.try_recv().is_err());
+        // Non-git projects refuse it outright.
+        let (hook, _) = hook_with_sink(false);
+        let hook = hook.with_test_decisions(vec![Approval::AllowOnce]);
+        assert_eq!(hook.approve(&escape(CoreRisk::Execute)), Approval::Deny);
+        // A person's answer is what allows it.
+        let (hook, _) = hook_with_sink(true);
+        let hook = hook.with_test_decisions(vec![Approval::AllowOnce]);
+        assert_eq!(
+            hook.approve(&escape(CoreRisk::Execute)),
+            Approval::AllowOnce
+        );
     }
 
     #[test]

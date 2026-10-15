@@ -15,8 +15,8 @@ QA builds with a different app identifier have separate data directories.
 
 | Location | Purpose | Scope |
 | --- | --- | --- |
-| App-data `runtime.jsonc` | Runtime defaults, Custom approval rules, logging, discovery | User, across projects |
-| Project `.themis/config.jsonc` | Project runtime overrides and additional approval restrictions | Selected project/run root |
+| App-data `runtime.jsonc` | Runtime defaults, Custom approval rules, OS sandbox, logging, discovery | User, across projects |
+| Project `.themis/config.jsonc` | Project runtime overrides and additional approval and sandbox restrictions | Selected project/run root |
 | App-data `settings.json` | Existing desktop preferences and legacy run defaults | User |
 | App-data `compatibility-cache/` | Derived marketplace scan progress and validated package snapshots | User; refreshed explicitly |
 | App-data `plugins/registry.json` | Revisioned plugin, skill, MCP, and hook definitions and activation | Global |
@@ -120,6 +120,12 @@ Example user `runtime.jsonc`:
       { "tool": "*", "risk": "read", "action": "allow" }
     ]
   },
+  "sandbox": {
+    "enabled": true,
+    "backend": "auto",
+    "network": "allow",
+    "writable_paths": ["~/.cargo"]
+  },
   "compaction": {
     "timeout_seconds": 900,
     "document_batch_timeout_seconds": 3600,
@@ -140,9 +146,17 @@ Example project `.themis/config.jsonc`:
   "skills": { "paths": [".agents/skills", "team-skills"] },
   "approval": {
     "rules": [{ "tool": "git", "risk": "write", "action": "deny" }]
-  }
+  },
+  "sandbox": { "network": "block" }
 }
 ```
+
+The `sandbox` block configures the OS sandbox for commands the agent runs
+(`shell`, background tasks, the `git` tool and watch checks), in Custom and YOLO
+alike; see [sandbox](sandbox.md) for what it allows, the secret locations it
+hides, backend choice and limits. A project file and an explicit run override may
+only tighten it (block the network, enable it, drop writable paths); anything
+else fails validation with a message naming the field.
 
 `skills.paths` replaces project skill search roots; it does not change conventional
 user discovery. Skill and instruction paths must be relative, without parent
@@ -174,6 +188,10 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.summary_model` | Optional `longcat-2.5-preview-free`, `gpt-5.6-luna`, or `gpt-6-luna`; omitted/null keeps automatic routing. Only internal summaries change; the configured model must be present in the captured Go catalog. |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
 | `approval.rules` | At most 256 ordered rules `{tool, action, risk?, command?}`; `command` is an argv-prefix array (see Composer permissions) |
+| `sandbox.enabled` | Boolean, default `true`; only the user file (or no file) can turn it off |
+| `sandbox.backend` | `auto` (default), `seatbelt` (macOS), `bubblewrap` or `landlock` (Linux); a backend of another OS is an error, an unusable named one fails closed |
+| `sandbox.network` | `allow` (default, also in Custom) or `block`; projects may only set `block` |
+| `sandbox.writable_paths` | At most 32 folders, absolute or `~/...`, 1–1,024 bytes, no `..`; projects may only remove entries |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration
@@ -244,7 +262,12 @@ A rule may carry `command`, an array of 1–16 non-empty argv tokens (each at mo
 256 bytes) that scopes it to `shell` calls: it matches when the program and its
 arguments begin with exactly those tokens (`["cargo","test"]` matches
 `cargo test --lib`, not `cargo build`, `cargo testing` or `/usr/bin/cargo test`).
-No globbing applies. `command` is valid only with `"tool": "shell"` (exact name).
+No globbing applies. `command` is valid only with `"tool": "shell"` or
+`"tool": "shell_unsandboxed"` (exact names; the latter is the request to run a
+command the sandbox blocked outside it, see [sandbox](sandbox.md#when-the-sandbox-blocks-a-command)).
+Only allow/ask rules naming `shell_unsandboxed` exactly apply to that request;
+wildcard, prefix and risk-only allow rules and an `allow` default never cover it,
+while every matching deny rule (including `*`) refuses it.
 Example allow rule: `{ "tool": "shell", "command": ["cargo", "test"], "action": "allow" }`.
 Allow and ask rules match the program token exactly (`/bin/echo` or a project-local
 `./echo` does not match `["echo"]`, so an allow rule never widens). Deny rules also
@@ -274,7 +297,7 @@ or the same server after its plugin revision changes, asks again.
 **Deny**. *Allow in this chat* runs the action now and saves the grant to the chat's own
 file, `chat_grants/<chat id>.json` in the app data directory (beside `threads.json`). Format:
 `{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<16 hex>","risk":"network"}]}`;
-`command` is the covered argv prefix (shell and git only), `server` marks a whole-MCP-server
+`command` is the covered argv prefix (`shell`, `git` and `shell_unsandboxed` only), `server` marks a whole-MCP-server
 grant, and `risk` is `read`, `write`, `execute` or `network`. Limits: 256 grants, 256 KiB.
 The file is loaded when a run starts (configuration and approval mode are still captured once
 per run); a grant made during a run applies immediately to that run and is saved for later
@@ -284,7 +307,7 @@ diagnostic with the reason, never the contents), which can only remove permissio
 automations and watches post into the same chat and inherit its grants; a watch's
 `check_command` follows normal shell policy plus the chat's grants. Deny rules always beat a
 grant, and YOLO is unchanged. Discarding a chat, or deleting its project, removes its file.
-Neither `chat_grants/*.json` nor `mcp_consent.json` has integrity protection: both live in app data like the plugin registry, and a shell program you approve can edit them (the shell tool is not an OS sandbox). Writes are serialized, merge with concurrent runs, and use unique temporary files.
+Neither `chat_grants/*.json` nor `mcp_consent.json` has integrity protection: both live in app data like the plugin registry. Sandboxed commands and Themis' file tools cannot write the app-data folder, but a command you let run outside the sandbox (or any command while the sandbox is off or unavailable) can edit them. Writes are serialized, merge with concurrent runs, and use unique temporary files.
 **To undo** a grant, edit or delete its entry in the chat's file, or start a new chat; there is
 deliberately no UI for this, and the composer shield stays YOLO/Custom only.
 Destructive actions (the variants below and the `destructive` risk class such as
@@ -311,17 +334,34 @@ an allow rule that does not name the variant itself:
   such as `pnpm --filter pkg`, `npm -w x`, `yarn npm publish`, and npm's command
   abbreviations of at least three characters such as `npm publi`), and `publish`/`yank`
   for `cargo` (also `cargo +nightly publish`, `cargo --config k=v publish`), including
-  `--dry-run`. Any positional argument matching is enough, so a script or package
-  that happens to be named `publish` also prompts: over-flagging costs a prompt only.
+  `--dry-run`. Positional words are scanned until an ordinary subcommand (`test`, `build`,
+  `install`, ...) is reached, so `cargo test publish` or `npm test publish` do not count,
+  while `npm run publish` (a script that likely publishes) still does. A word right after
+  a flag may be that flag's value and never ends the scan: over-flagging costs a prompt only.
+- Recursive `rm` (`-r`, `-R`, `--recursive`, or a cluster such as `-rf`).
 
-So a rule `["git","push"]` allows `git push origin main` but `git push --force` falls
-through to later rules and the default (ask; denied when unattended). A rule such as
-`["git","push","--force"]` is honoured. **Deny rules match literally**: they compare
-argv tokens and do not normalize flag spellings, so denying `["git","push","--force"]`
-does not deny `git push -f`; deny the broader `["git","push"]` or list each spelling.
-A broad rule without `command` remains explicit trust. The `git` tool reports
-`["git", args...]` as its command with the same keys, and escalates destructive
-`checkout`, `branch` and `commit` calls to risk `destructive`.
+These variants carry the risk class `destructive` for `shell` calls too (the `git` tool
+also escalates destructive `checkout`, `branch` and `commit` calls), so a rule with
+`"risk": "execute"` does not cover them. So a rule `["git","push"]` allows
+`git push origin main` but `git push --force` falls through to later rules and the
+default (ask; denied when unattended). A rule such as `["git","push","--force"]` is
+honoured. A broad allow rule without `command` (`{"tool":"shell","action":"allow"}`, or
+`"tool":"*"`) is trust in the tool but not in its destructive variants; add
+`"risk": "destructive"` to such a rule if you really mean them. Wrappers (`sudo rm -rf`,
+`bash -c "git push -f"`) are not recognized as variants.
+
+**Deny rules compare flags by meaning.** A deny rule's non-flag tokens must begin the
+command's non-flag tokens and every flag it names must appear before `--`, in any order,
+as `--name=value`, inside a short cluster, or under a known equivalent spelling:
+`git` `--force`/`-f`, `--delete`/`-d`, `--all`/`-a`, `--recursive`/`-r`; `rm`
+`--force`/`-f`, `--recursive`/`-r`/`-R`, `--dir`/`-d`; `cp` `--force`/`-f`,
+`--recursive`/`-r`/`-R`; `mv` `--force`/`-f`; `chmod`/`chown` `--recursive`/`-R`.
+So denying `["git","push","--force"]` also denies `git push -f origin main` and
+`git push origin --force`, and `["rm","-rf"]` denies `rm -fr x` and `rm -r -f x`. Other
+programs' short and long spellings are not related (their meanings differ per program):
+list each spelling, or deny the broader prefix such as `["git","push"]`. Allow and ask
+rules stay exact so they never widen. The `git` tool reports `["git", args...]` as its
+command with the same keys.
 
 The `shell` tool schema asks for the program only in `command` and one `args`
 element per argument. If `command` contains whitespace and no executable of that
@@ -332,12 +372,34 @@ always see the argv the model sent.
 
 Unattended CLI `ask` requests deny; use explicit policy or an interactive client.
 
-YOLO bypasses harness approval gates, filesystem root restrictions, skill tool
-filters, and the Git subcommand allowlist. Operating-system permissions, tool
-input validation, time/output bounds, and child environment handling remain.
-Custom is a tool policy, not an OS sandbox: approved programs, including an
-explicit shell interpreter, can perform their own filesystem/network operations.
-See [sandbox](sandbox.md) for the enforcement boundary.
+YOLO means no approval prompts: it bypasses harness approval gates, filesystem
+root restrictions, skill tool filters, and the Git subcommand allowlist. The OS
+sandbox (and the file guard) still apply, as do operating-system permissions,
+tool input validation, time/output bounds, and child environment handling; a
+command the sandbox blocks fails without asking. Custom is a tool policy on top
+of the same sandbox: approved programs, including an explicit shell interpreter,
+perform their own filesystem/network operations inside it. See
+[sandbox](sandbox.md) for the enforcement boundary.
+
+## Effective permissions view
+
+`get_effective_permissions` (`projectRoot`, optional `threadId`) returns a
+read-only view built from the files on every call: the chat's approval `mode`,
+`files` (user and project file paths with `status` `loaded`, `missing`, `invalid`
+or `unreadable` and the first `error` with `line`/`column` when known),
+`validation_error` for the resolved configuration, `approval` (`rules` in
+evaluation order, each with `source` `default`, `user`, `project` or `run`, the
+`default` action with its source and `project_rule_count`), `sandbox` (state,
+chosen backend and why, network and whether it is enforced, writable, protected
+and secret paths, every backend's availability, what is and is not covered, and
+the source of each sandbox field) and `chat` (the chat's grants and the grants
+file path). `themis permissions [PROJECT] [--thread ID] [--json]` prints it (the
+current directory when neither is given); Settings → Permissions uses only its
+global problems. `ensure_runtime_config` returns the global `runtime.jsonc` path,
+first writing a starter with every setting commented out when the file does not
+exist (never changing an existing file); `open_runtime_config` does the same and
+opens that file as plain text in the system text editor. `get_runtime_configuration` also
+returns `rule_sources` beside the resolved configuration.
 
 ## Diagnostics
 
@@ -347,7 +409,9 @@ severity, service, or operation ID.
 
 Records contain epoch-millisecond timestamp, severity, service, event, and
 metadata. Events cover server lifecycle, configuration saves, integration
-inspection/import/test outcomes, approval decisions, and compaction stages.
+inspection/import/test outcomes, approval decisions, the sandbox state each run
+captured (`sandbox`/`run_plan`: state, backend and network, never paths or
+commands), and compaction stages.
 Request bodies, prompts, tool arguments/results, and provider bodies are excluded.
 Known credential fields and referenced secret environment values are redacted;
 debug subprocess stderr is bounded and filtered. Debug output from third-party

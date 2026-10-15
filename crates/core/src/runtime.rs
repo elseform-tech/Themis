@@ -2706,6 +2706,7 @@ async fn execute_call(
                     argv: argv.clone(),
                     cwd: None,
                     background: false,
+                    sandbox_blocked: None,
                 }),
                 None => crate::tools::command_display_for_call(name, &approval_args),
             },
@@ -2721,6 +2722,10 @@ async fn execute_call(
             },
             risk: if mcp_command.is_some() {
                 RiskLevel::Execute
+            } else if name == "shell" {
+                // Destructive variants (`git push --force`, `rm -rf`, ...) carry
+                // the destructive risk class, as the git tool's do.
+                crate::tools::shell_risk(&crate::tools::shell_argv(&approval_args))
             } else {
                 crate::tools::integration_risk(name, &approval_args)
                     .unwrap_or_else(|| risk_for(name))

@@ -216,15 +216,29 @@ impl AppState {
             skill_catalog
         );
         materialize_scripts(&snapshot.skills, &snapshot.work_root).map_err(|e| e.to_string())?;
-        let mut tools = themis_core::tools::boxed_tools_for_chat(
+        // The sandbox is captured once per run like the rest of the
+        // configuration; YOLO keeps it and only drops the escalation prompt.
+        let sandbox = self.sandbox_plan(&snapshot.work_root, &run_configuration.sandbox);
+        let _ = self.inner.diagnostics.append_with_level(
+            "sandbox",
+            "run_plan",
+            "info",
+            json!({"thread_id":thread_id,"run_id":run_id,"state":sandbox.status().state,
+                "backend":sandbox.status().backend,"network":run_configuration.sandbox.network}),
+            Some(&run_configuration.logging.level),
+        );
+        let mut tools = themis_core::tools::boxed_tools_for_run(
             &snapshot.work_root,
             Arc::clone(&approvals),
-            yolo,
-            Some(themis_core::tools::background::BackgroundScope::new(
-                self.background_registry(),
-                thread_id,
-            )),
-            Some(Arc::clone(&stopped)),
+            themis_core::tools::ToolOptions {
+                yolo,
+                background: Some(themis_core::tools::background::BackgroundScope::new(
+                    self.background_registry(),
+                    thread_id,
+                )),
+                cancel: Some(Arc::clone(&stopped)),
+                sandbox: Some(sandbox),
+            },
         )
         .map_err(|err| format!("failed to build tools: {err:#}"))?;
         let store = self.plugin_store(Some(snapshot.work_root.clone()));

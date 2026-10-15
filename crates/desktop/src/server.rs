@@ -551,6 +551,11 @@ async fn dispatch_command(
     }
     match method {
         "get_runtime_configuration" => state.get_runtime_configuration(arg(&args, "projectRoot")?),
+        "get_effective_permissions" => {
+            state
+                .get_effective_permissions(arg(&args, "projectRoot")?, arg(&args, "threadId")?)
+                .await
+        }
         "save_runtime_configuration" => state.save_runtime_configuration(
             &arg::<String>(&args, "scope")?,
             arg(&args, "projectRoot")?,
@@ -723,6 +728,8 @@ async fn dispatch_command(
                 .set_thread_effort(arg(&args, "threadId")?, arg(&args, "effort")?)
                 .await?
         ),
+        "ensure_runtime_config" => output!(state.ensure_runtime_config()?),
+        "open_runtime_config" => done!(state.open_runtime_config()),
         "open_in_editor" => done!(
             state
                 .open_in_editor(arg(&args, "path")?, arg(&args, "line")?)

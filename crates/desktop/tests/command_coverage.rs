@@ -33,6 +33,8 @@ fn server_exposes_all_frontend_backend_commands() {
             "query_diagnostic_logs",
             "get_context_usage",
             "get_thread_history_page",
+            // CLI path to the global runtime.jsonc; the desktop uses open_runtime_config.
+            "ensure_runtime_config",
         ])
         .collect();
     let handled: BTreeSet<_> = server

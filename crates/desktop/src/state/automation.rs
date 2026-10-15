@@ -9,7 +9,7 @@ use chrono_tz::Tz;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use themis_core::configuration::{ApprovalMode, PolicyAction};
-use themis_core::tools::{RiskLevel, ToolAction};
+use themis_core::tools::ToolAction;
 
 /// Agent-created interval watches run every 2 to 60 minutes.
 pub const WATCH_MIN_INTERVAL_MINS: i64 = 2;
@@ -84,11 +84,12 @@ pub fn check_action(argv: &[String]) -> ToolAction {
             argv: argv.to_vec(),
             cwd: None,
             background: false,
+            sandbox_blocked: None,
         }),
         command: argv.to_vec(),
         tool: "shell".to_owned(),
         summary: "watch check command".to_owned(),
-        risk: RiskLevel::Execute,
+        risk: themis_core::tools::shell_risk(argv),
     }
 }
 
@@ -989,10 +990,17 @@ impl AppState {
             }
             _ => {}
         }
+        // Checks run in the sandbox the current configuration describes; a
+        // blocked check is never escalated (the scheduler asks nobody).
+        let sandbox = self
+            .runtime_configuration(Some(&root), None)
+            .map(|resolved| self.sandbox_plan(&root, &resolved.config.sandbox))
+            .map_err(CheckError::Failed)?;
         let out = themis_core::tools::run_check_command(
             argv.to_vec(),
             root,
             std::time::Duration::from_secs(WATCH_CHECK_TIMEOUT_SECS),
+            Some(sandbox),
         )
         .await
         .map_err(|error| CheckError::Failed(error.to_string()))?;

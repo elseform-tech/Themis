@@ -62,3 +62,10 @@ path = "fuzz_targets/chat_grants.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "sandbox_config"
+path = "fuzz_targets/sandbox_config.rs"
+test = false
+doc = false
+bench = false

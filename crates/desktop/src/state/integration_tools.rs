@@ -173,6 +173,7 @@ fn mcp_command_action(argv: Vec<String>) -> ToolAction {
             argv,
             cwd: None,
             background: false,
+            sandbox_blocked: None,
         }),
         command: Vec::new(),
         tool: themis_core::tools::MCP_COMMAND_APPROVAL_TOOL.to_owned(),

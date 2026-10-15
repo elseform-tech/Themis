@@ -23,6 +23,18 @@ Make the work, its state, and the next useful action obvious. Keep the interface
 - Do not show `lspServers`, “Not included,” or “No supported capabilities to install in Themis” as routine plugin detail content. Use a concise compatibility label on the tile; explain limitations at an installation decision when needed.
 - Keep skill instructions complete and readable. Reducing interface copy must never truncate the requested content.
 
+## Only what earns its place
+
+This applies to every screen, not just Settings. Before adding an element, ask what it tells this person about this task that they cannot already see; if nothing, leave it out.
+
+- Show what varies or needs attention, not facts that are always true. Fixed explanations (what a feature covers, how a mechanism works, which backends exist on other systems) belong in the docs.
+- Show a status only when it is not the expected one. No "Loaded", "OK" or "On" badges for the normal case; show "Invalid", "Not created", "Off" or "Not available" when that is the case.
+- One fact, one place. Do not add summary lines ("+2 from this project") that repeat what each row already says, or a banner that repeats an inline error.
+- Hide empty sections instead of rendering "Nothing yet", unless the empty state needs an action.
+- Prefer a plain phrase to machine detail: "This project and temporary folders", not the absolute temp paths. Show a path only when the person needs it to act (a file to edit).
+- Describe the current state, not every option: show the active mode with its one-line meaning, not a glossary of all modes.
+- Avoid ornamental numbering, badges and labels; order and grouping already carry meaning.
+
 ## Layout and containers
 
 - Use whitespace, alignment, typography, and surface tone for hierarchy before adding borders or boxes.
@@ -105,7 +117,7 @@ Compatibility badges currently use the following dark color pairs in [`Plugins.c
 
 Before calling a UI change complete:
 
-1. Remove words, controls, and containers that do not support the current task.
+1. Remove words, controls, badges, sections and containers that do not support the current task (see **Only what earns its place**).
 2. Verify state labels and actions against the actual backend behavior.
 3. Exercise the changed journey in a refreshed browser or native app, including a failure or empty state where relevant.
 4. Check focus, keyboard access, contrast, overflow, and loading/completion feedback.
