@@ -2111,7 +2111,10 @@ async fn cli_large_source_checkpoint_excerpts_once_and_preserves_restart_recover
     assert!(system.contains(
         "Respect this request's tool restrictions; if reads are forbidden, report uncertainty"
     ));
-    assert!(system.contains("reopen a receipt's source with `recall` `around`"));
+    // Archive coordinates are for the agent's follow-up calls, never the person.
+    assert!(system.contains("Use its coordinates only for follow-up `around` calls"));
+    assert!(system.contains("never show paths, snapshot names or record numbers to the user"));
+    assert!(!system.contains("Cite its coordinates"));
     assert!(system.contains("call the `recall` tool with 2-5 distinctive keywords"));
     assert!(!system.contains("read_file uses project-relative paths"));
     assert!(!system.contains("Before citing, pair each claim"));
