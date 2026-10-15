@@ -1,0 +1,71 @@
+//! Runs one tool-use task with the real chat toolset in a scratch project and prints a JSON
+//! report of every tool call; the Python harness in `evals/tools` sets up the project and
+//! grades the end state.
+//!
+//! ```text
+//! cargo run --release -p themis-core --features eval --example tool_eval -- \
+//!   --project /tmp/x/project --task /tmp/x/task.json --model longcat-2.5-preview-free
+//! ```
+//!
+//! `task.json` holds `prompt`, and optionally `checkpoint` (a summary standing in for
+//! compacted history) and `evidence` (project-relative saved-originals directory, which also
+//! offers `recall`). The key comes from `OPENCODE_KEY`; `--base-url` points at a mock.
+
+use std::path::PathBuf;
+
+use serde_json::Value;
+use themis_core::providers::{resolve, ProviderConfig, ProviderKind};
+use themis_core::runtime::tool_eval::run_tool_task;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut project = PathBuf::new();
+    let mut task_file = PathBuf::new();
+    let mut model = None;
+    let mut base_url = None;
+    let mut max_turns = 12;
+    let mut args = std::env::args().skip(1);
+    while let Some(flag) = args.next() {
+        let mut value = || {
+            args.next()
+                .ok_or_else(|| anyhow::anyhow!("{flag} needs a value"))
+        };
+        match flag.as_str() {
+            "--project" => project = PathBuf::from(value()?),
+            "--task" => task_file = PathBuf::from(value()?),
+            "--model" => model = Some(value()?),
+            "--base-url" => base_url = Some(value()?),
+            "--max-turns" => max_turns = value()?.parse()?,
+            other => anyhow::bail!("unknown flag {other}"),
+        }
+    }
+    let task: Value = serde_json::from_str(&std::fs::read_to_string(&task_file)?)?;
+    let prompt = task["prompt"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("task needs a prompt"))?;
+    let key = match (&base_url, std::env::var("OPENCODE_KEY")) {
+        (_, Ok(key)) => key,
+        (Some(_), Err(_)) => "mock-key".to_owned(),
+        (None, Err(_)) => anyhow::bail!("OPENCODE_KEY is not set"),
+    };
+    let mut config = ProviderConfig::new(ProviderKind::Go, key);
+    if let Some(model) = &model {
+        config = config.with_model(model);
+    }
+    if let Some(url) = &base_url {
+        config = config.with_base_url(url);
+    }
+    let llm = resolve(&config).await?;
+    let evidence = task["evidence"].as_str().map(|dir| project.join(dir));
+    let report = run_tool_task(
+        &llm,
+        &project,
+        prompt,
+        task["checkpoint"].as_str(),
+        evidence.as_deref(),
+        max_turns,
+    )
+    .await?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
