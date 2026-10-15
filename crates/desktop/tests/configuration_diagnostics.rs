@@ -410,7 +410,7 @@ async fn cli_retries_required_summary_automatically_and_exposes_usage() {
     Mock::given(method("POST")).respond_with(move |request: &wiremock::Request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let summary = body["messages"][0]["content"].as_str().unwrap_or("").contains("You summarize agent context");
-        if summary && matches!(counter.fetch_add(1, Ordering::SeqCst), 1 | 2) { return ResponseTemplate::new(503); }
+        if summary && matches!(counter.fetch_add(1, Ordering::SeqCst), 0 | 1) { return ResponseTemplate::new(503); }
         let text = if summary { "Goal/constraints: preserve task. Confirmed findings: originals supplied. Completed changes/tests: none. Unresolved work: continue the task. Next action: answer once." } else { "Resumed without repeating completed actions." };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":text},"finish_reason":"stop"}],"usage":{"prompt_tokens":123,"completion_tokens":45,"total_tokens":168}}))
     }).mount(&provider).await;
@@ -453,7 +453,8 @@ async fn cli_retries_required_summary_automatically_and_exposes_usage() {
         "{history}"
     );
     assert!(!history.to_string().contains("/retry-compaction"));
-    assert!(summaries.load(Ordering::SeqCst) > 3);
+    // One checkpoint request: two transient failures, then the automatic third attempt.
+    assert_eq!(summaries.load(Ordering::SeqCst), 3);
     let requests = provider.received_requests().await.unwrap();
     let first: Value = serde_json::from_slice(&requests[0].body).unwrap();
     assert!(
@@ -473,8 +474,8 @@ async fn cli_retries_required_summary_automatically_and_exposes_usage() {
                     == first["messages"]
             )
             .count(),
-        1,
-        "automatic retries must not repeat a completed first stage"
+        3,
+        "automatic retries resend the same checkpoint request, not a new plan"
     );
     let metrics = cli(
         data.path(),

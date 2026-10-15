@@ -1806,26 +1806,13 @@ async fn compact_context_inner(
             "context_token_budget":policy.context_token_budget,
         }),
     );
+    // One summary request per checkpoint. Excerpted or omitted detail stays in the saved
+    // originals, which `recall` searches; no staged pass over every byte is needed.
     let mut summary = crate::providers::COMPACTION_REQUEST
-        .scope((), async {
-            if sampled {
-                summary_job::summarize(
-                    llm,
-                    &messages[1..],
-                    &current_request,
-                    summary_input_budget,
-                    summary_tokens,
-                    &evidence.as_ref().unwrap().1,
-                )
-                .await
-            } else {
-                let mut summary = compaction_chat(llm, &request, summary_tokens).await?;
-                summary.push_str("\n\n");
-                summary.push_str(&coverage);
-                Ok(summary)
-            }
-        })
+        .scope((), compaction_chat(llm, &request, summary_tokens))
         .await?;
+    summary.push_str("\n\n");
+    summary.push_str(&coverage);
     if let Some((navigation, _)) = evidence {
         summary.push_str("\n\n");
         summary.push_str(navigation);
@@ -1842,7 +1829,9 @@ async fn compact_context_inner(
     Ok(true)
 }
 
-/// Bound the packet locally, keeping prior task state intact and sources on disk.
+/// Bound the single summary request locally, keeping prior task state intact. Long fields are
+/// cut to an equal head/tail ceiling; when even empty fields cannot fit, the oldest new records
+/// are left to the saved originals. The flag reports any cut, which needs saved originals.
 fn prepare_compaction(
     older: &[ChatMessage],
     current_request: &str,
@@ -1853,9 +1842,9 @@ fn prepare_compaction(
         .map(checkpoint_task_state)
         .unwrap_or("");
     let (records, skipped) = summary_evidence::records(older)?;
-    let build = |limit: usize| {
-        let mut sampled = false;
-        let mut projected = records.clone();
+    let build = |limit: usize, dropped: usize| {
+        let mut sampled = dropped > 0;
+        let mut projected = records[dropped..].to_vec();
         for record in &mut projected {
             if let Some(text) = record["content"].as_str() {
                 let (excerpt, cut) = compaction_excerpt(text, limit);
@@ -1877,7 +1866,12 @@ fn prepare_compaction(
                 }
             }
         }
-        let coverage = format!("Prepared input coverage: {} selected records; {skipped} duplicate/recovery records omitted. {} Source record numbers refer to the original snapshot; excerpt byte ranges refer to decoded fields. Originals remain unchanged. Do not infer absence from omitted material or invent missing facts.", records.len(), if sampled || skipped > 0 {"coverage is incomplete; only selected excerpts were summarized."} else {"All eligible new records supplied; the resulting summary is still lossy."});
+        let omitted = if dropped > 0 {
+            format!(" {dropped} oldest new records omitted (only in saved originals);")
+        } else {
+            String::new()
+        };
+        let coverage = format!("Prepared input coverage: {} selected records;{omitted} {skipped} duplicate/recovery records omitted. {} Source record numbers refer to the original snapshot; excerpt byte ranges refer to decoded fields. Originals remain unchanged. Do not infer absence from omitted material or invent missing facts.", projected.len(), if sampled || skipped > 0 {"coverage is incomplete; only selected excerpts were summarized."} else {"All eligible new records supplied; the resulting summary is still lossy."});
         let notes = projected
             .iter()
             .map(serde_json::Value::to_string)
@@ -1892,35 +1886,36 @@ fn prepare_compaction(
     let fits =
         |request: &[ChatMessage]| estimated_tokens(request).saturating_add(reserve) <= budget;
     let mut high = budget.saturating_mul(4);
-    let full = build(high);
+    let full = build(high, 0);
     if fits(&full.0) {
         return Ok(full);
     }
-    let minimum = build(0);
-    if !fits(&minimum.0) {
-        // The full-source stage planner packs records; no sampled packet is dispatched.
-        let request = context_update_messages("", previous, current_request, true);
-        anyhow::ensure!(
-            fits(&request),
-            "prior state and summary instructions exceed the request budget"
-        );
-        return Ok((
-            request,
-            "Full-source staged processing required".into(),
-            true,
-        ));
+    // Fewest oldest records to leave out so that the remaining ones fit with empty fields.
+    let (mut keep_from, mut drop_all) = (0, records.len());
+    anyhow::ensure!(
+        fits(&build(0, drop_all).0),
+        "prior state and summary instructions exceed the request budget"
+    );
+    while keep_from < drop_all {
+        let middle = keep_from + (drop_all - keep_from) / 2;
+        if fits(&build(0, middle).0) {
+            drop_all = middle;
+        } else {
+            keep_from = middle + 1;
+        }
     }
+    let dropped = drop_all;
     let mut low = 0;
     // ponytail: equal per-field excerpt ceiling; semantic selection requires targeted recovery.
     while low < high {
         let middle = low + (high - low).div_ceil(2);
-        if fits(&build(middle).0) {
+        if fits(&build(middle, dropped).0) {
             low = middle;
         } else {
             high = middle - 1;
         }
     }
-    Ok(build(low))
+    Ok(build(low, dropped))
 }
 
 fn compaction_excerpt(input: &str, limit: usize) -> (String, bool) {
@@ -4770,11 +4765,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn staged_summary_receives_the_same_original_derived_failures() {
+    async fn oversized_history_compacts_in_one_request_and_leaves_the_rest_to_originals() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let (root, messages) = recovered_original_excerpt_fixture().await;
         let server = MockServer::start().await;
-        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: preserve. Confirmed findings: check failed. Completed changes/tests: failed test. Unresolved work: fix. Next action: repair."},"finish_reason":"stop"}]}))).mount(&server).await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Goal/constraints: keep going. Unresolved work: continue. Parked work: none. Next action: continue."},"finish_reason":"stop"}]}))).mount(&server).await;
         let llm = crate::providers::resolve(
             &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
                 .with_model("test-model")
@@ -4782,29 +4776,67 @@ mod tests {
         )
         .await
         .unwrap();
-        summary_job::summarize(
-            &llm,
-            &messages,
-            "Continue repair",
-            24_000,
-            1024,
-            &root.path().join(".themis/context/test"),
-        )
-        .await
-        .unwrap();
-        let captured = server.received_requests().await.unwrap();
-        assert!(
-            captured.len() >= 2,
-            "source stage and consolidation must both dispatch"
-        );
-        let body: serde_json::Value = captured[0].body_json().unwrap();
-        let input = body["messages"][1]["content"].as_str().unwrap();
-        assert_eq!(input.matches("RETAIN_PENDING_ASSERTION").count(), 1);
-        assert!(input.contains("original_derived_excerpt"));
-        assert!(input.contains("source_sha256"));
-        assert!(input.contains("snapshot-original.jsonl"));
-        assert!(!input.contains("RECURSIVE_COPY_MUST_BE_EXCLUDED"));
-        assert!(!input.contains("NAVIGATION_COPY_MUST_BE_EXCLUDED"));
+        let directory = tempfile::tempdir().unwrap();
+        // Long fields need excerpts; many records need the oldest left to the originals.
+        for (records, field) in [(6, 40_000), (400, 200)] {
+            let history = (0..records)
+                .map(|index| ConversationTurn {
+                    role: ConversationRole::User,
+                    text: format!("RECORD-{index} {}", "padding ".repeat(field / 8)),
+                })
+                .collect();
+            let mut messages = initial_messages(history, "Continue".into());
+            let (tx, _rx) = tokio::sync::mpsc::channel(64);
+            let before = server.received_requests().await.unwrap().len();
+            assert!(compact_context_with_evidence(
+                &llm,
+                &mut messages,
+                &RunPolicy {
+                    total_turns: 8,
+                    context_token_budget: 6_000,
+                    recent_messages: 2,
+                },
+                &tx,
+                &AtomicBool::new(false),
+                std::time::Duration::from_secs(10),
+                Some(directory.path().into()),
+            )
+            .await
+            .unwrap());
+            let captured = server.received_requests().await.unwrap();
+            assert_eq!(
+                captured.len(),
+                before + 1,
+                "one summary request per checkpoint"
+            );
+            let body: serde_json::Value = captured.last().unwrap().body_json().unwrap();
+            let input = body["messages"][1]["content"].as_str().unwrap();
+            assert!(input.contains("coverage is incomplete"), "{records}");
+            assert!(
+                estimated_tokens(&[ChatMessage {
+                    role: ChatRole::User,
+                    message_type: MessageType::Text,
+                    content: input.to_owned(),
+                }]) < 6_000
+            );
+            if records == 400 {
+                assert!(input.contains("oldest new records omitted (only in saved originals)"));
+                // History turns are records 1..=400 and the active request 401.
+                assert!(
+                    input.contains("\"source_record\":401"),
+                    "the newest records are kept"
+                );
+                assert!(
+                    !input.contains("\"source_record\":1,"),
+                    "the oldest are left out"
+                );
+            }
+            let checkpoint = messages
+                .iter()
+                .find(|m| m.content.starts_with("Earlier context checkpoint"))
+                .unwrap();
+            assert!(checkpoint.content.contains("Latest snapshot: "));
+        }
     }
 
     #[tokio::test]
@@ -5383,7 +5415,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn staged_summary_covers_middle_of_large_original_and_reuses_completed_stages() {
+    async fn excerpted_checkpoint_keeps_the_middle_in_originals_after_a_failed_attempt() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -5395,7 +5427,7 @@ mod tests {
             if String::from_utf8_lossy(&request.body).contains("MIDDLE_CANONICAL_947") {
                 middle_seen.store(true, Ordering::SeqCst);
             }
-            if n == 1 {
+            if n == 0 {
                 ResponseTemplate::new(400)
             } else {
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Goal/constraints: retain exact original references. Confirmed findings: source supplied. Completed changes/tests: none. Unresolved work: continue. Next action: inspect current task."},"finish_reason":"stop"}]}))
@@ -5456,27 +5488,20 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            seen.load(Ordering::SeqCst),
-            "the middle of originals must reach a summary stage"
-        );
-        let requests = server.received_requests().await.unwrap();
-        let first =
-            &serde_json::from_slice::<serde_json::Value>(&requests[0].body).unwrap()["messages"];
-        assert_eq!(
-            requests
-                .iter()
-                .filter(
-                    |r| &serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["messages"]
-                        == first
-                )
-                .count(),
-            1,
-            "completed first stage must be reused on explicit retry"
-        );
+        // One request per attempt: the failed one and the installed one.
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+        // The excerpt omits the middle; the summary is told so, and the saved original keeps it.
+        assert!(!seen.load(Ordering::SeqCst));
         assert!(messages
             .iter()
-            .any(|m| m.content.contains("Complete source coverage")));
+            .any(|m| m.content.contains("coverage is incomplete")));
+        assert!(std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|e| e == "jsonl"))
+            .any(|path| std::fs::read_to_string(path)
+                .unwrap()
+                .contains("MIDDLE_CANONICAL_947")));
     }
 
     #[test]

@@ -1933,7 +1933,7 @@ async fn cli_suspends_after_required_summary_failure_without_degraded_continuati
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery() {
+async fn cli_large_source_checkpoint_excerpts_once_and_preserves_restart_recovery() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     assert!(std::process::Command::new("git")
@@ -1988,8 +1988,10 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
             format!("Goal/constraints: report markers. Confirmed findings: {} (selected excerpts). Completed changes/tests: none. Unresolved work: report markers. Next action: answer from supplied state.", ["BEGIN-17", "MIDDLE-42", "END-99"].into_iter().filter(|marker| dump.contains(marker)).collect::<Vec<_>>().join(", "))
         } else {
             let input = body.to_string();
-            if ["BEGIN-17", "MIDDLE-42", "END-99", "Report all three markers", "music.mp3", "movie.mp4"].iter().all(|marker| input.contains(marker)) {
-                "BEGIN-17, MIDDLE-42, END-99".to_owned()
+            // One excerpted checkpoint request keeps the head and tail; the middle stays in
+            // the saved original, which the coverage notice points to.
+            if ["BEGIN-17", "END-99", "coverage is incomplete", "Report all three markers", "music.mp3", "movie.mp4"].iter().all(|marker| input.contains(marker)) {
+                "BEGIN-17, END-99".to_owned()
             } else { "Missing context".to_owned() }
         };
         ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":answer},"finish_reason":"stop"}]}))
@@ -2076,21 +2078,13 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
     .unwrap();
     assert!(checkpoint);
     assert_eq!(terminal["kind"], "finished", "{terminal}");
-    assert_eq!(terminal["result"], "BEGIN-17, MIDDLE-42, END-99");
+    assert_eq!(terminal["result"], "BEGIN-17, END-99");
     {
         let dumps = summaries.lock().unwrap();
-        assert!(
-            dumps.len() > 2,
-            "complete original coverage requires bounded source stages and consolidation"
-        );
-        let joined = dumps.join("\n");
-        assert!(["BEGIN-17", "MIDDLE-42", "END-99"]
+        assert_eq!(dumps.len(), 1, "one summary request per checkpoint");
+        assert!(["BEGIN-17", "END-99", "coverage is incomplete"]
             .iter()
-            .all(|marker| joined.contains(marker)));
-        assert!(
-            dumps.last().unwrap().contains("MIDDLE-42"),
-            "middle facts must reach consolidation"
-        );
+            .all(|marker| dumps[0].contains(marker)));
     }
     let stages = attempts.lock().unwrap().len();
     assert!(attempts
@@ -2255,7 +2249,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
         if messages[0]["content"].as_str().unwrap().contains("You summarize agent context") {
             let input = messages[1]["content"].as_str().unwrap();
             let previous = input.split("PREVIOUS TASK STATE TO UPDATE (lossy historical navigation; newer observed actions take precedence):\n").nth(1).expect("restart compaction must retain persisted task state").split("\n\nNEW MESSAGE RECORDS WITH PROVENANCE:").next().unwrap().split("\n\nORDERED SECTION NOTES TO RECONCILE:").next().unwrap();
-            assert!(previous.contains("BEGIN-17, MIDDLE-42, END-99 (selected excerpts)") || previous.contains("Goal/constraints: preserve task. Confirmed findings: original references retained. Completed changes/tests: see observed actions. Unresolved work: reconcile current task. Next action: Task state only; recovered details omitted."));
+            assert!((previous.contains("BEGIN-17") && previous.contains("END-99 (selected excerpts)")) || previous.contains("Goal/constraints: preserve task. Confirmed findings: original references retained. Completed changes/tests: see observed actions. Unresolved work: reconcile current task. Next action: Task state only; recovered details omitted."));
             assert!(!previous.contains("Earlier context checkpoint"), "generated envelopes must not be recursively summarized");
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Goal/constraints: preserve task. Confirmed findings: original references retained. Completed changes/tests: see observed actions. Unresolved work: reconcile current task. Next action: Task state only; recovered details omitted."},"finish_reason":"stop"}]}));
         }
@@ -2315,7 +2309,7 @@ async fn cli_large_source_stages_cover_all_markers_and_preserve_restart_recovery
         } else {
             let context = messages.iter().filter_map(|message| message["content"].as_str()).collect::<Vec<_>>().join("\n");
             assert!(!context.contains("ARCHIVE-SECRET-753"));
-            assert!(context.contains("Complete source coverage:"));
+            assert!(context.contains("Prepared input coverage:"));
             let relative = if stage == 0 {
                 recovery_original.lock().unwrap().clone().unwrap()
             } else {
