@@ -248,8 +248,9 @@ impl AppState {
 /// Written once when Settings opens a `runtime.jsonc` that does not exist:
 /// every setting is commented out, so it changes nothing until edited.
 pub const RUNTIME_CONFIG_STARTER: &str = r#"// Themis settings for every project. Changes apply from the next run.
-// Remove the // in front of a line to use it. Reference: docs/configuration.md
-// and docs/sandbox.md.
+// With nothing set, Custom mode allows reads and asks before anything else,
+// and the sandbox is on. Remove the // in front of a line to use it.
+// Reference: docs/configuration.md and docs/sandbox.md.
 {
   // "approval": {
   //   "rules": [
