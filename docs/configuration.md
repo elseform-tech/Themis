@@ -265,6 +265,9 @@ arguments begin with exactly those tokens (`["cargo","test"]` matches
 No globbing applies. `command` is valid only with `"tool": "shell"` or
 `"tool": "shell_unsandboxed"` (exact names; the latter is the request to run a
 command the sandbox blocked outside it, see [sandbox](sandbox.md#when-the-sandbox-blocks-a-command)).
+Only allow/ask rules naming `shell_unsandboxed` exactly apply to that request;
+wildcard, prefix and risk-only allow rules and an `allow` default never cover it,
+while every matching deny rule (including `*`) refuses it.
 Example allow rule: `{ "tool": "shell", "command": ["cargo", "test"], "action": "allow" }`.
 Allow and ask rules match the program token exactly (`/bin/echo` or a project-local
 `./echo` does not match `["echo"]`, so an allow rule never widens). Deny rules also

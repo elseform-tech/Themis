@@ -74,44 +74,47 @@ impl ApprovalPolicy {
     fn rule_decision(&self, action: &ToolAction) -> PolicyAction {
         self.rules
             .iter()
-            .find(|rule| {
-                let matches = rule
-                    .tool
-                    .strip_suffix('*')
-                    .map_or(rule.tool == action.tool, |prefix| {
-                        action.tool.starts_with(prefix)
-                    });
-                matches
-                    && match rule.command.as_ref() {
-                        // A broad allow without `command` is trust in the tool,
-                        // not in its destructive variants (`git push --force`,
-                        // `rm -rf`): those need a rule that names them or an
-                        // explicit `"risk": "destructive"`.
-                        None => {
-                            rule.action != PolicyAction::Allow
-                                || rule.risk.as_deref() == Some("destructive")
-                                || !is_destructive_variant(&action.command)
-                        }
-                        Some(prefix) => {
-                            // A broad allow (`["git","push"]`) must not silently cover
-                            // a destructive variant (`git push --force`) unless the
-                            // rule itself names that variant.
-                            let covers_variant = rule.action != PolicyAction::Allow
-                                || !is_destructive_variant(&action.command)
-                                || is_destructive_variant(prefix);
-                            covers_variant
-                                && (command_has_prefix(&action.command, prefix)
-                                    || (rule.action == PolicyAction::Deny
-                                        && deny_matches(&action.command, prefix)))
-                        }
-                    }
-                    && rule
-                        .risk
-                        .as_ref()
-                        .is_none_or(|risk| risk == risk_name(action.risk))
-            })
+            .find(|rule| rule_matches(rule, action))
             .map_or(self.default, |rule| rule.action)
     }
+}
+/// Whether `rule` applies to `action` (tool name or `*` prefix, command
+/// prefix with deny-only widening, risk).
+fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
+    let matches = rule
+        .tool
+        .strip_suffix('*')
+        .map_or(rule.tool == action.tool, |prefix| {
+            action.tool.starts_with(prefix)
+        });
+    matches
+        && match rule.command.as_ref() {
+            // A broad allow without `command` is trust in the tool,
+            // not in its destructive variants (`git push --force`,
+            // `rm -rf`): those need a rule that names them or an
+            // explicit `"risk": "destructive"`.
+            None => {
+                rule.action != PolicyAction::Allow
+                    || rule.risk.as_deref() == Some("destructive")
+                    || !is_destructive_variant(&action.command)
+            }
+            Some(prefix) => {
+                // A broad allow (`["git","push"]`) must not silently cover
+                // a destructive variant (`git push --force`) unless the
+                // rule itself names that variant.
+                let covers_variant = rule.action != PolicyAction::Allow
+                    || !is_destructive_variant(&action.command)
+                    || is_destructive_variant(prefix);
+                covers_variant
+                    && (command_has_prefix(&action.command, prefix)
+                        || (rule.action == PolicyAction::Deny
+                            && deny_matches(&action.command, prefix)))
+            }
+        }
+        && rule
+            .risk
+            .as_ref()
+            .is_none_or(|risk| risk == risk_name(action.risk))
 }
 /// Exact token-prefix match: `["cargo","test"]` matches `cargo test --lib` but
 /// not `cargo testing`, `/usr/bin/cargo test` or an empty command.
@@ -255,6 +258,9 @@ struct ConfiguredHook {
 }
 impl ApprovalHook for ConfiguredHook {
     fn approve(&self, action: &ToolAction) -> Approval {
+        if action.tool == crate::tools::UNSANDBOXED_TOOL {
+            return self.approve_escape(action);
+        }
         if self.mode == ApprovalMode::Yolo {
             return Approval::AllowOnce;
         }
@@ -278,6 +284,54 @@ impl ApprovalHook for ConfiguredHook {
         }
     }
 }
+impl ConfiguredHook {
+    /// Running a sandbox-blocked command outside the sandbox needs a person:
+    /// a dialog answer, a chat grant they made for `shell_unsandboxed`, or a
+    /// rule naming `shell_unsandboxed` exactly. Wildcard, prefix and risk-only
+    /// allow rules never cover it (deny rules of any shape still deny), the
+    /// default action is never an allow, and YOLO (which never asks) denies.
+    fn approve_escape(&self, action: &ToolAction) -> Approval {
+        if self.mode == ApprovalMode::Yolo {
+            return Approval::Deny;
+        }
+        match self.policy.escape_decision(action) {
+            PolicyAction::Deny => return Approval::Deny,
+            PolicyAction::Allow if action.grantable() => return Approval::AllowOnce,
+            _ => {}
+        }
+        if self.grants.covers(action) {
+            return Approval::AllowOnce;
+        }
+        match self.interactive.approve(action) {
+            Approval::AllowAlways => {
+                self.grants.remember(action);
+                Approval::AllowOnce
+            }
+            decision => decision,
+        }
+    }
+}
+
+impl ApprovalPolicy {
+    /// Decision for a `shell_unsandboxed` escape: the first deny rule that
+    /// matches (normal matching, wildcards included) or the first allow/ask
+    /// rule whose tool is exactly `shell_unsandboxed`, in order; otherwise ask
+    /// (a `deny` default denies, an `allow` default still asks).
+    pub fn escape_decision(&self, action: &ToolAction) -> PolicyAction {
+        for rule in &self.rules {
+            let exact = rule.tool == crate::tools::UNSANDBOXED_TOOL;
+            if (rule.action == PolicyAction::Deny || exact) && rule_matches(rule, action) {
+                return rule.action;
+            }
+        }
+        if self.default == PolicyAction::Deny {
+            PolicyAction::Deny
+        } else {
+            PolicyAction::Ask
+        }
+    }
+}
+
 /// Wrap the existing UI approval hook; automatic decisions are never cached by tool name.
 /// Grants made through it last as long as the hook (one run).
 pub fn configured_hook(
@@ -1969,6 +2023,102 @@ mod tests {
             calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             answer
         }))
+    }
+
+    fn escape(argv: &[&str]) -> ToolAction {
+        let mut action = shell_action(argv);
+        action.tool = crate::tools::UNSANDBOXED_TOOL.into();
+        action
+    }
+
+    /// Decision for an escape under `rules`, with an interactive hook that
+    /// answers `answer`; returns the decision and how often a person was asked.
+    fn escape_with(
+        rules: &str,
+        mode: ApprovalMode,
+        answer: Approval,
+        grants: Arc<ChatGrants>,
+    ) -> (Approval, usize) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let policy = resolve(Some(rules), None, None).unwrap().config.approval;
+        let hook = configured_hook_with_grants(mode, policy, counting_hook(&calls, answer), grants);
+        let decision = hook.approve(&escape(&["touch", "/outside"]));
+        (decision, calls.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    #[test]
+    fn broad_allow_rules_never_let_a_command_leave_the_sandbox() {
+        for rules in [
+            r#"{"approval":{"rules":[{"tool":"*","action":"allow"}]}}"#,
+            r#"{"approval":{"rules":[{"tool":"shell*","action":"allow"}]}}"#,
+            r#"{"approval":{"rules":[{"tool":"*","risk":"execute","action":"allow"}]}}"#,
+            r#"{"approval":{"default":"allow","rules":[]}}"#,
+            "{}",
+        ] {
+            // Without a person (the dialog denies) it never runs outside...
+            let (decision, asked) = escape_with(
+                rules,
+                ApprovalMode::Custom,
+                Approval::Deny,
+                ChatGrants::in_memory(),
+            );
+            assert_eq!(decision, Approval::Deny, "{rules}");
+            assert_eq!(asked, 1, "a person is asked: {rules}");
+            // ...and the person's Allow once is what lets it.
+            let (decision, _) = escape_with(
+                rules,
+                ApprovalMode::Custom,
+                Approval::AllowOnce,
+                ChatGrants::in_memory(),
+            );
+            assert_eq!(decision, Approval::AllowOnce, "{rules}");
+        }
+    }
+
+    #[test]
+    fn deny_rules_of_any_shape_refuse_the_escape_without_asking() {
+        for rules in [
+            r#"{"approval":{"rules":[{"tool":"*","action":"deny"}]}}"#,
+            r#"{"approval":{"rules":[{"tool":"shell_unsandboxed","action":"deny"}]}}"#,
+            r#"{"approval":{"default":"deny","rules":[]}}"#,
+        ] {
+            let (decision, asked) = escape_with(
+                rules,
+                ApprovalMode::Custom,
+                Approval::AllowOnce,
+                ChatGrants::in_memory(),
+            );
+            assert_eq!((decision, asked), (Approval::Deny, 0), "{rules}");
+        }
+    }
+
+    #[test]
+    fn only_a_grant_an_exact_rule_or_a_person_lets_a_command_leave() {
+        let grants = ChatGrants::in_memory();
+        assert!(grants.remember(&escape(&["touch", "/outside"])));
+        let (decision, asked) = escape_with("{}", ApprovalMode::Custom, Approval::Deny, grants);
+        assert_eq!((decision, asked), (Approval::AllowOnce, 0));
+        // A plain `shell` grant for the same argv does not cover the escape.
+        let shell_only = ChatGrants::in_memory();
+        assert!(shell_only.remember(&shell_action(&["touch", "/outside"])));
+        let (decision, asked) = escape_with("{}", ApprovalMode::Custom, Approval::Deny, shell_only);
+        assert_eq!((decision, asked), (Approval::Deny, 1));
+        let exact = r#"{"approval":{"rules":[{"tool":"shell_unsandboxed","command":["touch"],"action":"allow"}]}}"#;
+        let (decision, asked) = escape_with(
+            exact,
+            ApprovalMode::Custom,
+            Approval::Deny,
+            ChatGrants::in_memory(),
+        );
+        assert_eq!((decision, asked), (Approval::AllowOnce, 0));
+        // YOLO never asks, so it never leaves the sandbox either.
+        let (decision, asked) = escape_with(
+            "{}",
+            ApprovalMode::Yolo,
+            Approval::AllowOnce,
+            ChatGrants::in_memory(),
+        );
+        assert_eq!((decision, asked), (Approval::Deny, 0));
     }
 
     #[test]

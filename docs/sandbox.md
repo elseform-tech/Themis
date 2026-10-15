@@ -113,7 +113,15 @@ request is the tool `shell_unsandboxed` with the command's argv, so rules and
 chat grants for it are keyed like other shell commands but kept apart from
 `shell`: allowing `cargo test` does not allow running it unsandboxed, and a
 `{"tool":"shell_unsandboxed","action":"deny"}` rule refuses every escape.
-Destructive commands stay **Allow once** / **Deny** only. In **YOLO** nothing is
+Leaving the sandbox always needs a person: your answer in this dialog, a
+**Allow in this chat** grant you made for it, or a rule you wrote in your user
+`runtime.jsonc` whose `tool` is exactly `shell_unsandboxed`. Wildcard (`*`),
+prefix (`shell*`) and risk-only allow rules never cover it, an `allow` default
+still asks, and deny rules of any shape (including `*`) refuse it without
+asking. The request is at least `execute` risk even when the original call was a
+read (such as `git status`), so the read shortcuts never pass it. Destructive
+commands stay **Allow once** / **Deny** only. Automation runs never ask for it
+(only an existing chat grant lets one out), and non-Git projects refuse it. In **YOLO** nothing is
 asked: the failure goes back to the agent with a short note that the sandbox
 blocked it. Watch checks are never escalated (the scheduler asks nobody), and
 background tasks cannot be escalated (they are already running when they fail);

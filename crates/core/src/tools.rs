@@ -2269,6 +2269,13 @@ fn sandbox_outcome(
                 action.command.join(" ")
             ),
             display: Some(display),
+            // Leaving the sandbox is at least an execution, whatever the
+            // original call was (a read-only `git status` must not escalate
+            // as a read that policies and dialogs pass silently).
+            risk: match action.risk {
+                RiskLevel::Destructive => RiskLevel::Destructive,
+                _ => RiskLevel::Execute,
+            },
             ..action.clone()
         };
         if check_approval(approvals, &request).is_ok() {
@@ -4458,6 +4465,84 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(50));
             }
             assert!(!target.exists(), "background task escaped the sandbox");
+        }
+
+        #[test]
+        fn a_read_only_call_escalates_as_execute_and_only_a_person_lets_it_out() {
+            let env = env();
+            let Some(plan) = active(&env) else { return };
+            let outside = env.outside.join("x");
+            let blocked = || CommandOutput {
+                success: false,
+                exit_code: Some(1),
+                output: format!("error: {}: Operation not permitted", outside.display()),
+                truncated: false,
+            };
+            let status = ToolAction {
+                display: None,
+                command: vec!["git".into(), "status".into()],
+                tool: "git".into(),
+                summary: "run `git status`".into(),
+                risk: RiskLevel::Read,
+            };
+            let run = |policy: &str, answer: Approval, unattended: bool| {
+                let asked = Arc::new(std::sync::Mutex::new(Vec::<ToolAction>::new()));
+                let interactive = Arc::new(FnHook::new({
+                    let asked = asked.clone();
+                    move |action: &ToolAction| {
+                        asked.lock().unwrap().push(action.clone());
+                        if unattended {
+                            Approval::Deny
+                        } else {
+                            answer
+                        }
+                    }
+                }));
+                let policy = crate::configuration::resolve(Some(policy), None, None)
+                    .unwrap()
+                    .config
+                    .approval;
+                let hook = crate::configuration::configured_hook(
+                    crate::configuration::ApprovalMode::Custom,
+                    policy,
+                    interactive,
+                );
+                let outcome = sandbox_outcome(
+                    blocked(),
+                    Some(&plan),
+                    true,
+                    hook.as_ref(),
+                    &status,
+                    &env.root,
+                );
+                let asked = asked.lock().unwrap().clone();
+                (matches!(outcome, SandboxOutcome::RunOutside), asked)
+            };
+            // The default policy allows reads, but the escape is an execution and asks.
+            let (outside_run, asked) = run("{}", Approval::Deny, false);
+            assert!(!outside_run);
+            assert_eq!(asked.len(), 1);
+            assert_eq!(asked[0].tool, UNSANDBOXED_TOOL);
+            assert_eq!(asked[0].risk, RiskLevel::Execute);
+            for broad in [
+                r#"{"approval":{"rules":[{"tool":"*","action":"allow"}]}}"#,
+                r#"{"approval":{"rules":[{"tool":"shell*","action":"allow"}]}}"#,
+                r#"{"approval":{"rules":[{"tool":"*","risk":"execute","action":"allow"}]}}"#,
+            ] {
+                let (outside_run, asked) = run(broad, Approval::Deny, false);
+                assert!(!outside_run, "{broad}");
+                assert_eq!(asked.len(), 1, "{broad}");
+            }
+            // Unattended (nobody answers): stays inside.
+            assert!(!run("{}", Approval::AllowOnce, true).0);
+            // A person's Allow once lets it out; a deny rule refuses without asking.
+            assert!(run("{}", Approval::AllowOnce, false).0);
+            let (outside_run, asked) = run(
+                r#"{"approval":{"rules":[{"tool":"*","action":"deny"}]}}"#,
+                Approval::AllowOnce,
+                false,
+            );
+            assert!(!outside_run && asked.is_empty());
         }
 
         #[tokio::test]
