@@ -193,7 +193,7 @@ def setup_long_job(project):
              "waited for the ferry"]
     for number, hero in enumerate(STORY_HEROES, 1):
         sentences = [f"{hero} walked to the {rng.choice(places)} at dawn."]
-        while len(" ".join(sentences)) < 3400:
+        while len(" ".join(sentences)) < 5200:
             sentences.append(f"Later {rng.choice(['that day', 'in the evening', 'after the rain', 'before supper'])} "
                              f"{hero} {rng.choice(deeds)} near the {rng.choice(places)}.")
         write(project, f"stories/story-{number:02d}.txt", " ".join(sentences) + "\n")
@@ -378,7 +378,7 @@ LONG_JOB_PROMPT = ("The stories folder has story-01.txt to story-10.txt. Read ea
                    "'story-01.txt: <one-sentence summary that names its main character>'. Then tell me you are done.")
 
 # Ablation pair: the same long job crossing context checkpoints, with and without update_plan.
-LONG_JOB = {"setup": setup_long_job, "evidence": ".themis/context/eval-thread", "budget": 16_000,
+LONG_JOB = {"setup": setup_long_job, "evidence": ".themis/context/eval-thread", "budget": 12_000,
             "recent_messages": 4, "max_turns": 40, "prompt": LONG_JOB_PROMPT, "check": check_long_job}
 TASKS += [
     dict(LONG_JOB, name="long-job-plan", tool="update_plan", offer_plan=True),
