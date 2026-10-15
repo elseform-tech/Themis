@@ -82,18 +82,29 @@ impl ApprovalPolicy {
                         action.tool.starts_with(prefix)
                     });
                 matches
-                    && rule.command.as_ref().is_none_or(|prefix| {
-                        // A broad allow (`["git","push"]`) must not silently cover
-                        // a destructive variant (`git push --force`) unless the
-                        // rule itself names that variant.
-                        let covers_variant = rule.action != PolicyAction::Allow
-                            || !is_destructive_variant(&action.command)
-                            || is_destructive_variant(prefix);
-                        covers_variant
-                            && (command_has_prefix(&action.command, prefix)
-                                || (rule.action == PolicyAction::Deny
-                                    && command_has_prefix_normalized(&action.command, prefix)))
-                    })
+                    && match rule.command.as_ref() {
+                        // A broad allow without `command` is trust in the tool,
+                        // not in its destructive variants (`git push --force`,
+                        // `rm -rf`): those need a rule that names them or an
+                        // explicit `"risk": "destructive"`.
+                        None => {
+                            rule.action != PolicyAction::Allow
+                                || rule.risk.as_deref() == Some("destructive")
+                                || !is_destructive_variant(&action.command)
+                        }
+                        Some(prefix) => {
+                            // A broad allow (`["git","push"]`) must not silently cover
+                            // a destructive variant (`git push --force`) unless the
+                            // rule itself names that variant.
+                            let covers_variant = rule.action != PolicyAction::Allow
+                                || !is_destructive_variant(&action.command)
+                                || is_destructive_variant(prefix);
+                            covers_variant
+                                && (command_has_prefix(&action.command, prefix)
+                                    || (rule.action == PolicyAction::Deny
+                                        && deny_matches(&action.command, prefix)))
+                        }
+                    }
                     && rule
                         .risk
                         .as_ref()
@@ -129,16 +140,102 @@ fn normalize_program(program: &str) -> String {
     }
     name
 }
-/// Prefix match with the program token normalized on both sides. Used only for
-/// deny rules so `/bin/rm`, `./rm` and `RM` (on case-insensitive systems) are
-/// still denied by `["rm"]`; allow/ask rules stay exact so they never widen.
-fn command_has_prefix_normalized(command: &[String], prefix: &[String]) -> bool {
-    match (command.split_first(), prefix.split_first()) {
-        (Some((program, rest)), Some((first, wanted))) => {
-            normalize_program(program) == normalize_program(first) && rest.starts_with(wanted)
-        }
-        _ => false,
+/// Deny-rule match: the program token is normalized on both sides (so `/bin/rm`,
+/// `./rm` and `RM` on case-insensitive systems are still denied by `["rm"]`) and
+/// flags are compared by meaning rather than spelling (see [`flag_present`]):
+/// the rule's non-flag tokens must begin the command's non-flag tokens, and each
+/// flag the rule names must appear anywhere in the command before `--`. So
+/// `["git","push","--force"]` also denies `git push -f origin main` and
+/// `git push origin --force`, and `["rm","-rf"]` denies `rm -fr x` and
+/// `rm -r -f x`. Deny rules may only widen this way; allow/ask rules stay exact.
+fn deny_matches(command: &[String], prefix: &[String]) -> bool {
+    let (Some((program, rest)), Some((first, wanted))) =
+        (command.split_first(), prefix.split_first())
+    else {
+        return false;
+    };
+    let program = normalize_program(program);
+    if program != normalize_program(first) {
+        return false;
     }
+    if rest.starts_with(wanted) {
+        return true;
+    }
+    let before_separator: Vec<&str> = rest
+        .iter()
+        .map(String::as_str)
+        .take_while(|arg| *arg != "--")
+        .collect();
+    let is_flag = |token: &str| token.len() > 1 && token.starts_with('-');
+    let mut words = before_separator.iter().filter(|arg| !is_flag(arg));
+    wanted
+        .iter()
+        .filter(|token| !is_flag(token))
+        .all(|token| words.next() == Some(&token.as_str()))
+        && wanted
+            .iter()
+            .filter(|token| is_flag(token))
+            .all(|flag| flag_present(&program, flag, &before_separator))
+}
+
+/// Short/long spellings with one meaning for a program, used only to widen deny
+/// rules: `(program, long name, short letters)`.
+const FLAG_EQUIVALENTS: &[(&str, &str, &str)] = &[
+    ("git", "force", "f"),
+    ("git", "delete", "d"),
+    ("git", "all", "a"),
+    ("git", "recursive", "r"),
+    ("rm", "force", "f"),
+    ("rm", "recursive", "rR"),
+    ("rm", "dir", "d"),
+    ("cp", "force", "f"),
+    ("cp", "recursive", "rR"),
+    ("mv", "force", "f"),
+    ("chmod", "recursive", "R"),
+    ("chown", "recursive", "R"),
+];
+
+/// Whether the command (tokens before `--`) carries `flag` under any equivalent
+/// spelling: the exact token, `--name=value` for `--name`, a short-flag cluster
+/// containing every letter of a short rule flag (`-rf` covers `-f`, `-fr`,
+/// `-r -f`), or the short/long equivalent from [`FLAG_EQUIVALENTS`].
+fn flag_present(program: &str, flag: &str, args: &[&str]) -> bool {
+    let shorts: String = args
+        .iter()
+        .filter(|arg| arg.starts_with('-') && !arg.starts_with("--"))
+        .flat_map(|arg| arg.chars().skip(1))
+        .collect();
+    let has_long = |name: &str| {
+        args.iter().any(|arg| {
+            arg.strip_prefix("--")
+                .is_some_and(|long| long == name || long.starts_with(&format!("{name}=")))
+        })
+    };
+    if args.contains(&flag) {
+        return true;
+    }
+    if let Some(long) = flag.strip_prefix("--") {
+        let name = long.split('=').next().unwrap_or(long);
+        if long == name && has_long(name) {
+            return true;
+        }
+        return long == name
+            && FLAG_EQUIVALENTS
+                .iter()
+                .filter(|(p, l, _)| *p == program && *l == name)
+                .any(|(_, _, letters)| letters.chars().any(|c| shorts.contains(c)));
+    }
+    let letters = &flag[1..];
+    !letters.is_empty()
+        && letters.chars().all(|letter| {
+            shorts.contains(letter)
+                || FLAG_EQUIVALENTS
+                    .iter()
+                    .filter(|(p, _, short)| *p == program && short.contains(letter))
+                    .any(|(_, long, short)| {
+                        has_long(long) || short.chars().any(|c| shorts.contains(c))
+                    })
+        })
 }
 fn risk_name(risk: RiskLevel) -> &'static str {
     match risk {
@@ -1014,6 +1111,118 @@ mod tests {
         }
     }
 
+    fn decide(rules: &str, argv: &[&str]) -> PolicyAction {
+        let policy = resolve(Some(rules), None, None).unwrap().config.approval;
+        let mut action = shell_action(argv);
+        action.risk = crate::tools::shell_risk(&action.command);
+        policy.decision(&action)
+    }
+
+    #[test]
+    fn deny_rules_match_equivalent_flag_spellings() {
+        let deny = r#"{"approval":{"default":"allow","rules":[
+            {"tool":"shell","command":["git","push","--force"],"action":"deny"},
+            {"tool":"shell","command":["rm","-rf"],"action":"deny"}]}}"#;
+        for denied in [
+            vec!["git", "push", "--force"],
+            vec!["git", "push", "-f", "origin", "main"],
+            vec!["git", "push", "origin", "main", "--force"],
+            vec!["/usr/bin/git", "push", "--force=yes"],
+            vec!["rm", "-rf", "build"],
+            vec!["rm", "-fr", "build"],
+            vec!["rm", "-r", "-f", "build"],
+            vec!["rm", "--recursive", "--force", "build"],
+            vec!["rm", "-Rf", "build"],
+        ] {
+            assert_eq!(decide(deny, &denied), PolicyAction::Deny, "{denied:?}");
+        }
+        for allowed in [
+            vec!["git", "push", "origin", "main"],
+            vec!["git", "pull", "--force"],
+            vec!["rm", "-r", "build"],
+            vec!["rm", "file", "--", "-rf"],
+        ] {
+            assert_ne!(decide(deny, &allowed), PolicyAction::Deny, "{allowed:?}");
+        }
+    }
+
+    #[test]
+    fn broad_shell_allow_does_not_cover_destructive_variants() {
+        let broad = r#"{"approval":{"rules":[{"tool":"shell","action":"allow"}]}}"#;
+        assert_eq!(decide(broad, &["cargo", "test"]), PolicyAction::Allow);
+        for variant in [
+            vec!["git", "push", "--force"],
+            vec!["git", "reset", "--hard"],
+            vec!["git", "clean", "-fdx"],
+            vec!["rm", "-rf", "target"],
+            vec!["cargo", "publish"],
+        ] {
+            assert_eq!(decide(broad, &variant), PolicyAction::Ask, "{variant:?}");
+        }
+        let wildcard = r#"{"approval":{"rules":[{"tool":"*","action":"allow"}]}}"#;
+        assert_eq!(decide(wildcard, &["rm", "-rf", "x"]), PolicyAction::Ask);
+        let explicit =
+            r#"{"approval":{"rules":[{"tool":"shell","risk":"destructive","action":"allow"}]}}"#;
+        assert_eq!(decide(explicit, &["rm", "-rf", "x"]), PolicyAction::Allow);
+        let execute =
+            r#"{"approval":{"rules":[{"tool":"shell","risk":"execute","action":"allow"}]}}"#;
+        assert_eq!(
+            decide(execute, &["git", "reset", "--hard"]),
+            PolicyAction::Ask
+        );
+        assert_eq!(decide(execute, &["git", "status"]), PolicyAction::Allow);
+    }
+
+    #[test]
+    fn shell_destructive_variants_carry_the_destructive_risk() {
+        for variant in [
+            vec!["git", "push", "--force"],
+            vec!["git", "reset", "--hard"],
+            vec!["git", "clean", "-fdx"],
+            vec!["rm", "-rf", "/tmp/x"],
+            vec!["rm", "--recursive", "x"],
+        ] {
+            assert_eq!(
+                crate::tools::shell_risk(&argv(&variant)),
+                RiskLevel::Destructive,
+                "{variant:?}"
+            );
+        }
+        for ordinary in [
+            vec!["rm", "file"],
+            vec!["rm", "-f", "file"],
+            vec!["ls", "-R"],
+        ] {
+            assert_eq!(
+                crate::tools::shell_risk(&argv(&ordinary)),
+                RiskLevel::Execute,
+                "{ordinary:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn publish_words_as_operands_of_other_subcommands_are_harmless() {
+        for harmless in [
+            vec!["cargo", "test", "publish"],
+            vec!["cargo", "test", "--", "publish"],
+            vec!["cargo", "build", "-p", "publish"],
+            vec!["cargo", "run", "--bin", "yank"],
+            vec!["npm", "test", "publish"],
+            vec!["pnpm", "install", "publisher"],
+            vec!["yarn", "add", "deprecated-pkg"],
+        ] {
+            assert!(!is_destructive_variant(&argv(&harmless)), "{harmless:?}");
+        }
+        for danger in [
+            vec!["npm", "run", "publish"],
+            vec!["cargo", "publish", "--dry-run"],
+            vec!["pnpm", "-r", "publish"],
+        ] {
+            assert!(is_destructive_variant(&argv(&danger)), "{danger:?}");
+        }
+    }
+
     #[test]
     fn command_rules_match_token_prefixes_only() {
         let config = resolve(
@@ -1594,7 +1803,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("chat.json");
         let grants = ChatGrants::load(&path);
-        assert!(grants.remember(&shell_action(&["rm", "-rf", "build"])));
+        assert!(grants.remember(&shell_action(&["rm", "build.log"])));
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let policy = resolve(
             Some(r#"{"approval":{"rules":[{"tool":"shell","command":["rm"],"action":"deny"}]}}"#),
@@ -1611,7 +1820,7 @@ mod tests {
             grants,
         );
         assert_eq!(
-            hook.approve(&shell_action(&["rm", "-rf", "build"])),
+            hook.approve(&shell_action(&["rm", "build.log"])),
             Approval::Deny
         );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -1654,6 +1863,34 @@ mod tests {
                            prop_assert!(command_has_prefix(&command, &command[..n]));
                        }
                    }
+
+            #[test]
+            fn deny_matching_only_widens_exact_prefixes(
+                command in proptest::collection::vec("-{0,2}[a-zA-Z]{0,4}", 0..7),
+                prefix in proptest::collection::vec("-{0,2}[a-zA-Z]{0,4}", 0..5),
+            ) {
+                // Never panics, and every exact prefix match is also a deny match.
+                let widened = deny_matches(&command, &prefix);
+                if command_has_prefix(&command, &prefix) {
+                    prop_assert!(widened, "{command:?} {prefix:?}");
+                }
+            }
+
+            #[test]
+            fn deny_flags_match_in_any_order_and_cluster(
+                letters in proptest::sample::subsequence(vec!['r', 'f', 'v', 'i'], 1..=4),
+                split in proptest::bool::ANY,
+            ) {
+                let rule: Vec<String> = vec!["rm".into(), format!("-{}", letters.iter().collect::<String>())];
+                let mut command = vec!["rm".to_string()];
+                if split {
+                    command.extend(letters.iter().rev().map(|c| format!("-{c}")));
+                } else {
+                    command.push(format!("-{}", letters.iter().rev().collect::<String>()));
+                }
+                command.push("target".into());
+                prop_assert!(deny_matches(&command, &rule), "{command:?} {rule:?}");
+            }
 
             #[test]
             fn destructive_flag_never_shares_the_harmless_key(

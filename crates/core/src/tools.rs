@@ -430,29 +430,229 @@ fn registry_word(arg: &str) -> bool {
         .any(|word| arg.len() >= 3 && word.starts_with(arg))
 }
 
+/// Ordinary `npm`/`pnpm`/`yarn` subcommands. Once one of these is reached, later
+/// arguments are its own operands (`npm test publish` runs the tests), so the
+/// registry scan stops there. Words that run another command (`run`, `exec`,
+/// `dlx`, `npm`, `workspace`, ...) are deliberately absent: the scan continues
+/// through them, so `yarn workspace pkg npm publish` and `npm run publish` (a
+/// script that likely publishes) still count.
+const NODE_SUBCOMMANDS: &[&str] = &[
+    "test",
+    "t",
+    "tst",
+    "install",
+    "i",
+    "ci",
+    "add",
+    "remove",
+    "rm",
+    "uninstall",
+    "un",
+    "update",
+    "up",
+    "upgrade",
+    "build",
+    "start",
+    "stop",
+    "restart",
+    "ls",
+    "list",
+    "ll",
+    "la",
+    "outdated",
+    "audit",
+    "view",
+    "info",
+    "show",
+    "search",
+    "init",
+    "link",
+    "ln",
+    "pack",
+    "prune",
+    "dedupe",
+    "why",
+    "explain",
+    "config",
+    "cache",
+    "doctor",
+    "help",
+    "version",
+    "whoami",
+    "login",
+    "logout",
+    "rebuild",
+    "fund",
+    "ping",
+    "prefix",
+    "root",
+    "bin",
+    "bugs",
+    "docs",
+    "edit",
+    "explore",
+    "star",
+    "stars",
+    "unstar",
+    "completion",
+    "import",
+    "store",
+    "env",
+    "patch",
+    "licenses",
+    "plugin",
+    "constraints",
+    "lint",
+    "format",
+    "dev",
+    "serve",
+    "typecheck",
+    "check",
+    "clean",
+    "set",
+    "get",
+];
+
+/// Ordinary `cargo` subcommands (and common plugins); see [`NODE_SUBCOMMANDS`].
+const CARGO_SUBCOMMANDS: &[&str] = &[
+    "build",
+    "b",
+    "check",
+    "c",
+    "clean",
+    "doc",
+    "d",
+    "new",
+    "init",
+    "add",
+    "remove",
+    "rm",
+    "run",
+    "r",
+    "test",
+    "t",
+    "bench",
+    "update",
+    "search",
+    "install",
+    "uninstall",
+    "fmt",
+    "clippy",
+    "tree",
+    "metadata",
+    "fix",
+    "vendor",
+    "package",
+    "locate-project",
+    "generate-lockfile",
+    "fetch",
+    "help",
+    "version",
+    "report",
+    "miri",
+    "nextest",
+    "llvm-cov",
+    "expand",
+    "watch",
+    "audit",
+    "deny",
+    "outdated",
+    "info",
+    "fuzz",
+    "login",
+    "logout",
+];
+
+/// Whether a package-manager argv publishes, retracts or deprecates a package.
+/// Every positional is scanned (option values such as `--filter pkg` or
+/// `--otp 123456` are skipped as unknown words) until an ordinary subcommand is
+/// reached, so `cargo test publish` or `npm test -- publish` are harmless while
+/// `pnpm --filter pkg publish` and `cargo +nightly publish` are not.
+fn registry_publish(program: &str, args: &[String]) -> bool {
+    let cargo = program == "cargo";
+    let mut after_flag = false;
+    for arg in args
+        .iter()
+        .map(String::as_str)
+        .take_while(|arg| *arg != "--")
+    {
+        if arg.starts_with('-') {
+            after_flag = true;
+            continue;
+        }
+        // A word right after a flag may be that flag's value (`npm -w test
+        // publish`), so it is never taken as the subcommand that ends the scan.
+        let maybe_value = std::mem::replace(&mut after_flag, false);
+        let destructive = if cargo {
+            matches!(arg, "publish" | "yank")
+        } else {
+            registry_word(arg)
+        };
+        if destructive {
+            return true;
+        }
+        let ordinary = if cargo {
+            CARGO_SUBCOMMANDS
+        } else {
+            NODE_SUBCOMMANDS
+        };
+        if !maybe_value && ordinary.contains(&arg) {
+            return false;
+        }
+    }
+    false
+}
+
+/// `rm` with a recursive flag (`-r`, `-R`, `--recursive`, or a cluster such as
+/// `-rf`) before a `--` separator.
+fn rm_recursive(args: &[String]) -> bool {
+    args.iter()
+        .take_while(|arg| *arg != "--")
+        .any(|arg| match arg.strip_prefix("--") {
+            Some(long) => long == "recursive",
+            None => arg.starts_with('-') && arg[1..].chars().any(|c| c == 'r' || c == 'R'),
+        })
+}
+
+/// Basename of a program token, lowercased, without a Windows `.exe` suffix.
+fn program_basename(program: &str) -> String {
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let name = name.to_ascii_lowercase();
+    name.strip_suffix(".exe").map(str::to_owned).unwrap_or(name)
+}
+
 /// Whether `command` (program followed by arguments) is a destructive or
 /// irreversible variant of a known CLI: `git push --force`, `git clean -fd`,
 /// `git reset --hard`, `git checkout -- .`, forced checkout/switch/restore,
-/// `git branch -D`, `git stash drop`, `git rebase`, `git commit --amend`, and
-/// `publish`/`yank` style registry commands (found even behind value-taking
-/// options such as `pnpm --filter pkg publish`, `npm -w x publish` or
-/// `yarn npm publish`). Used to give such calls their own grant key and to keep
-/// broad allow rules (for example `["git","push"]`) from silently covering them.
+/// `git branch -D`, `git stash drop`, `git rebase`, `git commit --amend`,
+/// recursive `rm` (`rm -rf`), and `publish`/`yank` style registry commands
+/// (found even behind value-taking options such as `pnpm --filter pkg publish`,
+/// `npm -w x publish` or `yarn npm publish`, but not as an operand of another
+/// subcommand such as `cargo test publish`). Such calls get their own grant
+/// key, the `destructive` risk class, and are not covered by broad allow
+/// rules (for example `["git","push"]` or a `shell` rule without `command`).
 pub fn is_destructive_variant(command: &[String]) -> bool {
     let Some(program) = command.first() else {
         return false;
     };
-    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
-    let name = name.to_ascii_lowercase();
-    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    let name = program_basename(program);
     let args = &command[1..];
-    match name {
+    match name.as_str() {
         "git" => git_destructive(args),
-        // Scanning every positional also covers values of options like
-        // `--filter pkg` and wrappers like `yarn workspace pkg npm publish`.
-        "npm" | "pnpm" | "yarn" => positionals(args).any(registry_word),
-        "cargo" => positionals(args).any(|arg| matches!(arg, "publish" | "yank")),
+        "rm" => rm_recursive(args),
+        "npm" | "pnpm" | "yarn" | "cargo" => registry_publish(&name, args),
         _ => false,
+    }
+}
+
+/// Risk class of a `shell` (or `git`) argv: destructive variants
+/// ([`is_destructive_variant`]) are [`RiskLevel::Destructive`], everything
+/// else runs as [`RiskLevel::Execute`].
+pub fn shell_risk(command: &[String]) -> RiskLevel {
+    if is_destructive_variant(command) {
+        RiskLevel::Destructive
+    } else {
+        RiskLevel::Execute
     }
 }
 
@@ -1807,6 +2007,7 @@ impl ToolRuntime for ShellTool {
                 cwd: Some(workdir.display().to_string()),
                 background,
             }),
+            risk: shell_risk(&argv),
             command: argv,
             tool: "shell".to_string(),
             summary: format!(
@@ -1815,7 +2016,6 @@ impl ToolRuntime for ShellTool {
                 workdir.display(),
                 if background { " in the background" } else { "" }
             ),
-            risk: RiskLevel::Execute,
         };
         if background && self.background.is_none() {
             return Err(tool_error(

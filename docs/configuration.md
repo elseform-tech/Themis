@@ -311,17 +311,34 @@ an allow rule that does not name the variant itself:
   such as `pnpm --filter pkg`, `npm -w x`, `yarn npm publish`, and npm's command
   abbreviations of at least three characters such as `npm publi`), and `publish`/`yank`
   for `cargo` (also `cargo +nightly publish`, `cargo --config k=v publish`), including
-  `--dry-run`. Any positional argument matching is enough, so a script or package
-  that happens to be named `publish` also prompts: over-flagging costs a prompt only.
+  `--dry-run`. Positional words are scanned until an ordinary subcommand (`test`, `build`,
+  `install`, ...) is reached, so `cargo test publish` or `npm test publish` do not count,
+  while `npm run publish` (a script that likely publishes) still does. A word right after
+  a flag may be that flag's value and never ends the scan: over-flagging costs a prompt only.
+- Recursive `rm` (`-r`, `-R`, `--recursive`, or a cluster such as `-rf`).
 
-So a rule `["git","push"]` allows `git push origin main` but `git push --force` falls
-through to later rules and the default (ask; denied when unattended). A rule such as
-`["git","push","--force"]` is honoured. **Deny rules match literally**: they compare
-argv tokens and do not normalize flag spellings, so denying `["git","push","--force"]`
-does not deny `git push -f`; deny the broader `["git","push"]` or list each spelling.
-A broad rule without `command` remains explicit trust. The `git` tool reports
-`["git", args...]` as its command with the same keys, and escalates destructive
-`checkout`, `branch` and `commit` calls to risk `destructive`.
+These variants carry the risk class `destructive` for `shell` calls too (the `git` tool
+also escalates destructive `checkout`, `branch` and `commit` calls), so a rule with
+`"risk": "execute"` does not cover them. So a rule `["git","push"]` allows
+`git push origin main` but `git push --force` falls through to later rules and the
+default (ask; denied when unattended). A rule such as `["git","push","--force"]` is
+honoured. A broad allow rule without `command` (`{"tool":"shell","action":"allow"}`, or
+`"tool":"*"`) is trust in the tool but not in its destructive variants; add
+`"risk": "destructive"` to such a rule if you really mean them. Wrappers (`sudo rm -rf`,
+`bash -c "git push -f"`) are not recognized as variants.
+
+**Deny rules compare flags by meaning.** A deny rule's non-flag tokens must begin the
+command's non-flag tokens and every flag it names must appear before `--`, in any order,
+as `--name=value`, inside a short cluster, or under a known equivalent spelling:
+`git` `--force`/`-f`, `--delete`/`-d`, `--all`/`-a`, `--recursive`/`-r`; `rm`
+`--force`/`-f`, `--recursive`/`-r`/`-R`, `--dir`/`-d`; `cp` `--force`/`-f`,
+`--recursive`/`-r`/`-R`; `mv` `--force`/`-f`; `chmod`/`chown` `--recursive`/`-R`.
+So denying `["git","push","--force"]` also denies `git push -f origin main` and
+`git push origin --force`, and `["rm","-rf"]` denies `rm -fr x` and `rm -r -f x`. Other
+programs' short and long spellings are not related (their meanings differ per program):
+list each spelling, or deny the broader prefix such as `["git","push"]`. Allow and ask
+rules stay exact so they never widen. The `git` tool reports `["git", args...]` as its
+command with the same keys.
 
 The `shell` tool schema asks for the program only in `command` and one `args`
 element per argument. If `command` contains whitespace and no executable of that
