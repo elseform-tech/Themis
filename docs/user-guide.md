@@ -334,8 +334,9 @@ unchanged. Older responses say “Model not recorded” when metadata is missing
 See [UI rules](ui-rules.md) for the maintained interface contract.
 
 The workspace uses continuous surface layers: lighter utility/header frame, dark
-project sidebar, darker canvas. Appearance swatches and the Surface preview show
-these three levels in the same order for every theme.
+project sidebar, darker canvas. Appearance swatches show these three levels in
+the same order for every theme, and the app itself previews a theme until you
+Apply or Revert.
 
 ### Integration discovery and recovery
 

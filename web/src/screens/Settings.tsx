@@ -25,13 +25,7 @@ const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
 
 /** Pure rendering of one update status (null = never checked). */
 export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
-  if (status === null) {
-    return (
-      <p className="themis-settings-hint">
-        Not checked yet.
-      </p>
-    );
-  }
+  if (status === null) return null;
   switch (status.state) {
     case "disabled":
       return (
@@ -110,7 +104,7 @@ export function SettingsScreen() {
     let active = true;
     setConnecting(true); setConnection(""); setError(""); setModels([]);
     void listGoModels().then(models => {
-      if (active) { setModels(models); setConnection(`Connected · ${models.length} models available`); }
+      if (active) { setModels(models); setConnection(`${models.length} models available`); }
     }).catch((error: unknown) => {
       if (active) setError(describeError(error));
     }).finally(() => {
@@ -215,14 +209,13 @@ export function SettingsScreen() {
       </>}
       {section === "Models" && <>
         <section className="themis-settings-section" aria-label="Model"><h3 className="themis-settings-subtitle">Model</h3>
-          <label className="themis-settings-control">Model<span className="themis-settings-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={models.some(model => model.id === form.default_model) ? form.default_model : ""} disabled={connecting || !state.secretStatus.go || models.length === 0} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>{connecting ? "Loading models…" : !state.secretStatus.go ? "Connect Go" : models.length === 0 ? "No models available" : models.some(model => model.id === form.default_model) ? "Choose a model" : `Unavailable: ${form.default_model}`}</option>{models.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}</select></span></label>
+          <label className="themis-settings-control">New chats use<span className="themis-settings-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={models.some(model => model.id === form.default_model) ? form.default_model : ""} disabled={connecting || !state.secretStatus.go || models.length === 0} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>{connecting ? "Loading models…" : !state.secretStatus.go ? "Connect Go" : models.length === 0 ? "No models available" : models.some(model => model.id === form.default_model) ? "Choose a model" : `Unavailable: ${form.default_model}`}</option>{models.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}</select></span></label>
           <div><Button variant="ghost" size="small" disabled={connecting || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button></div>{connection && <p role="status" className="themis-settings-hint">{connection}</p>}
-          <p className="themis-settings-hint">Used for new threads. Existing threads keep their model.</p>
           <div><Button variant="ghost" size="small" onClick={() => void save({ default_provider: "go", default_model: "muse-spark-1.3-contributor" })}>Reset model</Button></div>
         </section>
-        <section className="themis-settings-section" aria-label="Connections"><h3 className="themis-settings-subtitle">Connections</h3><p className="themis-settings-hint">Keys use macOS Keychain. Go also supports OPENCODE_KEY.</p>
+        <section className="themis-settings-section" aria-label="Connections"><h3 className="themis-settings-subtitle">Connections</h3>
           {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key"><div className="themis-settings-key-head"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><Badge tone={state.secretStatus[provider] ? "success" : "default"}>{state.secretStatus[provider] ? "Connected" : "Not connected"}</Badge></div>
-          <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div>{provider === "go" && <p className="themis-settings-hint">Forgetting a saved key does not remove OPENCODE_KEY from your environment.</p>}</details></div>)}
+          <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div>{provider === "go" && <p className="themis-settings-hint">Saved in macOS Keychain. An OPENCODE_KEY in your environment also works, and Forget key does not remove it.</p>}</details></div>)}
         </section>
       </>}
       {section === "Permissions" && <PermissionsSettings projectRoot={state.activeProjectRoot} threadId={state.activeThreadId} />}
@@ -232,8 +225,8 @@ export function SettingsScreen() {
         <Input id="themis-context-budget" label="Context tokens" type="number" min={2000} max={256000} value={form.context_token_budget} onChange={event => setForm(f => ({ ...f, context_token_budget: Number(event.target.value) }))} onBlur={() => { if (form.context_token_budget !== state.settings.context_token_budget) void save({ context_token_budget: form.context_token_budget }); }} />
         <Input id="themis-context-messages" label="Recent messages" type="number" min={1} max={100} value={form.context_messages} onChange={event => setForm(f => ({ ...f, context_messages: Number(event.target.value) }))} onBlur={() => { if (form.context_messages !== state.settings.context_messages) void save({ context_messages: form.context_messages }); }} />
         <Input id="themis-concurrency" label="Parallel runs" type="number" min={1} max={16} value={form.concurrency_limit} onChange={event => setForm(f => ({ ...f, concurrency_limit: Number(event.target.value) }))} onBlur={() => { if (form.concurrency_limit !== state.settings.concurrency_limit) void save({ concurrency_limit: form.concurrency_limit }); }} />
-        <Input id="themis-approval-timeout" label="Approval timeout" type="number" min={30} max={600} value={form.approval_timeout_seconds} onChange={event => setForm(f => ({ ...f, approval_timeout_seconds: Number(event.target.value) }))} onBlur={() => { if (form.approval_timeout_seconds !== state.settings.approval_timeout_seconds) void save({ approval_timeout_seconds: form.approval_timeout_seconds }); }} />
-        <details><summary>Details</summary><p className="themis-settings-hint">When context exceeds the token budget, checkpoints summarize older context and continue the run. The turn limit saves a handoff and stops. Token counts are estimates. Limits apply to new runs; approval timeout uses seconds.</p></details>
+        <Input id="themis-approval-timeout" label="Approval timeout (seconds)" type="number" min={30} max={600} value={form.approval_timeout_seconds} onChange={event => setForm(f => ({ ...f, approval_timeout_seconds: Number(event.target.value) }))} onBlur={() => { if (form.approval_timeout_seconds !== state.settings.approval_timeout_seconds) void save({ approval_timeout_seconds: form.approval_timeout_seconds }); }} />
+        <p className="themis-settings-hint">Limits apply to new runs.</p>
         <div><Button variant="ghost" size="small" onClick={() => void save({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3, approval_timeout_seconds: 300 })}>Reset limits</Button></div>
       </section>}
       </fieldset>

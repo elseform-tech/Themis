@@ -53,9 +53,8 @@ function render(status: UpdateStatus | null): string {
 }
 
 describe("UpdateStatusView", () => {
-  it("renders the never-checked prompt when status is null", () => {
-    const html = render(null);
-    expect(html).toContain("Not checked yet");
+  it("renders nothing before the first check", () => {
+    expect(render(null)).toBe("");
   });
 
   it("renders disabled with its message and a docs hint", () => {
