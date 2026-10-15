@@ -1395,8 +1395,8 @@ async fn cli_plan_survives_checkpoint_in_task_ledger_and_budget_events_reach_cli
     assert!(requests >= 3);
     assert_eq!(
         budgets.len(),
-        requests,
-        "one budget per bounded model request"
+        requests + compactions,
+        "one budget per bounded model request, plus the triggering size before each checkpoint"
     );
     for budget in &budgets {
         let breakdown = &budget["breakdown"];

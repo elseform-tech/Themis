@@ -40,6 +40,16 @@ impl Outcome {
             })
             .expect("a context budget event")
     }
+    fn budget_after_checkpoint(&self) -> &themis_core::runtime::ContextBudget {
+        self.events
+            .iter()
+            .skip_while(|event| !matches!(event, RunEvent::ContextCheckpoint { .. }))
+            .find_map(|event| match event {
+                RunEvent::ContextBudget(budget) => Some(budget),
+                _ => None,
+            })
+            .expect("a context budget after the checkpoint")
+    }
 }
 
 /// `packets` historical user messages of about 250 estimated tokens each.
@@ -216,8 +226,12 @@ async fn short_reply_never_exceeds_the_hard_budget() {
     // Far above the usable budget: the flag cannot postpone the checkpoint.
     let outcome = run(200, "thanks!").await;
     assert!(outcome.checkpoints() >= 1);
-    let budget = outcome.first_budget();
-    assert!(budget.used_tokens <= budget.usable_tokens);
+    // The budget that triggered the checkpoint is over the limit by design; the request
+    // actually sent after it must fit.
+    let triggering = outcome.first_budget();
+    assert!(triggering.used_tokens > triggering.usable_tokens);
+    let sent = outcome.budget_after_checkpoint();
+    assert!(sent.used_tokens <= sent.usable_tokens);
     // The constructed checkpoint request asks for the four sections, parked work and reasons.
     let system = &outcome.summary_systems[0];
     for expected in [
