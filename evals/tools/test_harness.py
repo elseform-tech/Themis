@@ -84,6 +84,7 @@ class SummaryTests(unittest.TestCase):
         text = markdown({"model": "m", "build_ref": None, "errors": [], "summary": summary})
         self.assertIn("| shell | 2 | 0% | 50% | bad_arguments 1 |", text)
         self.assertIn("answer lacks x", text)
+        self.assertIn("Repeated calls", text)
 
 
 if __name__ == "__main__":

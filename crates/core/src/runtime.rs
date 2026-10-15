@@ -527,7 +527,8 @@ async fn run_task_with_evidence_inner(
     let caching = CachingApprovals::wrap(approvals);
     let mut llm_tools: Vec<Tool> = tools.iter().map(to_llm_tool).collect();
     // The plan is part of the durable task ledger, which needs saved originals.
-    if evidence_directory.is_some() && !tools.iter().any(|tool| tool.name() == ledger::PLAN_TOOL) {
+    let plan_offered = evidence_directory.is_some() && offer_plan();
+    if plan_offered && !tools.iter().any(|tool| tool.name() == ledger::PLAN_TOOL) {
         llm_tools.push(ledger::plan_tool());
     }
     // Byte estimates are approximate bookkeeping, not a model-specific tokenizer.
@@ -582,7 +583,11 @@ async fn run_task_with_evidence_inner(
             directory,
             llm_tools.iter().any(|tool| tool.function.name == "recall"),
         )?);
-        messages[0].content.push_str("\nFor multi-step work keep a short plan with update_plan and mark steps done as you finish them. The task ledger keeps the plan, completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work.");
+        messages[0].content.push_str(if plan_offered {
+            "\nFor multi-step work keep a short plan with update_plan and mark steps done as you finish them. The task ledger keeps the plan, completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work."
+        } else {
+            "\nThe task ledger keeps completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work."
+        });
     }
 
     let mut observations = HashSet::new();
@@ -1577,6 +1582,24 @@ fn effective_context_budget(requested: usize) -> usize {
 
 tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
 tokio::task_local! { static SHORT_REPLY_TURN: bool; }
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only ablation switch: `false` withholds `update_plan` and its instruction.
+    pub static EVAL_OFFER_PLAN: bool;
+}
+
+/// Whether runs that save evidence offer `update_plan` (always, outside evals).
+fn offer_plan() -> bool {
+    #[cfg(feature = "eval")]
+    {
+        EVAL_OFFER_PLAN.try_with(|offer| *offer).unwrap_or(true)
+    }
+    #[cfg(not(feature = "eval"))]
+    {
+        true
+    }
+}
 
 /// Longest new user message, in characters, that can count as a short conversational reply.
 pub const SHORT_REPLY_MAX_CHARS: usize = 200;

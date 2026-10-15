@@ -109,6 +109,25 @@ def setup_tabs(project):
     write(project, "Makefile", "build:\n\tcargo build --release\n\ntest:\n\tcargo test  \n")
 
 
+def setup_long_module(project):
+    """A 120-line module, so an edit lands mid-file with real line numbers."""
+    body = ['"""Billing helpers."""', "", "import math", ""]
+    for n in range(1, 25):
+        body += [f"def helper_{n:02d}(value):", f'    """Helper {n}."""', f"    return value * {n}", "", ""]
+    write(project, "src/billing.py", "\n".join(body) + "\n")
+
+
+def setup_two_modules(project):
+    write(project, "src/limits.py", "MAX_ITEMS = 50\n\n\ndef allowed(n):\n    return n <= MAX_ITEMS\n")
+    write(project, "src/report.py", "from limits import MAX_ITEMS\n\n\ndef header():\n    return f'up to {MAX_ITEMS} items'\n")
+
+
+def setup_deprecated(project):
+    write(project, "src/api.py",
+          "def current():\n    return 2\n\n\n# DEPRECATED: remove after v3\ndef legacy():\n    return 1\n"
+          "# END DEPRECATED\n\n\ndef next_version():\n    return 3\n")
+
+
 def setup_script(project):
     write(project, "scripts/sum.py", "import sys\nprint(sum(int(a) for a in sys.argv[1:]))\n")
 
@@ -161,6 +180,41 @@ def setup_plan_evidence(project):
     os.makedirs(os.path.join(project, ".themis/context/eval-thread"), exist_ok=True)
 
 
+STORY_HEROES = ["Odile", "Bram", "Sunniva", "Teodor", "Yara", "Caspian", "Wren", "Ilsa", "Mattias", "Petra"]
+
+
+def setup_long_job(project):
+    """Ten ~3.5 KB stories, each about one named hero. Summarising them needs the model to read
+    each one (a script cannot), so with a small budget the job crosses context checkpoints."""
+    rng = random.Random(23)
+    places = ["harbour", "mill", "orchard", "lighthouse", "market", "quarry", "bridge", "abbey"]
+    deeds = ["mended a broken net", "counted the lanterns", "carried salt to the cellar", "argued with the miller",
+             "found a lost key", "repainted the gate", "fed the goats", "read the old ledger", "climbed the tower",
+             "waited for the ferry"]
+    for number, hero in enumerate(STORY_HEROES, 1):
+        sentences = [f"{hero} walked to the {rng.choice(places)} at dawn."]
+        while len(" ".join(sentences)) < 3400:
+            sentences.append(f"Later {rng.choice(['that day', 'in the evening', 'after the rain', 'before supper'])} "
+                             f"{hero} {rng.choice(deeds)} near the {rng.choice(places)}.")
+        write(project, f"stories/story-{number:02d}.txt", " ".join(sentences) + "\n")
+    os.makedirs(os.path.join(project, ".themis/context/eval-thread"), exist_ok=True)
+
+
+def check_long_job(project, report):
+    text = read(project, "report.txt") or ""
+    got = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    problems = []
+    if len(got) != len(STORY_HEROES):
+        problems.append(f"{len(got)} lines")
+    if len(set(got)) != len(got):
+        problems.append("duplicates")
+    for number, (line, hero) in enumerate(zip(got, STORY_HEROES), 1):
+        if not line.startswith(f"story-{number:02d}.txt:") or hero.lower() not in line.lower():
+            problems.append(f"line {number} {line[:40]!r}")
+            break
+    return not problems, "; ".join(problems)
+
+
 # --- checks that need more than one condition ----------------------------------------------
 
 def check_append(project, report):
@@ -180,6 +234,40 @@ def check_makefile(project, report):
     text = read(project, "Makefile") or ""
     ok = text == "build:\n\tcargo build --release --locked\n\ntest:\n\tcargo test  \n"
     return ok, "" if ok else f"Makefile is {text!r:.160}"
+
+
+def check_add_function(project, report):
+    text = read(project, "src/billing.py") or ""
+    lines = text.splitlines()
+    try:
+        at = lines.index("def helper_12(value):")
+    except ValueError:
+        return False, "helper_12 missing"
+    after = "\n".join(lines[at:at + 12])
+    new = "def helper_12b(value):" in after and "return value * 12.5" in text
+    intact = all(f"def helper_{n:02d}(value):" in text for n in range(1, 25)) and len(lines) >= 120
+    ok = new and intact and text.count("def helper_12b") == 1
+    return ok, "" if ok else f"new function placed={new} others intact={intact}"
+
+
+def check_rename(project, report):
+    limits, report_py = read(project, "src/limits.py") or "", read(project, "src/report.py") or ""
+    ok = ("MAX_ITEMS" not in limits + report_py and limits.count("ITEM_LIMIT") == 2
+          and report_py.count("ITEM_LIMIT") == 2)
+    return ok, "" if ok else f"limits={limits!r:.80} report={report_py!r:.80}"
+
+
+def check_deprecated(project, report):
+    text = read(project, "src/api.py") or ""
+    ok = ("legacy" not in text and "DEPRECATED" not in text and "def current():" in text
+          and "def next_version():" in text)
+    return ok, "" if ok else f"api.py is {text!r:.160}"
+
+
+def plan_kept_current(report):
+    """The last update_plan call leaves no step pending or in progress."""
+    plans = [c.get("summary", "") for c in report.get("calls", []) if c["tool"] == "update_plan"]
+    return bool(plans) and not re.search(r"pending|in_progress", plans[-1])
 
 
 def check_server(project, report):
@@ -207,9 +295,10 @@ def check_refused_reset(project, report):
 
 def check_plan(project, report):
     used = any(c["tool"] == "update_plan" for c in report.get("calls", []))
+    current = plan_kept_current(report)
     files = all((read(project, f"out/{n}.txt") or "").strip() == n for n in ("alpha", "beta", "gamma"))
-    ok = used and files
-    return ok, "" if ok else f"plan used={used} files ok={files}"
+    ok = used and current and files
+    return ok, "" if ok else f"plan used={used} kept current={current} files ok={files}"
 
 
 TASKS = [
@@ -240,6 +329,18 @@ TASKS = [
     {"name": "patch-tabs", "tool": "apply_patch", "setup": setup_tabs,
      "prompt": "In the Makefile, make the build recipe run `cargo build --release --locked`. Keep the tab indentation and change nothing else.",
      "check": check_makefile},
+    {"name": "patch-add-function", "tool": "apply_patch", "setup": setup_long_module,
+     "prompt": "In src/billing.py add a new function helper_12b(value) that returns value * 12.5, placed right after helper_12. Do not change anything else.",
+     "check": check_add_function},
+    {"name": "patch-two-files", "tool": "apply_patch", "setup": setup_two_modules,
+     "prompt": "Rename the constant MAX_ITEMS to ITEM_LIMIT everywhere in src/limits.py and src/report.py.",
+     "check": check_rename},
+    {"name": "patch-delete-block", "tool": "apply_patch", "setup": setup_deprecated,
+     "prompt": "Remove the deprecated block from src/api.py (from the DEPRECATED comment to the END DEPRECATED comment, inclusive). Keep the other functions.",
+     "check": check_deprecated},
+    {"name": "patch-new-file", "tool": "apply_patch", "setup": setup_plan,
+     "prompt": "Add a new file src/version.py containing exactly the line: VERSION = \"1.4.0\"",
+     "check": file_is("src/version.py", 'VERSION = "1.4.0"')},
     {"name": "shell-args", "tool": "shell", "setup": setup_script,
      "prompt": "Run scripts/sum.py with python3 and the arguments 3 4 5, and tell me what it prints. Answer with the output only.",
      "check": answer_has(r"\b12\b")},
@@ -270,6 +371,18 @@ TASKS = [
      "evidence": ".themis/context/eval-thread",
      "prompt": "Create three files out/alpha.txt, out/beta.txt and out/gamma.txt, each containing only its own name (alpha, beta, gamma). Keep a short plan while you work.",
      "check": check_plan},
+]
+
+LONG_JOB_PROMPT = ("The stories folder has story-01.txt to story-10.txt. Read each story and write report.txt "
+                   "with one line per story, in file order and each story exactly once, in the form "
+                   "'story-01.txt: <one-sentence summary that names its main character>'. Then tell me you are done.")
+
+# Ablation pair: the same long job crossing context checkpoints, with and without update_plan.
+LONG_JOB = {"setup": setup_long_job, "evidence": ".themis/context/eval-thread", "budget": 16_000,
+            "recent_messages": 4, "max_turns": 40, "prompt": LONG_JOB_PROMPT, "check": check_long_job}
+TASKS += [
+    dict(LONG_JOB, name="long-job-plan", tool="update_plan", offer_plan=True),
+    dict(LONG_JOB, name="long-job-no-plan", tool="update_plan", offer_plan=False),
 ]
 
 

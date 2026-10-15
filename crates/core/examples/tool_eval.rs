@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 use themis_core::providers::{resolve, ProviderConfig, ProviderKind};
-use themis_core::runtime::tool_eval::run_tool_task;
+use themis_core::runtime::tool_eval::{run_tool_task, ToolTaskOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -56,16 +56,21 @@ async fn main() -> anyhow::Result<()> {
         config = config.with_base_url(url);
     }
     let llm = resolve(&config).await?;
-    let evidence = task["evidence"].as_str().map(|dir| project.join(dir));
-    let report = run_tool_task(
-        &llm,
-        &project,
-        prompt,
-        task["checkpoint"].as_str(),
-        evidence.as_deref(),
-        max_turns,
-    )
-    .await?;
+    let options = ToolTaskOptions {
+        checkpoint: task["checkpoint"].as_str().map(str::to_owned),
+        evidence: task["evidence"].as_str().map(|dir| project.join(dir)),
+        max_turns: task["max_turns"]
+            .as_u64()
+            .map_or(max_turns, |turns| turns as usize),
+        budget: task["budget"]
+            .as_u64()
+            .map_or(64_000, |budget| budget as usize),
+        recent_messages: task["recent_messages"]
+            .as_u64()
+            .map_or(20, |recent| recent as usize),
+        offer_plan: task["offer_plan"].as_bool().unwrap_or(true),
+    };
+    let report = run_tool_task(&llm, &project, prompt, options).await?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
