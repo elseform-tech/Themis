@@ -249,23 +249,35 @@ impl ChatGrants {
         let Some(entry) = GrantEntry::for_action(action) else {
             return false;
         };
-        let snapshot = {
-            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-            if !entries.contains(&entry) {
-                if entries.len() >= MAX_GRANTS {
-                    // Keep the grant for this run; the file stays within bounds.
-                    entries.remove(0);
-                }
-                entries.push(entry);
-            }
-            entries.clone()
-        };
+        // One writer at a time, merging with what other runs saved meanwhile so
+        // concurrent runs never lose each other's grants.
+        let _writing = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(path) = &self.path {
-            let _ = write_grants(path, &snapshot);
+            if let Ok(Some(text)) = read_limited(path) {
+                for stored in parse_grants(&text).unwrap_or_default() {
+                    if !entries.contains(&stored) {
+                        entries.push(stored);
+                    }
+                }
+            }
+        }
+        if !entries.contains(&entry) {
+            if entries.len() >= MAX_GRANTS {
+                // Keep the grant for this run; the file stays within bounds.
+                entries.remove(0);
+            }
+            entries.push(entry);
+        }
+        if let Some(path) = &self.path {
+            let _ = write_grants(path, &entries);
         }
         true
     }
 }
+
+/// Serializes grant and consent file writes within the process.
+pub static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 fn read_limited(path: &Path) -> Result<Option<String>, &'static str> {
     use std::io::Read;
@@ -291,9 +303,23 @@ pub fn write_grants(path: &Path, entries: &[GrantEntry]) -> std::io::Result<()> 
         grants: entries.to_vec(),
     })
     .map_err(std::io::Error::other)?;
-    let tmp = path.with_extension("json.tmp");
+    write_atomic(path, &text)
+}
+
+/// Writes `text` to `path` through a uniquely named temporary file and a rename,
+/// so concurrent writers never share a temporary file or leave a torn file.
+pub fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let tmp = path.with_extension(format!(
+        "{}.{}.tmp",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 #[cfg(test)]
@@ -436,6 +462,26 @@ mod tests {
         let path = dir.path().join("chat.json");
         std::fs::write(&path, " ".repeat(MAX_FILE_BYTES as usize + 8)).unwrap();
         assert!(ChatGrants::load(&path).warning().is_some());
+    }
+
+    #[test]
+    fn concurrent_runs_of_a_chat_do_not_lose_each_others_grants() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chat.json");
+        // Every writer loaded the (empty) file before any of the others saved.
+        let writers: Vec<_> = (0..8).map(|_| ChatGrants::load(&path)).collect();
+        std::thread::scope(|scope| {
+            for (index, grants) in writers.iter().enumerate() {
+                scope.spawn(move || {
+                    assert!(grants.remember(&shell(&["tool", &index.to_string()])));
+                });
+            }
+        });
+        let saved = ChatGrants::load(&path);
+        assert_eq!(saved.len(), 8);
+        assert!(saved.warning().is_none());
+        let leftovers = std::fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(leftovers, 1, "no temporary files remain");
     }
 
     #[test]
