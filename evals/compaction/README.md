@@ -39,7 +39,9 @@ Run a single case directly with
 Per probe: `correct` (an `any_of` substring or the `regex` matches, case-insensitive),
 `unknown` (answered `UNKNOWN` for a fact that was in the conversation: forgotten),
 `stale` (matches a `stale` pattern of a superseded value and not the current one),
-`wrong` (neither), `error` (provider failure). Decoy probes ask for facts that were never
+`wrong` (neither), `error` (provider failure). A truncated probe answer is retried once
+with a larger output cap; remaining `error` probes are counted under `probe_errors` and excluded
+from every retention rate, since a failed request says nothing about what the checkpoint kept. Decoy probes ask for facts that were never
 stated; any answer other than `UNKNOWN` counts as `invented`.
 
 Reported, as mean and sample SD (plus min/max) across trials: **summary-only retention (the
@@ -88,7 +90,7 @@ shape and the Rust test replays every case.
 measures what the agent does with the next user message after a compaction. The
 `behavior_eval` example (feature `eval`) compacts a text-only conversation like the retention
 runner, then plays every turn of `behavior.json` through the real agent loop (all tools offered,
-every approval denied) on top of the post-compaction context, and reports the reply, attempted
+every approval denied; `recall` is offered as in the app when the tree has it) on top of the post-compaction context, and reports the reply, attempted
 tool calls and checkpoints. Cases use `"suites": ["behavior"]`:
 
 - `behavior-greeting`: "hi", "thanks!", "你好", "hey, how's it going?" after an unfinished task:

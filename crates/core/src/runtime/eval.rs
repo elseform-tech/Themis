@@ -229,9 +229,17 @@ pub async fn answer_probe(
         message_type: MessageType::Text,
         content: format!("Memory check. Answer from the conversation context above only; you have no tools. Reply with the answer in one short sentence, or exactly UNKNOWN if the context does not say. Do not guess.\n\nQuestion: {question}"),
     });
-    let sampling = SamplingOverrides::with_max_tokens(400);
-    let response = llm.chat_and_sampling(&asked, None, Some(&sampling)).await?;
-    Ok(response.text().unwrap_or_default().trim().to_owned())
+    // A truncated probe answer is an eval-side failure, not a lost fact: retry once with room.
+    let mut last = None;
+    for max_tokens in [400, 1600] {
+        let sampling = SamplingOverrides::with_max_tokens(max_tokens);
+        match llm.chat_and_sampling(&asked, None, Some(&sampling)).await {
+            Ok(response) => return Ok(response.text().unwrap_or_default().trim().to_owned()),
+            Err(error) if error.to_string().contains("truncated") => last = Some(error),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(last.map_or_else(|| anyhow!("probe answer failed"), Into::into))
 }
 
 /// What one real agent turn did after a compaction.
@@ -286,11 +294,23 @@ pub async fn behavior_turn(
         }
         seen
     });
+    #[allow(unused_mut)]
+    let mut tools = boxed_tools(project, approvals.clone())?;
+    // The desktop offers `recall` to every chat; mirror it when the build has the tool.
+    #[cfg(eval_recall)]
+    tools.push(Box::new(crate::tools::recall::RecallTool::new(
+        crate::tools::recall::RecallScope {
+            evidence_dir: evidence.clone(),
+            attachments: Vec::new(),
+            attachment_root: None,
+            project_root: project.canonicalize().ok(),
+        },
+    )));
     let result = with_short_reply_turn(
         short_reply,
         run_task_with_evidence(
             llm.clone(),
-            boxed_tools(project, approvals.clone())?,
+            tools,
             message.to_owned(),
             history,
             approvals,

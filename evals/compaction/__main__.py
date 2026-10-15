@@ -43,10 +43,18 @@ def target_dir():
     return os.path.join(ROOT, os.environ.get("CARGO_TARGET_DIR", "target"))
 
 
+def recall_env():
+    """`--cfg eval_recall` offers the read-only `recall` tool in agent turns, as the app does."""
+    env = dict(os.environ)
+    if os.path.isfile(os.path.join(ROOT, "crates/core/src/tools/recall.rs")):
+        env["RUSTFLAGS"] = (env.get("RUSTFLAGS", "") + " --cfg eval_recall").strip()
+    return env
+
+
 def build_runner():
     command = ["cargo", "build", "--release", "-q", "-p", "themis-core", "--features", "eval",
                "--example", "compaction_eval"]
-    subprocess.run(command, cwd=ROOT, check=True)
+    subprocess.run(command, cwd=ROOT, check=True, env=recall_env())
     target = target_dir()
     return [os.path.join(target, "release", "examples", "compaction_eval" + EXE)]
 
@@ -141,7 +149,7 @@ def regrade(args):
 def build_behavior_runner():
     command = ["cargo", "build", "--release", "-q", "-p", "themis-core", "--features", "eval",
                "--example", "behavior_eval"]
-    subprocess.run(command, cwd=ROOT, check=True)
+    subprocess.run(command, cwd=ROOT, check=True, env=recall_env())
     return [os.path.join(target_dir(), "release", "examples", "behavior_eval" + EXE)]
 
 
