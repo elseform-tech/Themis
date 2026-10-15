@@ -155,6 +155,12 @@ def setup_plan(project):
     write(project, "README.md", "# Plan task\n")
 
 
+def setup_plan_evidence(project):
+    """A chat that saves history (as real chats do), which is when update_plan is offered."""
+    setup_plan(project)
+    os.makedirs(os.path.join(project, ".themis/context/eval-thread"), exist_ok=True)
+
+
 # --- checks that need more than one condition ----------------------------------------------
 
 def check_append(project, report):
@@ -260,7 +266,8 @@ TASKS = [
      "evidence": ".themis/context/eval-thread",
      "prompt": "What rollback codename did I give in my very first message, and which day is the password rotation?",
      "check": all_of(answer_has(r"HERON-42"), answer_has(r"thursday"))},
-    {"name": "plan-multi-step", "tool": "update_plan", "setup": setup_plan,
+    {"name": "plan-multi-step", "tool": "update_plan", "setup": setup_plan_evidence,
+     "evidence": ".themis/context/eval-thread",
      "prompt": "Create three files out/alpha.txt, out/beta.txt and out/gamma.txt, each containing only its own name (alpha, beta, gamma). Keep a short plan while you work.",
      "check": check_plan},
 ]
