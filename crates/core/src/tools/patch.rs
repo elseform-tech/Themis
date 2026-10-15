@@ -140,15 +140,16 @@ pub(super) fn parse_hunk(lines: &[&str], at: usize) -> anyhow::Result<(Hunk, usi
         .iter()
         .filter(|l| matches!(l, HunkLine::Context(_) | HunkLine::Add(_)))
         .count();
-    if old_seen != old_count || new_seen != new_count {
-        anyhow::bail!(
-            "malformed patch: hunk header '{header}' does not match its body: old side has {old_seen} lines, declared {old_count}; new side has {new_seen} lines, declared {new_count}. Count context plus removals for old_count and context plus additions for new_count"
-        );
+    // Models often miscount the header; the body says exactly what changes, so its own
+    // counts win. (A body with no lines at all is still rejected below.)
+    let _ = (old_count, new_count, new_seen);
+    if hunk_lines.is_empty() {
+        anyhow::bail!("malformed patch: hunk '{header}' has no lines");
     }
     Ok((
         Hunk {
             old_start,
-            old_count,
+            old_count: old_seen,
             lines: hunk_lines,
             new_lacks_trailing_newline: marker_after_new_at_end,
         },
@@ -253,6 +254,39 @@ pub(super) fn plan_file(
     })
 }
 
+/// Lines compared with runs of whitespace collapsed and trailing whitespace ignored.
+fn loose(line: &str) -> String {
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Where the hunk's old side (context and removals) starts in `old`, at or after `from`:
+/// the exact match nearest the declared start, else the only whitespace-insensitive
+/// match. `None` when it is absent or (loosely) ambiguous.
+fn locate(old: &[String], from: usize, wanted: &[&str], declared: usize) -> Option<usize> {
+    if wanted.is_empty() {
+        return (declared >= from && declared <= old.len()).then_some(declared);
+    }
+    let last = old.len().checked_sub(wanted.len())?;
+    let positions = |same: &dyn Fn(&str, &str) -> bool| {
+        (from..=last)
+            .filter(|&at| {
+                wanted
+                    .iter()
+                    .enumerate()
+                    .all(|(i, w)| same(&old[at + i], w))
+            })
+            .collect::<Vec<_>>()
+    };
+    let exact = positions(&|a, b| a == b);
+    if let Some(&best) = exact.iter().min_by_key(|&&at| at.abs_diff(declared)) {
+        return Some(best);
+    }
+    match positions(&|a, b| loose(a) == loose(b)).as_slice() {
+        [only] => Some(*only),
+        _ => None,
+    }
+}
+
 pub(super) fn apply_hunks(
     old: &[String],
     hunks: &[Hunk],
@@ -261,44 +295,45 @@ pub(super) fn apply_hunks(
     let mut out: Vec<String> = Vec::new();
     let mut cursor = 0;
     for hunk in hunks {
+        let wanted: Vec<&str> = hunk
+            .lines
+            .iter()
+            .filter_map(|line| match line {
+                HunkLine::Context(text) | HunkLine::Remove(text) => Some(text.as_str()),
+                HunkLine::Add(_) => None,
+            })
+            .collect();
         // `old_start` is 1-based, except 0 when the hunk touches no old lines.
-        let start = if hunk.old_count == 0 {
+        let declared = if hunk.old_count == 0 {
             hunk.old_start
         } else {
             hunk.old_start.saturating_sub(1)
         };
-        if start < cursor || start > old.len() {
-            anyhow::bail!("patch does not apply to '{file}': hunk out of range");
-        }
+        let Some(start) = locate(old, cursor, &wanted, declared) else {
+            let from = declared.min(old.len()).saturating_sub(2);
+            let near: Vec<String> = old
+                .iter()
+                .enumerate()
+                .skip(from)
+                .take(wanted.len().max(1) + 4)
+                .map(|(n, line)| format!("{:>4}| {line}", n + 1))
+                .collect();
+            anyhow::bail!(
+                "patch does not apply to '{file}': context mismatch near line {}: these lines were not found in the file. The file there reads:\n{}\nCopy context lines exactly from the file (read it first if unsure).",
+                declared + 1,
+                near.join("\n")
+            );
+        };
         out.extend_from_slice(&old[cursor..start]);
         cursor = start;
         for line in &hunk.lines {
             match line {
-                HunkLine::Context(text) => {
-                    let actual = old.get(cursor).ok_or_else(|| {
-                        anyhow::anyhow!("patch does not apply to '{file}': context mismatch")
-                    })?;
-                    if actual != text {
-                        anyhow::bail!(
-                            "patch does not apply to '{file}': context mismatch at line {}",
-                            cursor + 1
-                        );
-                    }
-                    out.push(text.clone());
+                // Keep the file's own text for context (it may differ only in whitespace).
+                HunkLine::Context(_) => {
+                    out.push(old[cursor].clone());
                     cursor += 1;
                 }
-                HunkLine::Remove(text) => {
-                    let actual = old.get(cursor).ok_or_else(|| {
-                        anyhow::anyhow!("patch does not apply to '{file}': context mismatch")
-                    })?;
-                    if actual != text {
-                        anyhow::bail!(
-                            "patch does not apply to '{file}': removal mismatch at line {}",
-                            cursor + 1
-                        );
-                    }
-                    cursor += 1;
-                }
+                HunkLine::Remove(_) => cursor += 1,
                 HunkLine::Add(text) => out.push(text.clone()),
             }
         }

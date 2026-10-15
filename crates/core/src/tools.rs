@@ -2876,6 +2876,30 @@ pub fn shared_tools(
         .collect())
 }
 
+/// Entry points for the `fuzz/` cargo-fuzz targets; not a stable API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing {
+    /// Parses every `@@` hunk in `patch` and applies them to `old` (the hunk parser and the
+    /// forgiving applier `apply_patch` uses, without touching files).
+    pub fn apply_hunk_text(old: &str, patch: &str) -> Result<Vec<String>, String> {
+        let lines: Vec<&str> = patch.lines().collect();
+        let mut hunks = Vec::new();
+        let mut at = 0;
+        while at < lines.len() {
+            if lines[at].starts_with("@@ ") {
+                let (hunk, next) = super::parse_hunk(&lines, at).map_err(|e| e.to_string())?;
+                hunks.push(hunk);
+                at = next;
+            } else {
+                at += 1;
+            }
+        }
+        let old: Vec<String> = old.lines().map(str::to_owned).collect();
+        super::apply_hunks(&old, &hunks, "fuzz").map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3722,6 +3746,43 @@ mod tests {
         assert!(plain.get("selectors_ignored").is_none());
     }
 
+    mod patch_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// With distinct lines, a hunk whose header counts and start line are wrong still
+            /// edits exactly the intended span and nothing else.
+            #[test]
+            fn miscounted_misplaced_hunks_edit_exactly_their_span(
+                len in 3usize..30,
+                start in 0usize..30,
+                take in 1usize..4,
+                replacement in proptest::collection::vec("[a-z]{1,6}", 0..4),
+                declared_start in 0usize..60,
+                declared_count in 0usize..9,
+            ) {
+                let old: Vec<String> = (0..len).map(|n| format!("line-{n}")).collect();
+                let start = start % len;
+                let end = (start + take).min(len);
+                let mut body = Vec::new();
+                if start > 0 { body.push(format!(" {}", old[start - 1])); }
+                body.extend(old[start..end].iter().map(|l| format!("-{l}")));
+                body.extend(replacement.iter().map(|l| format!("+new-{l}")));
+                if end < len { body.push(format!(" {}", old[end])); }
+                let mut lines = vec![format!("@@ -{},{declared_count} +1,{declared_count} @@", declared_start + 1)];
+                lines.extend(body);
+                let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+                let (hunk, _) = parse_hunk(&refs, 0).unwrap();
+                let applied = apply_hunks(&old, &[hunk], "f").unwrap();
+                let mut expected = old[..start].to_vec();
+                expected.extend(replacement.iter().map(|l| format!("new-{l}")));
+                expected.extend_from_slice(&old[end..]);
+                prop_assert_eq!(applied, expected);
+            }
+        }
+    }
+
     mod normalize_argv_props {
         use super::*;
         use proptest::prelude::*;
@@ -4314,6 +4375,54 @@ mod tests {
             fs::read_to_string(root.join("new.txt")).unwrap(),
             "one\ntwo\n"
         );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_forgives_the_mistakes_models_make_but_not_ambiguity() {
+        let (_tmp, root) = rooted_case();
+        let tool = ApplyPatchTool::new(root.clone(), allow_all());
+        let settings =
+            "\"\"\"Settings.\"\"\"\n\nHOST = \"localhost\"\nTIMEOUT = 30  # seconds\nRETRIES = 3\n";
+        fs::write(root.join("s.py"), settings).unwrap();
+        // Miscounted header, wrong start line and single-spaced context: still one clear place.
+        let sloppy = "--- a/s.py\n+++ b/s.py\n@@ -9,7 +9,7 @@\n HOST = \"localhost\"\n-TIMEOUT = 30 # seconds\n+TIMEOUT = 45  # seconds\n";
+        tool.execute(json!({ "patch": sloppy })).await.unwrap();
+        let text = fs::read_to_string(root.join("s.py")).unwrap();
+        assert!(
+            text.contains("TIMEOUT = 45  # seconds") && text.contains("RETRIES = 3"),
+            "{text}"
+        );
+        assert!(text.starts_with("\"\"\"Settings."), "{text}");
+
+        // The exact match nearest the declared line wins over an earlier duplicate.
+        fs::write(root.join("d.txt"), "x\nsame\ny\nsame\nz\n").unwrap();
+        let near = "--- a/d.txt\n+++ b/d.txt\n@@ -4,1 +4,1 @@\n-same\n+second\n";
+        tool.execute(json!({ "patch": near })).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("d.txt")).unwrap(),
+            "x\nsame\ny\nsecond\nz\n"
+        );
+
+        // Two places that match only loosely: refused, nothing changed, file lines shown.
+        fs::write(root.join("a.txt"), "a  b\nc\na b\n").unwrap();
+        let ambiguous = "--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-a   b\n+changed\n";
+        let error = tool
+            .execute(json!({ "patch": ambiguous }))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("context mismatch") && error.contains("   1| a  b"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("a.txt")).unwrap(),
+            "a  b\nc\na b\n"
+        );
+
+        // Text that is not in the file at all is still refused.
+        let missing = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-nowhere\n+x\n";
+        assert!(tool.execute(json!({ "patch": missing })).await.is_err());
     }
 
     #[tokio::test]
