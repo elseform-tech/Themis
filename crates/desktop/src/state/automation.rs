@@ -75,6 +75,23 @@ enum CheckError {
     Failed(String),
 }
 
+/// The `shell` action a watch's `check_command` is judged as. The command is
+/// structured so approval UI never has to show a joined string.
+#[must_use]
+pub fn check_action(argv: &[String]) -> ToolAction {
+    ToolAction {
+        display: Some(themis_core::tools::CommandDisplay {
+            argv: argv.to_vec(),
+            cwd: None,
+            background: false,
+        }),
+        command: argv.to_vec(),
+        tool: "shell".to_owned(),
+        summary: "watch check command".to_owned(),
+        risk: RiskLevel::Execute,
+    }
+}
+
 /// The verdict for running `argv` as a `shell` action under `mode` and `policy`.
 #[must_use]
 pub fn shell_policy_for(
@@ -85,14 +102,7 @@ pub fn shell_policy_for(
     if mode == ApprovalMode::Yolo {
         return CheckPolicy::Allow;
     }
-    let action = ToolAction {
-        display: None,
-        command: argv.to_vec(),
-        tool: "shell".to_owned(),
-        summary: format!("watch check `{}`", argv.join(" ")),
-        risk: RiskLevel::Execute,
-    };
-    match policy.decision(&action) {
+    match policy.decision(&check_action(argv)) {
         PolicyAction::Allow => CheckPolicy::Allow,
         PolicyAction::Ask => CheckPolicy::Ask,
         PolicyAction::Deny => CheckPolicy::Deny,
@@ -954,8 +964,8 @@ impl AppState {
 
     /// Policy is evaluated again before every execution, exactly like a
     /// `shell` action: a later deny rule, or a chat switched from YOLO to
-    /// Custom, stops the check. Run-scoped "allow for this run" grants never
-    /// reach here. The scheduler never prompts.
+    /// Custom, stops the check. The chat's saved grants count like an allow
+    /// rule for non-destructive commands. The scheduler never prompts.
     async fn run_watch_check(
         &self,
         automation: &Automation,
@@ -1015,11 +1025,17 @@ impl AppState {
             }
         }
         let resolved = self.runtime_configuration(Some(root), None)?;
-        Ok(shell_policy_for(
-            ApprovalMode::Custom,
-            &resolved.config.approval,
-            argv,
-        ))
+        let verdict = shell_policy_for(ApprovalMode::Custom, &resolved.config.approval, argv);
+        // A rule that asks is answered by the chat's "Allow in this chat"
+        // grants (never for destructive variants). Deny rules were final above.
+        if verdict == CheckPolicy::Ask {
+            if let Some(thread_id) = thread_id {
+                if self.chat_grants_for(thread_id).covers(&check_action(argv)) {
+                    return Ok(CheckPolicy::Allow);
+                }
+            }
+        }
+        Ok(verdict)
     }
 
     /// Pauses an automation whose check may no longer run, with the reason

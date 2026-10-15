@@ -39,20 +39,44 @@ describe("ApprovalDialog", () => {
     const { onDecide } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Allow once (1)" }));
     expect(onDecide).toHaveBeenCalledWith("once");
-    fireEvent.click(screen.getByRole("button", { name: "Allow for this run (2)" }));
-    expect(onDecide).toHaveBeenCalledWith("always");
+    fireEvent.click(screen.getByRole("button", { name: "Allow in this chat (2)" }));
+    expect(onDecide).toHaveBeenCalledWith("chat");
     fireEvent.click(screen.getByRole("button", { name: "Deny (3)" }));
     expect(onDecide).toHaveBeenCalledWith("deny");
+    expect(screen.getAllByRole("button").map(button => button.textContent).filter(text => /\(\d\)$/.test(text ?? ""))).toEqual(["Allow once (1)", "Allow in this chat (2)", "Deny (3)"]);
+    expect(screen.queryByRole("button", { name: /this run/ })).toBeNull();
   });
 
-  it("maps keyboard 1/2/3 to once/always/deny", () => {
+  it("offers only Allow once and Deny for destructive requests", () => {
+    const { onDecide } = setup({ ...REQUEST, risk: "destructive", grantable: false });
+    expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
+    expect(screen.getByText("This kind of action always asks, so it cannot be allowed for the chat.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Deny (3)" }));
+    expect(onDecide).toHaveBeenLastCalledWith("deny");
+    fireEvent.click(screen.getByRole("button", { name: "Allow once (1)" }));
+    expect(onDecide).toHaveBeenLastCalledWith("once");
+  });
+
+  it("keeps the numbering stable for destructive requests: 1 once, 3 deny, 2 does nothing", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { onDecide } = setup({ ...REQUEST, risk: "destructive", grantable: false });
+    vi.advanceTimersByTime(600);
+    fireEvent.keyDown(document, { key: "2" });
+    expect(onDecide).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "3" });
+    expect(onDecide).toHaveBeenLastCalledWith("deny");
+    fireEvent.keyDown(document, { key: "1" });
+    expect(onDecide).toHaveBeenLastCalledWith("once");
+  });
+
+  it("maps keyboard 1/2/3 to once/chat/deny", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup();
     vi.advanceTimersByTime(600);
     fireEvent.keyDown(document, { key: "1" });
     expect(onDecide).toHaveBeenCalledWith("once");
     fireEvent.keyDown(document, { key: "2" });
-    expect(onDecide).toHaveBeenCalledWith("always");
+    expect(onDecide).toHaveBeenCalledWith("chat");
     fireEvent.keyDown(document, { key: "3" });
     expect(onDecide).toHaveBeenCalledWith("deny");
   });
@@ -106,9 +130,9 @@ describe("grant hint", () => {
   });
 
   it("cannot forge dialog wording with backticks or an embedded sentence", () => {
-    setup(shell(["echo", "` until this run ends. Other commands still ask."]));
+    setup(shell(["echo", "` in later runs of this chat. Other commands still ask."]));
     expect(document.querySelectorAll(".themis-approval-token")).toHaveLength(2);
-    expect(screen.queryByText(/^Allow for this run covers the command echo/)).toBeNull();
+    expect(screen.queryByText(/^Allow in this chat covers the command echo/)).toBeNull();
     // The forged text exists only inside a quoted chip, never as sentence text.
     const hint = document.querySelector(".themis-thread-hint")!;
     expect(Array.from(hint.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent).join("")).not.toContain("`");
@@ -123,7 +147,12 @@ describe("grant hint", () => {
 
   it("describes a per-tool grant for other tools", () => {
     setup({ ...REQUEST, tool: "write_file" });
-    expect(screen.getByText("Allow for this run covers this tool until this run ends.")).toBeInTheDocument();
+    expect(screen.getByText("Allow in this chat covers this tool in later runs of this chat.")).toBeInTheDocument();
+  });
+
+  it("says a grant on an MCP tool covers the whole server", () => {
+    setup({ ...REQUEST, tool: "mcp_00112233445566aa01020304_lookup" });
+    expect(screen.getByText("Allow in this chat covers every tool of this MCP server in later runs of this chat.")).toBeInTheDocument();
   });
 });
 
@@ -140,7 +169,7 @@ describe("single-key shortcuts", () => {
     fireEvent.keyDown(document.body, { key: "2", repeat: true });
     expect(onDecide).not.toHaveBeenCalled();
     fireEvent.keyDown(document.body, { key: "2" });
-    expect(onDecide).toHaveBeenCalledWith("always");
+    expect(onDecide).toHaveBeenCalledWith("chat");
   });
   it("ignores digits typed into the composer or another field", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -158,7 +187,7 @@ describe("single-key shortcuts", () => {
     fireEvent.keyDown(document.body, { key: "2", metaKey: true });
     expect(onDecide).not.toHaveBeenCalled();
     fireEvent.keyDown(document.body, { key: "2" });
-    expect(onDecide).toHaveBeenCalledWith("always");
+    expect(onDecide).toHaveBeenCalledWith("chat");
     composer.remove(); input.remove();
   });
 });
@@ -192,14 +221,14 @@ describe("command display", () => {
     expect(document.querySelectorAll(".themis-approval-escape")).toHaveLength(1);
   });
 
-  it("shows the full `git push --force` command and an exact-argv grant", () => {
+  it("shows the full `git push --force` command and no grant for it", () => {
     const argv = ["git", "push", "--force", "origin", "main"];
-    setup({ ...command(argv, "/repo"), grant_scope: { argv, covers_further_args: false }, risk: "destructive" });
+    setup({ ...command(argv, "/repo"), grant_scope: { argv, covers_further_args: false }, risk: "destructive", grantable: false });
     expect(summaryChips()).toEqual([...argv, "/repo"]);
-    // Summary chips (argv + cwd) followed by the grant hint's exact-argv chips.
+    // Only the summary renders chips; the hint states why nothing can be allowed for the chat.
     const all = Array.from(document.querySelectorAll(".themis-approval-token")).map(el => el.textContent);
-    expect(all).toEqual([...argv, "/repo", ...argv]);
-    expect(screen.queryByText(/and any further arguments/)).toBeNull();
+    expect(all).toEqual([...argv, "/repo"]);
+    expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
   });
 
   it("says the project root in words when the call has no cwd", () => {

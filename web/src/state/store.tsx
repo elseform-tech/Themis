@@ -32,6 +32,7 @@ import {
   listReviewItems,
   listSkills,
   listThreads,
+  onApprovalExpired,
   onApprovalRequest,
   onReviewItemAdded,
   onThreadChanged,
@@ -223,6 +224,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           eventVersion++;
           dispatch({ type: "approval/enqueued", request });
         });
+        const offExpired = await onApprovalExpired((expired) => {
+          if (cancelled) return;
+          eventVersion++;
+          dispatch({ type: "approval/expired", approvalId: expired.approval_id });
+        });
         const offThreadChanged = await onThreadChanged((change) => {
           if (cancelled) return;
           dispatch({ type: "thread/changed", change });
@@ -245,10 +251,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           offRecovery();
           offThread();
           offApproval();
+          offExpired();
           offReview();
           offThreadChanged();
         } else {
-          unlistens = [offThread, offApproval, offReview, offThreadChanged, offRecovery];
+          unlistens = [offThread, offApproval, offExpired, offReview, offThreadChanged, offRecovery];
           recoverState.current = () => { clearTimeout(retry); void recover(); };
           if (restoredSession.current) recoverState.current();
         }

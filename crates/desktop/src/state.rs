@@ -9,9 +9,11 @@ mod attachments;
 mod automation;
 mod background;
 mod changes;
+mod chat_grants;
 pub(crate) mod configuration;
 mod integration_tools;
 mod mcp;
+mod mcp_consent;
 mod plugins;
 mod preferences;
 mod projects;
@@ -130,6 +132,8 @@ struct RunSnapshot {
     skill_catalog: Vec<themis_core::skills::Skill>,
     /// Short conversational message without attachments: a checkpoint may wait one turn.
     short_reply: bool,
+    /// Started by an automation or watch: nobody is necessarily watching.
+    automation_run: bool,
 }
 
 /// One automation run in flight: the completion registry entry that lets the
@@ -206,6 +210,10 @@ struct AppStateInner {
     go_catalog: tokio::sync::RwLock<Vec<themis_core::providers::GoModel>>,
     worktrees_root: PathBuf,
     registry_path: PathBuf,
+    /// Per-chat approval grants (`chat_grants/<chat id>.json` in the app data dir).
+    chat_grants_dir: PathBuf,
+    /// Serializes agent management calls per plugin.
+    plugin_locks: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Live run count for the global concurrency gate.
     running_count: AtomicUsize,
     /// Boot reconciliation notes (recovered threads, pruned/left dirs).
@@ -369,6 +377,8 @@ impl AppState {
                 go_catalog: tokio::sync::RwLock::new(Vec::new()),
                 worktrees_root,
                 registry_path,
+                chat_grants_dir: app_dir.join(chat_grants::CHAT_GRANTS_DIR),
+                plugin_locks: std::sync::Mutex::new(HashMap::new()),
                 running_count: AtomicUsize::new(0),
                 reconcile_report: std::sync::Mutex::new(report),
                 skills: tokio::sync::RwLock::new(skills),

@@ -5,6 +5,7 @@ import type { PromptSkill } from './prompt';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   ApprovalDecision,
+  ApprovalExpired,
   ApprovalRequest,
   Automation,
   AutomationInput,
@@ -36,6 +37,7 @@ import type {
   ThreadChange,
 } from './types';
 import {
+  APPROVAL_EXPIRED_NAME,
   APPROVAL_REQUEST_NAME,
   REVIEW_ITEM_NAME,
   THREAD_CHANGED_NAME,
@@ -298,6 +300,12 @@ export function onApprovalRequest(
   cb: (request: ApprovalRequest) => void,
 ): Promise<UnlistenFn> {
   return listen<ApprovalRequest>(APPROVAL_REQUEST_NAME, (event) => cb(event.payload));
+}
+
+export function onApprovalExpired(
+  cb: (expired: ApprovalExpired) => void,
+): Promise<UnlistenFn> {
+  return listen<ApprovalExpired>(APPROVAL_EXPIRED_NAME, (event) => cb(event.payload));
 }
 
 export function onReviewItemAdded(

@@ -55,3 +55,10 @@ path = "fuzz_targets/social_request.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "chat_grants"
+path = "fuzz_targets/chat_grants.rs"
+test = false
+doc = false
+bench = false

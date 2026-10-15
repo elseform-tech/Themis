@@ -116,11 +116,19 @@ restrictions but cannot grant access.
 
 When a rule asks, the dialog shows the tool, summary, and risk:
 
-- **Once** — allow this call only.
-- **Allow for this run** — allow the same tool and risk for the rest of this run.
-- **Deny** — refuse; the agent sees the denial and adapts or stops.
+- **Allow once (1)** — allow this call only.
+- **Allow in this chat (2)** — allow the same command family (for example `cargo test`
+  with any further arguments, or every tool of one MCP server) now and in every later
+  run of this chat, including its automations. Other chats still ask.
+- **Deny (3)** — refuse; the agent sees the denial and adapts or stops.
 
-Approval timeouts deny pending requests. Reopening the app restores requests still pending in the running backend. With no explicit approval
+Destructive actions (force pushes, discarding changes, deleting files and similar) always
+ask: their dialog shows only **Allow once (1)** and **Deny (3)**. Deny rules always win over
+chat grants. Grants live in the chat's own file, `chat_grants/<chat id>.json` in the app data
+folder; to undo one, remove its entry (or delete the file) or start a new chat. Enabling an MCP
+connection is the permission to start it, so no start prompt appears.
+
+Approval timeouts deny pending requests and remove the dialog with a short note. Reopening the app restores requests still pending in the running backend. With no explicit approval
 configuration, **Ask before read tools** still controls reads. **YOLO** bypasses
 harness approval and tool restrictions, including the filesystem root and Git
 allowlist. Mode and configuration changes apply to the next run; active runs
@@ -311,7 +319,7 @@ these three levels in the same order for every theme.
 
 Discover cards show purpose, origin and compatibility. Install directly from a tile; compatibility is checked automatically. Partial packages list omitted components and offer Install supported parts. Unsupported-only packages have a disabled Install action and are hidden from the checked catalog unless Unsupported or All statuses is selected. Not checked and Connection not checked are explicit unknowns, not errors or verification badges. New catalog installs are global, with a spinner during installation and ✓ Installed afterwards. Marketplace, status and Personal/Public source dropdowns share one toolbar. Existing project imports retain their scope. Colored labels retain readable text; installed items filter by Enabled or Disabled. MCP setup and testing remain available through chat or the CLI.
 
-Automation editors keep destination, timezone and enabled/paused status visible above Advanced. Custom permissions explain their next-run scope; approval dialogs label reusable grants Allow for this run. The companion updates its mood without re-showing its native window. Keyboard focus includes editable instructions.
+Automation editors keep destination, timezone and enabled/paused status visible above Advanced. Custom permissions explain their next-run scope; approval dialogs label reusable grants Allow in this chat. The companion updates its mood without re-showing its native window. Keyboard focus includes editable instructions.
 
 After a backend event gap or reconnect, Themis reloads completed histories and pending approvals. Active streams keep their current live text and reconcile durable history when the run finishes; missed streaming fragments can remain absent until then. Failed recovery displays a warning and retries. Recovery preserves the selected conversation and local drafts.
 

@@ -9,7 +9,8 @@ export interface GoModel {
   effort_levels: string[];
 }
 export type RiskLevel = 'read' | 'write' | 'execute' | 'network' | 'destructive';
-export type ApprovalDecision = 'once' | 'always' | 'deny';
+/** `chat` is "Allow in this chat": allow now and for every later run of this chat. */
+export type ApprovalDecision = 'once' | 'chat' | 'deny';
 export type ThemeMode = 'dark' | 'light' | 'system';
 
 export interface ProjectInfo {
@@ -357,14 +358,22 @@ export type HistoryItem =
   | { kind: "event"; envelope: ThreadEventEnvelope }
   | { kind: "legacy"; message: PersistedMessage };
 
+/** The dialog for `approval_id` timed out and was denied; the UI removes it. */
+export interface ApprovalExpired {
+  thread_id: string;
+  approval_id: string;
+}
+
 export interface ApprovalRequest {
   thread_id: string;
   approval_id: string;
   tool: string;
   summary: string;
   risk: RiskLevel;
-  /** What "allow for this run" covers for shell, as raw argv tokens; render as data only. */
+  /** What "allow in this chat" covers for shell, as raw argv tokens; render as data only. */
   grant_scope?: { argv: string[]; covers_further_args: boolean };
+  /** False for destructive actions: they ask every time, so only Allow once and Deny are offered. */
+  grantable?: boolean;
   /** Structured command for shell/git approvals; show this instead of the joined summary. */
   command?: { argv: string[]; cwd?: string; background?: boolean };
 }
@@ -451,6 +460,7 @@ export interface SecretStatus {
 
 export const THREAD_EVENT_NAME = 'thread-event';
 export const APPROVAL_REQUEST_NAME = 'approval-request';
+export const APPROVAL_EXPIRED_NAME = 'approval-expired';
 export const REVIEW_ITEM_NAME = 'review-item-added';
 export const THREAD_CHANGED_NAME = 'thread-changed';
 

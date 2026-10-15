@@ -457,6 +457,7 @@ impl AppState {
                 plugins,
                 skill_catalog,
                 short_reply: themis_core::runtime::is_short_reply(&text, !attachments.is_empty()),
+                automation_run,
             }
         };
         if let Err(error) = self.inner.transcript.append_user_with_attachments(
@@ -579,6 +580,7 @@ impl AppState {
             }
         };
         drop(record);
+        self.forget_chat_grants(std::slice::from_ref(&thread_id));
         self.forget_background_tasks(&[thread_id]).await;
         self.persist_registry().await;
         Ok(())

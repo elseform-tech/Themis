@@ -48,7 +48,28 @@ impl AppState {
         );
         Ok(skills)
     }
+    /// A person's plugin action (UI, CLI): saving or enabling a connection is
+    /// their consent to start it.
     pub async fn plugin_action(&self, args: Value) -> Result<Value, String> {
+        self.plugin_action_with(args, None).await
+    }
+
+    /// An agent's plugin action. `approved_servers` are the command-based MCP
+    /// connections whose exact command the person approved in a dialog; no
+    /// other definition gains consent from an agent's change.
+    pub(super) async fn plugin_action_for_agent(
+        &self,
+        args: Value,
+        approved_servers: Vec<(String, Option<String>)>,
+    ) -> Result<Value, String> {
+        self.plugin_action_with(args, Some(approved_servers)).await
+    }
+
+    async fn plugin_action_with(
+        &self,
+        args: Value,
+        agent_approved: Option<Vec<(String, Option<String>)>>,
+    ) -> Result<Value, String> {
         let project = args["projectRoot"]
             .as_str()
             .map(canonical_project_dir)
@@ -314,6 +335,27 @@ impl AppState {
                     | "import_repository"
             )
         {
+            // Consent is recorded before connections refresh so approved
+            // definitions start now and everything else stays stopped.
+            let plugin_name = if action == "save" {
+                args["spec"]["name"].as_str().unwrap_or_default()
+            } else {
+                name
+            };
+            match &agent_approved {
+                Some(servers) => {
+                    self.record_mcp_consent(project.as_deref(), scope, plugin_name, servers)
+                }
+                None if matches!(action, "save" | "set_component_enabled" | "enable") => self
+                    .record_user_mcp_consent(
+                        project.as_deref(),
+                        scope,
+                        plugin_name,
+                        (action == "set_component_enabled" && args["kind"] == "mcp")
+                            .then(|| args["id"].as_str().unwrap_or_default()),
+                    ),
+                None => {}
+            }
             self.refresh_mcp_connections();
         }
         outcome.map_err(|e| format!("{e:#}\nDiagnostic operation: {operation_id}"))

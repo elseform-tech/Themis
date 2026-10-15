@@ -9,6 +9,10 @@ use themis_core::{
     tools::ApprovalHook,
 };
 
+/// Status shown when a definition has not been enabled by a person since it last changed.
+pub(super) const NEEDS_CONSENT: &str =
+    "Needs your approval: enable this connection yourself in Integrations or the CLI";
+
 pub(super) type Connections = HashMap<PathBuf, HashMap<String, Arc<McpEntry>>>;
 type SessionResult = Result<Arc<Session>, String>;
 pub(super) struct McpEntry {
@@ -53,12 +57,12 @@ impl AppState {
         plugin: &Plugin,
         name: &str,
         server: McpServer,
-        blocked: bool,
+        blocked: Option<&'static str>,
         retry: bool,
     ) -> Arc<McpEntry> {
         let key = format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name);
         let fingerprint = format!(
-            "{}:{blocked}:{}",
+            "{}:{blocked:?}:{}",
             plugin.revision,
             serde_json::to_string(&server).expect("MCP config serializes")
         );
@@ -87,10 +91,8 @@ impl AppState {
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(30),
                 themis_core::diagnostics::ACTIVE.scope(context, async {
-                    if blocked {
-                        return Err(
-                            "Connection blocked by project or user approval policy".to_owned()
-                        );
+                    if let Some(reason) = blocked {
+                        return Err(reason.to_owned());
                     }
                     store
                         .materialize(&[plugin], &root)
@@ -167,8 +169,15 @@ impl AppState {
                 // Explicit user/project denials still prevent startup.
                 let action = connections::startup_action(&plugin.skill_id(name), &server)
                     .map_err(|e| e.to_string())?;
+                // Only a definition a person approved may start; a deny rule still wins.
                 let blocked =
-                    policy.decision(&action) == themis_core::configuration::PolicyAction::Deny;
+                    if policy.decision(&action) == themis_core::configuration::PolicyAction::Deny {
+                        Some("Connection blocked by project or user approval policy")
+                    } else if !self.mcp_consented(root, plugin, name, &plugin.spec.mcp[name]) {
+                        Some(NEEDS_CONSENT)
+                    } else {
+                        None
+                    };
                 let entry = self.mcp_entry(root, plugin, name, server, blocked, retry);
                 statuses.insert(
                     format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name),
@@ -191,12 +200,27 @@ impl AppState {
         plugin: &Plugin,
         name: &str,
         approvals: Arc<dyn ApprovalHook>,
+        startup_rules: Option<&themis_core::configuration::ApprovalPolicy>,
     ) -> anyhow::Result<connections::McpTools> {
         let server = resolved_server(plugin, name, root);
-        connections::authorize_start(&plugin.skill_id(name), &server, approvals.as_ref())?;
-        let entry = self.mcp_entry(root, plugin, name, server, false, false);
+        // Enabling a connection is the consent to start it: the run asks
+        // nothing here, and only an explicit deny rule stops startup. YOLO
+        // callers pass no rules.
+        // A new or changed definition starts only after a person enabled it.
+        if !self.mcp_consented(root, plugin, name, &plugin.spec.mcp[name]) {
+            anyhow::bail!("MCP startup needs your approval");
+        }
+        if let Some(policy) = startup_rules {
+            if connections::startup_denied(&plugin.skill_id(name), &server, policy)? {
+                anyhow::bail!("MCP startup denied");
+            }
+        }
+        let entry = self.mcp_entry(root, plugin, name, server, None, false);
         let session = entry.ready().await.map_err(anyhow::Error::msg)?;
-        session.tools(&plugin.skill_id(name), approvals)
+        session.tools(
+            &super::mcp_consent::mcp_namespace(plugin, name, &plugin.spec.mcp[name]),
+            approvals,
+        )
     }
     pub(super) fn refresh_mcp_connections(&self) {
         let roots: HashSet<_> = self

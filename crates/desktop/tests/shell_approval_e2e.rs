@@ -1,5 +1,5 @@
 //! Command-scoped shell approvals through the shared app server, the `themis`
-//! CLI (unattended) and the interactive bridge (allow-for-this-run grants).
+//! CLI (unattended) and the interactive bridge (allow-in-this-chat grants).
 //! Shell calls are portable (`git`-free `echo`/`touch` are avoided on Windows
 //! by gating on unix).
 #![cfg(unix)]
@@ -128,7 +128,7 @@ async fn unattended_cli_runs_allowed_command_prefix_and_denies_other_shell_comma
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn allow_for_this_run_grant_is_scoped_to_the_approved_command() {
+async fn chat_grant_is_scoped_to_the_approved_command() {
     if !common::git_available() {
         return;
     }
@@ -166,7 +166,7 @@ async fn allow_for_this_run_grant_is_scoped_to_the_approved_command() {
                         .approve_action(
                             thread.id.clone(),
                             request.approval_id.clone(),
-                            ApprovalDecision::Always,
+                            ApprovalDecision::Chat,
                         )
                         .await
                         .unwrap();

@@ -64,6 +64,7 @@ async fn finish_run(
     tokio::time::timeout(RUN_TIMEOUT, async {
         while let Some(event) = rx.recv().await {
             match event {
+                TestEvent::Expired(expired) => panic!("unexpected expiry: {expired:?}"),
                 TestEvent::Approval(request) => {
                     state
                         .approve_action(

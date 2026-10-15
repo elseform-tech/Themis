@@ -309,6 +309,24 @@ describe("approval queue", () => {
     expect(s.approvals).toHaveLength(0);
   });
 
+  it("removes an expired approval and says once that the action was skipped", () => {
+    let s = withThread();
+    s = reducer(s, { type: "approval/enqueued", request: REQ });
+    s = reducer(s, { type: "approval/expired", approvalId: "a1" });
+    expect(s.approvals).toHaveLength(0);
+    expect(s.toasts.map(toast => toast.message)).toEqual(["Approval expired — the action was skipped"]);
+    // A repeat, or an id that is not shown, changes nothing.
+    expect(reducer(s, { type: "approval/expired", approvalId: "a1" })).toBe(s);
+  });
+
+  it("keeps other pending approvals when one expires", () => {
+    let s = withThread();
+    s = reducer(s, { type: "approval/enqueued", request: REQ });
+    s = reducer(s, { type: "approval/enqueued", request: { ...REQ, approval_id: "a2" } });
+    s = reducer(s, { type: "approval/expired", approvalId: "a1" });
+    expect(s.approvals.map(approval => approval.approval_id)).toEqual(["a2"]);
+  });
+
   it("ignores duplicate approval ids", () => {
     let s = withThread();
     s = reducer(s, { type: "approval/enqueued", request: REQ });

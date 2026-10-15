@@ -108,6 +108,7 @@ async fn finish_run(rx: &mut UnboundedReceiver<TestEvent>) {
     tokio::time::timeout(DEADLINE, async {
         loop {
             match rx.recv().await.expect("events") {
+                TestEvent::Expired(expired) => panic!("unexpected expiry: {expired:?}"),
                 TestEvent::Review(_) => return,
                 TestEvent::Approval(request) => panic!("unexpected approval: {request:?}"),
                 TestEvent::Thread(envelope) => {
@@ -445,6 +446,7 @@ async fn agent_creates_and_completes_a_watch_without_any_approval_in_custom_mode
     tokio::time::timeout(DEADLINE, async {
         loop {
             match rx.recv().await.expect("events") {
+                TestEvent::Expired(expired) => panic!("unexpected expiry: {expired:?}"),
                 TestEvent::Approval(request) => panic!("agent was asked to approve: {request:?}"),
                 TestEvent::Thread(envelope) => match envelope.event {
                     ThreadEvent::Finished { .. } => return,
@@ -536,6 +538,7 @@ async fn an_agent_check_command_needs_the_users_answer_in_a_git_project() {
     tokio::time::timeout(DEADLINE, async {
         loop {
             match rx.recv().await.expect("events") {
+                TestEvent::Expired(expired) => panic!("unexpected expiry: {expired:?}"),
                 TestEvent::Approval(request) => {
                     asked = Some(request.clone());
                     fx.state
@@ -560,8 +563,10 @@ async fn an_agent_check_command_needs_the_users_answer_in_a_git_project() {
     .expect("chat run finished");
     let asked = asked.expect("the user was asked about the exact command");
     assert_eq!(asked.tool, "shell");
+    // The exact argv travels as structured tokens, never as a joined string.
+    assert_eq!(asked.command.unwrap().argv, ["cat", "status.txt"]);
     assert!(
-        asked.summary.contains("cat status.txt"),
+        !asked.summary.contains("cat status.txt"),
         "{}",
         asked.summary
     );
@@ -588,6 +593,7 @@ async fn an_agent_check_command_is_refused_like_shell_outside_a_git_project() {
     tokio::time::timeout(DEADLINE, async {
         loop {
             match rx.recv().await.expect("events") {
+                TestEvent::Expired(expired) => panic!("unexpected expiry: {expired:?}"),
                 TestEvent::Approval(request) => panic!("no prompt expected: {request:?}"),
                 TestEvent::Thread(envelope) => match envelope.event {
                     ThreadEvent::Finished { .. } => return,
