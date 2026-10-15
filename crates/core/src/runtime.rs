@@ -2697,12 +2697,34 @@ async fn execute_call(
     let decision = if self_approving {
         Approval::AllowOnce
     } else {
+        // Saving one command-based MCP server is approved once, by the dialog
+        // that shows its exact argv and cannot be remembered for the chat.
+        let mcp_command = crate::tools::sole_mcp_command_save(name, &approval_args);
         let decision = approvals.approve(&ToolAction {
-            display: crate::tools::command_display_for_call(name, &approval_args),
-            tool: crate::tools::integration_approval_identity(name, &approval_args),
-            summary: summary.to_owned(),
-            risk: crate::tools::integration_risk(name, &approval_args)
-                .unwrap_or_else(|| risk_for(name)),
+            display: match &mcp_command {
+                Some((_, argv)) => Some(crate::tools::CommandDisplay {
+                    argv: argv.clone(),
+                    cwd: None,
+                    background: false,
+                }),
+                None => crate::tools::command_display_for_call(name, &approval_args),
+            },
+            tool: if mcp_command.is_some() {
+                crate::tools::MCP_COMMAND_APPROVAL_TOOL.to_owned()
+            } else {
+                crate::tools::integration_approval_identity(name, &approval_args)
+            },
+            summary: if mcp_command.is_some() {
+                "Enable a command-based MCP connection".to_owned()
+            } else {
+                summary.to_owned()
+            },
+            risk: if mcp_command.is_some() {
+                RiskLevel::Execute
+            } else {
+                crate::tools::integration_risk(name, &approval_args)
+                    .unwrap_or_else(|| risk_for(name))
+            },
             command: if name == "shell" {
                 crate::tools::shell_argv(&approval_args)
             } else {

@@ -60,7 +60,7 @@ impl AppState {
     pub(super) async fn plugin_action_for_agent(
         &self,
         args: Value,
-        approved_servers: Vec<String>,
+        approved_servers: Vec<(String, Option<String>)>,
     ) -> Result<Value, String> {
         self.plugin_action_with(args, Some(approved_servers)).await
     }
@@ -68,7 +68,7 @@ impl AppState {
     async fn plugin_action_with(
         &self,
         args: Value,
-        agent_approved: Option<Vec<String>>,
+        agent_approved: Option<Vec<(String, Option<String>)>>,
     ) -> Result<Value, String> {
         let project = args["projectRoot"]
             .as_str()

@@ -210,7 +210,7 @@ async fn definitions_that_a_person_did_not_enable_never_start() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn agent_enabling_a_command_server_asks_about_the_exact_command_every_time() {
+async fn agent_enabling_a_command_server_asks_once_about_the_exact_command_every_time() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let root = project.path().canonicalize().unwrap();
@@ -221,67 +221,83 @@ async fn agent_enabling_a_command_server_asks_about_the_exact_command_every_time
     let chat = new_chat(&state, &root).await;
     let store = PluginStore::new(data.path().to_owned(), Some(root.clone()));
 
-    // Declining the command saves nothing.
-    let (asked, _) = run_to_end(
-        &state,
-        &chat,
-        "enable it",
-        &[ApprovalDecision::Once, ApprovalDecision::Deny],
-    )
-    .await;
-    let command = asked
-        .iter()
-        .find(|a| a.tool == "manage_integrations_mcp_command")
-        .expect("command prompt");
+    // The call's only executable effect is that command: one dialog, exact argv.
+    // Declining saves nothing.
+    let (asked, _) = run_to_end(&state, &chat, "enable it", &[ApprovalDecision::Deny]).await;
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(asked[0].tool, "manage_integrations_mcp_command");
     assert_eq!(
-        command.command.as_ref().unwrap().argv,
+        asked[0].command.as_ref().unwrap().argv,
         ["sh", "-c", "exit 0"]
     );
-    assert!(!command.grantable, "never offered for the chat");
+    assert!(!asked[0].grantable, "never offered for the chat");
     assert!(
         store.list().unwrap().iter().all(|p| p.spec.name != "docs"),
         "denied: nothing saved"
     );
 
-    // "Allow in this chat" on that prompt is downgraded to once and not stored,
-    // and the approved command is the consent: it is not blocked from starting.
-    let (asked, _) = run_to_end(
-        &state,
-        &chat,
-        "enable it again",
-        &[ApprovalDecision::Once, ApprovalDecision::Chat],
-    )
-    .await;
-    assert_eq!(asked.len(), 2, "{asked:?}");
+    // "Allow in this chat" is downgraded to once and not stored; the answered
+    // dialog is the consent.
+    let (asked, _) = run_to_end(&state, &chat, "enable it again", &[ApprovalDecision::Chat]).await;
+    assert_eq!(asked.len(), 1);
     let shown = settled(&state, &root).await;
     assert!(!status(&shown).contains("Needs your approval"), "{shown}");
-    let grants = data.path().join("chat_grants").join(format!("{chat}.json"));
-    let stored = std::fs::read_to_string(grants).unwrap_or_default();
+    let stored =
+        std::fs::read_to_string(data.path().join("chat_grants").join(format!("{chat}.json")))
+            .unwrap_or_default();
     assert!(!stored.contains("mcp_command"), "{stored}");
 
-    // Changing the command of the enabled server asks again.
+    // The same definition again still asks (the dialog is never remembered).
     state
         .plugin_action(json!({"action":"delete","scope":"local","projectRoot":root,"name":"docs"}))
         .await
         .unwrap();
+    let (asked, _) = run_to_end(&state, &chat, "again", &[ApprovalDecision::Once]).await;
+    assert_eq!(asked.len(), 1);
+
+    // A changed command asks about the new argv.
     let changed = agent_saving(json!({"name":"docs","mcp":{"docs":{"command":"sh","args":["-c","exit 1"],"enabled":true}}})).await;
     common::use_mock_llm(&state, &changed).await;
-    let (asked, _) = run_to_end(
-        &state,
-        &chat,
-        "once more",
-        &[ApprovalDecision::Once, ApprovalDecision::Deny],
-    )
-    .await;
-    let again = asked
-        .iter()
-        .find(|a| a.tool == "manage_integrations_mcp_command")
-        .expect("a changed command asks again");
-    assert_eq!(again.command.as_ref().unwrap().argv, ["sh", "-c", "exit 1"]);
+    let (asked, _) = run_to_end(&state, &chat, "once more", &[ApprovalDecision::Deny]).await;
+    assert_eq!(
+        asked[0].command.as_ref().unwrap().argv,
+        ["sh", "-c", "exit 1"]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn yolo_agent_changes_keep_the_users_explicit_trust() {
+async fn a_call_with_other_executable_effects_keeps_both_dialogs_and_a_grant_cannot_cover_the_command(
+) {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().canonicalize().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let spec = json!({"name":"docs","hooks":[{"name":"h","event":"RunStart","command":"true","enabled":false}],
+        "mcp":{"docs":{"command":"sh","args":["-c","exit 0"],"enabled":true}}});
+    let llm = agent_saving(spec).await;
+    common::use_mock_llm(&state, &llm).await;
+    let chat = new_chat(&state, &root).await;
+    // The generic dialog is answered "Allow in this chat"; the command dialog still asks next time.
+    for round in 0..2 {
+        let (asked, _) = run_to_end(
+            &state,
+            &chat,
+            "enable it",
+            &[ApprovalDecision::Chat, ApprovalDecision::Deny],
+        )
+        .await;
+        let tools: Vec<&str> = asked.iter().map(|a| a.tool.as_str()).collect();
+        assert_eq!(
+            tools.last(),
+            Some(&"manage_integrations_mcp_command"),
+            "round {round}: {tools:?}"
+        );
+        assert!(tools.len() == 2 || round == 1, "{tools:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn yolo_agent_changes_apply_but_leave_the_connection_unconsented() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let root = project.path().canonicalize().unwrap();
@@ -296,6 +312,24 @@ async fn yolo_agent_changes_keep_the_users_explicit_trust() {
         .unwrap();
     let (asked, _) = run_to_end(&state, &chat, "enable it", &[]).await;
     assert!(asked.is_empty(), "YOLO is unchanged: {asked:?}");
+    assert!(
+        PluginStore::new(data.path().to_owned(), Some(root.clone()))
+            .list()
+            .unwrap()
+            .iter()
+            .any(|p| p.spec.name == "docs"),
+        "the change applied"
+    );
+    // YOLO was trust for that run only: a later Custom run does not start it.
     let shown = settled(&state, &root).await;
-    assert!(!status(&shown).contains("Needs your approval"), "{shown}");
+    assert!(status(&shown).contains("Needs your approval"), "{shown}");
+    state
+        .set_thread_approval_mode(chat.clone(), ApprovalMode::Custom)
+        .await
+        .unwrap();
+    let (_, notes) = run_to_end(&state, &chat, "hello", &[]).await;
+    assert!(
+        notes.iter().any(|n| n.contains("not been enabled by you")),
+        "{notes:?}"
+    );
 }

@@ -217,7 +217,10 @@ impl AppState {
         }
         let entry = self.mcp_entry(root, plugin, name, server, None, false);
         let session = entry.ready().await.map_err(anyhow::Error::msg)?;
-        session.tools(&plugin.skill_id(name), approvals)
+        session.tools(
+            &super::mcp_consent::mcp_namespace(plugin, name, &plugin.spec.mcp[name]),
+            approvals,
+        )
     }
     pub(super) fn refresh_mcp_connections(&self) {
         let roots: HashSet<_> = self

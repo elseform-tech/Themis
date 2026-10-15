@@ -112,9 +112,11 @@ impl ToolRuntime for ManagementTool {
         if own_chat_automation {
             self.own_chat_policy(&args)?;
         } else {
-            themis_core::tools::check_approval_permitted(
-                self.approvals.as_ref(),
-                &ToolAction {
+            let action = match themis_core::tools::sole_mcp_command_save(self.name, &args) {
+                // One command-based server and nothing else executable: a single
+                // dialog with the exact argv, never remembered for the chat.
+                Some((_, argv)) => mcp_command_action(argv),
+                None => ToolAction {
                     display: None,
                     command: Vec::new(),
                     tool: themis_core::tools::integration_approval_identity(self.name, &args),
@@ -126,7 +128,8 @@ impl ToolRuntime for ManagementTool {
                     risk: themis_core::tools::integration_risk(self.name, &args)
                         .expect("known management tool"),
                 },
-            )?;
+            };
+            themis_core::tools::check_approval_permitted(self.approvals.as_ref(), &action)?;
         }
         if self.name == "manage_automations" {
             return self.automation_action(args).await.map_err(error);
@@ -140,32 +143,85 @@ impl ToolRuntime for ManagementTool {
         if args["action"].as_str().unwrap_or("list") == "list" {
             args["action"] = "inventory".into();
         }
+        // One management call per plugin at a time: the definition a dialog
+        // shows is then the one that is saved.
+        let plugin_name = if args["action"] == "save" {
+            args["spec"]["name"].as_str()
+        } else {
+            args["name"].as_str()
+        }
+        .unwrap_or_default()
+        .to_owned();
+        let lock = self
+            .state
+            .plugin_call_lock(args["scope"].as_str().unwrap_or("global"), &plugin_name);
+        let _serialized = lock.lock().await;
         let effects = self.mcp_command_effects(&args)?;
-        let approved = self.approve_mcp_command(&effects)?;
+        let sole = themis_core::tools::sole_mcp_command_save(self.name, &args).is_some();
+        let approved = self.approve_mcp_command(&effects, sole)?;
         self.state
             .plugin_action_for_agent(args, approved)
             .await
             .map_err(error)
     }
 }
+
+/// The dialog for launching a new or changed MCP command: exact argv as data.
+fn mcp_command_action(argv: Vec<String>) -> ToolAction {
+    ToolAction {
+        display: Some(themis_core::tools::CommandDisplay {
+            argv,
+            cwd: None,
+            background: false,
+        }),
+        command: Vec::new(),
+        tool: themis_core::tools::MCP_COMMAND_APPROVAL_TOOL.to_owned(),
+        summary: "Enable a command-based MCP connection".to_owned(),
+        risk: themis_core::tools::RiskLevel::Execute,
+    }
+}
+
+/// (server name, server, resource files, executable files) of a plugin.
+type StoredMcp = (
+    String,
+    McpServer,
+    std::collections::BTreeMap<String, String>,
+    Vec<String>,
+);
+
+/// A command-based server this call would newly enable or change, with the
+/// digest of the definition (and resources) the dialog is about.
+struct McpEffect {
+    name: String,
+    server: McpServer,
+    digest: Option<String>,
+}
 impl ManagementTool {
     /// Command-based MCP connections this call would newly enable or change:
     /// the app launches their command on the next start, so the person must
     /// approve that exact command. Imports, installs and updates leave
     /// connections disabled or unapproved and need no such prompt.
-    fn mcp_command_effects(&self, args: &Value) -> Result<Vec<(String, McpServer)>, ToolCallError> {
+    fn mcp_command_effects(&self, args: &Value) -> Result<Vec<McpEffect>, ToolCallError> {
         let scope = args["scope"].as_str().unwrap_or("global");
-        let wanted: Vec<(String, McpServer)> = match args["action"].as_str().unwrap_or("list") {
+        // (server name, server, resource files, executable files) after the call.
+        let wanted: Vec<StoredMcp> = match args["action"].as_str().unwrap_or("list") {
             "save" => {
-                let spec: Result<themis_core::plugins::PluginSpec, _> =
-                    serde_json::from_value(args["spec"].clone());
-                spec.map(|spec| {
-                    spec.mcp
-                        .into_iter()
-                        .filter(|(_, server)| server.enabled)
-                        .collect()
-                })
-                .unwrap_or_default()
+                serde_json::from_value::<themis_core::plugins::PluginSpec>(args["spec"].clone())
+                    .map(|spec| {
+                        spec.mcp
+                            .into_iter()
+                            .filter(|(_, server)| server.enabled)
+                            .map(|(name, server)| {
+                                (
+                                    name,
+                                    server,
+                                    spec.files.clone(),
+                                    spec.executable_files.clone(),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
             }
             "set_component_enabled" if args["kind"] == "mcp" && args["enabled"] == true => {
                 self.stored_mcp(scope, args["name"].as_str(), args["id"].as_str())
@@ -177,20 +233,31 @@ impl ManagementTool {
             .project
             .canonicalize()
             .unwrap_or_else(|_| self.project.clone());
-        let root = root.as_path();
         let plugin = if args["action"] == "save" {
             args["spec"]["name"].as_str()
         } else {
             args["name"].as_str()
         }
         .unwrap_or_default();
-        let effects: Vec<(String, McpServer)> = wanted
+        let effects: Vec<McpEffect> = wanted
             .into_iter()
-            .filter(|(_, server)| server.command.is_some() && server.enabled)
-            .filter(|(name, server)| {
-                !self
-                    .state
-                    .mcp_definition_consented(root, scope, plugin, name, server)
+            .filter(|(_, server, _, _)| server.command.is_some() && server.enabled)
+            .map(|(name, server, files, executable)| {
+                let digest = super::mcp_consent::definition_digest(&server, &files, &executable);
+                McpEffect {
+                    name,
+                    server,
+                    digest,
+                }
+            })
+            .filter(|effect| {
+                !self.state.mcp_definition_consented(
+                    &root,
+                    scope,
+                    plugin,
+                    &effect.name,
+                    effect.digest.as_deref(),
+                )
             })
             .collect();
         if effects.len() > 1 {
@@ -201,60 +268,65 @@ impl ManagementTool {
         Ok(effects)
     }
 
+    #[allow(clippy::type_complexity)]
     fn stored_mcp(
         &self,
         scope: &str,
         plugin: Option<&str>,
         id: Option<&str>,
-    ) -> Vec<(String, McpServer)> {
+    ) -> Vec<(
+        String,
+        McpServer,
+        std::collections::BTreeMap<String, String>,
+        Vec<String>,
+    )> {
         self.state
             .plugin_store(Some(self.project.clone()))
             .list()
             .unwrap_or_default()
             .into_iter()
             .filter(|p| p.scope == scope && Some(p.spec.name.as_str()) == plugin)
-            .flat_map(|p| p.spec.mcp.into_iter())
-            .filter(|(name, _)| id.is_none_or(|id| id == name))
-            .map(|(name, mut server)| {
-                server.enabled = true;
-                (name, server)
+            .flat_map(|p| {
+                let (files, executable) = (p.spec.files.clone(), p.spec.executable_files.clone());
+                p.spec.mcp.into_iter().map(move |(name, mut server)| {
+                    server.enabled = true;
+                    (name, server, files.clone(), executable.clone())
+                })
             })
+            .filter(|(name, ..)| id.is_none_or(|id| id == name))
             .collect()
     }
 
     /// Asks about the exact command, every time and never remembered for the
-    /// chat. YOLO is the person's explicit trust and an allow rule is theirs
-    /// too; a deny rule refuses. Returns the connection names now approved.
+    /// chat; a deny rule refuses. Returns the connections a person approved,
+    /// with the digest the dialog was about. YOLO and allow rules apply the
+    /// change but record no consent: the connection then waits for a person to
+    /// enable it (`sole`: the runtime's dialog already asked).
     fn approve_mcp_command(
         &self,
-        effects: &[(String, McpServer)],
-    ) -> Result<Vec<String>, ToolCallError> {
-        let Some((name, server)) = effects.first() else {
+        effects: &[McpEffect],
+        sole: bool,
+    ) -> Result<Vec<(String, Option<String>)>, ToolCallError> {
+        let Some(effect) = effects.first() else {
             return Ok(Vec::new());
         };
-        let command = server.command.clone().unwrap_or_default();
-        let action = ToolAction {
-            display: Some(themis_core::tools::CommandDisplay {
-                argv: std::iter::once(command)
-                    .chain(server.args.iter().cloned())
-                    .collect(),
-                cwd: None,
-                background: false,
-            }),
-            command: Vec::new(),
-            tool: themis_core::tools::MCP_COMMAND_APPROVAL_TOOL.to_owned(),
-            summary: "Enable a command-based MCP connection".to_owned(),
-            risk: themis_core::tools::RiskLevel::Execute,
-        };
-        let allowed = if self.run.mode == ApprovalMode::Yolo {
-            true
+        let command = effect.server.command.clone().unwrap_or_default();
+        let action = mcp_command_action(
+            std::iter::once(command)
+                .chain(effect.server.args.iter().cloned())
+                .collect(),
+        );
+        let (allowed, answered) = if self.run.mode == ApprovalMode::Yolo {
+            (true, false)
         } else {
             match self.run.policy.decision(&action) {
-                PolicyAction::Allow => true,
-                PolicyAction::Deny => false,
-                PolicyAction::Ask => {
-                    self.run.interactive.approve(&action) != themis_core::tools::Approval::Deny
-                }
+                PolicyAction::Allow => (true, false),
+                PolicyAction::Deny => (false, false),
+                PolicyAction::Ask if sole => (true, true),
+                PolicyAction::Ask => (
+                    self.run.interactive.approve(&action) != themis_core::tools::Approval::Deny,
+                    true,
+                ),
             }
         };
         if !allowed {
@@ -262,7 +334,11 @@ impl ManagementTool {
                 "approval denied for 'manage_integrations': the MCP connection command was not approved",
             ));
         }
-        Ok(vec![name.clone()])
+        Ok(if answered {
+            vec![(effect.name.clone(), effect.digest.clone())]
+        } else {
+            Vec::new()
+        })
     }
 
     /// Own-chat lifecycle never prompts, but the captured policy still applies:

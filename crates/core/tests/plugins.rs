@@ -743,3 +743,28 @@ fn materialization_preserves_open_resource_readers() {
         "print('replacement')"
     );
 }
+
+#[test]
+fn only_a_lone_command_server_collapses_to_the_single_argv_dialog() {
+    use themis_core::tools::sole_mcp_command_save;
+    let save = |spec: serde_json::Value| json!({"action":"save","spec":spec});
+    let one =
+        save(json!({"name":"d","mcp":{"a":{"command":"node","args":["s.js"],"enabled":true}}}));
+    assert_eq!(
+        sole_mcp_command_save("manage_integrations", &one)
+            .unwrap()
+            .1,
+        ["node", "s.js"]
+    );
+    let two = save(
+        json!({"name":"d","mcp":{"a":{"command":"x","enabled":true},"b":{"command":"y","enabled":true}}}),
+    );
+    assert!(sole_mcp_command_save("manage_integrations", &two).is_none());
+    let hook = save(
+        json!({"name":"d","hooks":[{"name":"h","event":"RunStart","command":"true","enabled":false}],"mcp":{"a":{"command":"x","enabled":true}}}),
+    );
+    assert!(sole_mcp_command_save("manage_integrations", &hook).is_none());
+    let remote = save(json!({"name":"d","mcp":{"a":{"url":"http://localhost:1","enabled":true}}}));
+    assert!(sole_mcp_command_save("manage_integrations", &remote).is_none());
+    assert!(sole_mcp_command_save("save_skill", &one).is_none());
+}

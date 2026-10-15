@@ -26,7 +26,7 @@ subcommand only for a short list of subcommand-style CLIs such as `cargo test`, 
 full argv for everything else. Destructive variants such as `git push --force`, `git reset
 --hard` or `cargo publish` and the destructive risk class are never remembered: they ask
 every time and the dialog offers only Once and **Deny**.
-Chat grants cannot bypass policy denies. Approval timeouts (default five minutes, after which
+Chat grants cannot bypass policy denies. They (and the MCP start consent in `mcp_consent.json`) are plain files in app data without integrity protection; an approved shell program can edit them, the same limit as the plugin registry. Approval timeouts (default five minutes, after which
 the dialog is removed with a short note), lost clients, and unattended CLI requests deny. The interactive hook denies
 non-read actions in non-Git projects; explicit allow policy or YOLO bypasses
 that interactive restriction. A non-Git folder is not an OS-enforced read-only

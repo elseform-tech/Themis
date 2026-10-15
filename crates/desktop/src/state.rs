@@ -212,6 +212,8 @@ struct AppStateInner {
     registry_path: PathBuf,
     /// Per-chat approval grants (`chat_grants/<chat id>.json` in the app data dir).
     chat_grants_dir: PathBuf,
+    /// Serializes agent management calls per plugin.
+    plugin_locks: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Live run count for the global concurrency gate.
     running_count: AtomicUsize,
     /// Boot reconciliation notes (recovered threads, pruned/left dirs).
@@ -376,6 +378,7 @@ impl AppState {
                 worktrees_root,
                 registry_path,
                 chat_grants_dir: app_dir.join(chat_grants::CHAT_GRANTS_DIR),
+                plugin_locks: std::sync::Mutex::new(HashMap::new()),
                 running_count: AtomicUsize::new(0),
                 reconcile_report: std::sync::Mutex::new(report),
                 skills: tokio::sync::RwLock::new(skills),
