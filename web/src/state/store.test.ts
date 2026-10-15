@@ -120,6 +120,19 @@ describe("thread lifecycle events", () => {
     expect(last(s).checkpoint).toEqual({ before: 91, after: 31 });
     expect(s.contextBudgets[THREAD.id]?.used_tokens).toBe(4000);
   });
+
+  it("measures the divider from the budget that triggered the checkpoint, not the previous turn", () => {
+    const budget = (used: number) => ({ budget_tokens: 24000, usable_tokens: 10000, used_tokens: used, tool_definition_tokens: 3000, output_reserve_tokens: 3000, safety_margin_tokens: 480, maintenance_at_tokens: 8300, compaction_at_tokens: 9000, compaction_soon: false, breakdown: { system: 1000, checkpoint: 0, attachments: 0, conversation: used - 1000, tool_activity: 0 } });
+    let s = withThread();
+    s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 10 }));
+    s = applyThreadEvent(s, envelope({ kind: "context_budget", budget: budget(5500) }));
+    // The runtime reports the size with this turn's input before it compacts.
+    s = applyThreadEvent(s, envelope({ kind: "context_budget", budget: budget(9900) }));
+    s = applyThreadEvent(s, envelope({ kind: "context_compacting" }));
+    s = applyThreadEvent(s, envelope({ kind: "context_checkpoint", summary: "state" }));
+    s = applyThreadEvent(s, envelope({ kind: "context_budget", budget: budget(5700) }));
+    expect(last(s).checkpoint).toEqual({ before: 99, after: 57 });
+  });
   it("attaches the files a turn changed to that turn's final reply only", () => {
     let s = withThread();
     s = applyThreadEvent(s, envelope({ kind: "started", task: "edit", max_turns: 3 }));

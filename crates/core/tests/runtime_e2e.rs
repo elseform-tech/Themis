@@ -2254,3 +2254,28 @@ async fn shell_call_with_whole_command_line_self_corrects_from_the_error() {
     assert!(finished[0].1.contains("command: \"git\""), "{finished:?}");
     assert!(finished[1].0, "corrected call must succeed: {finished:?}");
 }
+
+#[tokio::test]
+async fn a_checkpoint_is_preceded_by_the_budget_that_triggered_it() {
+    // The divider reads "before → after" from the budgets around a checkpoint, so the
+    // runtime reports the triggering size (this turn's input included) before compacting.
+    let run = calibration_run(Some(3.0), 0).await;
+    assert!(checkpoints(&run.events) >= 1);
+    let compacting = run
+        .events
+        .iter()
+        .position(|event| matches!(event, RunEvent::ContextCompacting))
+        .expect("a checkpoint starts");
+    let RunEvent::ContextBudget(before) = &run.events[compacting - 1] else {
+        panic!("a budget immediately precedes compaction");
+    };
+    assert!(before.used_tokens > before.compaction_at_tokens);
+    let after = run.events[compacting..]
+        .iter()
+        .find_map(|event| match event {
+            RunEvent::ContextBudget(budget) => Some(budget),
+            _ => None,
+        })
+        .expect("a budget follows the checkpoint");
+    assert!(after.used_tokens < before.used_tokens);
+}
