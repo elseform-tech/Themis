@@ -1,0 +1,1426 @@
+{
+  "trials_requested": 3,
+  "trials_with_data": 3,
+  "cases": [
+    "parked-budget-recipe",
+    "parked-trip-bugfix"
+  ],
+  "invalid_runs": [],
+  "aggregate": {
+    "summary_only_retention": {
+      "mean": 0.8958,
+      "sd": 0.0722,
+      "min": 0.8125,
+      "max": 0.9375,
+      "n": 3
+    },
+    "tail_retention": {
+      "mean": 1.0,
+      "sd": 0.0,
+      "min": 1.0,
+      "max": 1.0,
+      "n": 3
+    },
+    "overall_retention": {
+      "mean": 0.9167,
+      "sd": 0.0577,
+      "min": 0.85,
+      "max": 0.95,
+      "n": 3
+    },
+    "summary_only_probes": {
+      "mean": 16.0,
+      "sd": 0.0,
+      "min": 16,
+      "max": 16,
+      "n": 3
+    },
+    "tail_probes": {
+      "mean": 4.0,
+      "sd": 0.0,
+      "min": 4,
+      "max": 4,
+      "n": 3
+    },
+    "stale_fact_rate": null,
+    "forgot_rate": {
+      "mean": 0.0667,
+      "sd": 0.0764,
+      "min": 0.0,
+      "max": 0.15,
+      "n": 3
+    },
+    "wrong_answers": {
+      "mean": 0.3333,
+      "sd": 0.5774,
+      "min": 0,
+      "max": 1,
+      "n": 3
+    },
+    "invented_decoy_answers": {
+      "mean": 0.0,
+      "sd": 0.0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "probe_errors": {
+      "mean": 0.0,
+      "sd": 0.0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "compactions": {
+      "mean": 5.0,
+      "sd": 0.0,
+      "min": 5,
+      "max": 5,
+      "n": 3
+    },
+    "compactions_failed": {
+      "mean": 0.0,
+      "sd": 0.0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "compaction_ms_mean": {
+      "mean": 17396.8,
+      "sd": 4753.7142,
+      "min": 14575.8,
+      "max": 22885.2,
+      "n": 3
+    },
+    "tokens_before_mean": {
+      "mean": 15462.8667,
+      "sd": 91.6642,
+      "min": 15401.2,
+      "max": 15568.2,
+      "n": 3
+    },
+    "tokens_after_mean": {
+      "mean": 8736.2,
+      "sd": 132.7126,
+      "min": 8639.0,
+      "max": 8887.4,
+      "n": 3
+    },
+    "provider_requests_per_compaction": {
+      "mean": 1.0667,
+      "sd": 0.1155,
+      "min": 1.0,
+      "max": 1.2,
+      "n": 3
+    },
+    "by_category": {
+      "decision": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "identifier": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "next_action": null,
+      "parked_topic": {
+        "mean": 0.881,
+        "sd": 0.0825,
+        "min": 0.7857,
+        "max": 0.9286,
+        "n": 3
+      },
+      "tool_result": null
+    },
+    "by_category_overall": {
+      "decision": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "identifier": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "next_action": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "parked_topic": {
+        "mean": 0.8889,
+        "sd": 0.077,
+        "min": 0.8,
+        "max": 0.9333,
+        "n": 3
+      },
+      "tool_result": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      }
+    },
+    "by_position": {
+      "early": {
+        "mean": 0.8485,
+        "sd": 0.105,
+        "min": 0.7273,
+        "max": 0.9091,
+        "n": 3
+      },
+      "middle": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "late": null
+    },
+    "by_position_overall": {
+      "early": {
+        "mean": 0.8485,
+        "sd": 0.105,
+        "min": 0.7273,
+        "max": 0.9091,
+        "n": 3
+      },
+      "middle": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "late": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      }
+    },
+    "tail_split_available": true
+  },
+  "per_trial": [
+    {
+      "summary_only_retention": 0.8125,
+      "tail_retention": 1.0,
+      "overall_retention": 0.85,
+      "summary_only_probes": 16,
+      "tail_probes": 4,
+      "tail_split_available": true,
+      "by_category": {
+        "decision": 1.0,
+        "identifier": 1.0,
+        "next_action": null,
+        "parked_topic": 0.7857142857142857,
+        "tool_result": null
+      },
+      "by_position": {
+        "early": 0.7272727272727273,
+        "middle": 1.0,
+        "late": null
+      },
+      "by_category_overall": {
+        "decision": 1.0,
+        "identifier": 1.0,
+        "next_action": 1.0,
+        "parked_topic": 0.8,
+        "tool_result": 1.0
+      },
+      "by_position_overall": {
+        "early": 0.7272727272727273,
+        "middle": 1.0,
+        "late": 1.0
+      },
+      "stale_fact_rate": null,
+      "forgot_rate": 0.15,
+      "wrong_answers": 0,
+      "invented_decoy_answers": 0,
+      "decoy_probes": 2,
+      "probe_errors": 0,
+      "compactions": 5,
+      "compactions_failed": 0,
+      "compaction_ms_mean": 14575.8,
+      "tokens_before_mean": 15419.2,
+      "tokens_after_mean": 8682.2,
+      "provider_requests_per_compaction": 1.0
+    },
+    {
+      "summary_only_retention": 0.9375,
+      "tail_retention": 1.0,
+      "overall_retention": 0.95,
+      "summary_only_probes": 16,
+      "tail_probes": 4,
+      "tail_split_available": true,
+      "by_category": {
+        "decision": 1.0,
+        "identifier": 1.0,
+        "next_action": null,
+        "parked_topic": 0.9285714285714286,
+        "tool_result": null
+      },
+      "by_position": {
+        "early": 0.9090909090909091,
+        "middle": 1.0,
+        "late": null
+      },
+      "by_category_overall": {
+        "decision": 1.0,
+        "identifier": 1.0,
+        "next_action": 1.0,
+        "parked_topic": 0.9333333333333333,
+        "tool_result": 1.0
+      },
+      "by_position_overall": {
+        "early": 0.9090909090909091,
+        "middle": 1.0,
+        "late": 1.0
+      },
+      "stale_fact_rate": null,
+      "forgot_rate": 0.0,
+      "wrong_answers": 1,
+      "invented_decoy_answers": 0,
+      "decoy_probes": 2,
+      "probe_errors": 0,
+      "compactions": 5,
+      "compactions_failed": 0,
+      "compaction_ms_mean": 14729.4,
+      "tokens_before_mean": 15401.2,
+      "tokens_after_mean": 8639.0,
+      "provider_requests_per_compaction": 1.0
+    },
+    {
+      "summary_only_retention": 0.9375,
+      "tail_retention": 1.0,
+      "overall_retention": 0.95,
+      "summary_only_probes": 16,
+      "tail_probes": 4,
+      "tail_split_available": true,
+      "by_category": {
+        "decision": 1.0,
+        "identifier": 1.0,
+        "next_action": null,
+        "parked_topic": 0.9285714285714286,
+        "tool_result": null
+      },
+      "by_position": {
+        "early": 0.9090909090909091,
+        "middle": 1.0,
+        "late": null
+      },
+      "by_category_overall": {
+        "decision": 1.0,
+        "identifier": 1.0,
+        "next_action": 1.0,
+        "parked_topic": 0.9333333333333333,
+        "tool_result": 1.0
+      },
+      "by_position_overall": {
+        "early": 0.9090909090909091,
+        "middle": 1.0,
+        "late": 1.0
+      },
+      "stale_fact_rate": null,
+      "forgot_rate": 0.05,
+      "wrong_answers": 0,
+      "invented_decoy_answers": 0,
+      "decoy_probes": 2,
+      "probe_errors": 0,
+      "compactions": 5,
+      "compactions_failed": 0,
+      "compaction_ms_mean": 22885.2,
+      "tokens_before_mean": 15568.2,
+      "tokens_after_mean": 8887.4,
+      "provider_requests_per_compaction": 1.2
+    }
+  ],
+  "per_case_retention": {
+    "parked-budget-recipe": {
+      "mean": 1.0,
+      "trials": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "parked-trip-bugfix": {
+      "mean": 0.8148,
+      "trials": [
+        0.6666666666666666,
+        0.8888888888888888,
+        0.8888888888888888
+      ]
+    }
+  },
+  "details": [
+    {
+      "trial": 0,
+      "case": "parked-budget-recipe",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 15517,
+          "error": null,
+          "installed": true,
+          "records_before": 28,
+          "requests": 1,
+          "tokens_after": 8488,
+          "tokens_before": 11446
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 18412,
+          "error": null,
+          "installed": true,
+          "records_before": 62,
+          "requests": 1,
+          "tokens_after": 9093,
+          "tokens_before": 20381
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        41,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62
+      ],
+      "rows": [
+        {
+          "case": "parked-budget-recipe",
+          "id": "rent",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly rent in the budget is $1450, as specified in the budget script constants shown in the conversation context.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "savings",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The savings target is set at 15% of income, which amounts to $630 per month.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "income",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly income is $4,200.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "diet",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The recipe uses a lactose-free substitute (oat milk + lemon juice) instead of buttermilk.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "substitute",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The buttermilk substitute chosen was 1 cup oat milk plus 1 tablespoon lemon juice per cup of buttermilk, rested 5 minutes.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "flour",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The final recipe uses 2 cups of flour.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "A hand-thrown mug set.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_date",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "November 9",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_budget",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The gift budget is $80.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "test_fail",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The test expected 640 but 15% of 4200 is 630, so the test constant was wrong.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "oven",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The next step is to add a CSV export for the monthly plan.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 0,
+      "case": "parked-trip-bugfix",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 10907,
+          "error": null,
+          "installed": true,
+          "records_before": 18,
+          "requests": 1,
+          "tokens_after": 8598,
+          "tokens_before": 8706
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 12879,
+          "error": null,
+          "installed": true,
+          "records_before": 50,
+          "requests": 1,
+          "tokens_after": 8526,
+          "tokens_before": 24162
+        },
+        {
+          "chunk": 2,
+          "duration_ms": 15164,
+          "error": null,
+          "installed": true,
+          "records_before": 58,
+          "requests": 1,
+          "tokens_after": 8706,
+          "tokens_before": 12401
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58
+      ],
+      "rows": [
+        {
+          "case": "parked-trip-bugfix",
+          "id": "dates",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "budget",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "allergy",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The peanut allergy must be remembered for the trip.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "hotel",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "neighborhood",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Alfama",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "bug_func",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The rounding bug was in the `round_cents` function in `invoicer/totals.py`.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "rounding",
+          "category": "decision",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "ROUND_HALF_EVEN (banker's rounding) — `round_cents` in `invoicer/totals.py` was changed from `ROUND_HALF_UP` to `ROUND_HALF_EVEN` via `amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_EVEN)`.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "park_state",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The trip planning was parked/queued as the next active task—no itinerary work or bookings were being made while the bug was being fixed.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "flight",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Pending for Lisbon: book the flights and reserve a seafood dinner in Alfama, keeping the peanut allergy in mind when choosing restaurants.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "parked-budget-recipe",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 19324,
+          "error": null,
+          "installed": true,
+          "records_before": 28,
+          "requests": 1,
+          "tokens_after": 8500,
+          "tokens_before": 11446
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 11918,
+          "error": null,
+          "installed": true,
+          "records_before": 62,
+          "requests": 1,
+          "tokens_after": 9065,
+          "tokens_before": 20393
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        41,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62
+      ],
+      "rows": [
+        {
+          "case": "parked-budget-recipe",
+          "id": "rent",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "1450",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "savings",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The savings target is 15 percent of income, which comes out to $630.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "income",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly income is $4,200.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "diet",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Lactose intolerance affects the recipe.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "substitute",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "1 cup oat milk plus 1 tablespoon lemon juice per cup of buttermilk, rested 5 minutes.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "flour",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The final recipe uses **2 cups of flour**.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "You chose a hand-thrown mug set for the sister.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_date",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The sister's birthday is on November 9.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_budget",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "$80.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "test_fail",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "test_savings_goal failed because it expected a savings of 640 while 15 percent of the 4200 income computes to 630.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "oven",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The next step on the budget is to implement a CSV export for the monthly plan.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "parked-trip-bugfix",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 9766,
+          "error": null,
+          "installed": true,
+          "records_before": 18,
+          "requests": 1,
+          "tokens_after": 8551,
+          "tokens_before": 8706
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 19430,
+          "error": null,
+          "installed": true,
+          "records_before": 50,
+          "requests": 1,
+          "tokens_after": 8471,
+          "tokens_before": 24115
+        },
+        {
+          "chunk": 2,
+          "duration_ms": 13209,
+          "error": null,
+          "installed": true,
+          "records_before": 58,
+          "requests": 1,
+          "tokens_after": 8608,
+          "tokens_before": 12346
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58
+      ],
+      "rows": [
+        {
+          "case": "parked-trip-bugfix",
+          "id": "dates",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The Lisbon trip is March 14–19.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "budget",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The total trip budget is 1800 EUR.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "allergy",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Peanut allergy.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "hotel",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Hotel Miradouro Verde was penciled in at 96 EUR per night.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "neighborhood",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Alfama",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "bug_func",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The function `round_cents` in `invoicer/totals.py` had the rounding bug.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "rounding",
+          "category": "decision",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The fix uses ROUND_HALF_EVEN (banker's rounding).",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "park_state",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "wrong",
+          "answer": "Trip planning was partially done with dates, budget, hotel, and dietary notes set, but flights and a seafood dinner reservation were still pending.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "flight",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Book the flights and reserve a seafood dinner in Alfama, keeping the peanut allergy in mind when choosing restaurants.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "parked-budget-recipe",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 20430,
+          "error": null,
+          "installed": true,
+          "records_before": 28,
+          "requests": 1,
+          "tokens_after": 8692,
+          "tokens_before": 11446
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 19785,
+          "error": null,
+          "installed": true,
+          "records_before": 62,
+          "requests": 1,
+          "tokens_after": 9353,
+          "tokens_before": 20585
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        41,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62
+      ],
+      "rows": [
+        {
+          "case": "parked-budget-recipe",
+          "id": "rent",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly rent is $1,450.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "savings",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The savings target is 15% of income, which equals $630.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "income",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly income is 4200.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "diet",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The user is lactose intolerant.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "substitute",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The buttermilk substitute chosen was 1 cup oat milk plus 1 tablespoon lemon juice per cup of buttermilk, rested 5 minutes.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "flour",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "2 cups flour.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "A hand-thrown mug set from Etsy, described as a pottery piece for $80.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_date",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "November 9.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_budget",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The gift budget is 80 dollars.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "test_fail",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The test expected 640, but 15% of 4200 is 630, so the test constant was wrong.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "oven",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Add a CSV export for the monthly plan.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "parked-trip-bugfix",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 17369,
+          "error": null,
+          "installed": true,
+          "records_before": 18,
+          "requests": 1,
+          "tokens_after": 8645,
+          "tokens_before": 8706
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 44255,
+          "error": null,
+          "installed": true,
+          "records_before": 50,
+          "requests": 2,
+          "tokens_after": 9020,
+          "tokens_before": 24209
+        },
+        {
+          "chunk": 2,
+          "duration_ms": 12587,
+          "error": null,
+          "installed": true,
+          "records_before": 58,
+          "requests": 1,
+          "tokens_after": 8727,
+          "tokens_before": 12895
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58
+      ],
+      "rows": [
+        {
+          "case": "parked-trip-bugfix",
+          "id": "dates",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "budget",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The total trip budget is 1800 EUR, as stated in the historical context checkpoint (carried-forward planning record).",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "allergy",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Peanut allergy.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "hotel",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Hotel Miradouro Verde was penciled in at 96 EUR per night.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "neighborhood",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Alfama",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "bug_func",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The rounding bug was in the round_cents function in invoicer/totals.py.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "rounding",
+          "category": "decision",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "ROUND_HALF_EVEN.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "park_state",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Trip planning was on hold pending completion of the invoice bug fix, which is now confirmed done and ready to resume.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "flight",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Booking the flights and reserving a seafood dinner in Alfama, keeping the peanut allergy in mind.",
+          "error": null
+        }
+      ]
+    }
+  ],
+  "suite": "core",
+  "model": "longcat-2.5-preview-free",
+  "budget": 24000,
+  "recent_messages": 20,
+  "failed_runs": [],
+  "created": "2026-10-15T15:45:33.215453+00:00",
+  "git_commit": "7fe57b3",
+  "note": "Live-model benchmark audit; not an automated runtime check."
+}

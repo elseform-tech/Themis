@@ -107,3 +107,12 @@ text is already in the working context. The desktop store itself is covered by
 `crates/desktop/tests/transcript_store.rs`. Grading (`behavior.py`) is lexical. CI only runs the
 scripted-provider versions (`evals.compaction.test_harness`), which prove plumbing, not model
 behavior.
+
+## Recorded results (2026-10-15)
+
+`results/2026-10-15-*` hold the simplify-compaction benchmark audit: `...-main-c34da50` (main plus
+the harness changes), `...-ablate-single-pass`, `...-ablate-lean-prompt` (ablation toggles in
+`docs/verification/simplify-compaction-2026-10-15/ablation-toggles.patch`), `...-simplify` (the
+branch) and parked-case reruns, plus `behavior-main-c34da50` and `behavior-simplify`. These use
+the current grader (probe request errors excluded), so compare them with each other rather than
+with the 2026-10-13/14 files. See `docs/verification/simplify-compaction-2026-10-15.md`.

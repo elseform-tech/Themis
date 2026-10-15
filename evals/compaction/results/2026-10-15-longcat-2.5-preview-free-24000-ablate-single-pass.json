@@ -1,0 +1,4590 @@
+{
+  "trials_requested": 3,
+  "trials_with_data": 3,
+  "cases": [
+    "coding-csv-migration",
+    "coding-rate-limiter",
+    "coding-rust-parser",
+    "constraints-api-design",
+    "narrative-lighthouse",
+    "parked-budget-recipe",
+    "parked-trip-bugfix",
+    "superseded-deploy-plan"
+  ],
+  "invalid_runs": [],
+  "aggregate": {
+    "summary_only_retention": {
+      "mean": 0.9455,
+      "sd": 0.0182,
+      "min": 0.9273,
+      "max": 0.9636,
+      "n": 3
+    },
+    "tail_retention": {
+      "mean": 0.9861,
+      "sd": 0.0241,
+      "min": 0.9583,
+      "max": 1.0,
+      "n": 3
+    },
+    "overall_retention": {
+      "mean": 0.9578,
+      "sd": 0.0146,
+      "min": 0.9494,
+      "max": 0.9747,
+      "n": 3
+    },
+    "summary_only_probes": {
+      "mean": 55.0,
+      "sd": 0.0,
+      "min": 55,
+      "max": 55,
+      "n": 3
+    },
+    "tail_probes": {
+      "mean": 24.0,
+      "sd": 0.0,
+      "min": 24,
+      "max": 24,
+      "n": 3
+    },
+    "stale_fact_rate": {
+      "mean": 0.0,
+      "sd": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 3
+    },
+    "forgot_rate": {
+      "mean": 0.0338,
+      "sd": 0.0073,
+      "min": 0.0253,
+      "max": 0.038,
+      "n": 3
+    },
+    "wrong_answers": {
+      "mean": 0.6667,
+      "sd": 0.5774,
+      "min": 0,
+      "max": 1,
+      "n": 3
+    },
+    "invented_decoy_answers": {
+      "mean": 0.3333,
+      "sd": 0.5774,
+      "min": 0,
+      "max": 1,
+      "n": 3
+    },
+    "probe_errors": {
+      "mean": 0.0,
+      "sd": 0.0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "compactions": {
+      "mean": 18.0,
+      "sd": 0.0,
+      "min": 18,
+      "max": 18,
+      "n": 3
+    },
+    "compactions_failed": {
+      "mean": 0.0,
+      "sd": 0.0,
+      "min": 0,
+      "max": 0,
+      "n": 3
+    },
+    "compaction_ms_mean": {
+      "mean": 18861.5,
+      "sd": 1408.248,
+      "min": 18025.6111,
+      "max": 20487.3889,
+      "n": 3
+    },
+    "tokens_before_mean": {
+      "mean": 17595.9815,
+      "sd": 18.7676,
+      "min": 17574.4444,
+      "max": 17608.8333,
+      "n": 3
+    },
+    "tokens_after_mean": {
+      "mean": 8913.3889,
+      "sd": 18.8984,
+      "min": 8899.1667,
+      "max": 8934.8333,
+      "n": 3
+    },
+    "provider_requests_per_compaction": {
+      "mean": 1.0,
+      "sd": 0.0,
+      "min": 1.0,
+      "max": 1.0,
+      "n": 3
+    },
+    "by_category": {
+      "constraint": {
+        "mean": 0.963,
+        "sd": 0.0642,
+        "min": 0.8889,
+        "max": 1.0,
+        "n": 3
+      },
+      "decision": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "identifier": {
+        "mean": 0.9167,
+        "sd": 0.0722,
+        "min": 0.875,
+        "max": 1.0,
+        "n": 3
+      },
+      "narrative": {
+        "mean": 0.9524,
+        "sd": 0.0825,
+        "min": 0.8571,
+        "max": 1.0,
+        "n": 3
+      },
+      "negation": {
+        "mean": 0.7778,
+        "sd": 0.1925,
+        "min": 0.6667,
+        "max": 1.0,
+        "n": 3
+      },
+      "next_action": null,
+      "parked_topic": {
+        "mean": 0.9762,
+        "sd": 0.0412,
+        "min": 0.9286,
+        "max": 1.0,
+        "n": 3
+      },
+      "superseded": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "tool_result": {
+        "mean": 0.9048,
+        "sd": 0.0825,
+        "min": 0.8571,
+        "max": 1.0,
+        "n": 3
+      }
+    },
+    "by_category_overall": {
+      "constraint": {
+        "mean": 0.9667,
+        "sd": 0.0577,
+        "min": 0.9,
+        "max": 1.0,
+        "n": 3
+      },
+      "decision": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "identifier": {
+        "mean": 0.9167,
+        "sd": 0.0722,
+        "min": 0.875,
+        "max": 1.0,
+        "n": 3
+      },
+      "narrative": {
+        "mean": 0.9583,
+        "sd": 0.0722,
+        "min": 0.875,
+        "max": 1.0,
+        "n": 3
+      },
+      "negation": {
+        "mean": 0.8333,
+        "sd": 0.1443,
+        "min": 0.75,
+        "max": 1.0,
+        "n": 3
+      },
+      "next_action": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "parked_topic": {
+        "mean": 0.9778,
+        "sd": 0.0385,
+        "min": 0.9333,
+        "max": 1.0,
+        "n": 3
+      },
+      "superseded": {
+        "mean": 1.0,
+        "sd": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 3
+      },
+      "tool_result": {
+        "mean": 0.9167,
+        "sd": 0.0,
+        "min": 0.9167,
+        "max": 0.9167,
+        "n": 3
+      }
+    },
+    "by_position": {
+      "early": {
+        "mean": 0.9706,
+        "sd": 0.0294,
+        "min": 0.9412,
+        "max": 1.0,
+        "n": 3
+      },
+      "middle": {
+        "mean": 0.9111,
+        "sd": 0.0385,
+        "min": 0.8667,
+        "max": 0.9333,
+        "n": 3
+      },
+      "late": {
+        "mean": 0.8889,
+        "sd": 0.0962,
+        "min": 0.8333,
+        "max": 1.0,
+        "n": 3
+      }
+    },
+    "by_position_overall": {
+      "early": {
+        "mean": 0.9706,
+        "sd": 0.0294,
+        "min": 0.9412,
+        "max": 1.0,
+        "n": 3
+      },
+      "middle": {
+        "mean": 0.9259,
+        "sd": 0.0321,
+        "min": 0.8889,
+        "max": 0.9444,
+        "n": 3
+      },
+      "late": {
+        "mean": 0.963,
+        "sd": 0.0,
+        "min": 0.963,
+        "max": 0.963,
+        "n": 3
+      }
+    },
+    "tail_split_available": true
+  },
+  "per_trial": [
+    {
+      "summary_only_retention": 0.9272727272727272,
+      "tail_retention": 1.0,
+      "overall_retention": 0.9493670886075949,
+      "summary_only_probes": 55,
+      "tail_probes": 24,
+      "tail_split_available": true,
+      "by_category": {
+        "constraint": 1.0,
+        "decision": 1.0,
+        "identifier": 0.875,
+        "narrative": 1.0,
+        "negation": 0.6666666666666666,
+        "next_action": null,
+        "parked_topic": 0.9285714285714286,
+        "superseded": 1.0,
+        "tool_result": 0.8571428571428571
+      },
+      "by_position": {
+        "early": 0.9705882352941176,
+        "middle": 0.8666666666666667,
+        "late": 0.8333333333333334
+      },
+      "by_category_overall": {
+        "constraint": 1.0,
+        "decision": 1.0,
+        "identifier": 0.875,
+        "narrative": 1.0,
+        "negation": 0.75,
+        "next_action": 1.0,
+        "parked_topic": 0.9333333333333333,
+        "superseded": 1.0,
+        "tool_result": 0.9166666666666666
+      },
+      "by_position_overall": {
+        "early": 0.9705882352941176,
+        "middle": 0.8888888888888888,
+        "late": 0.9629629629629629
+      },
+      "stale_fact_rate": 0.0,
+      "forgot_rate": 0.0379746835443038,
+      "wrong_answers": 1,
+      "invented_decoy_answers": 0,
+      "decoy_probes": 8,
+      "probe_errors": 0,
+      "compactions": 18,
+      "compactions_failed": 0,
+      "compaction_ms_mean": 18025.61111111111,
+      "tokens_before_mean": 17608.833333333332,
+      "tokens_after_mean": 8906.166666666666,
+      "provider_requests_per_compaction": 1.0
+    },
+    {
+      "summary_only_retention": 0.9454545454545454,
+      "tail_retention": 0.9583333333333334,
+      "overall_retention": 0.9493670886075949,
+      "summary_only_probes": 55,
+      "tail_probes": 24,
+      "tail_split_available": true,
+      "by_category": {
+        "constraint": 0.8888888888888888,
+        "decision": 1.0,
+        "identifier": 0.875,
+        "narrative": 1.0,
+        "negation": 0.6666666666666666,
+        "next_action": null,
+        "parked_topic": 1.0,
+        "superseded": 1.0,
+        "tool_result": 1.0
+      },
+      "by_position": {
+        "early": 0.9411764705882353,
+        "middle": 0.9333333333333333,
+        "late": 1.0
+      },
+      "by_category_overall": {
+        "constraint": 0.9,
+        "decision": 1.0,
+        "identifier": 0.875,
+        "narrative": 1.0,
+        "negation": 0.75,
+        "next_action": 1.0,
+        "parked_topic": 1.0,
+        "superseded": 1.0,
+        "tool_result": 0.9166666666666666
+      },
+      "by_position_overall": {
+        "early": 0.9411764705882353,
+        "middle": 0.9444444444444444,
+        "late": 0.9629629629629629
+      },
+      "stale_fact_rate": 0.0,
+      "forgot_rate": 0.0379746835443038,
+      "wrong_answers": 1,
+      "invented_decoy_answers": 0,
+      "decoy_probes": 8,
+      "probe_errors": 0,
+      "compactions": 18,
+      "compactions_failed": 0,
+      "compaction_ms_mean": 20487.38888888889,
+      "tokens_before_mean": 17574.444444444445,
+      "tokens_after_mean": 8899.166666666666,
+      "provider_requests_per_compaction": 1.0
+    },
+    {
+      "summary_only_retention": 0.9636363636363636,
+      "tail_retention": 1.0,
+      "overall_retention": 0.9746835443037974,
+      "summary_only_probes": 55,
+      "tail_probes": 24,
+      "tail_split_available": true,
+      "by_category": {
+        "constraint": 1.0,
+        "decision": 1.0,
+        "identifier": 1.0,
+        "narrative": 0.8571428571428571,
+        "negation": 1.0,
+        "next_action": null,
+        "parked_topic": 1.0,
+        "superseded": 1.0,
+        "tool_result": 0.8571428571428571
+      },
+      "by_position": {
+        "early": 1.0,
+        "middle": 0.9333333333333333,
+        "late": 0.8333333333333334
+      },
+      "by_category_overall": {
+        "constraint": 1.0,
+        "decision": 1.0,
+        "identifier": 1.0,
+        "narrative": 0.875,
+        "negation": 1.0,
+        "next_action": 1.0,
+        "parked_topic": 1.0,
+        "superseded": 1.0,
+        "tool_result": 0.9166666666666666
+      },
+      "by_position_overall": {
+        "early": 1.0,
+        "middle": 0.9444444444444444,
+        "late": 0.9629629629629629
+      },
+      "stale_fact_rate": 0.0,
+      "forgot_rate": 0.02531645569620253,
+      "wrong_answers": 0,
+      "invented_decoy_answers": 1,
+      "decoy_probes": 8,
+      "probe_errors": 0,
+      "compactions": 18,
+      "compactions_failed": 0,
+      "compaction_ms_mean": 18071.5,
+      "tokens_before_mean": 17604.666666666668,
+      "tokens_after_mean": 8934.833333333334,
+      "provider_requests_per_compaction": 1.0
+    }
+  ],
+  "per_case_retention": {
+    "coding-csv-migration": {
+      "mean": 0.963,
+      "trials": [
+        0.8888888888888888,
+        1.0,
+        1.0
+      ]
+    },
+    "coding-rate-limiter": {
+      "mean": 0.9667,
+      "trials": [
+        1.0,
+        1.0,
+        0.9
+      ]
+    },
+    "coding-rust-parser": {
+      "mean": 0.963,
+      "trials": [
+        0.8888888888888888,
+        1.0,
+        1.0
+      ]
+    },
+    "constraints-api-design": {
+      "mean": 0.9333,
+      "trials": [
+        1.0,
+        0.8,
+        1.0
+      ]
+    },
+    "narrative-lighthouse": {
+      "mean": 0.9722,
+      "trials": [
+        1.0,
+        1.0,
+        0.9166666666666666
+      ]
+    },
+    "parked-budget-recipe": {
+      "mean": 0.9697,
+      "trials": [
+        0.9090909090909091,
+        1.0,
+        1.0
+      ]
+    },
+    "parked-trip-bugfix": {
+      "mean": 0.963,
+      "trials": [
+        1.0,
+        0.8888888888888888,
+        1.0
+      ]
+    },
+    "superseded-deploy-plan": {
+      "mean": 0.9259,
+      "trials": [
+        0.8888888888888888,
+        0.8888888888888888,
+        1.0
+      ]
+    }
+  },
+  "details": [
+    {
+      "trial": 0,
+      "case": "coding-csv-migration",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 14421,
+          "error": null,
+          "installed": true,
+          "records_before": 29,
+          "requests": 1,
+          "tokens_after": 8640,
+          "tokens_before": 14034
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 19135,
+          "error": null,
+          "installed": true,
+          "records_before": 63,
+          "requests": 1,
+          "tokens_after": 9215,
+          "tokens_before": 24373
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        28,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63
+      ],
+      "rows": [
+        {
+          "case": "coding-csv-migration",
+          "id": "delimiter",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The legacy export uses a semicolon (;) delimiter, as seen in the header row order_id;customer_id;sku;qty;amount.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "encoding",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The legacy export uses windows-1252 encoding.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "inplace",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The source file data/legacy/orders_2019.csv must never be modified in place.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "bad_rows",
+          "category": "superseded",
+          "position": "middle",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Skip them and write them to rejects.csv instead of aborting the import.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "bad_row_no",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Row 8812 caused the ValueError, specifically an invalid literal for int() with base 10: '3 '.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "cause",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "rows",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The final run imported 41207 rows and rejected 93 rows.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "decimal",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Comma decimal separator (e.g., 12,50).",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "page_size",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Add an index on customer_id and document the rejects.csv format in the README.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 0,
+      "case": "coding-rate-limiter",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 21772,
+          "error": null,
+          "installed": true,
+          "records_before": 35,
+          "requests": 1,
+          "tokens_after": 9084,
+          "tokens_before": 15529
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 33434,
+          "error": null,
+          "installed": true,
+          "records_before": 72,
+          "requests": 1,
+          "tokens_after": 10170,
+          "tokens_before": 23942
+        },
+        {
+          "chunk": 2,
+          "duration_ms": 18076,
+          "error": null,
+          "installed": true,
+          "records_before": 83,
+          "requests": 1,
+          "tokens_after": 10115,
+          "tokens_before": 15401
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ],
+      "rows": [
+        {
+          "case": "coding-rate-limiter",
+          "id": "algorithm",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Token-bucket (the user required token-bucket, not sliding window).",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "deps",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No — the constraints explicitly forbid adding any new third-party dependency (standard library only).",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "free_tier",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "60 requests per minute.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "paid_tier",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "600 requests per minute.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "root_cause",
+          "category": "tool_result",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The bucket's refill used wall-clock time.time() instead of the injectable monotonic Clock, so the test clock and the bucket disagreed on elapsed time and the burst limit was never exceeded.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "header",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "X-RateLimit-Remaining",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "clock_file",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "`pinboard/limiter/clock.py` holds the injected clock (a `Clock` class whose `now()` returns `time.monotonic()`).",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "burst",
+          "category": "tool_result",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "25.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "skipped",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Because the Redis backend test was skipped — no Redis was configured.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "redis_host",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Update docs/limits.md with the tier table and open a follow-up for per-IP limits on unauthenticated routes.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 0,
+      "case": "coding-rust-parser",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 14780,
+          "error": null,
+          "installed": true,
+          "records_before": 24,
+          "requests": 1,
+          "tokens_after": 9047,
+          "tokens_before": 10793
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 13301,
+          "error": null,
+          "installed": true,
+          "records_before": 66,
+          "requests": 1,
+          "tokens_after": 6889,
+          "tokens_before": 24377
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        23,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66
+      ],
+      "rows": [
+        {
+          "case": "coding-rust-parser",
+          "id": "msrv",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The minimum supported Rust version is 1.70, so let-else syntax is banned.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "no_regex",
+          "category": "negation",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "No — the user explicitly rejected adding the regex crate or any new crate and insisted on keeping the hand-written parser.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "fail_tests",
+          "category": "tool_result",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The two tests that failed initially were `range::caret_zero_zero_patch` and `range::tilde_missing_minor`.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "bug_file",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "wrong",
+          "answer": "The off-by-one was fixed in `src/range/caret.rs` (changing the condition to `idx < 2`), but the context does not name the specific function.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "bug_cmp",
+          "category": "tool_result",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The incorrect comparison was `idx <= 2`, which wrongly allowed a patch-level bump in caret ranges; it was replaced with `idx < 2` using `v.next_patch()` for the else branch.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "empty",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "An empty comparator should return Err(ParseError::EmptyComparator) instead of panicking.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "final_tests",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "34 tests passed.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "clippy",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Clippy complained about an unused variable `idx` at src/range/tilde.rs line 19, which was treated as an error under `-D warnings`.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "rustc_version",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The remaining steps are adding a CHANGELOG entry, bumping the version to 0.4.2 in Cargo.toml, and running final cargo test and cargo clippy to verify everything passes.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 0,
+      "case": "constraints-api-design",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 14046,
+          "error": null,
+          "installed": true,
+          "records_before": 28,
+          "requests": 1,
+          "tokens_after": 9503,
+          "tokens_before": 14976
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 16243,
+          "error": null,
+          "installed": true,
+          "records_before": 57,
+          "requests": 1,
+          "tokens_after": 8626,
+          "tokens_before": 23679
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57
+      ],
+      "rows": [
+        {
+          "case": "constraints-api-design",
+          "id": "schema",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "/v1/users",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "deps",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No, the constraints forbid adding any new dependencies.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "style",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Terse, bullet style.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "pagination",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Cursor-based pagination (opaque cursor param + limit) is used for the new endpoints, with offset dropped.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "field",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The final name is displayName in camelCase, to match the mobile client.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "audit",
+          "category": "negation",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No — the audit log is explicitly out of scope and must not be modified.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "why_cursor",
+          "category": "decision",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Cursor pagination was chosen because offset breaks on large tables.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "why_camel",
+          "category": "decision",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "To match the mobile client, which uses camelCase.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "tests",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "12 profile tests passed.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "auth_scheme",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Write the OpenAPI entry for /v2/profiles and the cursor encoding spec.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 0,
+      "case": "narrative-lighthouse",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 14620,
+          "error": null,
+          "installed": true,
+          "records_before": 14,
+          "requests": 1,
+          "tokens_after": 8426,
+          "tokens_before": 11773
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 21520,
+          "error": null,
+          "installed": true,
+          "records_before": 34,
+          "requests": 1,
+          "tokens_after": 8750,
+          "tokens_before": 23937
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34
+      ],
+      "rows": [
+        {
+          "case": "narrative-lighthouse",
+          "id": "island",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The island is Skarn and the year is 1894.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "pov",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Third person, past tense.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "name",
+          "category": "superseded",
+          "position": "early",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Marit Oyelaran.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "sister",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Ingrid.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "ship",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The ship that ran aground was the Halcyon Dray.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "villain",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The harbor-master, Teague, blames the lamp for the wreck of the Halcyon Dray.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "compass",
+          "category": "narrative",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The initials T.K. are engraved on the brass compass.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "secret",
+          "category": "narrative",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "A hairline crack in the great lens, hidden from everyone including Ingrid.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "motive",
+          "category": "narrative",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Because he secretly owes money to the shipping line, so he wants the lamp blamed for the Halcyon Dray's grounding.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "confession",
+          "category": "narrative",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Marit confessed to Ingrid that she had lied to the inspector in March about the cracked lens.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "tone",
+          "category": "constraint",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Quiet and melancholy.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "dog",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The inspector returns and Teague's exposure (his secret debt to the shipping line) comes out.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 0,
+      "case": "parked-budget-recipe",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 22689,
+          "error": null,
+          "installed": true,
+          "records_before": 28,
+          "requests": 1,
+          "tokens_after": 8557,
+          "tokens_before": 11446
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 18666,
+          "error": null,
+          "installed": true,
+          "records_before": 62,
+          "requests": 1,
+          "tokens_after": 9130,
+          "tokens_before": 20450
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        41,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62
+      ],
+      "rows": [
+        {
+          "case": "parked-budget-recipe",
+          "id": "rent",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly rent is $1,450, set as RENT=1450 in budget/plan.py.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "savings",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The savings target is set at 15% of income, which comes out to $630 per month.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "income",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly income is $4,200.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "diet",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The user is lactose intolerant, so the pancake recipe uses an oat milk + lemon juice substitute for buttermilk.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "substitute",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The chosen buttermilk substitute is oat milk mixed with lemon juice (1 cup oat milk + 1 tablespoon lemon juice per cup of buttermilk, rested 5 minutes).",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "flour",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The final recipe uses 2 cups of flour.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "A hand-thrown mug set was chosen for the sister's 30th birthday (budget $80).",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_date",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_budget",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The gift budget is 80 dollars.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "test_fail",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "test_savings_goal failed because the test constant expected 640 but 15% of 4200 is 630, so the test was asserting the wrong value.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "oven",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The next step on the budget is to add a CSV export for the monthly plan.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 0,
+      "case": "parked-trip-bugfix",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 13255,
+          "error": null,
+          "installed": true,
+          "records_before": 18,
+          "requests": 1,
+          "tokens_after": 8471,
+          "tokens_before": 8706
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 20084,
+          "error": null,
+          "installed": true,
+          "records_before": 50,
+          "requests": 1,
+          "tokens_after": 8653,
+          "tokens_before": 24035
+        },
+        {
+          "chunk": 2,
+          "duration_ms": 14335,
+          "error": null,
+          "installed": true,
+          "records_before": 58,
+          "requests": 1,
+          "tokens_after": 8784,
+          "tokens_before": 12528
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58
+      ],
+      "rows": [
+        {
+          "case": "parked-trip-bugfix",
+          "id": "dates",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The Lisbon trip is scheduled for March 14-19.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "budget",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The total trip budget is 1800 EUR.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "allergy",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Peanut allergy.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "hotel",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Hotel Miradouro Verde at 96 EUR/night.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "neighborhood",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Alfama",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "bug_func",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The function `round_cents` in `invoicer/totals.py` had the rounding bug.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "rounding",
+          "category": "decision",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "ROUND_HALF_EVEN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "park_state",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Trip planning was parked while the invoice bug was fixed, with pending items (flights, seafood dinner reservation, hotel confirmation) identified but not yet acted on.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "flight",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Book the flights and reserve a seafood dinner in Alfama, keeping the peanut allergy in mind when choosing restaurants.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 0,
+      "case": "superseded-deploy-plan",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 17077,
+          "error": null,
+          "installed": true,
+          "records_before": 30,
+          "requests": 1,
+          "tokens_after": 8491,
+          "tokens_before": 15360
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 17007,
+          "error": null,
+          "installed": true,
+          "records_before": 59,
+          "requests": 1,
+          "tokens_after": 9760,
+          "tokens_before": 21620
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "rows": [
+        {
+          "case": "superseded-deploy-plan",
+          "id": "region",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "eu-central-1",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "pg",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Postgres 16, specifically PostgreSQL 16.2 on x86_64-pc-linux-gnu (confirmed by a shell check).",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "size",
+          "category": "superseded",
+          "position": "middle",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "t3.large",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "date",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "November 11.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "redis",
+          "category": "negation",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "analytics",
+          "category": "negation",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No, the analytics database is out of scope this quarter and will not be migrated.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "why_eu",
+          "category": "decision",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The region was moved to the EU first because legal required customer data to remain in the EU.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "why_fra",
+          "category": "decision",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Most customers are in Frankfurt and latency matters more than initially thought.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "backup",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Write the rollback runbook and schedule the load test rerun on t3.large.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "coding-csv-migration",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 19145,
+          "error": null,
+          "installed": true,
+          "records_before": 29,
+          "requests": 1,
+          "tokens_after": 8938,
+          "tokens_before": 14034
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 59298,
+          "error": null,
+          "installed": true,
+          "records_before": 63,
+          "requests": 1,
+          "tokens_after": 9657,
+          "tokens_before": 24671
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        28,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63
+      ],
+      "rows": [
+        {
+          "case": "coding-csv-migration",
+          "id": "delimiter",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The legacy export uses a semicolon (`;`) delimiter.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "encoding",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The legacy export is encoded in windows-1252 (cp1252).",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "inplace",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "`data/legacy/orders_2019.csv` must never be modified in place; a copy is used instead.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "bad_rows",
+          "category": "superseded",
+          "position": "middle",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Skip rows with an empty customer_id and write them to rejects.csv instead of aborting the import.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "bad_row_no",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Row 8812 caused the ValueError in test_full_file.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "cause",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The ValueError was caused by a trailing space in the `qty` field (e.g., `'3 '`) at row 8812, which `int()` could not parse.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "rows",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The final run imported 41207 rows and rejected 93 rows.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "decimal",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Amounts use a comma decimal separator (e.g. `12,50`).",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "page_size",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Add an index on customer_id and document the rejects.csv format in the README.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "coding-rate-limiter",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 16852,
+          "error": null,
+          "installed": true,
+          "records_before": 35,
+          "requests": 1,
+          "tokens_after": 8876,
+          "tokens_before": 15529
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 23549,
+          "error": null,
+          "installed": true,
+          "records_before": 72,
+          "requests": 1,
+          "tokens_after": 9912,
+          "tokens_before": 23734
+        },
+        {
+          "chunk": 2,
+          "duration_ms": 24050,
+          "error": null,
+          "installed": true,
+          "records_before": 83,
+          "requests": 1,
+          "tokens_after": 10131,
+          "tokens_before": 15143
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ],
+      "rows": [
+        {
+          "case": "coding-rate-limiter",
+          "id": "algorithm",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The token-bucket algorithm (explicitly not sliding window).",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "deps",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No — the constraint is standard library only, with no new third-party dependency.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "free_tier",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "60 requests per minute.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "paid_tier",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "600 requests per minute.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "root_cause",
+          "category": "tool_result",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The root cause was that the clock used `time.time()` (wall-clock) instead of `time.monotonic()`, and wall-clock jumps caused the burst test to fail.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "header",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "X-RateLimit-Remaining",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "clock_file",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "pinboard/limiter/clock.py holds the injected Clock class.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "burst",
+          "category": "tool_result",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "RATE_LIMIT_BURST is set to 25 in settings.py.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "skipped",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The skipped test is the redis backend test, which is skipped because no redis is configured.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "redis_host",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The remaining follow-ups are updating docs/limits.md with the tier table and opening a follow-up for per-IP limits on unauthenticated routes.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "coding-rust-parser",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 17153,
+          "error": null,
+          "installed": true,
+          "records_before": 24,
+          "requests": 1,
+          "tokens_after": 8981,
+          "tokens_before": 10793
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 11358,
+          "error": null,
+          "installed": true,
+          "records_before": 66,
+          "requests": 1,
+          "tokens_after": 6895,
+          "tokens_before": 24311
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        23,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66
+      ],
+      "rows": [
+        {
+          "case": "coding-rust-parser",
+          "id": "msrv",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "MSRV is 1.70, so let-else syntax is banned.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "no_regex",
+          "category": "negation",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "No; the user explicitly rejected the regex crate (and any other crate) and required keeping the hand-written parser.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "fail_tests",
+          "category": "tool_result",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The two initially failing tests were `range::caret_zero_zero_patch` and `range::tilde_missing_minor`.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "bug_file",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The off-by-one was found in src/range/caret.rs in the function containing the bump_index logic, where `idx <= 2` should have been `idx < 2`.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "bug_cmp",
+          "category": "tool_result",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The incorrect comparison was `idx <= 2`, which was replaced with `idx < 2` in the caret range bump logic.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "empty",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "It should return `Err(ParseError::EmptyComparator)` instead of panicking.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "final_tests",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "34 tests passed.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "clippy",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Clippy complained at src/range/tilde.rs:19 about an unused variable `idx`, which I resolved by renaming it to `_idx`; clippy then finished clean with no warnings.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "rustc_version",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Add a CHANGELOG entry and bump the version to 0.4.2.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "constraints-api-design",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 13000,
+          "error": null,
+          "installed": true,
+          "records_before": 28,
+          "requests": 1,
+          "tokens_after": 9408,
+          "tokens_before": 14976
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 19156,
+          "error": null,
+          "installed": true,
+          "records_before": 57,
+          "requests": 1,
+          "tokens_after": 8670,
+          "tokens_before": 23584
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57
+      ],
+      "rows": [
+        {
+          "case": "constraints-api-design",
+          "id": "schema",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The response schema of `/v1/users` must never change.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "deps",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "style",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Replies should be terse, in bullet style.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "pagination",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Cursor-based pagination using an opaque cursor parameter plus a limit, not offset.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "field",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "displayName (camelCase)",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "audit",
+          "category": "negation",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No, the audit log is explicitly out of scope for this change.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "why_cursor",
+          "category": "decision",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Cursor pagination was chosen because offset-based pagination breaks on large tables.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "why_camel",
+          "category": "decision",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "CamelCase was chosen to match the mobile client.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "tests",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "wrong",
+          "answer": "Twelve profile tests passed in 1.7 seconds.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "auth_scheme",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The next step is to write the OpenAPI entry for /v2/profiles and the cursor encoding spec.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "narrative-lighthouse",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 13565,
+          "error": null,
+          "installed": true,
+          "records_before": 14,
+          "requests": 1,
+          "tokens_after": 8372,
+          "tokens_before": 11773
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 19266,
+          "error": null,
+          "installed": true,
+          "records_before": 34,
+          "requests": 1,
+          "tokens_after": 8690,
+          "tokens_before": 23883
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34
+      ],
+      "rows": [
+        {
+          "case": "narrative-lighthouse",
+          "id": "island",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The novel is set on the island of Skarn in 1894.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "pov",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Third person, past tense.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "name",
+          "category": "superseded",
+          "position": "early",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Marit Oyelaran.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "sister",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The protagonist's sister is Ingrid.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "ship",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The ship that ran aground was the Halcyon Dray.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "villain",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Harbor-master Teague blames the lamp for the wreck.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "compass",
+          "category": "narrative",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The initials engraved on the compass are T.K.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "secret",
+          "category": "narrative",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "A hairline crack in the lighthouse's great lens.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "motive",
+          "category": "narrative",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Teague owes money to the shipping line, and that is why he wants the lamp blamed.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "confession",
+          "category": "narrative",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Marit confessed that she lied to the inspector in March.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "tone",
+          "category": "constraint",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Quiet and melancholy, with no humor.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "dog",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The next chapter will focus on the inspector's return and Teague's exposure.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "parked-budget-recipe",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 18341,
+          "error": null,
+          "installed": true,
+          "records_before": 28,
+          "requests": 1,
+          "tokens_after": 8554,
+          "tokens_before": 11446
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 15866,
+          "error": null,
+          "installed": true,
+          "records_before": 62,
+          "requests": 1,
+          "tokens_after": 9257,
+          "tokens_before": 20447
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        41,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62
+      ],
+      "rows": [
+        {
+          "case": "parked-budget-recipe",
+          "id": "rent",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly rent in the budget is 1450.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "savings",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "15% of income, which is $630 on a $4,200 monthly income.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "income",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly income is 4200 (per the budget figures in the checkpoint summary, where the 15% savings goal of 630 is derived from it).",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "diet",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Lactose intolerance — that's why the recipe uses an oat milk and lemon juice substitute instead of buttermilk.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "substitute",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The chosen substitute was 1 cup oat milk plus 1 tablespoon of lemon juice per cup of buttermilk, rested for 5 minutes.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "flour",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "2 cups.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The hand-thrown mug set was chosen.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_date",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The sister's 30th birthday is on November 9.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_budget",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "$80.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "test_fail",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "It failed because the test expected savings of 640, but 15% of the 4200 income is 630, so the test's constant was wrong.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "oven",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The next step is to add a CSV export for the monthly plan.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "parked-trip-bugfix",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 13625,
+          "error": null,
+          "installed": true,
+          "records_before": 18,
+          "requests": 1,
+          "tokens_after": 8534,
+          "tokens_before": 8706
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 16308,
+          "error": null,
+          "installed": true,
+          "records_before": 50,
+          "requests": 1,
+          "tokens_after": 8531,
+          "tokens_before": 24098
+        },
+        {
+          "chunk": 2,
+          "duration_ms": 17151,
+          "error": null,
+          "installed": true,
+          "records_before": 58,
+          "requests": 1,
+          "tokens_after": 8711,
+          "tokens_before": 12406
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58
+      ],
+      "rows": [
+        {
+          "case": "parked-trip-bugfix",
+          "id": "dates",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "March 14–19.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "budget",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The total trip budget is 1800 EUR.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "allergy",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The trip requires remembering a peanut allergy.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "hotel",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Hotel Miradouro Verde at 96 EUR/night.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "neighborhood",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The user wanted to stay in the Alfama neighborhood.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "bug_func",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "The bug was in invoicer/totals.py; the function name is not stated.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "rounding",
+          "category": "decision",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "ROUND_HALF_EVEN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "park_state",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The Lisbon trip planning was parked while the bug was fixed, with flights and an Alfama seafood dinner reservation still pending.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "flight",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Book the flights and reserve an allergy-aware seafood dinner in Alfama.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 1,
+      "case": "superseded-deploy-plan",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 17366,
+          "error": null,
+          "installed": true,
+          "records_before": 30,
+          "requests": 1,
+          "tokens_after": 8317,
+          "tokens_before": 15360
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 33724,
+          "error": null,
+          "installed": true,
+          "records_before": 59,
+          "requests": 1,
+          "tokens_after": 9751,
+          "tokens_before": 21446
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "rows": [
+        {
+          "case": "superseded-deploy-plan",
+          "id": "region",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "eu-central-1.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "pg",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Postgres 16 will be used, as confirmed by the `select version()` query showing PostgreSQL 16.2 and the managed service only offering this version.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "size",
+          "category": "superseded",
+          "position": "middle",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "t3.large (changed from t3.medium after load testing showed t3.medium was too small).",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "date",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "November 11.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "redis",
+          "category": "negation",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "analytics",
+          "category": "negation",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No, the analytics database is explicitly out of scope this quarter and will not be migrated.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "why_eu",
+          "category": "decision",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Because legal requires customer data to stay in the EU.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "why_fra",
+          "category": "decision",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Because most customers are in Frankfurt and latency matters more than initially thought.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "backup",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Write the rollback runbook and schedule the load test rerun on t3.large.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "coding-csv-migration",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 16605,
+          "error": null,
+          "installed": true,
+          "records_before": 29,
+          "requests": 1,
+          "tokens_after": 8821,
+          "tokens_before": 14034
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 17957,
+          "error": null,
+          "installed": true,
+          "records_before": 63,
+          "requests": 1,
+          "tokens_after": 9372,
+          "tokens_before": 24554
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        28,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63
+      ],
+      "rows": [
+        {
+          "case": "coding-csv-migration",
+          "id": "delimiter",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Semicolon-delimited (`order_id;customer_id;sku;qty;amount`).",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "encoding",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The legacy export uses windows-1252 (cp1252) encoding.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "inplace",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "data/legacy/orders_2019.csv",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "bad_rows",
+          "category": "superseded",
+          "position": "middle",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Skip them (do not abort the import) and write them to rejects.csv.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "bad_row_no",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Row 8812 — the ledger records `ValueError: invalid literal for int() with base 10: '3 '` at row 8812 in `test_full_file`.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "cause",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The qty field contained a value with surrounding whitespace (e.g. `'3 '`), so `int()` failed until the code stripped it with `row['qty'].strip()`.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "rows",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The final run imported 41207 rows and rejected 93.",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "decimal",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Amounts use a comma decimal separator (e.g. `12,50`).",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "page_size",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-csv-migration",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Add an index on customer_id and document the rejects.csv format in the README.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "coding-rate-limiter",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 18574,
+          "error": null,
+          "installed": true,
+          "records_before": 35,
+          "requests": 1,
+          "tokens_after": 8877,
+          "tokens_before": 15529
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 17595,
+          "error": null,
+          "installed": true,
+          "records_before": 72,
+          "requests": 1,
+          "tokens_after": 9908,
+          "tokens_before": 23735
+        },
+        {
+          "chunk": 2,
+          "duration_ms": 17201,
+          "error": null,
+          "installed": true,
+          "records_before": 83,
+          "requests": 1,
+          "tokens_after": 10021,
+          "tokens_before": 15139
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ],
+      "rows": [
+        {
+          "case": "coding-rate-limiter",
+          "id": "algorithm",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "A token-bucket algorithm.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "deps",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No, the feature must use the standard library only with no new third-party dependencies.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "free_tier",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "60 requests per minute.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "paid_tier",
+          "category": "identifier",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The paid tier gets 600 requests per minute.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "root_cause",
+          "category": "tool_result",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The root cause was that the refill clock used wall-clock time (time.time()), which let the test pass unexpectedly when wall-clock jumps occurred; switching to time.monotonic() via the injected Clock class fixed it.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "header",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The final header name is X-RateLimit-Remaining, applied everywhere via a sed rename across 3 files.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "clock_file",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The injected clock is in `pinboard/limiter/clock.py` — it defines a `Clock` class whose `now()` method returns `time.monotonic()`.",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "burst",
+          "category": "tool_result",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "25",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "skipped",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "redis_host",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-rate-limiter",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The remaining follow-up tasks are updating docs/limits.md with the tier table and opening a follow-up for per-IP limits on unauthenticated routes.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "coding-rust-parser",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 12044,
+          "error": null,
+          "installed": true,
+          "records_before": 24,
+          "requests": 1,
+          "tokens_after": 9015,
+          "tokens_before": 10793
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 20625,
+          "error": null,
+          "installed": true,
+          "records_before": 66,
+          "requests": 1,
+          "tokens_after": 7094,
+          "tokens_before": 24345
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        23,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66
+      ],
+      "rows": [
+        {
+          "case": "coding-rust-parser",
+          "id": "msrv",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The MSRV is 1.70, so let-else syntax is banned (along with unsafe code and new dependencies).",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "no_regex",
+          "category": "negation",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "No — the user explicitly rejected the regex crate and instructed to keep the hand-written parser.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "fail_tests",
+          "category": "tool_result",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The two initially failing tests were `range::caret_zero_zero_patch` and `range::tilde_missing_minor`.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "bug_file",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "src/range/caret.rs, in the `bump_index` function.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "bug_cmp",
+          "category": "tool_result",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The incorrect comparison was `idx <= 2` in `src/range/caret.rs`'s `bump_index`, which was replaced by `if idx < 2 { v.bump(idx) } else { v.next_patch() }`.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "empty",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "An empty comparator should return `Err(ParseError::EmptyComparator)`, as implemented in src/parse/comparator.rs.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "final_tests",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "34 tests passed.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "clippy",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Clippy complained about an unused variable `idx` at src/range/tilde.rs:19, which was fixed by renaming it to `_idx`.",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "rustc_version",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "coding-rust-parser",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Add a CHANGELOG entry for the caret off-by-one fix and the empty-comparator error handling, then bump the version to 0.4.2 in Cargo.toml.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "constraints-api-design",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 10363,
+          "error": null,
+          "installed": true,
+          "records_before": 28,
+          "requests": 1,
+          "tokens_after": 9388,
+          "tokens_before": 14976
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 19201,
+          "error": null,
+          "installed": true,
+          "records_before": 57,
+          "requests": 1,
+          "tokens_after": 8662,
+          "tokens_before": 23564
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57
+      ],
+      "rows": [
+        {
+          "case": "constraints-api-design",
+          "id": "schema",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "/v1/users.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "deps",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No, new dependencies are not allowed — adding no new dependencies is one of the hard constraints.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "style",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Terse, bullet style.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "pagination",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The new endpoints use cursor-based pagination with an opaque cursor param and limit, replacing offset which breaks on large tables.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "field",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "displayName",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "audit",
+          "category": "negation",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No — the audit log is explicitly out of scope and must not be modified as part of this change.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "why_cursor",
+          "category": "decision",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Cursor pagination was chosen because offset-based pagination breaks on large tables.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "why_camel",
+          "category": "decision",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "CamelCase was chosen for the field to match the mobile client.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "tests",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "12 profile tests passed.",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "auth_scheme",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "constraints-api-design",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Next step: write the OpenAPI entry for /v2/profiles and the cursor encoding spec.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "narrative-lighthouse",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 17540,
+          "error": null,
+          "installed": true,
+          "records_before": 14,
+          "requests": 1,
+          "tokens_after": 8353,
+          "tokens_before": 11773
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 19048,
+          "error": null,
+          "installed": true,
+          "records_before": 34,
+          "requests": 1,
+          "tokens_after": 8661,
+          "tokens_before": 23864
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34
+      ],
+      "rows": [
+        {
+          "case": "narrative-lighthouse",
+          "id": "island",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The novel is set on the island of Skarn in 1894.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "pov",
+          "category": "constraint",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Third person, past tense.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "name",
+          "category": "superseded",
+          "position": "early",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Marit Oyelaran.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "sister",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Ingrid",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "ship",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The ship that ran aground was the Halcyon Dray.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "villain",
+          "category": "narrative",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Harbor-master Teague blames the lamp for the wreck.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "compass",
+          "category": "narrative",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The compass is engraved T.K.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "secret",
+          "category": "narrative",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "A hairline crack in the great lens.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "motive",
+          "category": "narrative",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Because he secretly owes money to the shipping line.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "confession",
+          "category": "narrative",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "tone",
+          "category": "constraint",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The requested tone is quiet and melancholy, with no humor.",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "dog",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "narrative-lighthouse",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The next chapter brings the inspector's return and Teague's exposure.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "parked-budget-recipe",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 20076,
+          "error": null,
+          "installed": true,
+          "records_before": 28,
+          "requests": 1,
+          "tokens_after": 8674,
+          "tokens_before": 11446
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 21689,
+          "error": null,
+          "installed": true,
+          "records_before": 62,
+          "requests": 1,
+          "tokens_after": 9341,
+          "tokens_before": 20567
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        41,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62
+      ],
+      "rows": [
+        {
+          "case": "parked-budget-recipe",
+          "id": "rent",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly rent is $1450.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "savings",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "15% of income ($4,200), which equals $630.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "income",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The monthly income is $4,200.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "diet",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Lactose intolerance.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "substitute",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Oat milk plus 1 tablespoon of lemon juice per cup of buttermilk, rested 5 minutes.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "flour",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The final recipe uses 2 cups of flour.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The hand-thrown mug set was chosen for the sister.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_date",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "November 9.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "gift_budget",
+          "category": "parked_topic",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The gift budget is $80.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "test_fail",
+          "category": "tool_result",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "test_savings_goal failed because it expected 640, but 15% of 4200 is 630.",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "oven",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "parked-budget-recipe",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "The next step is to add a CSV export for the monthly plan.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "parked-trip-bugfix",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 13705,
+          "error": null,
+          "installed": true,
+          "records_before": 18,
+          "requests": 1,
+          "tokens_after": 8711,
+          "tokens_before": 8706
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 16927,
+          "error": null,
+          "installed": true,
+          "records_before": 50,
+          "requests": 1,
+          "tokens_after": 8639,
+          "tokens_before": 24275
+        },
+        {
+          "chunk": 2,
+          "duration_ms": 22229,
+          "error": null,
+          "installed": true,
+          "records_before": 58,
+          "requests": 1,
+          "tokens_after": 8846,
+          "tokens_before": 12514
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58
+      ],
+      "rows": [
+        {
+          "case": "parked-trip-bugfix",
+          "id": "dates",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "March 14–19.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "budget",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "1800 EUR.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "allergy",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Peanut allergy.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "hotel",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Hotel Miradouro Verde was penciled in at 96 EUR/night.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "neighborhood",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Alfama.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "bug_func",
+          "category": "identifier",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The function `round_cents` in the file `invoicer/totals.py` had the rounding bug.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "rounding",
+          "category": "decision",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "ROUND_HALF_EVEN (banker's rounding).",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "park_state",
+          "category": "parked_topic",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Trip planning was paused during the bug fix: no itinerary, flights, or restaurant reservations were made.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "flight",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "invented",
+          "answer": "TAP Portugal, flight TP 253.",
+          "error": null
+        },
+        {
+          "case": "parked-trip-bugfix",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Book the flights, reserve a seafood dinner in Alfama (peanut allergy noted), and plan the days 1–6 itinerary.",
+          "error": null
+        }
+      ]
+    },
+    {
+      "trial": 2,
+      "case": "superseded-deploy-plan",
+      "chunks": [
+        {
+          "chunk": 0,
+          "duration_ms": 20622,
+          "error": null,
+          "installed": true,
+          "records_before": 30,
+          "requests": 1,
+          "tokens_after": 8581,
+          "tokens_before": 15360
+        },
+        {
+          "chunk": 1,
+          "duration_ms": 23286,
+          "error": null,
+          "installed": true,
+          "records_before": 59,
+          "requests": 1,
+          "tokens_after": 9863,
+          "tokens_before": 21710
+        }
+      ],
+      "valid": true,
+      "verbatim_records": [
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "rows": [
+        {
+          "case": "superseded-deploy-plan",
+          "id": "region",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The final deployment region is eu-central-1, chosen because most customers are in Frankfurt and latency matters more than initially thought.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "pg",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Postgres 16 will be used, confirmed by the shell check showing PostgreSQL 16.2.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "size",
+          "category": "superseded",
+          "position": "middle",
+          "has_stale": true,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "t3.large",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "date",
+          "category": "superseded",
+          "position": "late",
+          "has_stale": true,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "November 11 (slipped one week from the original November 4 date).",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "redis",
+          "category": "negation",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No — Redis is excluded from the plan; the checkout service will use Postgres for all data with no Redis caching layer.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "analytics",
+          "category": "negation",
+          "position": "middle",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "No, the analytics database is out of scope this quarter and will not be migrated.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "why_eu",
+          "category": "decision",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "The region was moved to the EU first because legal compliance requires customer data residency in the EU.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "why_fra",
+          "category": "decision",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct",
+          "answer": "Most customers are in Frankfurt and latency matters more than initially thought.",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "backup",
+          "category": "decoy",
+          "position": "early",
+          "has_stale": false,
+          "verbatim": false,
+          "verdict": "correct_unknown",
+          "answer": "UNKNOWN",
+          "error": null
+        },
+        {
+          "case": "superseded-deploy-plan",
+          "id": "next",
+          "category": "next_action",
+          "position": "late",
+          "has_stale": false,
+          "verbatim": true,
+          "verdict": "correct",
+          "answer": "Next step: write the rollback runbook and schedule the load test rerun on t3.large.",
+          "error": null
+        }
+      ]
+    }
+  ],
+  "suite": "core",
+  "model": "longcat-2.5-preview-free",
+  "budget": 24000,
+  "recent_messages": 20,
+  "failed_runs": [],
+  "created": "2026-10-15T14:51:48.279932+00:00",
+  "git_commit": "a7cf6bc",
+  "note": "Live-model benchmark audit; not an automated runtime check."
+}
