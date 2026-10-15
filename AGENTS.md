@@ -27,6 +27,8 @@ Read [docs/configuration.md](docs/configuration.md) and [docs/plugins.md](docs/p
 
 Follow [docs/ui-rules.md](docs/ui-rules.md) and [DESIGN.md](DESIGN.md) for layout, tokens and approved treatments.
 
+- Keep every screen clean: each visible word, badge, section and control must tell the person something about the current task or let them act. Follow DESIGN.md "Only what earns its place" for new and changed UI everywhere, not just Settings, and remove existing elements that add nothing when you touch a screen.
+
 - Workspace is a read-only monitor of what agents write: no accept, discard, merge, commit, push or other state-changing Git actions. The one exception is the Tasks tab, where Stop (current run) and Pause (turn an automation off) are allowed for the current chat; nothing else there changes state, and neither control undoes completed work. File and directory reads stay bounded and inside the project; the change list shows only readable text files.
 - Per-turn edited files come from the backend `files_changed` event (before/after fingerprints of readable changes), not from parsing tool summaries.
 - Deleting a project moves its folder to the Trash and never deletes in place; the built-in Themis project cannot be deleted. Projects live in the fixed projects folder, so there is no folder-picker flow.

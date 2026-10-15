@@ -61,45 +61,60 @@ describe("PermissionsSummary", () => {
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
 
-  it("explains YOLO as no prompts with the sandbox still on", () => {
+  it("states only the current mode", () => {
     render(<PermissionsSummary view={VIEW} />);
-    expect(screen.getByText("No approval prompts; the sandbox still applies.")).toBeInTheDocument();
-    expect(screen.getByText("this chat")).toBeInTheDocument();
+    const mode = within(screen.getByRole("region", { name: "Permission mode" }));
+    expect(mode.getByText(/No approval prompts; the sandbox still applies\./)).toBeInTheDocument();
+    expect(mode.getByText(/in this chat/)).toBeInTheDocument();
+    expect(mode.queryByText(/The rules below decide/)).toBeNull();
   });
 
-  it("lists rules in order with sources and project additions separately", () => {
+  it("lists rules in one ordered list with short source labels", () => {
     render(<PermissionsSummary view={VIEW} />);
     const rules = within(screen.getByRole("region", { name: "Rules" }));
-    expect(rules.getByText("+2 deny rules from this project")).toBeInTheDocument();
+    expect(rules.queryByText(/from this project/)).toBeNull();
     const items = rules.getAllByRole("listitem").map(item => item.textContent);
-    expect(items[0]).toMatch(/^1\. Deny shell · git push.*Project file$/);
-    expect(items[1]).toMatch(/^2\. Deny git · write.*Project file$/);
-    expect(items[2]).toMatch(/^3\. Allow shell · cargo test.*User file$/);
-    expect(items[3]).toMatch(/^4\. Allow any tool · read.*Built-in$/);
+    expect(items[0]).toMatch(/^Deny shell · git push.*Project$/);
+    expect(items[1]).toMatch(/^Deny git · write.*Project$/);
+    expect(items[2]).toMatch(/^Allow shell · cargo test.*User$/);
+    expect(items[3]).toMatch(/^Allow any tool · read.*Built-in$/);
     expect(items[4]).toMatch(/^Otherwise ask.*Built-in$/);
   });
 
-  it("shows sandbox status, network, paths and other backends", () => {
-    render(<PermissionsSummary view={VIEW} />);
+  it("summarises the sandbox without fixed or irrelevant detail", () => {
+    render(<PermissionsSummary view={{ ...VIEW, sandbox: { ...VIEW.sandbox!, configured_writable_paths: ["/opt/cache"] } }} />);
     const sandbox = within(screen.getByRole("region", { name: "Sandbox" }));
-    expect(sandbox.getByText("On")).toBeInTheDocument();
-    expect(sandbox.getByText("Seatbelt, chosen automatically for macOS")).toBeInTheDocument();
+    expect(sandbox.getByText("On · Seatbelt, chosen automatically for macOS")).toBeInTheDocument();
     expect(sandbox.getByText("Allowed")).toBeInTheDocument();
-    expect(sandbox.getByText("/private/tmp")).toBeInTheDocument();
-    expect(sandbox.getByText("/work/app/.themis")).toBeInTheDocument();
-    expect(sandbox.getByText("bubblewrap: not available on this system (Linux only)")).toBeInTheDocument();
+    expect(sandbox.getByText("/opt/cache")).toBeInTheDocument();
+    expect(sandbox.getByText("2 secret folders are never readable")).toBeInTheDocument();
+    // Temp folders, protected absolute paths, coverage and other systems' backends are documented, not shown.
+    expect(sandbox.queryByText("/private/tmp")).toBeNull();
+    expect(sandbox.queryByText("/work/app/.themis")).toBeNull();
+    expect(sandbox.queryByText(/bubblewrap/)).toBeNull();
+    expect(sandbox.queryByText(/MCP servers/)).toBeNull();
   });
 
-  it("shows config file paths as copyable text with load status and the error line", () => {
+  it("shows config file paths as copyable text and marks only problems", () => {
     render(<PermissionsSummary view={VIEW} />);
     const files = within(screen.getByRole("region", { name: "Configuration files" }));
     expect(files.getByText("/data/runtime.jsonc").tagName).toBe("CODE");
-    expect(files.getByText("Loaded")).toBeInTheDocument();
-    expect(files.getByText("Invalid")).toBeInTheDocument();
-    expect(files.getByRole("alert")).toHaveTextContent("Line 3, column 5: unknown field `sandboxx`");
+    expect(files.queryByText("Loaded")).toBeNull();
+    expect(files.getByRole("alert")).toHaveTextContent("Invalid, runs are refused. Line 3, column 5: unknown field `sandboxx`");
   });
 
-  it("lists the chat's grants with the grants file path", () => {
+  it("does not repeat a file problem in a separate banner", () => {
+    render(<PermissionsSummary view={{ ...VIEW, validation_error: "runtime configuration: invalid runtime configuration: unknown field `sandboxx`" }} />);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("shows a validation error without a file problem once, without the doubled prefix", () => {
+    const files = VIEW.files.map(file => ({ ...file, status: "loaded" as const, error: null }));
+    render(<PermissionsSummary view={{ ...VIEW, files, validation_error: "runtime configuration: invalid runtime configuration: bad override" }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Runs are refused until the configuration is fixed: bad override");
+  });
+
+  it("lists the chat's grants with the file to edit", () => {
     render(<PermissionsSummary view={VIEW} />);
     const chat = within(screen.getByRole("region", { name: "Allowed in this chat" }));
     expect(chat.getByText("cargo test")).toBeInTheDocument();
@@ -107,16 +122,16 @@ describe("PermissionsSummary", () => {
     expect(chat.getByText("/data/chat_grants/t1.json")).toBeInTheDocument();
   });
 
-  it("shows a validation error without the doubled configuration prefix", () => {
-    render(<PermissionsSummary view={{ ...VIEW, validation_error: "runtime configuration: invalid runtime configuration: unknown field `sandbx`" }} />);
-    expect(screen.getAllByRole("alert")[0]).toHaveTextContent("Configuration is invalid, so runs are refused until it is fixed: unknown field `sandbx`");
+  it("hides the chat section when nothing is allowed", () => {
+    render(<PermissionsSummary view={{ ...VIEW, chat: { ...VIEW.chat!, grants: [] } }} />);
+    expect(screen.queryByRole("region", { name: "Allowed in this chat" })).toBeNull();
   });
 
-  it("explains an unavailable sandbox and a blocked network", () => {
-    render(<PermissionsSummary view={{ ...VIEW, sandbox: { ...VIEW.sandbox!, state: "unavailable", backend: null, summary: "Not available on this system (Windows)", network: "block" } }} />);
-    expect(screen.getByText("Not available")).toBeInTheDocument();
-    expect(screen.getByText("Not available on this system (Windows)")).toBeInTheDocument();
-    expect(screen.getByText("Blocked")).toBeInTheDocument();
+  it("explains an unavailable sandbox without listing what it would do", () => {
+    render(<PermissionsSummary view={{ ...VIEW, sandbox: { ...VIEW.sandbox!, state: "unavailable", backend: null, summary: "Not available on this system (Windows)" } }} />);
+    const sandbox = within(screen.getByRole("region", { name: "Sandbox" }));
+    expect(sandbox.getByText("Not available · Not available on this system (Windows)")).toBeInTheDocument();
+    expect(sandbox.queryByText("Network")).toBeNull();
   });
 });
 
