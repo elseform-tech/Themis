@@ -255,8 +255,13 @@ async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
         })
         .collect::<Vec<_>>();
     assert_eq!(results.len(), 2);
-    assert!(!results[0].0);
-    assert!(results[0].1.contains("omit jsonl_record and json_pointer"));
+    // Archive selectors on a plain file no longer fail: the file is read and the agent told.
+    assert!(results[0].0, "{}", results[0].1);
+    assert!(
+        results[0].1.contains("selectors_ignored"),
+        "{}",
+        results[0].1
+    );
     assert!(results[1].0);
     let text: serde_json::Value = serde_json::from_str(results[1].1).unwrap();
     assert!(text["content"]
@@ -268,10 +273,10 @@ async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
     assert!(has_finished(&events));
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 3);
+    // The first (selector) read already reached the model with the file's content.
     let correction: serde_json::Value = requests[1].body_json().unwrap();
-    assert!(serde_json::to_string(&correction["messages"])
-        .unwrap()
-        .contains("omit jsonl_record and json_pointer"));
+    let delivered = serde_json::to_string(&correction["messages"]).unwrap();
+    assert!(delivered.contains("selectors_ignored") && delivered.contains("import unittest"));
     let continuation: serde_json::Value = requests[2].body_json().unwrap();
     assert!(serde_json::to_string(&continuation["messages"])
         .unwrap()

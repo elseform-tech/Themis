@@ -1010,6 +1010,24 @@ impl GatedTool {
     }
 }
 
+/// Removes JSONL selectors from a `read_file` call on a file that is not JSON lines
+/// (by extension: `.jsonl`/`.ndjson`/`.json` keep them). Returns whether any were removed.
+fn strip_jsonl_selectors(args: &mut Value) -> bool {
+    let jsonl = args
+        .get("file_path")
+        .and_then(Value::as_str)
+        .and_then(|path| Path::new(path).extension())
+        .is_some_and(|ext| matches!(ext.to_str(), Some("jsonl" | "ndjson" | "json")));
+    let Some(fields) = args.as_object_mut().filter(|_| !jsonl) else {
+        return false;
+    };
+    ["jsonl_record", "json_pointer", "decode_tool_payload"]
+        .into_iter()
+        .filter(|key| fields.remove(*key).is_some())
+        .count()
+        > 0
+}
+
 /// `path` relative to `base` when it is absolute and lies under `base`; `None` otherwise.
 /// The path is resolved first (the file, or its parent for a new file), so `/var/..` vs
 /// `/private/var/..` spellings match and a symlink pointing outside the project does not;
@@ -1123,8 +1141,17 @@ impl ToolRuntime for GatedTool {
         check_approval_permitted(self.approvals.as_ref(), &action)?;
         self.check_guard(name, &args)?;
         if name == "read_file" {
+            // Models often send the archive-only selectors on ordinary files; read the file
+            // plainly instead of failing, and say so.
+            let ignored = strip_jsonl_selectors(&mut args);
             let result = self.inner.execute(args.clone()).await?;
-            bounded_read_result(&args, result)
+            let mut result = bounded_read_result(&args, result)?;
+            if ignored {
+                result["selectors_ignored"] = Value::String(
+                    "jsonl_record/json_pointer/decode_tool_payload apply only to .jsonl files; read as plain text".into(),
+                );
+            }
+            Ok(result)
         } else if name == "write_file" && args["append"].as_bool() == Some(true) {
             // The toolkit appends through tokio's buffered file and returns
             // without flushing, so the bytes can land after the call reports
@@ -3664,6 +3691,35 @@ mod tests {
             git.contains("allowlist") && git.contains(REFUSAL_NOTE),
             "{git}"
         );
+    }
+
+    #[tokio::test]
+    async fn archive_selectors_on_plain_files_are_ignored_with_a_note() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join("story.txt"),
+            "Odile walked to the mill.",
+        )
+        .unwrap();
+        let tools = boxed_tools(project.path(), Arc::new(AllowAllHook)).unwrap();
+        let read = tools
+            .iter()
+            .find(|tool| tool.name() == "read_file")
+            .unwrap();
+        let result = read
+            .execute(serde_json::json!({"file_path": "story.txt", "jsonl_record": 1, "json_pointer": "/content"}))
+            .await
+            .unwrap();
+        assert!(
+            result["content"].as_str().unwrap().contains("Odile"),
+            "{result}"
+        );
+        assert!(result["selectors_ignored"].is_string(), "{result}");
+        let plain = read
+            .execute(serde_json::json!({"file_path": "story.txt"}))
+            .await
+            .unwrap();
+        assert!(plain.get("selectors_ignored").is_none());
     }
 
     mod normalize_argv_props {
