@@ -103,6 +103,9 @@ def run_task(runner, task, args):
             report = json.loads(done.stdout)
         except ValueError:
             return None, "unparseable runner output"
+        if report.get("error") and not report.get("calls"):
+            # Failed before any tool call (provider error, rate limit): infrastructure, not a result.
+            return None, classify_error(report["error"]) or "failed before any call"
         passed, why = task["check"](project, report)
         return {
             "task": task["name"], "tool": task["tool"], "passed": passed, "why": why,
@@ -140,6 +143,7 @@ def summarize(rows):
     tasks = {name: {"tool": runs[0]["tool"], "runs": len(runs), "pass_rate": _mean([r["passed"] for r in runs]),
                     "mean_calls": _mean([len(r["calls"]) for r in runs]),
                     "mean_repeated_calls": _mean([r.get("repeated_calls", 0) for r in runs]),
+                    "plan_used_rate": _mean([any(c["tool"] == "update_plan" for c in r["calls"]) for r in runs]),
                     "mean_compactions": _mean([r.get("compactions", 0) for r in runs]),
                     "mean_input_tokens": _mean([r.get("input_tokens") for r in runs]),
                     "failures": [r["why"] for r in runs if not r["passed"]][:3]}
@@ -181,11 +185,12 @@ def markdown(summary):
     for tool, row in s["tools"].items():
         reasons = ", ".join(f"{k} {v}" for k, v in row["reasons"].items()) or "-"
         lines.append(f"| {tool} | {row['calls']} | {fmt(row['first_try_success'])} | {fmt(row['wasted_share'])} | {reasons} |")
-    lines += ["", "| Task | Tool | Pass | Calls | Repeated calls | Compactions | Input tokens | First failure |",
-              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    lines += ["", "| Task | Tool | Pass | Calls | Repeated calls | Compactions | Plan used | Input tokens | First failure |",
+              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for name, row in s["tasks"].items():
         lines.append(f"| {name} | {row['tool']} | {fmt(row['pass_rate'])} | {fmt(row['mean_calls'], False)} | "
                      f"{fmt(row.get('mean_repeated_calls'), False)} | {fmt(row.get('mean_compactions'), False)} | "
+                     f"{fmt(row.get('plan_used_rate'))} | "
                      f"{fmt(row.get('mean_input_tokens'), False)} | {(row['failures'] or ['-'])[0][:80]} |")
     return "\n".join(lines) + "\n"
 
