@@ -66,9 +66,9 @@ class TaskChecksTest(unittest.TestCase):
             setup_modules(project)
             counts = [len(module_functions(n)) for n in range(1, MODULES + 1)]
             for n in range(1, MODULES + 1):
-                write(project, f"notes/mod-{n:02d}.md", OWNER_RULE + "\n" + "\n".join(module_functions(n))
+                write(project, f"cards/mod-{n:02d}.md", OWNER_RULE + "\n" + "\n".join(module_functions(n))
                       + f"\nsummary: It is about the office in {CITIES[n - 1]}.\n")
-            write(project, "notes/SUMMARY.md", "".join(f"mod-{n:02d}: {c}\n" for n, c in enumerate(counts, 1))
+            write(project, "cards/SUMMARY.md", "".join(f"mod-{n:02d}: {c}\n" for n, c in enumerate(counts, 1))
                   + f"total: {sum(counts)}\n")
             turn = lambda answer: {"answer": answer, "error": None}  # noqa: E731
             so_far = sum(counts[:8])
@@ -95,14 +95,14 @@ class TaskChecksTest(unittest.TestCase):
             setup_modules(project)
             counts = [len(module_functions(n)) for n in range(1, MODULES + 1)]
             for n in range(1, MODULES + 1):
-                write(project, f"notes/mod-{n:02d}.md", OWNER_RULE + "\n" + "\n".join(module_functions(n))
+                write(project, f"cards/mod-{n:02d}.md", OWNER_RULE + "\n" + "\n".join(module_functions(n))
                       + f"\nsummary: It is about the office in {CITIES[n - 1]}.\n")
-            write(project, "notes/SUMMARY.md", "".join(f"mod-{n:02d}: {c}\n" for n, c in enumerate(counts, 1))
+            write(project, "cards/SUMMARY.md", "".join(f"mod-{n:02d}: {c}\n" for n, c in enumerate(counts, 1))
                   + f"total: {sum(counts)}\n")
             report = {"answer": f"Rule: first line '{OWNER_RULE}'. Total {sum(counts)}.", "calls": []}
             self.assertEqual(check_modules(project, report), (True, ""))
             self.assertEqual(measure_modules(project, report)["rule_kept_files"], MODULES)
-            write(project, f"notes/mod-{MODULES:02d}.md", "\n".join(module_functions(MODULES)) + "\n")
+            write(project, f"cards/mod-{MODULES:02d}.md", "\n".join(module_functions(MODULES)) + "\n")
             ok, why = check_modules(project, report)
             self.assertFalse(ok)
             self.assertIn("first line", why)

@@ -81,13 +81,13 @@ STORIES_PROMPT = (
     "finish with one sentence that names the main character of story-01.txt and the number of stories.")
 
 MODULES_PROMPT = (
-    f"For each of src/mod-01.py to src/mod-{MODULES:02d}.py, write notes/mod-NN.md (same number). Rule for every "
-    f"notes file: its first line is exactly '{OWNER_RULE}', followed by the module's function names, one per "
+    f"For each of src/mod-01.py to src/mod-{MODULES:02d}.py, write cards/mod-NN.md (same number). Rule for every "
+    f"card file: its first line is exactly '{OWNER_RULE}', followed by the module's function names, one per "
     "line, in file order, and a last line 'summary: <one sentence on what the module docstring is about>'. "
-    "Read each module with read_file and write each notes file yourself; do not use scripts to extract or "
-    "generate the notes. Do not change anything in src/. Then write notes/SUMMARY.md with one line per module "
+    "Read each module with read_file and write each card file yourself; do not use scripts to extract or "
+    "generate the cards. Do not change anything in src/. Then write cards/SUMMARY.md with one line per module "
     "in order, 'mod-NN: <number of functions>', and a last line 'total: <sum>'. Finish with one sentence that "
-    "repeats the rule for notes files and gives the total.")
+    "repeats the rule for card files and gives the total.")
 
 
 def check_stories(project, report):
@@ -115,7 +115,7 @@ def measure_stories(project, report):
 def check_modules(project, report):
     problems = []
     for number in range(1, MODULES + 1):
-        text = read(project, f"notes/mod-{number:02d}.md")
+        text = read(project, f"cards/mod-{number:02d}.md")
         if text is None:
             problems.append(f"mod-{number:02d}.md missing")
             break
@@ -129,7 +129,7 @@ def check_modules(project, report):
         if not (lines[-1].lower().startswith("summary:") and CITIES[number - 1].lower() in lines[-1].lower()):
             problems.append(f"mod-{number:02d}.md summary {lines[-1][:40]!r}")
             break
-    summary = [line.strip() for line in (read(project, "notes/SUMMARY.md") or "").strip().splitlines() if line.strip()]
+    summary = [line.strip() for line in (read(project, "cards/SUMMARY.md") or "").strip().splitlines() if line.strip()]
     counts = [len(module_functions(n)) for n in range(1, MODULES + 1)]
     expected = [f"mod-{n:02d}: {c}" for n, c in enumerate(counts, 1)] + [f"total: {sum(counts)}"]
     if summary != expected:
@@ -145,8 +145,8 @@ def check_modules(project, report):
 def measure_modules(project, report):
     answer = report.get("answer", "")
     total = sum(len(module_functions(n)) for n in range(1, MODULES + 1))
-    # How many notes files keep the rule given only at the start (late files test retention).
-    kept = sum((read(project, f"notes/mod-{n:02d}.md") or "").lstrip().startswith(OWNER_RULE)
+    # How many card files keep the rule given only at the start (late files test retention).
+    kept = sum((read(project, f"cards/mod-{n:02d}.md") or "").lstrip().startswith(OWNER_RULE)
                for n in range(1, MODULES + 1))
     return {"early_detail": OWNER_RULE in answer.lower(), "count_recalled": str(total) in answer,
             "rule_kept_files": kept, "rereads": rereads(report, r"src/mod-\d\d\.py")}
@@ -190,10 +190,10 @@ TURNS_PROMPT = MODULES_PROMPT.replace(
     f"We will do this job over several messages. For each of src/mod-01.py to src/mod-{MODULES:02d}.py",
 ) + " For now, do mod-01 to mod-08 only, then stop and wait for me."
 TURNS_FOLLOWUPS = [
-    "Progress check: how many modules have notes files so far, which ones are left, and what is the "
+    "Progress check: how many modules have card files so far, which ones are left, and what is the "
     "function count so far? Do not continue the job yet.",
-    "Continue the job: finish mod-09 to mod-16 and write notes/SUMMARY.md.",
-    "Remind me: what rule did I give for the first line of every notes file, and what is the total?",
+    "Continue the job: finish mod-09 to mod-16 and write cards/SUMMARY.md.",
+    "Remind me: what rule did I give for the first line of every card file, and what is the total?",
 ]
 
 

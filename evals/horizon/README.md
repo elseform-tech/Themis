@@ -12,7 +12,7 @@ Two jobs, each far bigger than the 12k-token context budget, so they cross sever
 | Job | What the agent does | What has to survive compaction |
 | --- | --- | --- |
 | `stories` | Summarise 24 stories (~5 KB each) into `report.txt`, one line each, in order | Progress (no missing, duplicate or re-read stories), the main character of story 1, the count |
-| `modules` | Write `notes/mod-NN.md` for 16 modules (function names plus a one-sentence summary of a ~4.5 KB docstring), then `notes/SUMMARY.md` | A rule given only in the prompt (first line `owner: heron` in every notes file), `src/` left alone, the total |
+| `modules` | Write `cards/mod-NN.md` for 16 modules (function names plus a one-sentence summary of a ~4.5 KB docstring), then `cards/SUMMARY.md` | A rule given only in the prompt (first line `owner: heron` in every card file), `src/` left alone, the total |
 
 | `modules-turns` | The `modules` job over four turns: modules 1–8 and stop; a progress question (how many done, which left, function count so far; no work); finish 9–16 and SUMMARY.md; then "what was the rule and the total?" | Progress across turns with no tool history, the rule from turn 1, the total |
 

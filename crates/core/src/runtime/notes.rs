@@ -247,7 +247,7 @@ pub(super) fn tool() -> autoagents::llm::chat::Tool {
         tool_type: "function".into(),
         function: autoagents::llm::chat::FunctionTool {
             name: TOOL.into(),
-            description: "Your notes for this chat: short labelled lines for the goal, each task with its status, and results you will need later (counts, names, decisions, file paths). Send only lines that change: `set` adds or updates lines by key, `remove` deletes keys. Notes are shown to you after every context checkpoint and in later turns, so they are how you remember the goal and progress.".into(),
+            description: "Your notes for this chat: short labelled lines for the goal, each task with its status, and results you will need later (counts, names, decisions, file paths). Send only lines that change: `set` adds or updates lines by key, `remove` deletes keys; keep result lines until the task is finished. Notes are shown to you after every context checkpoint and in later turns, so they are how you remember the goal and progress.".into(),
             parameters: json!({"type":"object","properties":{
                 "set":{"type":"array","items":{"type":"object","properties":{
                     "key":{"type":"string","description":"Short label, e.g. goal, mod-01, decision-db"},
