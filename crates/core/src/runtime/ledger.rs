@@ -72,7 +72,25 @@ pub(super) fn plan_items(arguments: &Value) -> Result<Value, String> {
         steps
             .push(json!({"step":take_char_prefix(step.trim(), PLAN_STEP_CHARS).0,"status":status}));
     }
-    Ok(Value::Array(steps))
+    // Every saved plan must fit its ledger line, or it would silently vanish at a checkpoint.
+    let steps = Value::Array(steps);
+    let bytes = plan_line(&steps).len();
+    if bytes >= PLAN_BYTES {
+        return Err(format!("plan is {bytes} bytes; plans must stay under {PLAN_BYTES} bytes to survive context checkpoints. Shorten or merge steps and send the complete list again"));
+    }
+    Ok(steps)
+}
+
+fn plan_line(items: &Value) -> String {
+    json!({"kind":"plan","items":items}).to_string()
+}
+
+/// Ledger bytes the latest plan needs, framing included. Checkpoints add this to the
+/// ledger budget so shrinking caches never squeeze the plan out.
+pub(super) fn plan_reserve(messages: &[ChatMessage]) -> usize {
+    collect(messages, 0, None).plan.map_or(0, |items| {
+        plan_line(&items).len() + 1 + START.len() + END.len()
+    })
 }
 
 /// Executes the runtime-internal plan tool. It records the model's own checklist
@@ -340,7 +358,7 @@ pub(super) fn render(
     }
     let plan = collected
         .plan
-        .map(|items| json!({"kind":"plan","items":items}).to_string())
+        .map(|items| plan_line(&items))
         .filter(|line| line.len() < PLAN_BYTES.min(budget.total - used));
     if let Some(line) = &plan {
         used += line.len() + 1;
@@ -529,6 +547,21 @@ mod tests {
             items[0]["step"].as_str().unwrap().chars().count(),
             PLAN_STEP_CHARS
         );
+    }
+
+    #[test]
+    fn plans_too_long_for_the_ledger_are_rejected_not_silently_dropped() {
+        let step = "s".repeat(PLAN_STEP_CHARS);
+        let items: Vec<_> = (0..PLAN_ITEMS)
+            .map(|_| json!({"step":step,"status":"pending"}))
+            .collect();
+        let error = update_plan(&json!({ "items": items }).to_string()).unwrap_err();
+        assert!(error.contains("Shorten or merge steps"), "{error}");
+        let fits: Vec<_> = (0..8)
+            .map(|_| json!({"step":"s".repeat(150),"status":"pending"}))
+            .collect();
+        let saved = plan_items(&json!({ "items": fits })).unwrap();
+        assert!(plan_line(&saved).len() < PLAN_BYTES);
     }
 
     #[test]
