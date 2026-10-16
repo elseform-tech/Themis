@@ -710,7 +710,7 @@ async fn repeated_archive_reads_stop_without_another_compaction() {
     let server = MockServer::start().await;
     let args =
         json!({"file_path":".themis/context/source/snapshot-original.jsonl","jsonl_record":1});
-    let mut script = (0..5)
+    let mut script = (0..8)
         .map(|i| common::tool_call_body(&format!("read-{i}"), "read_file", args.clone()))
         .collect::<Vec<_>>();
     script.push(common::final_text_body("Repeated the same evidence"));
@@ -761,14 +761,14 @@ async fn repeated_archive_reads_stop_without_another_compaction() {
     assert!(events
         .iter()
         .any(|e| matches!(e, RunEvent::Failed { error } if error.contains("recovery"))));
-    assert!(server.received_requests().await.unwrap().len() <= 4);
+    assert!(server.received_requests().await.unwrap().len() <= 7);
 }
 
 #[tokio::test]
 async fn repeated_ordinary_reads_stop_even_without_archive_paths() {
     let server = MockServer::start().await;
     let args = json!({"file_path":"story.jsonl","jsonl_record":1});
-    let mut script = (0..5)
+    let mut script = (0..8)
         .map(|i| common::tool_call_body(&format!("read-{i}"), "read_file", args.clone()))
         .collect::<Vec<_>>();
     script.push(common::final_text_body("Repeated the same evidence"));
@@ -822,14 +822,32 @@ async fn repeated_ordinary_reads_stop_even_without_archive_paths() {
     assert!(events.iter().any(
         |e| matches!(e, RunEvent::Failed { error } if error.contains("Repeated unchanged tool"))
     ));
-    assert!(server.received_requests().await.unwrap().len() <= 4);
+    let requests = server.received_requests().await.unwrap();
+    assert!(requests.len() <= 7);
+    // The first streak warns the model once instead of stopping; the second streak stops.
+    let warned = requests
+        .iter()
+        .filter(|request| String::from_utf8_lossy(&request.body).contains("Loop warning"))
+        .count();
+    assert!(
+        warned >= 1,
+        "the model must see the loop warning before the stop"
+    );
+    // Evidence runs tell the model to save each item before reading more (provider request path).
+    let first: serde_json::Value = requests[0].body_json().unwrap();
+    assert!(
+        first["messages"][0]["role"] == "system"
+            && first["messages"][0]["content"].as_str().unwrap().contains(
+                "finish and save each item's result (write its output) before reading the next few"
+            )
+    );
 }
 
 #[tokio::test]
 async fn alternating_unchanged_reads_stop_after_compaction_at_both_budgets() {
     for budget in [24_000, 200_000] {
         let server = MockServer::start().await;
-        let mut script = (0..5)
+        let mut script = (0..8)
             .map(|i| {
                 common::tool_call_body(
                     &format!("read-{i}"),
@@ -900,7 +918,8 @@ async fn alternating_unchanged_reads_stop_after_compaction_at_both_budgets() {
                 .iter()
                 .filter(|e| matches!(e, RunEvent::ToolCallFinished { .. }))
                 .count(),
-            5
+            8,
+            "two new reads, three repeats and a warning, then three more repeats stop the run"
         );
         assert!(!has_finished(&events));
     }
@@ -2283,4 +2302,73 @@ async fn a_checkpoint_is_preceded_by_the_budget_that_triggered_it() {
         })
         .expect("a budget follows the checkpoint");
     assert!(after.used_tokens < before.used_tokens);
+}
+
+#[tokio::test]
+async fn oversized_tool_batch_runs_what_fits_and_continues() {
+    let server = MockServer::start().await;
+    // At a 12k budget each turn's batch gets 6,000 bytes: five calls fit at 1 KiB each.
+    let mut batch = common::tool_call_body("w0", "write_file", json!({}));
+    batch["choices"][0]["message"]["tool_calls"] = (0..8)
+        .map(|n| {
+            json!({"id":format!("w{n}"),"type":"function","function":{"name":"write_file",
+                "arguments":json!({"file_path":format!("out-{n}.txt"),"content":"done\n","append":false}).to_string()}})
+        })
+        .collect();
+    common::mount_script(
+        &server,
+        vec![
+            batch,
+            common::final_text_body("Wrote what ran; will request the rest"),
+        ],
+    )
+    .await;
+    let project = tempfile::tempdir().unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let answer = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Write eight files".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 5,
+            context_token_budget: 12_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .expect("an oversized batch must not end the run");
+    assert_eq!(answer, "Wrote what ran; will request the rest");
+    let written: Vec<bool> = (0..8)
+        .map(|n| project.path().join(format!("out-{n}.txt")).exists())
+        .collect();
+    assert_eq!(written, [true, true, true, true, true, false, false, false]);
+    let requests = server.received_requests().await.unwrap();
+    let followup: serde_json::Value = requests[1].body_json().unwrap();
+    let deferred: Vec<&str> = followup["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .filter_map(|m| m["content"].as_str())
+        .filter(|content| content.contains("Not run: this batch had 8 calls"))
+        .collect();
+    assert_eq!(
+        deferred.len(),
+        3,
+        "deferred calls are reported to the model"
+    );
+    let events = common::drain(&mut rx).await;
+    assert!(!events.iter().any(|e| matches!(e, RunEvent::Failed { .. })));
 }

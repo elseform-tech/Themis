@@ -588,11 +588,13 @@ async fn run_task_with_evidence_inner(
         } else {
             "\nThe task ledger keeps completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work."
         });
+        messages[0].content.push_str(INCREMENTAL_WORK);
     }
 
     let mut observations = HashSet::new();
     let mut last_shell_observation = None;
     let mut unchanged_results = 0;
+    let mut loop_warned = false;
     let mut recovery_reads = 0;
     let mut recall_searches = 0usize;
     let config = compaction_config();
@@ -857,7 +859,10 @@ async fn run_task_with_evidence_inner(
                 };
                 if value["arguments_rejected"] != true && unchanged {
                     unchanged_results += 1;
-                    if unchanged_results >= 3 {
+                    // The first streak gets one warning: re-reading after compaction is usually
+                    // forgotten work, which saving results can fix. A second streak stops.
+                    let warn = unchanged_results >= 3 && !loop_warned;
+                    if unchanged_results >= 3 && loop_warned {
                         let error = "Repeated unchanged tool results stopped the run. Completed actions and evidence remain saved; evidence recovery can continue in a new run with a narrower unresolved question.".to_owned();
                         emit(RunEvent::Failed {
                             error: error.clone(),
@@ -892,6 +897,11 @@ async fn run_task_with_evidence_inner(
                                 calls.len(),
                             ),
                         )?;
+                    }
+                    if warn {
+                        loop_warned = true;
+                        unchanged_results = 0;
+                        warn_repeated_results(result);
                     }
                 } else {
                     unchanged_results = 0;
@@ -1243,8 +1253,13 @@ async fn execute_tool_calls(
     narration: &str,
     batch_bytes: usize,
 ) -> anyhow::Result<Vec<ToolCall>> {
-    let allowance = tool_result_allowance(batch_bytes, calls.len());
-    if allowance < 1024 {
+    // Run the calls that fit at least 1 KiB each; the rest come back unexecuted with a
+    // note, so an oversized batch costs one turn instead of the whole run.
+    let runnable = calls
+        .len()
+        .min(batch_bytes.min(48 * 1024) / (MIN_RESULT_ALLOWANCE + 4));
+    let allowance = tool_result_allowance(batch_bytes, runnable);
+    if runnable == 0 || allowance < MIN_RESULT_ALLOWANCE {
         let error = "tool batch exceeds the bounded delivery allowance; request fewer calls";
         events
             .send(RunEvent::Failed {
@@ -1255,7 +1270,7 @@ async fn execute_tool_calls(
         anyhow::bail!(error);
     }
     let mut results = Vec::with_capacity(calls.len());
-    for call in calls {
+    for (index, call) in calls.iter().enumerate() {
         check_stopped(stopped, events).await?;
         let name = call.function.name.clone();
         let args = call.function.arguments.clone();
@@ -1270,7 +1285,9 @@ async fn execute_tool_calls(
 
         let argument_allowance = tool_argument_allowance(batch_bytes);
         let arguments_rejected = serde_json::to_vec(call)?.len() > argument_allowance;
-        let outcome = if arguments_rejected {
+        let outcome = if index >= runnable {
+            Err(format!("Not run: this batch had {} calls but only the first {runnable} fit the context budget. Nothing was executed for this call; request it again in a later, smaller batch.", calls.len()))
+        } else if arguments_rejected {
             Err(format!("Tool arguments exceed {argument_allowance} serialized bytes (at most 64 KiB); rejected before execution. Use focused patches or approved shell/Python generators. No write was performed."))
         } else {
             execute_call(tools, approvals, &name, &args, &summary, events, stopped).await
@@ -1420,6 +1437,27 @@ fn tool_argument_allowance(batch_bytes: usize) -> usize {
     batch_bytes.saturating_mul(2).min(64 * 1024)
 }
 
+/// Long jobs fail when every input is read before anything is saved: checkpoints summarise
+/// the early reads away and the agent re-reads them in a loop (long-horizon eval, 2026-10-16).
+const INCREMENTAL_WORK: &str = "\nContext is limited and older reads are summarised away at checkpoints. For jobs over many files or items, finish and save each item's result (write its output) before reading the next few; do not read everything first.";
+
+const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. Repeating it again stops the run. Context is limited and earlier reads are summarised away, so save what you learned now (write the output or notes for finished items, update the plan), then take the next unfinished step instead of re-reading.";
+
+/// Adds the one-time loop warning to a repeated result without dropping its content.
+fn warn_repeated_results(result: &mut ToolCall) {
+    let arguments = &mut result.function.arguments;
+    match serde_json::from_str::<serde_json::Value>(arguments) {
+        Ok(mut value) if value.is_object() => {
+            value["loop_warning"] = LOOP_WARNING.into();
+            *arguments = value.to_string();
+        }
+        _ => {
+            arguments.push('\n');
+            arguments.push_str(LOOP_WARNING);
+        }
+    }
+}
+
 fn remind_unchanged_result(
     result: &mut ToolCall,
     fingerprint: u64,
@@ -1520,6 +1558,8 @@ fn freshness_receipt(result: &ToolCall, earlier_id: &str, fingerprint: u64) -> T
     result.function.arguments = receipt.to_string();
     result
 }
+
+const MIN_RESULT_ALLOWANCE: usize = 1024;
 
 fn tool_result_allowance(batch_bytes: usize, calls: usize) -> usize {
     (batch_bytes.min(48 * 1024) / calls.max(1))
@@ -2221,6 +2261,8 @@ async fn replace_context(
         .max(fixed_tokens);
     let mut cache_bytes = target.saturating_sub(fixed_tokens).saturating_mul(4) / 3;
     let checkpoint_prefix = compacted[checkpoint_index].content.clone();
+    // The plan keeps its own room: halving cache allowances must never drop it.
+    let plan_reserve = ledger::plan_reserve(messages);
     loop {
         let actions = cache_bytes
             .min((policy.context_token_budget / 12).saturating_mul(4))
@@ -2232,17 +2274,20 @@ async fn replace_context(
             messages,
             split,
             ledger::Budget {
-                total: actions + reads,
+                total: actions + reads + plan_reserve,
                 actions,
             },
             original_snapshot,
         );
         compacted[checkpoint_index].content = format!("{checkpoint_prefix}{ledger}");
-        if estimated_tokens(&compacted) <= target {
+        if estimated_tokens(&compacted) <= target || cache_bytes == 0 {
             summary.push_str(&ledger);
             break;
         }
         cache_bytes /= 2;
+    }
+    if estimated_tokens(&compacted) > policy.context_token_budget {
+        anyhow::bail!("checkpoint plan and active request exceed the context budget; original conversation preserved");
     }
     let mut durable_summary = summary;
     durable_summary.push_str("\nRecent completed context:\n");
@@ -3655,6 +3700,98 @@ mod tests {
         assert!(checkpoint.content.contains("parser.py"));
         assert!(checkpoint.content.contains("Ran 16 tests. OK"));
         assert!(checkpoint.content.contains("/tmp/progress.jsonl"));
+    }
+
+    #[tokio::test]
+    async fn plan_survives_repeated_checkpoints_when_caches_are_squeezed() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Goal/constraints: summarise modules. Confirmed findings: modules read. Completed changes/tests: none. Unresolved work: continue. Next action: read the next module."},"finish_reason":"stop"}]}))).mount(&server).await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let call = |id: &str, name: &str, arguments: String| ToolCall {
+            id: id.into(),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: name.into(),
+                arguments,
+            },
+        };
+        // A ~700-byte plan, as in the long-horizon eval where it vanished.
+        let steps: Vec<_> = (1..=8)
+            .map(|n| serde_json::json!({"step":format!("Read module {n:02} and write its notes file with owner line"),"status":"pending"}))
+            .collect();
+        let plan = serde_json::json!({ "items": steps }).to_string();
+        // A long task leaves little cache room, so the checkpoint loop halves its allowances.
+        let mut messages = initial_messages(Vec::new(), "Summarise every module. ".repeat(1000));
+        messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(vec![call("plan", ledger::PLAN_TOOL, plan)]),
+            content: String::new(),
+        });
+        messages.push(ChatMessage {
+            role: ChatRole::Tool,
+            message_type: MessageType::ToolResult(vec![call(
+                "plan",
+                ledger::PLAN_TOOL,
+                r#"{"ok":true}"#.into(),
+            )]),
+            content: String::new(),
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let policy = RunPolicy {
+            total_turns: 20,
+            context_token_budget: 12_000,
+            recent_messages: 2,
+        };
+        for round in 0..3 {
+            for n in 0..6 {
+                let id = format!("read-{round}-{n}");
+                let content = format!("Module {round}-{n}: ").repeat(400);
+                messages.push(ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::ToolUse(vec![call(
+                        &id,
+                        "read_file",
+                        serde_json::json!({"file_path":format!("src/mod-{round}{n}.py")})
+                            .to_string(),
+                    )]),
+                    content: String::new(),
+                });
+                messages.push(ChatMessage {
+                    role: ChatRole::Tool,
+                    message_type: MessageType::ToolResult(vec![call(&id, "read_file", serde_json::json!({"found":true,"path":format!("src/mod-{round}{n}.py"),"content":content}).to_string())]),
+                    content: String::new(),
+                });
+            }
+            compact_context(
+                &llm,
+                &mut messages,
+                &policy,
+                &tx,
+                &AtomicBool::new(false),
+                Some(directory.path()),
+            )
+            .await
+            .unwrap();
+            while rx.try_recv().is_ok() {}
+            let checkpoint = messages
+                .iter()
+                .find(|m| m.content.starts_with("Earlier context checkpoint"))
+                .unwrap();
+            assert!(
+                checkpoint.content.contains(r#""kind":"plan""#)
+                    && checkpoint.content.contains("Read module 08"),
+                "plan dropped at checkpoint {}",
+                round + 1
+            );
+        }
     }
 
     #[tokio::test]
