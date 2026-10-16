@@ -18,6 +18,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import time
 
 from evals.longform.__main__ import isolated_env, sandbox_wrapper
 from evals.longform.report import classify_error
@@ -85,7 +86,7 @@ def run_task(runner, task, args):
         task_file = os.path.join(workdir, "task.json")
         with open(task_file, "w", encoding="utf-8") as handle:
             json.dump({k: task[k] for k in ("prompt", "checkpoint", "evidence", "budget", "recent_messages",
-                                            "max_turns", "offer_notes", "followups", "snapshots") if k in task}, handle)
+                                            "max_turns", "offer_notes", "followups", "snapshots", "allow_all") if k in task}, handle)
         command = runner + ["--project", project, "--task", task_file, "--max-turns", str(args.max_turns)]
         if args.model:
             command += ["--model", args.model]
@@ -123,6 +124,24 @@ def run_task(runner, task, args):
         }, None
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def infrastructure_failure(row, error):
+    """A run lost to the provider or the harness (rate limit, cut-off response, timeout), not
+    a result about the agent."""
+    return bool(error) or bool(row and row.get("error_text", "").startswith("LLM request failed"))
+
+
+def run_task_retrying(runner, make_task, args, delay=120, run=None):
+    """`run_task` on a fresh task from `make_task()`, run once more after `delay` seconds when
+    the first attempt was lost to the provider. Returns (row, error, retried)."""
+    run = run or run_task
+    row, error = run(runner, make_task(), args)
+    if not infrastructure_failure(row, error) or getattr(args, "no_retry", False):
+        return row, error, False
+    time.sleep(delay)
+    row, error = run(runner, make_task(), args)
+    return row, error, True
 
 
 def repeated_calls(report):

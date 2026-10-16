@@ -200,7 +200,8 @@ class TaskPlumbingTest(unittest.TestCase):
             facts = generate(os.path.join(folder, "facts"), 5)
             self.assertIn(f"In this project ({facts['package']})", task["prompt"])
             self.assertEqual(len(task["followups"]), 4)
-            self.assertTrue(task["snapshots"] and task["offer_notes"] and task["budget"] == 200_000)
+            self.assertTrue(task["snapshots"] and task["offer_notes"] and task["allow_all"])
+            self.assertEqual(task["budget"], 200_000)
             current = os.path.join(folder, "current")
             shutil.copytree(project, current, ignore=shutil.ignore_patterns(".git", ".themis"))
             for turn in range(1, 6):

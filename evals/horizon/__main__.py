@@ -17,7 +17,7 @@ import os
 import re
 import sys
 
-from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task
+from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task_retrying
 
 from .tasks import TASKS
 
@@ -87,6 +87,8 @@ def failure_cause(row):
         return "unfinished"
     if "first line" in why or "functions" in why or "summary '" in why or why.startswith("line "):
         return "wrong_content"
+    if "SUMMARY.md total" in why:
+        return "wrong_total"
     if "SUMMARY.md" in why or "conflicts.md" in why:
         return "wrong_result"
     if why.startswith("progress"):
@@ -128,7 +130,8 @@ def summarize(rows):
 def markdown(summary):
     s = summary["summary"]
     lines = [f"# Long horizon: {summary.get('model')}", "",
-             f"Runs: {s['runs']}; infrastructure errors (excluded): {len(summary['errors'])}. "
+             f"Runs: {s['runs']}; infrastructure errors (excluded): {len(summary['errors'])}; "
+             f"runs retried after a provider error: {summary.get('retried', 0)}. "
              "Benchmark audit, not an automated check.", "",
              "| Task | Pass | Compactions | Notes used | Notes kept at checkpoints | Open at end | Progress reported | "
              "Early detail recalled | Count recalled | Re-reads | Loop warnings | Old guard would stop (passed) | "
@@ -152,12 +155,14 @@ def run(args):
         ROOT, os.path.join(ROOT, os.environ.get("CARGO_TARGET_DIR", "target")))
     tasks = [t for t in TASKS if not args.task or t["name"] in args.task or t["job"] in args.task]
     jobs = [(trial, task) for trial in range(args.trials) for task in tasks]
-    rows, errors = [], []
+    rows, errors, retries = [], [], 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(run_task, runner, task, args): (trial, task) for trial, task in jobs}
+        futures = {pool.submit(run_task_retrying, runner, lambda task=task: task, args): (trial, task)
+                   for trial, task in jobs}
         for future in concurrent.futures.as_completed(futures):
             trial, task = futures[future]
-            row, error = future.result()
+            row, error, retried = future.result()
+            retries += retried
             if row and row.get("error_text", "").startswith("LLM request failed"):
                 # The provider failed mid-run (truncated response, rate limit): infrastructure,
                 # not a result. Kept with its measures for inspection, excluded from rates.
@@ -174,7 +179,7 @@ def run(args):
     summary = {"suite": "horizon", "model": args.model, "trials": args.trials,
                "created": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                "note": "Live-model benchmark audit; not an automated runtime check.",
-               "summary": summarize(rows), "errors": errors, "rows": rows}
+               "summary": summarize(rows), "errors": errors, "retried": retries, "rows": rows}
     os.makedirs(RESULTS, exist_ok=True)
     out = args.out or os.path.join(RESULTS, f"{datetime.date.today()}-{args.model or 'mock'}.json")
     with open(out, "w", encoding="utf-8") as handle:
@@ -199,6 +204,7 @@ def main(argv=None):
     cmd.add_argument("--runner", help="prebuilt tool_eval binary")
     cmd.add_argument("--sandbox", choices=("auto", "off"), default="auto")
     cmd.add_argument("--out")
+    cmd.add_argument("--no-retry", action="store_true", help="do not rerun runs lost to the provider")
     show = sub.add_parser("report")
     show.add_argument("result")
     args = parser.parse_args(argv)

@@ -41,7 +41,9 @@ wrong or unfinished).
 
 ## Isolation
 
-The runner is the tool-eval runner with `snapshots` on: it copies the project (without
+Approvals are YOLO-style, as a developer would use them (every action runs; the OS sandbox
+still applies), and scripts are allowed. A run lost to the provider is rerun once after two
+minutes (`--no-retry` turns that off). The runner is the tool-eval runner with `snapshots` on: it copies the project (without
 `.themis`, `.git` and caches; symlinks skipped) after each message. Runs use a scratch project
 and HOME and `sandbox-exec` on macOS. The grader runs agent code only in scratch copies, in a
 subprocess with a time limit and, on macOS, `sandbox-exec` with no network and no file access

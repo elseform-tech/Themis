@@ -59,7 +59,11 @@ class NotesPersistenceTest(unittest.TestCase):
 
 class TaskChecksTest(unittest.TestCase):
     def test_arms_per_job_and_only_the_asked_arm_asks(self):
-        self.assertEqual(len(TASKS), 14)
+        self.assertEqual(len(TASKS), 16)
+        free = [t for t in TASKS if t["job"] == "modules-free"]
+        self.assertEqual([t["arm"] for t in free], ["no-notes", "notes-offered"])
+        self.assertTrue(all(t["allow_all"] and "scripts" not in t["prompt"] for t in free))
+        self.assertFalse(any(t.get("allow_all") for t in TASKS if t["job"] != "modules-free"))
         asked = [t for t in TASKS if t["arm"] == "notes-asked"]
         self.assertTrue(all("notes tool" in t["prompt"] for t in asked))
         self.assertFalse(any("notes tool" in t["prompt"] for t in TASKS if t["arm"] != "notes-asked"))
@@ -115,6 +119,11 @@ class TaskChecksTest(unittest.TestCase):
             ok, why = check_modules(project, report)
             self.assertFalse(ok)
             self.assertIn("first line", why)
+            write(project, "cards/SUMMARY.md", "".join(f"mod-{n:02d}: {c}\n" for n, c in enumerate(counts, 1))
+                  + f"total: {sum(counts) - 3}\n")
+            self.assertIn("SUMMARY.md total", check_modules(project, report)[1])
+            write(project, "cards/SUMMARY.md", "mod-01: 9\n")
+            self.assertNotIn("SUMMARY.md total", check_modules(project, report)[1])
             self.assertEqual(measure_modules(project, report)["rule_kept_files"], MODULES - 1)
 
 
@@ -149,9 +158,39 @@ class LoopAndCauseTest(unittest.TestCase):
         self.assertEqual(failure_cause(row("20 lines")), "unfinished")
         self.assertEqual(failure_cause(row("mod-03.md first line ['x']")), "wrong_content")
         self.assertEqual(failure_cause(row("SUMMARY.md; final 'x'")), "wrong_result")
+        self.assertEqual(failure_cause(row("SUMMARY.md total; final 'x'")), "wrong_total")
         self.assertEqual(failure_cause(row("conflicts.md ['port 1: a']")), "wrong_result")
         self.assertEqual(failure_cause(row("progress 'none'")), "wrong_progress")
         self.assertEqual(failure_cause(row("final 'x'")), "wrong_final_answer")
+
+
+
+class RetryTest(unittest.TestCase):
+    def test_runs_lost_to_the_provider_are_retried_once(self):
+        from types import SimpleNamespace
+
+        from evals.tools.__main__ import run_task_retrying
+        outcomes = [(None, "provider_request:429"), ({"error_text": "", "passed": True}, None)]
+        seen = []
+
+        def fake(runner, task, args):
+            seen.append(task)
+            return outcomes[len(seen) - 1]
+
+        args = SimpleNamespace()
+        row, error, retried = run_task_retrying([], lambda: {"n": len(seen)}, args, delay=0, run=fake)
+        self.assertEqual((row["passed"], error, retried, len(seen)), (True, None, True, 2))
+        failed = [({"error_text": "LLM request failed: 429", "calls": []}, None)] * 2
+        seen.clear()
+        row, error, retried = run_task_retrying([], dict, args, delay=0, run=lambda *a: (seen.append(1), failed[0])[1])
+        self.assertTrue(retried and row["error_text"].startswith("LLM request failed") and len(seen) == 2)
+        seen.clear()
+        _, _, retried = run_task_retrying([], dict, args, delay=0, run=lambda *a: (seen.append(1), ({"error_text": ""}, None))[1])
+        self.assertFalse(retried)
+        self.assertEqual(len(seen), 1)
+        _, _, retried = run_task_retrying([], dict, SimpleNamespace(no_retry=True), delay=0,
+                                          run=lambda *a: (None, "timeout"))
+        self.assertFalse(retried)
 
 
 if __name__ == "__main__":

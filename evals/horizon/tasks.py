@@ -145,6 +145,11 @@ def measure_ports(project, report):
             "rereads": rereads(report, r"svc-\d\d\.yaml")}
 
 
+FREE_PROMPT = MODULES_PROMPT.replace(
+    "Read each module with read_file and write each card file yourself; do not use scripts to extract or "
+    "generate the cards. ", "")
+
+
 def check_stories(project, report):
     text = read(project, "report.txt") or ""
     got = [line.strip() for line in text.strip().splitlines() if line.strip()]
@@ -188,7 +193,8 @@ def check_modules(project, report):
     counts = [len(module_functions(n)) for n in range(1, MODULES + 1)]
     expected = [f"mod-{n:02d}: {c}" for n, c in enumerate(counts, 1)] + [f"total: {sum(counts)}"]
     if summary != expected:
-        problems.append("SUMMARY.md")
+        # A right list with a wrong last line is an addition slip, not lost work.
+        problems.append("SUMMARY.md total" if summary[:-1] == expected[:-1] else "SUMMARY.md")
     for number in range(1, MODULES + 1):
         original = read(project, f"src/mod-{number:02d}.py") or ""
         if f"def {module_functions(number)[0]}(value):" not in original:
@@ -228,6 +234,10 @@ JOBS = [
      "measure": measure_modules, "arms": ARMS},
     {"name": "ports", "setup": setup_ports, "prompt": PORTS_PROMPT, "check": check_ports,
      "measure": measure_ports, "arms": ARMS[:3]},
+    # The modules job with the agent untied: no ban on scripts and YOLO-style approvals (the
+    # OS sandbox still applies), to see what the memory-test restrictions cost.
+    {"name": "modules-free", "setup": setup_modules, "prompt": FREE_PROMPT, "check": check_modules,
+     "measure": measure_modules, "arms": ARMS[:2], "allow_all": True},
 ]
 COMMON = {"evidence": ".themis/context/eval-thread", "budget": 12_000, "recent_messages": 4, "max_turns": 90,
           "timeout": 2400}

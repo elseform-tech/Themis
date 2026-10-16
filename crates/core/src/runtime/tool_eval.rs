@@ -93,6 +93,9 @@ pub struct ToolTaskOptions {
     /// Later user messages in the same chat, each run after the previous answer with the
     /// chat history (latest checkpoint plus the text turns) and the same notes file.
     pub followups: Vec<String>,
+    /// YOLO-style approvals: every action runs (the OS sandbox around the runner still
+    /// applies). Off: destructive actions are refused, as by a cautious person in Custom mode.
+    pub allow_all: bool,
     /// Copies the project to `<project>.turn-<n>` after each turn (without `.themis`, `.git`
     /// and caches) so a grader can check every stage, not only the end state.
     pub snapshots: bool,
@@ -109,6 +112,7 @@ impl Default for ToolTaskOptions {
             offer_notes: true,
             followups: Vec::new(),
             snapshots: false,
+            allow_all: false,
         }
     }
 }
@@ -259,7 +263,11 @@ async fn run_turn(
     history: Vec<ConversationTurn>,
     options: &ToolTaskOptions,
 ) -> anyhow::Result<TurnRun> {
-    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowNonDestructive);
+    let approvals: Arc<dyn ApprovalHook> = if options.allow_all {
+        Arc::new(crate::tools::AllowAllHook)
+    } else {
+        Arc::new(AllowNonDestructive)
+    };
     let registry = crate::tools::background::BackgroundRegistry::in_memory();
     #[allow(unused_mut)]
     let mut tools = crate::tools::boxed_tools_for_chat(

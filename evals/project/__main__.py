@@ -17,7 +17,7 @@ import shutil
 import sys
 import tempfile
 
-from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task
+from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task_retrying
 from evals.tools.tasks import commit_all
 
 from .generate import generate
@@ -73,6 +73,8 @@ def make_task(seed, memory, arm):
     task = {"name": f"project-{memory}-{arm}", "tool": "project", "job": "project", "arm": arm, "memory": memory,
             "setup": setup, "check": check, "measure": measure, "prompt": "", "followups": [], "snapshots": True,
             "evidence": ".themis/context/eval-thread", "offer_notes": arm == "notes", "timeout": 5400,
+            # YOLO-style approvals as a developer would use them; the OS sandbox still applies.
+            "allow_all": True,
             **MEMORY[memory]}
     return task
 
@@ -103,7 +105,8 @@ def summarize(rows):
 def markdown(summary):
     s = summary["summary"]
     lines = [f"# Real project: {summary.get('model')}", "",
-             f"Runs: {s['runs']}; infrastructure errors (excluded): {len(summary['errors'])}. "
+             f"Runs: {s['runs']}; infrastructure errors (excluded): {len(summary['errors'])}; "
+             f"runs retried after a provider error: {summary.get('retried', 0)}. "
              "Benchmark audit, not an automated check.", "",
              "| Setup | Pass | 1 parser+pricing | 2 progress | 3 bug fix | 4 CLI+docs | 5 recall | Hidden tests at end | "
              "Loop warnings | Open-task checks | Compactions | Notes used | Calls | Minutes | Failure causes |",
@@ -123,14 +126,18 @@ def run(args):
     runner = [os.path.abspath(args.runner)] if args.runner else cargo_build(
         ROOT, os.path.join(ROOT, os.environ.get("CARGO_TARGET_DIR", "target")))
     memories = ["normal", "squeezed"] if args.memory == "both" else [args.memory]
-    jobs = [(trial, make_task(args.seed + trial, memory, arm))
+    jobs = [(trial, args.seed + trial, memory, arm)
             for trial in range(args.trials) for memory in memories for arm in args.arm]
-    rows, errors = [], []
+    rows, errors, retries = [], [], 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(run_task, runner, task, args): (trial, task) for trial, task in jobs}
+        futures = {}
+        for trial, seed, memory, arm in jobs:
+            make = lambda seed=seed, memory=memory, arm=arm: make_task(seed, memory, arm)  # noqa: E731
+            futures[pool.submit(run_task_retrying, runner, make, args)] = (trial, make_task(seed, memory, arm))
         for future in concurrent.futures.as_completed(futures):
             trial, task = futures[future]
-            row, error = future.result()
+            row, error, retried = future.result()
+            retries += retried
             if row and row.get("error_text", "").startswith("LLM request failed"):
                 error = f"provider failed mid-run after {len(row['calls'])} calls: {row['error_text'][:120]}"
             if error:
@@ -143,7 +150,7 @@ def run(args):
     summary = {"suite": "project", "model": args.model, "trials": args.trials,
                "created": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
                "note": "Live-model benchmark audit; not an automated runtime check.",
-               "summary": summarize(rows), "errors": errors, "rows": rows}
+               "summary": summarize(rows), "errors": errors, "retried": retries, "rows": rows}
     os.makedirs(RESULTS, exist_ok=True)
     out = args.out or os.path.join(RESULTS, f"{datetime.date.today()}-{args.model or 'mock'}.json")
     with open(out, "w", encoding="utf-8") as handle:
@@ -170,6 +177,7 @@ def main(argv=None):
     cmd.add_argument("--runner", help="prebuilt tool_eval binary")
     cmd.add_argument("--sandbox", choices=("auto", "off"), default="auto")
     cmd.add_argument("--out")
+    cmd.add_argument("--no-retry", action="store_true", help="do not rerun runs lost to the provider")
     show = sub.add_parser("report")
     show.add_argument("result")
     args = parser.parse_args(argv)
