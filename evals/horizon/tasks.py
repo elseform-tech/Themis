@@ -26,6 +26,11 @@ OWNER_RULE = "owner: heron"
 ADVICE = (" Context is limited and older reads are summarised away at checkpoints. For jobs over many files or"
           " items, finish and save each item's result (write its output) before reading the next few; do not"
           " read everything first.")
+# The scoped version proposed on 2026-10-16: order of work for independent items, notes for
+# facts otherwise, and no extra files just to remember.
+SCOPED = (" For many independent items, finish each item's part of the requested output before reading the"
+          " next. If the output is not per item, put each item's key facts in your notes, or add to the"
+          " output as you go. Do not create extra files just to remember.")
 SERVICES = 14
 ASK_NOTES = (" Keep notes with the notes tool: the goal and rules, each item's status, and the results you"
              " will need at the end, updated as you finish each item.")
@@ -226,7 +231,7 @@ def rereads(report, pattern):
     return again
 
 
-ARMS = ("no-notes", "notes-offered", "notes-asked", "notes-advice")
+ARMS = ("no-notes", "notes-offered", "notes-asked", "notes-advice", "notes-scoped")
 JOBS = [
     {"name": "stories", "setup": setup_stories, "prompt": STORIES_PROMPT, "check": check_stories,
      "measure": measure_stories, "arms": ARMS[:3]},
@@ -244,7 +249,7 @@ COMMON = {"evidence": ".themis/context/eval-thread", "budget": 12_000, "recent_m
 
 
 def arm_prompt(prompt, arm):
-    return prompt + {"notes-asked": ASK_NOTES, "notes-advice": ADVICE}.get(arm, "")
+    return prompt + {"notes-asked": ASK_NOTES, "notes-advice": ADVICE, "notes-scoped": SCOPED}.get(arm, "")
 
 
 def arms(job):

@@ -28,6 +28,18 @@ RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 # The app's defaults (200,000-token context, 200 turns); "squeezed" forces many checkpoints.
 MEMORY = {"normal": {"budget": 200_000, "recent_messages": 20},
           "squeezed": {"budget": 32_000, "recent_messages": 8}}
+FILE_TOOLS = ["read_file", "write_file", "apply_patch", "list_dir", "search_file", "copy_file", "move_file",
+              "delete_file", "create_dir"]
+# Arms: the app as it is (`notes`), the notes tool withheld, one runtime nudge switched off at a
+# time, and the file tools hidden so the agent works through the shell alone.
+ARMS = {
+    "notes": {},
+    "no-notes": {"offer_notes": False},
+    "no-reminder": {"nudges_off": ["notes_reminder"]},
+    "no-finish-checks": {"nudges_off": ["finish_checks"]},
+    "no-loop-warning": {"nudges_off": ["loop_warning"]},
+    "bash-only": {"hide_tools": FILE_TOOLS},
+}
 STAGES = ["1_parser_pricing", "2_progress", "3_bug_fix", "4_cli_docs", "5_recall"]
 
 
@@ -72,10 +84,10 @@ def make_task(seed, memory, arm):
 
     task = {"name": f"project-{memory}-{arm}", "tool": "project", "job": "project", "arm": arm, "memory": memory,
             "setup": setup, "check": check, "measure": measure, "prompt": "", "followups": [], "snapshots": True,
-            "evidence": ".themis/context/eval-thread", "offer_notes": arm == "notes", "timeout": 5400,
+            "evidence": ".themis/context/eval-thread", "offer_notes": True, "timeout": 5400,
             # YOLO-style approvals as a developer would use them; the OS sandbox still applies.
             "allow_all": True,
-            **MEMORY[memory]}
+            **MEMORY[memory], **ARMS[arm]}
     return task
 
 
@@ -169,7 +181,7 @@ def main(argv=None):
     cmd.add_argument("--seed", type=int, default=1, help="first trial's seed; later trials add one")
     cmd.add_argument("--model", default="longcat-2.5-preview-free")
     cmd.add_argument("--memory", choices=("normal", "squeezed", "both"), default="normal")
-    cmd.add_argument("--arm", action="append", choices=("notes", "no-notes"))
+    cmd.add_argument("--arm", action="append", choices=sorted(ARMS))
     cmd.add_argument("--jobs", type=int, default=2)
     cmd.add_argument("--max-turns", type=int, default=200)
     cmd.add_argument("--timeout", type=int, default=5400)

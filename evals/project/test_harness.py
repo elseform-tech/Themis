@@ -187,6 +187,22 @@ class GraderTest(unittest.TestCase):
         self.assertEqual(rule_problems(self.original, self.original, self.package), [])
 
 
+class ArmsTest(unittest.TestCase):
+    def test_each_arm_changes_one_thing(self):
+        from .__main__ import FILE_TOOLS, make_task
+        base = make_task(1, "normal", "notes")
+        self.assertTrue(base["offer_notes"])
+        self.assertNotIn("nudges_off", base)
+        self.assertFalse(make_task(1, "normal", "no-notes")["offer_notes"])
+        for arm, nudge in [("no-reminder", "notes_reminder"), ("no-finish-checks", "finish_checks"),
+                           ("no-loop-warning", "loop_warning")]:
+            task = make_task(1, "normal", arm)
+            self.assertEqual((task["nudges_off"], task["offer_notes"]), ([nudge], True))
+        bash = make_task(1, "normal", "bash-only")
+        self.assertEqual(bash["hide_tools"], FILE_TOOLS)
+        self.assertNotIn("shell", bash["hide_tools"])
+
+
 class TaskPlumbingTest(unittest.TestCase):
     def test_task_sets_prompts_grades_snapshots_and_measures(self):
         from evals.tools.tasks import prepare

@@ -96,6 +96,10 @@ pub struct ToolTaskOptions {
     /// YOLO-style approvals: every action runs (the OS sandbox around the runner still
     /// applies). Off: destructive actions are refused, as by a cautious person in Custom mode.
     pub allow_all: bool,
+    /// Ablation: runtime nudges to switch off (`notes_reminder`, `finish_checks`, `loop_warning`).
+    pub nudges_off: Vec<String>,
+    /// Ablation: tools withheld from the agent (for example the file tools, leaving the shell).
+    pub hide_tools: Vec<String>,
     /// Copies the project to `<project>.turn-<n>` after each turn (without `.themis`, `.git`
     /// and caches) so a grader can check every stage, not only the end state.
     pub snapshots: bool,
@@ -113,6 +117,8 @@ impl Default for ToolTaskOptions {
             followups: Vec::new(),
             snapshots: false,
             allow_all: false,
+            nudges_off: Vec::new(),
+            hide_tools: Vec::new(),
         }
     }
 }
@@ -291,6 +297,12 @@ async fn run_turn(
             },
         )));
     }
+    tools.retain(|tool| {
+        !options
+            .hide_tools
+            .iter()
+            .any(|hidden| hidden == tool.name())
+    });
     let tools_available = tools.iter().map(|tool| tool.name().to_owned()).collect();
     let (events, mut sink) = tokio::sync::mpsc::channel(1024);
     let collector = tokio::spawn(async move {
@@ -346,30 +358,33 @@ async fn run_turn(
     let notes_log = Arc::new(Mutex::new(Vec::new()));
     let loop_warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let finish_checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let result = EVAL_FINISH_CHECKS
+    let result = EVAL_NUDGES_OFF
         .scope(
-            finish_checks.clone(),
-            EVAL_LOOP_WARNINGS.scope(
-                loop_warnings.clone(),
-                EVAL_NOTES_LOG.scope(
-                    notes_log.clone(),
-                    EVAL_OFFER_NOTES.scope(
-                        options.offer_notes,
-                        run_task_with_evidence(
-                            llm.clone(),
-                            tools,
-                            task.to_owned(),
-                            history,
-                            approvals,
-                            RunPolicy {
-                                total_turns: options.max_turns,
-                                context_token_budget: options.budget,
-                                recent_messages: options.recent_messages,
-                            },
-                            events,
-                            Arc::new(AtomicBool::new(false)),
-                            String::new(),
-                            options.evidence.clone(),
+            Arc::new(options.nudges_off.clone()),
+            EVAL_FINISH_CHECKS.scope(
+                finish_checks.clone(),
+                EVAL_LOOP_WARNINGS.scope(
+                    loop_warnings.clone(),
+                    EVAL_NOTES_LOG.scope(
+                        notes_log.clone(),
+                        EVAL_OFFER_NOTES.scope(
+                            options.offer_notes,
+                            run_task_with_evidence(
+                                llm.clone(),
+                                tools,
+                                task.to_owned(),
+                                history,
+                                approvals,
+                                RunPolicy {
+                                    total_turns: options.max_turns,
+                                    context_token_budget: options.budget,
+                                    recent_messages: options.recent_messages,
+                                },
+                                events,
+                                Arc::new(AtomicBool::new(false)),
+                                String::new(),
+                                options.evidence.clone(),
+                            ),
                         ),
                     ),
                 ),

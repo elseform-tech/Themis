@@ -815,11 +815,12 @@ async fn run_task_with_evidence_inner(
             // or when the run did no work at all (an answer that only announces the next step):
             // a long job must not end early because the agent lost track of what is left. Later
             // checks need tool calls since the previous one, so narration alone still ends the run.
-            let check_due = if finish_checks == 0 {
-                notes_used || work_calls == 0
-            } else {
-                finish_checks < MAX_FINISH_CHECKS && work_calls > work_at_check
-            };
+            let check_due = !nudge_off("finish_checks")
+                && if finish_checks == 0 {
+                    notes_used || work_calls == 0
+                } else {
+                    finish_checks < MAX_FINISH_CHECKS && work_calls > work_at_check
+                };
             if let (Some(directory), true) = (&notes_directory, check_due) {
                 let saved = notes::Notes::load(directory);
                 let open: Vec<&str> = saved.open().iter().map(|line| line.key.as_str()).collect();
@@ -938,7 +939,9 @@ async fn run_task_with_evidence_inner(
                     }
                     if warn {
                         unchanged_results = 0;
-                        warn_repeated_results(result);
+                        if !nudge_off("loop_warning") {
+                            warn_repeated_results(result);
+                        }
                         #[cfg(feature = "eval")]
                         let _ = EVAL_LOOP_WARNINGS.try_with(|count| {
                             count.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -1007,7 +1010,7 @@ async fn run_task_with_evidence_inner(
         work_calls += delivered_calls.len();
         if let (Some(directory), false, false, true) = (
             &notes_directory,
-            notes_reminded,
+            notes_reminded || nudge_off("notes_reminder"),
             batch_has_notes || notes_used,
             work_calls >= NOTES_REMINDER_AFTER,
         ) {
@@ -1804,6 +1807,28 @@ tokio::task_local! {
 tokio::task_local! {
     /// Eval-only: loop warnings given in the run (each would once have stopped it after the first).
     pub static EVAL_LOOP_WARNINGS: Arc<std::sync::atomic::AtomicUsize>;
+}
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only ablation: runtime nudges switched off (`notes_reminder`, `finish_checks`,
+    /// `loop_warning`), to measure whether each one earns its place.
+    pub static EVAL_NUDGES_OFF: Arc<Vec<String>>;
+}
+
+/// Whether an eval switched this runtime nudge off (never, outside evals).
+fn nudge_off(name: &str) -> bool {
+    #[cfg(feature = "eval")]
+    {
+        EVAL_NUDGES_OFF
+            .try_with(|off| off.iter().any(|item| item == name))
+            .unwrap_or(false)
+    }
+    #[cfg(not(feature = "eval"))]
+    {
+        let _ = name;
+        false
+    }
 }
 
 /// Whether runs that save evidence offer `notes` (always, outside evals).
@@ -4502,6 +4527,19 @@ mod tests {
             }
         }
         assert_eq!(public, vec!["Recovered after a slow attempt"]);
+    }
+
+    #[cfg(feature = "eval")]
+    #[tokio::test]
+    async fn eval_switches_turn_off_only_the_named_nudges() {
+        assert!(!nudge_off("loop_warning"));
+        EVAL_NUDGES_OFF
+            .scope(Arc::new(vec!["loop_warning".to_owned()]), async {
+                assert!(nudge_off("loop_warning"));
+                assert!(!nudge_off("finish_checks"));
+                assert!(!nudge_off("notes_reminder"));
+            })
+            .await;
     }
 
     #[test]

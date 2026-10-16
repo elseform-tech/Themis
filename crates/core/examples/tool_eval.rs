@@ -78,8 +78,19 @@ async fn main() -> anyhow::Result<()> {
             .collect(),
         snapshots: task["snapshots"].as_bool().unwrap_or(false),
         allow_all: task["allow_all"].as_bool().unwrap_or(false),
+        nudges_off: strings(&task["nudges_off"]),
+        hide_tools: strings(&task["hide_tools"]),
     };
     let report = run_tool_task(&llm, &project, prompt, options).await?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.as_str().map(str::to_owned))
+        .collect()
 }

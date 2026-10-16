@@ -25,6 +25,9 @@ Arms (not every job runs every arm):
   model would not keep notes by itself.
 - `notes-advice` (`modules`, `modules-turns`): notes offered, and the prompt carries the
   read-one-write-one advice removed from the system prompt, to measure whether it helps.
+- `notes-scoped` (`modules`, `modules-turns`): notes offered, and the prompt carries the scoped
+  version: finish each independent item's output before the next; otherwise keep each item's
+  facts in notes or add to the output as you go; no extra files just to remember.
 
 Follow-up turns get the history the desktop sends: the latest checkpoint plus the text turns
 (no tool calls), and the same notes file.

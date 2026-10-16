@@ -86,7 +86,8 @@ def run_task(runner, task, args):
         task_file = os.path.join(workdir, "task.json")
         with open(task_file, "w", encoding="utf-8") as handle:
             json.dump({k: task[k] for k in ("prompt", "checkpoint", "evidence", "budget", "recent_messages",
-                                            "max_turns", "offer_notes", "followups", "snapshots", "allow_all") if k in task}, handle)
+                                            "max_turns", "offer_notes", "followups", "snapshots", "allow_all", "nudges_off", "hide_tools")
+                       if k in task}, handle)
         command = runner + ["--project", project, "--task", task_file, "--max-turns", str(args.max_turns)]
         if args.model:
             command += ["--model", args.model]

@@ -12,6 +12,7 @@ from .tasks import (
     HEROES,
     MODULES,
     OWNER_RULE,
+    SCOPED,
     TASKS,
     check_modules,
     check_ports,
@@ -59,7 +60,7 @@ class NotesPersistenceTest(unittest.TestCase):
 
 class TaskChecksTest(unittest.TestCase):
     def test_arms_per_job_and_only_the_asked_arm_asks(self):
-        self.assertEqual(len(TASKS), 16)
+        self.assertEqual(len(TASKS), 18)
         free = [t for t in TASKS if t["job"] == "modules-free"]
         self.assertEqual([t["arm"] for t in free], ["no-notes", "notes-offered"])
         self.assertTrue(all(t["allow_all"] and "scripts" not in t["prompt"] for t in free))
@@ -70,6 +71,9 @@ class TaskChecksTest(unittest.TestCase):
         advised = {t["job"] for t in TASKS if t["arm"] == "notes-advice"}
         self.assertEqual(advised, {"modules", "modules-turns"})
         self.assertTrue(all(t["prompt"].endswith(ADVICE) == (t["arm"] == "notes-advice") for t in TASKS))
+        scoped = {t["job"] for t in TASKS if t["arm"] == "notes-scoped"}
+        self.assertEqual(scoped, {"modules", "modules-turns"})
+        self.assertTrue(all(t["prompt"].endswith(SCOPED) == (t["arm"] == "notes-scoped") for t in TASKS))
         self.assertTrue(all(t["offer_notes"] for t in TASKS if t["arm"] == "notes-advice"))
         self.assertTrue(all(t["offer_notes"] is False for t in TASKS if t["arm"] == "no-notes"))
         self.assertTrue(all(len(t["followups"]) == 3 for t in TASKS if t["job"] == "modules-turns"))
