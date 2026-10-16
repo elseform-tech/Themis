@@ -363,3 +363,52 @@ async fn cli_open_task_checks_repeat_only_after_work() {
     assert_eq!(checks, vec![0, 0, 1, 1, 2]);
     serving.abort();
 }
+
+/// A rate-limited provider (HTTP 429) is waited out instead of failing the run: the request
+/// is retried after the rate-limit backoff and the run finishes.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_run_waits_out_a_rate_limit() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let provider = MockServer::start().await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = calls.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |_: &Request| {
+            if seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                ResponseTemplate::new(429).set_body_json(
+                    json!({"error":{"type":"server_error","message":"Rate limit exceeded. Please try again later."}}),
+                )
+            } else {
+                reply(json!({"content":"Done after the wait."}))
+            }
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    let started = std::time::Instant::now();
+    let done = send(data.path(), &mut events, &id, "Say done").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    assert_eq!(done["result"].as_str().unwrap(), "Done after the wait.");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(10),
+        "waited the rate-limit backoff"
+    );
+    serving.abort();
+}

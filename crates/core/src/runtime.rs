@@ -1171,6 +1171,22 @@ async fn request_answer_with_timeout(
     .map_err(|_| anyhow!("LLM answer deadline exceeded"))?
 }
 
+/// Answer retries after HTTP 429: waits of about 10, 20, 40, 80 and 160 seconds (310 s in all).
+const RATE_LIMIT_RETRIES: u32 = 5;
+const RATE_LIMIT_BACKOFF_SECONDS: u64 = 10;
+/// Answer retries after a cut-off (truncated) provider response.
+const TRUNCATED_RETRIES: u32 = 4;
+
+fn answer_retry_limit(rate_limited: bool, truncated: bool) -> u32 {
+    if rate_limited {
+        RATE_LIMIT_RETRIES
+    } else if truncated {
+        TRUNCATED_RETRIES
+    } else {
+        2
+    }
+}
+
 // Retry-After is a floor, never shortened by jitter. Separate randomized states
 // keep simultaneous clients from retrying in lockstep; no provider data is hashed.
 fn request_retry_delay(
@@ -1283,11 +1299,22 @@ async fn request_answer_inner(
         };
         let empty_output = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == EMPTY_ANSWER);
         let truncated = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == "Provider response was truncated");
-        if retries == 2 || published || (!error.is_retryable() && !empty_output && !truncated) {
+        // A rate limit or a cut-off response usually clears with time: losing a long run to
+        // it costs far more than waiting, so those get more and longer retries (still inside
+        // the overall answer deadline).
+        let rate_limited = error.http_status_code() == Some(429);
+        if retries >= answer_retry_limit(rate_limited, truncated)
+            || published
+            || (!error.is_retryable() && !empty_output && !truncated)
+        {
             return result;
         }
         // Calls from an interrupted response have not been executed; completed tools are already in messages.
-        let delay = request_retry_delay(error, retries);
+        let delay = if rate_limited {
+            request_retry_delay_with_rate_limit_floor(error, retries, RATE_LIMIT_BACKOFF_SECONDS)
+        } else {
+            request_retry_delay(error, retries)
+        };
         retries += 1;
         crate::diagnostics::emit(
             "answer",
@@ -1295,7 +1322,7 @@ async fn request_answer_inner(
             "warn",
             serde_json::json!({
                 "retry": retries, "status": error.http_status_code(), "backoff_ms": delay.as_millis(),
-                "reason": if empty_output { "empty_output" } else if truncated { "output_truncated" } else { "transient" },
+                "reason": if empty_output { "empty_output" } else if truncated { "output_truncated" } else if rate_limited { "rate_limited" } else { "transient" },
             }),
         );
         eprintln!(
@@ -4471,6 +4498,40 @@ mod tests {
             }
         }
         assert_eq!(public, vec!["Recovered after a slow attempt"]);
+    }
+
+    #[test]
+    fn rate_limits_and_cut_off_answers_wait_longer_within_the_answer_deadline() {
+        use autoagents::llm::error::LLMError;
+        assert_eq!(answer_retry_limit(true, false), 5);
+        assert_eq!(answer_retry_limit(false, true), 4);
+        assert_eq!(answer_retry_limit(false, false), 2);
+        let limited = LLMError::RateLimitError {
+            status_code: 429,
+            message: "Rate limit exceeded".into(),
+            response_body: "".into(),
+            retry_after: None,
+            provider_code: None,
+        };
+        let waits: Vec<u64> = (0..RATE_LIMIT_RETRIES)
+            .map(|retry| {
+                request_retry_delay_with_rate_limit_floor(
+                    &limited,
+                    retry,
+                    RATE_LIMIT_BACKOFF_SECONDS,
+                )
+                .as_secs()
+            })
+            .collect();
+        for (retry, wait) in waits.iter().enumerate() {
+            let base = RATE_LIMIT_BACKOFF_SECONDS << retry;
+            assert!((base..=base * 3 / 2).contains(wait), "{waits:?}");
+        }
+        // Every wait plus five more 60-second attempts still fits the 900-second answer deadline.
+        assert!(
+            waits.iter().sum::<u64>() * 3 / 2 + 5 * 60 < 900,
+            "{waits:?}"
+        );
     }
 
     #[tokio::test]
