@@ -69,3 +69,10 @@ path = "fuzz_targets/sandbox_config.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "patch_apply"
+path = "fuzz_targets/patch_apply.rs"
+test = false
+doc = false
+bench = false

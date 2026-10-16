@@ -712,15 +712,52 @@ pub fn command_display_for_call(name: &str, args: &serde_json::Value) -> Option<
 /// Program and arguments of a `shell` tool call, as validated arguments or raw
 /// model JSON. Empty when the call has no usable `command`.
 pub fn shell_argv(args: &serde_json::Value) -> Vec<String> {
-    let Some(program) = args.get("command").and_then(|v| v.as_str()) else {
-        return Vec::new();
-    };
+    let program = args
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     let mut argv = vec![program.to_owned()];
     if let Some(rest) = args.get("args").and_then(|v| v.as_array()) {
         argv.extend(rest.iter().filter_map(|v| v.as_str()).map(str::to_owned));
     }
+    let argv = normalize_argv(argv);
+    if argv.first().is_none_or(|program| program.trim().is_empty()) {
+        return Vec::new();
+    }
     argv
 }
+
+/// Repairs the two argv shapes models commonly send, before approval, so the
+/// person approves exactly what runs: an empty `command` with the program as
+/// the first of `args`, and the program repeated as the first argument
+/// (`command: "python3", args: ["python3", "x.py"]`, or its full path).
+/// `echo`/`printf` keep a repeated word, since printing it is plausible.
+pub fn normalize_argv(mut argv: Vec<String>) -> Vec<String> {
+    if argv.len() > 1 && argv[0].trim().is_empty() {
+        argv.remove(0);
+    }
+    let base = |word: &str| {
+        Path::new(word)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    if argv.len() > 1 && !matches!(base(&argv[0]).as_str(), "echo" | "printf") {
+        let (program, first) = (&argv[0], &argv[1]);
+        let same = program == first
+            || (Path::new(first).has_root() && base(first) == base(program))
+            || (Path::new(program).has_root() && base(program) == *first);
+        if same {
+            argv.remove(1);
+        }
+    }
+    argv
+}
+
+/// Appended to every refusal the agent sees: a refused action must not be reached
+/// another way (a live run restored a file with `git show ... >` after `git reset
+/// --hard` was refused, losing the same uncommitted change).
+pub const REFUSAL_NOTE: &str = "Do not reach the same result another way (for example with shell or another tool); tell the user it was not allowed and ask how to proceed.";
 
 /// Decides whether a proposed [`ToolAction`] may run.
 ///
@@ -794,7 +831,7 @@ fn check_approval(hook: &dyn ApprovalHook, action: &ToolAction) -> Result<(), To
     match hook.approve(action) {
         Approval::AllowOnce | Approval::AllowAlways => Ok(()),
         Approval::Deny => Err(tool_error(format!(
-            "approval denied for '{}': {}",
+            "approval denied for '{}': {} {REFUSAL_NOTE}",
             action.tool, action.summary
         ))),
     }
@@ -973,6 +1010,46 @@ impl GatedTool {
     }
 }
 
+/// Removes JSONL selectors from a `read_file` call on a file that is not JSON lines
+/// (by extension: `.jsonl`/`.ndjson`/`.json` keep them). Returns whether any were removed.
+fn strip_jsonl_selectors(args: &mut Value) -> bool {
+    let jsonl = args
+        .get("file_path")
+        .and_then(Value::as_str)
+        .and_then(|path| Path::new(path).extension())
+        .is_some_and(|ext| matches!(ext.to_str(), Some("jsonl" | "ndjson" | "json")));
+    let Some(fields) = args.as_object_mut().filter(|_| !jsonl) else {
+        return false;
+    };
+    ["jsonl_record", "json_pointer", "decode_tool_payload"]
+        .into_iter()
+        .filter(|key| fields.remove(*key).is_some())
+        .count()
+        > 0
+}
+
+/// `path` relative to `base` when it is absolute and lies under `base`; `None` otherwise.
+/// The path is resolved first (the file, or its parent for a new file), so `/var/..` vs
+/// `/private/var/..` spellings match and a symlink pointing outside the project does not;
+/// the caller's root-scoped tool still validates the relative result.
+fn project_relative(base: &Path, path: &Path) -> Option<String> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let base = base.canonicalize().ok()?;
+    let resolved = path.canonicalize().ok().or_else(|| {
+        let parent = path.parent()?.canonicalize().ok()?;
+        Some(parent.join(path.file_name()?))
+    })?;
+    let rest = resolved.strip_prefix(&base).ok()?;
+    let rest = rest.to_string_lossy().into_owned();
+    Some(if rest.is_empty() {
+        ".".to_owned()
+    } else {
+        rest
+    })
+}
+
 impl std::fmt::Debug for GatedTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GatedTool")
@@ -1031,6 +1108,27 @@ impl ToolRuntime for GatedTool {
                     }
                 }
             }
+        } else if let Some(base) = &self.base_dir {
+            // Root-scoped tools take project-relative paths only. Models often pass the
+            // absolute path they were shown (e.g. the evidence directory); an absolute path
+            // inside the project becomes relative, and the toolkit still validates the rest
+            // (traversal, symlinks). Paths outside the project are left to be refused.
+            for key in [
+                "path",
+                "file_path",
+                "directory_path",
+                "source_path",
+                "destination_path",
+                "directory",
+            ] {
+                if let Some(relative) = args
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .and_then(|path| project_relative(base, Path::new(path)))
+                {
+                    args[key] = Value::String(relative);
+                }
+            }
         }
         let name = self.inner.name();
         let action = ToolAction {
@@ -1043,8 +1141,17 @@ impl ToolRuntime for GatedTool {
         check_approval_permitted(self.approvals.as_ref(), &action)?;
         self.check_guard(name, &args)?;
         if name == "read_file" {
+            // Models often send the archive-only selectors on ordinary files; read the file
+            // plainly instead of failing, and say so.
+            let ignored = strip_jsonl_selectors(&mut args);
             let result = self.inner.execute(args.clone()).await?;
-            bounded_read_result(&args, result)
+            let mut result = bounded_read_result(&args, result)?;
+            if ignored {
+                result["selectors_ignored"] = Value::String(
+                    "jsonl_record/json_pointer/decode_tool_payload apply only to .jsonl files; read as plain text".into(),
+                );
+            }
+            Ok(result)
         } else if name == "write_file" && args["append"].as_bool() == Some(true) {
             // The toolkit appends through tokio's buffered file and returns
             // without flushing, so the bytes can land after the call reports
@@ -2119,6 +2226,9 @@ impl ToolRuntime for ShellTool {
             background,
             background_timeout_secs,
         } = serde_json::from_value(args)?;
+        let mut argv = normalize_argv(std::iter::once(command).chain(args).collect());
+        let command = argv.remove(0);
+        let args = argv;
         if command.trim().is_empty() {
             return Err(tool_error("shell: 'command' must not be empty".to_string()));
         }
@@ -2486,7 +2596,7 @@ impl ToolRuntime for GitTool {
             other => {
                 return Err(tool_error(format!(
                     "git: subcommand '{other}' is denied by the allowlist \
-                     (allowed: status, diff, log, show, add, commit, checkout, branch)"
+                     (allowed: status, diff, log, show, add, commit, checkout, branch). {REFUSAL_NOTE}"
                 )));
             }
         };
@@ -2766,9 +2876,76 @@ pub fn shared_tools(
         .collect())
 }
 
+/// Entry points for the `fuzz/` cargo-fuzz targets; not a stable API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing {
+    /// Parses every `@@` hunk in `patch` and applies them to `old` (the hunk parser and the
+    /// forgiving applier `apply_patch` uses, without touching files).
+    pub fn apply_hunk_text(old: &str, patch: &str) -> Result<Vec<String>, String> {
+        let lines: Vec<&str> = patch.lines().collect();
+        let mut hunks = Vec::new();
+        let mut at = 0;
+        while at < lines.len() {
+            if lines[at].starts_with("@@ ") {
+                let (hunk, next) = super::parse_hunk(&lines, at).map_err(|e| e.to_string())?;
+                hunks.push(hunk);
+                at = next;
+            } else {
+                at += 1;
+            }
+        }
+        let old: Vec<String> = old.lines().map(str::to_owned).collect();
+        super::apply_hunks(&old, &hunks, "fuzz").map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn absolute_paths_inside_the_project_read_like_relative_ones() {
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("notes.txt"), "the HERON-42 note").unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "outside").unwrap();
+        let tools = boxed_tools(project.path(), Arc::new(AllowAllHook)).unwrap();
+        let read = tools
+            .iter()
+            .find(|tool| tool.name() == "read_file")
+            .unwrap();
+        let canonical = project.path().canonicalize().unwrap();
+        for path in [
+            project.path().join("notes.txt"),
+            canonical.join("notes.txt"),
+        ] {
+            let result = read
+                .execute(serde_json::json!({"file_path": path}))
+                .await
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            assert!(result.to_string().contains("HERON-42"), "{result}");
+        }
+        // Outside the project, directly or by climbing out, stays refused.
+        let escape = canonical.join("..").join(
+            outside
+                .path()
+                .canonicalize()
+                .unwrap()
+                .strip_prefix(canonical.parent().unwrap())
+                .unwrap_or(outside.path())
+                .join("secret.txt"),
+        );
+        for path in [outside.path().join("secret.txt"), escape] {
+            assert!(
+                read.execute(serde_json::json!({"file_path": path}))
+                    .await
+                    .is_err(),
+                "{} must be refused",
+                path.display()
+            );
+        }
+    }
     use std::fs;
     use tempfile::tempdir;
 
@@ -3223,10 +3400,15 @@ mod tests {
             json!({"file_path":"evidence.jsonl","find":""}),
             json!({"file_path":"evidence.jsonl","json_pointer":"/content"}),
             json!({"file_path":"evidence.jsonl","jsonl_record":2,"json_pointer":"/missing"}),
-            json!({"file_path":root.join("evidence.jsonl"),"offset":0}),
         ] {
             assert!(tool.execute(args).await.is_err());
         }
+        // An absolute path inside the project reads like the relative one.
+        let absolute = tool
+            .execute(json!({"file_path":root.join("evidence.jsonl"),"offset":0}))
+            .await
+            .unwrap();
+        assert_eq!(absolute["content"], first["content"]);
         assert!(hook
             .seen()
             .iter()
@@ -3479,6 +3661,187 @@ mod tests {
         let spaced = spawn_failure("/Applications/My App/bin/x", &[], &missing);
         assert!(!spaced.contains("Retry exactly"), "{spaced}");
         assert!(spaced.contains("contains spaces"), "{spaced}");
+    }
+
+    #[test]
+    fn argv_repairs_the_shapes_models_send() {
+        let v = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        // Program repeated as the first argument, plainly or as a path.
+        assert_eq!(
+            normalize_argv(v(&["python3", "python3", "x.py"])),
+            v(&["python3", "x.py"])
+        );
+        assert_eq!(
+            normalize_argv(v(&["python3", "/usr/bin/python3", "x.py"])),
+            v(&["python3", "x.py"])
+        );
+        assert_eq!(
+            normalize_argv(v(&["/usr/bin/git", "git", "status"])),
+            v(&["/usr/bin/git", "status"])
+        );
+        // Empty command with the program in args.
+        assert_eq!(
+            normalize_argv(v(&["", "grep", "-c", "x", "f"])),
+            v(&["grep", "-c", "x", "f"])
+        );
+        // Ordinary commands and echo of its own name are left alone.
+        assert_eq!(normalize_argv(v(&["git", "status"])), v(&["git", "status"]));
+        assert_eq!(normalize_argv(v(&["echo", "echo"])), v(&["echo", "echo"]));
+        assert_eq!(
+            normalize_argv(v(&["python3", "-c", "print(1)"])),
+            v(&["python3", "-c", "print(1)"])
+        );
+        // The approval argv and the executed argv agree.
+        let raw = serde_json::json!({"command": "", "args": ["python3", "python3", "x.py"]});
+        assert_eq!(shell_argv(&raw), v(&["python3", "x.py"]));
+        assert!(shell_argv(&serde_json::json!({"command": "", "args": []})).is_empty());
+    }
+
+    #[tokio::test]
+    async fn refusals_tell_the_agent_not_to_work_around_them() {
+        let project = tempfile::tempdir().unwrap();
+        let denied = ShellTool::new(project.path().to_owned(), Arc::new(DenyAllHook))
+            .execute(serde_json::json!({"command": "ls"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(denied.contains(REFUSAL_NOTE), "{denied}");
+        let git = GitTool::new(project.path().to_owned(), Arc::new(AllowAllHook))
+            .execute(serde_json::json!({"args": ["reset", "--hard"]}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            git.contains("allowlist") && git.contains(REFUSAL_NOTE),
+            "{git}"
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_selectors_on_plain_files_are_ignored_with_a_note() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join("story.txt"),
+            "Odile walked to the mill.",
+        )
+        .unwrap();
+        let tools = boxed_tools(project.path(), Arc::new(AllowAllHook)).unwrap();
+        let read = tools
+            .iter()
+            .find(|tool| tool.name() == "read_file")
+            .unwrap();
+        let result = read
+            .execute(serde_json::json!({"file_path": "story.txt", "jsonl_record": 1, "json_pointer": "/content"}))
+            .await
+            .unwrap();
+        assert!(
+            result["content"].as_str().unwrap().contains("Odile"),
+            "{result}"
+        );
+        assert!(result["selectors_ignored"].is_string(), "{result}");
+        let plain = read
+            .execute(serde_json::json!({"file_path": "story.txt"}))
+            .await
+            .unwrap();
+        assert!(plain.get("selectors_ignored").is_none());
+    }
+
+    mod patch_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// With distinct lines, a hunk whose header counts and start line are wrong still
+            /// edits exactly the intended span and nothing else.
+            #[test]
+            fn miscounted_misplaced_hunks_edit_exactly_their_span(
+                len in 3usize..30,
+                start in 0usize..30,
+                take in 1usize..4,
+                replacement in proptest::collection::vec("[a-z]{1,6}", 0..4),
+                declared_start in 0usize..60,
+                declared_count in 0usize..9,
+            ) {
+                let old: Vec<String> = (0..len).map(|n| format!("line-{n}")).collect();
+                let start = start % len;
+                let end = (start + take).min(len);
+                let mut body = Vec::new();
+                if start > 0 { body.push(format!(" {}", old[start - 1])); }
+                body.extend(old[start..end].iter().map(|l| format!("-{l}")));
+                body.extend(replacement.iter().map(|l| format!("+new-{l}")));
+                if end < len { body.push(format!(" {}", old[end])); }
+                let mut lines = vec![format!("@@ -{},{declared_count} +1,{declared_count} @@", declared_start + 1)];
+                lines.extend(body);
+                let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+                let (hunk, _) = parse_hunk(&refs, 0).unwrap();
+                let applied = apply_hunks(&old, &[hunk], "f").unwrap();
+                let mut expected = old[..start].to_vec();
+                expected.extend(replacement.iter().map(|l| format!("new-{l}")));
+                expected.extend_from_slice(&old[end..]);
+                prop_assert_eq!(applied, expected);
+            }
+        }
+    }
+
+    mod normalize_argv_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Repair only ever drops one leading duplicate or an empty program: the rest of
+            /// the command keeps its order and nothing is added.
+            #[test]
+            fn repair_only_removes_a_leading_duplicate(
+                argv in proptest::collection::vec(prop_oneof![
+                    Just(String::new()), Just("python3".to_owned()), Just("/usr/bin/python3".to_owned()),
+                    Just("echo".to_owned()), "[a-z./-]{1,8}",
+                ], 1..6),
+            ) {
+                let repaired = normalize_argv(argv.clone());
+                prop_assert!(argv.len() - repaired.len() <= 2);
+                // An order-preserving subsequence of the input.
+                let mut rest = argv.iter();
+                prop_assert!(repaired.iter().all(|word| rest.any(|original| original == word)));
+                // A real program is kept as the program.
+                if !argv[0].trim().is_empty() {
+                    prop_assert_eq!(&repaired[0], &argv[0]);
+                }
+                // Everything after the program and its possible duplicate is untouched.
+                let start = if argv[0].trim().is_empty() { 3 } else { 2 };
+                if argv.len() > start {
+                    let tail = &argv[start..];
+                    prop_assert_eq!(&repaired[repaired.len() - tail.len()..], tail);
+                }
+            }
+        }
+    }
+
+    mod project_relative_props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Whatever absolute path a model sends, a mapped result never climbs out of the
+            /// project and always names the same place inside it.
+            #[test]
+            fn mapped_paths_stay_inside_the_project(
+                parts in proptest::collection::vec(prop_oneof![
+                    Just("..".to_owned()), Just(".".to_owned()), "[a-z]{1,6}",
+                ], 0..6),
+            ) {
+                let project = tempfile::tempdir().unwrap();
+                let base = project.path().canonicalize().unwrap();
+                std::fs::create_dir_all(base.join("a/b")).unwrap();
+                let candidate = parts.iter().fold(base.clone(), |path, part| path.join(part));
+                if let Some(relative) = project_relative(&base, &candidate) {
+                    prop_assert!(!Path::new(&relative).components().any(|c| c == std::path::Component::ParentDir));
+                    prop_assert!(!Path::new(&relative).is_absolute());
+                    let mapped = base.join(&relative);
+                    let resolved = mapped.canonicalize().unwrap_or(mapped);
+                    prop_assert!(resolved.starts_with(&base), "{} -> {}", candidate.display(), resolved.display());
+                }
+            }
+        }
     }
 
     mod spawn_failure_props {
@@ -4012,6 +4375,67 @@ mod tests {
             fs::read_to_string(root.join("new.txt")).unwrap(),
             "one\ntwo\n"
         );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_forgives_the_mistakes_models_make_but_not_ambiguity() {
+        let (_tmp, root) = rooted_case();
+        let tool = ApplyPatchTool::new(root.clone(), allow_all());
+        let settings =
+            "\"\"\"Settings.\"\"\"\n\nHOST = \"localhost\"\nTIMEOUT = 30  # seconds\nRETRIES = 3\n";
+        fs::write(root.join("s.py"), settings).unwrap();
+        // Miscounted header, wrong start line and single-spaced context: still one clear place.
+        let sloppy = "--- a/s.py\n+++ b/s.py\n@@ -9,7 +9,7 @@\n HOST = \"localhost\"\n-TIMEOUT = 30 # seconds\n+TIMEOUT = 45  # seconds\n";
+        tool.execute(json!({ "patch": sloppy })).await.unwrap();
+        let text = fs::read_to_string(root.join("s.py")).unwrap();
+        assert!(
+            text.contains("TIMEOUT = 45  # seconds") && text.contains("RETRIES = 3"),
+            "{text}"
+        );
+        assert!(text.starts_with("\"\"\"Settings."), "{text}");
+
+        // The exact match nearest the declared line wins over an earlier duplicate.
+        fs::write(root.join("d.txt"), "x\nsame\ny\nsame\nz\n").unwrap();
+        let near = "--- a/d.txt\n+++ b/d.txt\n@@ -4,1 +4,1 @@\n-same\n+second\n";
+        tool.execute(json!({ "patch": near })).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("d.txt")).unwrap(),
+            "x\nsame\ny\nsecond\nz\n"
+        );
+
+        // Two places that match only loosely: refused, nothing changed, file lines shown.
+        fs::write(root.join("a.txt"), "a  b\nc\na b\n").unwrap();
+        let ambiguous = "--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-a   b\n+changed\n";
+        let error = tool
+            .execute(json!({ "patch": ambiguous }))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("context mismatch") && error.contains("   1| a  b"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("a.txt")).unwrap(),
+            "a  b\nc\na b\n"
+        );
+
+        // A tab-indented context line missing its leading space is still matched as context.
+        fs::write(
+            root.join("Makefile"),
+            "build:\n\tcargo build\n\ntest:\n\tcargo test  \n",
+        )
+        .unwrap();
+        let tabbed = "--- a/Makefile\n+++ b/Makefile\n@@ -1,5 +1,5 @@\n build:\n-\tcargo build\n+\tcargo build --locked\n \n test:\n\tcargo test  \n";
+        tool.execute(json!({ "patch": tabbed })).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("Makefile")).unwrap(),
+            "build:\n\tcargo build --locked\n\ntest:\n\tcargo test  \n"
+        );
+
+        // Text that is not in the file at all is still refused.
+        let missing = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-nowhere\n+x\n";
+        assert!(tool.execute(json!({ "patch": missing })).await.is_err());
     }
 
     #[tokio::test]

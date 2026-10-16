@@ -100,11 +100,15 @@ pub struct RecallArgs {
     pub limit: u64,
     /// Evidence kinds to search.
     #[serde(default)]
-    #[input(description = "Default original and original_exchange; also navigation, recovery")]
+    #[input(
+        description = "Usually leave empty (searches original and original_exchange). Only to add navigation or recovery copies"
+    )]
     pub kinds: Vec<String>,
     /// Source filter.
     #[serde(default)]
-    #[input(description = "Only sources whose file, attachment, tool or role contains this")]
+    #[input(
+        description = "Usually leave empty. Narrows to sources whose file name, attachment, tool name or role (User, Assistant, Tool) contains this; not a kind"
+    )]
     pub source: String,
     /// A previous hit's `around` value.
     #[serde(default)]
@@ -208,15 +212,23 @@ pub fn recall(scope: &RecallScope, args: &RecallArgs, limits: &Limits) -> Result
     if query.terms.is_empty() {
         return Err("query needs at least one word".into());
     }
-    Ok(search(
-        scope,
-        &query,
-        &args.query,
-        limit,
-        &kinds,
-        args.source.trim(),
-        limits,
-    ))
+    let source = args.source.trim();
+    let mut found = search(scope, &query, &args.query, limit, &kinds, source, limits);
+    // Models often narrow with guessed filters (a kind name as `source`, one kind only)
+    // and then conclude the detail was never said. When the filters match nothing but the
+    // default search does, return those hits and say the filters were ignored.
+    let filtered = !source.is_empty() || kinds.iter().map(String::as_str).ne(DEFAULT_KINDS);
+    if filtered && found["total_matches"].as_u64() == Some(0) {
+        let defaults: Vec<String> = DEFAULT_KINDS.iter().map(|k| (*k).to_owned()).collect();
+        let broad = search(scope, &query, &args.query, limit, &defaults, "", limits);
+        if broad["total_matches"].as_u64().unwrap_or(0) > 0 {
+            found = broad;
+            found["filters_ignored"] = serde_json::json!(
+                "Your kinds/source filters matched nothing, so these hits ignore them. Usually leave both empty."
+            );
+        }
+    }
+    Ok(found)
 }
 
 // ---------------------------------------------------------------------------
