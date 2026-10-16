@@ -60,6 +60,11 @@ def open_lines(row):
     return [line for line in row.get("final_notes") or [] if line.get("status") in ("pending", "in_progress")]
 
 
+def loop_warnings(row):
+    """Loop warnings over all turns (graded rows keep them per turn)."""
+    return sum(turn.get("loop_warnings") or 0 for turn in row.get("turns") or [])
+
+
 def would_stop(row):
     """The old guard stopped a run at its second warned streak: any turn with two warnings."""
     turns = row.get("turns") or []
@@ -111,7 +116,7 @@ def summarize(rows):
             "mean_rereads": extra("rereads"), "mean_rule_kept_files": extra("rule_kept_files"),
             "mean_calls": _mean([len(r["calls"]) for r in runs]),
             "mean_input_tokens": _mean([r.get("input_tokens") for r in runs]),
-            "mean_loop_warnings": _mean([r.get("loop_warnings", 0) for r in runs]),
+            "mean_loop_warnings": _mean([loop_warnings(r) for r in runs]),
             "old_guard_would_stop": sum(would_stop(r) for r in runs),
             "old_guard_would_stop_passed": sum(would_stop(r) and r["passed"] for r in runs),
             "causes": dict(collections.Counter(c for c in map(failure_cause, runs) if c)),

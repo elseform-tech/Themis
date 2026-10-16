@@ -5,7 +5,7 @@ import unittest
 
 from evals.tools.tasks import write
 
-from .__main__ import failure_cause, notes_persistence, summarize, would_stop
+from .__main__ import failure_cause, loop_warnings, notes_persistence, summarize, would_stop
 from .tasks import (
     ADVICE,
     CITIES,
@@ -136,6 +136,7 @@ class LoopAndCauseTest(unittest.TestCase):
     def test_old_guard_would_stop_at_two_warnings_in_one_turn(self):
         self.assertFalse(would_stop({"turns": [{"loop_warnings": 1}, {"loop_warnings": 1}]}))
         self.assertTrue(would_stop({"turns": [{"loop_warnings": 0}, {"loop_warnings": 2}]}))
+        self.assertEqual(loop_warnings({"turns": [{"loop_warnings": 1}, {"loop_warnings": 2}, {}]}), 3)
 
     def test_failure_causes(self):
         def row(why="", error=None, passed=False):
