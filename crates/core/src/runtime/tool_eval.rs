@@ -24,6 +24,17 @@ pub struct CallRecord {
     pub output: String,
 }
 
+/// One context checkpoint installed during a task.
+#[derive(Debug, Clone, Serialize)]
+pub struct CheckpointRecord {
+    /// `update_plan` calls made before this checkpoint.
+    pub plan_calls_before: usize,
+    /// The plan items the checkpoint's task ledger carries, if any.
+    pub plan: Option<serde_json::Value>,
+    /// Size of the durable checkpoint summary.
+    pub summary_bytes: usize,
+}
+
 /// Result of one tool-use task.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolTaskReport {
@@ -35,6 +46,10 @@ pub struct ToolTaskReport {
     pub requests: u64,
     /// Context checkpoints installed during the task.
     pub compactions: usize,
+    /// Each checkpoint with the plan its ledger carries.
+    pub checkpoints: Vec<CheckpointRecord>,
+    /// Every `update_plan` call in order: its validated items, or `null` when rejected.
+    pub plans: Vec<serde_json::Value>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub latency_ms: u128,
@@ -129,12 +144,12 @@ pub async fn run_tool_task(
         .unwrap_or_default();
     let (events, mut sink) = tokio::sync::mpsc::channel(1024);
     let collector = tokio::spawn(async move {
-        let (mut calls, mut finished, mut error, mut metrics, mut compactions) = (
+        let (mut calls, mut finished, mut error, mut metrics, mut checkpoints) = (
             Vec::<CallRecord>::new(),
             None,
             None,
             serde_json::Value::Null,
-            0,
+            Vec::new(),
         );
         while let Some(event) = sink.recv().await {
             match event {
@@ -166,41 +181,50 @@ pub async fn run_tool_task(
                     }
                 }
                 RunEvent::ContextUsage { metrics: latest } => metrics = latest,
-                RunEvent::ContextCheckpoint { .. } => compactions += 1,
+                RunEvent::ContextCheckpoint { summary } => checkpoints.push(CheckpointRecord {
+                    plan_calls_before: calls.iter().filter(|c| c.tool == ledger::PLAN_TOOL).count(),
+                    plan: ledger_plan(&summary),
+                    summary_bytes: summary.len(),
+                }),
                 RunEvent::Finished { result } => finished = Some(result),
                 RunEvent::Incomplete { result } => error = Some(format!("incomplete: {result}")),
                 RunEvent::Failed { error: failure } => error = Some(failure),
                 _ => {}
             }
         }
-        (calls, finished, error, metrics, compactions)
+        (calls, finished, error, metrics, checkpoints)
     });
+    let plan_log = Arc::new(Mutex::new(Vec::new()));
     let started = std::time::Instant::now();
-    let result = EVAL_OFFER_PLAN
+    let result = EVAL_PLAN_LOG
         .scope(
-            options.offer_plan,
-            run_task_with_evidence(
-                llm.clone(),
-                tools,
-                task.to_owned(),
-                history,
-                approvals,
-                RunPolicy {
-                    total_turns: options.max_turns,
-                    context_token_budget: options.budget,
-                    recent_messages: options.recent_messages,
-                },
-                events,
-                Arc::new(AtomicBool::new(false)),
-                String::new(),
-                options.evidence.clone(),
+            plan_log.clone(),
+            EVAL_OFFER_PLAN.scope(
+                options.offer_plan,
+                run_task_with_evidence(
+                    llm.clone(),
+                    tools,
+                    task.to_owned(),
+                    history,
+                    approvals,
+                    RunPolicy {
+                        total_turns: options.max_turns,
+                        context_token_budget: options.budget,
+                        recent_messages: options.recent_messages,
+                    },
+                    events,
+                    Arc::new(AtomicBool::new(false)),
+                    String::new(),
+                    options.evidence.clone(),
+                ),
             ),
         )
         .await;
     let latency_ms = started.elapsed().as_millis();
     // Background tasks the agent left running must not outlive the eval.
     registry.remove_thread("tool-eval", std::time::Duration::from_secs(5));
-    let (calls, finished, event_error, metrics, compactions) = collector.await?;
+    let (calls, finished, event_error, metrics, checkpoints) = collector.await?;
+    let plans = std::mem::take(&mut *plan_log.lock().unwrap());
     let (answer, error) = match (result, finished) {
         (Ok(text), _) => (text, None),
         (Err(error), Some(text)) => (text, Some(error.to_string())),
@@ -216,9 +240,44 @@ pub async fn run_tool_task(
         calls,
         tools_available,
         requests: metrics["total_requests"].as_u64().unwrap_or(0),
-        compactions,
+        compactions: checkpoints.len(),
+        checkpoints,
+        plans,
         input_tokens: metrics["provider_input_tokens"].as_u64(),
         output_tokens: metrics["provider_output_tokens"].as_u64(),
         latency_ms,
     })
+}
+
+/// The plan line of the task ledger inside a checkpoint summary (the last ledger block).
+fn ledger_plan(summary: &str) -> Option<serde_json::Value> {
+    let start = summary.rfind(ledger::START)? + ledger::START.len();
+    let block = &summary[start..];
+    let block = &block[..block.find(ledger::END).unwrap_or(block.len())];
+    block
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|value| value["kind"] == "plan")
+        .map(|value| value["items"].clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ledger_plan_reads_the_plan_line() {
+        let summary = format!(
+            "Goal: x{}{}\n{}{}",
+            ledger::START,
+            r#"{"kind":"plan","items":[{"step":"a","status":"done"}]}"#,
+            r#"{"kind":"action"}"#,
+            ledger::END
+        );
+        assert_eq!(
+            ledger_plan(&summary),
+            Some(serde_json::json!([{"step":"a","status":"done"}]))
+        );
+        assert_eq!(ledger_plan("no ledger here"), None);
+    }
 }

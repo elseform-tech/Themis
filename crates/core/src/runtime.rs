@@ -1629,6 +1629,13 @@ tokio::task_local! {
     pub static EVAL_OFFER_PLAN: bool;
 }
 
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only: every `update_plan` call in order, its validated items or `null`, so the
+    /// long-horizon eval can check that each checkpoint carries the latest plan.
+    pub static EVAL_PLAN_LOG: Arc<Mutex<Vec<serde_json::Value>>>;
+}
+
 /// Whether runs that save evidence offer `update_plan` (always, outside evals).
 fn offer_plan() -> bool {
     #[cfg(feature = "eval")]
@@ -2757,6 +2764,15 @@ async fn execute_call(
     let Some(tool) = tools.iter().find(|tool| tool.name() == name) else {
         if name == ledger::PLAN_TOOL {
             // Records the model's own checklist in context; touches no files or network.
+            #[cfg(feature = "eval")]
+            let _ = EVAL_PLAN_LOG.try_with(|log| {
+                let items = serde_json::from_str::<serde_json::Value>(args)
+                    .ok()
+                    .and_then(|value| ledger::plan_items(&value).ok());
+                log.lock()
+                    .unwrap()
+                    .push(items.unwrap_or(serde_json::Value::Null));
+            });
             return ledger::update_plan(args);
         }
         let available: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();

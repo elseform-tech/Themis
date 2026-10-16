@@ -93,7 +93,8 @@ def run_task(runner, task, args):
             command += ["--base-url", args.base_url]
         command = sandbox_wrapper(runner, workdir, args.sandbox) + command
         try:
-            done = subprocess.run(command, capture_output=True, text=True, timeout=args.timeout,
+            done = subprocess.run(command, capture_output=True, text=True,
+                                  timeout=max(args.timeout, task.get("timeout", 0)),
                                   env=isolated_env(workdir), cwd=workdir)
         except subprocess.TimeoutExpired:
             return None, "timeout"
@@ -110,11 +111,14 @@ def run_task(runner, task, args):
         return {
             "task": task["name"], "tool": task["tool"], "passed": passed, "why": why,
             "answer": report.get("answer", "")[:300], "error": classify_error(report.get("error")),
+            "error_text": (report.get("error") or "")[:300],
             "calls": call_rows(report), "tools_available": report.get("tools_available", []),
             "requests": report.get("requests", 0), "compactions": report.get("compactions", 0),
             "repeated_calls": repeated_calls(report), "input_tokens": report.get("input_tokens"),
             "output_tokens": report.get("output_tokens"), "latency_ms": report.get("latency_ms", 0),
             "sandboxed": command[0] == "sandbox-exec",
+            "checkpoints": report.get("checkpoints", []), "plans": report.get("plans", []),
+            "extra": task["measure"](project, report) if "measure" in task else {},
         }, None
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
