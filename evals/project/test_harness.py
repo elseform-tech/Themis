@@ -209,7 +209,7 @@ class TaskPlumbingTest(unittest.TestCase):
                 if turn == 4:
                     stage_four(current, facts["package"])
                 shutil.copytree(current, f"{project}.turn-{turn}")
-            report = {"turns": [{"answer": a, "error": None, "loop_warnings": 1} for a in ANSWERS]}
+            report = {"turns": [{"answer": a, "error": None, "loop_warnings": 1, "finish_checks": 1} for a in ANSWERS]}
             passed, why = task["check"](project, report)
             self.assertTrue(passed, why)
             extra = task["measure"](project, report)
@@ -218,7 +218,7 @@ class TaskPlumbingTest(unittest.TestCase):
             row = {"task": task["name"], "passed": passed, "extra": extra, "compactions": 0, "calls": [],
                    "notes_log": [], "latency_ms": 60000, "input_tokens": 10}
             text = markdown({"model": "m", "errors": [], "summary": summarize([row])})
-            self.assertIn("| project-normal-notes | 100% | 100% | 100% | 100% | 100% | 100% | 100% |", text)
+            self.assertIn("| project-normal-notes | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 5.0 | 5.0 |", text)
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 

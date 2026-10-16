@@ -1,7 +1,8 @@
-//! Shared server + `themis` CLI journeys for long jobs at a small (24k) budget: an oversized
-//! tool batch runs what fits and the run continues, a first streak of unchanged re-reads gets
-//! a loop warning instead of ending the run, and the request tells the model to save each
-//! item before reading more. The provider is scripted: this checks wiring, not model quality.
+//! Shared server + `themis` CLI journeys for long jobs: an oversized tool batch runs what fits
+//! and the run continues, unchanged re-reads are warned and never end the run, notes carry
+//! progress into later messages, and open task lines send the agent back to work (again only
+//! after it worked since the last check). The provider is scripted: this checks wiring, not
+//! model quality.
 
 use serde_json::{json, Value};
 use std::{
@@ -291,5 +292,74 @@ async fn cli_notes_carry_progress_into_later_messages() {
         progress["result"].as_str().unwrap(),
         "Part one is done; part two is still open."
     );
+    serving.abort();
+}
+
+/// A model that keeps narrating with open task lines is sent back after each stretch of real
+/// work (at most three times); narration right after a check is accepted as the answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_open_task_checks_repeat_only_after_work() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("a.txt"), "A").unwrap();
+    let provider = MockServer::start().await;
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let sink = requests.clone();
+    let notes = json!({"set":[{"key":"goal","text":"ship it"},
+                              {"key":"step","text":"not done","status":"pending"}]});
+    let script = vec![
+        json!({"tool_calls":[{"id":"n1","type":"function","function":{"name":"notes","arguments":notes.to_string()}}]}),
+        json!({"content":"Let me continue."}),
+        json!({"tool_calls":[read_call("r1", "a.txt")]}),
+        json!({"content":"Now I will finish."}),
+        json!({"content":"Stopping; the step is still open."}),
+    ];
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            let mut seen = sink.lock().unwrap();
+            seen.push(body);
+            reply(script[(seen.len() - 1).min(script.len() - 1)].clone())
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    let done = send(data.path(), &mut events, &id, "Ship it").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    assert_eq!(
+        done["result"].as_str().unwrap(),
+        "Stopping; the step is still open."
+    );
+    let seen = requests.lock().unwrap();
+    assert_eq!(
+        seen.len(),
+        5,
+        "a check after the notes, one after the read, then the answer"
+    );
+    let checks: Vec<usize> = seen
+        .iter()
+        .map(|body| {
+            serde_json::to_string(&body["messages"])
+                .unwrap()
+                .matches("[Runtime check, not from the user]")
+                .count()
+        })
+        .collect();
+    assert_eq!(checks, vec![0, 0, 1, 1, 2]);
     serving.abort();
 }

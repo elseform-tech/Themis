@@ -2519,6 +2519,71 @@ async fn notes_carry_goal_and_progress_into_later_runs_and_check_open_tasks_once
     );
 }
 
+/// A model that narrates instead of working is sent back again only after it did real work
+/// since the last check, at most three times per run; narration alone ends the run.
+#[tokio::test]
+async fn open_task_checks_repeat_only_after_real_work_and_stop_at_three() {
+    let project = tempfile::tempdir().unwrap();
+    let evidence = project.path().join(".themis/context/chat");
+    std::fs::create_dir_all(&evidence).unwrap();
+    std::fs::write(project.path().join("a.txt"), "A").unwrap();
+    let server = MockServer::start().await;
+    let open = json!({"set":[{"key":"goal","text":"finish the job"},
+                             {"key":"step","text":"not done","status":"pending"}]});
+    let read = |id: &str| common::tool_call_body(id, "read_file", json!({"file_path":"a.txt"}));
+    common::mount_script(
+        &server,
+        vec![
+            common::tool_call_body("n1", "notes", open),
+            common::final_text_body("Let me continue."),
+            read("r1"),
+            common::final_text_body("Now I will finish."),
+            read("r2"),
+            common::final_text_body("Next I will do the step."),
+            read("r3"),
+            common::final_text_body("Stopping here; the step is still open."),
+        ],
+    )
+    .await;
+    let answer = notes_run(
+        &server,
+        &project.path().join(".themis/context/chat"),
+        "Do the job",
+        vec![],
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "Stopping here; the step is still open.");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests.len(),
+        8,
+        "three checks, each after new work, then the answer"
+    );
+    let checks = |index: usize| {
+        request_text(&requests[index])
+            .matches("[Runtime check, not from the user]")
+            .count()
+    };
+    assert_eq!((checks(2), checks(4), checks(6), checks(7)), (1, 2, 3, 3));
+
+    // Narration right after a check, with no work in between, is accepted.
+    let idle = MockServer::start().await;
+    common::mount_script(
+        &idle,
+        vec![
+            common::final_text_body("Let me look at the files."),
+            common::final_text_body("I will look at the files next."),
+        ],
+    )
+    .await;
+    let answer = notes_run(&idle, &evidence, "Carry on", vec![])
+        .await
+        .unwrap();
+    assert_eq!(answer, "I will look at the files next.");
+    assert_eq!(idle.received_requests().await.unwrap().len(), 2);
+}
+
 /// A plan saved by the old `update_plan` tool in a checkpoint ledger becomes notes.
 #[tokio::test]
 async fn plans_from_old_checkpoints_migrate_into_notes() {

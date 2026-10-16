@@ -600,7 +600,8 @@ async fn run_task_with_evidence_inner(
     let mut notes_used = false;
     let mut notes_reminded = false;
     let mut work_calls = 0usize;
-    let mut finish_checked = false;
+    let mut finish_checks = 0usize;
+    let mut work_at_check = 0usize;
     let mut recovery_reads = 0;
     let mut recall_searches = 0usize;
     let config = compaction_config();
@@ -810,14 +811,16 @@ async fn run_task_with_evidence_inner(
         };
         check_stopped(&stopped, &events).await?;
         if calls.is_empty() {
-            // Finishing with open task lines gets one check when notes were kept during this
-            // run, or when the run did no work at all (an answer that only announces the next
-            // step): a long job must not end early because the agent lost track of what is left.
-            if let (Some(directory), true, false) = (
-                &notes_directory,
-                notes_used || work_calls == 0,
-                finish_checked,
-            ) {
+            // Finishing with open task lines gets a check when notes were kept during this run,
+            // or when the run did no work at all (an answer that only announces the next step):
+            // a long job must not end early because the agent lost track of what is left. Later
+            // checks need tool calls since the previous one, so narration alone still ends the run.
+            let check_due = if finish_checks == 0 {
+                notes_used || work_calls == 0
+            } else {
+                finish_checks < MAX_FINISH_CHECKS && work_calls > work_at_check
+            };
+            if let (Some(directory), true) = (&notes_directory, check_due) {
                 let saved = notes::Notes::load(directory);
                 let open: Vec<&str> = saved.open().iter().map(|line| line.key.as_str()).collect();
                 if !open.is_empty() {
@@ -826,7 +829,11 @@ async fn run_task_with_evidence_inner(
                     } else {
                         IDLE_OPEN_TASKS_CHECK
                     };
-                    finish_checked = true;
+                    finish_checks += 1;
+                    work_at_check = work_calls;
+                    #[cfg(feature = "eval")]
+                    let _ = EVAL_FINISH_CHECKS
+                        .try_with(|count| count.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
                     messages.push(ChatMessage {
                         role: ChatRole::Assistant,
                         message_type: MessageType::Text,
@@ -1517,6 +1524,9 @@ const NOTES_REMINDER: &str = "Notes reminder (runtime, once): you have started w
 /// open task lines.
 const OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] Your notes still list open task lines. Finish them now, or, if one is already done or no longer needed, update the notes (status done, or remove it) and say why in the answer. Then give the final answer. Open: ";
 
+/// Open-task checks per run: the first, then one more each time the agent worked after a check.
+const MAX_FINISH_CHECKS: usize = 3;
+
 /// One check when a run that did no work ends while saved notes list open task lines.
 const IDLE_OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] You answered without using any tools while your notes list open task lines. If the user's latest message asks you to do that work, do it now with tool calls instead of describing it. If it only asks a question or asks you to wait, keep the lines open and give the answer. Open: ";
 
@@ -1755,6 +1765,12 @@ tokio::task_local! {
     /// Eval-only: the saved notes after every `notes` call (`null` when rejected), so the
     /// long-horizon eval can check that each checkpoint carries the latest notes.
     pub static EVAL_NOTES_LOG: Arc<Mutex<Vec<serde_json::Value>>>;
+}
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only: open-task checks sent in the run.
+    pub static EVAL_FINISH_CHECKS: Arc<std::sync::atomic::AtomicUsize>;
 }
 
 #[cfg(feature = "eval")]

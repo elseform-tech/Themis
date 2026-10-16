@@ -67,7 +67,8 @@ def make_task(seed, memory, arm):
                 "rules_broken": sorted({p for s in stages.values() for p in s.get("rules", [])})[:10],
                 "tests_added": stages.get("1_parser_pricing", {}).get("tests_added"),
                 "recalled": stages.get("5_recall", {}).get("recalled"),
-                "loop_warnings": sum(t.get("loop_warnings") or 0 for t in report.get("turns", []))}
+                "loop_warnings": sum(t.get("loop_warnings") or 0 for t in report.get("turns", [])),
+                "finish_checks": sum(t.get("finish_checks") or 0 for t in report.get("turns", []))}
 
     task = {"name": f"project-{memory}-{arm}", "tool": "project", "job": "project", "arm": arm, "memory": memory,
             "setup": setup, "check": check, "measure": measure, "prompt": "", "followups": [], "snapshots": True,
@@ -89,6 +90,7 @@ def summarize(rows):
             "final_hidden_pass": _mean([e["final_hidden_pass"] for e in extra]),
             "causes": dict(collections.Counter(e["cause"] for e in extra if e["cause"])),
             "mean_loop_warnings": _mean([e["loop_warnings"] for e in extra]),
+            "mean_finish_checks": _mean([e.get("finish_checks") for e in extra]),
             "mean_compactions": _mean([r["compactions"] for r in runs]),
             "notes_used_rate": _mean([any(n for n in r.get("notes_log", [])) for r in runs]),
             "mean_calls": _mean([len(r["calls"]) for r in runs]),
@@ -104,13 +106,14 @@ def markdown(summary):
              f"Runs: {s['runs']}; infrastructure errors (excluded): {len(summary['errors'])}. "
              "Benchmark audit, not an automated check.", "",
              "| Setup | Pass | 1 parser+pricing | 2 progress | 3 bug fix | 4 CLI+docs | 5 recall | Hidden tests at end | "
-             "Loop warnings | Compactions | Notes used | Calls | Minutes | Failure causes |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "Loop warnings | Open-task checks | Compactions | Notes used | Calls | Minutes | Failure causes |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for name, row in s["tasks"].items():
         stages = " | ".join(fmt(row["stage_pass"][stage]) for stage in STAGES)
         causes = ", ".join(f"{k} {v}" for k, v in row["causes"].items()) or "-"
         lines.append(f"| {name} | {fmt(row['pass_rate'])} | {stages} | {fmt(row['final_hidden_pass'])} | "
-                     f"{fmt(row['mean_loop_warnings'], False)} | {fmt(row['mean_compactions'], False)} | "
+                     f"{fmt(row['mean_loop_warnings'], False)} | {fmt(row.get('mean_finish_checks'), False)} | "
+                     f"{fmt(row['mean_compactions'], False)} | "
                      f"{fmt(row['notes_used_rate'])} | {fmt(row['mean_calls'], False)} | "
                      f"{fmt(row['mean_minutes'], False)} | {causes} |")
     return "\n".join(lines) + "\n"
