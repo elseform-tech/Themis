@@ -600,6 +600,8 @@ async fn run_task_with_evidence_inner(
     let mut unchanged_results = 0;
     let mut loop_warned = false;
     let mut notes_used = false;
+    let mut notes_reminded = false;
+    let mut work_calls = 0usize;
     let mut finish_checked = false;
     let mut recovery_reads = 0;
     let mut recall_searches = 0usize;
@@ -985,6 +987,25 @@ async fn run_task_with_evidence_inner(
                 call.function.arguments =
                     serde_json::json!({"arguments_rejected":true,"source":value["original_call"]})
                         .to_string();
+            }
+        }
+        // One early reminder when work has started but the chat has no notes: tasks of one
+        // or two calls never see it, and it comes at most once per run.
+        let batch_has_notes = delivered_calls
+            .iter()
+            .any(|call| call.function.name == notes::TOOL);
+        work_calls += delivered_calls.len();
+        if let (Some(directory), false, false, true) = (
+            &notes_directory,
+            notes_reminded,
+            batch_has_notes || notes_used,
+            work_calls >= NOTES_REMINDER_AFTER,
+        ) {
+            if notes::Notes::load(directory).lines.is_empty() {
+                notes_reminded = results
+                    .iter_mut()
+                    .rev()
+                    .any(|result| annotate_result(result, "notes_reminder", NOTES_REMINDER));
             }
         }
         notes_used |= delivered_calls.iter().zip(&results).any(|(call, result)| {
@@ -1486,11 +1507,14 @@ fn tool_argument_allowance(batch_bytes: usize) -> usize {
     batch_bytes.saturating_mul(2).min(64 * 1024)
 }
 
+const NOTES_REMINDER_AFTER: usize = 3;
+const NOTES_REMINDER: &str = "Notes reminder (runtime, once): you have started work but this chat has no notes. If the task has several steps, call notes now: a `goal` line with the goal and the user's rules, one line per task with its status, then results as you finish each item. Older reads are summarised away at checkpoints; notes are not. Skip this if the task is nearly done.";
+
 /// Runtime message (user role, like other harness checks) when the agent would finish with
 /// open task lines.
 const OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] Your notes still list open task lines. Finish them now, or, if one is already done or no longer needed, update the notes (status done, or remove it) and say why in the answer. Then give the final answer. Open: ";
 
-const NOTES_INSTRUCTION: &str = "\nKeep notes with the notes tool for any task with several steps: a `goal` line with the user's goal and constraints, one line per task with its status, and every result you will need later (counts, names, decisions, file paths). Update a line as soon as its item is done. Notes are shown to you after every context checkpoint and in later turns of this chat: they are how you remember the goal and progress, and how you answer questions about progress. The task ledger also keeps completed actions and recent reads. Before the final answer, check every task line: finish open ones, or mark them done or remove them with a reason. Then verify if needed and answer instead of re-inspecting finished work.";
+const NOTES_INSTRUCTION: &str = "\nKeep notes with the notes tool for any task with several steps, starting with a notes call before other work: a `goal` line with the user's goal and constraints, one line per task with its status, and every result you will need later (counts, names, decisions, file paths). Update a line as soon as its item is done. Notes are shown to you after every context checkpoint and in later turns of this chat: they are how you remember the goal and progress, and how you answer questions about progress. The task ledger also keeps completed actions and recent reads. Before the final answer, check every task line: finish open ones, or mark them done or remove them with a reason. Then verify if needed and answer instead of re-inspecting finished work.";
 
 /// Shows the chat's saved notes before the current request. Notes from a checkpoint ledger
 /// written before notes existed are migrated once.
@@ -1526,15 +1550,29 @@ const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. Repe
 
 /// Adds the one-time loop warning to a repeated result without dropping its content.
 fn warn_repeated_results(result: &mut ToolCall) {
+    if !annotate_result(result, "loop_warning", LOOP_WARNING) {
+        // A JSON array or scalar keeps its shape: wrap it rather than break it.
+        let original = std::mem::take(&mut result.function.arguments);
+        result.function.arguments = serde_json::json!({"result": serde_json::from_str::<serde_json::Value>(&original).unwrap_or_default(), "loop_warning": LOOP_WARNING}).to_string();
+    }
+}
+
+/// Adds a runtime note to a tool result without dropping its content: a field on a JSON
+/// object, or a line after plain text. Other JSON is left untouched (returns false), so a
+/// tool's JSON output stays valid JSON.
+fn annotate_result(result: &mut ToolCall, field: &str, note: &str) -> bool {
     let arguments = &mut result.function.arguments;
     match serde_json::from_str::<serde_json::Value>(arguments) {
         Ok(mut value) if value.is_object() => {
-            value["loop_warning"] = LOOP_WARNING.into();
+            value[field] = note.into();
             *arguments = value.to_string();
+            true
         }
-        _ => {
+        Ok(_) => false,
+        Err(_) => {
             arguments.push('\n');
-            arguments.push_str(LOOP_WARNING);
+            arguments.push_str(note);
+            true
         }
     }
 }
@@ -2318,7 +2356,18 @@ async fn replace_context(
     let notes_block = original_snapshot
         .and_then(std::path::Path::parent)
         .filter(|_| offer_notes())
-        .map(|directory| notes::Notes::load(directory).checkpoint_block())
+        .map(|directory| {
+            // Work since the last checkpoint without a notes update: results may be lost.
+            let older = &messages[1..split];
+            let (mut work, mut updated) = (0usize, false);
+            for message in older {
+                if let MessageType::ToolUse(batch) = &message.message_type {
+                    updated |= batch.iter().any(|call| call.function.name == notes::TOOL);
+                    work += batch.len();
+                }
+            }
+            notes::Notes::load(directory).checkpoint_block(work >= NOTES_REMINDER_AFTER && !updated)
+        })
         .unwrap_or_default();
     summary.push_str(&notes_block);
     let mut compacted = vec![messages[0].clone()];
@@ -3867,6 +3916,10 @@ mod tests {
                     && checkpoint.content.contains("- mod-12 [done]: 12 functions"),
                 "notes dropped at checkpoint {}",
                 round + 1
+            );
+            assert!(
+                checkpoint.content.contains("Your notes were not updated"),
+                "reads without a notes update mark the notes stale"
             );
         }
     }

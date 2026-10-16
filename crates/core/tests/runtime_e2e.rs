@@ -2542,3 +2542,66 @@ async fn plans_from_old_checkpoints_migrate_into_notes() {
         .unwrap()
         .contains("Fix parser"));
 }
+
+/// Work without notes gets one early reminder after three calls; a one-call task gets none.
+#[tokio::test]
+async fn notes_reminder_comes_once_after_three_calls_and_never_for_short_tasks() {
+    let project = tempfile::tempdir().unwrap();
+    let evidence = project.path().join(".themis/context/chat");
+    std::fs::create_dir_all(&evidence).unwrap();
+    for name in ["a", "b", "c", "d", "e"] {
+        std::fs::write(project.path().join(format!("{name}.txt")), name).unwrap();
+    }
+    let read = |n: &str| {
+        common::tool_call_body(
+            &format!("r-{n}"),
+            "read_file",
+            json!({"file_path":format!("{n}.txt")}),
+        )
+    };
+    let server = MockServer::start().await;
+    common::mount_script(
+        &server,
+        vec![
+            read("a"),
+            read("b"),
+            read("c"),
+            read("d"),
+            read("e"),
+            common::final_text_body("Read all five."),
+        ],
+    )
+    .await;
+    notes_run(&server, &evidence, "Read the five files", vec![])
+        .await
+        .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let reminders: Vec<usize> = requests
+        .iter()
+        .map(|request| {
+            request_text(request)
+                .matches("Notes reminder (runtime, once)")
+                .count()
+        })
+        .collect();
+    // Requests 1-3 precede the third call; from request 4 on the one reminder stays in history.
+    assert_eq!(reminders, [0, 0, 0, 1, 1, 1], "{reminders:?}");
+
+    let short = MockServer::start().await;
+    common::mount_script(
+        &short,
+        vec![read("a"), common::final_text_body("It says a.")],
+    )
+    .await;
+    let other = project.path().join(".themis/context/other");
+    std::fs::create_dir_all(&other).unwrap();
+    notes_run(&short, &other, "What is in a.txt?", vec![])
+        .await
+        .unwrap();
+    assert!(short
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|request| !request_text(request).contains("Notes reminder")));
+}
