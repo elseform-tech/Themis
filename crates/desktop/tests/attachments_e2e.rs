@@ -967,8 +967,9 @@ async fn cli_stops_alternating_unchanged_reads_after_compaction() {
         .unwrap()
         .contains("Repeated unchanged tool"));
     assert_eq!(compactions, 1);
-    assert_eq!(completed, 5);
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 5);
+    // Two new reads, a first streak of three that is warned, then a second streak that stops.
+    assert_eq!(completed, 8);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 8);
     assert!(
         !cli(data.path(), "get_thread", json!({"threadId":id}))["running"]
             .as_bool()
