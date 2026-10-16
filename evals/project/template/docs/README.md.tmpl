@@ -1,0 +1,15 @@
+# __pkg__
+
+Prices customer orders from a product catalog, with bundle offers and sales tax per category.
+
+```sh
+python -m __pkg__.cli quote data/orders/A-1001.txt --catalog data/catalog.csv
+python -m unittest discover -s tests -t .
+```
+
+- `__pkg__/parser.py` reads order files, `__pkg__/catalog.py` the catalog CSV.
+- `__pkg__/pricing.py` builds quotes; see [pricing.md](pricing.md) for the rules.
+- `__pkg__/report.py` prints them and `__pkg__/storage.py` saves them as JSON.
+- `tests/legacy/` holds quotes agreed with customers before 1.4.
+
+All money is integer cents. Amounts in files are written with two decimals (`12.50`).

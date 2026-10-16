@@ -91,6 +91,9 @@ pub struct ToolTaskOptions {
     /// Later user messages in the same chat, each run after the previous answer with the
     /// chat history (latest checkpoint plus the text turns) and the same notes file.
     pub followups: Vec<String>,
+    /// Copies the project to `<project>.turn-<n>` after each turn (without `.themis`, `.git`
+    /// and caches) so a grader can check every stage, not only the end state.
+    pub snapshots: bool,
 }
 
 impl Default for ToolTaskOptions {
@@ -103,6 +106,7 @@ impl Default for ToolTaskOptions {
             recent_messages: 20,
             offer_notes: true,
             followups: Vec::new(),
+            snapshots: false,
         }
     }
 }
@@ -205,6 +209,11 @@ pub async fn run_tool_task(
         report.calls.extend(run.calls);
         report.notes_log.extend(run.notes_log);
         report.tools_available = run.tools_available;
+        if options.snapshots {
+            let mut target = project.as_os_str().to_owned();
+            target.push(format!(".turn-{}", turn + 1));
+            snapshot(project, std::path::Path::new(&target))?;
+        }
         report.requests += run.metrics["total_requests"].as_u64().unwrap_or(0);
         for (total, key) in [
             (&mut report.input_tokens, "provider_input_tokens"),
@@ -380,6 +389,29 @@ async fn run_turn(
     })
 }
 
+/// Copies readable project files for a per-turn grade. Symlinks are skipped, so a snapshot
+/// never follows a link out of the scratch project.
+fn snapshot(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if [".themis", ".git", "__pycache__", "node_modules", "target"]
+            .iter()
+            .any(|skip| name == *skip)
+        {
+            continue;
+        }
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            snapshot(&entry.path(), &to.join(&name))?;
+        } else if kind.is_file() && entry.metadata()?.len() <= 2 << 20 {
+            std::fs::copy(entry.path(), to.join(&name))?;
+        }
+    }
+    Ok(())
+}
+
 /// The notes lines a checkpoint summary carries (its last saved-notes block), parsed back
 /// from the rendered `- key [status]: text` lines.
 fn checkpoint_notes(summary: &str) -> Option<serde_json::Value> {
@@ -403,6 +435,29 @@ fn checkpoint_notes(summary: &str) -> Option<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_copies_project_files_but_not_agent_state_or_links() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        std::fs::create_dir_all(project.join("src/pkg")).unwrap();
+        std::fs::create_dir_all(project.join(".themis/context")).unwrap();
+        std::fs::create_dir_all(project.join("src/__pycache__")).unwrap();
+        std::fs::write(project.join("src/pkg/a.py"), "x = 1\n").unwrap();
+        std::fs::write(project.join(".themis/context/notes.json"), "{}").unwrap();
+        std::fs::write(project.join("src/__pycache__/a.pyc"), "c").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.path(), project.join("escape")).unwrap();
+        let target = root.path().join("project.turn-1");
+        snapshot(&project, &target).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(target.join("src/pkg/a.py")).unwrap(),
+            "x = 1\n"
+        );
+        assert!(!target.join(".themis").exists());
+        assert!(!target.join("src/__pycache__").exists());
+        assert!(!target.join("escape").exists());
+    }
 
     #[test]
     fn checkpoint_notes_reads_the_rendered_lines() {

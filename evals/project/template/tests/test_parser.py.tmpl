@@ -1,0 +1,37 @@
+import unittest
+
+from __pkg__.errors import OrderError
+from __pkg__.models import Line
+from __pkg__.parser import parse_order
+
+from tests.support import ORDER_TEXT
+
+
+class ParserTest(unittest.TestCase):
+    def test_parses_an_order(self):
+        order = parse_order(ORDER_TEXT)
+        self.assertEqual(order.order_id, "T-1")
+        self.assertEqual(order.customer, "Test Person")
+        self.assertEqual(order.lines[0], Line("BK-1", 4))
+        self.assertEqual(len(order.lines), 3)
+
+    def test_ignores_comments_and_blank_lines(self):
+        order = parse_order("# note\n\norder A\ncustomer B\n\nline X 1\n")
+        self.assertEqual(order.lines, (Line("X", 1),))
+
+    def test_errors_carry_the_line_number(self):
+        with self.assertRaises(OrderError) as caught:
+            parse_order("order A\ncustomer B\nline X zero\n")
+        self.assertEqual(caught.exception.line, 3)
+        with self.assertRaises(OrderError) as caught:
+            parse_order("order A\ncustomer B\nline X 1\norder C\n")
+        self.assertEqual(caught.exception.line, 4)
+
+    def test_requires_order_customer_and_lines(self):
+        for text in ["customer B\nline X 1\n", "order A\nline X 1\n", "order A\ncustomer B\n"]:
+            with self.assertRaises(OrderError):
+                parse_order(text)
+
+
+if __name__ == "__main__":
+    unittest.main()

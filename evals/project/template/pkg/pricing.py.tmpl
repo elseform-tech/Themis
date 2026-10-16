@@ -1,0 +1,19 @@
+"""Quotes for orders: bundle-aware line prices, tax per line, totals in cents."""
+
+from __pkg__.bundles import line_price
+from __pkg__.models import Quote
+from __pkg__.tax import tax_for
+
+
+def price_order(order, catalog):
+    """Quote an order against a catalog."""
+    line_totals = []
+    subtotal = 0
+    tax = 0
+    for line in order.lines:
+        product = catalog.get(line.sku)
+        amount = line_price(product, line.quantity)
+        line_totals.append((line.sku, amount))
+        subtotal += amount
+        tax += tax_for(product.category, amount)
+    return Quote(order.order_id, tuple(line_totals), subtotal, tax, subtotal + tax)

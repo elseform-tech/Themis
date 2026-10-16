@@ -76,6 +76,7 @@ async fn main() -> anyhow::Result<()> {
             .flatten()
             .filter_map(|turn| turn.as_str().map(str::to_owned))
             .collect(),
+        snapshots: task["snapshots"].as_bool().unwrap_or(false),
     };
     let report = run_tool_task(&llm, &project, prompt, options).await?;
     println!("{}", serde_json::to_string_pretty(&report)?);

@@ -1,0 +1,65 @@
+"""The product catalog, read from CSV: sku,name,category,unit_price,bundle_size,bundle_price."""
+
+from __pkg__.errors import CatalogError, MoneyError
+from __pkg__.models import Product
+from __pkg__.money import parse_amount
+
+HEADER = "sku,name,category,unit_price,bundle_size,bundle_price"
+
+
+class Catalog:
+    """Products by SKU, in the order they were listed."""
+
+    def __init__(self, products):
+        self._products = {}
+        for product in products:
+            if product.sku in self._products:
+                raise CatalogError(f"duplicate sku {product.sku}")
+            self._products[product.sku] = product
+
+    def get(self, sku):
+        """The product for `sku`; raises CatalogError when it is unknown."""
+        try:
+            return self._products[sku]
+        except KeyError:
+            raise CatalogError(f"unknown sku {sku}") from None
+
+    def __contains__(self, sku):
+        return sku in self._products
+
+    def __iter__(self):
+        return iter(self._products.values())
+
+    def __len__(self):
+        return len(self._products)
+
+
+def parse_catalog(text):
+    """Parse catalog CSV text (with its header line) into a Catalog."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines or lines[0] != HEADER:
+        raise CatalogError(f"catalog must start with the header {HEADER!r}")
+    products = []
+    for number, line in enumerate(lines[1:], 2):
+        fields = [field.strip() for field in line.split(",")]
+        if len(fields) != 6:
+            raise CatalogError(f"line {number}: expected 6 fields, got {len(fields)}")
+        sku, name, category, unit, size, bundle = fields
+        try:
+            unit_cents = parse_amount(unit)
+            bundle_cents = parse_amount(bundle) if bundle else 0
+        except MoneyError as error:
+            raise CatalogError(f"line {number}: {error}") from None
+        if not size.isdigit():
+            raise CatalogError(f"line {number}: bundle size must be a whole number")
+        bundle_size = int(size)
+        if bundle_size == 1 or (bundle_size and not bundle_cents):
+            raise CatalogError(f"line {number}: a bundle needs at least 2 units and a price")
+        products.append(Product(sku, name, category, unit_cents, bundle_size, bundle_cents))
+    return Catalog(products)
+
+
+def load_catalog(path):
+    """Read and parse a catalog file."""
+    with open(path, encoding="utf-8") as handle:
+        return parse_catalog(handle.read())

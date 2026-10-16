@@ -1,0 +1,36 @@
+import io
+import os
+import tempfile
+import unittest
+
+from __pkg__.cli import main
+
+from tests.support import CATALOG_TEXT, ORDER_TEXT
+
+
+class CliTest(unittest.TestCase):
+    def run_cli(self, order_text, *extra):
+        with tempfile.TemporaryDirectory() as folder:
+            catalog = os.path.join(folder, "catalog.csv")
+            order = os.path.join(folder, "order.txt")
+            with open(catalog, "w", encoding="utf-8") as handle:
+                handle.write(CATALOG_TEXT)
+            with open(order, "w", encoding="utf-8") as handle:
+                handle.write(order_text)
+            out = io.StringIO()
+            code = main(["quote", order, "--catalog", catalog, *extra], out)
+            return code, out.getvalue()
+
+    def test_prints_the_quote(self):
+        code, text = self.run_cli(ORDER_TEXT)
+        self.assertEqual(code, 0)
+        self.assertIn("Total: 44.95", text)
+
+    def test_reports_unknown_skus(self):
+        code, text = self.run_cli("order A\ncustomer B\nline NOPE 1\n")
+        self.assertEqual(code, 1)
+        self.assertIn("unknown sku NOPE", text)
+
+
+if __name__ == "__main__":
+    unittest.main()
