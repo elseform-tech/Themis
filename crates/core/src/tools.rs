@@ -1429,7 +1429,7 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
     }
     let total = text.chars().count();
     if offset > total {
-        return Err(invalid("Read offset exceeds text length"));
+        return Err(invalid(&format!("Read offset {offset} is past the end: the text has {total} characters, so everything was already read")));
     }
     let mut start = offset;
     let mut next = None;
