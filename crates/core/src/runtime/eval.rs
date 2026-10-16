@@ -371,7 +371,7 @@ const TOOL_OUTPUT_KEEP: usize = 16_384;
 pub struct AgentAnswer {
     /// Final assistant text (empty when the run produced none).
     pub answer: String,
-    /// Names of every tool call the agent issued, in order (including `update_plan`).
+    /// Names of every tool call the agent issued, in order (including `notes`).
     pub tools: Vec<String>,
     /// What each finished tool call returned, in order (each bounded to 16 KiB).
     pub tool_outputs: Vec<ToolOutput>,

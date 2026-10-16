@@ -187,3 +187,101 @@ async fn cli_long_job_survives_oversized_batches_and_one_loop_streak() {
     );
     serving.abort();
 }
+
+/// Notes kept in one message are shown in the next (which carries no tool history), live in
+/// the chat's evidence directory, and an early finish with open task lines is checked once.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_notes_carry_progress_into_later_messages() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":64000,"recent_messages":8,"total_turns":10}"#,
+    )
+    .unwrap();
+    let provider = MockServer::start().await;
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let sink = requests.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            sink.lock().unwrap().push(body.clone());
+            let messages = body["messages"].as_array().unwrap();
+            let last = messages.last().unwrap();
+            let text = last["content"].as_str().unwrap_or_default();
+            if text.contains("[Runtime check, not from the user]") {
+                return reply(json!({"content":"Part one is done; part two is still open."}));
+            }
+            if last["role"] == "tool" {
+                return reply(json!({"content":"Part one is done."}));
+            }
+            if text.contains("Start the release") {
+                let notes = json!({"set":[
+                    {"key":"goal","text":"release v2: changelog, then tag"},
+                    {"key":"changelog","text":"written, 14 entries","status":"done"},
+                    {"key":"tag","text":"tag v2.0.0 after review","status":"pending"}]});
+                return reply(json!({"tool_calls":[{"id":"n1","type":"function","function":{"name":"notes","arguments":notes.to_string()}}]}));
+            }
+            reply(json!({"content":"Changelog done (14 entries); tagging is still pending."}))
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+
+    let done = send(data.path(), &mut events, &id, "Start the release").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    assert_eq!(
+        done["result"].as_str().unwrap(),
+        "Part one is done; part two is still open.",
+        "the open task line got one runtime check before the answer"
+    );
+    let saved = std::fs::read_to_string(
+        project
+            .path()
+            .join(".themis/context")
+            .join(&id)
+            .join("notes.json"),
+    )
+    .unwrap();
+    assert!(saved.contains("tag v2.0.0 after review"), "{saved}");
+
+    let before = requests.lock().unwrap().len();
+    let progress = send(
+        data.path(),
+        &mut events,
+        &id,
+        "Where are we with the release?",
+    )
+    .await;
+    assert_eq!(progress["kind"], "finished", "{progress}");
+    let wire =
+        serde_json::to_string(&requests.lock().unwrap().last().unwrap()["messages"]).unwrap();
+    assert!(
+        wire.contains("Saved notes (written by you with the notes tool"),
+        "{wire}"
+    );
+    assert!(wire.contains("- goal: release v2: changelog, then tag"));
+    assert!(wire.contains("- tag [pending]: tag v2.0.0 after review"));
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        before + 1,
+        "a run that kept no notes is never held back"
+    );
+    serving.abort();
+}

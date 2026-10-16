@@ -9,7 +9,8 @@
 //!
 //! `task.json` holds `prompt`, and optionally `checkpoint` (a summary standing in for
 //! compacted history) and `evidence` (project-relative saved-originals directory, which also
-//! offers `recall`). The key comes from `OPENCODE_KEY`; `--base-url` points at a mock.
+//! offers `recall` and `notes`), `offer_notes` (false withholds `notes`) and `followups`
+//! (later messages in the same chat). The key comes from `OPENCODE_KEY`; `--base-url` points at a mock.
 
 use std::path::PathBuf;
 
@@ -68,7 +69,13 @@ async fn main() -> anyhow::Result<()> {
         recent_messages: task["recent_messages"]
             .as_u64()
             .map_or(20, |recent| recent as usize),
-        offer_plan: task["offer_plan"].as_bool().unwrap_or(true),
+        offer_notes: task["offer_notes"].as_bool().unwrap_or(true),
+        followups: task["followups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|turn| turn.as_str().map(str::to_owned))
+            .collect(),
     };
     let report = run_tool_task(&llm, &project, prompt, options).await?;
     println!("{}", serde_json::to_string_pretty(&report)?);

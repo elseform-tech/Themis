@@ -31,6 +31,7 @@ pub mod documents;
 pub mod eval;
 mod ledger;
 mod maintenance;
+mod notes;
 mod pending;
 mod summary_evidence;
 mod summary_job;
@@ -526,10 +527,10 @@ async fn run_task_with_evidence_inner(
     };
     let caching = CachingApprovals::wrap(approvals);
     let mut llm_tools: Vec<Tool> = tools.iter().map(to_llm_tool).collect();
-    // The plan is part of the durable task ledger, which needs saved originals.
-    let plan_offered = evidence_directory.is_some() && offer_plan();
-    if plan_offered && !tools.iter().any(|tool| tool.name() == ledger::PLAN_TOOL) {
-        llm_tools.push(ledger::plan_tool());
+    // Notes live in the chat's evidence directory, so they need saved originals.
+    let notes_directory = evidence_directory.clone().filter(|_| offer_notes());
+    if notes_directory.is_some() && !tools.iter().any(|tool| tool.name() == notes::TOOL) {
+        llm_tools.push(notes::tool());
     }
     // Byte estimates are approximate bookkeeping, not a model-specific tokenizer.
     let schema_tokens = serde_json::to_vec(&llm_tools)?.len().div_ceil(4);
@@ -583,18 +584,23 @@ async fn run_task_with_evidence_inner(
             directory,
             llm_tools.iter().any(|tool| tool.function.name == "recall"),
         )?);
-        messages[0].content.push_str(if plan_offered {
-            "\nFor multi-step work keep a short plan with update_plan and mark steps done as you finish them. The task ledger keeps the plan, completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work."
+        messages[0].content.push_str(if notes_directory.is_some() {
+            NOTES_INSTRUCTION
         } else {
             "\nThe task ledger keeps completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work."
         });
         messages[0].content.push_str(INCREMENTAL_WORK);
+    }
+    if let Some(directory) = &notes_directory {
+        pin_notes(&mut messages, directory);
     }
 
     let mut observations = HashSet::new();
     let mut last_shell_observation = None;
     let mut unchanged_results = 0;
     let mut loop_warned = false;
+    let mut notes_used = false;
+    let mut finish_checked = false;
     let mut recovery_reads = 0;
     let mut recall_searches = 0usize;
     let config = compaction_config();
@@ -804,6 +810,29 @@ async fn run_task_with_evidence_inner(
         };
         check_stopped(&stopped, &events).await?;
         if calls.is_empty() {
+            // Finishing with open task lines in notes kept during this run gets one check:
+            // a long job must not end early because the agent lost track of what is left.
+            if let (Some(directory), true, false) = (&notes_directory, notes_used, finish_checked) {
+                let saved = notes::Notes::load(directory);
+                let open: Vec<&str> = saved.open().iter().map(|line| line.key.as_str()).collect();
+                if !open.is_empty() {
+                    finish_checked = true;
+                    messages.push(ChatMessage {
+                        role: ChatRole::Assistant,
+                        message_type: MessageType::Text,
+                        content: text.unwrap_or_default(),
+                    });
+                    messages.push(ChatMessage {
+                        role: ChatRole::User,
+                        message_type: MessageType::Text,
+                        content: format!(
+                            "{OPEN_TASKS_CHECK}{}",
+                            open.iter().take(20).copied().collect::<Vec<_>>().join(", ")
+                        ),
+                    });
+                    continue;
+                }
+            }
             let result = text.unwrap_or_default();
             emit(RunEvent::Finished {
                 result: result.clone(),
@@ -958,6 +987,11 @@ async fn run_task_with_evidence_inner(
                         .to_string();
             }
         }
+        notes_used |= delivered_calls.iter().zip(&results).any(|(call, result)| {
+            call.function.name == notes::TOOL
+                && serde_json::from_str::<serde_json::Value>(&result.function.arguments)
+                    .is_ok_and(|value| value["ok"] == true)
+        });
         messages.push(ChatMessage {
             role: ChatRole::Assistant,
             message_type: MessageType::ToolUse(delivered_calls),
@@ -1289,6 +1323,21 @@ async fn execute_tool_calls(
             Err(format!("Not run: this batch had {} calls but only the first {runnable} fit the context budget. Nothing was executed for this call; request it again in a later, smaller batch.", calls.len()))
         } else if arguments_rejected {
             Err(format!("Tool arguments exceed {argument_allowance} serialized bytes (at most 64 KiB); rejected before execution. Use focused patches or approved shell/Python generators. No write was performed."))
+        } else if name == notes::TOOL && !tools.iter().any(|tool| tool.name() == notes::TOOL) {
+            // The agent's own notes file in this chat's evidence directory; no approval.
+            let outcome = match evidence_directory {
+                Some(directory) => notes::call(directory, &args),
+                None => Err("notes are not available in this run".to_owned()),
+            };
+            #[cfg(feature = "eval")]
+            let _ = EVAL_NOTES_LOG.try_with(|log| {
+                let saved = (outcome.is_ok())
+                    .then(|| evidence_directory.map(notes::Notes::load))
+                    .flatten()
+                    .and_then(|notes| serde_json::to_value(notes).ok());
+                log.lock().unwrap().push(saved.unwrap_or_default());
+            });
+            outcome
         } else {
             execute_call(tools, approvals, &name, &args, &summary, events, stopped).await
         };
@@ -1435,6 +1484,38 @@ async fn execute_tool_calls(
 
 fn tool_argument_allowance(batch_bytes: usize) -> usize {
     batch_bytes.saturating_mul(2).min(64 * 1024)
+}
+
+/// Runtime message (user role, like other harness checks) when the agent would finish with
+/// open task lines.
+const OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] Your notes still list open task lines. Finish them now, or, if one is already done or no longer needed, update the notes (status done, or remove it) and say why in the answer. Then give the final answer. Open: ";
+
+const NOTES_INSTRUCTION: &str = "\nKeep notes with the notes tool for any task with several steps: a `goal` line with the user's goal and constraints, one line per task with its status, and every result you will need later (counts, names, decisions, file paths). Update a line as soon as its item is done. Notes are shown to you after every context checkpoint and in later turns of this chat: they are how you remember the goal and progress, and how you answer questions about progress. The task ledger also keeps completed actions and recent reads. Before the final answer, check every task line: finish open ones, or mark them done or remove them with a reason. Then verify if needed and answer instead of re-inspecting finished work.";
+
+/// Shows the chat's saved notes before the current request. Notes from a checkpoint ledger
+/// written before notes existed are migrated once.
+fn pin_notes(messages: &mut Vec<ChatMessage>, directory: &std::path::Path) {
+    let mut saved = notes::Notes::load(directory);
+    if saved.lines.is_empty() {
+        if let Some(plan) = ledger::legacy_plan(messages) {
+            saved = notes::from_legacy_plan(&plan);
+            if !saved.lines.is_empty() {
+                let _ = saved.save(directory);
+            }
+        }
+    }
+    let block = saved.render();
+    if !block.is_empty() {
+        let request = messages.len() - 1;
+        messages.insert(
+            request,
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: block.trim_start().to_owned(),
+            },
+        );
+    }
 }
 
 /// Long jobs fail when every input is read before anything is saved: checkpoints summarise
@@ -1625,22 +1706,22 @@ tokio::task_local! { static SHORT_REPLY_TURN: bool; }
 
 #[cfg(feature = "eval")]
 tokio::task_local! {
-    /// Eval-only ablation switch: `false` withholds `update_plan` and its instruction.
-    pub static EVAL_OFFER_PLAN: bool;
+    /// Eval-only ablation switch: `false` withholds `notes` and its instruction.
+    pub static EVAL_OFFER_NOTES: bool;
 }
 
 #[cfg(feature = "eval")]
 tokio::task_local! {
-    /// Eval-only: every `update_plan` call in order, its validated items or `null`, so the
-    /// long-horizon eval can check that each checkpoint carries the latest plan.
-    pub static EVAL_PLAN_LOG: Arc<Mutex<Vec<serde_json::Value>>>;
+    /// Eval-only: the saved notes after every `notes` call (`null` when rejected), so the
+    /// long-horizon eval can check that each checkpoint carries the latest notes.
+    pub static EVAL_NOTES_LOG: Arc<Mutex<Vec<serde_json::Value>>>;
 }
 
-/// Whether runs that save evidence offer `update_plan` (always, outside evals).
-fn offer_plan() -> bool {
+/// Whether runs that save evidence offer `notes` (always, outside evals).
+fn offer_notes() -> bool {
     #[cfg(feature = "eval")]
     {
-        EVAL_OFFER_PLAN.try_with(|offer| *offer).unwrap_or(true)
+        EVAL_OFFER_NOTES.try_with(|offer| *offer).unwrap_or(true)
     }
     #[cfg(not(feature = "eval"))]
     {
@@ -2232,6 +2313,14 @@ async fn replace_context(
             }
         }
     }
+    // Notes are the agent's goal and progress: every checkpoint carries them in full, and
+    // they count as fixed content, so shrinking caches never squeezes them out.
+    let notes_block = original_snapshot
+        .and_then(std::path::Path::parent)
+        .filter(|_| offer_notes())
+        .map(|directory| notes::Notes::load(directory).checkpoint_block())
+        .unwrap_or_default();
+    summary.push_str(&notes_block);
     let mut compacted = vec![messages[0].clone()];
     // The checkpoint includes work completed for this request; preserve that chronology.
     compacted.extend(active_request);
@@ -2261,8 +2350,6 @@ async fn replace_context(
         .max(fixed_tokens);
     let mut cache_bytes = target.saturating_sub(fixed_tokens).saturating_mul(4) / 3;
     let checkpoint_prefix = compacted[checkpoint_index].content.clone();
-    // The plan keeps its own room: halving cache allowances must never drop it.
-    let plan_reserve = ledger::plan_reserve(messages);
     loop {
         let actions = cache_bytes
             .min((policy.context_token_budget / 12).saturating_mul(4))
@@ -2274,7 +2361,7 @@ async fn replace_context(
             messages,
             split,
             ledger::Budget {
-                total: actions + reads + plan_reserve,
+                total: actions + reads,
                 actions,
             },
             original_snapshot,
@@ -2287,7 +2374,7 @@ async fn replace_context(
         cache_bytes /= 2;
     }
     if estimated_tokens(&compacted) > policy.context_token_budget {
-        anyhow::bail!("checkpoint plan and active request exceed the context budget; original conversation preserved");
+        anyhow::bail!("checkpoint notes and active request exceed the context budget; original conversation preserved");
     }
     let mut durable_summary = summary;
     durable_summary.push_str("\nRecent completed context:\n");
@@ -2685,6 +2772,8 @@ fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMes
     for turn in history {
         if turn.role == ConversationRole::Checkpoint {
             let (summary, recent) = checkpoint_parts(&turn.text);
+            // Saved notes are pinned fresh from the notes file; drop the checkpoint's copy.
+            let summary = notes::strip_blocks(summary);
             messages.push(ChatMessage {
                 role: ChatRole::Assistant,
                 message_type: MessageType::Text,
@@ -2762,19 +2851,6 @@ async fn execute_call(
     stopped: &AtomicBool,
 ) -> Result<String, String> {
     let Some(tool) = tools.iter().find(|tool| tool.name() == name) else {
-        if name == ledger::PLAN_TOOL {
-            // Records the model's own checklist in context; touches no files or network.
-            #[cfg(feature = "eval")]
-            let _ = EVAL_PLAN_LOG.try_with(|log| {
-                let items = serde_json::from_str::<serde_json::Value>(args)
-                    .ok()
-                    .and_then(|value| ledger::plan_items(&value).ok());
-                log.lock()
-                    .unwrap()
-                    .push(items.unwrap_or(serde_json::Value::Null));
-            });
-            return ledger::update_plan(args);
-        }
         let available: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
         return Err(format!(
             "unknown tool '{name}' (available: {})",
@@ -2876,6 +2952,17 @@ async fn execute_call(
 #[doc(hidden)]
 pub mod fuzzing {
     use super::*;
+
+    /// Parses a notes file from the project (untrusted bytes), applies a model-written
+    /// update, and returns the rendered block and whether the update applied.
+    pub fn notes_file_and_update(file: &[u8], update: &str) -> (String, bool) {
+        let saved = notes::parse(file).unwrap_or_default();
+        let value = serde_json::from_str(update).unwrap_or_default();
+        match saved.apply(&value) {
+            Ok(updated) => (updated.render(), true),
+            Err(_) => (saved.render(), false),
+        }
+    }
 
     /// Social-message detection and recall terms for arbitrary UI text.
     pub fn social_request(text: &str) -> (bool, Vec<String>) {
@@ -3703,7 +3790,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plan_survives_repeated_checkpoints_when_caches_are_squeezed() {
+    async fn notes_survive_repeated_checkpoints_when_caches_are_squeezed() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Goal/constraints: summarise modules. Confirmed findings: modules read. Completed changes/tests: none. Unresolved work: continue. Next action: read the next module."},"finish_reason":"stop"}]}))).mount(&server).await;
@@ -3722,28 +3809,18 @@ mod tests {
                 arguments,
             },
         };
-        // A ~700-byte plan, as in the long-horizon eval where it vanished.
-        let steps: Vec<_> = (1..=8)
-            .map(|n| serde_json::json!({"step":format!("Read module {n:02} and write its notes file with owner line"),"status":"pending"}))
-            .collect();
-        let plan = serde_json::json!({ "items": steps }).to_string();
         // A long task leaves little cache room, so the checkpoint loop halves its allowances.
         let mut messages = initial_messages(Vec::new(), "Summarise every module. ".repeat(1000));
-        messages.push(ChatMessage {
-            role: ChatRole::Assistant,
-            message_type: MessageType::ToolUse(vec![call("plan", ledger::PLAN_TOOL, plan)]),
-            content: String::new(),
-        });
-        messages.push(ChatMessage {
-            role: ChatRole::Tool,
-            message_type: MessageType::ToolResult(vec![call(
-                "plan",
-                ledger::PLAN_TOOL,
-                r#"{"ok":true}"#.into(),
-            )]),
-            content: String::new(),
-        });
         let directory = tempfile::tempdir().unwrap();
+        // ~1 KB of notes, larger than the plan that vanished in the long-horizon eval.
+        let lines: Vec<_> = (1..=12)
+            .map(|n| serde_json::json!({"key":format!("mod-{n:02}"),"text":format!("{n} functions; notes/mod-{n:02}.md written with owner line"),"status":"done"}))
+            .collect();
+        notes::call(
+            directory.path(),
+            &serde_json::json!({ "set": lines }).to_string(),
+        )
+        .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let policy = RunPolicy {
             total_turns: 20,
@@ -3786,9 +3863,9 @@ mod tests {
                 .find(|m| m.content.starts_with("Earlier context checkpoint"))
                 .unwrap();
             assert!(
-                checkpoint.content.contains(r#""kind":"plan""#)
-                    && checkpoint.content.contains("Read module 08"),
-                "plan dropped at checkpoint {}",
+                checkpoint.content.contains(notes::START)
+                    && checkpoint.content.contains("- mod-12 [done]: 12 functions"),
+                "notes dropped at checkpoint {}",
                 round + 1
             );
         }

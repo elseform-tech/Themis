@@ -1,4 +1,4 @@
-//! Runtime-owned task ledger. One budgeted record of the plan, completed actions and
+//! Runtime-owned task ledger. One budgeted record of completed actions and
 //! bounded reads that survives lossy checkpoints independently of model-written text.
 use super::*;
 use serde_json::{json, Value};
@@ -17,10 +17,8 @@ pub(super) const MARKERS: [&str; 4] = [
     LEGACY_BLOCKS[1].0,
     LEGACY_BLOCKS[2].0,
 ];
-pub(super) const PLAN_TOOL: &str = "update_plan";
-const PLAN_BYTES: usize = 2048;
-const PLAN_ITEMS: usize = 20;
-const PLAN_STEP_CHARS: usize = 200;
+/// The plan tool notes replaced; plans in older checkpoints migrate into notes.
+const LEGACY_PLAN_TOOL: &str = "update_plan";
 const LOCATION_FIELDS: [&str; 10] = [
     "found",
     "path",
@@ -51,70 +49,9 @@ struct Collected {
     reads: Vec<(String, Option<Value>, Value)>,
 }
 
-/// Validated plan arguments, or the reason they were rejected.
-pub(super) fn plan_items(arguments: &Value) -> Result<Value, String> {
-    let items = arguments["items"]
-        .as_array()
-        .ok_or("update_plan requires an items array")?;
-    if items.is_empty() || items.len() > PLAN_ITEMS {
-        return Err(format!("update_plan accepts 1 to {PLAN_ITEMS} items"));
-    }
-    let mut steps = Vec::with_capacity(items.len());
-    for item in items {
-        let step = item["step"]
-            .as_str()
-            .filter(|step| !step.trim().is_empty())
-            .ok_or("each plan item needs a nonempty step")?;
-        let status = item["status"].as_str().unwrap_or("pending");
-        if !matches!(status, "pending" | "in_progress" | "done") {
-            return Err("status must be pending, in_progress or done".into());
-        }
-        steps
-            .push(json!({"step":take_char_prefix(step.trim(), PLAN_STEP_CHARS).0,"status":status}));
-    }
-    // Every saved plan must fit its ledger line, or it would silently vanish at a checkpoint.
-    let steps = Value::Array(steps);
-    let bytes = plan_line(&steps).len();
-    if bytes >= PLAN_BYTES {
-        return Err(format!("plan is {bytes} bytes; plans must stay under {PLAN_BYTES} bytes to survive context checkpoints. Shorten or merge steps and send the complete list again"));
-    }
-    Ok(steps)
-}
-
-fn plan_line(items: &Value) -> String {
-    json!({"kind":"plan","items":items}).to_string()
-}
-
-/// Ledger bytes the latest plan needs, framing included. Checkpoints add this to the
-/// ledger budget so shrinking caches never squeeze the plan out.
-pub(super) fn plan_reserve(messages: &[ChatMessage]) -> usize {
-    collect(messages, 0, None).plan.map_or(0, |items| {
-        plan_line(&items).len() + 1 + START.len() + END.len()
-    })
-}
-
-/// Executes the runtime-internal plan tool. It records the model's own checklist
-/// and touches no files, so it needs no approval.
-pub(super) fn update_plan(arguments: &str) -> Result<String, String> {
-    let value: Value = serde_json::from_str(arguments)
-        .map_err(|error| format!("tool 'update_plan' got invalid arguments: {error}"))?;
-    let items = plan_items(&value)?;
-    let remaining = items.as_array().map_or(0, |items| {
-        items.iter().filter(|item| item["status"] != "done").count()
-    });
-    Ok(json!({"ok":true,"items":items.as_array().map_or(0, Vec::len),"remaining":remaining,
-        "note":if remaining == 0 {"All plan steps are done. Verify if needed, then give the final answer."} else {"Plan saved. It survives context checkpoints in the task ledger."}}).to_string())
-}
-
-pub(super) fn plan_tool() -> Tool {
-    Tool {
-        tool_type: "function".into(),
-        function: autoagents::llm::chat::FunctionTool {
-            name: PLAN_TOOL.into(),
-            description: "Record or update your short step plan for multi-step work. Send the complete list each time with each step's status (pending, in_progress, done). The plan survives context checkpoints; keep it current and finish when every step is done.".into(),
-            parameters: json!({"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":PLAN_ITEMS,"items":{"type":"object","properties":{"step":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","done"]}},"required":["step","status"]}}},"required":["items"]}),
-        },
-    }
+/// The latest plan a checkpoint ledger written before notes carried, if any.
+pub(super) fn legacy_plan(messages: &[ChatMessage]) -> Option<Value> {
+    collect(messages, 0, None).plan
 }
 
 fn checkpoint_message(message: &ChatMessage) -> bool {
@@ -260,20 +197,15 @@ fn collect(
             MessageType::ToolUse(batch) => {
                 calls = batch.clone();
                 intent = &message.content;
-                for call in batch.iter().filter(|call| call.function.name == PLAN_TOOL) {
-                    if let Ok(items) = serde_json::from_str::<Value>(&call.function.arguments)
-                        .map_err(|error| error.to_string())
-                        .and_then(|value| plan_items(&value))
-                    {
-                        collected.plan = Some(items);
-                    }
-                }
             }
             MessageType::ToolResult(batch) => {
                 for (result_index, result) in batch.iter().enumerate() {
                     let pointer =
                         format!("/message_type/ToolResult/{result_index}/function/arguments");
-                    if result.function.name == PLAN_TOOL {
+                    // Notes have their own block; old plan calls are not actions either.
+                    if [LEGACY_PLAN_TOOL, super::notes::TOOL]
+                        .contains(&result.function.name.as_str())
+                    {
                         continue;
                     }
                     if result.function.name == "read_file" {
@@ -342,7 +274,7 @@ fn tagged(kind: &str, value: &Value) -> String {
     tagged.to_string()
 }
 
-/// Render the ledger within `budget`. Priority: plan, newest completed actions,
+/// Render the ledger within `budget`. Priority: newest completed actions,
 /// read locations, then full excerpts for the newest reads. Earlier details
 /// stay in the original snapshots.
 pub(super) fn render(
@@ -355,13 +287,6 @@ pub(super) fn render(
     let mut used = START.len() + END.len();
     if budget.total <= used {
         return String::new();
-    }
-    let plan = collected
-        .plan
-        .map(|items| plan_line(&items))
-        .filter(|line| line.len() < PLAN_BYTES.min(budget.total - used));
-    if let Some(line) = &plan {
-        used += line.len() + 1;
     }
     let mut actions = Vec::new();
     let mut action_bytes = 0;
@@ -406,7 +331,7 @@ pub(super) fn render(
         }
     }
     let reads: Vec<String> = reads.into_iter().flatten().collect();
-    let lines: Vec<String> = plan.into_iter().chain(actions).chain(reads).collect();
+    let lines: Vec<String> = actions.into_iter().chain(reads).collect();
     if lines.is_empty() {
         String::new()
     } else {
@@ -498,7 +423,7 @@ mod tests {
         #[test]
         fn rendered_ledger_stays_within_budget_and_parses(
             calls in proptest::collection::vec(
-                (prop_oneof![Just("read_file".to_owned()), Just("shell".to_owned()), Just("update_plan".to_owned()), Just("write_file".to_owned()), "[a-z_]{1,10}"], any::<String>(), tool_output()),
+                (prop_oneof![Just("read_file".to_owned()), Just("shell".to_owned()), Just("notes".to_owned()), Just("write_file".to_owned()), "[a-z_]{1,10}"], any::<String>(), tool_output()),
                 0..12,
             ),
             total in 0usize..8192,
@@ -521,97 +446,19 @@ mod tests {
                 }
             }
         }
-
-        /// Plan arguments from a model are validated, never trusted or panicked on.
-        #[test]
-        fn plan_arguments_never_panic(arguments in any::<String>()) {
-            if let Ok(rendered) = update_plan(&arguments) {
-                prop_assert!(!rendered.is_empty());
-            }
-        }
     }
 
     #[test]
-    fn plan_validation_bounds_steps_and_rejects_bad_status() {
-        assert!(update_plan(r#"{"items":[]}"#).is_err());
-        assert!(update_plan(r#"{"items":[{"step":"x","status":"later"}]}"#).is_err());
-        let long = "s".repeat(500);
-        let saved: Value = serde_json::from_str(
-            &update_plan(&json!({"items":[{"step":long,"status":"done"}]}).to_string()).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(saved["remaining"], 0);
-        let items =
-            plan_items(&json!({"items":[{"step":"s".repeat(500),"status":"done"}]})).unwrap();
-        assert_eq!(
-            items[0]["step"].as_str().unwrap().chars().count(),
-            PLAN_STEP_CHARS
-        );
-    }
-
-    #[test]
-    fn plans_too_long_for_the_ledger_are_rejected_not_silently_dropped() {
-        let step = "s".repeat(PLAN_STEP_CHARS);
-        let items: Vec<_> = (0..PLAN_ITEMS)
-            .map(|_| json!({"step":step,"status":"pending"}))
-            .collect();
-        let error = update_plan(&json!({ "items": items }).to_string()).unwrap_err();
-        assert!(error.contains("Shorten or merge steps"), "{error}");
-        let fits: Vec<_> = (0..8)
-            .map(|_| json!({"step":"s".repeat(150),"status":"pending"}))
-            .collect();
-        let saved = plan_items(&json!({ "items": fits })).unwrap();
-        assert!(plan_line(&saved).len() < PLAN_BYTES);
-    }
-
-    #[test]
-    fn latest_plan_survives_restart_through_the_ledger() {
-        let mut messages = initial_messages(Vec::new(), "Fix and test".into());
-        for (id, status) in [("p1", "pending"), ("p2", "done")] {
-            messages.push(tool_message(
-                ChatRole::Assistant,
-                "use",
-                id,
-                PLAN_TOOL,
-                &json!({"items":[{"step":"Fix parser","status":status}]}).to_string(),
-                "",
-            ));
-            messages.push(tool_message(
-                ChatRole::Tool,
-                "result",
-                id,
-                PLAN_TOOL,
-                r#"{"ok":true}"#,
-                "",
-            ));
-        }
-        let ledger = render(
-            &messages,
-            messages.len(),
-            Budget {
-                total: 4096,
-                actions: 2048,
-            },
-            None,
-        );
-        let plan = entries(&ledger)
-            .into_iter()
-            .find(|entry| entry["kind"] == "plan")
-            .unwrap();
-        assert_eq!(plan["items"][0]["status"], "done");
-        assert!(
-            !entries(&ledger)
-                .iter()
-                .any(|entry| entry["tool"] == PLAN_TOOL),
-            "plan calls are not actions"
-        );
+    fn plans_in_old_checkpoints_are_read_for_migration_but_not_rendered() {
+        let plan = json!({"kind":"plan","items":[{"step":"Fix parser","status":"done"}]});
         let restarted = initial_messages(
             vec![ConversationTurn {
                 role: ConversationRole::Checkpoint,
-                text: format!("state{ledger}"),
+                text: format!("state{START}{plan}{END}"),
             }],
             "Continue".into(),
         );
+        assert_eq!(legacy_plan(&restarted).unwrap()[0]["step"], "Fix parser");
         let again = render(
             &restarted,
             restarted.len(),
@@ -621,8 +468,7 @@ mod tests {
             },
             None,
         );
-        assert_eq!(again.matches(r#""kind":"plan""#).count(), 1);
-        assert!(again.contains("Fix parser"));
+        assert!(!again.contains(r#""kind":"plan""#), "{again}");
     }
 
     #[test]

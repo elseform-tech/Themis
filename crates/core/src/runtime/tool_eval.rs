@@ -27,12 +27,24 @@ pub struct CallRecord {
 /// One context checkpoint installed during a task.
 #[derive(Debug, Clone, Serialize)]
 pub struct CheckpointRecord {
-    /// `update_plan` calls made before this checkpoint.
-    pub plan_calls_before: usize,
-    /// The plan items the checkpoint's task ledger carries, if any.
-    pub plan: Option<serde_json::Value>,
+    /// Conversation turn (0 = the first prompt) in which the checkpoint was installed.
+    pub turn: usize,
+    /// `notes` calls made before this checkpoint (all turns).
+    pub notes_calls_before: usize,
+    /// The notes lines the checkpoint carries, if any.
+    pub notes: Option<serde_json::Value>,
     /// Size of the durable checkpoint summary.
     pub summary_bytes: usize,
+}
+
+/// One turn of a multi-turn task.
+#[derive(Debug, Clone, Serialize)]
+pub struct TurnRecord {
+    pub prompt: String,
+    pub answer: String,
+    pub error: Option<String>,
+    /// Tool calls made in this turn.
+    pub calls: usize,
 }
 
 /// Result of one tool-use task.
@@ -46,10 +58,14 @@ pub struct ToolTaskReport {
     pub requests: u64,
     /// Context checkpoints installed during the task.
     pub compactions: usize,
-    /// Each checkpoint with the plan its ledger carries.
+    /// Each checkpoint with the notes it carries.
     pub checkpoints: Vec<CheckpointRecord>,
-    /// Every `update_plan` call in order: its validated items, or `null` when rejected.
-    pub plans: Vec<serde_json::Value>,
+    /// The saved notes after every `notes` call in order, or `null` when it was rejected.
+    pub notes_log: Vec<serde_json::Value>,
+    /// The notes file at the end of the task.
+    pub final_notes: Option<serde_json::Value>,
+    /// Every turn: the prompt, then each follow-up.
+    pub turns: Vec<TurnRecord>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub latency_ms: u128,
@@ -60,14 +76,17 @@ pub struct ToolTaskReport {
 pub struct ToolTaskOptions {
     /// A summary standing in for compacted history.
     pub checkpoint: Option<String>,
-    /// Saved-originals directory: offers `recall`, the evidence pointer and `update_plan`.
+    /// Saved-originals directory: offers `recall`, the evidence pointer and `notes`.
     pub evidence: Option<std::path::PathBuf>,
     pub max_turns: usize,
     /// Context budget in tokens; small values force compaction mid-task.
     pub budget: usize,
     pub recent_messages: usize,
-    /// Ablation: `false` withholds `update_plan` and its instruction.
-    pub offer_plan: bool,
+    /// Ablation: `false` withholds `notes` and its instruction.
+    pub offer_notes: bool,
+    /// Later user messages in the same chat, each run after the previous answer with the
+    /// chat history (latest checkpoint plus the text turns) and the same notes file.
+    pub followups: Vec<String>,
 }
 
 impl Default for ToolTaskOptions {
@@ -78,7 +97,8 @@ impl Default for ToolTaskOptions {
             max_turns: 12,
             budget: 64_000,
             recent_messages: 20,
-            offer_plan: true,
+            offer_notes: true,
+            followups: Vec::new(),
         }
     }
 }
@@ -97,16 +117,127 @@ impl ApprovalHook for AllowNonDestructive {
     }
 }
 
-/// Runs `task` in `project` with the chat toolset (background tasks included). With
-/// `evidence`, the run gets the saved-originals pointer and the `recall` tool for that
-/// directory, after `checkpoint` (a summary standing in for compacted history).
-#[allow(unexpected_cfgs)]
+/// Runs `task` (then each follow-up) in `project` with the chat toolset (background tasks
+/// included). With `evidence`, the run gets the saved-originals pointer, `recall` and `notes`
+/// for that directory, after `checkpoint` (a summary standing in for compacted history).
 pub async fn run_tool_task(
     llm: &Arc<dyn LLMProvider>,
     project: &std::path::Path,
     task: &str,
     options: ToolTaskOptions,
 ) -> anyhow::Result<ToolTaskReport> {
+    let mut history = options
+        .checkpoint
+        .as_ref()
+        .map(|text| {
+            vec![ConversationTurn {
+                role: ConversationRole::Checkpoint,
+                text: text.clone(),
+            }]
+        })
+        .unwrap_or_default();
+    let prompts: Vec<String> = std::iter::once(task.to_owned())
+        .chain(options.followups.iter().cloned())
+        .collect();
+    let mut report = ToolTaskReport {
+        answer: String::new(),
+        finished: true,
+        error: None,
+        calls: Vec::new(),
+        tools_available: Vec::new(),
+        requests: 0,
+        compactions: 0,
+        checkpoints: Vec::new(),
+        notes_log: Vec::new(),
+        final_notes: None,
+        turns: Vec::new(),
+        input_tokens: None,
+        output_tokens: None,
+        latency_ms: 0,
+    };
+    let started = std::time::Instant::now();
+    for (turn, prompt) in prompts.iter().enumerate() {
+        let run = run_turn(llm, project, prompt, history.clone(), &options).await?;
+        let notes_before = report.notes_log.len();
+        report
+            .checkpoints
+            .extend(
+                run.checkpoints
+                    .iter()
+                    .map(|(calls_before, summary)| CheckpointRecord {
+                        turn,
+                        notes_calls_before: notes_before + calls_before,
+                        notes: checkpoint_notes(summary),
+                        summary_bytes: summary.len(),
+                    }),
+            );
+        // The chat history the desktop sends next: the latest checkpoint, then text turns.
+        if let Some((_, summary)) = run.checkpoints.last() {
+            history = vec![ConversationTurn {
+                role: ConversationRole::Checkpoint,
+                text: summary.clone(),
+            }];
+        }
+        history.push(ConversationTurn {
+            role: ConversationRole::User,
+            text: prompt.clone(),
+        });
+        history.push(ConversationTurn {
+            role: ConversationRole::Assistant,
+            text: run.answer.clone(),
+        });
+        report.turns.push(TurnRecord {
+            prompt: prompt.clone(),
+            answer: run.answer.clone(),
+            error: run.error.clone(),
+            calls: run.calls.len(),
+        });
+        report.finished &= run.error.is_none() && !run.answer.trim().is_empty();
+        report.answer = run.answer.trim().to_owned();
+        report.error = report.error.take().or(run.error);
+        report.calls.extend(run.calls);
+        report.notes_log.extend(run.notes_log);
+        report.tools_available = run.tools_available;
+        report.requests += run.metrics["total_requests"].as_u64().unwrap_or(0);
+        for (total, key) in [
+            (&mut report.input_tokens, "provider_input_tokens"),
+            (&mut report.output_tokens, "provider_output_tokens"),
+        ] {
+            if let Some(value) = run.metrics[key].as_u64() {
+                *total = Some(total.unwrap_or(0) + value);
+            }
+        }
+    }
+    report.compactions = report.checkpoints.len();
+    report.latency_ms = started.elapsed().as_millis();
+    report.final_notes = options
+        .evidence
+        .as_deref()
+        .map(notes::Notes::load)
+        .filter(|notes| !notes.lines.is_empty())
+        .and_then(|notes| serde_json::to_value(notes.lines).ok());
+    Ok(report)
+}
+
+struct TurnRun {
+    answer: String,
+    error: Option<String>,
+    calls: Vec<CallRecord>,
+    tools_available: Vec<String>,
+    metrics: serde_json::Value,
+    /// (`notes` calls before it in this turn, durable summary) per checkpoint.
+    checkpoints: Vec<(usize, String)>,
+    notes_log: Vec<serde_json::Value>,
+}
+
+#[allow(unexpected_cfgs)]
+async fn run_turn(
+    llm: &Arc<dyn LLMProvider>,
+    project: &std::path::Path,
+    task: &str,
+    history: Vec<ConversationTurn>,
+    options: &ToolTaskOptions,
+) -> anyhow::Result<TurnRun> {
     let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowNonDestructive);
     let registry = crate::tools::background::BackgroundRegistry::in_memory();
     #[allow(unused_mut)]
@@ -132,16 +263,6 @@ pub async fn run_tool_task(
         )));
     }
     let tools_available = tools.iter().map(|tool| tool.name().to_owned()).collect();
-    let history = options
-        .checkpoint
-        .as_ref()
-        .map(|text| {
-            vec![ConversationTurn {
-                role: ConversationRole::Checkpoint,
-                text: text.clone(),
-            }]
-        })
-        .unwrap_or_default();
     let (events, mut sink) = tokio::sync::mpsc::channel(1024);
     let collector = tokio::spawn(async move {
         let (mut calls, mut finished, mut error, mut metrics, mut checkpoints) = (
@@ -181,11 +302,10 @@ pub async fn run_tool_task(
                     }
                 }
                 RunEvent::ContextUsage { metrics: latest } => metrics = latest,
-                RunEvent::ContextCheckpoint { summary } => checkpoints.push(CheckpointRecord {
-                    plan_calls_before: calls.iter().filter(|c| c.tool == ledger::PLAN_TOOL).count(),
-                    plan: ledger_plan(&summary),
-                    summary_bytes: summary.len(),
-                }),
+                RunEvent::ContextCheckpoint { summary } => checkpoints.push((
+                    calls.iter().filter(|c| c.tool == notes::TOOL).count(),
+                    summary,
+                )),
                 RunEvent::Finished { result } => finished = Some(result),
                 RunEvent::Incomplete { result } => error = Some(format!("incomplete: {result}")),
                 RunEvent::Failed { error: failure } => error = Some(failure),
@@ -194,13 +314,12 @@ pub async fn run_tool_task(
         }
         (calls, finished, error, metrics, checkpoints)
     });
-    let plan_log = Arc::new(Mutex::new(Vec::new()));
-    let started = std::time::Instant::now();
-    let result = EVAL_PLAN_LOG
+    let notes_log = Arc::new(Mutex::new(Vec::new()));
+    let result = EVAL_NOTES_LOG
         .scope(
-            plan_log.clone(),
-            EVAL_OFFER_PLAN.scope(
-                options.offer_plan,
+            notes_log.clone(),
+            EVAL_OFFER_NOTES.scope(
+                options.offer_notes,
                 run_task_with_evidence(
                     llm.clone(),
                     tools,
@@ -220,11 +339,10 @@ pub async fn run_tool_task(
             ),
         )
         .await;
-    let latency_ms = started.elapsed().as_millis();
     // Background tasks the agent left running must not outlive the eval.
     registry.remove_thread("tool-eval", std::time::Duration::from_secs(5));
     let (calls, finished, event_error, metrics, checkpoints) = collector.await?;
-    let plans = std::mem::take(&mut *plan_log.lock().unwrap());
+    let notes_log = std::mem::take(&mut *notes_log.lock().unwrap());
     let (answer, error) = match (result, finished) {
         (Ok(text), _) => (text, None),
         (Err(error), Some(text)) => (text, Some(error.to_string())),
@@ -233,32 +351,35 @@ pub async fn run_tool_task(
             Some(event_error.unwrap_or_else(|| error.to_string())),
         ),
     };
-    Ok(ToolTaskReport {
-        finished: error.is_none() && !answer.trim().is_empty(),
-        answer: answer.trim().to_owned(),
+    Ok(TurnRun {
+        answer,
         error,
         calls,
         tools_available,
-        requests: metrics["total_requests"].as_u64().unwrap_or(0),
-        compactions: checkpoints.len(),
+        metrics,
         checkpoints,
-        plans,
-        input_tokens: metrics["provider_input_tokens"].as_u64(),
-        output_tokens: metrics["provider_output_tokens"].as_u64(),
-        latency_ms,
+        notes_log,
     })
 }
 
-/// The plan line of the task ledger inside a checkpoint summary (the last ledger block).
-fn ledger_plan(summary: &str) -> Option<serde_json::Value> {
-    let start = summary.rfind(ledger::START)? + ledger::START.len();
+/// The notes lines a checkpoint summary carries (its last saved-notes block), parsed back
+/// from the rendered `- key [status]: text` lines.
+fn checkpoint_notes(summary: &str) -> Option<serde_json::Value> {
+    let start = summary.rfind(notes::START)? + notes::START.len();
     let block = &summary[start..];
-    let block = &block[..block.find(ledger::END).unwrap_or(block.len())];
-    block
+    let block = &block[..block.find(notes::END).unwrap_or(block.len())];
+    let lines: Vec<serde_json::Value> = block
         .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|value| value["kind"] == "plan")
-        .map(|value| value["items"].clone())
+        .filter_map(|line| {
+            let (label, text) = line.strip_prefix("- ")?.split_once(": ")?;
+            let (key, status) = match label.rsplit_once(" [") {
+                Some((key, status)) => (key, status.strip_suffix(']')),
+                None => (label, None),
+            };
+            Some(serde_json::json!({"key":key,"text":text,"status":status}))
+        })
+        .collect();
+    Some(serde_json::Value::Array(lines))
 }
 
 #[cfg(test)]
@@ -266,18 +387,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ledger_plan_reads_the_plan_line() {
-        let summary = format!(
-            "Goal: x{}{}\n{}{}",
-            ledger::START,
-            r#"{"kind":"plan","items":[{"step":"a","status":"done"}]}"#,
-            r#"{"kind":"action"}"#,
-            ledger::END
-        );
+    fn checkpoint_notes_reads_the_rendered_lines() {
+        let notes = notes::Notes::default()
+            .apply(&serde_json::json!({"set":[
+                {"key":"goal","text":"ship: v2"},
+                {"key":"mod-01","text":"4 functions","status":"done"}]}))
+            .unwrap();
+        let summary = format!("Goal: x{}ledger", notes.render());
         assert_eq!(
-            ledger_plan(&summary),
-            Some(serde_json::json!([{"step":"a","status":"done"}]))
+            checkpoint_notes(&summary),
+            Some(serde_json::json!([
+                {"key":"goal","text":"ship: v2","status":null},
+                {"key":"mod-01","text":"4 functions","status":"done"}]))
         );
-        assert_eq!(ledger_plan("no ledger here"), None);
+        assert_eq!(checkpoint_notes("no notes here"), None);
     }
 }
