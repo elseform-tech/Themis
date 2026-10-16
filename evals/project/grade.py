@@ -250,7 +250,8 @@ import _hidden.test_hidden as module
 suite = unittest.defaultTestLoader.loadTestsFromName(sys.argv[1], module)
 result = unittest.TestResult()
 suite.run(result)
-failed = [str(t) for t, _ in result.failures + result.errors]
+# A failing subTest reports per case; count each test method once.
+failed = sorted({getattr(t, "test_case", t).id().rsplit(".", 1)[-1] for t, _ in result.failures + result.errors})
 print(json.dumps({"run": result.testsRun, "failed": failed,
                   "details": [d[-600:] for _, d in (result.failures + result.errors)][:3]}))
 '''

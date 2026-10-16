@@ -146,6 +146,14 @@ class GraderTest(unittest.TestCase):
                 self.assertFalse(passed, name)
                 self.assertEqual(failure_cause(stages, []), cause, name)
 
+    def test_hidden_failures_count_test_methods_not_cases(self):
+        from .grade import hidden_tests
+        snaps = self.snapshots()
+        edit(snaps[1], f"{self.package}/discounts.py", "return min(best, net)", "return 0")
+        result = hidden_tests(snaps[1], self.facts, "StageA")
+        self.assertEqual(result["failed"], ["test_priced_with_rules"])
+        self.assertLessEqual(len(result["failed"]), result["run"])
+
     def test_unfixed_bug_fails_stage_three(self):
         def unfix(turn, root):
             if turn == 3:
