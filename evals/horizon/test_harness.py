@@ -5,20 +5,25 @@ import unittest
 
 from evals.tools.tasks import write
 
-from .__main__ import notes_persistence, summarize
+from .__main__ import failure_cause, notes_persistence, summarize, would_stop
 from .tasks import (
+    ADVICE,
     CITIES,
     HEROES,
     MODULES,
     OWNER_RULE,
     TASKS,
     check_modules,
+    check_ports,
     check_stories,
     check_turns,
     measure_modules,
     measure_stories,
     module_functions,
+    port_conflicts,
+    service_port,
     setup_modules,
+    setup_ports,
     setup_stories,
 )
 
@@ -53,11 +58,15 @@ class NotesPersistenceTest(unittest.TestCase):
 
 
 class TaskChecksTest(unittest.TestCase):
-    def test_three_arms_per_job_and_only_the_asked_arm_asks(self):
-        self.assertEqual(len(TASKS), 9)
+    def test_arms_per_job_and_only_the_asked_arm_asks(self):
+        self.assertEqual(len(TASKS), 14)
         asked = [t for t in TASKS if t["arm"] == "notes-asked"]
         self.assertTrue(all("notes tool" in t["prompt"] for t in asked))
         self.assertFalse(any("notes tool" in t["prompt"] for t in TASKS if t["arm"] != "notes-asked"))
+        advised = {t["job"] for t in TASKS if t["arm"] == "notes-advice"}
+        self.assertEqual(advised, {"modules", "modules-turns"})
+        self.assertTrue(all(t["prompt"].endswith(ADVICE) == (t["arm"] == "notes-advice") for t in TASKS))
+        self.assertTrue(all(t["offer_notes"] for t in TASKS if t["arm"] == "notes-advice"))
         self.assertTrue(all(t["offer_notes"] is False for t in TASKS if t["arm"] == "no-notes"))
         self.assertTrue(all(len(t["followups"]) == 3 for t in TASKS if t["job"] == "modules-turns"))
 
@@ -107,6 +116,41 @@ class TaskChecksTest(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("first line", why)
             self.assertEqual(measure_modules(project, report)["rule_kept_files"], MODULES - 1)
+
+
+    def test_ports_check_needs_every_shared_port_in_order(self):
+        with tempfile.TemporaryDirectory() as project:
+            setup_ports(project)
+            self.assertIn(f"port: {service_port(1)}", open(f"{project}/services/svc-01.yaml").read())
+            report = {"answer": "", "calls": []}
+            self.assertFalse(check_ports(project, report)[0])
+            lines = [f"port {p}: {', '.join(n)}" for p, n in port_conflicts().items()]
+            write(project, "conflicts.md", "\n".join(reversed(lines)) + "\n")
+            self.assertFalse(check_ports(project, report)[0])
+            write(project, "conflicts.md", "\n".join(lines) + "\n")
+            self.assertEqual(check_ports(project, report), (True, ""))
+            self.assertEqual(len(lines), 4)
+
+
+class LoopAndCauseTest(unittest.TestCase):
+    def test_old_guard_would_stop_at_two_warnings_in_one_turn(self):
+        self.assertFalse(would_stop({"turns": [{"loop_warnings": 1}, {"loop_warnings": 1}]}))
+        self.assertTrue(would_stop({"turns": [{"loop_warnings": 0}, {"loop_warnings": 2}]}))
+
+    def test_failure_causes(self):
+        def row(why="", error=None, passed=False):
+            return {"passed": passed, "why": why, "turns": [{"error": error}]}
+        self.assertIsNone(failure_cause(row(passed=True)))
+        self.assertEqual(failure_cause(row("mod-09.md missing", "incomplete: handoff")), "turn_limit")
+        self.assertEqual(failure_cause(row("SUMMARY.md", "Repeated unchanged tool results stopped the run.")),
+                         "guard_stop")
+        self.assertEqual(failure_cause(row("mod-09.md missing; SUMMARY.md")), "unfinished")
+        self.assertEqual(failure_cause(row("20 lines")), "unfinished")
+        self.assertEqual(failure_cause(row("mod-03.md first line ['x']")), "wrong_content")
+        self.assertEqual(failure_cause(row("SUMMARY.md; final 'x'")), "wrong_result")
+        self.assertEqual(failure_cause(row("conflicts.md ['port 1: a']")), "wrong_result")
+        self.assertEqual(failure_cause(row("progress 'none'")), "wrong_progress")
+        self.assertEqual(failure_cause(row("final 'x'")), "wrong_final_answer")
 
 
 if __name__ == "__main__":

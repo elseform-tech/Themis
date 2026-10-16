@@ -356,7 +356,12 @@ async fn run_turn(
     let (calls, finished, event_error, metrics, checkpoints) = collector.await?;
     let notes_log = std::mem::take(&mut *notes_log.lock().unwrap());
     let (answer, error) = match (result, finished) {
-        (Ok(text), _) => (text, None),
+        // Ending at the turn limit returns a handoff summary: keep it as the answer and
+        // record why, so the eval does not count it as a finished task.
+        (Ok(text), _) => (
+            text,
+            event_error.filter(|error| error.starts_with("incomplete:")),
+        ),
         (Err(error), Some(text)) => (text, Some(error.to_string())),
         (Err(error), None) => (
             String::new(),

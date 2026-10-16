@@ -14,6 +14,7 @@ import concurrent.futures
 import datetime
 import json
 import os
+import re
 import sys
 
 from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task
@@ -59,6 +60,35 @@ def open_lines(row):
     return [line for line in row.get("final_notes") or [] if line.get("status") in ("pending", "in_progress")]
 
 
+def would_stop(row):
+    """The old guard stopped a run at its second warned streak: any turn with two warnings."""
+    turns = row.get("turns") or []
+    return any((turn.get("loop_warnings") or 0) >= 2 for turn in turns)
+
+
+def failure_cause(row):
+    """One coarse cause per failed run, from the turn errors and the check's reason."""
+    if row["passed"]:
+        return None
+    errors = " ".join(str((turn.get("error") or "")) for turn in row.get("turns") or []) + str(row.get("error") or "")
+    why = row.get("why", "")
+    if "incomplete:" in errors or "max turns" in errors:
+        return "turn_limit"
+    if "Repeated unchanged" in errors:
+        return "guard_stop"
+    if errors.strip() and errors.strip() != "None":
+        return "run_error"
+    if "missing" in why or re.search(r"\b\d+ lines\b", why):
+        return "unfinished"
+    if "first line" in why or "functions" in why or "summary '" in why or why.startswith("line "):
+        return "wrong_content"
+    if "SUMMARY.md" in why or "conflicts.md" in why:
+        return "wrong_result"
+    if why.startswith("progress"):
+        return "wrong_progress"
+    return "wrong_final_answer"
+
+
 def summarize(rows):
     by_task = collections.defaultdict(list)
     for row in rows:
@@ -81,6 +111,10 @@ def summarize(rows):
             "mean_rereads": extra("rereads"), "mean_rule_kept_files": extra("rule_kept_files"),
             "mean_calls": _mean([len(r["calls"]) for r in runs]),
             "mean_input_tokens": _mean([r.get("input_tokens") for r in runs]),
+            "mean_loop_warnings": _mean([r.get("loop_warnings", 0) for r in runs]),
+            "old_guard_would_stop": sum(would_stop(r) for r in runs),
+            "old_guard_would_stop_passed": sum(would_stop(r) and r["passed"] for r in runs),
+            "causes": dict(collections.Counter(c for c in map(failure_cause, runs) if c)),
             "failures": [r["why"] for r in runs if not r["passed"]][:3],
         }
     return {"runs": len(rows), "task_pass_rate": _mean([r["passed"] for r in rows]), "tasks": tasks}
@@ -92,16 +126,19 @@ def markdown(summary):
              f"Runs: {s['runs']}; infrastructure errors (excluded): {len(summary['errors'])}. "
              "Benchmark audit, not an automated check.", "",
              "| Task | Pass | Compactions | Notes used | Notes kept at checkpoints | Open at end | Progress reported | "
-             "Early detail recalled | Count recalled | Re-reads | Calls | Input tokens | First failure |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "Early detail recalled | Count recalled | Re-reads | Loop warnings | Old guard would stop (passed) | "
+             "Calls | Input tokens | Failure causes |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for name, row in s["tasks"].items():
         kept = f"{fmt(row['notes_kept_rate'])} of {row['checkpoints_with_notes']}" if row["checkpoints_with_notes"] else "-"
         lines.append(f"| {name} | {fmt(row['pass_rate'])} | {fmt(row['mean_compactions'], False)} | "
                      f"{fmt(row['notes_used_rate'])} | {kept} | {fmt(row['open_at_end_rate'])} | "
                      f"{fmt(row['progress_reported_rate'])} | {fmt(row['early_detail_rate'])} | "
                      f"{fmt(row['count_recalled_rate'])} | {fmt(row['mean_rereads'], False)} | "
+                     f"{fmt(row.get('mean_loop_warnings'), False)} | "
+                     f"{row.get('old_guard_would_stop', '-')} ({row.get('old_guard_would_stop_passed', '-')}) | "
                      f"{fmt(row['mean_calls'], False)} | {fmt(row['mean_input_tokens'], False)} | "
-                     f"{(row['failures'] or ['-'])[0][:60]} |")
+                     f"{', '.join(f'{k} {v}' for k, v in (row.get('causes') or {}).items()) or '-'} |")
     return "\n".join(lines) + "\n"
 
 
