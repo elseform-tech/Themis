@@ -782,6 +782,9 @@ pub const REFUSAL_NOTE: &str = "Do not reach the same result another way (for ex
 /// The desktop app implements this with a dialog (allow-once /
 /// allow-always-for-thread / deny); headless callers use [`AllowAllHook`],
 /// [`DenyAllHook`], or the [`FnHook`] closure adapter.
+/// Content characters one `read_file` call returns; follow `next_offset` for more.
+pub const READ_PAGE_CHARS: usize = 8000;
+
 pub trait ApprovalHook: Send + Sync {
     /// Return the approval decision for `action`.
     fn approve(&self, action: &ToolAction) -> Approval;
@@ -1084,7 +1087,7 @@ impl ToolT for GatedTool {
 
     fn description(&self) -> &str {
         if self.inner.name() == "read_file" {
-            "Read a project file. For ordinary source/text files use file_path with optional offset/find; omit JSONL selectors. Example: {\"file_path\":\"tests/test_example.py\"}. Optional jsonl_record selects a one-based JSONL record, json_pointer selects its string field (default /content). Optional offset (Unicode characters) pages text; find searches an exact case-sensitive literal from offset. On .jsonl files, find without jsonl_record prefers original User/Tool fields and excludes records marked evidence_kind=recovery; recovery-only snapshots require explicit record selection. For Tool arguments set decode_tool_payload=true to search decoded envelope values rather than escaped JSON; preserve that flag for subsequent offsets. For secondary navigation in a mixed snapshot, explicitly select its jsonl_record; Assistant-only notes remain searchable and carry a navigation warning. Continue using the returned jsonl_record and next_offset. Every read returns at most 4000 content characters with provenance and next_offset, including reads without options. find also returns match_count and last_match_offset for non-overlapping matches in the selected text from offset; pass the same find and returned last_match_offset as offset to inspect the last match, or page nearby with offset alone. No shell is needed. For complete-file analysis use approved local shell/Python processing and return selected facts."
+            "Read a project text file. Returns up to 8000 characters from offset (Unicode characters, default 0) with next_offset when more remains. Example: {\"file_path\":\"src/main.py\"}. find searches an exact, case-sensitive text from offset and also returns match_count and last_match_offset. For saved chat archives (.jsonl) only: jsonl_record selects a one-based record, json_pointer its string field (default /content), and decode_tool_payload=true searches decoded tool arguments (keep it for later offsets); recall is usually easier for those. To search, count or analyse whole files, use approved shell/Python and print only the facts you need."
         } else {
             self.inner.description()
         }
@@ -1454,7 +1457,7 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
         }
     }
     let excerpt: String = if found {
-        text.chars().skip(start).take(4000).collect()
+        text.chars().skip(start).take(READ_PAGE_CHARS).collect()
     } else {
         String::new()
     };
@@ -3397,7 +3400,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("instruction\nsecond line"));
-        assert!(result["content"].as_str().unwrap().chars().count() <= 4000);
+        assert!(result["content"].as_str().unwrap().chars().count() <= READ_PAGE_CHARS);
         let next = result["next_offset"].as_u64().unwrap();
         let absent = tool.execute(json!({"file_path":"evidence.jsonl","jsonl_record":2,"find":"Original 🔎","offset":next})).await.unwrap();
         assert_eq!(absent["found"], false);
@@ -3413,9 +3416,9 @@ mod tests {
             .unwrap();
         assert_eq!(
             first["content"],
-            dump.chars().take(4000).collect::<String>()
+            dump.chars().take(READ_PAGE_CHARS).collect::<String>()
         );
-        assert_eq!(first["next_offset"], 4000);
+        assert_eq!(first["next_offset"], READ_PAGE_CHARS);
         assert_eq!(first["truncated"], true);
         for args in [
             json!({"file_path":"../outside","offset":0}),

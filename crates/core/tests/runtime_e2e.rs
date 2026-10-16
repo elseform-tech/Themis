@@ -268,7 +268,9 @@ async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
         .as_str()
         .unwrap()
         .starts_with("import unittest"));
-    assert!(text["content"].as_str().unwrap().chars().count() <= 4000);
+    assert!(
+        text["content"].as_str().unwrap().chars().count() <= themis_core::tools::READ_PAGE_CHARS
+    );
     assert!(text["next_offset"].is_number());
     assert!(has_finished(&events));
     let requests = server.received_requests().await.unwrap();
@@ -294,10 +296,15 @@ async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
         .iter()
         .find(|tool| tool["function"]["name"] == "read_file")
         .unwrap();
-    assert!(read["function"]["description"]
+    assert!(body["messages"][0]["content"]
         .as_str()
         .unwrap()
-        .contains("For ordinary source/text files"));
+        .contains("read_file returns at most 8000 characters"));
+    // The description leads with plain files and keeps archive selectors to one sentence.
+    let description = read["function"]["description"].as_str().unwrap();
+    assert!(description.starts_with("Read a project text file. Returns up to 8000 characters"));
+    assert!(description.contains("For saved chat archives (.jsonl) only"));
+    assert!(description.len() < 800, "{}", description.len());
 }
 
 #[tokio::test]
@@ -1904,10 +1911,13 @@ async fn bounded_file_read_prevents_compaction_and_keeps_completion() {
         serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
     assert_eq!(
         receipt["content"],
-        source.chars().take(4000).collect::<String>()
+        source
+            .chars()
+            .take(themis_core::tools::READ_PAGE_CHARS)
+            .collect::<String>()
     );
     assert_eq!(receipt["truncated"], true);
-    assert_eq!(receipt["next_offset"], 4000);
+    assert_eq!(receipt["next_offset"], themis_core::tools::READ_PAGE_CHARS);
     assert_eq!(
         requests.len(),
         2,
