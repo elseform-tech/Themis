@@ -27,7 +27,7 @@
         "mean_rule_kept_files": 0.0,
         "mean_calls": 113.5,
         "mean_input_tokens": 349814.75,
-        "mean_loop_warnings": 0.0,
+        "mean_loop_warnings": 11.75,
         "old_guard_would_stop": 3,
         "old_guard_would_stop_passed": 0,
         "causes": {
@@ -91,7 +91,7 @@
         "mean_rule_kept_files": 11.75,
         "mean_calls": 105.5,
         "mean_input_tokens": 351558.75,
-        "mean_loop_warnings": 0.0,
+        "mean_loop_warnings": 3.25,
         "old_guard_would_stop": 3,
         "old_guard_would_stop_passed": 0,
         "causes": {
@@ -123,7 +123,7 @@
         "mean_rule_kept_files": 6.4,
         "mean_calls": 70.4,
         "mean_input_tokens": 318355.0,
-        "mean_loop_warnings": 0.0,
+        "mean_loop_warnings": 1.2,
         "old_guard_would_stop": 1,
         "old_guard_would_stop_passed": 0,
         "causes": {
@@ -190,7 +190,7 @@
         "mean_rule_kept_files": 14.4,
         "mean_calls": 113.2,
         "mean_input_tokens": 505887.6,
-        "mean_loop_warnings": 0.0,
+        "mean_loop_warnings": 3.2,
         "old_guard_would_stop": 5,
         "old_guard_would_stop_passed": 3,
         "causes": {
@@ -221,7 +221,7 @@
         "mean_rule_kept_files": null,
         "mean_calls": 113.5,
         "mean_input_tokens": 295539.0,
-        "mean_loop_warnings": 0.0,
+        "mean_loop_warnings": 12.5,
         "old_guard_would_stop": 3,
         "old_guard_would_stop_passed": 3,
         "causes": {},
@@ -247,7 +247,7 @@
         "mean_rule_kept_files": null,
         "mean_calls": 74.2,
         "mean_input_tokens": 228473.6,
-        "mean_loop_warnings": 0.0,
+        "mean_loop_warnings": 3.2,
         "old_guard_would_stop": 2,
         "old_guard_would_stop_passed": 2,
         "causes": {
