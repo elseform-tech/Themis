@@ -307,7 +307,7 @@ async fn cli_open_task_checks_repeat_only_after_work() {
     let sink = requests.clone();
     let notes = json!({"set":[{"key":"goal","text":"ship it"},
                               {"key":"step","text":"not done","status":"pending"}]});
-    let script = vec![
+    let script = [
         json!({"tool_calls":[{"id":"n1","type":"function","function":{"name":"notes","arguments":notes.to_string()}}]}),
         json!({"content":"Let me continue."}),
         json!({"tool_calls":[read_call("r1", "a.txt")]}),
