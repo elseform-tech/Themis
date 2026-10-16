@@ -15,6 +15,7 @@
 pub mod background;
 mod patch;
 pub mod recall;
+mod wrapped;
 
 use patch::*;
 
@@ -646,6 +647,23 @@ fn program_basename(program: &str) -> String {
 /// key, the `destructive` risk class, and are not covered by broad allow
 /// rules (for example `["git","push"]` or a `shell` rule without `command`).
 pub fn is_destructive_variant(command: &[String]) -> bool {
+    // Wrappers (`sh -c`, `sudo`, `env`, `eval`, `cmd /c`, ...) never hide a
+    // destructive command; a wrapped script we cannot read counts as one.
+    direct_destructive(command)
+        || wrapped::wrapped_commands(command)
+            .is_none_or(|inner| inner.iter().any(|command| direct_destructive(command)))
+}
+
+/// Every command `command` runs, itself first, then those inside wrappers
+/// (`sh -c "..."`, `sudo`, `env`, ...); `None` when a wrapped script cannot be
+/// read reliably. Deny rules match against each of them.
+pub fn commands_run_by(command: &[String]) -> Option<Vec<Vec<String>>> {
+    let mut all = vec![command.to_vec()];
+    all.extend(wrapped::wrapped_commands(command)?);
+    Some(all)
+}
+
+fn direct_destructive(command: &[String]) -> bool {
     let Some(program) = command.first() else {
         return false;
     };
@@ -2880,6 +2898,12 @@ pub fn shared_tools(
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub mod fuzzing {
+    /// Commands found inside wrappers such as `sh -c "..."` or `sudo` (see
+    /// [`super::commands_run_by`]).
+    pub fn wrapped_commands(command: &[String]) -> Option<Vec<Vec<String>>> {
+        super::wrapped::wrapped_commands(command)
+    }
+
     /// Parses every `@@` hunk in `patch` and applies them to `old` (the hunk parser and the
     /// forgiving applier `apply_patch` uses, without touching files).
     pub fn apply_hunk_text(old: &str, patch: &str) -> Result<Vec<String>, String> {

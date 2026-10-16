@@ -520,3 +520,54 @@ async fn cli_chat_grant_from_run_one_covers_run_two_of_the_same_chat() {
     );
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wrapped_destructive_commands_ask_every_time_and_meet_deny_rules() {
+    if !common::git_available() {
+        return;
+    }
+    let (_repo, project) = common::init_repo();
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let provider = mount_script(vec![
+        (
+            "wrapped",
+            vec![vec!["sh", "-c", "git status && git reset --hard"]],
+        ),
+        ("sudo-env", vec![vec!["env", "X=1", "rm", "-rf", "build"]]),
+    ])
+    .await;
+    common::use_mock_llm(&state, &provider).await;
+    let chat = new_chat(&state, &project).await;
+
+    // A destructive command inside `sh -c` or behind `env` is never grantable
+    // and asks every time, even after "Allow in this chat".
+    for text in ["wrapped reset", "wrapped reset again", "sudo-env clean"] {
+        let observed = run_message(&state, &chat, text, ApprovalDecision::Chat).await;
+        assert_eq!(observed.approvals.len(), 1, "{text}");
+        assert!(!observed.approvals[0].grantable, "{text}");
+    }
+    let stored = std::fs::read_to_string(grants_file(data.path(), &chat)).unwrap_or_default();
+    assert!(
+        !stored.contains("reset") && !stored.contains("rm"),
+        "{stored}"
+    );
+
+    // A deny rule on the inner command refuses the wrapped call without asking.
+    state
+        .save_runtime_configuration(
+            "user",
+            Some(project.to_string_lossy().into_owned()),
+            r#"{"approval":{"rules":[{"tool":"shell","command":["git","reset"],"action":"deny"}]}}"#,
+        )
+        .unwrap();
+    let denied = run_message(
+        &state,
+        &chat,
+        "wrapped reset denied",
+        ApprovalDecision::Chat,
+    )
+    .await;
+    assert!(denied.approvals.is_empty(), "{:?}", denied.approvals);
+    assert_eq!(denied.tools_failed, 1);
+}

@@ -273,8 +273,14 @@ Allow and ask rules match the program token exactly (`/bin/echo` or a project-lo
 `./echo` does not match `["echo"]`, so an allow rule never widens). Deny rules also
 match the program by basename, lowercased on macOS/Windows and without
 `.exe`/`.cmd`/`.bat` on Windows, so `["rm"]` denies `rm`, `/bin/rm`, `./rm` and `RM`.
-Wrappers (`env`, `sudo`, `command`, `busybox`, `xargs`, `bash -c`) still bypass
-deny rules: this is a tool policy, not a sandbox; deny the wrappers you do not want.
+Deny rules also match every command a wrapper runs: `sh`/`bash`/`zsh`/`dash`/`ksh`/`fish`
+`-c` scripts (split at `;`, `&&`, `||`, `|`, newlines, subshells and `$(...)`), `eval`,
+`cmd /c`, `powershell`/`pwsh -Command`, and prefix wrappers (`env`, `sudo`, `doas`,
+`nohup`, `nice`, `time`, `timeout`, `xargs`, `stdbuf`, `ionice`, `caffeinate`,
+`command`, `exec`, `busybox`), nested up to four levels. So `["rm"]` also denies
+`sh -c "ls && rm x"` and `sudo rm x`. Script files (`sh build.sh`) and other
+interpreters (`python -c`, `node -e`) are not read: this is a tool policy, not a
+sandbox; deny those interpreters if you need to.
 
 Project approval configuration may add deny rules only (including `command` denies). Those restrictions are
 evaluated ahead of user rules; a project cannot grant itself access. Explicit
@@ -347,8 +353,11 @@ also escalates destructive `checkout`, `branch` and `commit` calls), so a rule w
 default (ask; denied when unattended). A rule such as `["git","push","--force"]` is
 honoured. A broad allow rule without `command` (`{"tool":"shell","action":"allow"}`, or
 `"tool":"*"`) is trust in the tool but not in its destructive variants; add
-`"risk": "destructive"` to such a rule if you really mean them. Wrappers (`sudo rm -rf`,
-`bash -c "git push -f"`) are not recognized as variants.
+`"risk": "destructive"` to such a rule if you really mean them. Wrapped commands count too
+(`sudo rm -rf x`, `bash -c "git push -f"`, `env X=1 git reset --hard`), and so does a
+wrapped script that cannot be read reliably (unbalanced quotes, `$(...)` inside a quoted
+word, a variable as the program, `-EncodedCommand`, more than four wrapper levels), so
+those ask every time and are never covered by a chat grant.
 
 **Deny rules compare flags by meaning.** A deny rule's non-flag tokens must begin the
 command's non-flag tokens and every flag it names must appear before `--`, in any order,

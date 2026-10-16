@@ -105,10 +105,15 @@ fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
                 let covers_variant = rule.action != PolicyAction::Allow
                     || !is_destructive_variant(&action.command)
                     || is_destructive_variant(prefix);
+                // Deny rules also see commands inside wrappers, so
+                // `sh -c "git push --force"` is denied by `["git","push","--force"]`.
                 covers_variant
                     && (command_has_prefix(&action.command, prefix)
                         || (rule.action == PolicyAction::Deny
-                            && deny_matches(&action.command, prefix)))
+                            && crate::tools::commands_run_by(&action.command)
+                                .unwrap_or_else(|| vec![action.command.clone()])
+                                .iter()
+                                .any(|command| deny_matches(command, prefix))))
             }
         }
         && rule
@@ -1539,8 +1544,15 @@ mod tests {
         // ...but allow rules never widen: a local ./echo is not `echo`.
         assert_eq!(decide(&["./echo", "hi"]), PolicyAction::Ask);
         assert_eq!(decide(&["/bin/echo"]), PolicyAction::Ask);
-        // Wrappers still bypass deny rules (tool policy, not a sandbox).
-        assert_eq!(decide(&["env", "rm", "x"]), PolicyAction::Ask);
+        // Deny rules see through wrappers and shell scripts.
+        assert_eq!(decide(&["env", "rm", "x"]), PolicyAction::Deny);
+        assert_eq!(decide(&["sh", "-c", "ls && rm x"]), PolicyAction::Deny);
+        assert_eq!(
+            decide(&["sudo", "-u", "me", "/bin/rm", "x"]),
+            PolicyAction::Deny
+        );
+        // ...but allow rules stay exact: `echo` does not allow a script that echoes.
+        assert_eq!(decide(&["sh", "-c", "echo hi"]), PolicyAction::Ask);
         #[cfg(any(target_os = "macos", windows))]
         assert_eq!(decide(&["RM", "x"]), PolicyAction::Deny);
         #[cfg(windows)]
