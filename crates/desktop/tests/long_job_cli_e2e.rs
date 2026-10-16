@@ -189,7 +189,8 @@ async fn cli_long_job_survives_oversized_batches_and_one_loop_streak() {
 }
 
 /// Notes kept in one message are shown in the next (which carries no tool history), live in
-/// the chat's evidence directory, and an early finish with open task lines is checked once.
+/// the chat's evidence directory, and an early finish with open task lines is checked once,
+/// including in a later message answered without any tool call.
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_notes_carry_progress_into_later_messages() {
     let data = tempfile::tempdir().unwrap();
@@ -278,10 +279,17 @@ async fn cli_notes_carry_progress_into_later_messages() {
     );
     assert!(wire.contains("- goal: release v2: changelog, then tag"));
     assert!(wire.contains("- tag [pending]: tag v2.0.0 after review"));
+    // Answering with no tool call while a task line is open gets one idle check, which lets a
+    // question be answered as is; the answer after it is accepted.
     assert_eq!(
         requests.lock().unwrap().len(),
-        before + 1,
-        "a run that kept no notes is never held back"
+        before + 2,
+        "one idle check, then the answer"
+    );
+    assert!(wire.contains("You answered without using any tools") && wire.contains("Open: tag"));
+    assert_eq!(
+        progress["result"].as_str().unwrap(),
+        "Part one is done; part two is still open."
     );
     serving.abort();
 }

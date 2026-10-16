@@ -812,12 +812,22 @@ async fn run_task_with_evidence_inner(
         };
         check_stopped(&stopped, &events).await?;
         if calls.is_empty() {
-            // Finishing with open task lines in notes kept during this run gets one check:
-            // a long job must not end early because the agent lost track of what is left.
-            if let (Some(directory), true, false) = (&notes_directory, notes_used, finish_checked) {
+            // Finishing with open task lines gets one check when notes were kept during this
+            // run, or when the run did no work at all (an answer that only announces the next
+            // step): a long job must not end early because the agent lost track of what is left.
+            if let (Some(directory), true, false) = (
+                &notes_directory,
+                notes_used || work_calls == 0,
+                finish_checked,
+            ) {
                 let saved = notes::Notes::load(directory);
                 let open: Vec<&str> = saved.open().iter().map(|line| line.key.as_str()).collect();
                 if !open.is_empty() {
+                    let check = if notes_used {
+                        OPEN_TASKS_CHECK
+                    } else {
+                        IDLE_OPEN_TASKS_CHECK
+                    };
                     finish_checked = true;
                     messages.push(ChatMessage {
                         role: ChatRole::Assistant,
@@ -828,7 +838,7 @@ async fn run_task_with_evidence_inner(
                         role: ChatRole::User,
                         message_type: MessageType::Text,
                         content: format!(
-                            "{OPEN_TASKS_CHECK}{}",
+                            "{check}{}",
                             open.iter().take(20).copied().collect::<Vec<_>>().join(", ")
                         ),
                     });
@@ -1514,7 +1524,10 @@ const NOTES_REMINDER: &str = "Notes reminder (runtime, once): you have started w
 /// open task lines.
 const OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] Your notes still list open task lines. Finish them now, or, if one is already done or no longer needed, update the notes (status done, or remove it) and say why in the answer. Then give the final answer. Open: ";
 
-const NOTES_INSTRUCTION: &str = "\nKeep notes with the notes tool for any task with several steps, starting with a notes call before other work: a `goal` line with the user's goal and constraints, one line per task with its status, and every result you will need later (counts, names, decisions, file paths). Update a line as soon as its item is done, and keep result lines until the whole task is finished (remove only lines you will not need). Notes are shown to you after every context checkpoint and in later turns of this chat: they are how you remember the goal and progress, and how you answer questions about progress. The task ledger also keeps completed actions and recent reads. Before the final answer, check every task line: finish open ones, or mark them done or remove them with a reason. Then verify if needed and answer instead of re-inspecting finished work.";
+/// One check when a run that did no work ends while saved notes list open task lines.
+const IDLE_OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] You answered without using any tools while your notes list open task lines. If the user's latest message asks you to do that work, do it now with tool calls instead of describing it. If it only asks a question or asks you to wait, keep the lines open and give the answer. Open: ";
+
+const NOTES_INSTRUCTION: &str = "\nKeep notes with the notes tool for any task with several steps, starting with a notes call before other work: a `goal` line with the user's goal and constraints, one line per task with its status, and every result you will need later (counts, names, decisions, file paths). For a total over many items, keep a running total line and add each item's count as you finish it, instead of adding everything up at the end. Update a line as soon as its item is done, and keep result lines until the whole task is finished (remove only lines you will not need). Notes are shown to you after every context checkpoint and in later turns of this chat: they are how you remember the goal and progress, and how you answer questions about progress. The task ledger also keeps completed actions and recent reads. Before the final answer, check every task line: finish open ones, or mark them done or remove them with a reason. Then verify if needed and answer instead of re-inspecting finished work.";
 
 /// Shows the chat's saved notes before the current request. Notes from a checkpoint ledger
 /// written before notes existed are migrated once.

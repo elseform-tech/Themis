@@ -2420,7 +2420,8 @@ fn request_text(request: &wiremock::Request) -> String {
 }
 
 /// Notes outlive the run: a later message in the chat (no tool history at all) sees the goal
-/// and progress. Finishing with open task lines gets exactly one runtime check.
+/// and progress. Finishing with open task lines gets exactly one runtime check, also in a
+/// later run that answers without doing any work.
 #[tokio::test]
 async fn notes_carry_goal_and_progress_into_later_runs_and_check_open_tasks_once() {
     let project = tempfile::tempdir().unwrap();
@@ -2455,6 +2456,10 @@ async fn notes_carry_goal_and_progress_into_later_runs_and_check_open_tasks_once
         .as_str()
         .unwrap()
         .contains("Keep notes with the notes tool for any task with several steps"));
+    assert!(first["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("keep a running total line and add each item's count as you finish it"));
     let tools: Vec<&str> = first["tools"]
         .as_array()
         .unwrap()
@@ -2475,7 +2480,10 @@ async fn notes_carry_goal_and_progress_into_later_runs_and_check_open_tasks_once
     let later = MockServer::start().await;
     common::mount_script(
         &later,
-        vec![common::final_text_body("1 of 2 done; svc-b open.")],
+        vec![
+            common::final_text_body("Next I will migrate svc-b."),
+            common::final_text_body("1 of 2 done; svc-b open."),
+        ],
     )
     .await;
     let history = vec![
@@ -2493,10 +2501,19 @@ async fn notes_carry_goal_and_progress_into_later_runs_and_check_open_tasks_once
         .unwrap();
     assert_eq!(progress, "1 of 2 done; svc-b open.");
     let requests = later.received_requests().await.unwrap();
+    // An answer without any tool calls while task lines are open gets one check that
+    // separates a question (answer it, keep the lines open) from a request to do the work.
     assert_eq!(
         requests.len(),
-        1,
-        "no check when this run did not keep notes"
+        2,
+        "one idle check, then the answer is accepted"
+    );
+    let checked = request_text(&requests[1]);
+    assert!(
+        checked.contains("You answered without using any tools")
+            && checked.contains("If it only asks a question or asks you to wait")
+            && checked.contains("Open: svc-b"),
+        "{checked}"
     );
     let wire = request_text(&requests[0]);
     assert!(
