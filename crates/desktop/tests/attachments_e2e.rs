@@ -884,7 +884,7 @@ async fn cli_answer_retries_empty_and_transient_responses_without_replaying_comp
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_stops_alternating_unchanged_reads_after_compaction() {
+async fn cli_bounds_alternating_unchanged_reads_by_the_turn_limit() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::create_dir(project.path().join(".themis")).unwrap();
@@ -954,22 +954,22 @@ async fn cli_stops_alternating_unchanged_reads_after_compaction() {
             let event = &item["payload"]["event"];
             compactions += usize::from(event["kind"] == "context_compacting");
             completed += usize::from(event["kind"] == "tool_finished");
-            if event["kind"] == "finished" || event["kind"] == "failed" {
+            if ["finished", "incomplete", "failed"]
+                .contains(&event["kind"].as_str().unwrap_or_default())
+            {
                 break event.clone();
             }
         }
     })
     .await
     .unwrap();
-    assert_eq!(terminal["kind"], "failed", "{terminal}");
-    assert!(terminal["error"]
-        .as_str()
-        .unwrap()
-        .contains("Repeated unchanged tool"));
+    // A model that never stops re-reading is warned at every streak and ends at the
+    // configured turn limit; no repeat stops the run early.
+    assert_eq!(terminal["kind"], "incomplete", "{terminal}");
     assert_eq!(compactions, 1);
-    // Two new reads, a first streak of three that is warned, then a second streak that stops.
-    assert_eq!(completed, 8);
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 8);
+    assert_eq!(completed, 10, "every turn ran its read");
+    // Ten tool turns, then the handoff request for the incomplete summary.
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 11);
     assert!(
         !cli(data.path(), "get_thread", json!({"threadId":id}))["running"]
             .as_bool()

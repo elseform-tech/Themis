@@ -589,7 +589,6 @@ async fn run_task_with_evidence_inner(
         } else {
             "\nThe task ledger keeps completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work."
         });
-        messages[0].content.push_str(INCREMENTAL_WORK);
     }
     if let Some(directory) = &notes_directory {
         pin_notes(&mut messages, directory);
@@ -598,7 +597,6 @@ async fn run_task_with_evidence_inner(
     let mut observations = HashSet::new();
     let mut last_shell_observation = None;
     let mut unchanged_results = 0;
-    let mut loop_warned = false;
     let mut notes_used = false;
     let mut notes_reminded = false;
     let mut work_calls = 0usize;
@@ -900,18 +898,10 @@ async fn run_task_with_evidence_inner(
                 };
                 if value["arguments_rejected"] != true && unchanged {
                     unchanged_results += 1;
-                    // The first streak gets one warning: re-reading after compaction is usually
-                    // forgotten work, which saving results can fix. A second streak stops.
-                    let warn = unchanged_results >= 3 && !loop_warned;
-                    if unchanged_results >= 3 && loop_warned {
-                        let error = "Repeated unchanged tool results stopped the run. Completed actions and evidence remain saved; evidence recovery can continue in a new run with a narrower unresolved question.".to_owned();
-                        emit(RunEvent::Failed {
-                            error: error.clone(),
-                        })
-                        .await
-                        .ok();
-                        return Err(anyhow!(error));
-                    }
+                    // Every streak of three gets a warning, never a stop: a re-read after a
+                    // checkpoint can be needed, and stopping hides why the agent repeats itself.
+                    // The run's turn limit bounds a real loop; evals count the warnings.
+                    let warn = unchanged_results >= 3;
                     // An identical result still in context is referenced, not resent.
                     let live =
                         messages
@@ -940,9 +930,12 @@ async fn run_task_with_evidence_inner(
                         )?;
                     }
                     if warn {
-                        loop_warned = true;
                         unchanged_results = 0;
                         warn_repeated_results(result);
+                        #[cfg(feature = "eval")]
+                        let _ = EVAL_LOOP_WARNINGS.try_with(|count| {
+                            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                        });
                     }
                 } else {
                     unchanged_results = 0;
@@ -1555,13 +1548,9 @@ fn pin_notes(messages: &mut Vec<ChatMessage>, directory: &std::path::Path) {
     }
 }
 
-/// Long jobs fail when every input is read before anything is saved: checkpoints summarise
-/// the early reads away and the agent re-reads them in a loop (long-horizon eval, 2026-10-16).
-const INCREMENTAL_WORK: &str = "\nContext is limited and older reads are summarised away at checkpoints. For jobs over many files or items, finish and save each item's result (write its output) before reading the next few; do not read everything first.";
+const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. If an earlier read was summarised away and you still need it, keep what you learn this time in your notes or output; otherwise take the next unfinished step instead of repeating it.";
 
-const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. Repeating it again stops the run. Context is limited and earlier reads are summarised away, so save what you learned now (write the output or notes for finished items, update the plan), then take the next unfinished step instead of re-reading.";
-
-/// Adds the one-time loop warning to a repeated result without dropping its content.
+/// Adds the loop warning to a repeated result without dropping its content.
 fn warn_repeated_results(result: &mut ToolCall) {
     if !annotate_result(result, "loop_warning", LOOP_WARNING) {
         // A JSON array or scalar keeps its shape: wrap it rather than break it.
@@ -1766,6 +1755,12 @@ tokio::task_local! {
     /// Eval-only: the saved notes after every `notes` call (`null` when rejected), so the
     /// long-horizon eval can check that each checkpoint carries the latest notes.
     pub static EVAL_NOTES_LOG: Arc<Mutex<Vec<serde_json::Value>>>;
+}
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only: loop warnings given in the run (each would once have stopped it after the first).
+    pub static EVAL_LOOP_WARNINGS: Arc<std::sync::atomic::AtomicUsize>;
 }
 
 /// Whether runs that save evidence offer `notes` (always, outside evals).

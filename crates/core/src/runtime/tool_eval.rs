@@ -45,6 +45,8 @@ pub struct TurnRecord {
     pub error: Option<String>,
     /// Tool calls made in this turn.
     pub calls: usize,
+    /// Loop warnings in this turn (three unchanged results in a row each).
+    pub loop_warnings: usize,
 }
 
 /// Result of one tool-use task.
@@ -66,6 +68,8 @@ pub struct ToolTaskReport {
     pub final_notes: Option<serde_json::Value>,
     /// Every turn: the prompt, then each follow-up.
     pub turns: Vec<TurnRecord>,
+    /// Loop warnings over all turns.
+    pub loop_warnings: usize,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub latency_ms: u128,
@@ -151,6 +155,7 @@ pub async fn run_tool_task(
         notes_log: Vec::new(),
         final_notes: None,
         turns: Vec::new(),
+        loop_warnings: 0,
         input_tokens: None,
         output_tokens: None,
         latency_ms: 0,
@@ -191,7 +196,9 @@ pub async fn run_tool_task(
             answer: run.answer.clone(),
             error: run.error.clone(),
             calls: run.calls.len(),
+            loop_warnings: run.loop_warnings,
         });
+        report.loop_warnings += run.loop_warnings;
         report.finished &= run.error.is_none() && !run.answer.trim().is_empty();
         report.answer = run.answer.trim().to_owned();
         report.error = report.error.take().or(run.error);
@@ -228,6 +235,7 @@ struct TurnRun {
     /// (`notes` calls before it in this turn, durable summary) per checkpoint.
     checkpoints: Vec<(usize, String)>,
     notes_log: Vec<serde_json::Value>,
+    loop_warnings: usize,
 }
 
 #[allow(unexpected_cfgs)]
@@ -315,26 +323,30 @@ async fn run_turn(
         (calls, finished, error, metrics, checkpoints)
     });
     let notes_log = Arc::new(Mutex::new(Vec::new()));
-    let result = EVAL_NOTES_LOG
+    let loop_warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let result = EVAL_LOOP_WARNINGS
         .scope(
-            notes_log.clone(),
-            EVAL_OFFER_NOTES.scope(
-                options.offer_notes,
-                run_task_with_evidence(
-                    llm.clone(),
-                    tools,
-                    task.to_owned(),
-                    history,
-                    approvals,
-                    RunPolicy {
-                        total_turns: options.max_turns,
-                        context_token_budget: options.budget,
-                        recent_messages: options.recent_messages,
-                    },
-                    events,
-                    Arc::new(AtomicBool::new(false)),
-                    String::new(),
-                    options.evidence.clone(),
+            loop_warnings.clone(),
+            EVAL_NOTES_LOG.scope(
+                notes_log.clone(),
+                EVAL_OFFER_NOTES.scope(
+                    options.offer_notes,
+                    run_task_with_evidence(
+                        llm.clone(),
+                        tools,
+                        task.to_owned(),
+                        history,
+                        approvals,
+                        RunPolicy {
+                            total_turns: options.max_turns,
+                            context_token_budget: options.budget,
+                            recent_messages: options.recent_messages,
+                        },
+                        events,
+                        Arc::new(AtomicBool::new(false)),
+                        String::new(),
+                        options.evidence.clone(),
+                    ),
                 ),
             ),
         )
@@ -359,6 +371,7 @@ async fn run_turn(
         metrics,
         checkpoints,
         notes_log,
+        loop_warnings: loop_warnings.load(std::sync::atomic::Ordering::SeqCst),
     })
 }
 

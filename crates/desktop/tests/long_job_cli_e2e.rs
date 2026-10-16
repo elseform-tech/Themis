@@ -174,11 +174,11 @@ async fn cli_long_job_survives_oversized_batches_and_one_loop_streak() {
     assert!(tools[0].contains("item 0"), "{}", tools[0]);
     let system = followup["messages"][0]["content"].as_str().unwrap();
     assert!(
-        system.contains("finish and save each item's result"),
-        "the CLI request carries the incremental-work instruction"
+        !system.contains("before reading the next few"),
+        "the CLI request no longer carries the read-one-write-one instruction"
     );
 
-    // Re-reading one unchanged file: the first streak is warned, and the run still finishes.
+    // Re-reading one unchanged file: the streak is warned, and the run still finishes.
     let done = send(data.path(), &mut events, &id, "Check item zero").await;
     assert_eq!(done["kind"], "finished", "{done}");
     assert_eq!(

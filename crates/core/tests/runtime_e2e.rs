@@ -706,7 +706,7 @@ async fn oversized_write_arguments_are_rejected_before_modifying_files() {
 }
 
 #[tokio::test]
-async fn repeated_archive_reads_stop_without_another_compaction() {
+async fn repeated_archive_reads_are_warned_without_another_compaction() {
     let server = MockServer::start().await;
     let args =
         json!({"file_path":".themis/context/source/snapshot-original.jsonl","jsonl_record":1});
@@ -749,23 +749,19 @@ async fn repeated_archive_reads_stop_without_another_compaction() {
         Some(evidence),
     )
     .await;
-    assert!(
-        result.is_err(),
-        "repeated identical archive reads must not cycle until the normal turn limit"
-    );
-    assert!(result.unwrap_err().to_string().contains("recovery"));
+    // Repeated archive reads are warned like any others; the 64-call recovery cap still bounds them.
+    assert_eq!(result.unwrap(), "Repeated the same evidence");
     let events = common::drain(&mut rx).await;
     assert!(!events
         .iter()
         .any(|e| matches!(e, RunEvent::ContextCompacting)));
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, RunEvent::Failed { error } if error.contains("recovery"))));
-    assert!(server.received_requests().await.unwrap().len() <= 7);
+    let requests = server.received_requests().await.unwrap();
+    let last = String::from_utf8_lossy(&requests.last().unwrap().body).into_owned();
+    assert_eq!(last.matches("Loop warning").count(), 2, "{last}");
 }
 
 #[tokio::test]
-async fn repeated_ordinary_reads_stop_even_without_archive_paths() {
+async fn repeated_ordinary_reads_are_warned_each_streak_and_never_stopped() {
     let server = MockServer::start().await;
     let args = json!({"file_path":"story.jsonl","jsonl_record":1});
     let mut script = (0..8)
@@ -807,44 +803,29 @@ async fn repeated_ordinary_reads_stop_even_without_archive_paths() {
         Some(evidence),
     )
     .await;
-    assert!(
-        result.is_err(),
-        "repeated identical ordinary reads must not cycle until the normal turn limit"
-    );
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Repeated unchanged tool"));
+    // Repeats are warned, never stopped: the run finishes with the model's own answer.
+    assert_eq!(result.unwrap(), "Repeated the same evidence");
     let events = common::drain(&mut rx).await;
-    assert!(!events
-        .iter()
-        .any(|e| matches!(e, RunEvent::ContextCompacting)));
-    assert!(events.iter().any(
-        |e| matches!(e, RunEvent::Failed { error } if error.contains("Repeated unchanged tool"))
-    ));
+    assert!(!events.iter().any(|e| matches!(e, RunEvent::Failed { .. })));
     let requests = server.received_requests().await.unwrap();
-    assert!(requests.len() <= 7);
-    // The first streak warns the model once instead of stopping; the second streak stops.
-    let warned = requests
-        .iter()
-        .filter(|request| String::from_utf8_lossy(&request.body).contains("Loop warning"))
-        .count();
-    assert!(
-        warned >= 1,
-        "the model must see the loop warning before the stop"
-    );
-    // Evidence runs tell the model to save each item before reading more (provider request path).
+    assert_eq!(requests.len(), 9, "eight reads, then the answer");
+    // One new read, then seven repeats: streaks end at the third and sixth repeat.
+    let last = String::from_utf8_lossy(&requests[8].body).into_owned();
+    assert_eq!(last.matches("Loop warning").count(), 2, "{last}");
+    assert!(!last.contains("stops the run"));
+    // The old read-one-write-one instruction is gone from the provider request.
     let first: serde_json::Value = requests[0].body_json().unwrap();
     assert!(
         first["messages"][0]["role"] == "system"
-            && first["messages"][0]["content"].as_str().unwrap().contains(
-                "finish and save each item's result (write its output) before reading the next few"
-            )
+            && !first["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("before reading the next few")
     );
 }
 
 #[tokio::test]
-async fn alternating_unchanged_reads_stop_after_compaction_at_both_budgets() {
+async fn alternating_unchanged_reads_are_warned_after_compaction_at_both_budgets() {
     for budget in [24_000, 200_000] {
         let server = MockServer::start().await;
         let mut script = (0..8)
@@ -897,14 +878,11 @@ async fn alternating_unchanged_reads_stop_after_compaction_at_both_budgets() {
             Some(evidence),
         )
         .await;
-        assert!(
-            result.is_err(),
-            "alternating unchanged reads must not escape the loop guard at {budget}"
+        assert_eq!(
+            result.unwrap(),
+            "Finished alternating observations",
+            "alternating unchanged reads are warned, not stopped, at {budget}"
         );
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Repeated unchanged tool"));
         let events = common::drain(&mut rx).await;
         assert_eq!(
             events
@@ -919,9 +897,16 @@ async fn alternating_unchanged_reads_stop_after_compaction_at_both_budgets() {
                 .filter(|e| matches!(e, RunEvent::ToolCallFinished { .. }))
                 .count(),
             8,
-            "two new reads, three repeats and a warning, then three more repeats stop the run"
+            "two new reads, then six repeats in two warned streaks"
         );
-        assert!(!has_finished(&events));
+        assert!(has_finished(&events));
+        let requests = server.received_requests().await.unwrap();
+        let warned = requests
+            .iter()
+            .map(|request| String::from_utf8_lossy(&request.body).into_owned())
+            .rfind(|body| !body.contains("You summarize agent context"))
+            .unwrap();
+        assert_eq!(warned.matches("Loop warning").count(), 2, "at {budget}");
     }
 }
 
