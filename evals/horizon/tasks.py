@@ -1,8 +1,9 @@
 """Long-horizon tasks: jobs big enough to cross several context checkpoints.
 
-Each job is run in three arms: `no-plan` (update_plan withheld), `plan-offered` (the tool and
-its instruction, as in the app) and `plan-asked` (the prompt also asks for a plan, so plan
-persistence can be measured even when the model would not plan by itself). Checks are
+Each job is run in three arms: `no-notes` (the notes tool withheld), `notes-offered` (the
+tool and its instruction, as in the app) and `notes-asked` (the prompt also asks for notes,
+so persistence can be measured even when the model would not keep notes by itself). The
+`modules-turns` job splits the modules job over four chat turns with a progress question. Checks are
 deterministic: the files on disk, details from early in the task named in the final answer,
 and redone work.
 """
@@ -20,7 +21,8 @@ MODULES = 16
 CITIES = ["Ghent", "Tromso", "Bergamo", "Aarhus", "Cork", "Tartu", "Lviv", "Porto", "Graz", "Uppsala",
           "Bilbao", "Kaunas", "Lille", "Turku", "Brno", "Malmo"]
 OWNER_RULE = "owner: heron"
-ASK_PLAN = " Keep a short plan with update_plan and keep it current as you work."
+ASK_NOTES = (" Keep notes with the notes tool: the goal and rules, each item's status, and the results you"
+             " will need at the end, updated as you finish each item.")
 
 
 def setup_stories(project):
@@ -174,11 +176,57 @@ COMMON = {"evidence": ".themis/context/eval-thread", "budget": 12_000, "recent_m
 
 
 def arms(job):
-    base = dict(COMMON, **job, tool="update_plan", job=job["name"])
-    return [dict(base, name=f"{job['name']}-no-plan", arm="no-plan", offer_plan=False),
-            dict(base, name=f"{job['name']}-plan-offered", arm="plan-offered", offer_plan=True),
-            dict(base, name=f"{job['name']}-plan-asked", arm="plan-asked", offer_plan=True,
-                 prompt=job["prompt"] + ASK_PLAN)]
+    base = dict(COMMON, **job, tool="notes", job=job["name"])
+    return [dict(base, name=f"{job['name']}-no-notes", arm="no-notes", offer_notes=False),
+            dict(base, name=f"{job['name']}-notes-offered", arm="notes-offered", offer_notes=True),
+            dict(base, name=f"{job['name']}-notes-asked", arm="notes-asked", offer_notes=True,
+                 prompt=job["prompt"] + ASK_NOTES)]
 
 
-TASKS = [task for job in JOBS for task in arms(job)]
+# The modules job over four turns: half, a progress question (no work), the rest, then a
+# question about the start. Progress and the early rule must survive turns and checkpoints.
+TURNS_PROMPT = MODULES_PROMPT.replace(
+    f"For each of src/mod-01.py to src/mod-{MODULES:02d}.py",
+    f"We will do this job over several messages. For each of src/mod-01.py to src/mod-{MODULES:02d}.py",
+) + " For now, do mod-01 to mod-08 only, then stop and wait for me."
+TURNS_FOLLOWUPS = [
+    "Progress check: how many modules have notes files so far, which ones are left, and what is the "
+    "function count so far? Do not continue the job yet.",
+    "Continue the job: finish mod-09 to mod-16 and write notes/SUMMARY.md.",
+    "Remind me: what rule did I give for the first line of every notes file, and what is the total?",
+]
+
+
+def check_turns(project, report):
+    passed, why = check_modules(project, report)
+    turns = report.get("turns", [])
+    if len(turns) < 4:
+        return False, f"{len(turns)} turns; {why}"
+    progress = turns[1]["answer"]
+    # Eight of sixteen done, and the count so far matches mod-01..08.
+    so_far = sum(len(module_functions(n)) for n in range(1, 9))
+    progress_ok = re.search(r"\b8\b|eight", progress, re.I) is not None and str(so_far) in progress
+    total = sum(len(module_functions(n)) for n in range(1, MODULES + 1))
+    final = turns[3]["answer"]
+    recall_ok = OWNER_RULE in final.lower() and str(total) in final
+    problems = [p for p in [why, "" if progress_ok else f"progress {progress[:60]!r}",
+                            "" if recall_ok else f"final {final[:60]!r}"] if p]
+    return passed and progress_ok and recall_ok, "; ".join(problems)
+
+
+def measure_turns(project, report):
+    turns = report.get("turns", [])
+    measured = measure_modules(project, dict(report, answer=turns[-1]["answer"] if turns else ""))
+    progress = turns[1]["answer"] if len(turns) > 1 else ""
+    so_far = sum(len(module_functions(n)) for n in range(1, 9))
+    measured["progress_reported"] = bool(re.search(r"\b8\b|eight", progress, re.I)) and str(so_far) in progress
+    return measured
+
+
+TURNS_TASKS = [dict(COMMON, setup=setup_modules, prompt=TURNS_PROMPT + ASK_NOTES * bool(arm == "notes-asked"),
+                    followups=TURNS_FOLLOWUPS, check=check_turns, measure=measure_turns, tool="notes",
+                    job="modules-turns", name=f"modules-turns-{arm}", arm=arm, offer_notes=arm != "no-notes",
+                    timeout=4800)
+               for arm in ("no-notes", "notes-offered", "notes-asked")]
+
+TASKS = [task for job in JOBS for task in arms(job)] + TURNS_TASKS

@@ -125,7 +125,7 @@ def process_run(case, report, workdir):
         outputs = entry.get("tool_outputs")
         support = None
         if not decoy and outputs is not None:
-            support = grounded(probe, [o["output"] for o in outputs if o.get("ok") and o.get("tool") != "update_plan"])
+            support = grounded(probe, [o["output"] for o in outputs if o.get("ok") and o.get("tool") not in ("update_plan", "notes")])
         rows.append({
             "case": case["name"], "id": probe["id"], "category": probe["category"], "domain": case["kind"],
             "in_context": None if decoy else context_location(messages, probe),
@@ -134,9 +134,9 @@ def process_run(case, report, workdir):
             "cite_count": cite.get("count", 0), "cite_over_cap": cite.get("over_cap", False),
             "grounded": support, "leak": leaks(answer),
             "refused_paths": entry.get("refused_paths", []),
-            "tools": tools, "tool_calls": sum(t != "update_plan" for t in tools),
+            "tools": tools, "tool_calls": sum(t not in ("update_plan", "notes") for t in tools),
             "denied": entry.get("denied", 0),
-            "executed_tool_calls": max(0, sum(t != "update_plan" for t in tools) - entry.get("denied", 0)), "used_recall": "recall" in tools,
+            "executed_tool_calls": max(0, sum(t not in ("update_plan", "notes") for t in tools) - entry.get("denied", 0)), "used_recall": "recall" in tools,
             "requests": entry.get("requests", 0), "input_tokens": entry.get("input_tokens"),
             "output_tokens": entry.get("output_tokens"), "latency_ms": entry.get("latency_ms", 0),
         })
