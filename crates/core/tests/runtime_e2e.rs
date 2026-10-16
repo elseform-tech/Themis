@@ -2455,6 +2455,12 @@ async fn notes_carry_goal_and_progress_into_later_runs_and_check_open_tasks_once
         .as_str()
         .unwrap()
         .contains("keep a running total line and add each item's count as you finish it"));
+    // Models are told that a reply without tool calls ends the turn, and the prompt no longer
+    // mentions private reasoning (a model once answered a "continue" with a refusal to recap it).
+    let system = first["messages"][0]["content"].as_str().unwrap();
+    assert!(system
+        .contains("a reply without tool calls ends your turn and is shown as your final answer"));
+    assert!(!system.contains("private reasoning"));
     let tools: Vec<&str> = first["tools"]
         .as_array()
         .unwrap()

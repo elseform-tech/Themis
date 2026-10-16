@@ -361,6 +361,9 @@ async fn cli_open_task_checks_repeat_only_after_work() {
         })
         .collect();
     assert_eq!(checks, vec![0, 0, 1, 1, 2]);
+    let system = seen[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("a reply without tool calls ends your turn"));
+    assert!(!system.contains("private reasoning"));
     serving.abort();
 }
 
