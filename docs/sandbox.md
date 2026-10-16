@@ -235,8 +235,9 @@ not sandbox third-party MCP servers/hooks.
 
 Custom requires the tool working directory to stay inside the project root.
 YOLO permits external paths. Command rules are a tool policy, not a sandbox: deny rules match the program basename
-(case-insensitively on macOS/Windows) but wrappers such as `env`, `sudo` or `bash -c`
-bypass them. The shell child runs in its own process group, so Ctrl-C in the CLI does
+(case-insensitively on macOS/Windows) and also the commands inside wrappers such as
+`env`, `sudo` or `bash -c` scripts, but not script files or other interpreters
+(`python -c`); see [configuration](configuration.md). The shell child runs in its own process group, so Ctrl-C in the CLI does
 not signal it. The timeout kills the group, and **stopping a run kills the
 blocking shell command it is waiting for** (whole process group, same
 SIGTERM-then-SIGKILL sequence); the call fails with "command was stopped by you
