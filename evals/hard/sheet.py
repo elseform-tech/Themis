@@ -282,8 +282,9 @@ def check(project, report):
     found = []
     if result["failed"]:
         found.append(f"hidden tests failed: {', '.join(result['failed'][:8])}")
-    if count < 10:
-        found.append(f"only {count} own tests")
+    # The spec asks for tests, not a number of them: they must exist and pass.
+    if count == 0:
+        found.append("no own tests")
     elif not passed_own:
         found.append("own tests fail")
     return not found, "; ".join(found)

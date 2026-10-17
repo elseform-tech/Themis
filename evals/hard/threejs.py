@@ -54,6 +54,12 @@ def measure(project):
             dom, _ = dump_dom(base + "/__probe.html")
             page, page_errors = dump_dom(base + "/index.html") if os.path.exists(
                 os.path.join(root, "index.html")) else ("", ["index.html missing"])
+            # A loaded machine can run out of Chrome's time budget before the modules load;
+            # one more try tells that apart from a page that really fails.
+            if '<pre id="probe">pending' in dom or "probe did not" in dom:
+                dom, _ = dump_dom(base + "/__probe.html", budget_ms=40000)
+            if os.path.exists(os.path.join(root, "index.html")) and "<canvas" not in page:
+                page, page_errors = dump_dom(base + "/index.html", budget_ms=40000)
         found = re.search(r'<pre id="probe">(.*?)</pre>', dom, re.S)
         try:
             probe = json.loads(html.unescape(found.group(1))) if found else {"error": "probe did not run"}

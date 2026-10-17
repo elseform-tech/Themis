@@ -54,7 +54,10 @@ def dump_dom(url, budget_ms=15000, timeout=120):
     profile = tempfile.mkdtemp(prefix="hard-eval-chrome-")
     try:
         done = subprocess.run(
+            # A fresh profile asks the macOS Keychain for "Chrome Safe Storage"; the mock
+            # keychain and basic password store keep the grader away from it.
             [binary, "--headless=new", f"--user-data-dir={profile}", "--no-first-run",
+             "--use-mock-keychain", "--password-store=basic",
              "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist",
              "--enable-logging=stderr", "--v=0", f"--virtual-time-budget={budget_ms}",
              "--window-size=1280,720", "--dump-dom", url],
