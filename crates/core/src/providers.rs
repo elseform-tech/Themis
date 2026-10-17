@@ -316,8 +316,16 @@ impl ProviderConfig {
 
 /// HTTP client for provider requests, including streamed answers and summaries (five minutes).
 fn http_client() -> Client {
+    http_client_with(Duration::from_secs(300))
+}
+
+/// No total timeout: a model streaming a long reply keeps its connection as long as data
+/// flows. `read` bounds silence between reads (the answer deadlines bound the rest), and
+/// connecting has its own short limit.
+fn http_client_with(read: Duration) -> Client {
     Client::builder()
-        .timeout(Duration::from_secs(300))
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(read)
         .build()
         .unwrap_or_else(|_| Client::new())
 }
@@ -1426,6 +1434,58 @@ mod tests {
     /// Serializes tests that touch `THEMIS_*` environment variables (`resolve`
     /// reads them, and process env is global across test threads).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn a_slow_steady_stream_outlasts_the_read_timeout_but_silence_does_not() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // A local server: headers, then one chunk every 300 ms for 2.4 s, or nothing at all.
+        async fn serve(chunks: usize) -> String {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0u8; 4096];
+                let _ = socket.read(&mut request).await;
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+                    .await
+                    .unwrap();
+                if chunks == 0 {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    return;
+                }
+                for _ in 0..chunks {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    socket.write_all(b"4\r\ndata\r\n").await.unwrap();
+                }
+                socket.write_all(b"0\r\n\r\n").await.unwrap();
+            });
+            format!("http://{address}")
+        }
+        let client = http_client_with(Duration::from_secs(1));
+        let started = std::time::Instant::now();
+        let body = client
+            .get(serve(8).await)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(body.len(), 32);
+        assert!(
+            started.elapsed() > Duration::from_secs(2),
+            "longer than the read timeout"
+        );
+        let silent = client
+            .get(serve(0).await)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await;
+        assert!(silent.unwrap_err().is_timeout());
+    }
 
     #[tokio::test]
     async fn http_errors_preserve_retry_after_headers() {
