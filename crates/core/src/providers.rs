@@ -89,8 +89,9 @@ const LONG_REPLY_TOKENS: usize = 32_768;
 
 /// The output cap for answer requests. The memory budget is this app's compaction threshold,
 /// not the model's window, so when the catalog shows a window well beyond it, a reply may use
-/// up to `LONG_REPLY_TOKENS` (never more than the model's own limit). Otherwise one eighth of
-/// the budget, at most 8,192, as before.
+/// up to `LONG_REPLY_TOKENS` (never more than the model's own limit), but at most a third of
+/// the budget: a single reply larger than that could never fit a later checkpoint. Otherwise
+/// one eighth of the budget, at most 8,192, as before.
 pub(crate) fn answer_output_cap(model: &str, budget: usize) -> u32 {
     let base = (budget / 8).clamp(1, 8192);
     MODEL_LIMITS
@@ -99,7 +100,8 @@ pub(crate) fn answer_output_cap(model: &str, budget: usize) -> u32 {
         .flatten()
         .and_then(|(context, output)| {
             let (context, output) = (context?, output?);
-            (context >= budget + LONG_REPLY_TOKENS).then(|| base.max(LONG_REPLY_TOKENS.min(output)))
+            (context >= budget + LONG_REPLY_TOKENS)
+                .then(|| base.max(LONG_REPLY_TOKENS.min(output).min(budget / 3)))
         })
         .unwrap_or(base) as u32
 }
@@ -2642,7 +2644,8 @@ mod tests {
         })
         .await;
         // Room beyond the budget: 32,768 (or the model's own limit); otherwise the old cap.
-        assert_eq!(caps, [32_768, 32_768, 16_000, 8_192, 8_192, 4_000]);
+        // At a 32,000 budget a reply stays within a third of it, so it fits a later checkpoint.
+        assert_eq!(caps, [32_768, 10_666, 16_000, 8_192, 8_192, 4_000]);
         assert_eq!(
             answer_output_cap("wide", 200_000),
             8_192,

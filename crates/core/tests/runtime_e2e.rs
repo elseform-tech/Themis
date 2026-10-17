@@ -2688,3 +2688,62 @@ async fn notes_reminder_comes_once_after_three_calls_and_never_for_short_tasks()
         .iter()
         .all(|request| !request_text(request).contains("Notes reminder")));
 }
+
+/// A thinking model's replayed reasoning counts toward the context budget: with a small
+/// visible conversation but long reasoning on every step, the run still checkpoints in time
+/// and finishes, instead of sending requests far beyond the budget.
+#[tokio::test]
+async fn replayed_reasoning_counts_toward_the_context_budget() {
+    let server = MockServer::start().await;
+    let mut script = Vec::new();
+    for step in 0..8 {
+        let mut body = common::tool_call_body(
+            &format!("think-{step}"),
+            "read_file",
+            json!({"file_path":"notes.txt"}),
+        );
+        // About 4,000 tokens of reasoning per step; the visible step is a few dozen.
+        body["choices"][0]["message"]["reasoning_content"] =
+            json!(format!("step {step} reasoning: ").repeat(1_000));
+        script.push(body);
+    }
+    script.push(common::final_text_body("Thought it through"));
+    common::mount_script_scripted(&server, script, Some("Read notes.txt repeatedly."), None, 0)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("notes.txt"), "short notes\n").unwrap();
+    let evidence = project.path().join(".themis/context/reasoning");
+    std::fs::create_dir_all(&evidence).unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2048);
+    let result = themis_core::runtime::run_task_with_evidence(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Read notes.txt and think it through.".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 20,
+            context_token_budget: 24_000,
+            recent_messages: 4,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await;
+    let events = common::drain(&mut rx).await;
+    assert_eq!(result.unwrap(), "Thought it through");
+    assert!(
+        checkpoints(&events) >= 1,
+        "32,000 tokens of replayed reasoning against a 24,000 budget must checkpoint"
+    );
+}
