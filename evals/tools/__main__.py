@@ -124,6 +124,12 @@ def run_task(runner, task, args):
             "extra": task["measure"](project, report) if "measure" in task else {},
         }, None
     finally:
+        # `--keep DIR` saves the run's `.themis/` (the full tool evidence) for reading afterwards.
+        keep = getattr(args, "keep", None)
+        if keep and os.path.isdir(os.path.join(workdir, "project", ".themis")):
+            os.makedirs(keep, exist_ok=True)
+            shutil.copytree(os.path.join(workdir, "project", ".themis"),
+                            tempfile.mkdtemp(prefix=f"{task['name']}-", dir=keep), dirs_exist_ok=True)
         shutil.rmtree(workdir, ignore_errors=True)
 
 

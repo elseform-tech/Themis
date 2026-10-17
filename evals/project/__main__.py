@@ -190,6 +190,7 @@ def main(argv=None):
     cmd.add_argument("--sandbox", choices=("auto", "off"), default="auto")
     cmd.add_argument("--out")
     cmd.add_argument("--no-retry", action="store_true", help="do not rerun runs lost to the provider")
+    cmd.add_argument("--keep", help="save each run's .themis/ (full tool evidence) under this folder")
     show = sub.add_parser("report")
     show.add_argument("result")
     args = parser.parse_args(argv)
