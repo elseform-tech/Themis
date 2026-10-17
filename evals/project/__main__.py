@@ -31,7 +31,7 @@ MEMORY = {"normal": {"budget": 200_000, "recent_messages": 20},
 FILE_TOOLS = ["read_file", "write_file", "apply_patch", "list_dir", "search_file", "copy_file", "move_file",
               "delete_file", "create_dir"]
 # Arms: the app as it is (`notes`), the notes tool withheld, one runtime nudge switched off at a
-# time, and the file tools hidden so the agent works through the shell alone.
+# time, the file tools hidden so the agent works through the shell alone, and reasoning replay.
 ARMS = {
     "notes": {},
     "no-notes": {"offer_notes": False},
@@ -39,6 +39,8 @@ ARMS = {
     "no-finish-checks": {"nudges_off": ["finish_checks"]},
     "no-loop-warning": {"nudges_off": ["loop_warning"]},
     "bash-only": {"hide_tools": FILE_TOOLS},
+    # The app as it is, plus the model's own reasoning sent back with its tool calls.
+    "reasoning": {"replay_reasoning": True},
 }
 STAGES = ["1_parser_pricing", "2_progress", "3_bug_fix", "4_cli_docs", "5_recall"]
 

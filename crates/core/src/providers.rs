@@ -41,6 +41,7 @@
 //! `From` conversion (both versions coexist in the dependency tree).
 
 use futures_util::{stream, Stream};
+pub mod reasoning;
 mod wire;
 
 use wire::*;
@@ -320,6 +321,7 @@ struct ChatEventStream {
     buffer: Vec<u8>,
     ready: std::collections::VecDeque<Result<StreamChunk, LLMError>>,
     calls: std::collections::BTreeMap<usize, ToolCall>,
+    reasoning: String,
     messages_api: bool,
     responses_api: bool,
     done: bool,
@@ -334,6 +336,7 @@ impl ChatEventStream {
             buffer: Vec::new(),
             ready: std::collections::VecDeque::new(),
             calls: std::collections::BTreeMap::new(),
+            reasoning: String::new(),
             messages_api,
             responses_api,
             done: false,
@@ -454,6 +457,12 @@ impl ChatEventStream {
         if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
             self.ready.push_back(Ok(StreamChunk::Text(text.to_owned())));
         }
+        if let Some(text) = delta["reasoning_content"]
+            .as_str()
+            .or_else(|| delta["reasoning"].as_str())
+        {
+            self.reasoning.push_str(text);
+        }
         for call in delta["tool_calls"].as_array().into_iter().flatten() {
             self.merge_tool_call(call);
         }
@@ -490,6 +499,8 @@ impl ChatEventStream {
                 "Provider response was truncated".to_owned(),
             ));
         }
+        let calls: Vec<ToolCall> = self.calls.values().cloned().collect();
+        reasoning::remember(&calls, &std::mem::take(&mut self.reasoning));
         for (index, mut tool_call) in std::mem::take(&mut self.calls) {
             if self.messages_api && tool_call.function.arguments.is_empty() {
                 tool_call.function.arguments = "{}".to_owned();
@@ -833,6 +844,12 @@ impl ChatProvider for CompatibleProvider {
             return Err(LLMError::Generic("Provider response was truncated".into()));
         }
         trace.complete();
+        if let (Some(calls), Some(text)) = (
+            &choice.message.tool_calls,
+            &choice.message.reasoning_content,
+        ) {
+            reasoning::remember(calls, text);
+        }
         Ok(Box::new(CompatibleChatResponse {
             text: choice.message.content,
             tool_calls: choice.message.tool_calls,
@@ -888,6 +905,12 @@ impl ChatProvider for CompatibleProvider {
                 .ok_or_else(|| LLMError::Generic("Provider returned no choices".to_owned()))?;
             if choice.finish_reason.as_deref() == Some("length") {
                 return Err(LLMError::Generic("Provider response was truncated".into()));
+            }
+            if let (Some(calls), Some(text)) = (
+                &choice.message.tool_calls,
+                &choice.message.reasoning_content,
+            ) {
+                reasoning::remember(calls, text);
             }
             let mut chunks = Vec::new();
             if let Some(text) = choice.message.content {
@@ -2310,6 +2333,94 @@ mod tests {
                 .unwrap()["stream"],
             true
         );
+    }
+
+    #[tokio::test]
+    async fn reasoning_is_replayed_with_its_own_tool_calls_only_when_on() {
+        use futures_util::StreamExt;
+        use wiremock::matchers::body_partial_json;
+        let server = MockServer::start().await;
+        let events = [
+            json!({"choices":[{"delta":{"reasoning_content":"The total is off by "},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"reasoning_content":"one bundle.","tool_calls":[{"index":0,"id":"replay-call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}),
+        ];
+        let body = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>()
+            + "data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({"stream": true})))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({"stream": false})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"done","reasoning_content":"hidden","tool_calls":[{"id":"replay-call-2","type":"function","function":{"name":"list_dir","arguments":"{}"}}]},"finish_reason":"tool_calls"}]})))
+            .mount(&server)
+            .await;
+        let provider =
+            CompatibleProvider::go("test".into(), "mock".into(), Some(server.uri()), None);
+        let call = |id: &str| ToolCall {
+            id: id.into(),
+            call_type: "function".into(),
+            function: autoagents::llm::FunctionCall {
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            },
+        };
+        let history = |id: &str| {
+            vec![
+                user_message("check the total"),
+                ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::ToolUse(vec![call(id)]),
+                    content: String::new(),
+                },
+                ChatMessage {
+                    role: ChatRole::Tool,
+                    message_type: MessageType::ToolResult(vec![call(id)]),
+                    content: String::new(),
+                },
+            ]
+        };
+        reasoning::REPLAY_REASONING
+            .scope(true, async {
+                let mut stream = provider
+                    .chat_stream_with_tools(&[user_message("check")], None, None)
+                    .await
+                    .unwrap();
+                while stream.next().await.is_some() {}
+                provider
+                    .chat(&history("replay-call-1"), None)
+                    .await
+                    .unwrap();
+                provider
+                    .chat(&history("replay-call-2"), None)
+                    .await
+                    .unwrap();
+            })
+            .await;
+        // Off (the app's default): the same history goes out without reasoning.
+        provider
+            .chat(&history("replay-call-1"), None)
+            .await
+            .unwrap();
+        let sent: Vec<Value> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|request| {
+                request.body_json::<Value>().unwrap()["messages"][1]["reasoning_content"].clone()
+            })
+            .collect();
+        // Streamed and non-streamed reasoning both return with their own calls.
+        assert_eq!(sent[1], "The total is off by one bundle.");
+        assert_eq!(sent[2], "hidden");
+        assert_eq!(sent[3], Value::Null);
     }
 
     #[tokio::test]

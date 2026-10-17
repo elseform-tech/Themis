@@ -201,6 +201,9 @@ class ArmsTest(unittest.TestCase):
         bash = make_task(1, "normal", "bash-only")
         self.assertEqual(bash["hide_tools"], FILE_TOOLS)
         self.assertNotIn("shell", bash["hide_tools"])
+        reasoning = make_task(1, "normal", "reasoning")
+        self.assertEqual((reasoning["replay_reasoning"], reasoning["offer_notes"]), (True, True))
+        self.assertNotIn("replay_reasoning", base)
 
 
 class TaskPlumbingTest(unittest.TestCase):

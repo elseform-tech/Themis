@@ -100,6 +100,9 @@ pub struct ToolTaskOptions {
     pub nudges_off: Vec<String>,
     /// Ablation: tools withheld from the agent (for example the file tools, leaving the shell).
     pub hide_tools: Vec<String>,
+    /// Sends a thinking model's reasoning back with its own tool calls (see
+    /// `providers::reasoning`).
+    pub replay_reasoning: bool,
     /// Copies the project to `<project>.turn-<n>` after each turn (without `.themis`, `.git`
     /// and caches) so a grader can check every stage, not only the end state.
     pub snapshots: bool,
@@ -119,6 +122,7 @@ impl Default for ToolTaskOptions {
             allow_all: false,
             nudges_off: Vec::new(),
             hide_tools: Vec::new(),
+            replay_reasoning: false,
         }
     }
 }
@@ -358,32 +362,35 @@ async fn run_turn(
     let notes_log = Arc::new(Mutex::new(Vec::new()));
     let loop_warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let finish_checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let result = EVAL_NUDGES_OFF
+    let result = crate::providers::reasoning::REPLAY_REASONING
         .scope(
-            Arc::new(options.nudges_off.clone()),
-            EVAL_FINISH_CHECKS.scope(
-                finish_checks.clone(),
-                EVAL_LOOP_WARNINGS.scope(
-                    loop_warnings.clone(),
-                    EVAL_NOTES_LOG.scope(
-                        notes_log.clone(),
-                        EVAL_OFFER_NOTES.scope(
-                            options.offer_notes,
-                            run_task_with_evidence(
-                                llm.clone(),
-                                tools,
-                                task.to_owned(),
-                                history,
-                                approvals,
-                                RunPolicy {
-                                    total_turns: options.max_turns,
-                                    context_token_budget: options.budget,
-                                    recent_messages: options.recent_messages,
-                                },
-                                events,
-                                Arc::new(AtomicBool::new(false)),
-                                String::new(),
-                                options.evidence.clone(),
+            options.replay_reasoning,
+            EVAL_NUDGES_OFF.scope(
+                Arc::new(options.nudges_off.clone()),
+                EVAL_FINISH_CHECKS.scope(
+                    finish_checks.clone(),
+                    EVAL_LOOP_WARNINGS.scope(
+                        loop_warnings.clone(),
+                        EVAL_NOTES_LOG.scope(
+                            notes_log.clone(),
+                            EVAL_OFFER_NOTES.scope(
+                                options.offer_notes,
+                                run_task_with_evidence(
+                                    llm.clone(),
+                                    tools,
+                                    task.to_owned(),
+                                    history,
+                                    approvals,
+                                    RunPolicy {
+                                        total_turns: options.max_turns,
+                                        context_token_budget: options.budget,
+                                        recent_messages: options.recent_messages,
+                                    },
+                                    events,
+                                    Arc::new(AtomicBool::new(false)),
+                                    String::new(),
+                                    options.evidence.clone(),
+                                ),
                             ),
                         ),
                     ),
@@ -489,6 +496,56 @@ mod tests {
         assert!(!target.join(".themis").exists());
         assert!(!target.join("src/__pycache__").exists());
         assert!(!target.join("escape").exists());
+    }
+
+    #[tokio::test]
+    async fn replay_reasoning_reaches_the_provider_through_the_agent_loop() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(|request: &Request| {
+                let body: serde_json::Value = request.body_json().unwrap();
+                let answered = body["messages"]
+                    .as_array()
+                    .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+                ResponseTemplate::new(200).set_body_json(if answered {
+                    serde_json::json!({"choices":[{"message":{"content":"Listed."},"finish_reason":"stop"}]})
+                } else {
+                    serde_json::json!({"choices":[{"message":{"content":"","reasoning_content":"List first, then decide.","tool_calls":[{"id":"loop-replay-1","type":"function","function":{"name":"list_dir","arguments":"{\"directory_path\":\".\"}"}}]},"finish_reason":"tool_calls"}]})
+                })
+            })
+            .mount(&server)
+            .await;
+        let llm: Arc<dyn LLMProvider> = Arc::new(crate::providers::CompatibleProvider::go(
+            "test".into(),
+            "mock".into(),
+            Some(server.uri()),
+            None,
+        ));
+        let mut replayed = Vec::new();
+        for replay_reasoning in [true, false] {
+            let project = tempfile::tempdir().unwrap();
+            std::fs::write(project.path().join("a.txt"), "a").unwrap();
+            let options = ToolTaskOptions {
+                replay_reasoning,
+                ..ToolTaskOptions::default()
+            };
+            let before = server.received_requests().await.unwrap().len();
+            run_tool_task(&llm, project.path(), "List the project.", options)
+                .await
+                .unwrap();
+            let requests = server.received_requests().await.unwrap();
+            replayed.push(requests[before..].iter().any(|request| {
+                request.body_json::<serde_json::Value>().unwrap()["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m["reasoning_content"] == "List first, then decide.")
+            }));
+        }
+        assert_eq!(replayed, [true, false]);
     }
 
     #[test]

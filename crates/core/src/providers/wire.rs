@@ -10,6 +10,9 @@ pub(super) struct WireMessage {
     pub(super) tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) tool_call_id: Option<String>,
+    /// A thinking model's reasoning for these tool calls, when replay is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) reasoning_content: Option<String>,
 }
 
 /// OpenAI chat-completions request body.
@@ -52,6 +55,8 @@ pub(super) struct WireChoiceMessage {
     pub(super) content: Option<String>,
     #[serde(default)]
     pub(super) tool_calls: Option<Vec<ToolCall>>,
+    #[serde(default, alias = "reasoning")]
+    pub(super) reasoning_content: Option<String>,
 }
 
 /// Converts SDK messages to the OpenAI wire shape.
@@ -75,6 +80,7 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                     content: Some(message.content.clone()),
                     tool_calls: None,
                     tool_call_id: None,
+                    reasoning_content: None,
                 });
             }
             MessageType::ToolUse(calls) => wire.push(WireMessage {
@@ -105,6 +111,7 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                         .collect(),
                 ),
                 tool_call_id: None,
+                reasoning_content: super::reasoning::replay(calls),
             }),
             MessageType::ToolResult(results) => {
                 for result in results {
@@ -113,6 +120,7 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                         content: Some(result.function.arguments.clone()),
                         tool_calls: None,
                         tool_call_id: Some(result.id.clone()),
+                        reasoning_content: None,
                     });
                 }
             }
@@ -274,6 +282,7 @@ pub(super) fn messages_response(value: serde_json::Value) -> Result<WireChatResp
             message: WireChoiceMessage {
                 content: Some(text),
                 tool_calls: Some(calls),
+                reasoning_content: None,
             },
         }],
         usage: None,
