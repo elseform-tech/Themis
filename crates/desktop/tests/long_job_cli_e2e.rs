@@ -543,3 +543,53 @@ async fn cli_retries_a_stream_that_dropped_part_way() {
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     serving.abort();
 }
+
+/// A write the model sends without `append` runs once, as a replace, in a YOLO chat.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_write_without_append_runs_once() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            let answered = body["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+            if answered {
+                reply(json!({"content":"Saved."}))
+            } else {
+                reply(json!({"content":"","tool_calls":[{"id":"write-1","type":"function","function":{"name":"write_file","arguments":json!({"file_path":"numbers.txt","content":"4217\n"}).to_string()}}]}))
+            }
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    let done = send(data.path(), &mut events, &id, "Save the number").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("numbers.txt")).unwrap(),
+        "4217\n"
+    );
+    serving.abort();
+}
