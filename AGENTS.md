@@ -68,6 +68,8 @@ Exercise backend features through the local app server and `themis` in isolated 
 
 For long-chat history diagnostics, prefer `get_thread_history_page` with a byte bound, the returned snapshot watermark and a progressing cursor. Carry unfinished JSONL records between pages and decode only complete lines. Paging preserves exact durable history; the compatibility `get_thread_history` adapter still reassembles the full result in client memory. See `docs/configuration.md` for the shared API contract.
 
+After every merge to `main`, run the live check in [docs/live-verification.md](docs/live-verification.md) on the freshly built app with real (free or cheap) models: the desktop app by hand, long tasks through the real app server and CLI (`python3 -m evals.hard run --via app`), and the short tool tasks. Use an isolated HOME and data folder, never the real app data or Keychain. Report it as a benchmark audit and fix any bug it finds on its own branch.
+
 Before considering any task done, run fresh, relevant verification and read the complete output. For UI changes, verify the affected journey in a browser or native app when available; for system-prompt changes, verify the constructed system message and the LLM request path. Report exact commands and results, and label any remaining evidence as unverified.
 
 ## Quality Dashboard
