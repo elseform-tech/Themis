@@ -463,6 +463,7 @@ pub async fn run_task_with_evidence(
     evidence_directory: Option<std::path::PathBuf>,
 ) -> anyhow::Result<String> {
     let budget = effective_context_budget(policy.context_token_budget);
+    let output_cap = crate::providers::answer_output_cap(llm.model(), budget);
     let future = crate::context_metrics::collect(async {
         let final_events = events.clone();
         let result = Box::pin(run_task_with_evidence_inner(
@@ -489,7 +490,7 @@ pub async fn run_task_with_evidence(
     MODEL_REQUEST_BUDGET
         .scope(
             budget,
-            crate::providers::OUTPUT_LIMIT.scope((budget / 8).clamp(1, 8192) as u32, future),
+            crate::providers::OUTPUT_LIMIT.scope(output_cap, future),
         )
         .await
 }
@@ -1129,6 +1130,47 @@ async fn request_answer(
     .await
 }
 
+/// Longest one answer attempt, and all attempts of one answer, may run while the provider
+/// keeps sending; idle time is bounded separately (see `unless_idle`).
+const ATTEMPT_CEILING: std::time::Duration = std::time::Duration::from_secs(3600);
+const ANSWER_CEILING: std::time::Duration = std::time::Duration::from_secs(3 * 3600);
+
+/// The current answer's stream-progress clock, or a fresh one outside an answer request.
+fn attempt_progress() -> Arc<std::sync::Mutex<tokio::time::Instant>> {
+    crate::providers::STREAM_PROGRESS
+        .try_with(Arc::clone)
+        .unwrap_or_else(|_| Arc::new(std::sync::Mutex::new(tokio::time::Instant::now())))
+}
+
+/// Like `tokio::time::timeout`, but only time without provider data counts: a model that keeps
+/// streaming a long reply is not cut off, while a stalled request still times out after `idle`.
+/// `ceiling` bounds it absolutely.
+async fn unless_idle<F: std::future::Future>(
+    idle: std::time::Duration,
+    ceiling: std::time::Duration,
+    progress: Arc<std::sync::Mutex<tokio::time::Instant>>,
+    future: F,
+) -> Result<F::Output, ()> {
+    let started = tokio::time::Instant::now();
+    let ceiling = started + ceiling.max(idle);
+    let last = || (*progress.lock().unwrap_or_else(|e| e.into_inner())).max(started);
+    // On the heap: an answer's state is large, and keeping it in this frame overflows the
+    // runtime's worker stacks in debug builds.
+    let mut future = Box::pin(future);
+    loop {
+        let deadline = (last() + idle).min(ceiling);
+        tokio::select! {
+            output = &mut future => return Ok(output),
+            () = tokio::time::sleep_until(deadline) => {
+                let now = tokio::time::Instant::now();
+                if now >= ceiling || last() + idle <= now {
+                    return Err(());
+                }
+            }
+        }
+    }
+}
+
 async fn request_answer_with_timeout(
     llm: &Arc<dyn LLMProvider>,
     messages: &[ChatMessage],
@@ -1137,10 +1179,16 @@ async fn request_answer_with_timeout(
     stopped: &AtomicBool,
     timeout: std::time::Duration,
 ) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
+    let progress = Arc::new(std::sync::Mutex::new(tokio::time::Instant::now()));
     until_stopped(
-        tokio::time::timeout(
-            timeout.saturating_mul(3),
-            request_answer_inner(llm, messages, llm_tools, events, stopped, timeout),
+        crate::providers::STREAM_PROGRESS.scope(
+            Arc::clone(&progress),
+            unless_idle(
+                timeout.saturating_mul(3),
+                ANSWER_CEILING,
+                Arc::clone(&progress),
+                request_answer_inner(llm, messages, llm_tools, events, stopped, timeout),
+            ),
         ),
         stopped,
         events,
@@ -1220,44 +1268,51 @@ async fn request_answer_inner(
         let attempt = crate::context_metrics::with_attempt(retries as usize, async {
             // Bound handshake, complete stream and non-streaming fallback together.
             // The published flag survives cancellation so partial text cannot be replayed.
-            tokio::time::timeout(attempt_timeout, async {
-                match llm
-                    .chat_stream_with_tools(messages, Some(llm_tools), None)
-                    .await
-                {
-                    Ok(mut stream) => {
-                        let mut text = String::new();
-                        let mut calls = Vec::new();
-                        while let Some(chunk) = stream.next().await {
-                            check_stopped(stopped, events).await?;
-                            match chunk? {
-                                StreamChunk::Text(delta) => {
-                                    published |= !delta.is_empty();
-                                    text.push_str(&delta);
-                                    events.send(RunEvent::AssistantText(delta)).await.ok();
-                                }
-                                StreamChunk::ToolUseComplete { tool_call, .. } => {
-                                    calls.push(tool_call)
-                                }
-                                _ => {} // Reasoning content is private; only public narration reaches the UI.
-                            }
-                        }
-                        Ok(((!text.is_empty()).then_some(text), calls))
-                    }
-                    Err(autoagents::llm::error::LLMError::Generic(message))
-                        if message == "Streaming with tools not supported for this provider" =>
+            unless_idle(
+                attempt_timeout,
+                ATTEMPT_CEILING,
+                attempt_progress(),
+                async {
+                    match llm
+                        .chat_stream_with_tools(messages, Some(llm_tools), None)
+                        .await
                     {
-                        let response = llm.chat_with_tools(messages, Some(llm_tools), None).await?;
-                        let text = response.text().filter(|text| !text.is_empty());
-                        if let Some(text) = text.clone() {
-                            published = true;
-                            events.send(RunEvent::AssistantText(text)).await.ok();
+                        Ok(mut stream) => {
+                            let mut text = String::new();
+                            let mut calls = Vec::new();
+                            while let Some(chunk) = stream.next().await {
+                                check_stopped(stopped, events).await?;
+                                match chunk? {
+                                    StreamChunk::Text(delta) => {
+                                        published |= !delta.is_empty();
+                                        text.push_str(&delta);
+                                        events.send(RunEvent::AssistantText(delta)).await.ok();
+                                    }
+                                    StreamChunk::ToolUseComplete { tool_call, .. } => {
+                                        calls.push(tool_call)
+                                    }
+                                    _ => {} // Reasoning content is private; only public narration reaches the UI.
+                                }
+                            }
+                            Ok(((!text.is_empty()).then_some(text), calls))
                         }
-                        Ok((text, response.tool_calls().unwrap_or_default()))
+                        Err(autoagents::llm::error::LLMError::Generic(message))
+                            if message
+                                == "Streaming with tools not supported for this provider" =>
+                        {
+                            let response =
+                                llm.chat_with_tools(messages, Some(llm_tools), None).await?;
+                            let text = response.text().filter(|text| !text.is_empty());
+                            if let Some(text) = text.clone() {
+                                published = true;
+                                events.send(RunEvent::AssistantText(text)).await.ok();
+                            }
+                            Ok((text, response.tool_calls().unwrap_or_default()))
+                        }
+                        Err(error) => Err(error.into()),
                     }
-                    Err(error) => Err(error.into()),
-                }
-            })
+                },
+            )
             .await
             .map_err(|_| {
                 autoagents::llm::error::LLMError::HttpError(
@@ -4596,6 +4651,51 @@ mod tests {
             }
         }
         assert_eq!(public, vec!["Recovered after a slow attempt"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn answer_deadlines_count_only_time_without_provider_data() {
+        use std::time::Duration;
+        let idle = Duration::from_secs(300);
+        // Streaming for 20 minutes, with data every minute: long past `idle`, but never idle.
+        let progress = Arc::new(std::sync::Mutex::new(tokio::time::Instant::now()));
+        let streaming = crate::providers::STREAM_PROGRESS.scope(Arc::clone(&progress), async {
+            for _ in 0..20 {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                crate::providers::note_stream_progress();
+            }
+            "done"
+        });
+        let started = tokio::time::Instant::now();
+        let finished = unless_idle(idle, ATTEMPT_CEILING, Arc::clone(&progress), streaming).await;
+        assert_eq!(finished, Ok("done"));
+        assert_eq!(started.elapsed(), Duration::from_secs(1200));
+        // Silent for longer than `idle`: it times out at `idle`, as before.
+        let progress = Arc::new(std::sync::Mutex::new(tokio::time::Instant::now()));
+        let started = tokio::time::Instant::now();
+        let stalled = unless_idle(
+            idle,
+            ATTEMPT_CEILING,
+            progress,
+            std::future::pending::<()>(),
+        )
+        .await;
+        assert_eq!(stalled, Err(()));
+        assert_eq!(started.elapsed(), idle);
+        // Data that never stops still ends at the ceiling.
+        let progress = Arc::new(std::sync::Mutex::new(tokio::time::Instant::now()));
+        let trickle = crate::providers::STREAM_PROGRESS.scope(Arc::clone(&progress), async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                crate::providers::note_stream_progress();
+            }
+        });
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            unless_idle(idle, ATTEMPT_CEILING, progress, trickle).await,
+            Err(())
+        );
+        assert_eq!(started.elapsed(), ATTEMPT_CEILING);
     }
 
     #[cfg(feature = "eval")]
