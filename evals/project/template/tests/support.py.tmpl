@@ -1,0 +1,22 @@
+"""Shared test fixtures."""
+
+from __pkg__.catalog import parse_catalog
+
+CATALOG_TEXT = """sku,name,category,unit_price,bundle_size,bundle_price
+BK-1,Field Notes,books,4.00,3,10.00
+FD-1,Oat Biscuits,food,2.50,2,4.00
+GN-1,Desk Lamp,general,19.99,0,
+TY-1,Wooden Train,toys,12.00,0,
+"""
+
+ORDER_TEXT = """order T-1
+customer Test Person
+line BK-1 4
+line FD-1 3
+line GN-1 1
+"""
+
+
+def catalog():
+    """The fixture catalog."""
+    return parse_catalog(CATALOG_TEXT)

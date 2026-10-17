@@ -884,7 +884,7 @@ async fn cli_answer_retries_empty_and_transient_responses_without_replaying_comp
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_stops_alternating_unchanged_reads_after_compaction() {
+async fn cli_bounds_alternating_unchanged_reads_by_the_turn_limit() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::create_dir(project.path().join(".themis")).unwrap();
@@ -954,22 +954,22 @@ async fn cli_stops_alternating_unchanged_reads_after_compaction() {
             let event = &item["payload"]["event"];
             compactions += usize::from(event["kind"] == "context_compacting");
             completed += usize::from(event["kind"] == "tool_finished");
-            if event["kind"] == "finished" || event["kind"] == "failed" {
+            if ["finished", "incomplete", "failed"]
+                .contains(&event["kind"].as_str().unwrap_or_default())
+            {
                 break event.clone();
             }
         }
     })
     .await
     .unwrap();
-    assert_eq!(terminal["kind"], "failed", "{terminal}");
-    assert!(terminal["error"]
-        .as_str()
-        .unwrap()
-        .contains("Repeated unchanged tool"));
+    // A model that never stops re-reading is warned at every streak and ends at the
+    // configured turn limit; no repeat stops the run early.
+    assert_eq!(terminal["kind"], "incomplete", "{terminal}");
     assert_eq!(compactions, 1);
-    // Two new reads, a first streak of three that is warned, then a second streak that stops.
-    assert_eq!(completed, 8);
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 8);
+    assert_eq!(completed, 10, "every turn ran its read");
+    // Ten tool turns, then the handoff request for the incomplete summary.
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 11);
     assert!(
         !cli(data.path(), "get_thread", json!({"threadId":id}))["running"]
             .as_bool()
@@ -1303,7 +1303,7 @@ async fn cli_recent_script_receipt_survives_stale_summary_without_replaying_edit
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_plan_survives_checkpoint_in_task_ledger_and_budget_events_reach_clients() {
+async fn cli_notes_survive_checkpoint_and_budget_events_reach_clients() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::create_dir(project.path().join(".themis")).unwrap();
@@ -1326,10 +1326,10 @@ async fn cli_plan_survives_checkpoint_in_task_ledger_and_budget_events_reach_cli
         // so two bounded batches force exactly one checkpoint.
         let shell = |id: String, fill: char| json!({"id":id,"type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",format!("print('{fill}'*11000)")],"cwd":""}).to_string()}});
         if index == 0 {
-            let offered = body["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "update_plan");
-            assert!(offered, "production runs offer the plan tool");
-            let plan = json!({"items":[{"step":"Write result.txt","status":"done"},{"step":"Verify result.txt","status":"in_progress"}]}).to_string();
-            let mut tool_calls = vec![json!({"id":"plan","type":"function","function":{"name":"update_plan","arguments":plan}})];
+            let offered = body["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "notes");
+            assert!(offered, "production runs offer the notes tool");
+            let notes = json!({"set":[{"key":"goal","text":"write and verify result.txt"},{"key":"write","text":"Write result.txt","status":"done"},{"key":"verify","text":"Verify result.txt","status":"done"}]}).to_string();
+            let mut tool_calls = vec![json!({"id":"notes","type":"function","function":{"name":"notes","arguments":notes}})];
             tool_calls.extend(['a', 'b', 'c'].map(|fill| shell(format!("first-{fill}"), fill)));
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Planned; gathering output.","tool_calls":tool_calls},"finish_reason":"tool_calls"}]}));
         }
@@ -1339,9 +1339,9 @@ async fn cli_plan_survives_checkpoint_in_task_ledger_and_budget_events_reach_cli
             let tool_calls: Vec<Value> = fills[(index - 1) * 3 % 15..][..3].iter().map(|fill| shell(format!("more-{index}-{fill}"), *fill)).collect();
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"More output.","tool_calls":tool_calls},"finish_reason":"tool_calls"}]}));
         }
-        assert!(context.contains(r#""kind":"plan""#), "plan survives the checkpoint");
-        assert!(context.contains("Verify result.txt"));
-        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Plan survived."},"finish_reason":"stop"}]}))
+        assert!(context.contains("Saved notes (written by you"), "notes survive the checkpoint");
+        assert!(context.contains("- verify [done]: Verify result.txt"));
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Notes survived."},"finish_reason":"stop"}]}))
     }).mount(&provider).await;
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
@@ -1390,7 +1390,7 @@ async fn cli_plan_survives_checkpoint_in_task_ledger_and_budget_events_reach_cli
     .await
     .unwrap();
     assert_eq!(terminal["kind"], "finished", "{terminal}");
-    assert_eq!(terminal["result"], "Plan survived.");
+    assert_eq!(terminal["result"], "Notes survived.");
     assert_eq!(compactions, 1);
     let requests = calls.load(std::sync::atomic::Ordering::SeqCst);
     assert!(requests >= 3);

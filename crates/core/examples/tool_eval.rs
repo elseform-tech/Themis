@@ -9,7 +9,8 @@
 //!
 //! `task.json` holds `prompt`, and optionally `checkpoint` (a summary standing in for
 //! compacted history) and `evidence` (project-relative saved-originals directory, which also
-//! offers `recall`). The key comes from `OPENCODE_KEY`; `--base-url` points at a mock.
+//! offers `recall` and `notes`), `offer_notes` (false withholds `notes`) and `followups`
+//! (later messages in the same chat). The key comes from `OPENCODE_KEY`; `--base-url` points at a mock.
 
 use std::path::PathBuf;
 
@@ -48,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
         (Some(_), Err(_)) => "mock-key".to_owned(),
         (None, Err(_)) => anyhow::bail!("OPENCODE_KEY is not set"),
     };
-    let mut config = ProviderConfig::new(ProviderKind::Go, key);
+    let mut config = ProviderConfig::new(ProviderKind::Go, key.clone());
     if let Some(model) = &model {
         config = config.with_model(model);
     }
@@ -68,9 +69,42 @@ async fn main() -> anyhow::Result<()> {
         recent_messages: task["recent_messages"]
             .as_u64()
             .map_or(20, |recent| recent as usize),
-        offer_plan: task["offer_plan"].as_bool().unwrap_or(true),
+        offer_notes: task["offer_notes"].as_bool().unwrap_or(true),
+        followups: task["followups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|turn| turn.as_str().map(str::to_owned))
+            .collect(),
+        snapshots: task["snapshots"].as_bool().unwrap_or(false),
+        allow_all: task["allow_all"].as_bool().unwrap_or(false),
+        nudges_off: strings(&task["nudges_off"]),
+        hide_tools: strings(&task["hide_tools"]),
+        replay_reasoning: task["replay_reasoning"].as_bool().unwrap_or(true),
     };
-    let report = run_tool_task(&llm, &project, prompt, options).await?;
+    // As the app does: the live catalog's limits and thinking switches apply to the run
+    // (none without a real key, or when the catalog cannot be loaded).
+    let catalog = if std::env::var("OPENCODE_KEY").is_ok() {
+        themis_core::providers::refresh_go_catalog(themis_core::providers::GO_BASE_URL, &key)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let report = themis_core::providers::with_catalog_limits(
+        &catalog,
+        run_tool_task(&llm, &project, prompt, options),
+    )
+    .await?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.as_str().map(str::to_owned))
+        .collect()
 }

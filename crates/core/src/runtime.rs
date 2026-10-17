@@ -31,6 +31,7 @@ pub mod documents;
 pub mod eval;
 mod ledger;
 mod maintenance;
+mod notes;
 mod pending;
 mod summary_evidence;
 mod summary_job;
@@ -526,10 +527,10 @@ async fn run_task_with_evidence_inner(
     };
     let caching = CachingApprovals::wrap(approvals);
     let mut llm_tools: Vec<Tool> = tools.iter().map(to_llm_tool).collect();
-    // The plan is part of the durable task ledger, which needs saved originals.
-    let plan_offered = evidence_directory.is_some() && offer_plan();
-    if plan_offered && !tools.iter().any(|tool| tool.name() == ledger::PLAN_TOOL) {
-        llm_tools.push(ledger::plan_tool());
+    // Notes live in the chat's evidence directory, so they need saved originals.
+    let notes_directory = evidence_directory.clone().filter(|_| offer_notes());
+    if notes_directory.is_some() && !tools.iter().any(|tool| tool.name() == notes::TOOL) {
+        llm_tools.push(notes::tool());
     }
     // Byte estimates are approximate bookkeeping, not a model-specific tokenizer.
     let schema_tokens = serde_json::to_vec(&llm_tools)?.len().div_ceil(4);
@@ -583,20 +584,24 @@ async fn run_task_with_evidence_inner(
             directory,
             llm_tools.iter().any(|tool| tool.function.name == "recall"),
         )?);
-        messages[0].content.push_str(if plan_offered {
-            "\nFor multi-step work keep a short plan with update_plan and mark steps done as you finish them. The task ledger keeps the plan, completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work."
+        messages[0].content.push_str(if notes_directory.is_some() {
+            NOTES_INSTRUCTION
         } else {
             "\nThe task ledger keeps completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work."
         });
-        messages[0].content.push_str(INCREMENTAL_WORK);
+    }
+    if let Some(directory) = &notes_directory {
+        pin_notes(&mut messages, directory);
     }
 
     let mut observations = HashSet::new();
     let mut last_shell_observation = None;
     let mut unchanged_results = 0;
-    let mut loop_warned = false;
-    let mut recovery_reads = 0;
-    let mut recall_searches = 0usize;
+    let mut notes_used = false;
+    let mut notes_reminded = false;
+    let mut work_calls = 0usize;
+    let mut finish_checks = 0usize;
+    let mut work_at_check = 0usize;
     let config = compaction_config();
     // Prior turns arrive as text or as checkpoint-retained messages that a
     // checkpoint already summarized; only this run's new work is unsummarized.
@@ -804,6 +809,46 @@ async fn run_task_with_evidence_inner(
         };
         check_stopped(&stopped, &events).await?;
         if calls.is_empty() {
+            // Finishing with open task lines gets a check when notes were kept during this run,
+            // or when the run did no work at all (an answer that only announces the next step):
+            // a long job must not end early because the agent lost track of what is left. Later
+            // checks need tool calls since the previous one, so narration alone still ends the run.
+            let check_due = !nudge_off("finish_checks")
+                && if finish_checks == 0 {
+                    notes_used || work_calls == 0
+                } else {
+                    finish_checks < MAX_FINISH_CHECKS && work_calls > work_at_check
+                };
+            if let (Some(directory), true) = (&notes_directory, check_due) {
+                let saved = notes::Notes::load(directory);
+                let open: Vec<&str> = saved.open().iter().map(|line| line.key.as_str()).collect();
+                if !open.is_empty() {
+                    let check = if notes_used {
+                        OPEN_TASKS_CHECK
+                    } else {
+                        IDLE_OPEN_TASKS_CHECK
+                    };
+                    finish_checks += 1;
+                    work_at_check = work_calls;
+                    #[cfg(feature = "eval")]
+                    let _ = EVAL_FINISH_CHECKS
+                        .try_with(|count| count.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+                    messages.push(ChatMessage {
+                        role: ChatRole::Assistant,
+                        message_type: MessageType::Text,
+                        content: text.unwrap_or_default(),
+                    });
+                    messages.push(ChatMessage {
+                        role: ChatRole::User,
+                        message_type: MessageType::Text,
+                        content: format!(
+                            "{check}{}",
+                            open.iter().take(20).copied().collect::<Vec<_>>().join(", ")
+                        ),
+                    });
+                    continue;
+                }
+            }
             let result = text.unwrap_or_default();
             emit(RunEvent::Finished {
                 result: result.clone(),
@@ -859,18 +904,10 @@ async fn run_task_with_evidence_inner(
                 };
                 if value["arguments_rejected"] != true && unchanged {
                     unchanged_results += 1;
-                    // The first streak gets one warning: re-reading after compaction is usually
-                    // forgotten work, which saving results can fix. A second streak stops.
-                    let warn = unchanged_results >= 3 && !loop_warned;
-                    if unchanged_results >= 3 && loop_warned {
-                        let error = "Repeated unchanged tool results stopped the run. Completed actions and evidence remain saved; evidence recovery can continue in a new run with a narrower unresolved question.".to_owned();
-                        emit(RunEvent::Failed {
-                            error: error.clone(),
-                        })
-                        .await
-                        .ok();
-                        return Err(anyhow!(error));
-                    }
+                    // Every streak of three gets a warning, never a stop: a re-read after a
+                    // checkpoint can be needed, and stopping hides why the agent repeats itself.
+                    // The run's turn limit bounds a real loop; evals count the warnings.
+                    let warn = unchanged_results >= 3;
                     // An identical result still in context is referenced, not resent.
                     let live =
                         messages
@@ -886,7 +923,9 @@ async fn run_task_with_evidence_inner(
                                 }
                                 _ => None,
                             });
-                    if let Some(earlier) = live {
+                    if nudge_off("repeat_receipt") {
+                        // Eval comparison: the repeated result goes back in full.
+                    } else if let Some(earlier) = live {
                         *result = freshness_receipt(result, &earlier.id, fingerprint);
                     } else {
                         remind_unchanged_result(
@@ -899,9 +938,14 @@ async fn run_task_with_evidence_inner(
                         )?;
                     }
                     if warn {
-                        loop_warned = true;
                         unchanged_results = 0;
-                        warn_repeated_results(result);
+                        if !nudge_off("loop_warning") {
+                            warn_repeated_results(result);
+                        }
+                        #[cfg(feature = "eval")]
+                        let _ = EVAL_LOOP_WARNINGS.try_with(|count| {
+                            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                        });
                     }
                 } else {
                     unchanged_results = 0;
@@ -911,39 +955,14 @@ async fn run_task_with_evidence_inner(
                 observations.clear();
                 last_shell_observation = None;
             }
-            // Run-local state survives compaction. This bounds retrieval, not semantic correctness.
-            // Recall has its own bound: each search is a bounded scan, so the allowance is
-            // wider than the 64 recursive archive reads, and `around` paging is exempt
-            // (it only reads one 3,000-character page; total turns still bound the run).
+            // Counted for diagnostics only. Like repeated results, many searches or archive
+            // reads never stop a run: stopping hides why the agent kept looking, and the run's
+            // turn limit bounds a real loop.
             if call.function.name == "recall" {
-                let paging = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
-                    .is_ok_and(|v| v["around"].as_str().is_some_and(|t| t.contains('|')));
-                if !paging {
-                    recall_searches += 1;
-                    crate::context_metrics::activity("recall_searches");
-                    if recall_searches > 128 {
-                        let error = "Recall stopped: the 128-search allowance was exceeded. Originals and completed actions remain saved; answer from what was found or narrow the question.".to_owned();
-                        emit(RunEvent::Failed {
-                            error: error.clone(),
-                        })
-                        .await
-                        .ok();
-                        return Err(anyhow!(error));
-                    }
-                }
+                crate::context_metrics::activity("recall_searches");
             }
             if crate::tools::context_recovery_call(&call.function.name, &call.function.arguments) {
-                recovery_reads += 1;
                 crate::context_metrics::activity("recovery_reads");
-                if recovery_reads >= 64 {
-                    let error = "Evidence recovery stopped: the 64-call recovery allowance was exceeded. Originals and completed actions remain saved; narrow the missing question/source range before continuing.".to_owned();
-                    emit(RunEvent::Failed {
-                        error: error.clone(),
-                    })
-                    .await
-                    .ok();
-                    return Err(anyhow!(error));
-                }
             }
         }
         let mut delivered_calls = calls;
@@ -958,6 +977,30 @@ async fn run_task_with_evidence_inner(
                         .to_string();
             }
         }
+        // One early reminder when work has started but the chat has no notes: tasks of one
+        // or two calls never see it, and it comes at most once per run.
+        let batch_has_notes = delivered_calls
+            .iter()
+            .any(|call| call.function.name == notes::TOOL);
+        work_calls += delivered_calls.len();
+        if let (Some(directory), false, false, true) = (
+            &notes_directory,
+            notes_reminded || nudge_off("notes_reminder"),
+            batch_has_notes || notes_used,
+            work_calls >= NOTES_REMINDER_AFTER,
+        ) {
+            if notes::Notes::load(directory).lines.is_empty() {
+                notes_reminded = results
+                    .iter_mut()
+                    .rev()
+                    .any(|result| annotate_result(result, "notes_reminder", NOTES_REMINDER));
+            }
+        }
+        notes_used |= delivered_calls.iter().zip(&results).any(|(call, result)| {
+            call.function.name == notes::TOOL
+                && serde_json::from_str::<serde_json::Value>(&result.function.arguments)
+                    .is_ok_and(|value| value["ok"] == true)
+        });
         messages.push(ChatMessage {
             role: ChatRole::Assistant,
             message_type: MessageType::ToolUse(delivered_calls),
@@ -1106,6 +1149,22 @@ async fn request_answer_with_timeout(
     .map_err(|_| anyhow!("LLM answer deadline exceeded"))?
 }
 
+/// Answer retries after HTTP 429: waits of about 10, 20, 40, 80 and 160 seconds (310 s in all).
+const RATE_LIMIT_RETRIES: u32 = 5;
+const RATE_LIMIT_BACKOFF_SECONDS: u64 = 10;
+/// Answer retries after a cut-off (truncated) provider response.
+const TRUNCATED_RETRIES: u32 = 4;
+
+fn answer_retry_limit(rate_limited: bool, truncated: bool) -> u32 {
+    if rate_limited {
+        RATE_LIMIT_RETRIES
+    } else if truncated {
+        TRUNCATED_RETRIES
+    } else {
+        2
+    }
+}
+
 // Retry-After is a floor, never shortened by jitter. Separate randomized states
 // keep simultaneous clients from retrying in lockstep; no provider data is hashed.
 fn request_retry_delay(
@@ -1148,67 +1207,79 @@ async fn request_answer_inner(
 ) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
     const EMPTY_ANSWER: &str = "Provider returned no public answer or tool calls";
     let mut retries = 0;
+    // Each cut-off doubles the output cap for the next attempt (up to four times it, and the
+    // model's own limit): a thinking model's reasoning counts toward the cap, so retrying a
+    // long reply at the same cap is cut off again.
+    let base_limit = crate::providers::OUTPUT_LIMIT.try_with(|limit| *limit).ok();
+    let mut cut_offs = 0u32;
+    // After an empty reply the retry says so, instead of resending the same request.
+    let mut request = std::borrow::Cow::Borrowed(messages);
     loop {
         let mut published = false;
-        let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> =
-            crate::context_metrics::with_attempt(retries as usize, async {
-                // Bound handshake, complete stream and non-streaming fallback together.
-                // The published flag survives cancellation so partial text cannot be replayed.
-                tokio::time::timeout(attempt_timeout, async {
-                    match llm
-                        .chat_stream_with_tools(messages, Some(llm_tools), None)
-                        .await
-                    {
-                        Ok(mut stream) => {
-                            let mut text = String::new();
-                            let mut calls = Vec::new();
-                            while let Some(chunk) = stream.next().await {
-                                check_stopped(stopped, events).await?;
-                                match chunk? {
-                                    StreamChunk::Text(delta) => {
-                                        published |= !delta.is_empty();
-                                        text.push_str(&delta);
-                                        events.send(RunEvent::AssistantText(delta)).await.ok();
-                                    }
-                                    StreamChunk::ToolUseComplete { tool_call, .. } => {
-                                        calls.push(tool_call)
-                                    }
-                                    _ => {} // Reasoning content is private; only public narration reaches the UI.
+        let messages: &[ChatMessage] = &request;
+        let attempt = crate::context_metrics::with_attempt(retries as usize, async {
+            // Bound handshake, complete stream and non-streaming fallback together.
+            // The published flag survives cancellation so partial text cannot be replayed.
+            tokio::time::timeout(attempt_timeout, async {
+                match llm
+                    .chat_stream_with_tools(messages, Some(llm_tools), None)
+                    .await
+                {
+                    Ok(mut stream) => {
+                        let mut text = String::new();
+                        let mut calls = Vec::new();
+                        while let Some(chunk) = stream.next().await {
+                            check_stopped(stopped, events).await?;
+                            match chunk? {
+                                StreamChunk::Text(delta) => {
+                                    published |= !delta.is_empty();
+                                    text.push_str(&delta);
+                                    events.send(RunEvent::AssistantText(delta)).await.ok();
                                 }
+                                StreamChunk::ToolUseComplete { tool_call, .. } => {
+                                    calls.push(tool_call)
+                                }
+                                _ => {} // Reasoning content is private; only public narration reaches the UI.
                             }
-                            Ok(((!text.is_empty()).then_some(text), calls))
                         }
-                        Err(autoagents::llm::error::LLMError::Generic(message))
-                            if message
-                                == "Streaming with tools not supported for this provider" =>
-                        {
-                            let response =
-                                llm.chat_with_tools(messages, Some(llm_tools), None).await?;
-                            let text = response.text().filter(|text| !text.is_empty());
-                            if let Some(text) = text.clone() {
-                                published = true;
-                                events.send(RunEvent::AssistantText(text)).await.ok();
-                            }
-                            Ok((text, response.tool_calls().unwrap_or_default()))
-                        }
-                        Err(error) => Err(error.into()),
+                        Ok(((!text.is_empty()).then_some(text), calls))
                     }
-                })
-                .await
-                .map_err(|_| {
-                    autoagents::llm::error::LLMError::HttpError(
-                        "request timed out: ordinary attempt deadline exceeded".into(),
-                    )
-                })?
+                    Err(autoagents::llm::error::LLMError::Generic(message))
+                        if message == "Streaming with tools not supported for this provider" =>
+                    {
+                        let response = llm.chat_with_tools(messages, Some(llm_tools), None).await?;
+                        let text = response.text().filter(|text| !text.is_empty());
+                        if let Some(text) = text.clone() {
+                            published = true;
+                            events.send(RunEvent::AssistantText(text)).await.ok();
+                        }
+                        Ok((text, response.tool_calls().unwrap_or_default()))
+                    }
+                    Err(error) => Err(error.into()),
+                }
             })
             .await
-            .and_then(|(text, calls)| {
-                if calls.is_empty() && text.as_deref().is_none_or(|text| text.trim().is_empty()) {
-                    Err(autoagents::llm::error::LLMError::Generic(EMPTY_ANSWER.into()).into())
-                } else {
-                    Ok((text, calls))
-                }
-            });
+            .map_err(|_| {
+                autoagents::llm::error::LLMError::HttpError(
+                    "request timed out: ordinary attempt deadline exceeded".into(),
+                )
+            })?
+        });
+        let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> = match base_limit {
+            Some(base) => {
+                crate::providers::OUTPUT_LIMIT
+                    .scope(base.saturating_mul(1 << cut_offs.min(2)), attempt)
+                    .await
+            }
+            None => attempt.await,
+        }
+        .and_then(|(text, calls)| {
+            if calls.is_empty() && text.as_deref().is_none_or(|text| text.trim().is_empty()) {
+                Err(autoagents::llm::error::LLMError::Generic(EMPTY_ANSWER.into()).into())
+            } else {
+                Ok((text, calls))
+            }
+        });
         let Some(error) = result
             .as_ref()
             .err()
@@ -1218,11 +1289,39 @@ async fn request_answer_inner(
         };
         let empty_output = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == EMPTY_ANSWER);
         let truncated = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == "Provider response was truncated");
-        if retries == 2 || published || (!error.is_retryable() && !empty_output && !truncated) {
+        // A stream that dropped or failed part-way is as temporary as a transport error.
+        let stream_dropped = matches!(error, autoagents::llm::error::LLMError::Generic(message)
+            if message == "Provider stream ended before completion"
+                || message == "Provider response failed or was incomplete"
+                || message.starts_with("Provider stream error"));
+        // A rate limit or a cut-off response usually clears with time: losing a long run to
+        // it costs far more than waiting, so those get more and longer retries (still inside
+        // the overall answer deadline).
+        let rate_limited = error.http_status_code() == Some(429);
+        if retries >= answer_retry_limit(rate_limited, truncated)
+            || published
+            || (!error.is_retryable() && !empty_output && !truncated && !stream_dropped)
+        {
             return result;
         }
+        if truncated {
+            cut_offs += 1;
+        }
+        if empty_output {
+            let mut retry = request.into_owned();
+            retry.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: EMPTY_ANSWER_NOTE.to_owned(),
+            });
+            request = std::borrow::Cow::Owned(retry);
+        }
         // Calls from an interrupted response have not been executed; completed tools are already in messages.
-        let delay = request_retry_delay(error, retries);
+        let delay = if rate_limited {
+            request_retry_delay_with_rate_limit_floor(error, retries, RATE_LIMIT_BACKOFF_SECONDS)
+        } else {
+            request_retry_delay(error, retries)
+        };
         retries += 1;
         crate::diagnostics::emit(
             "answer",
@@ -1230,7 +1329,7 @@ async fn request_answer_inner(
             "warn",
             serde_json::json!({
                 "retry": retries, "status": error.http_status_code(), "backoff_ms": delay.as_millis(),
-                "reason": if empty_output { "empty_output" } else if truncated { "output_truncated" } else { "transient" },
+                "reason": if empty_output { "empty_output" } else if truncated { "output_truncated" } else if rate_limited { "rate_limited" } else if stream_dropped { "stream_dropped" } else { "transient" },
             }),
         );
         eprintln!(
@@ -1289,6 +1388,21 @@ async fn execute_tool_calls(
             Err(format!("Not run: this batch had {} calls but only the first {runnable} fit the context budget. Nothing was executed for this call; request it again in a later, smaller batch.", calls.len()))
         } else if arguments_rejected {
             Err(format!("Tool arguments exceed {argument_allowance} serialized bytes (at most 64 KiB); rejected before execution. Use focused patches or approved shell/Python generators. No write was performed."))
+        } else if name == notes::TOOL && !tools.iter().any(|tool| tool.name() == notes::TOOL) {
+            // The agent's own notes file in this chat's evidence directory; no approval.
+            let outcome = match evidence_directory {
+                Some(directory) => notes::call(directory, &args),
+                None => Err("notes are not available in this run".to_owned()),
+            };
+            #[cfg(feature = "eval")]
+            let _ = EVAL_NOTES_LOG.try_with(|log| {
+                let saved = (outcome.is_ok())
+                    .then(|| evidence_directory.map(notes::Notes::load))
+                    .flatten()
+                    .and_then(|notes| serde_json::to_value(notes).ok());
+                log.lock().unwrap().push(saved.unwrap_or_default());
+            });
+            outcome
         } else {
             execute_call(tools, approvals, &name, &args, &summary, events, stopped).await
         };
@@ -1437,23 +1551,76 @@ fn tool_argument_allowance(batch_bytes: usize) -> usize {
     batch_bytes.saturating_mul(2).min(64 * 1024)
 }
 
-/// Long jobs fail when every input is read before anything is saved: checkpoints summarise
-/// the early reads away and the agent re-reads them in a loop (long-horizon eval, 2026-10-16).
-const INCREMENTAL_WORK: &str = "\nContext is limited and older reads are summarised away at checkpoints. For jobs over many files or items, finish and save each item's result (write its output) before reading the next few; do not read everything first.";
+const NOTES_REMINDER_AFTER: usize = 3;
+const NOTES_REMINDER: &str = "Notes reminder (runtime, once): you have started work but this chat has no notes. If the task has several steps, call notes now: a `goal` line with the goal and the user's rules, one line per task with its status, then results as you finish each item. Older reads are summarised away at checkpoints; notes are not. Skip this if the task is nearly done.";
 
-const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. Repeating it again stops the run. Context is limited and earlier reads are summarised away, so save what you learned now (write the output or notes for finished items, update the plan), then take the next unfinished step instead of re-reading.";
+/// Runtime message (user role, like other harness checks) when the agent would finish with
+/// open task lines.
+const OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] Your notes still list open task lines. Finish them now, or, if one is already done or no longer needed, update the notes (status done, or remove it) and say why in the answer. Then give the final answer. Open: ";
 
-/// Adds the one-time loop warning to a repeated result without dropping its content.
+/// Open-task checks per run: the first, then one more each time the agent worked after a check.
+const MAX_FINISH_CHECKS: usize = 3;
+
+/// One check when a run that did no work ends while saved notes list open task lines.
+const IDLE_OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] You answered without using any tools while your notes list open task lines. If the user's latest message asks you to do that work, do it now with tool calls instead of describing it. If it only asks a question or asks you to wait, keep the lines open and give the answer. Open: ";
+
+const NOTES_INSTRUCTION: &str = "\nKeep notes with the notes tool for any task with several steps, starting with a notes call before other work: a `goal` line with the user's goal and constraints, one line per task with its status, and every result you will need later (counts, names, decisions, file paths). For a total over many items, keep a running total line and add each item's count as you finish it, instead of adding everything up at the end. Update a line as soon as its item is done, and keep result lines until the whole task is finished (remove only lines you will not need). Notes are shown to you after every context checkpoint and in later turns of this chat: they are how you remember the goal and progress, and how you answer questions about progress. The task ledger also keeps completed actions and recent reads. Before the final answer, check every task line: finish open ones, or mark them done or remove them with a reason. Then verify if needed and answer instead of re-inspecting finished work.";
+
+/// Shows the chat's saved notes before the current request. Notes from a checkpoint ledger
+/// written before notes existed are migrated once.
+fn pin_notes(messages: &mut Vec<ChatMessage>, directory: &std::path::Path) {
+    let mut saved = notes::Notes::load(directory);
+    if saved.lines.is_empty() {
+        if let Some(plan) = ledger::legacy_plan(messages) {
+            saved = notes::from_legacy_plan(&plan);
+            if !saved.lines.is_empty() {
+                let _ = saved.save(directory);
+            }
+        }
+    }
+    let block = saved.render();
+    if !block.is_empty() {
+        let request = messages.len() - 1;
+        messages.insert(
+            request,
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: block.trim_start().to_owned(),
+            },
+        );
+    }
+}
+
+const EMPTY_ANSWER_NOTE: &str = "[Runtime note, not from the user] Your last reply had no text and no tool call. Reply with your answer as text, or call a tool to continue the work.";
+
+const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. If an earlier read was summarised away and you still need it, keep what you learn this time in your notes or output; otherwise take the next unfinished step instead of repeating it.";
+
+/// Adds the loop warning to a repeated result without dropping its content.
 fn warn_repeated_results(result: &mut ToolCall) {
+    if !annotate_result(result, "loop_warning", LOOP_WARNING) {
+        // A JSON array or scalar keeps its shape: wrap it rather than break it.
+        let original = std::mem::take(&mut result.function.arguments);
+        result.function.arguments = serde_json::json!({"result": serde_json::from_str::<serde_json::Value>(&original).unwrap_or_default(), "loop_warning": LOOP_WARNING}).to_string();
+    }
+}
+
+/// Adds a runtime note to a tool result without dropping its content: a field on a JSON
+/// object, or a line after plain text. Other JSON is left untouched (returns false), so a
+/// tool's JSON output stays valid JSON.
+fn annotate_result(result: &mut ToolCall, field: &str, note: &str) -> bool {
     let arguments = &mut result.function.arguments;
     match serde_json::from_str::<serde_json::Value>(arguments) {
         Ok(mut value) if value.is_object() => {
-            value["loop_warning"] = LOOP_WARNING.into();
+            value[field] = note.into();
             *arguments = value.to_string();
+            true
         }
-        _ => {
+        Ok(_) => false,
+        Err(_) => {
             arguments.push('\n');
-            arguments.push_str(LOOP_WARNING);
+            arguments.push_str(note);
+            true
         }
     }
 }
@@ -1625,22 +1792,56 @@ tokio::task_local! { static SHORT_REPLY_TURN: bool; }
 
 #[cfg(feature = "eval")]
 tokio::task_local! {
-    /// Eval-only ablation switch: `false` withholds `update_plan` and its instruction.
-    pub static EVAL_OFFER_PLAN: bool;
+    /// Eval-only ablation switch: `false` withholds `notes` and its instruction.
+    pub static EVAL_OFFER_NOTES: bool;
 }
 
 #[cfg(feature = "eval")]
 tokio::task_local! {
-    /// Eval-only: every `update_plan` call in order, its validated items or `null`, so the
-    /// long-horizon eval can check that each checkpoint carries the latest plan.
-    pub static EVAL_PLAN_LOG: Arc<Mutex<Vec<serde_json::Value>>>;
+    /// Eval-only: the saved notes after every `notes` call (`null` when rejected), so the
+    /// long-horizon eval can check that each checkpoint carries the latest notes.
+    pub static EVAL_NOTES_LOG: Arc<Mutex<Vec<serde_json::Value>>>;
 }
 
-/// Whether runs that save evidence offer `update_plan` (always, outside evals).
-fn offer_plan() -> bool {
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only: open-task checks sent in the run.
+    pub static EVAL_FINISH_CHECKS: Arc<std::sync::atomic::AtomicUsize>;
+}
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only: loop warnings given in the run (each would once have stopped it after the first).
+    pub static EVAL_LOOP_WARNINGS: Arc<std::sync::atomic::AtomicUsize>;
+}
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only ablation: runtime nudges switched off (`notes_reminder`, `finish_checks`,
+    /// `loop_warning`), to measure whether each one earns its place.
+    pub static EVAL_NUDGES_OFF: Arc<Vec<String>>;
+}
+
+/// Whether an eval switched this runtime nudge off (never, outside evals).
+fn nudge_off(name: &str) -> bool {
     #[cfg(feature = "eval")]
     {
-        EVAL_OFFER_PLAN.try_with(|offer| *offer).unwrap_or(true)
+        EVAL_NUDGES_OFF
+            .try_with(|off| off.iter().any(|item| item == name))
+            .unwrap_or(false)
+    }
+    #[cfg(not(feature = "eval"))]
+    {
+        let _ = name;
+        false
+    }
+}
+
+/// Whether runs that save evidence offer `notes` (always, outside evals).
+fn offer_notes() -> bool {
+    #[cfg(feature = "eval")]
+    {
+        EVAL_OFFER_NOTES.try_with(|offer| *offer).unwrap_or(true)
     }
     #[cfg(not(feature = "eval"))]
     {
@@ -2232,6 +2433,25 @@ async fn replace_context(
             }
         }
     }
+    // Notes are the agent's goal and progress: every checkpoint carries them in full, and
+    // they count as fixed content, so shrinking caches never squeezes them out.
+    let notes_block = original_snapshot
+        .and_then(std::path::Path::parent)
+        .filter(|_| offer_notes())
+        .map(|directory| {
+            // Work since the last checkpoint without a notes update: results may be lost.
+            let older = &messages[1..split];
+            let (mut work, mut updated) = (0usize, false);
+            for message in older {
+                if let MessageType::ToolUse(batch) = &message.message_type {
+                    updated |= batch.iter().any(|call| call.function.name == notes::TOOL);
+                    work += batch.len();
+                }
+            }
+            notes::Notes::load(directory).checkpoint_block(work >= NOTES_REMINDER_AFTER && !updated)
+        })
+        .unwrap_or_default();
+    summary.push_str(&notes_block);
     let mut compacted = vec![messages[0].clone()];
     // The checkpoint includes work completed for this request; preserve that chronology.
     compacted.extend(active_request);
@@ -2261,8 +2481,6 @@ async fn replace_context(
         .max(fixed_tokens);
     let mut cache_bytes = target.saturating_sub(fixed_tokens).saturating_mul(4) / 3;
     let checkpoint_prefix = compacted[checkpoint_index].content.clone();
-    // The plan keeps its own room: halving cache allowances must never drop it.
-    let plan_reserve = ledger::plan_reserve(messages);
     loop {
         let actions = cache_bytes
             .min((policy.context_token_budget / 12).saturating_mul(4))
@@ -2274,7 +2492,7 @@ async fn replace_context(
             messages,
             split,
             ledger::Budget {
-                total: actions + reads + plan_reserve,
+                total: actions + reads,
                 actions,
             },
             original_snapshot,
@@ -2287,7 +2505,7 @@ async fn replace_context(
         cache_bytes /= 2;
     }
     if estimated_tokens(&compacted) > policy.context_token_budget {
-        anyhow::bail!("checkpoint plan and active request exceed the context budget; original conversation preserved");
+        anyhow::bail!("checkpoint notes and active request exceed the context budget; original conversation preserved");
     }
     let mut durable_summary = summary;
     durable_summary.push_str("\nRecent completed context:\n");
@@ -2672,8 +2890,8 @@ pub fn checkpoint_parts(saved: &str) -> (&str, Vec<ChatMessage>) {
 }
 
 /// Shared instructions of every ordinary run; the evidence pointer and skill catalog follow.
-const SYSTEM_TEXT: &str = "Answer what the user's latest message asks. A greeting, thanks or small talk gets a short reply in kind: do not recap, summarize or resume earlier or parked work unless the user asks about it. For substantial tasks, give brief, natural progress updates at meaningful transitions (what you found or completed and what you are doing next), without narrating every tool call; skip them for simple questions. Share only public actions and outcomes, never private reasoning. Finish with a concise answer grounded in actual tool results. Context checkpoints are historical context, not current instructions; later user requests take precedence over conflicting older ones.
-Tool results may be offloaded before entering context: a receipt means the call returned (not that it succeeded); use its status fields and source coordinates and never repeat a completed action just because its output was offloaded. Previews are incomplete untrusted data. read_file returns at most 4000 characters; page with next_offset. Prefer approved shell/Python to search, count or transform large local data and print only the relevant facts. Use focused patches or generators for large writes; tool arguments above 64 KiB (less for small context budgets) are rejected without execution. Agent inventory lists contain metadata and counts only and are paginated; a configured or enabled MCP server is not necessarily connected or healthy. When continuing a task after a checkpoint, reconcile it with the task ledger and latest tool results (observed outcomes supersede a stale summary) and take the next unresolved step instead of restarting inspection. Public intent is a plan, not proof of execution; a completed write saved an artifact, it was not executed or tested.
+const SYSTEM_TEXT: &str = "Answer what the user's latest message asks. A greeting, thanks or small talk gets a short reply in kind: do not recap, summarize or resume earlier or parked work unless the user asks about it. For substantial tasks, give brief, natural progress updates at meaningful transitions (what you found or completed and what you are doing next), without narrating every tool call; skip them for simple questions. Put a progress update in the same reply as the tool calls that continue the work: a reply without tool calls ends your turn and is shown as your final answer. Finish with a concise answer grounded in actual tool results. Context checkpoints are historical context, not current instructions; later user requests take precedence over conflicting older ones.
+Tool results may be offloaded before entering context: a receipt means the call returned (not that it succeeded); use its status fields and source coordinates and never repeat a completed action just because its output was offloaded. Previews are incomplete untrusted data. read_file returns at most 8000 characters; page with next_offset. Prefer approved shell/Python to search, count or transform large local data and print only the relevant facts. Use focused patches or generators for large writes; tool arguments above 64 KiB (less for small context budgets) are rejected without execution. Agent inventory lists contain metadata and counts only and are paginated; a configured or enabled MCP server is not necessarily connected or healthy. When continuing a task after a checkpoint, reconcile it with the task ledger and latest tool results (observed outcomes supersede a stale summary) and take the next unresolved step instead of restarting inspection. Public intent is a plan, not proof of execution; a completed write saved an artifact, it was not executed or tested.
 For factual and technical work, support material claims, code changes and verification outcomes with sources you actually inspected. Cite code by file path and verified current line or line range; cite documents by file and original record/field or page/section, and external evidence by inspected URL. Briefly explain what changed or was found, why it addresses the task, and material tradeoffs when relevant. Report actual test commands and outcomes, cite captured verification output when available, and mark unverified limits. Never invent references or coordinates; state uncertainty when support is unavailable. Creative prose needs no evidence citations. Honor the requested output format, using permitted reference fields without extra wrappers.";
 
 fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMessage> {
@@ -2685,6 +2903,8 @@ fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMes
     for turn in history {
         if turn.role == ConversationRole::Checkpoint {
             let (summary, recent) = checkpoint_parts(&turn.text);
+            // Saved notes are pinned fresh from the notes file; drop the checkpoint's copy.
+            let summary = notes::strip_blocks(summary);
             messages.push(ChatMessage {
                 role: ChatRole::Assistant,
                 message_type: MessageType::Text,
@@ -2762,19 +2982,6 @@ async fn execute_call(
     stopped: &AtomicBool,
 ) -> Result<String, String> {
     let Some(tool) = tools.iter().find(|tool| tool.name() == name) else {
-        if name == ledger::PLAN_TOOL {
-            // Records the model's own checklist in context; touches no files or network.
-            #[cfg(feature = "eval")]
-            let _ = EVAL_PLAN_LOG.try_with(|log| {
-                let items = serde_json::from_str::<serde_json::Value>(args)
-                    .ok()
-                    .and_then(|value| ledger::plan_items(&value).ok());
-                log.lock()
-                    .unwrap()
-                    .push(items.unwrap_or(serde_json::Value::Null));
-            });
-            return ledger::update_plan(args);
-        }
         let available: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
         return Err(format!(
             "unknown tool '{name}' (available: {})",
@@ -2876,6 +3083,17 @@ async fn execute_call(
 #[doc(hidden)]
 pub mod fuzzing {
     use super::*;
+
+    /// Parses a notes file from the project (untrusted bytes), applies a model-written
+    /// update, and returns the rendered block and whether the update applied.
+    pub fn notes_file_and_update(file: &[u8], update: &str) -> (String, bool) {
+        let saved = notes::parse(file).unwrap_or_default();
+        let value = serde_json::from_str(update).unwrap_or_default();
+        match saved.apply(&value) {
+            Ok(updated) => (updated.render(), true),
+            Err(_) => (saved.render(), false),
+        }
+    }
 
     /// Social-message detection and recall terms for arbitrary UI text.
     pub fn social_request(text: &str) -> (bool, Vec<String>) {
@@ -3703,7 +3921,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn plan_survives_repeated_checkpoints_when_caches_are_squeezed() {
+    async fn notes_survive_repeated_checkpoints_when_caches_are_squeezed() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Goal/constraints: summarise modules. Confirmed findings: modules read. Completed changes/tests: none. Unresolved work: continue. Next action: read the next module."},"finish_reason":"stop"}]}))).mount(&server).await;
@@ -3722,28 +3940,18 @@ mod tests {
                 arguments,
             },
         };
-        // A ~700-byte plan, as in the long-horizon eval where it vanished.
-        let steps: Vec<_> = (1..=8)
-            .map(|n| serde_json::json!({"step":format!("Read module {n:02} and write its notes file with owner line"),"status":"pending"}))
-            .collect();
-        let plan = serde_json::json!({ "items": steps }).to_string();
         // A long task leaves little cache room, so the checkpoint loop halves its allowances.
         let mut messages = initial_messages(Vec::new(), "Summarise every module. ".repeat(1000));
-        messages.push(ChatMessage {
-            role: ChatRole::Assistant,
-            message_type: MessageType::ToolUse(vec![call("plan", ledger::PLAN_TOOL, plan)]),
-            content: String::new(),
-        });
-        messages.push(ChatMessage {
-            role: ChatRole::Tool,
-            message_type: MessageType::ToolResult(vec![call(
-                "plan",
-                ledger::PLAN_TOOL,
-                r#"{"ok":true}"#.into(),
-            )]),
-            content: String::new(),
-        });
         let directory = tempfile::tempdir().unwrap();
+        // ~1 KB of notes, larger than the plan that vanished in the long-horizon eval.
+        let lines: Vec<_> = (1..=12)
+            .map(|n| serde_json::json!({"key":format!("mod-{n:02}"),"text":format!("{n} functions; notes/mod-{n:02}.md written with owner line"),"status":"done"}))
+            .collect();
+        notes::call(
+            directory.path(),
+            &serde_json::json!({ "set": lines }).to_string(),
+        )
+        .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let policy = RunPolicy {
             total_turns: 20,
@@ -3786,10 +3994,14 @@ mod tests {
                 .find(|m| m.content.starts_with("Earlier context checkpoint"))
                 .unwrap();
             assert!(
-                checkpoint.content.contains(r#""kind":"plan""#)
-                    && checkpoint.content.contains("Read module 08"),
-                "plan dropped at checkpoint {}",
+                checkpoint.content.contains(notes::START)
+                    && checkpoint.content.contains("- mod-12 [done]: 12 functions"),
+                "notes dropped at checkpoint {}",
                 round + 1
+            );
+            assert!(
+                checkpoint.content.contains("Your notes were not updated"),
+                "reads without a notes update mark the notes stale"
             );
         }
     }
@@ -4197,7 +4409,67 @@ mod tests {
                     }
                 }
                 assert_eq!(texts, if recovers { vec!["Recovered"] } else { vec![] });
+                // Retries say the last reply was empty instead of resending the same request.
+                for (attempt, request) in
+                    server.received_requests().await.unwrap().iter().enumerate()
+                {
+                    let body = String::from_utf8_lossy(&request.body).into_owned();
+                    assert_eq!(body.contains("had no text and no tool call"), attempt > 0);
+                }
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn dropped_or_failed_streams_are_retried_before_anything_is_shown() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        // A stream that ends without finishing, and a Responses stream that fails.
+        for (model, broken) in [
+            (
+                "test-model",
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"}}]}\n\n".to_owned(),
+            ),
+            (
+                "gpt-test",
+                format!(
+                    "data: {}\n\n",
+                    serde_json::json!({"type":"response.failed","response":{"status":"failed"}})
+                ),
+            ),
+        ] {
+            let server = MockServer::start().await;
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = calls.clone();
+            let responses = model.starts_with("gpt-");
+            Mock::given(method("POST"))
+                .respond_with(move |_: &wiremock::Request| {
+                    let body = if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                        broken.clone()
+                    } else if responses {
+                        format!("data: {}\n\ndata: {}\n\n",
+                            serde_json::json!({"type":"response.output_text.delta","delta":"Recovered"}),
+                            serde_json::json!({"type":"response.completed","response":{"status":"completed"}}))
+                    } else {
+                        format!("data: {}\n\ndata: [DONE]\n\n", serde_json::json!({"choices":[{"delta":{"content":"Recovered"},"finish_reason":"stop"}]}))
+                    };
+                    ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
+                })
+                .mount(&server)
+                .await;
+            let llm = crate::providers::resolve(
+                &crate::providers::ProviderConfig::new(
+                    crate::providers::ProviderKind::Go,
+                    "test-key",
+                )
+                .with_model(model)
+                .with_base_url(server.uri()),
+            )
+            .await
+            .unwrap();
+            let (tx, _rx) = tokio::sync::mpsc::channel(16);
+            let result = request_answer(&llm, &[], &[], &tx, &AtomicBool::new(false)).await;
+            assert_eq!(result.unwrap().0.as_deref(), Some("Recovered"), "{model}");
+            assert_eq!(calls.load(Ordering::SeqCst), 2, "{model}");
         }
     }
 
@@ -4205,7 +4477,7 @@ mod tests {
     async fn unpublished_truncation_retries_without_publishing_discarded_calls() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         for streaming in [false, true] {
-            for (failures, public) in [(1, false), (2, false), (3, false), (1, true)] {
+            for (failures, public) in [(1, false), (3, false), (4, false), (5, false), (1, true)] {
                 let server = MockServer::start().await;
                 let calls = Arc::new(AtomicUsize::new(0));
                 let observed = calls.clone();
@@ -4240,9 +4512,13 @@ mod tests {
                 let published = streaming && public;
                 assert_eq!(
                     calls.load(Ordering::SeqCst),
-                    if published { 1 } else { (failures + 1).min(3) }
+                    if published {
+                        1
+                    } else {
+                        (failures + 1).min(TRUNCATED_RETRIES as usize + 1)
+                    }
                 );
-                if !published && failures < 3 {
+                if !published && failures <= TRUNCATED_RETRIES as usize {
                     let (text, tools) = result.unwrap();
                     assert_eq!(text.as_deref(), Some("Recovered"));
                     assert!(
@@ -4262,15 +4538,18 @@ mod tests {
                     texts,
                     if published {
                         vec!["Partial"]
-                    } else if failures < 3 {
+                    } else if failures <= TRUNCATED_RETRIES as usize {
                         vec!["Recovered"]
                     } else {
                         vec![]
                     }
                 );
-                for request in server.received_requests().await.unwrap() {
+                // Each cut-off doubles the cap for the next attempt, up to four times it.
+                for (attempt, request) in
+                    server.received_requests().await.unwrap().iter().enumerate()
+                {
                     let body: serde_json::Value = request.body_json().unwrap();
-                    assert_eq!(body["max_tokens"], 8192);
+                    assert_eq!(body["max_tokens"], 8192 << attempt.min(2));
                     assert_eq!(body["model"], "test-model");
                 }
             }
@@ -4317,6 +4596,52 @@ mod tests {
             }
         }
         assert_eq!(public, vec!["Recovered after a slow attempt"]);
+    }
+
+    #[cfg(feature = "eval")]
+    #[tokio::test]
+    async fn eval_switches_turn_off_only_the_named_nudges() {
+        assert!(!nudge_off("loop_warning"));
+        EVAL_NUDGES_OFF
+            .scope(Arc::new(vec!["loop_warning".to_owned()]), async {
+                assert!(nudge_off("loop_warning"));
+                assert!(!nudge_off("finish_checks"));
+                assert!(!nudge_off("notes_reminder"));
+                assert!(!nudge_off("repeat_receipt"));
+            })
+            .await;
+    }
+
+    #[test]
+    fn rate_limits_and_cut_off_answers_wait_longer_within_the_answer_deadline() {
+        use autoagents::llm::error::LLMError;
+        assert_eq!(answer_retry_limit(true, false), 5);
+        assert_eq!(answer_retry_limit(false, true), 4);
+        assert_eq!(answer_retry_limit(false, false), 2);
+        let limited = LLMError::RateLimitError {
+            status_code: 429,
+            message: "Rate limit exceeded".into(),
+            response_body: "".into(),
+            retry_after: None,
+            provider_code: None,
+        };
+        let waits: Vec<u64> = (0..RATE_LIMIT_RETRIES)
+            .map(|retry| {
+                request_retry_delay_with_rate_limit_floor(
+                    &limited,
+                    retry,
+                    RATE_LIMIT_BACKOFF_SECONDS,
+                )
+                .as_secs()
+            })
+            .collect();
+        for (retry, wait) in waits.iter().enumerate() {
+            let base = RATE_LIMIT_BACKOFF_SECONDS << retry;
+            assert!((base..=base * 3 / 2).contains(wait), "{waits:?}");
+        }
+        // The longest jittered waits (310 s base, at most 465 s) plus five more 60-second
+        // attempts still fit the 900-second answer deadline.
+        assert!(waits.iter().sum::<u64>() <= 465, "{waits:?}");
     }
 
     #[tokio::test]
@@ -6451,7 +6776,7 @@ mod tests {
                 .unwrap();
                 assert_eq!(
                     output["content"].as_str().unwrap().chars().count(),
-                    4000,
+                    crate::tools::READ_PAGE_CHARS,
                     "full authorized result is saved before delivery shrinks it"
                 );
             }

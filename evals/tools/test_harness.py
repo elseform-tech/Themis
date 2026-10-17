@@ -5,7 +5,7 @@ import os
 import tempfile
 import unittest
 
-from .__main__ import markdown, summarize
+from .__main__ import markdown, sandbox_wrapper, summarize
 from .grade import call_rows, outcome
 from .tasks import TASKS, prepare, read
 
@@ -89,3 +89,17 @@ class SummaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SandboxTests(unittest.TestCase):
+    @unittest.skipUnless(os.path.exists("/usr/bin/sandbox-exec"), "macOS only")
+    def test_only_the_runner_writes_the_projects_themis_folder(self):
+        with tempfile.TemporaryDirectory() as workdir:
+            runner = os.path.join(workdir, "tool_eval")
+            open(runner, "w").close()
+            command = sandbox_wrapper([runner], workdir, "auto")
+            with open(command[2], encoding="utf-8") as handle:
+                profile = handle.read()
+            real = os.path.realpath
+            self.assertIn(f'(subpath "{real(workdir)}/project/.themis")', profile)
+            self.assertIn(f'(require-not (process-path "{real(runner)}"))', profile)

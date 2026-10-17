@@ -1,0 +1,47 @@
+"""Saving quotes as JSON and reading them back."""
+
+import json
+
+from __pkg__.errors import StorageError
+from __pkg__.models import Quote
+
+
+def quote_to_dict(quote):
+    """A JSON-ready dict for a quote."""
+    return {
+        "order_id": quote.order_id,
+        "line_totals": [[sku, cents] for sku, cents in quote.line_totals],
+        "subtotal_cents": quote.subtotal_cents,
+        "tax_cents": quote.tax_cents,
+        "total_cents": quote.total_cents,
+    }
+
+
+def quote_from_dict(data):
+    """Rebuild a quote from `quote_to_dict` output; raises StorageError when fields are missing."""
+    try:
+        return Quote(
+            data["order_id"],
+            tuple((sku, int(cents)) for sku, cents in data["line_totals"]),
+            int(data["subtotal_cents"]),
+            int(data["tax_cents"]),
+            int(data["total_cents"]),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise StorageError(f"bad saved quote: {error}") from None
+
+
+def save_quote(quote, path):
+    """Write a quote to a JSON file."""
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(quote_to_dict(quote), handle, indent=2)
+        handle.write("\n")
+
+
+def load_quote(path):
+    """Read a quote saved by `save_quote`."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return quote_from_dict(json.load(handle))
+    except (OSError, ValueError) as error:
+        raise StorageError(f"cannot read {path}: {error}") from None

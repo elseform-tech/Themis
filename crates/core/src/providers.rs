@@ -41,6 +41,7 @@
 //! `From` conversion (both versions coexist in the dependency tree).
 
 use futures_util::{stream, Stream};
+pub mod reasoning;
 mod wire;
 
 use wire::*;
@@ -71,6 +72,7 @@ use serde::{Deserialize, Serialize};
 // so internal summary settings cannot leak into concurrent answer requests.
 tokio::task_local! { pub(crate) static COMPACTION_REQUEST: (); }
 tokio::task_local! { static MODEL_LIMITS: HashMap<String, (Option<usize>, Option<usize>)>; }
+tokio::task_local! { static MODEL_THINKING: HashMap<String, (bool, Vec<String>)>; }
 
 pub async fn with_catalog_limits<F: std::future::Future>(
     models: &[GoModel],
@@ -85,9 +87,41 @@ pub async fn with_catalog_limits<F: std::future::Future>(
                 .iter()
                 .map(|m| (m.id.clone(), (m.context_tokens, m.output_tokens)))
                 .collect(),
-            future,
+            MODEL_THINKING.scope(
+                models
+                    .iter()
+                    .map(|m| (m.id.clone(), (m.thinking_toggle, m.effort_levels.clone())))
+                    .collect(),
+                future,
+            ),
         )
         .await
+}
+
+/// How a request turns thinking on when the person chose no effort: the catalog's switch
+/// when the model has one, else a default effort (`medium`, else `high`). Claude takes
+/// adaptive thinking with an effort. Models not in the loaded catalog keep their default.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct ThinkingDefault {
+    pub(crate) switch_on: bool,
+    pub(crate) effort: Option<&'static str>,
+}
+
+pub(crate) fn thinking_default(model: &str) -> ThinkingDefault {
+    MODEL_THINKING
+        .try_with(|models| {
+            let Some((toggle, efforts)) = models.get(model) else {
+                return ThinkingDefault::default();
+            };
+            let effort = ["medium", "high"]
+                .into_iter()
+                .find(|level| efforts.iter().any(|known| known == level));
+            ThinkingDefault {
+                switch_on: *toggle,
+                effort,
+            }
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn summary_model(model: &str) -> &str {
@@ -320,6 +354,7 @@ struct ChatEventStream {
     buffer: Vec<u8>,
     ready: std::collections::VecDeque<Result<StreamChunk, LLMError>>,
     calls: std::collections::BTreeMap<usize, ToolCall>,
+    reasoning: reasoning::StreamedReasoning,
     messages_api: bool,
     responses_api: bool,
     done: bool,
@@ -334,6 +369,7 @@ impl ChatEventStream {
             buffer: Vec::new(),
             ready: std::collections::VecDeque::new(),
             calls: std::collections::BTreeMap::new(),
+            reasoning: reasoning::StreamedReasoning::default(),
             messages_api,
             responses_api,
             done: false,
@@ -415,6 +451,15 @@ impl ChatEventStream {
             return Err(LLMError::Generic(format!("Provider stream error: {error}")));
         }
         if self.responses_api
+            && value["type"] == "response.incomplete"
+            && value["response"]["incomplete_details"]["reason"] == "max_output_tokens"
+        {
+            // The same cut-off as a non-streamed reply, so it gets the cut-off retries.
+            return Err(LLMError::Generic(
+                "Provider response was truncated".to_owned(),
+            ));
+        }
+        if self.responses_api
             && matches!(
                 value["type"].as_str(),
                 Some("response.failed" | "response.incomplete")
@@ -454,6 +499,7 @@ impl ChatEventStream {
         if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
             self.ready.push_back(Ok(StreamChunk::Text(text.to_owned())));
         }
+        self.reasoning.take(delta);
         for call in delta["tool_calls"].as_array().into_iter().flatten() {
             self.merge_tool_call(call);
         }
@@ -490,6 +536,8 @@ impl ChatEventStream {
                 "Provider response was truncated".to_owned(),
             ));
         }
+        let calls: Vec<ToolCall> = self.calls.values().cloned().collect();
+        self.reasoning.finish(&calls);
         for (index, mut tool_call) in std::mem::take(&mut self.calls) {
             if self.messages_api && tool_call.function.arguments.is_empty() {
                 tool_call.function.arguments = "{}".to_owned();
@@ -573,16 +621,30 @@ impl CompatibleProvider {
                 if let Some(id) = message.tool_call_id {
                     input.push(serde_json::json!({"type":"function_call_output", "call_id":id, "output":message.content.unwrap_or_default()}));
                 } else {
+                    if message.role == "assistant" && message.tool_calls.is_none() {
+                        // An earlier final answer goes back after its own reasoning.
+                        if let Some(kept) = message
+                            .content
+                            .as_deref()
+                            .and_then(reasoning::replay_answer)
+                        {
+                            input.extend(kept.items);
+                        }
+                    }
                     if let Some(content) = message.content {
                         input.push(serde_json::json!({"role":message.role, "content":content}));
                     }
-                    for call in message.tool_calls.unwrap_or_default() {
+                    let calls = message.tool_calls.unwrap_or_default();
+                    if let Some(kept) = reasoning::replay(&calls) {
+                        input.extend(kept.items);
+                    }
+                    for call in calls {
                         input.push(serde_json::json!({"type":"function_call", "call_id":call.id, "name":call.function.name, "arguments":call.function.arguments}));
                     }
                 }
             }
-            let mut body =
-                serde_json::json!({"model":self.model,"input":input,"stream":stream,"store":false});
+            // Requests are not stored, so reasoning comes back encrypted to be replayed.
+            let mut body = serde_json::json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
             if let Some(tools) = tools {
                 body["tools"] = tools.iter().map(|tool| serde_json::json!({"type":"function","name":tool.function.name,"description":tool.function.description,"parameters":tool.function.parameters,"strict":false})).collect();
             }
@@ -635,6 +697,37 @@ impl CompatibleProvider {
             }
             if let Some(top_p) = sampling.top_p {
                 body["top_p"] = top_p.into();
+            }
+        }
+        // Thinking on by default for answers (summaries keep it off, above).
+        if COMPACTION_REQUEST.try_with(|_| ()).is_err() {
+            let thinking = thinking_default(&self.model);
+            if let (None, Some(effort), false) =
+                (&self.reasoning_effort, thinking.effort, thinking.switch_on)
+            {
+                if self.uses_responses() {
+                    body["reasoning"] = serde_json::json!({"effort":effort});
+                } else if !self.uses_messages() {
+                    body["reasoning_effort"] = effort.into();
+                }
+            }
+            if thinking.switch_on && self.model.starts_with("claude-") {
+                // Claude rejects a fixed budget: adaptive thinking, steered by effort.
+                body["thinking"] = serde_json::json!({"type":"adaptive"});
+                if let Some(effort) = self.reasoning_effort.as_deref().or(thinking.effort) {
+                    body["output_config"] = serde_json::json!({"effort":effort});
+                }
+            } else if thinking.switch_on {
+                if self.uses_messages() {
+                    // Messages thinking needs a budget below the output cap.
+                    let cap = body["max_tokens"].as_u64().unwrap_or(16_384);
+                    if cap > 2048 {
+                        body["thinking"] =
+                            serde_json::json!({"type":"enabled","budget_tokens":cap / 2});
+                    }
+                } else if !self.uses_responses() {
+                    body["thinking"] = serde_json::json!({"type":"enabled"});
+                }
             }
         }
         let request = if self.uses_responses() {
@@ -833,6 +926,11 @@ impl ChatProvider for CompatibleProvider {
             return Err(LLMError::Generic("Provider response was truncated".into()));
         }
         trace.complete();
+        reasoning::remember(
+            choice.message.tool_calls.as_deref().unwrap_or_default(),
+            choice.message.content.as_deref().unwrap_or_default(),
+            reasoning::from_message(&choice.message),
+        );
         Ok(Box::new(CompatibleChatResponse {
             text: choice.message.content,
             tool_calls: choice.message.tool_calls,
@@ -889,6 +987,11 @@ impl ChatProvider for CompatibleProvider {
             if choice.finish_reason.as_deref() == Some("length") {
                 return Err(LLMError::Generic("Provider response was truncated".into()));
             }
+            reasoning::remember(
+                choice.message.tool_calls.as_deref().unwrap_or_default(),
+                choice.message.content.as_deref().unwrap_or_default(),
+                reasoning::from_message(&choice.message),
+            );
             let mut chunks = Vec::new();
             if let Some(text) = choice.message.content {
                 chunks.push(Ok(StreamChunk::Text(text)));
@@ -1077,6 +1180,9 @@ pub struct GoModel {
     pub context_tokens: Option<usize>,
     #[serde(default)]
     pub output_tokens: Option<usize>,
+    /// The catalog lists a thinking on/off switch for this model.
+    #[serde(default)]
+    pub thinking_toggle: bool,
 }
 
 #[derive(Deserialize)]
@@ -1125,11 +1231,18 @@ fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoModel> {
                 .flat_map(|option| option.values.iter().cloned())
                 .collect();
             let limits = catalog.go.models.get(&id).map(|model| &model.limit);
+            let thinking_toggle = catalog.go.models.get(&id).is_some_and(|model| {
+                model
+                    .reasoning_options
+                    .iter()
+                    .any(|option| option.kind == "toggle")
+            });
             GoModel {
                 id,
                 effort_levels,
                 context_tokens: limits.and_then(|l| l.context),
                 output_tokens: limits.and_then(|l| l.output),
+                thinking_toggle,
             }
         })
         .collect()
@@ -1158,6 +1271,7 @@ pub async fn refresh_go_catalog(base_url: &str, api_key: &str) -> Result<Vec<GoM
                 effort_levels: Vec::new(),
                 context_tokens: None,
                 output_tokens: None,
+                thinking_toggle: false,
             })
             .collect(),
     })
@@ -1250,8 +1364,16 @@ pub mod fuzzing {
     pub fn convert_provider_json(value: serde_json::Value) {
         let _ = wire::responses_response(value.clone());
         let _ = wire::messages_response(value.clone());
-        let _ = wire::responses_stream_event(value.clone());
-        let _ = wire::messages_stream_event(value);
+        let mut kept = reasoning::StreamedReasoning::default();
+        for event in [
+            wire::responses_stream_event(value.clone()),
+            wire::messages_stream_event(value.clone()),
+            value,
+        ] {
+            for choice in event["choices"].as_array().into_iter().flatten() {
+                kept.take(&choice["delta"]);
+            }
+        }
     }
 }
 
@@ -1564,12 +1686,14 @@ mod tests {
                 effort_levels: vec!["none".into()],
                 context_tokens: Some(100000),
                 output_tokens: Some(1000),
+                thinking_toggle: false,
             },
             GoModel {
                 id: "longcat-2.5-preview-free".into(),
                 effort_levels: vec![],
                 context_tokens: Some(200000),
                 output_tokens: Some(8192),
+                thinking_toggle: false,
             },
         ];
         let provider = CompatibleProvider::go(
@@ -2313,6 +2437,399 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chat_reasoning_is_replayed_with_its_own_tool_calls_but_not_into_summaries() {
+        use futures_util::StreamExt;
+        use wiremock::matchers::body_partial_json;
+        let server = MockServer::start().await;
+        let events = [
+            json!({"choices":[{"delta":{"reasoning_content":"The total is off by "},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"reasoning_content":"one bundle.","tool_calls":[{"index":0,"id":"replay-call-1","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}),
+        ];
+        let body = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>()
+            + "data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({"stream": true})))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({"stream": false})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"done","reasoning_content":"hidden","tool_calls":[{"id":"replay-call-2","type":"function","function":{"name":"list_dir","arguments":"{}"}}]},"finish_reason":"tool_calls"}]})))
+            .mount(&server)
+            .await;
+        let provider =
+            CompatibleProvider::go("test".into(), "mock".into(), Some(server.uri()), None);
+        let call = |id: &str| ToolCall {
+            id: id.into(),
+            call_type: "function".into(),
+            function: autoagents::llm::FunctionCall {
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            },
+        };
+        let history = |id: &str| {
+            vec![
+                user_message("check the total"),
+                ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::ToolUse(vec![call(id)]),
+                    content: String::new(),
+                },
+                ChatMessage {
+                    role: ChatRole::Tool,
+                    message_type: MessageType::ToolResult(vec![call(id)]),
+                    content: String::new(),
+                },
+            ]
+        };
+        let mut stream = provider
+            .chat_stream_with_tools(&[user_message("check")], None, None)
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        provider
+            .chat(&history("replay-call-1"), None)
+            .await
+            .unwrap();
+        provider
+            .chat(&history("replay-call-2"), None)
+            .await
+            .unwrap();
+        // Switched off (an eval comparison), and in a summary request, it is not sent.
+        reasoning::REPLAY_REASONING
+            .scope(false, provider.chat(&history("replay-call-1"), None))
+            .await
+            .unwrap();
+        COMPACTION_REQUEST
+            .scope((), provider.chat(&history("replay-call-1"), None))
+            .await
+            .unwrap();
+        let sent: Vec<Value> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|request| {
+                request.body_json::<Value>().unwrap()["messages"][1]["reasoning_content"].clone()
+            })
+            .collect();
+        // Streamed and non-streamed reasoning both return with their own calls.
+        assert_eq!(sent[1], "The total is off by one bundle.");
+        assert_eq!(sent[2], "hidden");
+        assert_eq!(sent[3], Value::Null);
+        assert_eq!(sent[4], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn thinking_is_on_by_default_for_answers_but_not_for_summaries() {
+        let model = |id: &str, toggle: bool, efforts: &[&str]| GoModel {
+            id: id.into(),
+            effort_levels: efforts.iter().map(|e| e.to_string()).collect(),
+            context_tokens: None,
+            output_tokens: None,
+            thinking_toggle: toggle,
+        };
+        let catalog = [
+            model("longcat-test", true, &[]),
+            model("qwen-test", true, &["low", "medium"]),
+            model("muse-test", false, &["minimal", "low", "medium", "high"]),
+            model("deepseek-test", false, &["low", "high", "max"]),
+            model("plain-test", false, &[]),
+            model("claude-test", true, &["low", "medium", "high"]),
+        ];
+        let body = |id: &str, effort: Option<&str>, summary: bool| {
+            let mut provider = CompatibleProvider::go("test".into(), id.into(), None, None);
+            provider.reasoning_effort = effort.map(str::to_owned);
+            let build = || {
+                let request = provider
+                    .chat_request(&[user_message("hi")], None, true, None)
+                    .unwrap()
+                    .build()
+                    .unwrap();
+                serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap())
+                    .unwrap()
+            };
+            let scoped = || OUTPUT_LIMIT.sync_scope(8192, build);
+            let run = || {
+                if summary {
+                    COMPACTION_REQUEST.sync_scope((), scoped)
+                } else {
+                    scoped()
+                }
+            };
+            let models: HashMap<_, _> = catalog
+                .iter()
+                .map(|m| (m.id.clone(), (m.thinking_toggle, m.effort_levels.clone())))
+                .collect();
+            MODEL_THINKING.sync_scope(models, run)
+        };
+        assert_eq!(
+            body("longcat-test", None, false)["thinking"],
+            json!({"type":"enabled"})
+        );
+        assert_eq!(
+            body("qwen-test", None, false)["thinking"],
+            json!({"type":"enabled","budget_tokens":4096})
+        );
+        assert_eq!(
+            body("muse-test", None, false)["reasoning"],
+            json!({"effort":"medium"})
+        );
+        assert_eq!(
+            body("deepseek-test", None, false)["reasoning_effort"],
+            "high"
+        );
+        // The person's own effort wins; a model not in the catalog keeps its own default.
+        assert_eq!(
+            body("muse-test", Some("low"), false)["reasoning"],
+            json!({"effort":"low"})
+        );
+        let plain = body("plain-test", None, false);
+        assert!(plain.get("thinking").is_none() && plain.get("reasoning_effort").is_none());
+        let claude = body("claude-test", None, false);
+        assert_eq!(claude["thinking"], json!({"type":"adaptive"}));
+        assert_eq!(claude["output_config"], json!({"effort":"medium"}));
+        assert_eq!(
+            body("claude-test", Some("high"), false)["output_config"],
+            json!({"effort":"high"})
+        );
+        // Summaries keep thinking off.
+        assert_eq!(
+            body("longcat-test", None, true)["thinking"],
+            json!({"type":"disabled"})
+        );
+        assert!(body("deepseek-test", None, true)
+            .get("reasoning_effort")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn a_final_answers_reasoning_goes_back_with_it_in_later_messages() {
+        use futures_util::StreamExt;
+        let server = MockServer::start().await;
+        let events = [
+            json!({"choices":[{"delta":{"reasoning_content":"Bundles count per SKU."},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"content":"The total is 42."},"finish_reason":"stop"}]}),
+        ];
+        let body = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>()
+            + "data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let provider =
+            CompatibleProvider::go("test".into(), "mock".into(), Some(server.uri()), None);
+        let mut stream = provider
+            .chat_stream_with_tools(&[user_message("total?")], None, None)
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        let later = [
+            user_message("total?"),
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: "The total is 42.".into(),
+            },
+            user_message("and with tax?"),
+        ];
+        let request = provider
+            .chat_request(&later, None, false, None)
+            .unwrap()
+            .build()
+            .unwrap();
+        let sent: Value =
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(
+            sent["messages"][1]["reasoning_content"],
+            "Bundles count per SKU."
+        );
+        assert!(sent["messages"][0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn messages_answers_keep_their_thinking_except_for_claude() {
+        let calls = [];
+        let blocks = vec![json!({"type":"thinking","thinking":"t","signature":"s"})];
+        reasoning::remember(
+            &calls,
+            "Answer for the messages test.",
+            reasoning::Reasoning {
+                blocks,
+                ..Default::default()
+            },
+        );
+        let history = [
+            user_message("q"),
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: "Answer for the messages test.".into(),
+            },
+            user_message("next"),
+        ];
+        for (model, kept) in [("qwen-test", true), ("claude-test", false)] {
+            let body = wire::messages_body(model, &history, None, false).unwrap();
+            let first = &body["messages"][1]["content"][0]["type"];
+            assert_eq!(first == "thinking", kept, "{model}: {body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_streamed_responses_cut_off_is_reported_as_truncated() {
+        use futures_util::StreamExt;
+        let server = MockServer::start().await;
+        let body = format!(
+            "data: {}\n\n",
+            json!({"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}})
+        );
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let provider =
+            CompatibleProvider::go("test".into(), "gpt-test".into(), Some(server.uri()), None);
+        let mut stream = provider
+            .chat_stream_with_tools(&[user_message("write")], None, None)
+            .await
+            .unwrap();
+        let mut error = None;
+        while let Some(chunk) = stream.next().await {
+            if let Err(failure) = chunk {
+                error = Some(failure.to_string());
+            }
+        }
+        assert!(error.unwrap().contains("Provider response was truncated"));
+    }
+
+    #[tokio::test]
+    async fn messages_thinking_blocks_return_first_and_unchanged_with_their_tool_uses() {
+        use futures_util::StreamExt;
+        let server = MockServer::start().await;
+        let events = [
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Check the "}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"bundle."}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-1"}}),
+            json!({"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque"}}),
+            json!({"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"thinking-call-1","name":"read_file","input":{}}}),
+            json!({"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
+            json!({"type":"message_stop"}),
+        ];
+        let body = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>();
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let provider =
+            CompatibleProvider::go("test".into(), "qwen-test".into(), Some(server.uri()), None);
+        let mut stream = provider
+            .chat_stream_with_tools(&[user_message("check")], None, None)
+            .await
+            .unwrap();
+        let mut calls = Vec::new();
+        let mut text = String::new();
+        while let Some(chunk) = stream.next().await {
+            match chunk.unwrap() {
+                StreamChunk::ToolUseComplete { tool_call, .. } => calls.push(tool_call),
+                StreamChunk::Text(delta) => text.push_str(&delta),
+                _ => {}
+            }
+        }
+        assert_eq!(text, "", "thinking never becomes public text");
+        let history = [
+            user_message("check"),
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(calls.clone()),
+                content: "Reading.".into(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(calls),
+                content: String::new(),
+            },
+        ];
+        let body = provider
+            .chat_request(&history, None, false, None)
+            .unwrap()
+            .build()
+            .unwrap();
+        let body: Value = serde_json::from_slice(body.body().unwrap().as_bytes().unwrap()).unwrap();
+        let content = &body["messages"][1]["content"];
+        assert_eq!(
+            content[0],
+            json!({"type":"thinking","thinking":"Check the bundle.","signature":"sig-1"})
+        );
+        assert_eq!(
+            content[1],
+            json!({"type":"redacted_thinking","data":"opaque"})
+        );
+        assert_eq!(content[2]["type"], "text");
+        assert_eq!(content[3]["id"], "thinking-call-1");
+    }
+
+    #[tokio::test]
+    async fn responses_reasoning_items_return_before_their_function_calls() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":[
+                {"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"enc-1"},
+                {"type":"function_call","call_id":"responses-call-1","name":"read_file","arguments":"{}"}]})))
+            .mount(&server)
+            .await;
+        let provider =
+            CompatibleProvider::go("test".into(), "gpt-test".into(), Some(server.uri()), None);
+        let reply = provider.chat(&[user_message("check")], None).await.unwrap();
+        let calls = reply.tool_calls().unwrap();
+        assert_eq!(reply.text().unwrap_or_default(), "");
+        let first: Value = server.received_requests().await.unwrap()[0]
+            .body_json()
+            .unwrap();
+        assert_eq!(first["include"], json!(["reasoning.encrypted_content"]));
+        let history = [
+            user_message("check"),
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(calls.clone()),
+                content: String::new(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(calls),
+                content: String::new(),
+            },
+        ];
+        let body = provider
+            .chat_request(&history, None, false, None)
+            .unwrap()
+            .build()
+            .unwrap();
+        let body: Value = serde_json::from_slice(body.body().unwrap().as_bytes().unwrap()).unwrap();
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input[1]["type"], "reasoning");
+        assert_eq!(input[1]["encrypted_content"], "enc-1");
+        assert_eq!(input[2]["type"], "function_call");
+        assert_eq!(input[2]["call_id"], "responses-call-1");
+    }
+
+    #[tokio::test]
     async fn reasoning_effort_reaches_wire() {
         let server = MockServer::start().await;
         Mock::given(method("POST")).and(path("/responses"))
@@ -2544,6 +3061,36 @@ mod tests {
                     .unwrap(),
             )
             .unwrap()
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+        /// Whatever a provider streams, reasoning parts are collected without panicking and
+        /// only from the fields that carry reasoning; deltas with no block are dropped.
+        #[test]
+        fn any_streamed_reasoning_parts_collect_without_panicking(
+            parts in proptest::collection::vec((0usize..6, "[ -~]{0,8}"), 0..12)
+        ) {
+            let fields = ["reasoning_content", "reasoning", "thinking_delta", "signature_delta", "content", "thinking_block"];
+            let mut collected = reasoning::StreamedReasoning::default();
+            let mut expected_text = String::new();
+            let mut blocks = 0;
+            for (field, text) in &parts {
+                let delta = if fields[*field] == "thinking_block" {
+                    blocks += 1;
+                    json!({"thinking_block": {"type": "thinking", "thinking": text}})
+                } else {
+                    json!({fields[*field]: text})
+                };
+                if *field < 2 {
+                    expected_text.push_str(text);
+                }
+                collected.take(&delta);
+            }
+            let got = collected.peek();
+            proptest::prop_assert_eq!(&got.text, &expected_text);
+            proptest::prop_assert_eq!(got.blocks.len(), blocks);
         }
     }
 
@@ -2834,13 +3381,15 @@ mod tests {
                     id: "model-a".into(),
                     effort_levels: vec!["low".into(), "high".into(), "max".into()],
                     context_tokens: Some(1000000),
-                    output_tokens: Some(65536)
+                    output_tokens: Some(65536),
+                    thinking_toggle: true,
                 },
                 GoModel {
                     id: "model-b".into(),
                     effort_levels: vec![],
                     context_tokens: None,
-                    output_tokens: None
+                    output_tokens: None,
+                    thinking_toggle: false,
                 },
             ]
         );

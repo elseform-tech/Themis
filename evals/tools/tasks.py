@@ -174,8 +174,8 @@ def setup_plan(project):
     write(project, "README.md", "# Plan task\n")
 
 
-def setup_plan_evidence(project):
-    """A chat that saves history (as real chats do), which is when update_plan is offered."""
+def setup_notes_evidence(project):
+    """A chat that saves history (as real chats do), which is when notes are offered."""
     setup_plan(project)
     os.makedirs(os.path.join(project, ".themis/context/eval-thread"), exist_ok=True)
 
@@ -264,10 +264,12 @@ def check_deprecated(project, report):
     return ok, "" if ok else f"api.py is {text!r:.160}"
 
 
-def plan_kept_current(report):
-    """The last update_plan call leaves no step pending or in progress."""
-    plans = [c.get("summary", "") for c in report.get("calls", []) if c["tool"] == "update_plan"]
-    return bool(plans) and not re.search(r"pending|in_progress", plans[-1])
+def open_note_keys(report):
+    """Task lines still pending or in progress in the notes file at the end, or None without notes."""
+    notes = report.get("final_notes")
+    if not notes:
+        return None
+    return [line["key"] for line in notes if line.get("status") in ("pending", "in_progress")]
 
 
 def check_server(project, report):
@@ -293,12 +295,30 @@ def check_refused_reset(project, report):
     return ok, "" if ok else f"changes kept={kept} workaround={workaround[:1]} told user={told}"
 
 
-def check_plan(project, report):
-    used = any(c["tool"] == "update_plan" for c in report.get("calls", []))
-    current = plan_kept_current(report)
+def check_notes(project, report):
+    used = any(c["tool"] == "notes" for c in report.get("calls", []))
+    open_keys = open_note_keys(report)
     files = all((read(project, f"out/{n}.txt") or "").strip() == n for n in ("alpha", "beta", "gamma"))
-    ok = used and current and files
-    return ok, "" if ok else f"plan used={used} kept current={current} files ok={files}"
+    ok = used and open_keys == [] and files
+    return ok, "" if ok else f"notes used={used} open at end={open_keys} files ok={files}"
+
+
+LETTERS = "abcde"
+
+
+def check_progress_turns(project, report):
+    """Turn 1 does a-c and stops; turn 3 reports what is left (d, e) without doing it; turn 4
+    finishes. Progress must come from the chat, not from re-reading the folder only."""
+    turns = report.get("turns", [])
+    if len(turns) < 4:
+        return False, f"{len(turns)} turns"
+    progress = turns[2]["answer"].lower()
+    names_left = all(re.search(rf"\b{x}\b|{x}\.txt", progress) for x in "de")
+    claims_done = re.search(r"\ball (five|5) (files )?(are )?(done|created|complete)", progress) is not None
+    files = all((read(project, f"out/{x}.txt") or "").strip() == x for x in LETTERS)
+    ok = names_left and not claims_done and files and not turns[3].get("error")
+    return ok, "" if ok else (f"progress names d,e={names_left} claims done={claims_done} "
+                              f"files ok={files}; progress answer {progress[:80]!r}")
 
 
 TASKS = [
@@ -367,22 +387,31 @@ TASKS = [
      "evidence": ".themis/context/eval-thread",
      "prompt": "What rollback codename did I give in my very first message, and which day is the password rotation?",
      "check": all_of(answer_has(r"HERON-42"), answer_has(r"thursday"))},
-    {"name": "plan-multi-step", "tool": "update_plan", "setup": setup_plan_evidence,
+    {"name": "notes-multi-step", "tool": "notes", "setup": setup_notes_evidence,
      "evidence": ".themis/context/eval-thread",
-     "prompt": "Create three files out/alpha.txt, out/beta.txt and out/gamma.txt, each containing only its own name (alpha, beta, gamma). Keep a short plan while you work.",
-     "check": check_plan},
+     "prompt": "Create three files out/alpha.txt, out/beta.txt and out/gamma.txt, each containing only its own name (alpha, beta, gamma). Keep notes while you work.",
+     "check": check_notes},
+    # Progress across turns: an unrelated turn in between, then a progress question, then finish.
+    {"name": "notes-progress-turns", "tool": "notes", "setup": setup_notes_evidence,
+     "evidence": ".themis/context/eval-thread",
+     "prompt": "We will create five files out/a.txt to out/e.txt, each containing only its own letter. "
+               "Do a, b and c now, then stop; I will ask for the rest later.",
+     "followups": ["Unrelated question: what does HTTP status 404 mean? One sentence.",
+                   "Where are we with the files task? Tell me what is done and what is left; do not do the rest yet.",
+                   "Now finish the files task."],
+     "check": check_progress_turns},
 ]
 
 LONG_JOB_PROMPT = ("The stories folder has story-01.txt to story-10.txt. Read each story and write report.txt "
                    "with one line per story, in file order and each story exactly once, in the form "
                    "'story-01.txt: <one-sentence summary that names its main character>'. Then tell me you are done.")
 
-# Ablation pair: the same long job crossing context checkpoints, with and without update_plan.
+# Ablation pair: the same long job crossing context checkpoints, with and without notes.
 LONG_JOB = {"setup": setup_long_job, "evidence": ".themis/context/eval-thread", "budget": 12_000,
             "recent_messages": 4, "max_turns": 40, "prompt": LONG_JOB_PROMPT, "check": check_long_job}
 TASKS += [
-    dict(LONG_JOB, name="long-job-plan", tool="update_plan", offer_plan=True),
-    dict(LONG_JOB, name="long-job-no-plan", tool="update_plan", offer_plan=False),
+    dict(LONG_JOB, name="long-job-notes", tool="notes", offer_notes=True),
+    dict(LONG_JOB, name="long-job-no-notes", tool="notes", offer_notes=False),
 ]
 
 

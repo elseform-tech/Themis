@@ -58,7 +58,7 @@ pub(super) fn original_excerpt(call: &ToolCall, result: &ToolCall) -> Option<Val
     let start = read["excerpt_offset"].as_u64()?;
     let end = start.checked_add(chars)?;
     let total = read["total_chars"].as_u64()?;
-    if chars > 4000 || end > total {
+    if chars > crate::tools::READ_PAGE_CHARS as u64 || end > total {
         return None;
     }
     Some(json!({

@@ -1,0 +1,25 @@
+"""Quotes agreed with customers before 1.4. These numbers must never change."""
+
+import unittest
+
+from __pkg__.parser import parse_order
+from __pkg__.pricing import price_order
+
+from tests.support import catalog
+
+AGREED = [
+    ("order L-1\ncustomer Old Client\nline BK-1 6\nline TY-1 1\n", 3200, 240, 3440),
+    ("order L-2\ncustomer Old Client\nline FD-1 5\n", 1050, 74, 1124),
+    ("order L-3\ncustomer Old Client\nline GN-1 2\nline BK-1 1\n", 4398, 800, 5198),
+]
+
+
+class LegacyQuotesTest(unittest.TestCase):
+    def test_agreed_quotes(self):
+        for text, subtotal, tax, total in AGREED:
+            quote = price_order(parse_order(text), catalog())
+            self.assertEqual((quote.subtotal_cents, quote.tax_cents, quote.total_cents), (subtotal, tax, total), text)
+
+
+if __name__ == "__main__":
+    unittest.main()

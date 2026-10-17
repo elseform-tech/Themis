@@ -1,0 +1,35 @@
+"""Money helpers. Every amount in __pkg__ is an integer number of cents."""
+
+from __pkg__.errors import MoneyError
+
+
+def parse_amount(text):
+    """Parse '12.50', '12.5' or '12' into cents; a leading '-' makes it negative."""
+    text = text.strip()
+    if not text:
+        raise MoneyError("empty amount")
+    negative = text.startswith("-")
+    if negative:
+        text = text[1:]
+    whole, _, fraction = text.partition(".")
+    if not whole.isdigit() or (fraction and (not fraction.isdigit() or len(fraction) > 2)):
+        raise MoneyError(f"bad amount: {text!r}")
+    cents = int(whole) * 100 + int(fraction.ljust(2, "0") or "0")
+    return -cents if negative else cents
+
+
+def format_cents(cents):
+    """Format cents as '12.50', with a leading '-' when negative."""
+    sign = "-" if cents < 0 else ""
+    cents = abs(cents)
+    return f"{sign}{cents // 100}.{cents % 100:02d}"
+
+
+def percent_of(cents, percent):
+    """A whole-percent share of an amount, rounded down to whole cents."""
+    return cents * percent // 100
+
+
+def basis_points_of(cents, basis_points):
+    """A share of an amount in basis points (1/100 of a percent), rounded half up to whole cents."""
+    return (cents * basis_points + 5000) // 10000
