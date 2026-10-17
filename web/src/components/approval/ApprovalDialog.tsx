@@ -77,6 +77,9 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
   return (
     <Dialog
       open={open}
+      // A stray click elsewhere must not decide for the person: only a button, its number
+      // key or Escape (an explicit Deny) does.
+      closeOnOutsideClick={false}
       title={outside ? "Run outside the sandbox?" : "Approval required"}
       onClose={() => onDecide("deny")}
     >
