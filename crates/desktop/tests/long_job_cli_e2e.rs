@@ -543,3 +543,58 @@ async fn cli_retries_a_stream_that_dropped_part_way() {
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     serving.abort();
 }
+
+/// On macOS an agent's command cannot use the Keychain, and the agent is told why.
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_keeps_agent_commands_out_of_the_keychain() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            let answered = body["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+            if answered {
+                reply(json!({"content":"Checked."}))
+            } else {
+                reply(json!({"content":"","tool_calls":[{"id":"keychain-1","type":"function","function":{"name":"shell","arguments":json!({"command":"/usr/bin/security","args":["list-keychains"]}).to_string()}}]}))
+            }
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    let done = send(data.path(), &mut events, &id, "List the keychains").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    let requests = provider.received_requests().await.unwrap();
+    let last = String::from_utf8_lossy(&requests.last().unwrap().body).into_owned();
+    if last.contains("sandbox is not available") || last.contains("unsandboxed") {
+        eprintln!("skipping: no sandbox backend here");
+    } else {
+        assert!(!last.contains("login.keychain"), "{last}");
+        assert!(last.contains("sandbox.allow_keychain"), "{last}");
+    }
+    serving.abort();
+}

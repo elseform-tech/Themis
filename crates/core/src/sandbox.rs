@@ -110,6 +110,10 @@ pub struct SandboxConfig {
     pub network: NetworkPolicy,
     /// Extra folders sandboxed commands may write to: absolute, or `~/...`.
     pub writable_paths: Vec<String>,
+    /// macOS: let sandboxed commands use the Keychain (for example git's HTTPS credential
+    /// helper). Off by default, so an agent's command can neither read saved passwords nor
+    /// raise Keychain prompts.
+    pub allow_keychain: bool,
 }
 
 impl Default for SandboxConfig {
@@ -119,6 +123,7 @@ impl Default for SandboxConfig {
             backend: BackendChoice::Auto,
             network: NetworkPolicy::Allow,
             writable_paths: Vec::new(),
+            allow_keychain: false,
         }
     }
 }
@@ -282,6 +287,12 @@ pub fn check_restriction(
                         "{origin} configuration cannot add sandbox.writable_paths ({path:?}); it may only remove entries"
                     );
                 }
+            }
+            "allow_keychain" => {
+                ensure!(
+                    value.as_bool() != Some(true) || current.allow_keychain,
+                    "{origin} configuration cannot allow the Keychain (sandbox.allow_keychain); only your user runtime.jsonc can"
+                );
             }
             // Unknown fields fail later with the ordinary schema error.
             _ => {}
@@ -557,6 +568,7 @@ pub struct SandboxPlan {
     reason: String,
     network: NetworkPolicy,
     network_enforced: bool,
+    allow_keychain: bool,
     landlock_abi: u32,
     configured_writable: Vec<String>,
     home: Option<PathBuf>,
@@ -729,6 +741,7 @@ impl SandboxPlan {
             reason,
             network: inputs.config.network,
             network_enforced,
+            allow_keychain: inputs.config.allow_keychain,
             landlock_abi,
             configured_writable: inputs.config.writable_paths.clone(),
             home,
@@ -779,6 +792,11 @@ impl SandboxPlan {
             )),
             _ => None,
         }
+    }
+
+    /// Whether sandboxed commands may use the macOS Keychain.
+    pub fn allow_keychain(&self) -> bool {
+        self.allow_keychain
     }
 
     pub fn network(&self) -> NetworkPolicy {
