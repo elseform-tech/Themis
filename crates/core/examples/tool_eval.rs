@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
         (Some(_), Err(_)) => "mock-key".to_owned(),
         (None, Err(_)) => anyhow::bail!("OPENCODE_KEY is not set"),
     };
-    let mut config = ProviderConfig::new(ProviderKind::Go, key);
+    let mut config = ProviderConfig::new(ProviderKind::Go, key.clone());
     if let Some(model) = &model {
         config = config.with_model(model);
     }
@@ -82,7 +82,20 @@ async fn main() -> anyhow::Result<()> {
         hide_tools: strings(&task["hide_tools"]),
         replay_reasoning: task["replay_reasoning"].as_bool().unwrap_or(true),
     };
-    let report = run_tool_task(&llm, &project, prompt, options).await?;
+    // As the app does: the live catalog's limits and thinking switches apply to the run
+    // (none without a real key, or when the catalog cannot be loaded).
+    let catalog = if std::env::var("OPENCODE_KEY").is_ok() {
+        themis_core::providers::refresh_go_catalog(themis_core::providers::GO_BASE_URL, &key)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let report = themis_core::providers::with_catalog_limits(
+        &catalog,
+        run_tool_task(&llm, &project, prompt, options),
+    )
+    .await?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }

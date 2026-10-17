@@ -245,3 +245,13 @@ class TaskPlumbingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HiddenPassTest(unittest.TestCase):
+    def test_the_share_never_goes_below_zero(self):
+        from .__main__ import hidden_pass
+        self.assertEqual(hidden_pass({}), 0.0)
+        self.assertEqual(hidden_pass({"a": {"run": 4, "failed": ["x"]}}), 0.75)
+        # An import error lists every planned test as failed though only one ran.
+        self.assertEqual(hidden_pass({"a": {"run": 1, "failed": ["x", "y", "z"]}}), 0.0)
+        self.assertEqual(hidden_pass({"a": {"run": 2, "failed": ["x", "x"]}}), 0.5)

@@ -47,6 +47,14 @@ ARMS = {
 STAGES = ["1_parser_pricing", "2_progress", "3_bug_fix", "4_cli_docs", "5_recall"]
 
 
+def hidden_pass(final):
+    """Share of hidden test methods that passed in the final stage, from 0 to 1. A suite that
+    errors before running lists failures it never ran, so failures count at most the run."""
+    run = sum(r.get("run", 0) for r in final.values())
+    failed = sum(min(len(set(r.get("failed", []))), r.get("run", 0)) for r in final.values())
+    return (run - failed) / run if run else 0.0
+
+
 def make_task(seed, memory, arm):
     """One trial's task: the project for `seed`, its five messages and its grader."""
     graded = {}
@@ -75,11 +83,9 @@ def make_task(seed, memory, arm):
     def measure(project, report):
         stages = graded.get("stages", {})
         final = stages.get("4_cli_docs", {}).get("hidden", {})
-        run = sum(r.get("run", 0) for r in final.values())
-        failed = sum(len(r.get("failed", [])) for r in final.values())
         return {"seed": seed, "package": holder["facts"]["package"], "cause": graded.get("cause"),
                 "stage_ok": {name: bool(stages.get(name, {}).get("ok")) for name in STAGES},
-                "final_hidden_pass": (run - failed) / run if run else 0.0,
+                "final_hidden_pass": hidden_pass(final),
                 "rules_broken": sorted({p for s in stages.values() for p in s.get("rules", [])})[:10],
                 "tests_added": stages.get("1_parser_pricing", {}).get("tests_added"),
                 "recalled": stages.get("5_recall", {}).get("recalled"),
@@ -145,6 +151,20 @@ def run(args):
     jobs = [(trial, args.seed + trial, memory, arm)
             for trial in range(args.trials) for memory in memories for arm in args.arm]
     rows, errors, retries = [], [], 0
+    os.makedirs(RESULTS, exist_ok=True)
+    out = args.out or os.path.join(RESULTS, f"{datetime.date.today()}-{args.model or 'mock'}.json")
+
+    def save():
+        # Written after every run, so stopping a round early keeps what was graded.
+        summary = {"suite": "project", "model": args.model, "trials": args.trials,
+                   "created": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                   "note": "Live-model benchmark audit; not an automated runtime check.",
+                   "summary": summarize(rows), "errors": errors, "retried": retries, "rows": rows}
+        with open(out, "w", encoding="utf-8") as handle:
+            json.dump(summary, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        return summary
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = {}
         for trial, seed, memory, arm in jobs:
@@ -163,15 +183,8 @@ def run(args):
                 rows.append(dict(row, trial=trial, arm=task["arm"], memory=task["memory"]))
                 print(f"trial {trial + 1} {task['name']}: {'pass' if row['passed'] else 'fail'} "
                       f"({row['why'] or 'all stages'}; {row['compactions']} compactions)", flush=True)
-    summary = {"suite": "project", "model": args.model, "trials": args.trials,
-               "created": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-               "note": "Live-model benchmark audit; not an automated runtime check.",
-               "summary": summarize(rows), "errors": errors, "retried": retries, "rows": rows}
-    os.makedirs(RESULTS, exist_ok=True)
-    out = args.out or os.path.join(RESULTS, f"{datetime.date.today()}-{args.model or 'mock'}.json")
-    with open(out, "w", encoding="utf-8") as handle:
-        json.dump(summary, handle, indent=2, ensure_ascii=False)
-        handle.write("\n")
+            save()
+    summary = save()
     print(markdown(summary))
     print(out)
     return 0
