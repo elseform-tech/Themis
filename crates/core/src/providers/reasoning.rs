@@ -35,8 +35,12 @@ const KEPT: usize = 512;
 /// The reasoning that came with one set of tool calls.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Reasoning {
-    /// Chat Completions `reasoning_content`.
+    /// Chat Completions reasoning text, sent back under the field it came in.
     pub(super) text: String,
+    /// True when the text came as `reasoning` (Kimi, Hunyuan), not `reasoning_content`.
+    pub(super) text_as_reasoning: bool,
+    /// Chat Completions `reasoning_details` entries, fragments joined by index.
+    pub(super) details: Vec<serde_json::Value>,
     /// Messages `thinking` / `redacted_thinking` blocks.
     pub(super) blocks: Vec<serde_json::Value>,
     /// Responses `reasoning` items.
@@ -45,7 +49,10 @@ pub(super) struct Reasoning {
 
 impl Reasoning {
     fn is_empty(&self) -> bool {
-        self.text.trim().is_empty() && self.blocks.is_empty() && self.items.is_empty()
+        self.text.trim().is_empty()
+            && self.details.is_empty()
+            && self.blocks.is_empty()
+            && self.items.is_empty()
     }
 }
 
@@ -125,11 +132,14 @@ impl StreamedReasoning {
         if let Some(text) = delta["content"].as_str() {
             self.text.push_str(text);
         }
-        if let Some(text) = delta["reasoning_content"]
-            .as_str()
-            .or_else(|| delta["reasoning"].as_str())
-        {
+        if let Some(text) = delta["reasoning_content"].as_str() {
             self.reasoning.text.push_str(text);
+        } else if let Some(text) = delta["reasoning"].as_str() {
+            self.reasoning.text.push_str(text);
+            self.reasoning.text_as_reasoning = true;
+        }
+        for part in delta["reasoning_details"].as_array().into_iter().flatten() {
+            join_detail(&mut self.reasoning.details, part);
         }
         if delta["thinking_block"].is_object() {
             self.reasoning.blocks.push(delta["thinking_block"].clone());
@@ -165,8 +175,60 @@ impl StreamedReasoning {
 /// The reasoning parts of a complete (non-streamed) reply's normalized message.
 pub(super) fn from_message(message: &super::WireChoiceMessage) -> Reasoning {
     Reasoning {
-        text: message.reasoning_content.clone().unwrap_or_default(),
+        text: message
+            .reasoning_content
+            .clone()
+            .or_else(|| message.reasoning.clone())
+            .unwrap_or_default(),
+        text_as_reasoning: message.reasoning_content.is_none() && message.reasoning.is_some(),
+        details: message.reasoning_details.clone(),
         blocks: message.thinking_blocks.clone(),
         items: message.reasoning_items.clone(),
+    }
+}
+
+/// Joins a streamed `reasoning_details` fragment into the entry with its index (text,
+/// summary, data and signature strings append), or adds it as a new entry.
+fn join_detail(details: &mut Vec<serde_json::Value>, part: &serde_json::Value) {
+    if !part.is_object() {
+        return;
+    }
+    let same = details
+        .iter_mut()
+        .find(|known| known["index"] == part["index"] && known["type"] == part["type"]);
+    let Some(known) = same else {
+        details.push(part.clone());
+        return;
+    };
+    for key in ["text", "summary", "data", "signature"] {
+        if let Some(more) = part[key].as_str() {
+            let joined = format!("{}{more}", known[key].as_str().unwrap_or_default());
+            known[key] = joined.into();
+        }
+    }
+}
+
+/// The Chat Completions reasoning fields for an assistant message, in the shape they came.
+#[derive(serde::Serialize, Default)]
+pub(super) struct WireReasoning {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) reasoning_details: Option<Vec<serde_json::Value>>,
+}
+
+impl WireReasoning {
+    pub(super) fn from_kept(kept: Option<Reasoning>) -> Self {
+        let Some(kept) = kept else {
+            return Self::default();
+        };
+        let text = Some(kept.text).filter(|text| !text.trim().is_empty());
+        Self {
+            reasoning_content: text.clone().filter(|_| !kept.text_as_reasoning),
+            reasoning: text.filter(|_| kept.text_as_reasoning),
+            reasoning_details: Some(kept.details).filter(|details| !details.is_empty()),
+        }
     }
 }
