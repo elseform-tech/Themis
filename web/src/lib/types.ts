@@ -325,7 +325,7 @@ export interface ContextBudget {
   provider_input_tokens?: number;
   /** Estimate correction in thousandths (1000 = exact). */
   calibration_ratio_milli?: number;
-  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number };
+  breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number };
 }
 
 /** A readable project file one run changed. */

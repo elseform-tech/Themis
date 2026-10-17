@@ -195,12 +195,17 @@ pub struct ContextBreakdown {
     pub attachments: usize,
     pub conversation: usize,
     pub tool_activity: usize,
+    /// A thinking model's own reasoning, sent back with its tool calls and earlier answers.
+    #[serde(default)]
+    pub reasoning: usize,
 }
 
 fn context_breakdown(messages: &[ChatMessage]) -> ContextBreakdown {
     let mut breakdown = ContextBreakdown::default();
     for message in messages {
-        let tokens = estimated_tokens(std::slice::from_ref(message));
+        // Visible content goes to its own part; replayed reasoning has a part of its own.
+        let tokens = crate::calibration::message_tokens(message);
+        breakdown.reasoning += crate::providers::reasoning::replayed_tokens(message);
         let slot = match (&message.role, &message.message_type) {
             (ChatRole::System, _) => &mut breakdown.system,
             (_, MessageType::ToolUse(_) | MessageType::ToolResult(_)) => {
@@ -4665,6 +4670,38 @@ mod tests {
             }
         }
         assert_eq!(public, vec!["Recovered after a slow attempt"]);
+    }
+
+    #[test]
+    fn replayed_reasoning_has_its_own_part_of_the_context_breakdown() {
+        let call = ToolCall {
+            id: "meter-call-1".into(),
+            call_type: "function".into(),
+            function: autoagents::llm::FunctionCall {
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            },
+        };
+        crate::providers::reasoning::remember_text_for_test(
+            std::slice::from_ref(&call),
+            &"reasoning ".repeat(400),
+        );
+        let message = ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(vec![call]),
+            content: String::new(),
+        };
+        let breakdown = context_breakdown(std::slice::from_ref(&message));
+        assert_eq!(breakdown.reasoning, 1_000);
+        assert_eq!(
+            breakdown.tool_activity,
+            crate::calibration::message_tokens(&message)
+        );
+        assert_eq!(
+            breakdown.reasoning + breakdown.tool_activity,
+            estimated_tokens(std::slice::from_ref(&message)),
+            "the parts add up to the meter's total"
+        );
     }
 
     #[tokio::test]

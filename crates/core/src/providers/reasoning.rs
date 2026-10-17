@@ -118,6 +118,19 @@ pub(super) fn replay(calls: &[ToolCall]) -> Option<Reasoning> {
     })
 }
 
+/// Test seam: remembers `text` as the reasoning behind `calls`.
+#[cfg(test)]
+pub(crate) fn remember_text_for_test(calls: &[ToolCall], text: &str) {
+    remember(
+        calls,
+        "",
+        Reasoning {
+            text: text.to_owned(),
+            ..Default::default()
+        },
+    );
+}
+
 /// Estimated tokens of the reasoning a request would send back with `message` (bytes / 4,
 /// like the rest of the context estimate). The context budget counts it: a thinking model's
 /// replayed reasoning can be larger than the visible conversation.
