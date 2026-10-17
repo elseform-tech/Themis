@@ -321,7 +321,7 @@ struct ChatEventStream {
     buffer: Vec<u8>,
     ready: std::collections::VecDeque<Result<StreamChunk, LLMError>>,
     calls: std::collections::BTreeMap<usize, ToolCall>,
-    reasoning: String,
+    reasoning: reasoning::StreamedReasoning,
     messages_api: bool,
     responses_api: bool,
     done: bool,
@@ -336,7 +336,7 @@ impl ChatEventStream {
             buffer: Vec::new(),
             ready: std::collections::VecDeque::new(),
             calls: std::collections::BTreeMap::new(),
-            reasoning: String::new(),
+            reasoning: reasoning::StreamedReasoning::default(),
             messages_api,
             responses_api,
             done: false,
@@ -457,12 +457,7 @@ impl ChatEventStream {
         if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
             self.ready.push_back(Ok(StreamChunk::Text(text.to_owned())));
         }
-        if let Some(text) = delta["reasoning_content"]
-            .as_str()
-            .or_else(|| delta["reasoning"].as_str())
-        {
-            self.reasoning.push_str(text);
-        }
+        self.reasoning.take(delta);
         for call in delta["tool_calls"].as_array().into_iter().flatten() {
             self.merge_tool_call(call);
         }
@@ -500,7 +495,7 @@ impl ChatEventStream {
             ));
         }
         let calls: Vec<ToolCall> = self.calls.values().cloned().collect();
-        reasoning::remember(&calls, &std::mem::take(&mut self.reasoning));
+        self.reasoning.finish(&calls);
         for (index, mut tool_call) in std::mem::take(&mut self.calls) {
             if self.messages_api && tool_call.function.arguments.is_empty() {
                 tool_call.function.arguments = "{}".to_owned();
@@ -587,13 +582,17 @@ impl CompatibleProvider {
                     if let Some(content) = message.content {
                         input.push(serde_json::json!({"role":message.role, "content":content}));
                     }
-                    for call in message.tool_calls.unwrap_or_default() {
+                    let calls = message.tool_calls.unwrap_or_default();
+                    if let Some(kept) = reasoning::replay(&calls) {
+                        input.extend(kept.items);
+                    }
+                    for call in calls {
                         input.push(serde_json::json!({"type":"function_call", "call_id":call.id, "name":call.function.name, "arguments":call.function.arguments}));
                     }
                 }
             }
-            let mut body =
-                serde_json::json!({"model":self.model,"input":input,"stream":stream,"store":false});
+            // Requests are not stored, so reasoning comes back encrypted to be replayed.
+            let mut body = serde_json::json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
             if let Some(tools) = tools {
                 body["tools"] = tools.iter().map(|tool| serde_json::json!({"type":"function","name":tool.function.name,"description":tool.function.description,"parameters":tool.function.parameters,"strict":false})).collect();
             }
@@ -844,11 +843,8 @@ impl ChatProvider for CompatibleProvider {
             return Err(LLMError::Generic("Provider response was truncated".into()));
         }
         trace.complete();
-        if let (Some(calls), Some(text)) = (
-            &choice.message.tool_calls,
-            &choice.message.reasoning_content,
-        ) {
-            reasoning::remember(calls, text);
+        if let Some(calls) = &choice.message.tool_calls {
+            reasoning::remember(calls, reasoning::from_message(&choice.message));
         }
         Ok(Box::new(CompatibleChatResponse {
             text: choice.message.content,
@@ -906,11 +902,8 @@ impl ChatProvider for CompatibleProvider {
             if choice.finish_reason.as_deref() == Some("length") {
                 return Err(LLMError::Generic("Provider response was truncated".into()));
             }
-            if let (Some(calls), Some(text)) = (
-                &choice.message.tool_calls,
-                &choice.message.reasoning_content,
-            ) {
-                reasoning::remember(calls, text);
+            if let Some(calls) = &choice.message.tool_calls {
+                reasoning::remember(calls, reasoning::from_message(&choice.message));
             }
             let mut chunks = Vec::new();
             if let Some(text) = choice.message.content {
@@ -1273,8 +1266,16 @@ pub mod fuzzing {
     pub fn convert_provider_json(value: serde_json::Value) {
         let _ = wire::responses_response(value.clone());
         let _ = wire::messages_response(value.clone());
-        let _ = wire::responses_stream_event(value.clone());
-        let _ = wire::messages_stream_event(value);
+        let mut kept = reasoning::StreamedReasoning::default();
+        for event in [
+            wire::responses_stream_event(value.clone()),
+            wire::messages_stream_event(value.clone()),
+            value,
+        ] {
+            for choice in event["choices"].as_array().into_iter().flatten() {
+                kept.take(&choice["delta"]);
+            }
+        }
     }
 }
 
@@ -2336,7 +2337,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reasoning_is_replayed_with_its_own_tool_calls_only_when_on() {
+    async fn chat_reasoning_is_replayed_with_its_own_tool_calls_but_not_into_summaries() {
         use futures_util::StreamExt;
         use wiremock::matchers::body_partial_json;
         let server = MockServer::start().await;
@@ -2386,26 +2387,26 @@ mod tests {
                 },
             ]
         };
-        reasoning::REPLAY_REASONING
-            .scope(true, async {
-                let mut stream = provider
-                    .chat_stream_with_tools(&[user_message("check")], None, None)
-                    .await
-                    .unwrap();
-                while stream.next().await.is_some() {}
-                provider
-                    .chat(&history("replay-call-1"), None)
-                    .await
-                    .unwrap();
-                provider
-                    .chat(&history("replay-call-2"), None)
-                    .await
-                    .unwrap();
-            })
-            .await;
-        // Off (the app's default): the same history goes out without reasoning.
+        let mut stream = provider
+            .chat_stream_with_tools(&[user_message("check")], None, None)
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
         provider
             .chat(&history("replay-call-1"), None)
+            .await
+            .unwrap();
+        provider
+            .chat(&history("replay-call-2"), None)
+            .await
+            .unwrap();
+        // Switched off (an eval comparison), and in a summary request, it is not sent.
+        reasoning::REPLAY_REASONING
+            .scope(false, provider.chat(&history("replay-call-1"), None))
+            .await
+            .unwrap();
+        COMPACTION_REQUEST
+            .scope((), provider.chat(&history("replay-call-1"), None))
             .await
             .unwrap();
         let sent: Vec<Value> = server
@@ -2421,6 +2422,124 @@ mod tests {
         assert_eq!(sent[1], "The total is off by one bundle.");
         assert_eq!(sent[2], "hidden");
         assert_eq!(sent[3], Value::Null);
+        assert_eq!(sent[4], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn messages_thinking_blocks_return_first_and_unchanged_with_their_tool_uses() {
+        use futures_util::StreamExt;
+        let server = MockServer::start().await;
+        let events = [
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Check the "}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"bundle."}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-1"}}),
+            json!({"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque"}}),
+            json!({"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"thinking-call-1","name":"read_file","input":{}}}),
+            json!({"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
+            json!({"type":"message_stop"}),
+        ];
+        let body = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>();
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let provider =
+            CompatibleProvider::go("test".into(), "qwen-test".into(), Some(server.uri()), None);
+        let mut stream = provider
+            .chat_stream_with_tools(&[user_message("check")], None, None)
+            .await
+            .unwrap();
+        let mut calls = Vec::new();
+        let mut text = String::new();
+        while let Some(chunk) = stream.next().await {
+            match chunk.unwrap() {
+                StreamChunk::ToolUseComplete { tool_call, .. } => calls.push(tool_call),
+                StreamChunk::Text(delta) => text.push_str(&delta),
+                _ => {}
+            }
+        }
+        assert_eq!(text, "", "thinking never becomes public text");
+        let history = [
+            user_message("check"),
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(calls.clone()),
+                content: "Reading.".into(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(calls),
+                content: String::new(),
+            },
+        ];
+        let body = provider
+            .chat_request(&history, None, false, None)
+            .unwrap()
+            .build()
+            .unwrap();
+        let body: Value = serde_json::from_slice(body.body().unwrap().as_bytes().unwrap()).unwrap();
+        let content = &body["messages"][1]["content"];
+        assert_eq!(
+            content[0],
+            json!({"type":"thinking","thinking":"Check the bundle.","signature":"sig-1"})
+        );
+        assert_eq!(
+            content[1],
+            json!({"type":"redacted_thinking","data":"opaque"})
+        );
+        assert_eq!(content[2]["type"], "text");
+        assert_eq!(content[3]["id"], "thinking-call-1");
+    }
+
+    #[tokio::test]
+    async fn responses_reasoning_items_return_before_their_function_calls() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":[
+                {"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"enc-1"},
+                {"type":"function_call","call_id":"responses-call-1","name":"read_file","arguments":"{}"}]})))
+            .mount(&server)
+            .await;
+        let provider =
+            CompatibleProvider::go("test".into(), "gpt-test".into(), Some(server.uri()), None);
+        let reply = provider.chat(&[user_message("check")], None).await.unwrap();
+        let calls = reply.tool_calls().unwrap();
+        assert_eq!(reply.text().unwrap_or_default(), "");
+        let first: Value = server.received_requests().await.unwrap()[0]
+            .body_json()
+            .unwrap();
+        assert_eq!(first["include"], json!(["reasoning.encrypted_content"]));
+        let history = [
+            user_message("check"),
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(calls.clone()),
+                content: String::new(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(calls),
+                content: String::new(),
+            },
+        ];
+        let body = provider
+            .chat_request(&history, None, false, None)
+            .unwrap()
+            .build()
+            .unwrap();
+        let body: Value = serde_json::from_slice(body.body().unwrap().as_bytes().unwrap()).unwrap();
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input[1]["type"], "reasoning");
+        assert_eq!(input[1]["encrypted_content"], "enc-1");
+        assert_eq!(input[2]["type"], "function_call");
+        assert_eq!(input[2]["call_id"], "responses-call-1");
     }
 
     #[tokio::test]
@@ -2655,6 +2774,36 @@ mod tests {
                     .unwrap(),
             )
             .unwrap()
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+        /// Whatever a provider streams, reasoning parts are collected without panicking and
+        /// only from the fields that carry reasoning; deltas with no block are dropped.
+        #[test]
+        fn any_streamed_reasoning_parts_collect_without_panicking(
+            parts in proptest::collection::vec((0usize..6, "[ -~]{0,8}"), 0..12)
+        ) {
+            let fields = ["reasoning_content", "reasoning", "thinking_delta", "signature_delta", "content", "thinking_block"];
+            let mut collected = reasoning::StreamedReasoning::default();
+            let mut expected_text = String::new();
+            let mut blocks = 0;
+            for (field, text) in &parts {
+                let delta = if fields[*field] == "thinking_block" {
+                    blocks += 1;
+                    json!({"thinking_block": {"type": "thinking", "thinking": text}})
+                } else {
+                    json!({fields[*field]: text})
+                };
+                if *field < 2 {
+                    expected_text.push_str(text);
+                }
+                collected.take(&delta);
+            }
+            let got = collected.peek();
+            proptest::prop_assert_eq!(&got.text, &expected_text);
+            proptest::prop_assert_eq!(got.blocks.len(), blocks);
         }
     }
 

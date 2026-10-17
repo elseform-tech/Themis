@@ -415,3 +415,85 @@ async fn cli_run_waits_out_a_rate_limit() {
     );
     serving.abort();
 }
+
+/// A thinking model's reasoning goes back to it with its own tool call on the next request,
+/// and is never shown in the answer or saved with the chat.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_replays_reasoning_with_its_tool_call_but_never_saves_it() {
+    const REASONING: &str = "private-reasoning-sentinel: read notes.txt before answering";
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("notes.txt"), "the answer is 42\n").unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            let answered = body["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+            if answered {
+                reply(json!({"content":"The notes say 42."}))
+            } else {
+                reply(json!({"content":"","reasoning_content":REASONING,
+                    "tool_calls":[read_call("reasoned-read-1","notes.txt")]}))
+            }
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    let done = send(data.path(), &mut events, &id, "What do the notes say?").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    assert_eq!(done["result"].as_str().unwrap(), "The notes say 42.");
+    let requests = provider.received_requests().await.unwrap();
+    let replayed = requests.last().unwrap().body_json::<Value>().unwrap();
+    let assistant = replayed["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "assistant" && m["tool_calls"].is_array())
+        .expect("the tool call goes back");
+    assert_eq!(assistant["reasoning_content"], REASONING);
+    serving.abort();
+    // Nothing the app wrote (chat history, transcripts, evidence, logs) holds the reasoning.
+    for root in [data.path(), project.path()] {
+        for entry in walk(root) {
+            let bytes = std::fs::read(&entry).unwrap_or_default();
+            assert!(
+                !String::from_utf8_lossy(&bytes).contains("private-reasoning-sentinel"),
+                "reasoning saved in {}",
+                entry.display()
+            );
+        }
+    }
+}
+
+fn walk(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files
+}

@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
         allow_all: task["allow_all"].as_bool().unwrap_or(false),
         nudges_off: strings(&task["nudges_off"]),
         hide_tools: strings(&task["hide_tools"]),
-        replay_reasoning: task["replay_reasoning"].as_bool().unwrap_or(false),
+        replay_reasoning: task["replay_reasoning"].as_bool().unwrap_or(true),
     };
     let report = run_tool_task(&llm, &project, prompt, options).await?;
     println!("{}", serde_json::to_string_pretty(&report)?);

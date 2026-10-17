@@ -100,8 +100,8 @@ pub struct ToolTaskOptions {
     pub nudges_off: Vec<String>,
     /// Ablation: tools withheld from the agent (for example the file tools, leaving the shell).
     pub hide_tools: Vec<String>,
-    /// Sends a thinking model's reasoning back with its own tool calls (see
-    /// `providers::reasoning`).
+    /// Sends a thinking model's reasoning back with its own tool calls, as the app does
+    /// (see `providers::reasoning`). Off: the comparison without it.
     pub replay_reasoning: bool,
     /// Copies the project to `<project>.turn-<n>` after each turn (without `.themis`, `.git`
     /// and caches) so a grader can check every stage, not only the end state.
@@ -122,7 +122,7 @@ impl Default for ToolTaskOptions {
             allow_all: false,
             nudges_off: Vec::new(),
             hide_tools: Vec::new(),
-            replay_reasoning: false,
+            replay_reasoning: true,
         }
     }
 }

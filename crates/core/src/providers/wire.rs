@@ -57,6 +57,12 @@ pub(super) struct WireChoiceMessage {
     pub(super) tool_calls: Option<Vec<ToolCall>>,
     #[serde(default, alias = "reasoning")]
     pub(super) reasoning_content: Option<String>,
+    /// Messages `thinking` / `redacted_thinking` blocks (normalized responses only).
+    #[serde(default)]
+    pub(super) thinking_blocks: Vec<serde_json::Value>,
+    /// Responses `reasoning` items (normalized responses only).
+    #[serde(default)]
+    pub(super) reasoning_items: Vec<serde_json::Value>,
 }
 
 /// Converts SDK messages to the OpenAI wire shape.
@@ -111,7 +117,9 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                         .collect(),
                 ),
                 tool_call_id: None,
-                reasoning_content: super::reasoning::replay(calls),
+                reasoning_content: super::reasoning::replay(calls)
+                    .map(|kept| kept.text)
+                    .filter(|text| !text.trim().is_empty()),
             }),
             MessageType::ToolResult(results) => {
                 for result in results {
@@ -150,7 +158,12 @@ pub(super) fn responses_response(value: serde_json::Value) -> Result<WireChatRes
         .ok_or_else(|| LLMError::Generic("Missing Responses output".to_owned()))?;
     let mut text = String::new();
     let mut calls = Vec::new();
-    for item in output {
+    let reasoning_items: Vec<_> = output
+        .iter()
+        .filter(|item| item["type"] == "reasoning")
+        .cloned()
+        .collect();
+    for item in output.iter().filter(|item| item["type"] != "reasoning") {
         if item["type"] == "function_call" {
             calls.push(serde_json::json!({"id":item["call_id"],"type":"function","function":{"name":item["name"],"arguments":item["arguments"]}}));
         }
@@ -166,7 +179,7 @@ pub(super) fn responses_response(value: serde_json::Value) -> Result<WireChatRes
         ));
     }
     Ok(serde_json::from_value(
-        serde_json::json!({"choices":[{"message":{"content":text,"tool_calls":calls}}],"usage":value["usage"]}),
+        serde_json::json!({"choices":[{"message":{"content":text,"tool_calls":calls,"reasoning_items":reasoning_items}}],"usage":value["usage"]}),
     )?)
 }
 
@@ -175,6 +188,9 @@ pub(super) fn responses_stream_event(value: serde_json::Value) -> serde_json::Va
     let index = &value["output_index"];
     match value["type"].as_str().unwrap_or_default() {
         "response.output_text.delta" => json!({"choices":[{"delta":{"content":value["delta"]}}]}),
+        "response.output_item.done" if value["item"]["type"] == "reasoning" => {
+            json!({"choices":[{"delta":{"reasoning_item":value["item"]}}]})
+        }
         "response.output_item.added" if value["item"]["type"] == "function_call" => {
             json!({"choices":[{"delta":{"tool_calls":[{"index":index,"id":value["item"]["call_id"],"function":{"name":value["item"]["name"],"arguments":value["item"]["arguments"]}}]}}]})
         }
@@ -218,6 +234,14 @@ pub(super) fn messages_body(
         if let Some(id) = message.tool_call_id {
             content.push(json!({"type": "tool_result", "tool_use_id": id, "content": message.content.unwrap_or_default()}));
         } else {
+            // A thinking model's blocks go first, unchanged (signatures must round-trip).
+            if let Some(kept) = message
+                .tool_calls
+                .as_deref()
+                .and_then(super::reasoning::replay)
+            {
+                content.extend(kept.blocks);
+            }
             if let Some(text) = message.content.filter(|text| !text.is_empty()) {
                 content.push(json!({"type": "text", "text": text}));
             }
@@ -255,8 +279,10 @@ pub(super) fn messages_response(value: serde_json::Value) -> Result<WireChatResp
         .ok_or_else(|| LLMError::Generic("Messages response missing content".into()))?;
     let mut text = String::new();
     let mut calls = Vec::new();
+    let mut thinking_blocks = Vec::new();
     for block in content {
         match block["type"].as_str() {
+            Some("thinking" | "redacted_thinking") => thinking_blocks.push(block.clone()),
             Some("text") => text.push_str(
                 block["text"]
                     .as_str()
@@ -283,6 +309,8 @@ pub(super) fn messages_response(value: serde_json::Value) -> Result<WireChatResp
                 content: Some(text),
                 tool_calls: Some(calls),
                 reasoning_content: None,
+                thinking_blocks,
+                reasoning_items: Vec::new(),
             },
         }],
         usage: None,
@@ -297,6 +325,20 @@ pub(super) fn messages_stream_event(value: serde_json::Value) -> serde_json::Val
         Some("content_block_start") if value["content_block"]["type"] == "tool_use" => {
             let block = &value["content_block"];
             json!({"choices": [{"delta": {"tool_calls": [{"index": index, "id": block["id"], "function": {"name": block["name"], "arguments": if block["input"].as_object().is_some_and(|input| !input.is_empty()) { block["input"].to_string() } else { String::new() }}}]}}]})
+        }
+        Some("content_block_start")
+            if matches!(
+                value["content_block"]["type"].as_str(),
+                Some("thinking" | "redacted_thinking")
+            ) =>
+        {
+            json!({"choices": [{"delta": {"thinking_block": value["content_block"]}}]})
+        }
+        Some("content_block_delta") if value["delta"]["type"] == "thinking_delta" => {
+            json!({"choices": [{"delta": {"thinking_delta": value["delta"]["thinking"]}}]})
+        }
+        Some("content_block_delta") if value["delta"]["type"] == "signature_delta" => {
+            json!({"choices": [{"delta": {"signature_delta": value["delta"]["signature"]}}]})
         }
         Some("content_block_start") if value["content_block"]["type"] == "text" => {
             json!({"choices": [{"delta": {"content": value["content_block"]["text"]}}]})
