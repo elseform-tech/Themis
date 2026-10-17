@@ -228,8 +228,33 @@ fn ensure_server(client: &server::Client, data_dir: &Path) -> Result<(), String>
     Err("local server did not become ready within five seconds".to_owned())
 }
 
+/// Turns off macOS smart quotes and smart dashes in the app's text boxes (they are on by
+/// default system-wide and turn `"x"` into `“x”` and `--` into `—`, which corrupts code
+/// typed into prompts). Registered as this app's defaults only: a person's own choice in
+/// Edit > Substitutions still wins, and system settings are untouched.
+#[cfg(target_os = "macos")]
+fn turn_off_text_substitutions() {
+    use objc2_foundation::{NSDictionary, NSNumber, NSString, NSUserDefaults};
+    let keys = [
+        "WebAutomaticQuoteSubstitutionEnabled",
+        "WebAutomaticDashSubstitutionEnabled",
+        "NSAutomaticQuoteSubstitutionEnabled",
+        "NSAutomaticDashSubstitutionEnabled",
+    ]
+    .map(NSString::from_str);
+    let off = NSNumber::new_bool(false);
+    let off: &objc2::runtime::AnyObject = &off;
+    let values = keys.each_ref().map(|_| off);
+    let defaults = NSDictionary::from_slices(&keys.each_ref().map(|key| &**key), &values);
+    // SAFETY: every key is an NSString and every value an NSNumber, both property-list
+    // types, which is all `registerDefaults` requires.
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
 /// Runs the Tauri application.
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    turn_off_text_substitutions();
     let context = tauri::generate_context!();
     // The updater plugin panics at startup without a deserializable
     // `plugins.updater` section, so only register it when the bundled config
