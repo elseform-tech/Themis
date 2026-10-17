@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useDismiss } from "../lib/dismiss";
 import type { ContextBudget } from "../lib/types";
 import { usedPercent } from "../state/reducer";
 
@@ -20,6 +21,8 @@ export function formatTokens(tokens: number): string {
 /** Byte-estimated context distribution with the runtime's own thresholds. */
 export function ContextMeter({ budget, compacting = false, running = false }: { budget: ContextBudget | undefined; compacting?: boolean; running?: boolean }) {
   const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useDismiss(root, open, useCallback(() => setOpen(false), []));
   if (budget === undefined) return null;
   const percent = usedPercent(budget);
   // The projection only matters while a run can still reach the threshold.
@@ -31,7 +34,7 @@ export function ContextMeter({ budget, compacting = false, running = false }: { 
   const tokensOf = (part: Part) => budget.breakdown[part.key] ?? 0;
   const parts = PARTS.filter(part => !part.optional || tokensOf(part) > 0);
   return (
-    <div className="themis-context">
+    <div className="themis-context" ref={root}>
       <button type="button" className={`themis-context-chip themis-context-chip--${tone}`} aria-expanded={open}
         aria-label={`Context ${percent}% full${soon ? ", close to auto-compact" : ""}`} onClick={() => setOpen(value => !value)}>
         <svg width="20" height="20" viewBox="0 0 36 36" aria-hidden="true">

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { usePopoverDismissal } from "./lib/dismiss";
 import { ApprovalDialog, Button, Toasts } from "./components";
 import type { ApprovalDecision } from "./lib/types";
 import { approveAction } from "./lib/tauri";
@@ -27,6 +28,7 @@ import { useDesktopCompanion } from "./components/DesktopCompanion";
 
 function Shell() {
   const { state, startup, dispatch } = useApp();
+  usePopoverDismissal();
   const [companion, setCompanion] = useState(readCompanionPreferences);
   function updateCompanion(next: CompanionPreferences) { setCompanion(next); writeSession("companion", next); }
   const [collapsed, setCollapsed] = useState(() => readSession("sidebar-collapsed", false));
