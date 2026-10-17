@@ -45,6 +45,7 @@ Tested the local debug app at `target/debug/bundle/macos/Themis.app`, using the 
 - Removed the redundant thread heading/options/read-only banner and repeated role labels. Edit/remove controls now appear on sidebar thread hover/focus. The chat no longer exposes Merge.
 - Added composer + and ⌘/Ctrl+Shift+O for new threads; Enter or ⌘/Ctrl+Enter sends.
 - ReAct requests stream public text and tool-call deltas. Public updates and related tool calls are grouped under a few milestones. This is not a separate task-progress checklist. Reasoning deltas never become public text; they go back only to the model, with their own tool calls.
+- On macOS the app turns off smart quotes and smart dashes as its own defaults, so code typed into the composer keeps straight quotes and `--` (a person's Edit > Substitutions choice still wins). Verified natively: `"building"`, `it's` and `--` stay as typed.
 - Thinking/using-tool status shows elapsed time; pending tool calls shimmer. Reduced-motion disables shimmer and scale animation.
 - Tool completion events now carry bounded output (32,768 characters, with a truncation notice); chevrons expose input and actual result/error. Fixed approval trace bookkeeping so completed calls do not remain visually active.
 - Added a gently animated header scale on a persistent galaxy background and a matching macOS PNG/ICNS app icon. `scripts/generate-icon.swift` regenerates the local icon assets.
