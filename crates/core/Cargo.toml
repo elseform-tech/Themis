@@ -26,6 +26,8 @@ eval = []
 
 [dev-dependencies]
 proptest = "1"
+# Virtual time for deadline tests (tests only).
+tokio = { version = "1", features = ["test-util"] }
 tempfile = "3"
 wiremock = "0.6"
 

@@ -73,6 +73,36 @@ use serde::{Deserialize, Serialize};
 tokio::task_local! { pub(crate) static COMPACTION_REQUEST: (); }
 tokio::task_local! { static MODEL_LIMITS: HashMap<String, (Option<usize>, Option<usize>)>; }
 tokio::task_local! { static MODEL_THINKING: HashMap<String, (bool, Vec<String>)>; }
+// When provider bytes last arrived for the current answer request (see `note_stream_progress`).
+tokio::task_local! { pub(crate) static STREAM_PROGRESS: Arc<std::sync::Mutex<tokio::time::Instant>>; }
+
+/// Records that the provider sent data: answer deadlines count only time without any.
+pub(crate) fn note_stream_progress() {
+    let _ = STREAM_PROGRESS.try_with(|last| {
+        *last.lock().unwrap_or_else(|e| e.into_inner()) = tokio::time::Instant::now();
+    });
+}
+
+/// Output tokens a reply may use from the start when the model has room: a thinking model's
+/// reasoning plus a whole file in one tool call does not fit a cap sized for the memory budget.
+const LONG_REPLY_TOKENS: usize = 32_768;
+
+/// The output cap for answer requests. The memory budget is this app's compaction threshold,
+/// not the model's window, so when the catalog shows a window well beyond it, a reply may use
+/// up to `LONG_REPLY_TOKENS` (never more than the model's own limit). Otherwise one eighth of
+/// the budget, at most 8,192, as before.
+pub(crate) fn answer_output_cap(model: &str, budget: usize) -> u32 {
+    let base = (budget / 8).clamp(1, 8192);
+    MODEL_LIMITS
+        .try_with(|limits| limits.get(model).copied())
+        .ok()
+        .flatten()
+        .and_then(|(context, output)| {
+            let (context, output) = (context?, output?);
+            (context >= budget + LONG_REPLY_TOKENS).then(|| base.max(LONG_REPLY_TOKENS.min(output)))
+        })
+        .unwrap_or(base) as u32
+}
 
 pub async fn with_catalog_limits<F: std::future::Future>(
     models: &[GoModel],
@@ -286,8 +316,16 @@ impl ProviderConfig {
 
 /// HTTP client for provider requests, including streamed answers and summaries (five minutes).
 fn http_client() -> Client {
+    http_client_with(Duration::from_secs(300))
+}
+
+/// No total timeout: a model streaming a long reply keeps its connection as long as data
+/// flows. `read` bounds silence between reads (the answer deadlines bound the rest), and
+/// connecting has its own short limit.
+fn http_client_with(read: Duration) -> Client {
     Client::builder()
-        .timeout(Duration::from_secs(300))
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(read)
         .build()
         .unwrap_or_else(|_| Client::new())
 }
@@ -395,6 +433,7 @@ impl ChatEventStream {
             }
             match self.response.chunk().await {
                 Ok(Some(bytes)) => {
+                    note_stream_progress();
                     self.buffer.extend_from_slice(&bytes);
                     if self.buffer.len() > 4 * 1024 * 1024 {
                         self.fail(LLMError::Generic(
@@ -1395,6 +1434,58 @@ mod tests {
     /// Serializes tests that touch `THEMIS_*` environment variables (`resolve`
     /// reads them, and process env is global across test threads).
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[tokio::test]
+    async fn a_slow_steady_stream_outlasts_the_read_timeout_but_silence_does_not() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // A local server: headers, then one chunk every 300 ms for 2.4 s, or nothing at all.
+        async fn serve(chunks: usize) -> String {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0u8; 4096];
+                let _ = socket.read(&mut request).await;
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+                    .await
+                    .unwrap();
+                if chunks == 0 {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    return;
+                }
+                for _ in 0..chunks {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    socket.write_all(b"4\r\ndata\r\n").await.unwrap();
+                }
+                socket.write_all(b"0\r\n\r\n").await.unwrap();
+            });
+            format!("http://{address}")
+        }
+        let client = http_client_with(Duration::from_secs(1));
+        let started = std::time::Instant::now();
+        let body = client
+            .get(serve(8).await)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(body.len(), 32);
+        assert!(
+            started.elapsed() > Duration::from_secs(2),
+            "longer than the read timeout"
+        );
+        let silent = client
+            .get(serve(0).await)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await;
+        assert!(silent.unwrap_err().is_timeout());
+    }
 
     #[tokio::test]
     async fn http_errors_preserve_retry_after_headers() {
@@ -2526,6 +2617,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn long_replies_get_room_when_the_model_window_is_far_beyond_the_budget() {
+        let model = |id: &str, context, output| GoModel {
+            id: id.into(),
+            effort_levels: vec![],
+            context_tokens: Some(context),
+            output_tokens: Some(output),
+            thinking_toggle: false,
+        };
+        let catalog = [
+            model("wide", 1_000_000, 131_072),
+            model("short-output", 1_000_000, 16_000),
+            model("narrow", 200_000, 131_072),
+        ];
+        let caps = with_catalog_limits(&catalog, async {
+            [
+                answer_output_cap("wide", 200_000),
+                answer_output_cap("wide", 32_000),
+                answer_output_cap("short-output", 200_000),
+                answer_output_cap("narrow", 200_000),
+                answer_output_cap("unknown", 200_000),
+                answer_output_cap("unknown", 32_000),
+            ]
+        })
+        .await;
+        // Room beyond the budget: 32,768 (or the model's own limit); otherwise the old cap.
+        assert_eq!(caps, [32_768, 32_768, 16_000, 8_192, 8_192, 4_000]);
+        assert_eq!(
+            answer_output_cap("wide", 200_000),
+            8_192,
+            "no catalog loaded"
+        );
+    }
+
+    #[tokio::test]
     async fn thinking_is_on_by_default_for_answers_but_not_for_summaries() {
         let model = |id: &str, toggle: bool, efforts: &[&str]| GoModel {
             id: id.into(),
@@ -2710,6 +2835,67 @@ mod tests {
             }
         }
         assert!(error.unwrap().contains("Provider response was truncated"));
+    }
+
+    #[tokio::test]
+    async fn reasoning_and_its_details_go_back_in_the_fields_they_came_in() {
+        use futures_util::StreamExt;
+        let server = MockServer::start().await;
+        // As Kimi and Hunyuan stream: `reasoning` text plus `reasoning_details` fragments.
+        let events = [
+            json!({"choices":[{"delta":{"reasoning":"Add the ","reasoning_details":[{"type":"reasoning.text","text":"Add the ","format":"unknown","index":0}]}}]}),
+            json!({"choices":[{"delta":{"reasoning":"numbers.","reasoning_details":[{"type":"reasoning.text","text":"numbers.","format":"unknown","index":0}]}}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"details-call-1","function":{"name":"add","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}),
+        ];
+        let body = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>()
+            + "data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let provider =
+            CompatibleProvider::go("test".into(), "kimi-test".into(), Some(server.uri()), None);
+        let mut stream = provider
+            .chat_stream_with_tools(&[user_message("add")], None, None)
+            .await
+            .unwrap();
+        let mut calls = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            if let StreamChunk::ToolUseComplete { tool_call, .. } = chunk.unwrap() {
+                calls.push(tool_call);
+            }
+        }
+        let history = [
+            user_message("add"),
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(calls.clone()),
+                content: String::new(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(calls),
+                content: String::new(),
+            },
+        ];
+        let request = provider
+            .chat_request(&history, None, false, None)
+            .unwrap()
+            .build()
+            .unwrap();
+        let sent: Value =
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        let assistant = &sent["messages"][1];
+        assert_eq!(assistant["reasoning"], "Add the numbers.");
+        assert!(assistant.get("reasoning_content").is_none());
+        assert_eq!(
+            assistant["reasoning_details"],
+            json!([{"type":"reasoning.text","text":"Add the numbers.","format":"unknown","index":0}])
+        );
     }
 
     #[tokio::test]
