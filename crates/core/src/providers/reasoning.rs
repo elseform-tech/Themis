@@ -118,6 +118,30 @@ pub(super) fn replay(calls: &[ToolCall]) -> Option<Reasoning> {
     })
 }
 
+/// Estimated tokens of the reasoning a request would send back with `message` (bytes / 4,
+/// like the rest of the context estimate). The context budget counts it: a thinking model's
+/// replayed reasoning can be larger than the visible conversation.
+pub(crate) fn replayed_tokens(message: &autoagents::llm::chat::ChatMessage) -> usize {
+    use autoagents::llm::chat::{ChatRole, MessageType};
+    let kept = match &message.message_type {
+        MessageType::ToolUse(calls) => replay(calls),
+        MessageType::Text if matches!(message.role, ChatRole::Assistant) => {
+            replay_answer(&message.content)
+        }
+        _ => None,
+    };
+    kept.map_or(0, |kept| {
+        let structured: usize = kept
+            .details
+            .iter()
+            .chain(&kept.blocks)
+            .chain(&kept.items)
+            .map(|value| value.to_string().len())
+            .sum();
+        (kept.text.len() + structured).div_ceil(4)
+    })
+}
+
 /// Collects the reasoning of one streamed reply, whatever the wire protocol.
 #[derive(Default)]
 pub(super) struct StreamedReasoning {

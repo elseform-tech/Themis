@@ -1130,6 +1130,17 @@ async fn request_answer(
     .await
 }
 
+/// The output cap after `cut_offs` cut-off replies: doubled each time, up to four times the
+/// first cap, but never more than half the run's context budget (a larger reply could not
+/// fit a later checkpoint). The first attempt keeps `base`.
+fn retry_output_cap(base: u32, cut_offs: u32) -> u32 {
+    let grown = base.saturating_mul(1 << cut_offs.min(2));
+    let ceiling = MODEL_REQUEST_BUDGET
+        .try_with(|budget| u32::try_from(*budget / 2).unwrap_or(u32::MAX))
+        .unwrap_or(u32::MAX);
+    grown.min(ceiling.max(base))
+}
+
 /// Longest one answer attempt, and all attempts of one answer, may run while the provider
 /// keeps sending; idle time is bounded separately (see `unless_idle`).
 const ATTEMPT_CEILING: std::time::Duration = std::time::Duration::from_secs(3600);
@@ -1323,7 +1334,7 @@ async fn request_answer_inner(
         let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> = match base_limit {
             Some(base) => {
                 crate::providers::OUTPUT_LIMIT
-                    .scope(base.saturating_mul(1 << cut_offs.min(2)), attempt)
+                    .scope(retry_output_cap(base, cut_offs), attempt)
                     .await
             }
             None => attempt.await,
@@ -1809,7 +1820,10 @@ fn content_fingerprint(text: &str) -> u64 {
 fn estimated_tokens(messages: &[ChatMessage]) -> usize {
     messages
         .iter()
-        .map(crate::calibration::message_tokens)
+        .map(|message| {
+            crate::calibration::message_tokens(message)
+                + crate::providers::reasoning::replayed_tokens(message)
+        })
         .sum()
 }
 
@@ -4651,6 +4665,30 @@ mod tests {
             }
         }
         assert_eq!(public, vec!["Recovered after a slow attempt"]);
+    }
+
+    #[tokio::test]
+    async fn cut_off_retries_grow_the_cap_but_stay_within_half_the_budget() {
+        // 200k memory: 32,768 doubles to 65,536, then 131,072.
+        let wide = MODEL_REQUEST_BUDGET
+            .scope(200_000, async {
+                (0..4)
+                    .map(|n| retry_output_cap(32_768, n))
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        assert_eq!(wide, [32_768, 65_536, 100_000, 100_000]);
+        // 32k memory: 10,666 grows only to 16,000, so a reply always fits a checkpoint.
+        let squeezed = MODEL_REQUEST_BUDGET
+            .scope(32_000, async {
+                (0..4)
+                    .map(|n| retry_output_cap(10_666, n))
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        assert_eq!(squeezed, [10_666, 16_000, 16_000, 16_000]);
+        // Outside a run: the old doubling, up to four times.
+        assert_eq!(retry_output_cap(8_192, 3), 32_768);
     }
 
     #[tokio::test(start_paused = true)]
