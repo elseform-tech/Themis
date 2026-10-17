@@ -1207,67 +1207,79 @@ async fn request_answer_inner(
 ) -> anyhow::Result<(Option<String>, Vec<ToolCall>)> {
     const EMPTY_ANSWER: &str = "Provider returned no public answer or tool calls";
     let mut retries = 0;
+    // Each cut-off doubles the output cap for the next attempt (up to four times it, and the
+    // model's own limit): a thinking model's reasoning counts toward the cap, so retrying a
+    // long reply at the same cap is cut off again.
+    let base_limit = crate::providers::OUTPUT_LIMIT.try_with(|limit| *limit).ok();
+    let mut cut_offs = 0u32;
+    // After an empty reply the retry says so, instead of resending the same request.
+    let mut request = std::borrow::Cow::Borrowed(messages);
     loop {
         let mut published = false;
-        let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> =
-            crate::context_metrics::with_attempt(retries as usize, async {
-                // Bound handshake, complete stream and non-streaming fallback together.
-                // The published flag survives cancellation so partial text cannot be replayed.
-                tokio::time::timeout(attempt_timeout, async {
-                    match llm
-                        .chat_stream_with_tools(messages, Some(llm_tools), None)
-                        .await
-                    {
-                        Ok(mut stream) => {
-                            let mut text = String::new();
-                            let mut calls = Vec::new();
-                            while let Some(chunk) = stream.next().await {
-                                check_stopped(stopped, events).await?;
-                                match chunk? {
-                                    StreamChunk::Text(delta) => {
-                                        published |= !delta.is_empty();
-                                        text.push_str(&delta);
-                                        events.send(RunEvent::AssistantText(delta)).await.ok();
-                                    }
-                                    StreamChunk::ToolUseComplete { tool_call, .. } => {
-                                        calls.push(tool_call)
-                                    }
-                                    _ => {} // Reasoning content is private; only public narration reaches the UI.
+        let messages: &[ChatMessage] = &request;
+        let attempt = crate::context_metrics::with_attempt(retries as usize, async {
+            // Bound handshake, complete stream and non-streaming fallback together.
+            // The published flag survives cancellation so partial text cannot be replayed.
+            tokio::time::timeout(attempt_timeout, async {
+                match llm
+                    .chat_stream_with_tools(messages, Some(llm_tools), None)
+                    .await
+                {
+                    Ok(mut stream) => {
+                        let mut text = String::new();
+                        let mut calls = Vec::new();
+                        while let Some(chunk) = stream.next().await {
+                            check_stopped(stopped, events).await?;
+                            match chunk? {
+                                StreamChunk::Text(delta) => {
+                                    published |= !delta.is_empty();
+                                    text.push_str(&delta);
+                                    events.send(RunEvent::AssistantText(delta)).await.ok();
                                 }
+                                StreamChunk::ToolUseComplete { tool_call, .. } => {
+                                    calls.push(tool_call)
+                                }
+                                _ => {} // Reasoning content is private; only public narration reaches the UI.
                             }
-                            Ok(((!text.is_empty()).then_some(text), calls))
                         }
-                        Err(autoagents::llm::error::LLMError::Generic(message))
-                            if message
-                                == "Streaming with tools not supported for this provider" =>
-                        {
-                            let response =
-                                llm.chat_with_tools(messages, Some(llm_tools), None).await?;
-                            let text = response.text().filter(|text| !text.is_empty());
-                            if let Some(text) = text.clone() {
-                                published = true;
-                                events.send(RunEvent::AssistantText(text)).await.ok();
-                            }
-                            Ok((text, response.tool_calls().unwrap_or_default()))
-                        }
-                        Err(error) => Err(error.into()),
+                        Ok(((!text.is_empty()).then_some(text), calls))
                     }
-                })
-                .await
-                .map_err(|_| {
-                    autoagents::llm::error::LLMError::HttpError(
-                        "request timed out: ordinary attempt deadline exceeded".into(),
-                    )
-                })?
+                    Err(autoagents::llm::error::LLMError::Generic(message))
+                        if message == "Streaming with tools not supported for this provider" =>
+                    {
+                        let response = llm.chat_with_tools(messages, Some(llm_tools), None).await?;
+                        let text = response.text().filter(|text| !text.is_empty());
+                        if let Some(text) = text.clone() {
+                            published = true;
+                            events.send(RunEvent::AssistantText(text)).await.ok();
+                        }
+                        Ok((text, response.tool_calls().unwrap_or_default()))
+                    }
+                    Err(error) => Err(error.into()),
+                }
             })
             .await
-            .and_then(|(text, calls)| {
-                if calls.is_empty() && text.as_deref().is_none_or(|text| text.trim().is_empty()) {
-                    Err(autoagents::llm::error::LLMError::Generic(EMPTY_ANSWER.into()).into())
-                } else {
-                    Ok((text, calls))
-                }
-            });
+            .map_err(|_| {
+                autoagents::llm::error::LLMError::HttpError(
+                    "request timed out: ordinary attempt deadline exceeded".into(),
+                )
+            })?
+        });
+        let result: anyhow::Result<(Option<String>, Vec<ToolCall>)> = match base_limit {
+            Some(base) => {
+                crate::providers::OUTPUT_LIMIT
+                    .scope(base.saturating_mul(1 << cut_offs.min(2)), attempt)
+                    .await
+            }
+            None => attempt.await,
+        }
+        .and_then(|(text, calls)| {
+            if calls.is_empty() && text.as_deref().is_none_or(|text| text.trim().is_empty()) {
+                Err(autoagents::llm::error::LLMError::Generic(EMPTY_ANSWER.into()).into())
+            } else {
+                Ok((text, calls))
+            }
+        });
         let Some(error) = result
             .as_ref()
             .err()
@@ -1277,15 +1289,32 @@ async fn request_answer_inner(
         };
         let empty_output = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == EMPTY_ANSWER);
         let truncated = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == "Provider response was truncated");
+        // A stream that dropped or failed part-way is as temporary as a transport error.
+        let stream_dropped = matches!(error, autoagents::llm::error::LLMError::Generic(message)
+            if message == "Provider stream ended before completion"
+                || message == "Provider response failed or was incomplete"
+                || message.starts_with("Provider stream error"));
         // A rate limit or a cut-off response usually clears with time: losing a long run to
         // it costs far more than waiting, so those get more and longer retries (still inside
         // the overall answer deadline).
         let rate_limited = error.http_status_code() == Some(429);
         if retries >= answer_retry_limit(rate_limited, truncated)
             || published
-            || (!error.is_retryable() && !empty_output && !truncated)
+            || (!error.is_retryable() && !empty_output && !truncated && !stream_dropped)
         {
             return result;
+        }
+        if truncated {
+            cut_offs += 1;
+        }
+        if empty_output {
+            let mut retry = request.into_owned();
+            retry.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: EMPTY_ANSWER_NOTE.to_owned(),
+            });
+            request = std::borrow::Cow::Owned(retry);
         }
         // Calls from an interrupted response have not been executed; completed tools are already in messages.
         let delay = if rate_limited {
@@ -1300,7 +1329,7 @@ async fn request_answer_inner(
             "warn",
             serde_json::json!({
                 "retry": retries, "status": error.http_status_code(), "backoff_ms": delay.as_millis(),
-                "reason": if empty_output { "empty_output" } else if truncated { "output_truncated" } else if rate_limited { "rate_limited" } else { "transient" },
+                "reason": if empty_output { "empty_output" } else if truncated { "output_truncated" } else if rate_limited { "rate_limited" } else if stream_dropped { "stream_dropped" } else { "transient" },
             }),
         );
         eprintln!(
@@ -1562,6 +1591,8 @@ fn pin_notes(messages: &mut Vec<ChatMessage>, directory: &std::path::Path) {
         );
     }
 }
+
+const EMPTY_ANSWER_NOTE: &str = "[Runtime note, not from the user] Your last reply had no text and no tool call. Reply with your answer as text, or call a tool to continue the work.";
 
 const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. If an earlier read was summarised away and you still need it, keep what you learn this time in your notes or output; otherwise take the next unfinished step instead of repeating it.";
 
@@ -4378,7 +4409,67 @@ mod tests {
                     }
                 }
                 assert_eq!(texts, if recovers { vec!["Recovered"] } else { vec![] });
+                // Retries say the last reply was empty instead of resending the same request.
+                for (attempt, request) in
+                    server.received_requests().await.unwrap().iter().enumerate()
+                {
+                    let body = String::from_utf8_lossy(&request.body).into_owned();
+                    assert_eq!(body.contains("had no text and no tool call"), attempt > 0);
+                }
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn dropped_or_failed_streams_are_retried_before_anything_is_shown() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        // A stream that ends without finishing, and a Responses stream that fails.
+        for (model, broken) in [
+            (
+                "test-model",
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"}}]}\n\n".to_owned(),
+            ),
+            (
+                "gpt-test",
+                format!(
+                    "data: {}\n\n",
+                    serde_json::json!({"type":"response.failed","response":{"status":"failed"}})
+                ),
+            ),
+        ] {
+            let server = MockServer::start().await;
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = calls.clone();
+            let responses = model.starts_with("gpt-");
+            Mock::given(method("POST"))
+                .respond_with(move |_: &wiremock::Request| {
+                    let body = if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                        broken.clone()
+                    } else if responses {
+                        format!("data: {}\n\ndata: {}\n\n",
+                            serde_json::json!({"type":"response.output_text.delta","delta":"Recovered"}),
+                            serde_json::json!({"type":"response.completed","response":{"status":"completed"}}))
+                    } else {
+                        format!("data: {}\n\ndata: [DONE]\n\n", serde_json::json!({"choices":[{"delta":{"content":"Recovered"},"finish_reason":"stop"}]}))
+                    };
+                    ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
+                })
+                .mount(&server)
+                .await;
+            let llm = crate::providers::resolve(
+                &crate::providers::ProviderConfig::new(
+                    crate::providers::ProviderKind::Go,
+                    "test-key",
+                )
+                .with_model(model)
+                .with_base_url(server.uri()),
+            )
+            .await
+            .unwrap();
+            let (tx, _rx) = tokio::sync::mpsc::channel(16);
+            let result = request_answer(&llm, &[], &[], &tx, &AtomicBool::new(false)).await;
+            assert_eq!(result.unwrap().0.as_deref(), Some("Recovered"), "{model}");
+            assert_eq!(calls.load(Ordering::SeqCst), 2, "{model}");
         }
     }
 
@@ -4453,9 +4544,12 @@ mod tests {
                         vec![]
                     }
                 );
-                for request in server.received_requests().await.unwrap() {
+                // Each cut-off doubles the cap for the next attempt, up to four times it.
+                for (attempt, request) in
+                    server.received_requests().await.unwrap().iter().enumerate()
+                {
                     let body: serde_json::Value = request.body_json().unwrap();
-                    assert_eq!(body["max_tokens"], 8192);
+                    assert_eq!(body["max_tokens"], 8192 << attempt.min(2));
                     assert_eq!(body["model"], "test-model");
                 }
             }

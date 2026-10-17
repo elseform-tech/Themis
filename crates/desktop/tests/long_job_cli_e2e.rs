@@ -497,3 +497,49 @@ fn walk(root: &Path) -> Vec<std::path::PathBuf> {
     }
     files
 }
+
+/// A provider stream that drops part-way is retried, and the run still finishes.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_retries_a_stream_that_dropped_part_way() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let provider = MockServer::start().await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = calls.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |_: &Request| {
+            let body = if seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                // Reasoning, then the connection ends with no finish reason.
+                format!("data: {}\n\n", json!({"choices":[{"delta":{"reasoning_content":"thinking"}}]}))
+            } else {
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"choices":[{"delta":{"content":"Done after the drop."},"finish_reason":"stop"}]})
+                )
+            };
+            ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    let done = send(data.path(), &mut events, &id, "Say done").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    assert_eq!(done["result"].as_str().unwrap(), "Done after the drop.");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    serving.abort();
+}

@@ -86,7 +86,12 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                     content: Some(message.content.clone()),
                     tool_calls: None,
                     tool_call_id: None,
-                    reasoning_content: None,
+                    // An earlier final answer goes back with its own reasoning.
+                    reasoning_content: (role == "assistant")
+                        .then(|| super::reasoning::replay_answer(&message.content))
+                        .flatten()
+                        .map(|kept| kept.text)
+                        .filter(|text| !text.trim().is_empty()),
                 });
             }
             MessageType::ToolUse(calls) => wire.push(WireMessage {
@@ -235,11 +240,17 @@ pub(super) fn messages_body(
             content.push(json!({"type": "tool_result", "tool_use_id": id, "content": message.content.unwrap_or_default()}));
         } else {
             // A thinking model's blocks go first, unchanged (signatures must round-trip).
-            if let Some(kept) = message
-                .tool_calls
-                .as_deref()
-                .and_then(super::reasoning::replay)
-            {
+            let kept = match message.tool_calls.as_deref() {
+                Some(calls) => super::reasoning::replay(calls),
+                // Claude binds a thinking block to the exact conversation before it, and a
+                // later message's history is shorter, so its answers go back without it.
+                None if message.role == "assistant" && !model.starts_with("claude-") => message
+                    .content
+                    .as_deref()
+                    .and_then(super::reasoning::replay_answer),
+                None => None,
+            };
+            if let Some(kept) = kept {
                 content.extend(kept.blocks);
             }
             if let Some(text) = message.content.filter(|text| !text.is_empty()) {

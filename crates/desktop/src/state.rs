@@ -1334,6 +1334,7 @@ mod tests {
             effort_levels: vec!["low".to_owned(), "high".to_owned()],
             context_tokens: None,
             output_tokens: None,
+            thinking_toggle: false,
         }];
         assert!(state
             .set_thread_effort(thread.id.clone(), Some("max".to_owned()))

@@ -12,9 +12,13 @@
 //! - Responses: the `reasoning` output items (with `encrypted_content`, requested because
 //!   requests are not stored), before the function calls.
 //!
+//! A final answer's reasoning (a reply with no tool calls) is kept too, keyed by the answer
+//! text, so it goes back with that answer in later messages of the chat: the model keeps
+//! its own line of thought from one message to the next, not only within one.
+//!
 //! It is never shown, logged or saved: history, transcripts and evidence keep only the
 //! public text and the calls, so reasoning lasts as long as the process and stops being
-//! sent once its calls leave the request. Summaries never get it.
+//! sent once its calls or answer leave the request. Summaries never get it.
 
 use autoagents::llm::ToolCall;
 use std::collections::VecDeque;
@@ -52,20 +56,46 @@ fn enabled() -> bool {
         && super::COMPACTION_REQUEST.try_with(|_| ()).is_err()
 }
 
-/// Remembers the reasoning that came with `calls`.
-pub(super) fn remember(calls: &[ToolCall], reasoning: Reasoning) {
+fn answer_key(text: &str) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hash);
+    Some(format!("answer:{:016x}", hash.finish()))
+}
+
+/// Remembers the reasoning of one reply: by its tool calls, or by its answer text when it
+/// has none.
+pub(super) fn remember(calls: &[ToolCall], text: &str, reasoning: Reasoning) {
     if !enabled() || reasoning.is_empty() {
         return;
     }
-    let Some(id) = calls.iter().map(|call| &call.id).find(|id| !id.is_empty()) else {
+    let id = calls
+        .iter()
+        .map(|call| call.id.clone())
+        .find(|id| !id.is_empty())
+        .or_else(|| calls.is_empty().then(|| answer_key(text)).flatten());
+    let Some(id) = id else {
         return;
     };
     let mut kept = KEPT_REASONING.lock().unwrap_or_else(|e| e.into_inner());
-    kept.retain(|(known, _)| known != id);
+    kept.retain(|(known, _)| *known != id);
     if kept.len() >= KEPT {
         kept.pop_front();
     }
-    kept.push_back((id.clone(), reasoning));
+    kept.push_back((id, reasoning));
+}
+
+/// The reasoning remembered for a final answer with this text, when replay is on.
+pub(super) fn replay_answer(text: &str) -> Option<Reasoning> {
+    let key = answer_key(text).filter(|_| enabled())?;
+    let kept = KEPT_REASONING.lock().unwrap_or_else(|e| e.into_inner());
+    kept.iter()
+        .find(|(id, _)| *id == key)
+        .map(|(_, reasoning)| reasoning.clone())
 }
 
 /// The reasoning remembered for `calls`, when replay is on.
@@ -85,11 +115,16 @@ pub(super) fn replay(calls: &[ToolCall]) -> Option<Reasoning> {
 #[derive(Default)]
 pub(super) struct StreamedReasoning {
     reasoning: Reasoning,
+    /// The reply's public text, the key for an answer's reasoning.
+    text: String,
 }
 
 impl StreamedReasoning {
     /// Takes the reasoning parts of a normalized stream delta.
     pub(super) fn take(&mut self, delta: &serde_json::Value) {
+        if let Some(text) = delta["content"].as_str() {
+            self.text.push_str(text);
+        }
         if let Some(text) = delta["reasoning_content"]
             .as_str()
             .or_else(|| delta["reasoning"].as_str())
@@ -122,7 +157,8 @@ impl StreamedReasoning {
 
     /// Remembers what was collected for the reply's `calls`, and starts over.
     pub(super) fn finish(&mut self, calls: &[ToolCall]) {
-        remember(calls, std::mem::take(&mut self.reasoning));
+        let text = std::mem::take(&mut self.text);
+        remember(calls, &text, std::mem::take(&mut self.reasoning));
     }
 }
 
