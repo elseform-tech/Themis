@@ -29,11 +29,12 @@ MEMORY = {"normal": {"budget": 200_000, "recent_messages": 20},
 JOBS = {"threejs": threejs, "sheet": sheet}
 
 
-def make_task(job, memory):
+def make_task(job, memory, notes=True):
     module = JOBS[job]
-    return {"name": f"{job}-{memory}", "tool": job, "job": job, "memory": memory,
+    return {"name": f"{job}-{memory}" + ("" if notes else "-no-notes"), "tool": job, "job": job, "memory": memory,
+            "notes": notes,
             "setup": module.setup, "check": module.check, "prompt": module.PROMPT,
-            "evidence": ".themis/context/eval-thread", "offer_notes": True, "timeout": 5400,
+            "evidence": ".themis/context/eval-thread", "offer_notes": notes, "timeout": 5400,
             # YOLO-style approvals as a developer would use them; the OS sandbox still applies.
             "allow_all": True, **MEMORY[memory]}
 
@@ -46,9 +47,19 @@ def summarize(rows):
         name: {"runs": len(runs), "pass_rate": _mean([r["passed"] for r in runs]),
                "mean_calls": _mean([len(r["calls"]) for r in runs]),
                "mean_compactions": _mean([r["compactions"] for r in runs]),
+               # Notes carried by every checkpoint: the goal and task lines survive compaction.
+               "checkpoints_with_notes": _mean([notes_kept(r) for r in runs if r.get("checkpoints")]),
                "mean_minutes": _mean([r["latency_ms"] / 60000 for r in runs]),
                "failures": [r["why"][:200] for r in runs if not r["passed"]][:3]}
         for name, runs in sorted(by_task.items())}}
+
+
+def notes_kept(row):
+    """Share of the run's checkpoints that carried notes lines (None without checkpoints)."""
+    points = row.get("checkpoints") or []
+    if not points:
+        return None
+    return sum(1 for point in points if point.get("notes")) / len(points)
 
 
 def markdown(summary):
@@ -57,10 +68,12 @@ def markdown(summary):
              f"Via: {summary.get('via', 'runner')}. Runs: {s['runs']}; "
              f"infrastructure errors (excluded): {len(summary['errors'])}. "
              "Benchmark audit, not an automated check.", "",
-             "| Task | Pass | Calls | Compactions | Minutes | Failures |", "| --- | --- | --- | --- | --- | --- |"]
+             "| Task | Pass | Calls | Compactions | Checkpoints with notes | Minutes | Failures |",
+             "| --- | --- | --- | --- | --- | --- | --- |"]
     for name, row in s["tasks"].items():
         lines.append(f"| {name} | {fmt(row['pass_rate'])} | {fmt(row['mean_calls'], False)} | "
-                     f"{fmt(row['mean_compactions'], False)} | {fmt(row['mean_minutes'], False)} | "
+                     f"{fmt(row['mean_compactions'], False)} | {fmt(row.get('checkpoints_with_notes'))} | "
+                     f"{fmt(row['mean_minutes'], False)} | "
                      f"{'; '.join(row['failures']) or '-'} |")
     return "\n".join(lines) + "\n"
 
@@ -91,7 +104,12 @@ def run(args):
         def runner_call(make):
             return run_task_retrying(runner, make, args)
     memories = ["normal", "squeezed"] if args.memory == "both" else [args.memory]
-    jobs = [(trial, job, memory) for trial in range(args.trials) for job in args.job for memory in memories]
+    if args.no_notes and args.via == "app":
+        print("--no-notes needs --via runner: the app always offers notes", file=sys.stderr)
+        return 2
+    notes_arms = [True, False] if args.no_notes else [True]
+    jobs = [(trial, job, memory, notes) for trial in range(args.trials) for job in args.job for memory in memories
+            for notes in notes_arms]
     rows, errors = [], []
     os.makedirs(RESULTS, exist_ok=True)
     out = args.out or os.path.join(RESULTS, f"{datetime.date.today()}-{args.model}.json")
@@ -108,14 +126,14 @@ def run(args):
         return summary
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(runner_call, lambda job=job, memory=memory: make_task(job, memory)):
-                   (trial, job, memory) for trial, job, memory in jobs}
+        futures = {pool.submit(runner_call, lambda job=job, memory=memory, notes=notes: make_task(job, memory, notes)):
+                   (trial, job, memory, notes) for trial, job, memory, notes in jobs}
         for future in concurrent.futures.as_completed(futures):
-            trial, job, memory = futures[future]
+            trial, job, memory, notes = futures[future]
             row, error, _ = future.result()
             if row and row.get("error_text", "").startswith("LLM request failed"):
                 error = f"provider failed mid-run after {len(row['calls'])} calls: {row['error_text'][:120]}"
-            name = f"{job}-{memory}"
+            name = f"{job}-{memory}" + ("" if notes else "-no-notes")
             if error:
                 errors.append({"trial": trial, "task": name, "error": error})
                 print(f"trial {trial + 1} {name}: error {error}", flush=True)
@@ -140,6 +158,8 @@ def main(argv=None):
     cmd.add_argument("--model", default="muse-spark-1.3-contributor")
     cmd.add_argument("--memory", choices=("normal", "squeezed", "both"), default="both")
     cmd.add_argument("--jobs", type=int, default=2)
+    cmd.add_argument("--no-notes", action="store_true",
+                     help="also run each task with the notes tool withheld (needs --via runner)")
     cmd.add_argument("--via", choices=("app", "runner"), default="app",
                      help="app: the real themis app server and CLI (default); runner: the tool-eval runner")
     cmd.add_argument("--max-turns", type=int, default=200)

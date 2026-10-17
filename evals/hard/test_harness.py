@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from . import sheet, threejs
-from .__main__ import JOBS, make_task
+from .__main__ import JOBS, make_task, notes_kept
 from .browser import chrome
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -92,3 +92,15 @@ class TaskTest(unittest.TestCase):
             self.assertEqual(make_task(job, "normal")["budget"], 200_000)
             self.assertEqual(make_task(job, "squeezed")["budget"], 32_000)
             self.assertTrue(make_task(job, "normal")["allow_all"])
+
+    def test_the_notes_arm_withholds_notes_only(self):
+        with_notes, without = make_task("sheet", "squeezed"), make_task("sheet", "squeezed", notes=False)
+        self.assertTrue(with_notes["offer_notes"])
+        self.assertFalse(without["offer_notes"])
+        self.assertEqual(without["name"], "sheet-squeezed-no-notes")
+        self.assertEqual({k: v for k, v in without.items() if k not in ("offer_notes", "notes", "name")},
+                         {k: v for k, v in with_notes.items() if k not in ("offer_notes", "notes", "name")})
+
+    def test_notes_kept_is_the_share_of_checkpoints_with_notes(self):
+        self.assertIsNone(notes_kept({"checkpoints": []}))
+        self.assertEqual(notes_kept({"checkpoints": [{"notes": [{"key": "goal"}]}, {"notes": None}]}), 0.5)
