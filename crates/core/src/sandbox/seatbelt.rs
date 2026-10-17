@@ -22,14 +22,36 @@ const DEVICE_LITERALS: &[&str] = &[
     "/dev/urandom",
 ];
 
+/// The Keychain's services. Programs reach saved passwords through these, not by reading
+/// `~/Library/Keychains` (which is already a secret path). One rule per service: a rule's
+/// filters must all match, so naming several in one rule would match nothing.
+const KEYCHAIN_SERVICES: &[&str] = &[
+    "com.apple.SecurityServer",
+    "com.apple.securityd",
+    "com.apple.securityd.xpc",
+];
+
 /// The profile text and its `(name, path)` parameters.
 pub fn profile(plan: &SandboxPlan) -> (String, Vec<(String, OsString)>) {
-    build(
+    let (mut text, params) = build(
         plan.writable(),
         plan.protected(),
         plan.secrets(),
         plan.network() == NetworkPolicy::Block,
-    )
+    );
+    if !plan.allow_keychain() {
+        text.push_str(&keychain_rules());
+    }
+    (text, params)
+}
+
+/// Rules that keep sandboxed commands away from the Keychain (no prompts, no secrets).
+/// TLS certificate checks use other services, so HTTPS keeps working.
+pub fn keychain_rules() -> String {
+    KEYCHAIN_SERVICES
+        .iter()
+        .map(|service| format!("(deny mach-lookup (global-name \"{service}\"))\n"))
+        .collect()
 }
 
 /// Profile for explicit path lists (see [`profile`]).
