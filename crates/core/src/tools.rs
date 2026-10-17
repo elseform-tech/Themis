@@ -1152,6 +1152,12 @@ impl ToolRuntime for GatedTool {
             }
         }
         let name = self.inner.name();
+        // `append` is optional to the model (the schema default is a replace), but the
+        // toolkit's argument type requires it: fill it in before approval, so an approved
+        // write is not refused afterwards and approved again on retry.
+        if name == "write_file" && args.get("append").is_none() && args.is_object() {
+            args["append"] = Value::Bool(false);
+        }
         let action = ToolAction {
             display: None,
             command: Vec::new(),
@@ -3600,6 +3606,29 @@ mod tests {
         assert_eq!(tool.timeout(), Duration::from_secs(120));
         let tool = tool.with_timeout(Duration::from_secs(1));
         assert_eq!(tool.timeout(), Duration::from_secs(1));
+    }
+
+    /// Models often leave out `append`; the write runs once, as a replace, after one
+    /// approval (the toolkit used to refuse it after approval, asking again on retry).
+    #[tokio::test]
+    async fn write_file_without_append_replaces_the_file_after_one_approval() {
+        let (_tmp, root) = rooted_case();
+        let hook = Arc::new(RecordingHook::new(Approval::AllowOnce));
+        let tools = boxed_tools(&root, hook.clone()).unwrap();
+        let write = tools
+            .iter()
+            .find(|tool| tool.name() == "write_file")
+            .unwrap();
+        fs::write(root.join("numbers.txt"), "old\n").unwrap();
+        write
+            .execute(json!({"file_path": "numbers.txt", "content": "4217\n12\n30\n"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("numbers.txt")).unwrap(),
+            "4217\n12\n30\n"
+        );
+        assert_eq!(hook.seen().len(), 1);
     }
 
     /// The toolkit's append returns before tokio's buffered write lands; the
