@@ -113,7 +113,7 @@ export function ThreadComposer({
           placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Ask Themis… @ for plugins, / for skills"}
           onChange={onDraftChange} onSubmit={onSend} />
         <div className="themis-thread-composer-actions">
-          <details className="themis-composer-add">
+          <details className="themis-composer-add" data-popover>
             <summary aria-label="Add files, skills or plugins" title="Add files, skills or plugins">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             </summary>
@@ -129,7 +129,7 @@ export function ThreadComposer({
               </button>
             </div>
           </details>
-          <details className="themis-composer-permissions" data-mode={thread.approval_mode ?? "custom"}>
+          <details className="themis-composer-permissions" data-popover data-mode={thread.approval_mode ?? "custom"}>
             <summary onMouseDown={event => event.preventDefault()} aria-label={`Permissions: ${thread.approval_mode === "yolo" ? "YOLO" : "Custom"}`} title={thread.approval_mode === "yolo" ? "YOLO: no approval prompts; the sandbox still applies" : "Custom applies your rules and asks for tool approvals"}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 3 4 6.5V12c0 4.5 8 9 8 9s8-4.5 8-9V6.5Z" /></svg>
               <span>{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>

@@ -55,6 +55,15 @@ error. Each backend is probed once per app-server process.
   `~/.gem/credentials`, `~/.vault-token`, `~/.terraform.d/credentials.tfrc.json`
   and, on macOS, `~/Library/Keychains`. Tools that need them (an SSH
   `git push`, `gh`, `kubectl`, `aws`) therefore fail inside the sandbox.
+- **Keychain** (macOS): programs reach saved passwords through the Keychain's
+  services, not by reading its files, so Seatbelt also blocks those services
+  (`com.apple.SecurityServer`, `com.apple.securityd`, `com.apple.securityd.xpc`).
+  An agent's command can neither read saved passwords nor raise Keychain
+  prompts (headless Chrome, for example, otherwise asks for "Chrome Safe
+  Storage"). HTTPS certificate checks use other services and keep working.
+  Tools that use the Keychain, such as git's HTTPS credential helper, fail;
+  Themis tells the agent so. `"allow_keychain": true` in the user
+  `runtime.jsonc` lets them use it again.
 - **Network**: allowed by default, in Custom and YOLO. `"network": "block"` blocks
   all IP traffic, including `localhost` (Seatbelt: outbound, inbound and bind;
   bubblewrap: a private network namespace; Landlock: TCP bind/connect only, and
@@ -77,15 +86,17 @@ The sandbox is configured only in files, never in the app. In the user
   "enabled": true,          // default
   "backend": "auto",        // auto | seatbelt | bubblewrap | landlock
   "network": "allow",       // allow | block
-  "writable_paths": []      // absolute or ~/ folders
+  "writable_paths": [],     // absolute or ~/ folders
+  "allow_keychain": false   // macOS: let commands use the Keychain
 }
 ```
 
 A project's `.themis/config.jsonc` (and an explicit run override) may only
 tighten: set `"network": "block"`, set `"enabled": true`, repeat the user's
-`backend`, or list a subset of the user's `writable_paths`. Disabling the
-sandbox, changing the backend, allowing a network the user blocks or adding a
-writable path is a validation error, and runs are refused until it is fixed.
+`backend`, list a subset of the user's `writable_paths`, or set
+`"allow_keychain": false`. Disabling the sandbox, changing the backend,
+allowing a network the user blocks, adding a writable path or allowing the
+Keychain is a validation error, and runs are refused until it is fixed.
 Like the rest of the configuration, the sandbox is captured once when a run
 starts.
 

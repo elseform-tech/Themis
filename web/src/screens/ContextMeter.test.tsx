@@ -26,6 +26,15 @@ describe("ContextMeter", () => {
     rerender(<ContextMeter budget={budget} running compacting />);
     expect(screen.getByRole("button", { name: "Context 84% full" })).toHaveTextContent("Compacting…");
   });
+  it("shows model reasoning only when a thinking model sends some back", () => {
+    const { rerender } = render(<ContextMeter budget={budget} />);
+    fireEvent.click(screen.getByRole("button", { name: "Context 84% full" }));
+    expect(screen.getByRole("dialog", { name: "Context" })).not.toHaveTextContent("Model reasoning");
+    rerender(<ContextMeter budget={{ ...budget, breakdown: { ...budget.breakdown, reasoning: 21300 } }} />);
+    const panel = screen.getByRole("dialog", { name: "Context" });
+    expect(panel).toHaveTextContent("Model reasoning21.3k");
+    expect(screen.getByRole("img")).toHaveAccessibleName(expect.stringContaining("Model reasoning 21.3k"));
+  });
   it("renders nothing before the first budget arrives", () => {
     const { container } = render(<ContextMeter budget={undefined} running />);
     expect(container).toBeEmptyDOMElement();
