@@ -27,7 +27,7 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, switc
   const effortIndex = Math.max(0, choices.indexOf(effort));
   return (
     <header className="themis-thread-head">
-      <details className="themis-model-pill">
+      <details className="themis-model-pill" data-popover>
         <summary aria-label={`Model ${thread.model || "not chosen"}, reasoning effort ${effort || "Default"}`}>
           <span className="themis-model-pill-brand">Themis</span>
           <span className="themis-model-pill-meta">{thread.model || "Choose a model"} · {effort || "Default"}</span>

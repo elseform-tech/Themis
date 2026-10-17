@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useDismiss } from "../lib/dismiss";
 import type { ContextBudget } from "../lib/types";
 import { usedPercent } from "../state/reducer";
 
-type Part = { key: keyof ContextBudget["breakdown"]; label: string; color: string };
+type Part = { key: keyof ContextBudget["breakdown"]; label: string; color: string; optional?: boolean };
 const PARTS: Part[] = [
   { key: "tool_activity", label: "Tool calls & results", color: "var(--themis-accent)" },
+  // Only thinking models send their reasoning back; the row appears when there is some.
+  { key: "reasoning", label: "Model reasoning", color: "var(--themis-success)", optional: true },
   { key: "conversation", label: "Messages", color: "var(--themis-info)" },
   { key: "attachments", label: "Attachments", color: "#c58af9" },
   { key: "checkpoint", label: "Checkpoint & task ledger", color: "var(--themis-gradient-3)" },
@@ -18,6 +21,8 @@ export function formatTokens(tokens: number): string {
 /** Byte-estimated context distribution with the runtime's own thresholds. */
 export function ContextMeter({ budget, compacting = false, running = false }: { budget: ContextBudget | undefined; compacting?: boolean; running?: boolean }) {
   const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useDismiss(root, open, useCallback(() => setOpen(false), []));
   if (budget === undefined) return null;
   const percent = usedPercent(budget);
   // The projection only matters while a run can still reach the threshold.
@@ -26,8 +31,10 @@ export function ContextMeter({ budget, compacting = false, running = false }: { 
   const share = (tokens: number) => `${budget.usable_tokens > 0 ? Math.min(100, tokens / budget.usable_tokens * 100) : 0}%`;
   const at = (tokens: number) => Math.min(100, Math.round(tokens / Math.max(1, budget.usable_tokens) * 100));
   const label = compacting ? "Compacting…" : soon ? `${percent}% · compacting soon` : `${percent}%`;
+  const tokensOf = (part: Part) => budget.breakdown[part.key] ?? 0;
+  const parts = PARTS.filter(part => !part.optional || tokensOf(part) > 0);
   return (
-    <div className="themis-context">
+    <div className="themis-context" ref={root}>
       <button type="button" className={`themis-context-chip themis-context-chip--${tone}`} aria-expanded={open}
         aria-label={`Context ${percent}% full${soon ? ", close to auto-compact" : ""}`} onClick={() => setOpen(value => !value)}>
         <svg width="20" height="20" viewBox="0 0 36 36" aria-hidden="true">
@@ -44,14 +51,14 @@ export function ContextMeter({ budget, compacting = false, running = false }: { 
             <strong>Context</strong>
             <span>≈{formatTokens(budget.used_tokens)} of {formatTokens(budget.usable_tokens)} usable · {formatTokens(budget.budget_tokens)} budget</span>
           </div>
-          <div className="themis-context-bar" role="img" aria-label={`Context ${percent}% full: ${PARTS.map(part => `${part.label} ${formatTokens(budget.breakdown[part.key])}`).join(", ")}`}>
-            {PARTS.map(part => <span key={part.key} style={{ width: share(budget.breakdown[part.key]), background: part.color }} />)}
+          <div className="themis-context-bar" role="img" aria-label={`Context ${percent}% full: ${parts.map(part => `${part.label} ${formatTokens(tokensOf(part))}`).join(", ")}`}>
+            {parts.map(part => <span key={part.key} style={{ width: share(tokensOf(part)), background: part.color }} />)}
             <i style={{ left: `${at(budget.maintenance_at_tokens)}%` }} />
             <i className="is-compact" style={{ left: `${at(budget.compaction_at_tokens)}%` }} />
           </div>
           <p className="themis-context-thresholds"><span><i aria-hidden="true" />Tidy-up at {at(budget.maintenance_at_tokens)}%</span><span><i className="is-compact" aria-hidden="true" />Auto-compact at {at(budget.compaction_at_tokens)}%</span></p>
           <ul className="themis-context-legend">
-            {PARTS.map(part => <li key={part.key}><span style={{ background: part.color }} aria-hidden="true" />{part.label}<b>{formatTokens(budget.breakdown[part.key])}</b></li>)}
+            {parts.map(part => <li key={part.key}><span style={{ background: part.color }} aria-hidden="true" />{part.label}<b>{formatTokens(tokensOf(part))}</b></li>)}
           </ul>
           <p className="themis-context-note">Held outside the bar: {formatTokens(budget.tool_definition_tokens)} tool definitions · {formatTokens(budget.output_reserve_tokens)} reply · {formatTokens(budget.safety_margin_tokens)} safety margin. Estimates (bytes ÷ 4).</p>
           {soon && <p className="themis-context-warn">Close to auto-compact. Themis will summarise older work into a checkpoint and task ledger; every original stays on disk.</p>}

@@ -100,7 +100,7 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
         <div className="themis-brand"><span className="themis-wordmark">Themis</span></div>
         <div className="themis-sidebar-nav"><button type="button" className="themis-new-chat" disabled={!state.activeProjectRoot} onClick={() => void newThread()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New chat</span></button></div>
         <div className="themis-sidebar-projects">
-          <details className="themis-project-switcher">
+          <details className="themis-project-switcher" data-popover>
             <summary aria-label={`Project: ${activeProject?.name ?? "none"}`} title={activeProject?.root}>
               <SidebarIcon name="project" /><MovingText loop>{activeProject?.name ?? "Choose a project"}</MovingText>
               {busyElsewhere && <span className="themis-project-busy" role="img" aria-label="Activity in another project" />}
