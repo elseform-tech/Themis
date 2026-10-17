@@ -147,6 +147,10 @@ def run_task_retrying(runner, make_task, args, delay=120, run=None):
     row, error = run(runner, make_task(), args)
     if not infrastructure_failure(row, error) or getattr(args, "no_retry", False):
         return row, error, False
+    # Say why the first attempt was lost: only the retry's outcome reaches the results.
+    lost = error or (row or {}).get("error_text", "")[:160]
+    print(f"run lost after {len((row or {}).get('calls', []))} calls, retrying in {delay} s: {lost}",
+          file=sys.stderr, flush=True)
     time.sleep(delay)
     row, error = run(runner, make_task(), args)
     return row, error, True
