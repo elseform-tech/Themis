@@ -761,3 +761,100 @@ fn windows_has_no_backend_and_runs_unsandboxed() {
         assert!(!availability(backend).available);
     }
 }
+
+#[test]
+fn the_keychain_is_blocked_unless_the_user_allows_it() {
+    let fx = fixture();
+    let profile = |json: &str| {
+        let plan = plan_with(
+            Enforcement::Active(Backend::Seatbelt),
+            &config(json),
+            &fx.root,
+            &fx.app_data,
+            &fx.home,
+        );
+        seatbelt::profile(&plan).0
+    };
+    let blocked = profile("{}");
+    for service in [
+        "com.apple.SecurityServer",
+        "com.apple.securityd",
+        "com.apple.securityd.xpc",
+    ] {
+        assert!(
+            blocked.contains(&format!("(deny mach-lookup (global-name \"{service}\"))")),
+            "{blocked}"
+        );
+    }
+    assert!(!profile(r#"{"allow_keychain": true}"#).contains("mach-lookup"));
+}
+
+#[test]
+fn only_the_user_configuration_can_allow_the_keychain() {
+    let user = SandboxConfig::default();
+    let project = |value: serde_json::Value| check_restriction(&user, &value, "project");
+    assert!(project(serde_json::json!({"allow_keychain": false})).is_ok());
+    let error = project(serde_json::json!({"allow_keychain": true})).unwrap_err();
+    assert!(
+        error.to_string().contains("sandbox.allow_keychain"),
+        "{error}"
+    );
+    let allowed = config(r#"{"allow_keychain": true}"#);
+    assert!(check_restriction(
+        &allowed,
+        &serde_json::json!({"allow_keychain": true}),
+        "project"
+    )
+    .is_ok());
+}
+
+#[test]
+fn keychain_failures_name_the_setting_only_where_it_applies() {
+    let fx = fixture();
+    let plan = |enforcement, json: &str| {
+        plan_with(enforcement, &config(json), &fx.root, &fx.app_data, &fx.home)
+    };
+    let output = "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.";
+    let seatbelt = plan(Enforcement::Active(Backend::Seatbelt), "{}");
+    let note = seatbelt.denial(false, output, &fx.root).unwrap();
+    assert!(note.contains("sandbox.allow_keychain"), "{note}");
+    assert!(seatbelt.may_have_blocked(false, output));
+    let allowed = plan(
+        Enforcement::Active(Backend::Seatbelt),
+        r#"{"allow_keychain": true}"#,
+    );
+    assert!(allowed.denial(false, output, &fx.root).is_none());
+    assert!(
+        seatbelt.denial(true, output, &fx.root).is_none(),
+        "only failed commands"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn seatbelt_keeps_a_real_command_out_of_the_keychain() {
+    if !availability(Backend::Seatbelt).available {
+        eprintln!("skipping: Seatbelt unavailable");
+        return;
+    }
+    let fx = fixture();
+    let plan = |json: &str| {
+        plan_with(
+            Enforcement::Active(Backend::Seatbelt),
+            &config(json),
+            &fx.root,
+            &fx.app_data,
+            &fx.home,
+        )
+    };
+    // Listing the keychain search list needs the Keychain service but no item, so it never
+    // raises a prompt.
+    let (ok, output) = run(&plan("{}"), &fx.root, "/usr/bin/security list-keychains");
+    assert!(!ok || !output.contains("login.keychain"), "{output}");
+    let (ok, output) = run(
+        &plan(r#"{"allow_keychain": true}"#),
+        &fx.root,
+        "/usr/bin/security list-keychains",
+    );
+    assert!(ok, "allowed: {output}");
+}

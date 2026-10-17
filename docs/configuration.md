@@ -192,6 +192,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `sandbox.backend` | `auto` (default), `seatbelt` (macOS), `bubblewrap` or `landlock` (Linux); a backend of another OS is an error, an unusable named one fails closed |
 | `sandbox.network` | `allow` (default, also in Custom) or `block`; projects may only set `block` |
 | `sandbox.writable_paths` | At most 32 folders, absolute or `~/...`, 1–1,024 bytes, no `..`; projects may only remove entries |
+| `sandbox.allow_keychain` | macOS: `false` (default) keeps sandboxed commands out of the Keychain; `true` lets them use it (for example git's HTTPS credential helper); projects may only set `false` |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration

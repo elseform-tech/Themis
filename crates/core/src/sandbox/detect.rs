@@ -15,7 +15,7 @@
 //! Anything else (no path, a path the sandbox allows, a path the OS itself
 //! refuses) is not treated as a sandbox denial, so no escalation is offered.
 
-use super::{resolve_existing, NetworkPolicy, SandboxPlan};
+use super::{resolve_existing, Backend, Enforcement, NetworkPolicy, SandboxPlan};
 use std::path::{Path, PathBuf};
 
 /// Lines examined, and bytes per line.
@@ -59,20 +59,43 @@ fn lines(output: &str) -> impl Iterator<Item = &str> {
 }
 
 /// Whether any line mentions a permission or (when blocked) network failure.
+/// Whether this plan's backend keeps commands away from the Keychain (only Seatbelt can).
+fn keychain_blocked(plan: &SandboxPlan) -> bool {
+    !plan.allow_keychain() && matches!(plan.enforcement(), Enforcement::Active(Backend::Seatbelt))
+}
+
 pub(super) fn has_marker(plan: &SandboxPlan, output: &str) -> bool {
     lines(output).any(|line| {
         let lower = line.to_ascii_lowercase();
         PERMISSION_MARKERS
             .iter()
             .any(|marker| lower.contains(marker))
+            || (keychain_blocked(plan)
+                && KEYCHAIN_MARKERS.iter().any(|marker| lower.contains(marker)))
             || (plan.network() == NetworkPolicy::Block
                 && NETWORK_MARKERS.iter().any(|marker| lower.contains(marker)))
     })
 }
 
+/// Words in a failed command's output that point at the blocked Keychain (the `security`
+/// tool, git's credential helper, Chrome and the Security framework's errors).
+const KEYCHAIN_MARKERS: &[&str] = &[
+    "seckeychain",
+    "secitemcopymatching",
+    "could not be found in the keychain",
+    "keychain lookup failed",
+    "osxkeychain",
+];
+
 pub(super) fn denial(plan: &SandboxPlan, output: &str, cwd: &Path) -> Option<String> {
     for line in lines(output) {
         let lower = line.to_ascii_lowercase();
+        if keychain_blocked(plan) && KEYCHAIN_MARKERS.iter().any(|marker| lower.contains(marker)) {
+            return Some(
+                "the macOS Keychain is blocked for agent commands (sandbox.allow_keychain is false in runtime.jsonc)"
+                    .to_owned(),
+            );
+        }
         if plan.network() == NetworkPolicy::Block
             && plan.network_enforced
             && NETWORK_MARKERS.iter().any(|marker| lower.contains(marker))
