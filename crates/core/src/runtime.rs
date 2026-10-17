@@ -925,7 +925,9 @@ async fn run_task_with_evidence_inner(
                                 }
                                 _ => None,
                             });
-                    if let Some(earlier) = live {
+                    if nudge_off("repeat_receipt") {
+                        // Eval comparison: the repeated result goes back in full.
+                    } else if let Some(earlier) = live {
                         *result = freshness_receipt(result, &earlier.id, fingerprint);
                     } else {
                         remind_unchanged_result(
@@ -4538,6 +4540,7 @@ mod tests {
                 assert!(nudge_off("loop_warning"));
                 assert!(!nudge_off("finish_checks"));
                 assert!(!nudge_off("notes_reminder"));
+                assert!(!nudge_off("repeat_receipt"));
             })
             .await;
     }

@@ -195,7 +195,7 @@ class ArmsTest(unittest.TestCase):
         self.assertNotIn("nudges_off", base)
         self.assertFalse(make_task(1, "normal", "no-notes")["offer_notes"])
         for arm, nudge in [("no-reminder", "notes_reminder"), ("no-finish-checks", "finish_checks"),
-                           ("no-loop-warning", "loop_warning")]:
+                           ("no-loop-warning", "loop_warning"), ("no-repeat-receipt", "repeat_receipt")]:
             task = make_task(1, "normal", arm)
             self.assertEqual((task["nudges_off"], task["offer_notes"]), ([nudge], True))
         bash = make_task(1, "normal", "bash-only")

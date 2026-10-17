@@ -96,7 +96,8 @@ pub struct ToolTaskOptions {
     /// YOLO-style approvals: every action runs (the OS sandbox around the runner still
     /// applies). Off: destructive actions are refused, as by a cautious person in Custom mode.
     pub allow_all: bool,
-    /// Ablation: runtime nudges to switch off (`notes_reminder`, `finish_checks`, `loop_warning`).
+    /// Ablation: runtime nudges to switch off (`notes_reminder`, `finish_checks`, `loop_warning`,
+    /// `repeat_receipt`).
     pub nudges_off: Vec<String>,
     /// Ablation: tools withheld from the agent (for example the file tools, leaving the shell).
     pub hide_tools: Vec<String>,

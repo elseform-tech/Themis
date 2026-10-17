@@ -38,6 +38,8 @@ ARMS = {
     "no-reminder": {"nudges_off": ["notes_reminder"]},
     "no-finish-checks": {"nudges_off": ["finish_checks"]},
     "no-loop-warning": {"nudges_off": ["loop_warning"]},
+    # Repeated unchanged results sent in full instead of "identical to call X, reuse it".
+    "no-repeat-receipt": {"nudges_off": ["repeat_receipt"]},
     "bash-only": {"hide_tools": FILE_TOOLS},
     # The model's own reasoning withheld from later requests (the app sends it back).
     "no-reasoning": {"replay_reasoning": False},

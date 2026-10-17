@@ -38,7 +38,7 @@ wrong or unfinished).
 - Memory: `normal` uses the app's defaults (200,000-token context, 200 turns); `squeezed`
   (32,000 tokens) forces many checkpoints.
 - Arms: `notes` (the app as it is), `no-notes` (the notes tool withheld), one runtime nudge
-  switched off at a time (`no-reminder`, `no-finish-checks`, `no-loop-warning`), and
+  switched off at a time (`no-reminder`, `no-finish-checks`, `no-loop-warning`, `no-repeat-receipt`), and
   `bash-only` (the file tools hidden, so the agent works through the shell), and
   `no-reasoning` (the model's reasoning not sent back with its own tool calls, as before).
   A nudge that does not clearly help when switched off is a candidate for removal.
