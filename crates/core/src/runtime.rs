@@ -602,8 +602,6 @@ async fn run_task_with_evidence_inner(
     let mut work_calls = 0usize;
     let mut finish_checks = 0usize;
     let mut work_at_check = 0usize;
-    let mut recovery_reads = 0;
-    let mut recall_searches = 0usize;
     let config = compaction_config();
     // Prior turns arrive as text or as checkpoint-retained messages that a
     // checkpoint already summarized; only this run's new work is unsummarized.
@@ -957,39 +955,14 @@ async fn run_task_with_evidence_inner(
                 observations.clear();
                 last_shell_observation = None;
             }
-            // Run-local state survives compaction. This bounds retrieval, not semantic correctness.
-            // Recall has its own bound: each search is a bounded scan, so the allowance is
-            // wider than the 64 recursive archive reads, and `around` paging is exempt
-            // (it only reads one 3,000-character page; total turns still bound the run).
+            // Counted for diagnostics only. Like repeated results, many searches or archive
+            // reads never stop a run: stopping hides why the agent kept looking, and the run's
+            // turn limit bounds a real loop.
             if call.function.name == "recall" {
-                let paging = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
-                    .is_ok_and(|v| v["around"].as_str().is_some_and(|t| t.contains('|')));
-                if !paging {
-                    recall_searches += 1;
-                    crate::context_metrics::activity("recall_searches");
-                    if recall_searches > 128 {
-                        let error = "Recall stopped: the 128-search allowance was exceeded. Originals and completed actions remain saved; answer from what was found or narrow the question.".to_owned();
-                        emit(RunEvent::Failed {
-                            error: error.clone(),
-                        })
-                        .await
-                        .ok();
-                        return Err(anyhow!(error));
-                    }
-                }
+                crate::context_metrics::activity("recall_searches");
             }
             if crate::tools::context_recovery_call(&call.function.name, &call.function.arguments) {
-                recovery_reads += 1;
                 crate::context_metrics::activity("recovery_reads");
-                if recovery_reads >= 64 {
-                    let error = "Evidence recovery stopped: the 64-call recovery allowance was exceeded. Originals and completed actions remain saved; narrow the missing question/source range before continuing.".to_owned();
-                    emit(RunEvent::Failed {
-                        error: error.clone(),
-                    })
-                    .await
-                    .ok();
-                    return Err(anyhow!(error));
-                }
             }
         }
         let mut delivered_calls = calls;

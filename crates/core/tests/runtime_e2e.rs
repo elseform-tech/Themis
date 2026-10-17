@@ -756,7 +756,7 @@ async fn repeated_archive_reads_are_warned_without_another_compaction() {
         Some(evidence),
     )
     .await;
-    // Repeated archive reads are warned like any others; the 64-call recovery cap still bounds them.
+    // Repeated archive reads are warned like any others and never stopped.
     assert_eq!(result.unwrap(), "Repeated the same evidence");
     let events = common::drain(&mut rx).await;
     assert!(!events

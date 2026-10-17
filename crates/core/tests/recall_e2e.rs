@@ -268,10 +268,9 @@ async fn run_scripted_recalls(calls: usize, around: bool) -> anyhow::Result<Stri
 }
 
 #[tokio::test]
-async fn recall_searches_have_their_own_wider_bound() {
-    assert_eq!(run_scripted_recalls(100, false).await.unwrap(), "DONE");
-    let error = run_scripted_recalls(140, false).await.unwrap_err();
-    assert!(error.to_string().contains("128-search"), "{error}");
+async fn many_recall_searches_never_stop_the_run() {
+    // Only the turn limit bounds a run; 140 searches used to be stopped at 128.
+    assert_eq!(run_scripted_recalls(140, false).await.unwrap(), "DONE");
 }
 
 #[tokio::test]
