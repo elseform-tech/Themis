@@ -11,8 +11,8 @@ pub(super) struct WireMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) tool_call_id: Option<String>,
     /// A thinking model's reasoning for these tool calls, when replay is on.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) reasoning_content: Option<String>,
+    #[serde(flatten)]
+    pub(super) reasoning: super::reasoning::WireReasoning,
 }
 
 /// OpenAI chat-completions request body.
@@ -55,8 +55,13 @@ pub(super) struct WireChoiceMessage {
     pub(super) content: Option<String>,
     #[serde(default)]
     pub(super) tool_calls: Option<Vec<ToolCall>>,
-    #[serde(default, alias = "reasoning")]
+    #[serde(default)]
     pub(super) reasoning_content: Option<String>,
+    /// Kimi and Hunyuan send their reasoning text as `reasoning`.
+    #[serde(default)]
+    pub(super) reasoning: Option<String>,
+    #[serde(default)]
+    pub(super) reasoning_details: Vec<serde_json::Value>,
     /// Messages `thinking` / `redacted_thinking` blocks (normalized responses only).
     #[serde(default)]
     pub(super) thinking_blocks: Vec<serde_json::Value>,
@@ -87,11 +92,11 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                     tool_calls: None,
                     tool_call_id: None,
                     // An earlier final answer goes back with its own reasoning.
-                    reasoning_content: (role == "assistant")
-                        .then(|| super::reasoning::replay_answer(&message.content))
-                        .flatten()
-                        .map(|kept| kept.text)
-                        .filter(|text| !text.trim().is_empty()),
+                    reasoning: super::reasoning::WireReasoning::from_kept(
+                        (role == "assistant")
+                            .then(|| super::reasoning::replay_answer(&message.content))
+                            .flatten(),
+                    ),
                 });
             }
             MessageType::ToolUse(calls) => wire.push(WireMessage {
@@ -122,9 +127,9 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                         .collect(),
                 ),
                 tool_call_id: None,
-                reasoning_content: super::reasoning::replay(calls)
-                    .map(|kept| kept.text)
-                    .filter(|text| !text.trim().is_empty()),
+                reasoning: super::reasoning::WireReasoning::from_kept(super::reasoning::replay(
+                    calls,
+                )),
             }),
             MessageType::ToolResult(results) => {
                 for result in results {
@@ -133,7 +138,7 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
                         content: Some(result.function.arguments.clone()),
                         tool_calls: None,
                         tool_call_id: Some(result.id.clone()),
-                        reasoning_content: None,
+                        reasoning: Default::default(),
                     });
                 }
             }
@@ -320,6 +325,8 @@ pub(super) fn messages_response(value: serde_json::Value) -> Result<WireChatResp
                 content: Some(text),
                 tool_calls: Some(calls),
                 reasoning_content: None,
+                reasoning: None,
+                reasoning_details: Vec::new(),
                 thinking_blocks,
                 reasoning_items: Vec::new(),
             },

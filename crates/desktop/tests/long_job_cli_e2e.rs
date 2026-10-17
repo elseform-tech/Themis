@@ -544,6 +544,62 @@ async fn cli_retries_a_stream_that_dropped_part_way() {
     serving.abort();
 }
 
+/// Reasoning that comes as `reasoning` with `reasoning_details` (Kimi, Hunyuan) goes back in
+/// those same fields with the tool call it led to.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_replays_reasoning_details_in_the_fields_they_came_in() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("notes.txt"), "the answer is 42\n").unwrap();
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            let answered = body["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+            if answered {
+                reply(json!({"content":"The notes say 42."}))
+            } else {
+                reply(json!({"content":"","reasoning":"Read the notes.",
+                    "reasoning_details":[{"type":"reasoning.text","text":"Read the notes.","index":0}],
+                    "tool_calls":[read_call("detail-read-1","notes.txt")]}))
+            }
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    let done = send(data.path(), &mut events, &id, "What do the notes say?").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    let requests = provider.received_requests().await.unwrap();
+    let last = requests.last().unwrap().body_json::<Value>().unwrap();
+    let assistant = last["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "assistant" && m["tool_calls"].is_array())
+        .expect("the tool call goes back");
+    assert_eq!(assistant["reasoning"], "Read the notes.");
+    assert_eq!(assistant["reasoning_details"][0]["text"], "Read the notes.");
+    assert!(assistant.get("reasoning_content").is_none());
+    serving.abort();
+}
+
 /// A write the model sends without `append` runs once, as a replace, in a YOLO chat.
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_write_without_append_runs_once() {
