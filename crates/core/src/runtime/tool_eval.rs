@@ -72,6 +72,9 @@ pub struct ToolTaskReport {
     pub turns: Vec<TurnRecord>,
     /// Loop warnings over all turns.
     pub loop_warnings: usize,
+    /// Whether the app's OS sandbox ran the agent's commands (it never blocks a run when
+    /// no backend works here, as in the app).
+    pub sandbox_active: bool,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub latency_ms: u128,
@@ -151,6 +154,12 @@ pub async fn run_tool_task(
     task: &str,
     options: ToolTaskOptions,
 ) -> anyhow::Result<ToolTaskReport> {
+    // As in the app, the chat's saved-originals folder is excluded from Git, so the agent
+    // does not see it in `git status` as leftovers of its own.
+    if let Some(evidence) = options.evidence.as_deref() {
+        std::fs::create_dir_all(evidence)?;
+        crate::skills::ensure_git_excluded(evidence)?;
+    }
     let mut history = options
         .checkpoint
         .as_ref()
@@ -177,13 +186,25 @@ pub async fn run_tool_task(
         final_notes: None,
         turns: Vec::new(),
         loop_warnings: 0,
+        sandbox_active: false,
         input_tokens: None,
         output_tokens: None,
         latency_ms: 0,
     };
+    // The app's default OS sandbox, as a run in the app gets it: commands may write only
+    // to the project and temporary folders, never to `.themis/`.
+    let sandbox = Arc::new(crate::sandbox::SandboxPlan::new(
+        crate::sandbox::PlanInputs {
+            config: &crate::sandbox::SandboxConfig::default(),
+            project_root: project,
+            app_data: None,
+            home: None,
+        },
+    ));
+    report.sandbox_active = sandbox.is_active();
     let started = std::time::Instant::now();
     for (turn, prompt) in prompts.iter().enumerate() {
-        let run = run_turn(llm, project, prompt, history.clone(), &options).await?;
+        let run = run_turn(llm, project, prompt, history.clone(), &options, &sandbox).await?;
         let notes_before = report.notes_log.len();
         report
             .checkpoints
@@ -273,6 +294,7 @@ async fn run_turn(
     task: &str,
     history: Vec<ConversationTurn>,
     options: &ToolTaskOptions,
+    sandbox: &Arc<crate::sandbox::SandboxPlan>,
 ) -> anyhow::Result<TurnRun> {
     let approvals: Arc<dyn ApprovalHook> = if options.allow_all {
         Arc::new(crate::tools::AllowAllHook)
@@ -281,15 +303,19 @@ async fn run_turn(
     };
     let registry = crate::tools::background::BackgroundRegistry::in_memory();
     #[allow(unused_mut)]
-    let mut tools = crate::tools::boxed_tools_for_chat(
+    // YOLO-style approvals use the app's YOLO toolset (no prompts, unrestricted paths).
+    let mut tools = crate::tools::boxed_tools_for_run(
         project,
         approvals.clone(),
-        false,
-        Some(crate::tools::background::BackgroundScope::new(
-            registry.clone(),
-            "tool-eval",
-        )),
-        None,
+        crate::tools::ToolOptions {
+            yolo: options.allow_all,
+            background: Some(crate::tools::background::BackgroundScope::new(
+                registry.clone(),
+                "tool-eval",
+            )),
+            cancel: None,
+            sandbox: Some(Arc::clone(sandbox)),
+        },
     )?;
     #[cfg(eval_recall)]
     if let Some(evidence) = options.evidence.as_deref() {
@@ -547,6 +573,89 @@ mod tests {
             }));
         }
         assert_eq!(replayed, [true, false]);
+    }
+
+    #[tokio::test]
+    async fn the_evidence_folder_is_excluded_from_git_as_in_the_app() {
+        let project = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(project.path())
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"choices":[{"message":{"content":"Done."},"finish_reason":"stop"}]}),
+            ))
+            .mount(&server)
+            .await;
+        let llm: Arc<dyn LLMProvider> = Arc::new(crate::providers::CompatibleProvider::go(
+            "test".into(),
+            "mock".into(),
+            Some(server.uri()),
+            None,
+        ));
+        let options = ToolTaskOptions {
+            evidence: Some(project.path().join(".themis/context/eval-thread")),
+            ..ToolTaskOptions::default()
+        };
+        run_tool_task(&llm, project.path(), "Say done.", options)
+            .await
+            .unwrap();
+        let evidence = project.path().join(".themis/context/eval-thread");
+        std::fs::write(evidence.join("snapshot-1.jsonl"), "{}\n").unwrap();
+        let status = git(&["status", "--porcelain", "--untracked-files=all"]);
+        assert_eq!(String::from_utf8_lossy(&status.stdout), "");
+    }
+
+    #[tokio::test]
+    async fn the_app_sandbox_keeps_the_agent_out_of_themis_as_in_the_app() {
+        use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+        let project = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(|request: &Request| {
+                let body: serde_json::Value = request.body_json().unwrap();
+                let answered = body["messages"]
+                    .as_array()
+                    .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+                ResponseTemplate::new(200).set_body_json(if answered {
+                    serde_json::json!({"choices":[{"message":{"content":"Cleaned."},"finish_reason":"stop"}]})
+                } else {
+                    serde_json::json!({"choices":[{"message":{"content":"","tool_calls":[{"id":"clean-1","type":"function","function":{"name":"shell","arguments":"{\"command\":\"rm\",\"args\":[\"-rf\",\".themis\"]}"}}]},"finish_reason":"tool_calls"}]})
+                })
+            })
+            .mount(&server)
+            .await;
+        let llm: Arc<dyn LLMProvider> = Arc::new(crate::providers::CompatibleProvider::go(
+            "test".into(),
+            "mock".into(),
+            Some(server.uri()),
+            None,
+        ));
+        let evidence = project.path().join(".themis/context/eval-thread");
+        let options = ToolTaskOptions {
+            evidence: Some(evidence.clone()),
+            allow_all: true,
+            ..ToolTaskOptions::default()
+        };
+        let report = run_tool_task(&llm, project.path(), "Tidy up.", options)
+            .await
+            .unwrap();
+        if !report.sandbox_active {
+            eprintln!("no sandbox backend on this machine; nothing to check");
+            return;
+        }
+        assert!(
+            evidence.is_dir(),
+            "the chat's folder survived: {:?}",
+            report.calls
+        );
+        assert!(report.finished, "{:?}", report.error);
     }
 
     #[test]

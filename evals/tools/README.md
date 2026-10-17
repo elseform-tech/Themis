@@ -15,8 +15,11 @@ allows every non-destructive action once; destructive ones are refused.
 
 Every run gets a fresh project in the system temp folder, a scratch HOME and, on macOS,
 `sandbox-exec` around the runner (reads and writes under `/Users` and `/Volumes` blocked;
-network open), as in the long-form suite. Themis' own sandbox is off inside the runner because
-macOS does not allow nested sandboxes.
+network open), as in the long-form suite. The runner gets the app's sandbox plan and YOLO
+toolset, but macOS cannot start that sandbox inside this one (`sandbox_active` in the report
+says whether it ran), so the profile gives the project's `.themis/` the app's protection: only
+the runner writes there, never the agent's commands. The chat folder is excluded from Git, as
+in the app.
 
 ## Tasks
 

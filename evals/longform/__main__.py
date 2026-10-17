@@ -172,7 +172,11 @@ def isolated_env(workdir):
 
 def sandbox_wrapper(runner, workdir, mode):
     """macOS `sandbox-exec` prefix that blocks reads/writes under /Users and /Volumes except the
-    runner binary and the scratch directory. Network is NOT restricted. Returns [] when unavailable."""
+    runner binary and the scratch directory. Network is NOT restricted. Returns [] when unavailable.
+
+    macOS cannot start the app's own sandbox inside this one, so this profile also gives the
+    project's `.themis/` the app's protection: only the runner itself (the app) writes there,
+    never the commands the agent runs."""
     if mode == "off" or sys.platform != "darwin" or not shutil.which("sandbox-exec") or not os.path.isfile(runner[0]):
         return []
     real = os.path.realpath
@@ -181,7 +185,9 @@ def sandbox_wrapper(runner, workdir, mode):
         handle.write('(version 1)\n(allow default)\n'
                      '(deny file-read* (subpath "/Users") (subpath "/Volumes") (subpath "/private/etc/ssh"))\n'
                      '(deny file-write* (subpath "/Users") (subpath "/Volumes"))\n'
-                     f'(allow file-read* (literal "{real(runner[0])}") (subpath "{real(workdir)}"))\n')
+                     f'(allow file-read* (literal "{real(runner[0])}") (subpath "{real(workdir)}"))\n'
+                     f'(deny file-write* (require-all (subpath "{real(workdir)}/project/.themis")'
+                     f' (require-not (process-path "{real(runner[0])}"))))\n')
     return ["sandbox-exec", "-f", profile]
 
 
