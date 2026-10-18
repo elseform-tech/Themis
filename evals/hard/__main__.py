@@ -19,7 +19,7 @@ import time
 
 from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task_retrying
 
-from . import followup, sheet, threejs
+from . import followup, notes_metrics, sheet, threejs
 from .app import run_app_task, themis_binary
 
 RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
@@ -48,12 +48,25 @@ def summarize(rows):
     return {"runs": len(rows), "pass_rate": _mean([r["passed"] for r in rows]), "tasks": {
         name: {"runs": len(runs), "pass_rate": _mean([r["passed"] for r in runs]),
                "mean_calls": _mean([len(r["calls"]) for r in runs]),
+               # Moves a finished task took: fewer is better at the same pass rate.
+               "mean_calls_per_pass": _mean([len(r["calls"]) for r in runs if r["passed"]]),
                "mean_compactions": _mean([r["compactions"] for r in runs]),
                # Notes carried by every checkpoint: the goal and task lines survive compaction.
                "checkpoints_with_notes": _mean([notes_kept(r) for r in runs if r.get("checkpoints")]),
                "mean_minutes": _mean([r["latency_ms"] / 60000 for r in runs]),
+               **notes_measures(runs),
                "failures": [r["why"][:200] for r in runs if not r["passed"]][:3]}
         for name, runs in sorted(by_task.items())}}
+
+
+NOTES_MEASURES = ("stale_lines", "redone_writes", "rewrites_after_checkpoint", "notes_age", "wasted_repeats",
+                  "notes_refreshes")
+
+
+def notes_measures(runs):
+    """Mean of each notes measure over runs whose runner recorded checkpoint places."""
+    measured = [m for m in map(notes_metrics.measure, runs) if m]
+    return {f"mean_{key}": _mean([m[key] for m in measured]) for key in NOTES_MEASURES}
 
 
 def notes_kept(row):
@@ -70,11 +83,13 @@ def markdown(summary):
              f"Via: {summary.get('via', 'runner')}. Runs: {s['runs']}; "
              f"infrastructure errors (excluded): {len(summary['errors'])}. "
              "Benchmark audit, not an automated check.", "",
-             "| Task | Pass | Calls | Compactions | Checkpoints with notes | Minutes | Failures |",
-             "| --- | --- | --- | --- | --- | --- | --- |"]
+             "| Task | Pass | Calls | Calls per pass | Compactions | Checkpoints with notes | Stale lines | "
+             "Redone writes | Rewrites after checkpoint | Notes age | Wasted repeats | Refreshes | Minutes | Failures |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for name, row in s["tasks"].items():
         lines.append(f"| {name} | {fmt(row['pass_rate'])} | {fmt(row['mean_calls'], False)} | "
-                     f"{fmt(row['mean_compactions'], False)} | {fmt(row.get('checkpoints_with_notes'))} | "
+                     f"{fmt(row.get('mean_calls_per_pass'), False)} | {fmt(row['mean_compactions'], False)} | {fmt(row.get('checkpoints_with_notes'))} | "
+                     + " | ".join(fmt(row.get(f"mean_{key}"), False) for key in NOTES_MEASURES) + " | "
                      f"{fmt(row['mean_minutes'], False)} | "
                      f"{'; '.join(row['failures']) or '-'} |")
     return "\n".join(lines) + "\n"

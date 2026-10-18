@@ -5,8 +5,8 @@ import shutil
 import tempfile
 import unittest
 
-from . import followup, sheet, threejs
-from .__main__ import JOBS, make_task, notes_kept
+from . import followup, notes_metrics, sheet, threejs
+from .__main__ import JOBS, make_task, markdown, notes_kept, summarize
 from .browser import chrome
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -164,3 +164,54 @@ class FollowupTests(unittest.TestCase):
             with open(os.path.join(project, "calc.py"), "w", encoding="utf-8") as handle:
                 handle.write('"""Calculator."""\n\n\ndef add(a, b):\n    """Sum."""\n    return a + b\n')
             self.assertTrue(followup.TESTS.check(project, self.turns(("fixed", []), ("Yes, they passed.", [])))[0])
+
+
+class NotesMetricsTests(unittest.TestCase):
+    def write(self, path, content="x"):
+        return {"tool": "write_file", "summary": f'call `write_file` with {{"file_path":"{path}","content":"{content}"}}'}
+
+    def notes(self):
+        return {"tool": "notes", "summary": "call `notes` with {}"}
+
+    def test_lines_finished_before_a_checkpoint_but_open_in_it_are_stale(self):
+        row = {"calls": [self.notes(), self.write("a.py"), self.notes(), self.write("b.py")],
+               "notes_log": [{"lines": [{"key": "a", "status": "in_progress"}, {"key": "b", "status": "pending"}]},
+                             {"lines": [{"key": "a", "status": "done"}, {"key": "b", "status": "pending"}]}],
+               "checkpoints": [{"calls_before": 2, "notes_calls_before": 1,
+                                "notes": [{"key": "a", "status": "in_progress"}, {"key": "b", "status": "pending"}]}],
+               "notes_refreshes": 0}
+        self.assertEqual(notes_metrics.stale_lines(row), 1)
+        # An update after other work does not show what was done at the checkpoint.
+        row["calls"] = [self.notes(), self.write("a.py"), self.write("c.py"), self.notes()]
+        self.assertEqual(notes_metrics.stale_lines(row), 0)
+
+    def test_writes_after_a_checkpoint_count_as_redone_or_rewritten(self):
+        row = {"calls": [self.write("a.py", "1"), self.write("b.py", "1"), self.write("a.py", "1"),
+                         self.write("b.py", "2"), self.write("c.py")],
+               "checkpoints": [{"calls_before": 2, "notes_calls_before": 0, "notes": []}], "notes_refreshes": 2}
+        self.assertEqual(notes_metrics.writes_after_checkpoints(row), (1, 1))
+        self.assertEqual(notes_metrics.notes_age(row), 2)
+        self.assertEqual(notes_metrics.measure(row)["notes_refreshes"], 2)
+
+    def test_only_repeats_with_nothing_changed_between_are_wasted(self):
+        read = {"tool": "read_file", "summary": 'call `read_file` with {"file_path":"a.py"}'}
+        tests = {"tool": "shell", "summary": 'call `shell` with {"command":"python3 -m unittest"}'}
+        long_write = self.write("a.py", "x" * 300)
+        row = {"calls": [read, read, self.notes(), read,  # two wasted re-reads
+                         tests, self.write("a.py"), tests,  # rerun after an edit: fine
+                         tests, read,  # same rerun again: wasted; read after shell: fine
+                         long_write, long_write]}  # cut-off summaries: not compared
+        self.assertEqual(notes_metrics.wasted_repeats(row), 3)
+
+    def test_the_summary_counts_calls_per_passing_run(self):
+        def run(passed, calls):
+            return {"task": "t", "passed": passed, "why": "", "calls": [self.notes()] * calls,
+                    "compactions": 0, "latency_ms": 0, "checkpoints": [], "notes_refreshes": 0}
+        summary = summarize([run(True, 10), run(True, 20), run(False, 90)])
+        self.assertEqual(summary["tasks"]["t"]["mean_calls_per_pass"], 15)
+        table = markdown({"model": "m", "summary": summary, "errors": []})
+        self.assertIn("| t | 67% | 40.0 | 15.0 |", table)
+
+    def test_reports_without_checkpoint_places_are_not_measured(self):
+        self.assertIsNone(notes_metrics.measure({"calls": [], "checkpoints": [{"notes_calls_before": 0}]}))
+        self.assertIsNone(notes_metrics.measure({"calls": [], "checkpoints": []}))
