@@ -84,6 +84,15 @@ describe("QueueStack", () => {
     expect(save).toHaveBeenCalledWith("a", "Add a download icon");
   });
 
+  it("marks a message the server could not send, with the reason, and offers no steer", () => {
+    render(<QueueStack queue={[{ id: "x", text: "/goal", attachments: [], held: true, note: "Add the goal after /goal" }]} running onSteer={vi.fn()} onHold={vi.fn()} onSave={vi.fn()} onRemove={vi.fn()} />);
+    const note = screen.getByLabelText("Not sent: Add the goal after /goal");
+    expect(note).toHaveTextContent("Needs an edit");
+    expect(note).toHaveAttribute("data-tooltip", "Add the goal after /goal");
+    expect(screen.queryByRole("button", { name: "Steer: send now" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit queued message" })).toBeInTheDocument();
+  });
+
   it("renders nothing for an empty queue", () => {
     const { container } = render(<QueueStack queue={[]} running onSteer={vi.fn()} onHold={vi.fn()} onSave={vi.fn()} onRemove={vi.fn()} />);
     expect(container).toBeEmptyDOMElement();

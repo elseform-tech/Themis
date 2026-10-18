@@ -323,13 +323,18 @@ grant, and YOLO is unchanged. Discarding a chat, or deleting its project, remove
 Neither `chat_grants/*.json` nor `mcp_consent.json` has integrity protection: both live in app data like the plugin registry. Sandboxed commands and Themis' file tools cannot write the app-data folder, but a command you let run outside the sandbox (or any command while the sandbox is off or unavailable) can edit them. Writes are serialized, merge with concurrent runs, and use unique temporary files.
 **Queues and goals.** A chat's queued messages live in `queues/<chat id>.json` and its goal
 in `goals/<chat id>.json` (app data, beside `threads.json`): `[{"id","text","attachments",
-"reasoning_effort","held"}]` (at most 50 messages of 100,000 characters) and `{"text","status",
-"reason","started_at","active_ms","running_since","turns","stalls","progress","failures"}` with
+"reasoning_effort","held","note"}]` (at most 50 messages of 100,000 characters; `held` while being
+edited or after the server refused it, with the reason in `note`; `reasoning_effort` applies only
+while the chat's current model offers it) and `{"text","status","reason","started_at","active_ms",
+"running_since","turns","stalls","progress","failures","checked_seq"}` with
 `status` one of `running`, `paused`, `waiting`, `stuck`, `quota`, `reached` (the goal sentence is
 at most 2,000 characters). They grant nothing; a damaged file is ignored (fixed
 `queue_ignored`/`goal_ignored` diagnostics, never the contents), and discarding a chat or its
 project removes both. Diagnostics record queue and goal ids, status changes, check verdict kinds
-and retry counts, never message text, the goal sentence or check prompts. The goal check, the
+and retry counts, never message text, the goal sentence or check prompts. Each goal check reads
+the commands and file changes recorded since `checked_seq` (the history position the last decided
+check read through), in pages of 2,000 items, keeping the newest 12,000 characters of command
+output; a check that fails does not move it. The goal check, the
 stall rule (three turns without progress), quota retries (every 15 minutes) and error backoff
 (30 s doubling to 15 minutes) are fixed, not runtime configuration. App server commands:
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,

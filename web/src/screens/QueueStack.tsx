@@ -59,7 +59,13 @@ export function QueueStack({ queue, running, onSteer, onHold, onSave, onRemove }
                   {message.text || "Attached files"}
                   {message.attachments.length > 0 && <small> · {message.attachments.length} file{message.attachments.length === 1 ? "" : "s"}</small>}
                 </span>
-                {running && message.attachments.length === 0 && (
+                {message.note && (
+                  <span className="themis-queue-note themis-icon-tip" data-tooltip={message.note} tabIndex={0} aria-label={`Not sent: ${message.note}`}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 4 3 20h18ZM12 10v4M12 17v.01" /></svg>
+                    Needs an edit
+                  </span>
+                )}
+                {running && message.attachments.length === 0 && !message.note && (
                   <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="Steer — send now" aria-label="Steer: send now" onClick={() => onSteer(message.id)}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 12h12M12 6l6 6-6 6" /></svg>
                   </button>

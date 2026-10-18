@@ -336,7 +336,9 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
             if is_check(&body(request)) {
                 reply(r#"{"verdict":"not_yet","reason":"Still 300 ms.","progress":"p95 300 ms"}"#)
             } else {
-                reply("Tried another cache setting.").set_delay(Duration::from_millis(300))
+                // Long enough that the pause lands while the first turn runs,
+                // even on a slow CI machine.
+                reply("Tried another cache setting.").set_delay(Duration::from_millis(1200))
             }
         })
         .mount(&server)
@@ -353,10 +355,12 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
         .await
         .unwrap();
     assert_eq!(paused.status, GoalStatus::Paused);
-    // The running turn finishes; no further turn starts while paused.
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    // The running turn finishes; no further turn (and no check) starts while paused.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
     let before = server.received_requests().await.unwrap().len();
     assert_eq!(before, 1, "only the first turn ran");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
     let elapsed = state.goal_for(&thread).unwrap().active_ms;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
@@ -714,6 +718,14 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
         [("/goal", true), ("after the bad one", true)],
         "nothing is lost: the unsendable message waits, held, for an edit"
     );
+    assert!(
+        waiting[0]
+            .note
+            .as_deref()
+            .is_some_and(|note| note.contains("Add the goal after /goal")),
+        "the held message says why: {:?}",
+        waiting[0].note
+    );
     // Saving the edit releases it, and the idle chat sends it.
     state
         .update_queued_message(sink, thread.clone(), held.id, None, Some(false))
@@ -825,4 +837,58 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
         "a failed check is not a stall"
     );
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+}
+
+/// Third review: an error that belongs to the chat (its project's
+/// configuration became invalid) holds the first message with its reason and
+/// leaves the rest waiting in order, with one note instead of one per message.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_wide_error_holds_one_message_and_keeps_the_rest_in_order() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|_: &Request| reply("Done.").set_delay(Duration::from_millis(800)))
+        .mount(&server)
+        .await;
+    let (state, _data, project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "first".into())
+        .await
+        .unwrap();
+    for text in ["one", "two", "three"] {
+        state
+            .enqueue_message(sink.clone(), thread.clone(), text.into(), None, vec![])
+            .await
+            .unwrap();
+    }
+    // While the run goes, the project's configuration breaks.
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(project.path().join(".themis/config.jsonc"), "{ not json").unwrap();
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |event| {
+        matches!(event, ThreadEvent::Failed { error } if error.starts_with("Queued message not sent"))
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let queue = state.list_queue(thread.clone()).await.unwrap();
+    assert_eq!(
+        queue
+            .iter()
+            .map(|m| (m.text.as_str(), m.held, m.note.is_some()))
+            .collect::<Vec<_>>(),
+        [
+            ("one", true, true),
+            ("two", false, false),
+            ("three", false, false)
+        ]
+    );
+    let items = serde_json::to_value(state.get_thread_history(&thread).await.unwrap()).unwrap();
+    let notes = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item.to_string().contains("Queued message not sent"))
+        .count();
+    assert_eq!(notes, 1, "one note for one cause");
 }

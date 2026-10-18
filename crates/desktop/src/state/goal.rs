@@ -35,10 +35,9 @@ const BUSY_RETRY: Duration = Duration::from_secs(20);
 /// Most command evidence the goal check reads, in characters.
 const MAX_EVIDENCE_CHARS: usize = 12_000;
 const MAX_OUTPUT_CHARS: usize = 1_500;
-/// Most history items one check reads (the newest ones after its position):
-/// a goal from before positions were kept, or a checker that keeps failing,
-/// never reads a whole long chat.
-const MAX_EVIDENCE_ITEMS: usize = 2_000;
+/// History items read per page while gathering evidence (memory stays
+/// bounded; the text kept is capped by `MAX_EVIDENCE_CHARS`).
+const EVIDENCE_PAGE_ITEMS: usize = 2_000;
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -451,7 +450,7 @@ impl AppState {
         let text = core_goal::turn_message(goal.turns, &goal.text, &note);
         let run_id = uuid::Uuid::new_v4().to_string();
         self.mark_goal_turn(&run_id);
-        let (sent, spawn_failed) = self
+        let (sent, progress) = self
             .send_from_server(
                 Arc::clone(&sink),
                 &thread_id,
@@ -462,7 +461,7 @@ impl AppState {
             )
             .await;
         if let Err(error) = sent {
-            if spawn_failed {
+            if progress == super::queue::ServerSend::SpawnFailed {
                 return; // Its end step counts the failure and retries.
             }
             self.goal_turn_interrupted(&run_id);
@@ -769,48 +768,63 @@ impl AppState {
     /// The commands every run since the previous decided goal check ran
     /// (the turn, plus any user message, failed or interrupted turn before
     /// it), with bounded output; whether those runs changed files; and the
-    /// history position read through. Only history after `after_seq` is read.
+    /// history position read through. History after `after_seq` is read in
+    /// pages; only the newest evidence text is kept, but every item counts
+    /// toward "changed files" and the position.
     fn turn_evidence(&self, thread_id: &str, after_seq: i64) -> (String, bool, i64) {
         let mut evidence = String::new();
         let mut changed = false;
-        let Ok(history) =
+        let mut through = after_seq;
+        while let Ok(page) =
             self.inner
                 .transcript
-                .history_after(thread_id, after_seq, MAX_EVIDENCE_ITEMS)
-        else {
-            return (evidence, changed, after_seq);
-        };
-        // Read through exactly what was read, so nothing counts twice.
-        let through = history.last().map_or(after_seq, |(seq, _)| *seq);
-        for (_, item) in history {
-            let crate::transcript::HistoryItem::Event { envelope } = item else {
-                continue;
-            };
-            let line = match envelope.event {
-                ThreadEvent::ToolStarted { tool, summary } => format!("$ {tool}: {summary}\n"),
-                ThreadEvent::ToolFinished { ok, output, .. } => {
-                    let output: String = output.chars().take(MAX_OUTPUT_CHARS).collect();
-                    format!("{}{output}\n\n", if ok { "" } else { "(failed) " })
+                .history_after(thread_id, through, EVIDENCE_PAGE_ITEMS)
+        {
+            let full = page.len() == EVIDENCE_PAGE_ITEMS;
+            for (seq, item) in page {
+                through = seq;
+                let crate::transcript::HistoryItem::Event { envelope } = item else {
+                    continue;
+                };
+                let line = match envelope.event {
+                    ThreadEvent::ToolStarted { tool, summary } => format!("$ {tool}: {summary}\n"),
+                    ThreadEvent::ToolFinished { ok, output, .. } => {
+                        let output: String = output.chars().take(MAX_OUTPUT_CHARS).collect();
+                        format!("{}{output}\n\n", if ok { "" } else { "(failed) " })
+                    }
+                    ThreadEvent::FilesChanged { files } => {
+                        changed |= !files.is_empty();
+                        format!(
+                            "Files changed: {}\n",
+                            files
+                                .iter()
+                                .map(|file| file.path.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    }
+                    _ => continue,
+                };
+                evidence.push_str(&line);
+                // Keep the end: the last commands carry the latest measurements.
+                let count = evidence.chars().count();
+                if count > 2 * MAX_EVIDENCE_CHARS {
+                    evidence = evidence.chars().skip(count - MAX_EVIDENCE_CHARS).collect();
                 }
-                ThreadEvent::FilesChanged { files } => {
-                    changed |= !files.is_empty();
-                    format!(
-                        "Files changed: {}\n",
-                        files
-                            .iter()
-                            .map(|file| file.path.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                }
-                _ => continue,
-            };
-            evidence.push_str(&line);
+            }
+            if !full {
+                break;
+            }
         }
-        if evidence.chars().count() > MAX_EVIDENCE_CHARS {
-            // Keep the end: the last commands carry the latest measurements.
-            let skip = evidence.chars().count() - MAX_EVIDENCE_CHARS;
-            evidence = format!("…\n{}", evidence.chars().skip(skip).collect::<String>());
+        let count = evidence.chars().count();
+        if count > MAX_EVIDENCE_CHARS {
+            evidence = format!(
+                "…\n{}",
+                evidence
+                    .chars()
+                    .skip(count - MAX_EVIDENCE_CHARS)
+                    .collect::<String>()
+            );
         }
         (evidence, changed, through)
     }

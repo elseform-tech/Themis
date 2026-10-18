@@ -109,12 +109,7 @@ impl AppState {
             ));
         }
         if let Some(effort) = &snapshot.reasoning_effort {
-            let catalog = self.inner.go_catalog.read().await;
-            let supported = catalog
-                .iter()
-                .find(|model| model.id == snapshot.model)
-                .is_some_and(|model| model.effort_levels.contains(effort));
-            if !supported {
+            if !self.effort_offered(&snapshot.model, effort).await {
                 return Err(format!(
                     "Effort '{effort}' is unavailable for model '{}'",
                     snapshot.model
@@ -405,7 +400,7 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(thread_id)
-            .cloned()
+            .map(|(inbox, _)| Arc::clone(inbox))
             .unwrap_or_default();
         let state = self.clone();
         let thread_id = thread_id.to_owned();

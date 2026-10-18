@@ -1207,11 +1207,9 @@ impl AppState {
             )
         };
         if let Some(effort) = &effort {
-            let models = self.list_go_models().await?;
-            if !models
-                .iter()
-                .any(|item| item.id == model && item.effort_levels.contains(effort))
-            {
+            // A fresh catalog, then the shared check.
+            self.list_go_models().await?;
+            if !self.effort_offered(&model, effort).await {
                 return Err(format!(
                     "Effort '{effort}' is unavailable for model '{}'",
                     model

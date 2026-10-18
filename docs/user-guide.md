@@ -75,7 +75,10 @@ levels are listed.
   changes it while it waits (it is skipped while you edit), and **Remove**
   takes it out of the queue. A steered message shows in the chat as
   *Steered in during the run*. A steer the run never got to read is sent as
-  the next message. Queued messages survive a restart.
+  the next message. A message that cannot be sent (a bare `/goal`, a broken
+  project configuration) stays in the queue marked **Needs an edit**, with the
+  reason as its tooltip and in the chat; edit it (or save it unchanged) to send
+  it again. Queued messages survive a restart.
 - **Changing the model or effort during a run** applies from the next turn:
   the running turn finishes on the model it started with.
 

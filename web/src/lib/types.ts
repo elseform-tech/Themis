@@ -317,8 +317,10 @@ export interface QueuedMessage {
   text: string;
   attachments: string[];
   reasoning_effort?: string;
-  /** Being edited: the queue skips it until it is saved. */
+  /** Being edited, or refused (see `note`): the queue skips it until it is saved. */
   held: boolean;
+  /** Why the server held it (it could not be sent); an edit clears it. */
+  note?: string;
 }
 
 export type GoalStatus = 'running' | 'paused' | 'waiting' | 'stuck' | 'quota' | 'reached';

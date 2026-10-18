@@ -197,6 +197,9 @@ impl RegistryEntry {
     }
 }
 
+/// A running run's steer inbox and the sink its events go to.
+type SteerEntry = (themis_core::runtime::SteerInbox, Arc<dyn EventSink>);
+
 struct AppStateInner {
     stop_flags: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
     projects: tokio::sync::RwLock<HashMap<String, ProjectInfo>>,
@@ -257,7 +260,9 @@ struct AppStateInner {
     /// Serializes queue changes, so a message is sent or edited exactly once.
     queue_lock: std::sync::Mutex<()>,
     /// Steer inboxes of running runs, by chat.
-    steer_inboxes: std::sync::Mutex<HashMap<String, themis_core::runtime::SteerInbox>>,
+    /// Steer inboxes of running runs, by chat, with the sink of the run (to
+    /// announce steers put back in the queue when the run ends).
+    steer_inboxes: std::sync::Mutex<HashMap<String, SteerEntry>>,
     /// Per-chat goals (`goals/<chat id>.json`), loaded on first use.
     goals: std::sync::Mutex<HashMap<String, Option<crate::types::Goal>>>,
     goals_dir: PathBuf,
@@ -271,7 +276,7 @@ struct AppStateInner {
     /// the send path announces their user message once it is saved, and marks
     /// `true` when the run was admitted but failed to start (its end step then
     /// handles it, so the sender must not). The sender removes its entry.
-    server_sends: std::sync::Mutex<HashMap<String, bool>>,
+    server_sends: std::sync::Mutex<HashMap<String, queue::ServerSend>>,
 }
 
 /// Shared application state (cheap to clone; everything lives behind one `Arc`).
@@ -629,6 +634,14 @@ impl AppState {
         Ok(models)
     }
 
+    /// Whether the Go catalog says `model` offers `effort`, loading the
+    /// catalog first when it is empty. The one effort check for runs,
+    /// automations and queued messages.
+    pub(super) async fn effort_offered(&self, model: &str, effort: &str) -> bool {
+        let _ = self.ensure_go_catalog().await;
+        offers_effort(&self.inner.go_catalog.read().await, model, effort)
+    }
+
     async fn ensure_go_catalog(&self) -> Result<(), String> {
         let unloaded = self.inner.go_catalog.read().await.is_empty();
         if unloaded {
@@ -743,6 +756,13 @@ fn settings_app_dir(settings_path: &Path) -> PathBuf {
         .map(Path::to_path_buf)
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Whether `model` in `catalog` offers reasoning `effort`.
+fn offers_effort(catalog: &[themis_core::providers::GoModel], model: &str, effort: &str) -> bool {
+    catalog
+        .iter()
+        .any(|entry| entry.id == model && entry.effort_levels.iter().any(|level| level == effort))
 }
 
 /// Atomically writes a JSON store file (temp file + rename, so a crash

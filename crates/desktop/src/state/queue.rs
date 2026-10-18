@@ -26,6 +26,18 @@ const MAX_QUEUED_CHARS: usize = 100_000;
 /// Wait before retrying a queued message the concurrency limit turned away.
 const BUSY_RETRY_SECS: u64 = 5;
 
+/// How far a message the server sends itself got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ServerSend {
+    /// Not yet saved to the chat.
+    Pending,
+    /// Saved (and shown) as the user's message; a later failure must not
+    /// resend it.
+    Saved,
+    /// Admitted and failed to start: its end step continues the queue/goal.
+    SpawnFailed,
+}
+
 impl AppState {
     fn queue_path(&self, thread_id: &str) -> Option<PathBuf> {
         safe_chat_id(thread_id).then(|| self.inner.queues_dir.join(format!("{thread_id}.json")))
@@ -146,6 +158,7 @@ impl AppState {
             attachments,
             reasoning_effort,
             held: false,
+            note: None,
         };
         self.edit_queue(sink.as_ref(), &thread_id, |queue| {
             if queue.len() >= MAX_QUEUED {
@@ -190,9 +203,14 @@ impl AppState {
                     return Err("This message is too long to queue".to_owned());
                 }
                 message.text = text;
+                message.note = None;
             }
             if let Some(held) = held {
                 message.held = held;
+                if !held {
+                    // Saving (even unchanged) means "try again".
+                    message.note = None;
+                }
             }
             Ok(message.clone())
         })?;
@@ -245,7 +263,7 @@ impl AppState {
                 .steer_inboxes
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            let inbox = inboxes
+            let (inbox, _) = inboxes
                 .get(&thread_id)
                 .ok_or_else(|| "No run is going; send the message instead".to_owned())?;
             let text = queue.remove(index).text;
@@ -265,13 +283,13 @@ impl AppState {
     }
 
     /// A fresh steer inbox for the run starting in `thread_id`.
-    pub(super) fn open_steer_inbox(&self, thread_id: &str) -> SteerInbox {
+    pub(super) fn open_steer_inbox(&self, thread_id: &str, sink: Arc<dyn EventSink>) -> SteerInbox {
         let inbox = SteerInbox::default();
         self.inner
             .steer_inboxes
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(thread_id.to_owned(), Arc::clone(&inbox));
+            .insert(thread_id.to_owned(), (Arc::clone(&inbox), sink));
         inbox
     }
 
@@ -284,7 +302,7 @@ impl AppState {
             .queue_lock
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let Some(inbox) = self
+        let Some((inbox, sink)) = self
             .inner
             .steer_inboxes
             .lock()
@@ -312,6 +330,7 @@ impl AppState {
                     attachments: Vec::new(),
                     reasoning_effort: None,
                     held: false,
+                    note: None,
                 },
             );
         }
@@ -322,9 +341,7 @@ impl AppState {
             "info",
             json!({"thread_id": thread_id, "count": unread_count}),
         );
-        if let Some(sink) = self.scheduler_sink() {
-            self.announce_queue(sink.as_ref(), thread_id, queue);
-        }
+        self.announce_queue(sink.as_ref(), thread_id, queue);
     }
 
     /// Runs [`AppState::after_run`] on its own task. A plain function (not an
@@ -371,8 +388,9 @@ impl AppState {
     }
 
     /// Sends a message on the server's own behalf (a queued message or a
-    /// goal turn). Returns the send result and whether the run was admitted
-    /// but failed to start, in which case its end step already continues.
+    /// goal turn). Returns the send result and how far the message got: a
+    /// saved message is already in the chat, and a failed start is handled by
+    /// its run's end step.
     pub(super) async fn send_from_server(
         &self,
         sink: Arc<dyn EventSink>,
@@ -381,12 +399,12 @@ impl AppState {
         run_id: &str,
         reasoning_effort: Option<String>,
         attachments: Vec<String>,
-    ) -> (Result<(), String>, bool) {
+    ) -> (Result<(), String>, ServerSend) {
         self.inner
             .server_sends
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(run_id.to_owned(), false);
+            .insert(run_id.to_owned(), ServerSend::Pending);
         let sent = Box::pin(self.send_message_with_options(
             sink,
             thread_id.to_owned(),
@@ -396,14 +414,14 @@ impl AppState {
             attachments,
         ))
         .await;
-        let spawn_failed = self
+        let state = self
             .inner
             .server_sends
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(run_id)
-            .unwrap_or(false);
-        (sent.map(|_| ()), spawn_failed)
+            .unwrap_or(ServerSend::Pending);
+        (sent.map(|_| ()), state)
     }
 
     /// The effort a queued message was queued with, if the chat's current
@@ -417,26 +435,21 @@ impl AppState {
             .await
             .get(thread_id)
             .map(|record| record.model.clone())?;
-        self.inner
-            .go_catalog
-            .read()
-            .await
-            .iter()
-            .any(|entry| entry.id == model && entry.effort_levels.contains(&effort))
-            .then_some(effort)
+        self.effort_offered(&model, &effort).await.then_some(effort)
     }
 
     /// Sends the next waiting message if the chat is idle. Returns whether
     /// a message was sent (or will be, after the concurrency limit frees up).
-    /// A message that cannot be sent is kept, held, with the reason in the
-    /// chat, and the next one is tried: the queue never stalls and nothing is
-    /// lost, even when the cause is the chat's and not the message's.
+    /// A message that cannot be sent stays in the queue, held, with the reason
+    /// on it, and the next one is tried; when the next fails the same way, the
+    /// cause is the chat's, so the rest keep waiting (one note, not one each).
     pub(super) async fn dispatch_queue(&self, sink: Arc<dyn EventSink>, thread_id: &str) -> bool {
+        let mut refused: Option<String> = None;
         loop {
             if self.require_thread(thread_id).await.unwrap_or(true) {
                 return false;
             }
-            let next = {
+            let (index, next) = {
                 let _guard = self
                     .inner
                     .queue_lock
@@ -449,13 +462,13 @@ impl AppState {
                 let next = queue.remove(index);
                 self.save_queue(thread_id, &queue);
                 self.announce_queue(sink.as_ref(), thread_id, queue);
-                next
+                (index, next)
             };
             let run_id = uuid::Uuid::new_v4().to_string();
             let effort = self
                 .current_effort(thread_id, next.reasoning_effort.clone())
                 .await;
-            let (sent, spawn_failed) = self
+            let (sent, progress) = self
                 .send_from_server(
                     Arc::clone(&sink),
                     thread_id,
@@ -465,42 +478,65 @@ impl AppState {
                     next.attachments.clone(),
                 )
                 .await;
-            match sent {
-                Ok(()) => return true,
+            let Err(error) = sent else {
+                return true;
+            };
+            // A chat deleted meanwhile keeps nothing: no queue file, no note.
+            if self.require_thread(thread_id).await.is_err() {
+                return false;
+            }
+            match progress {
                 // Admitted and failed to start: its end step moves the queue on.
-                Err(_) if spawn_failed => return true,
-                Err(error) if super::threads::send_must_wait(&error) => {
-                    // Not this message's fault: it goes back to the front and waits.
-                    self.requeue_front(sink.as_ref(), thread_id, next);
+                ServerSend::SpawnFailed => return true,
+                // Saved as the user's message, then failed: it is in the chat
+                // already, so it is not queued again; the chat says why.
+                ServerSend::Saved => {
+                    self.note_queue_failure(
+                        sink.as_ref(),
+                        thread_id,
+                        &run_id,
+                        &format!("This message could not start: {error}"),
+                    );
+                }
+                ServerSend::Pending if super::threads::send_must_wait(&error) => {
+                    // Not this message's fault: it goes back and waits.
+                    self.requeue_at(sink.as_ref(), thread_id, index, next);
                     if error.contains(super::threads::CONCURRENCY_LIMIT) {
                         self.retry_queue_later(sink, thread_id.to_owned());
                     }
                     return true;
                 }
-                Err(error) => self.hold_unsendable(sink.as_ref(), thread_id, next, &error),
+                ServerSend::Pending if refused.as_deref() == Some(error.as_str()) => {
+                    // Refused the same way twice: the chat, not the message.
+                    self.requeue_at(sink.as_ref(), thread_id, index, next);
+                    return false;
+                }
+                ServerSend::Pending => {
+                    let mut held = next;
+                    held.held = true;
+                    held.note = Some(themis_core::goal::one_line(&error, 300));
+                    self.requeue_at(sink.as_ref(), thread_id, index, held);
+                    self.note_queue_failure(
+                        sink.as_ref(),
+                        thread_id,
+                        &uuid::Uuid::new_v4().to_string(),
+                        &format!(
+                            "Queued message not sent: {error}. It stays in the queue; edit it to send it again."
+                        ),
+                    );
+                    refused = Some(error);
+                }
             }
         }
     }
 
-    /// A queued message refused before any run started (a bare `/goal`, an
-    /// unavailable skill): it goes back to the front, held, and the chat
-    /// says why. Editing it (or saving it unchanged) sends it again.
-    fn hold_unsendable(
-        &self,
-        sink: &dyn EventSink,
-        thread_id: &str,
-        mut message: QueuedMessage,
-        error: &str,
-    ) {
-        message.held = true;
-        self.requeue_front(sink, thread_id, message);
+    /// Records why a queued message did not go out, in the chat and diagnostics.
+    fn note_queue_failure(&self, sink: &dyn EventSink, thread_id: &str, run_id: &str, error: &str) {
         let failed = ThreadEventEnvelope {
             thread_id: thread_id.to_owned(),
-            run_id: uuid::Uuid::new_v4().to_string(),
+            run_id: run_id.to_owned(),
             event: ThreadEvent::Failed {
-                error: format!(
-                    "Queued message not sent: {error}. It stays in the queue; edit it to send it again."
-                ),
+                error: error.to_owned(),
             },
         };
         if let Err(save) = self.inner.transcript.append_event(&failed) {
@@ -515,14 +551,21 @@ impl AppState {
         );
     }
 
-    fn requeue_front(&self, sink: &dyn EventSink, thread_id: &str, message: QueuedMessage) {
+    /// Puts a message back where it was taken from, keeping the queue order.
+    fn requeue_at(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        index: usize,
+        message: QueuedMessage,
+    ) {
         let _guard = self
             .inner
             .queue_lock
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let mut queue = self.queue_for(thread_id);
-        queue.insert(0, message);
+        queue.insert(index.min(queue.len()), message);
         self.save_queue(thread_id, &queue);
         self.announce_queue(sink, thread_id, queue);
     }

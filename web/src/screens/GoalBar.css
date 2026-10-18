@@ -59,6 +59,9 @@
 .themis-queue-index { flex: none; width: 14px; font-size: .75rem; color: var(--themis-text-3); font-variant-numeric: tabular-nums; }
 .themis-queue-text { flex: 1; min-width: 0; font-size: .875rem; color: var(--themis-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .themis-queue-text small { color: var(--themis-text-3); }
+.themis-queue-note { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: .75rem; color: var(--themis-warning); border-radius: 6px; }
+.themis-queue-note:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
+.themis-queue-note::after { white-space: normal; width: max-content; max-width: 280px; }
 .themis-queue-input {
   flex: 1; min-width: 0; height: 32px; padding: 0 10px;
   border: 1px solid var(--themis-border); border-radius: 10px; background: var(--themis-canvas);

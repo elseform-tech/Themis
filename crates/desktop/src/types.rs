@@ -246,9 +246,12 @@ pub struct QueuedMessage {
     pub attachments: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
-    /// Being edited: the queue skips it until it is saved.
+    /// Being edited, or refused (see `note`): the queue skips it until it is saved.
     #[serde(default)]
     pub held: bool,
+    /// Why the server held it (it could not be sent); cleared by an edit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Where a chat's goal stands.

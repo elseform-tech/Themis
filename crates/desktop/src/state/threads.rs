@@ -447,7 +447,7 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(thread_id.clone(), Arc::new(AtomicBool::new(false)));
-            self.open_steer_inbox(&thread_id);
+            self.open_steer_inbox(&thread_id, Arc::clone(&sink));
             if !record.titled {
                 record.title = title_from_message(&text);
                 record.titled = true;
@@ -503,13 +503,15 @@ impl AppState {
         }
         // A message the server sends itself shows in open windows now, saved
         // and before any of its run's events.
-        if self
+        let server_send = self
             .inner
             .server_sends
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .contains_key(&run_id)
-        {
+            .get_mut(&run_id)
+            .map(|state| *state = super::queue::ServerSend::Saved)
+            .is_some();
+        if server_send {
             sink.emit_thread_event(&ThreadEventEnvelope {
                 thread_id: thread_id.clone(),
                 run_id: String::new(),
@@ -563,14 +565,14 @@ impl AppState {
             // A run that failed to start ended like any run: the queue moves on
             // and a goal continues (or retries). Callers see the marker and
             // leave that to this step.
-            if let Some(spawn_failed) = self
+            if let Some(state) = self
                 .inner
                 .server_sends
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .get_mut(&run_id)
             {
-                *spawn_failed = true;
+                *state = super::queue::ServerSend::SpawnFailed;
             }
             self.spawn_after_run(sink, thread_id, run_id, failed.event);
             return Err(error);
@@ -693,11 +695,7 @@ impl AppState {
                 .get_mut(&thread_id)
                 .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
             if let Some(value) = effort.as_deref() {
-                let catalog = self.inner.go_catalog.read().await;
-                if !catalog.iter().any(|model| {
-                    model.id == record.model
-                        && model.effort_levels.iter().any(|level| level == value)
-                }) {
+                if !offers_effort(&self.inner.go_catalog.read().await, &record.model, value) {
                     return Err(format!(
                         "Effort '{value}' is unavailable for model '{}'",
                         record.model

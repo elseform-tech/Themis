@@ -395,9 +395,9 @@ impl TranscriptStore {
         .collect()
     }
 
-    /// The newest `limit` history items after `seq` (exclusive), oldest
-    /// first, each with its position: a bounded read for callers that keep
-    /// their own watermark.
+    /// Up to `limit` history items after `seq` (exclusive), oldest first,
+    /// each with its position: one page for callers that keep their own
+    /// watermark and page forward from the last position read.
     pub fn history_after(
         &self,
         thread_id: &str,
@@ -406,7 +406,7 @@ impl TranscriptStore {
     ) -> Result<Vec<(i64, HistoryItem)>, String> {
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let mut statement = connection
-            .prepare("SELECT seq,item FROM history WHERE thread_id = ?1 AND seq > ?2 ORDER BY seq DESC LIMIT ?3")
+            .prepare("SELECT seq,item FROM history WHERE thread_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3")
             .map_err(|e| format!("read session: {e}"))?;
         let rows = statement
             .query_map(
@@ -414,16 +414,13 @@ impl TranscriptStore {
                 |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
             )
             .map_err(|e| format!("read session: {e}"))?;
-        let mut items = rows
-            .map(|row| {
-                let (seq, text) = row.map_err(|e| format!("read session: {e}"))?;
-                serde_json::from_str(&text)
-                    .map(|item| (seq, item))
-                    .map_err(|e| format!("decode session item: {e}"))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        items.reverse();
-        Ok(items)
+        rows.map(|row| {
+            let (seq, text) = row.map_err(|e| format!("read session: {e}"))?;
+            serde_json::from_str(&text)
+                .map(|item| (seq, item))
+                .map_err(|e| format!("decode session item: {e}"))
+        })
+        .collect()
     }
 
     pub fn context(
@@ -1029,10 +1026,10 @@ mod document_tests {
 mod history_after_tests {
     use super::*;
 
-    /// The goal check's bounded read: only items after the position, at most
-    /// `limit` of the newest, oldest first, each with its position.
+    /// The goal check's paged read: only items after the position, at most
+    /// `limit` per page, oldest first, each with its position.
     #[test]
-    fn history_after_reads_the_newest_items_after_a_position() {
+    fn history_after_pages_forward_from_a_position() {
         let dir = tempfile::tempdir().unwrap();
         let store = TranscriptStore::open(&dir.path().join("sessions.sqlite3")).unwrap();
         for text in ["one", "two", "three", "four"] {
@@ -1053,10 +1050,10 @@ mod history_after_tests {
         assert!(all.windows(2).all(|pair| pair[0].0 < pair[1].0));
         let after_second = store.history_after("chat", all[1].0, 100).unwrap();
         assert_eq!(texts(&after_second), ["three", "four"]);
-        assert_eq!(
-            texts(&store.history_after("chat", 0, 2).unwrap()),
-            ["three", "four"]
-        );
+        let first_page = store.history_after("chat", 0, 2).unwrap();
+        assert_eq!(texts(&first_page), ["one", "two"]);
+        let next_page = store.history_after("chat", first_page[1].0, 2).unwrap();
+        assert_eq!(texts(&next_page), ["three", "four"]);
         assert!(store
             .history_after("chat", all[3].0, 100)
             .unwrap()
