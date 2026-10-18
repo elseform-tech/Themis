@@ -139,7 +139,10 @@ def run(args):
                    (trial, job, memory, notes) for trial, job, memory, notes in jobs}
         for future in concurrent.futures.as_completed(futures):
             trial, job, memory, notes = futures[future]
-            row, error, _ = future.result()
+            try:
+                row, error, _ = future.result()
+            except Exception as failure:  # noqa: BLE001 - one run must never abort the suite
+                row, error = None, f"harness: {type(failure).__name__}: {str(failure)[:160]}"
             if row and row.get("error_text", "").startswith("LLM request failed"):
                 error = f"provider failed mid-run after {len(row['calls'])} calls: {row['error_text'][:120]}"
             name = f"{job}-{memory}" + ("" if notes else "-no-notes")
