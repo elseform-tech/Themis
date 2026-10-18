@@ -17,6 +17,7 @@ import {
   listGoModels,
 } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
+import { DEFAULT_MODEL, modelLabel } from "../lib/models";
 import "./Settings.css";
 import { AppearanceSettings } from "./Appearance";
 import { PermissionsSettings } from "./PermissionsView";
@@ -209,9 +210,9 @@ export function SettingsScreen() {
       </>}
       {section === "Models" && <>
         <section className="themis-settings-section" aria-label="Model"><h3 className="themis-settings-subtitle">Model</h3>
-          <label className="themis-settings-control">New chats use<span className="themis-settings-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={models.some(model => model.id === form.default_model) ? form.default_model : ""} disabled={connecting || !state.secretStatus.go || models.length === 0} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>{connecting ? "Loading models…" : !state.secretStatus.go ? "Connect Go" : models.length === 0 ? "No models available" : models.some(model => model.id === form.default_model) ? "Choose a model" : `Unavailable: ${form.default_model}`}</option>{models.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}</select></span></label>
+          <label className="themis-settings-control">New chats use<span className="themis-settings-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={models.some(model => model.id === form.default_model) ? form.default_model : ""} disabled={connecting || !state.secretStatus.go || models.length === 0} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>{connecting ? "Loading models…" : !state.secretStatus.go ? "Connect Go" : models.length === 0 ? "No models available" : models.some(model => model.id === form.default_model) ? "Choose a model" : `Unavailable: ${form.default_model}`}</option>{models.map(model => <option key={model.id} value={model.id} disabled={!!model.unavailable_reason} title={model.unavailable_reason ?? undefined}>{modelLabel(model)}</option>)}</select></span></label>
           <div><Button variant="ghost" size="small" disabled={connecting || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button></div>{connection && <p role="status" className="themis-settings-hint">{connection}</p>}
-          <div><Button variant="ghost" size="small" onClick={() => void save({ default_provider: "go", default_model: "muse-spark-1.3-contributor" })}>Reset model</Button></div>
+          <div><Button variant="ghost" size="small" onClick={() => void save({ default_provider: "go", default_model: DEFAULT_MODEL })}>Reset model</Button></div>
         </section>
         <section className="themis-settings-section" aria-label="Connections"><h3 className="themis-settings-subtitle">Connections</h3>
           {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key"><div className="themis-settings-key-head"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><Badge tone={state.secretStatus[provider] ? "success" : "default"}>{state.secretStatus[provider] ? "Connected" : "Not connected"}</Badge></div>

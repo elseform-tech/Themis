@@ -268,6 +268,7 @@ mod tests {
                 context_tokens: Some(200000),
                 output_tokens: Some(32768),
                 thinking_toggle: false,
+                ..Default::default()
             });
         let directory = tempfile::tempdir().unwrap();
         let stopped = AtomicBool::new(false);

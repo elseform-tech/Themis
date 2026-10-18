@@ -26,6 +26,7 @@ import type {
 import type { ToastItem, ToastTone } from "../components";
 import { reduceCollectionActions } from "./reducer/collections";
 import { reduceUiActions } from "./reducer/ui";
+import { DEFAULT_MODEL } from "../lib/models";
 
 export type MessageRole = PersistedMessage["role"];
 export type ChatMessage = PersistedMessage;
@@ -196,7 +197,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebar_hover: true,
   theme: "dark",
   default_provider: "go",
-  default_model: "muse-spark-1.3-contributor",
+  default_model: DEFAULT_MODEL,
   max_turns: 20,
   max_total_turns: 200,
   context_token_budget: 200000,
@@ -588,15 +589,10 @@ export function reducer(state: AppState, action: AppAction): AppState {
       };
     }
     case "thread/created": {
+      // The server's own `created` event can arrive before this reply: upsert, never append twice.
+      const synced = reducer(state, { type: "thread/synced", projectRoot: action.projectRoot, thread: action.thread });
       return {
-        ...state,
-        threadsByProject: {
-          ...state.threadsByProject,
-          [action.projectRoot]: [
-            ...(state.threadsByProject[action.projectRoot] ?? []),
-            action.thread,
-          ],
-        },
+        ...synced,
         activeProjectRoot: action.projectRoot,
         activeThreadId: action.thread.id,
         mainView: "thread",

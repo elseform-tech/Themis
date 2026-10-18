@@ -147,3 +147,10 @@
 .themis-project-option .themis-moving-window { flex: 1; }
 .themis-project-option.is-danger { color: var(--themis-danger); }
 .themis-project-option.is-danger:hover { color: var(--themis-danger); filter: brightness(1.15); }
+.themis-project-entry { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.themis-project-entry .themis-project-option { flex: 1; }
+.themis-project-action { display: grid; flex: none; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-3); cursor: pointer; }
+button.themis-project-action:hover, button.themis-project-action:focus-visible { color: var(--themis-text); background: var(--themis-nav-hover-bg); }
+.themis-project-action.is-danger:hover, .themis-project-action.is-danger:focus-visible { color: var(--themis-danger); }
+.themis-project-action .themis-sidebar-icon { flex-basis: 15px; width: 15px; height: 15px; color: inherit; }
+.themis-project-entry .themis-project-count { flex: none; min-width: 22px; margin-left: 2px; text-align: right; }
