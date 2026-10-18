@@ -102,10 +102,8 @@ pub struct ToolTaskOptions {
     /// applies). Off: destructive actions are refused, as by a cautious person in Custom mode.
     pub allow_all: bool,
     /// Ablation: runtime nudges to switch off (`notes_reminder`, `finish_checks`, `loop_warning`,
-    /// `repeat_receipt`).
+    /// `repeat_receipt`, `spec_check`).
     pub nudges_off: Vec<String>,
-    /// Experiments to switch on (`spec_check`), off in the app.
-    pub experiments: Vec<String>,
     /// Ablation: tools withheld from the agent (for example the file tools, leaving the shell).
     pub hide_tools: Vec<String>,
     /// Sends a thinking model's reasoning back with its own tool calls, as the app does
@@ -129,7 +127,6 @@ impl Default for ToolTaskOptions {
             snapshots: false,
             allow_all: false,
             nudges_off: Vec::new(),
-            experiments: Vec::new(),
             hide_tools: Vec::new(),
             replay_reasoning: true,
         }
@@ -397,37 +394,34 @@ async fn run_turn(
     let notes_log = Arc::new(Mutex::new(Vec::new()));
     let loop_warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let finish_checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let result = EVAL_EXPERIMENTS
+    let result = crate::providers::reasoning::REPLAY_REASONING
         .scope(
-            Arc::new(options.experiments.clone()),
-            crate::providers::reasoning::REPLAY_REASONING.scope(
-                options.replay_reasoning,
-                EVAL_NUDGES_OFF.scope(
-                    Arc::new(options.nudges_off.clone()),
-                    EVAL_FINISH_CHECKS.scope(
-                        finish_checks.clone(),
-                        EVAL_LOOP_WARNINGS.scope(
-                            loop_warnings.clone(),
-                            EVAL_NOTES_LOG.scope(
-                                notes_log.clone(),
-                                EVAL_OFFER_NOTES.scope(
-                                    options.offer_notes,
-                                    run_task_with_evidence(
-                                        llm.clone(),
-                                        tools,
-                                        task.to_owned(),
-                                        history,
-                                        approvals,
-                                        RunPolicy {
-                                            total_turns: options.max_turns,
-                                            context_token_budget: options.budget,
-                                            recent_messages: options.recent_messages,
-                                        },
-                                        events,
-                                        Arc::new(AtomicBool::new(false)),
-                                        String::new(),
-                                        options.evidence.clone(),
-                                    ),
+            options.replay_reasoning,
+            EVAL_NUDGES_OFF.scope(
+                Arc::new(options.nudges_off.clone()),
+                EVAL_FINISH_CHECKS.scope(
+                    finish_checks.clone(),
+                    EVAL_LOOP_WARNINGS.scope(
+                        loop_warnings.clone(),
+                        EVAL_NOTES_LOG.scope(
+                            notes_log.clone(),
+                            EVAL_OFFER_NOTES.scope(
+                                options.offer_notes,
+                                run_task_with_evidence(
+                                    llm.clone(),
+                                    tools,
+                                    task.to_owned(),
+                                    history,
+                                    approvals,
+                                    RunPolicy {
+                                        total_turns: options.max_turns,
+                                        context_token_budget: options.budget,
+                                        recent_messages: options.recent_messages,
+                                    },
+                                    events,
+                                    Arc::new(AtomicBool::new(false)),
+                                    String::new(),
+                                    options.evidence.clone(),
                                 ),
                             ),
                         ),

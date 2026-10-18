@@ -858,16 +858,24 @@ async fn run_task_with_evidence_inner(
                     continue;
                 }
             }
-            // Experiment: a run that changed files checks its work against the request once
-            // before it ends; agents report success when their own tests pass, though those
-            // cover only what they remembered to test.
-            if changed_files && !spec_checked && experiment_on("spec_check") {
+            // A run that changed files checks its work against the request once before it
+            // ends: agents report success when their own tests pass, though those cover only
+            // what they remembered to test.
+            if changed_files && !spec_checked && !nudge_off("spec_check") {
                 spec_checked = true;
                 crate::context_metrics::activity("spec_checks");
+                let answer = text.unwrap_or_default();
+                // The checked answer starts a new paragraph after the one already shown.
+                if !answer.trim().is_empty() {
+                    events
+                        .send(RunEvent::AssistantText("\n\n".into()))
+                        .await
+                        .ok();
+                }
                 messages.push(ChatMessage {
                     role: ChatRole::Assistant,
                     message_type: MessageType::Text,
-                    content: text.unwrap_or_default(),
+                    content: answer,
                 });
                 messages.push(ChatMessage {
                     role: ChatRole::User,
@@ -1975,28 +1983,6 @@ fn nudge_off(name: &str) -> bool {
     {
         EVAL_NUDGES_OFF
             .try_with(|off| off.iter().any(|item| item == name))
-            .unwrap_or(false)
-    }
-    #[cfg(not(feature = "eval"))]
-    {
-        let _ = name;
-        false
-    }
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
-    /// Eval-only experiments switched on (`spec_check`): behavior still being measured, off
-    /// in the app until an eval shows it earns its place.
-    pub static EVAL_EXPERIMENTS: Arc<Vec<String>>;
-}
-
-/// Whether an eval switched this experiment on (never, outside evals).
-fn experiment_on(name: &str) -> bool {
-    #[cfg(feature = "eval")]
-    {
-        EVAL_EXPERIMENTS
-            .try_with(|on| on.iter().any(|item| item == name))
             .unwrap_or(false)
     }
     #[cfg(not(feature = "eval"))]
@@ -4878,14 +4864,14 @@ mod tests {
         assert_eq!(started.elapsed(), ATTEMPT_CEILING);
     }
 
-    /// The spec check experiment: a run that changed files gets one request to verify its
-    /// work against the user's request before it ends; a run that changed nothing does not,
-    /// and without the experiment (the app) nothing changes.
+    /// The spec check: a run that changed files gets one request to verify its work against
+    /// the user's request before it ends; a run that changed nothing does not, and an eval
+    /// can switch it off.
     #[cfg(feature = "eval")]
     #[tokio::test]
-    async fn spec_check_experiment_asks_once_after_file_changes() {
+    async fn spec_check_asks_once_after_file_changes() {
         use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
-        async fn run(experiments: Vec<String>, write: bool) -> (String, Vec<serde_json::Value>) {
+        async fn run(nudges_off: Vec<String>, write: bool) -> (String, Vec<serde_json::Value>) {
             let server = MockServer::start().await;
             Mock::given(method("POST"))
                 .respond_with(move |request: &Request| {
@@ -4923,9 +4909,9 @@ mod tests {
                 context_token_budget: 24000,
                 recent_messages: 4,
             };
-            let answer = EVAL_EXPERIMENTS
+            let answer = EVAL_NUDGES_OFF
                 .scope(
-                    Arc::new(experiments),
+                    Arc::new(nudges_off),
                     run_task_with_evidence(
                         llm,
                         tools,
@@ -4958,18 +4944,18 @@ mod tests {
                 })
                 .count()
         };
-        let (answer, bodies) = run(vec!["spec_check".into()], true).await;
+        let (answer, bodies) = run(Vec::new(), true).await;
         assert_eq!(answer, "Verified: a.txt holds 1.");
         assert_eq!((bodies.len(), checks(&bodies)), (3, 1));
         // The answer before the check stays in the conversation the model sees.
         let checked = bodies[2]["messages"].as_array().unwrap();
         assert_eq!(checked[checked.len() - 2]["content"], "Done.");
-        let (answer, bodies) = run(vec!["spec_check".into()], false).await;
+        let (answer, bodies) = run(Vec::new(), false).await;
         assert_eq!(
             (answer.as_str(), bodies.len(), checks(&bodies)),
             ("Done.", 1, 0)
         );
-        let (answer, bodies) = run(Vec::new(), true).await;
+        let (answer, bodies) = run(vec!["spec_check".into()], true).await;
         assert_eq!(
             (answer.as_str(), bodies.len(), checks(&bodies)),
             ("Done.", 2, 0)
