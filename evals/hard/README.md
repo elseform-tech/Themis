@@ -8,6 +8,7 @@ The offline grader self-tests (`python3 -m unittest evals.hard.test_harness`) ar
 ```sh
 python3 -m evals.hard run --model mimo-v2.6-flash --memory both     # via the real app
 python3 -m evals.hard run --via runner --model mimo-v2.6-flash      # via the tool-eval runner
+python3 -m evals.hard run --themis path/to/themis --job threejs      # a prebuilt CLI, e.g. a fix branch's
 python3 -m evals.hard report evals/hard/results/<file>.json
 ```
 
