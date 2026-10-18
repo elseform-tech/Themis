@@ -963,6 +963,9 @@ fn project_name(root: &Path) -> String {
 }
 
 fn title_from_message(text: &str) -> String {
+    // A chat started with `/goal` is named after the goal, not the command.
+    let goal = themis_core::goal::parse_goal_command(text);
+    let text = goal.as_deref().unwrap_or(text);
     let first = text.lines().next().unwrap_or_default().trim();
     if first.is_empty() {
         return UNTITLED_THREAD.to_owned();
@@ -1441,6 +1444,12 @@ mod tests {
             .await
             .expect("create");
         assert_eq!(thread.model, GO_DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn a_goal_chat_is_named_after_the_goal() {
+        assert_eq!(title_from_message("/goal speed up p95"), "speed up p95");
+        assert_eq!(title_from_message("/goals list"), "/goals list");
     }
 
     #[tokio::test]
