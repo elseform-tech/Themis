@@ -128,9 +128,14 @@ def setup(project):
     sheet.setup(project)
 
 
-def stages(failed):
-    """Which of the four stages pass: the base engine, then each follow-up."""
-    passed = {"engine": not any(not name.startswith(tuple(p for _, p in STAGES)) for name in failed)}
+def stages(result):
+    """Which of the four stages pass, from a hidden-suite result: the base engine, then each
+    follow-up. A suite that did not run (a timeout, an import failure) passes none."""
+    failed = result["failed"]
+    if result.get("run", 0) == 0 or {"timeout", "import"} & set(failed):
+        return {"engine": False, **{stage: False for stage, _ in STAGES}}
+    prefixes = tuple(prefix for _, prefix in STAGES)
+    passed = {"engine": not any(not name.startswith(prefixes) for name in failed)}
     for stage, prefix in STAGES:
         passed[stage] = not any(name.startswith(prefix) for name in failed)
     return passed
@@ -139,7 +144,9 @@ def stages(failed):
 def check(project, report):
     result = sheet.hidden(project, TESTS)
     passed_own, count = sheet.own_tests(project)
-    by_stage = stages(result["failed"])
+    by_stage = stages(result)
+    # The grader runs before `measure`: keep its result rather than run the suite twice.
+    report["_stages"] = by_stage
     found = []
     if result["failed"]:
         missing = [stage for stage, ok in by_stage.items() if not ok]
@@ -153,4 +160,5 @@ def check(project, report):
 
 def measure(project, report):
     """Stages passed (of 4), for partial credit on a long task."""
-    return {"stages_passed": sum(stages(sheet.hidden(project, TESTS)["failed"]).values())}
+    by_stage = report.get("_stages") or stages(sheet.hidden(project, TESTS))
+    return {"stages_passed": sum(by_stage.values())}

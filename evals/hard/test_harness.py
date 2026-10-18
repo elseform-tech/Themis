@@ -52,7 +52,6 @@ class SheetGraderTest(unittest.TestCase):
         self.assertIn("own tests", why)
 
 
-@unittest.skipUnless(chrome(), "needs Chrome or Chromium")
 class LongSheetGraderTest(unittest.TestCase):
     def test_the_full_reference_passes_every_stage(self):
         project = copy_reference("sheet_long")
@@ -62,8 +61,8 @@ class LongSheetGraderTest(unittest.TestCase):
         self.assertEqual(sheet_long.measure(project, {}), {"stages_passed": 4})
 
     def test_the_first_turn_alone_passes_only_the_engine(self):
-        failed = sheet.hidden(copy_reference("sheet"), sheet_long.TESTS)["failed"]
-        self.assertEqual(sheet_long.stages(failed),
+        result = sheet.hidden(copy_reference("sheet"), sheet_long.TESTS)
+        self.assertEqual(sheet_long.stages(result),
                          {"engine": True, "names": False, "text": False, "command line": False})
 
     def test_a_broken_follow_up_fails_its_own_stage(self):
@@ -73,9 +72,15 @@ class LongSheetGraderTest(unittest.TestCase):
             text = handle.read()
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(text.replace("self.defined.pop(name.upper(), None)", "pass"))
-        failed = sheet.hidden(project, sheet_long.TESTS)["failed"]
-        self.assertEqual(failed, ["test_names_follow_changes_and_removal"])
-        self.assertFalse(sheet_long.stages(failed)["names"])
+        result = sheet.hidden(project, sheet_long.TESTS)
+        self.assertEqual(result["failed"], ["test_names_follow_changes_and_removal"])
+        self.assertFalse(sheet_long.stages(result)["names"])
+
+    def test_a_suite_that_never_ran_passes_no_stage(self):
+        for result in ({"run": 0, "failed": ["timeout"]}, {"run": 0, "failed": ["import"]},
+                       {"run": 45, "failed": ["import"]}):
+            with self.subTest(result=result):
+                self.assertEqual(sum(sheet_long.stages(result).values()), 0)
 
     def test_the_task_has_three_follow_ups_and_a_longer_limit(self):
         task = make_task("sheet-long", "normal")
@@ -84,6 +89,7 @@ class LongSheetGraderTest(unittest.TestCase):
         self.assertIn("measure", task)
 
 
+@unittest.skipUnless(chrome(), "needs Chrome or Chromium")
 class ThreejsGraderTest(unittest.TestCase):
     def project(self, mutate=None):
         project = os.path.join(tempfile.mkdtemp(prefix="hard-3d-"), "project")
