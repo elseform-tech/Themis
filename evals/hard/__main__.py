@@ -19,14 +19,14 @@ import time
 
 from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task_retrying
 
-from . import followup, notes_metrics, sheet, threejs
+from . import followup, notes_metrics, sheet, sheet_long, threejs
 from .app import run_app_task, themis_binary
 
 RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 # The app's defaults, and a small budget that forces many checkpoints mid-task.
 MEMORY = {"normal": {"budget": 200_000, "recent_messages": 20},
           "squeezed": {"budget": 32_000, "recent_messages": 8}}
-JOBS = {"threejs": threejs, "sheet": sheet,
+JOBS = {"threejs": threejs, "sheet": sheet, "sheet-long": sheet_long,
         "followup-sum": followup.SUM, "followup-tests": followup.TESTS, "followup-read": followup.READ}
 
 
@@ -36,7 +36,9 @@ def make_task(job, memory, notes=True):
             "notes": notes,
             "setup": module.setup, "check": module.check, "prompt": module.PROMPT,
             "followups": getattr(module, "FOLLOWUPS", []),
-            "evidence": ".themis/context/eval-thread", "offer_notes": notes, "timeout": 5400,
+            "evidence": ".themis/context/eval-thread", "offer_notes": notes,
+            "timeout": getattr(module, "TIMEOUT", 5400),
+            **({"measure": module.measure} if hasattr(module, "measure") else {}),
             # YOLO-style approvals as a developer would use them; the OS sandbox still applies.
             "allow_all": True, **MEMORY[memory]}
 

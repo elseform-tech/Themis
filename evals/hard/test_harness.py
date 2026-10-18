@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import unittest
 
-from . import followup, notes_metrics, sheet, threejs
+from . import followup, notes_metrics, sheet, sheet_long, threejs
 from .__main__ import JOBS, make_task, markdown, notes_kept, summarize
 from .browser import chrome
 
@@ -53,6 +53,37 @@ class SheetGraderTest(unittest.TestCase):
 
 
 @unittest.skipUnless(chrome(), "needs Chrome or Chromium")
+class LongSheetGraderTest(unittest.TestCase):
+    def test_the_full_reference_passes_every_stage(self):
+        project = copy_reference("sheet_long")
+        result = sheet.hidden(project, sheet_long.TESTS)
+        self.assertGreaterEqual(result["run"], 40)
+        self.assertEqual(result["failed"], [], result["details"])
+        self.assertEqual(sheet_long.measure(project, {}), {"stages_passed": 4})
+
+    def test_the_first_turn_alone_passes_only_the_engine(self):
+        failed = sheet.hidden(copy_reference("sheet"), sheet_long.TESTS)["failed"]
+        self.assertEqual(sheet_long.stages(failed),
+                         {"engine": True, "names": False, "text": False, "command line": False})
+
+    def test_a_broken_follow_up_fails_its_own_stage(self):
+        project = copy_reference("sheet_long")
+        path = os.path.join(project, "sheet", "__init__.py")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text.replace("self.defined.pop(name.upper(), None)", "pass"))
+        failed = sheet.hidden(project, sheet_long.TESTS)["failed"]
+        self.assertEqual(failed, ["test_names_follow_changes_and_removal"])
+        self.assertFalse(sheet_long.stages(failed)["names"])
+
+    def test_the_task_has_three_follow_ups_and_a_longer_limit(self):
+        task = make_task("sheet-long", "normal")
+        self.assertEqual(len(task["followups"]), 3)
+        self.assertEqual(task["timeout"], 3 * 5400)
+        self.assertIn("measure", task)
+
+
 class ThreejsGraderTest(unittest.TestCase):
     def project(self, mutate=None):
         project = os.path.join(tempfile.mkdtemp(prefix="hard-3d-"), "project")
