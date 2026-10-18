@@ -301,7 +301,7 @@ describe("Workspace journey", () => {
     expect(screen.queryByText("Change location")).toBeNull();
     expect(screen.queryByLabelText("Parent folder")).toBeNull();
   });
-  it("renames projects without changing their roots, including Themis", async () => {
+  it("renames any listed project from its own row without switching to it, including Themis", async () => {
     const root = "/tmp/Themis/Projects/Research";
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
     vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Research", is_git: true });
@@ -309,14 +309,14 @@ describe("Workspace journey", () => {
     await mount();
     fireEvent.click(screen.getByRole("button", { name: /^Themis/ }));
     expect(screen.getByRole("button", { name: "Rename Themis" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Research/ }));
     fireEvent.click(screen.getByRole("button", { name: "Rename Research" }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Research notes" } });
     await act(async () => fireEvent.submit(screen.getByLabelText("Name").closest("form")!));
     expect(bridge.renameProject).toHaveBeenCalledWith(root, "Research notes");
-    expect(screen.getByLabelText("Project: Research notes")).toBeInTheDocument();
+    expect(screen.getByLabelText("Project: Themis")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rename Research notes" })).toBeInTheDocument();
   });
-  it("deletes a project after confirmation and never offers it for the built-in project", async () => {
+  it("deletes a non-active project from its row after confirmation and never offers it for the built-in project", async () => {
     const root = "/tmp/Themis/Projects/Scratch";
     vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
     vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Scratch", is_git: true });
@@ -324,7 +324,7 @@ describe("Workspace journey", () => {
     await mount();
     fireEvent.click(screen.getByRole("button", { name: /^Themis/ }));
     expect(screen.queryByRole("button", { name: "Delete Themis" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /^Scratch/ }));
+    expect(screen.getByLabelText("Project: Themis")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Delete Scratch" }));
     const dialog = screen.getByRole("dialog", { name: "Delete project?" });
     expect(dialog).toHaveTextContent("moves to the Trash");

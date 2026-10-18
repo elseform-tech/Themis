@@ -9,7 +9,7 @@ import { MovingText } from "../components/MovingText";
 import "./Sidebar.css";
 
 const views: Array<[MainView, string]> = [["skills", "Integrations"], ["automations", "Automations"], ["queue", "Review queue"]];
-type SidebarIconName = "panel" | "chat" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search";
+type SidebarIconName = "panel" | "chat" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search" | "rename" | "trash";
 const viewIcons: Record<MainView, SidebarIconName> = { thread: "thread", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
 export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
@@ -109,17 +109,21 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
             <div className="themis-project-menu" role="group" aria-label="Projects">
               {projects.length === 0 && <p className="themis-sidebar-note">No projects</p>}
               {projects.map(project => (
-                <button key={project.root} type="button" className="themis-project-option" title={project.root} aria-current={project.root === activeRoot ? "true" : undefined}
-                  onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowAll(false); dispatch({ type: "project/selected", root: project.root }); }}>
-                  <MovingText>{project.name}</MovingText>
-                  {projectBusy(project.root) && <span className="themis-project-busy" aria-hidden="true" />}
-                  <span className="themis-project-count">{(state.threadsByProject[project.root] ?? []).length}</span>
-                </button>
+                <div key={project.root} className="themis-project-entry">
+                  <button type="button" className="themis-project-option" title={project.root} aria-current={project.root === activeRoot ? "true" : undefined}
+                    onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowAll(false); dispatch({ type: "project/selected", root: project.root }); }}>
+                    <MovingText>{project.name}</MovingText>
+                    {projectBusy(project.root) && <span className="themis-project-busy" aria-hidden="true" />}
+                  </button>
+                  <button type="button" className="themis-project-action" aria-label={`Rename ${project.name}`} title="Rename" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setRenaming({ root: project.root, name: project.name }); }}><SidebarIcon name="rename" /></button>
+                  {project.is_default
+                    ? <span className="themis-project-action" aria-hidden="true" />
+                    : <button type="button" className="themis-project-action is-danger" aria-label={`Delete ${project.name}`} title="Delete" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setDeleting({ root: project.root, name: project.name }); }}><SidebarIcon name="trash" /></button>}
+                  <span className="themis-project-count" aria-label={`${(state.threadsByProject[project.root] ?? []).length} chats`}>{(state.threadsByProject[project.root] ?? []).length}</span>
+                </div>
               ))}
               <hr />
               <button type="button" className="themis-project-option" aria-label="New project" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); dispatch({ type: "ui/project-dialog", open: true }); }}>New project</button>
-              {activeProject && <button type="button" className="themis-project-option" aria-label={`Rename ${activeProject.name}`} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setRenaming({ root: activeProject.root, name: activeProject.name }); }}>Rename project</button>}
-              {activeProject && !activeProject.is_default && <button type="button" className="themis-project-option is-danger" aria-label={`Delete ${activeProject.name}`} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setError(""); setDeleting({ root: activeProject.root, name: activeProject.name }); }}>Delete project</button>}
             </div>
           </details>
           {activeProject && <>
@@ -197,6 +201,8 @@ export function SidebarIcon({ name }: { name: SidebarIconName }) {
     {name === "skills" && <><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0ZM12 18v4" /></>}
     {name === "automations" && <><circle cx="12" cy="12" r="10" /><path d="M12 6v6h4" /></>}
     {name === "queue" && <><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M13 6h3a2 2 0 0 1 2 2v7" /><line x1="6" x2="6" y1="9" y2="21" /></>}
+    {name === "rename" && <><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" /><path d="m15 5 4 4" /></>}
+    {name === "trash" && <><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><path d="M10 11v6M14 11v6" /></>}
     {name === "project" && <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />}
     {name === "settings" && <><path d="M14 17H5M19 7h-9" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></>}
     {name === "help" && <><circle cx="10" cy="10" r="7.5"/><path d="M7.9 7.4a2.2 2.2 0 1 1 3.8 1.5c-1.1 1-1.7 1.2-1.7 2.6"/><path d="M10 14.6h.01"/></>}
