@@ -1,0 +1,250 @@
+{
+  "suite": "hard",
+  "model": "mimo-v2.6-flash",
+  "trials": 1,
+  "via": "app",
+  "created": "2026-10-17T20:28:33+00:00",
+  "note": "Live-model benchmark audit; not an automated runtime check.",
+  "summary": {
+    "runs": 2,
+    "pass_rate": 0.5,
+    "tasks": {
+      "threejs-normal": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 28.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 19.436783333333334,
+        "failures": []
+      },
+      "threejs-squeezed": {
+        "runs": 1,
+        "pass_rate": 0.0,
+        "mean_calls": 30.0,
+        "mean_compactions": 1.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 18.1843,
+        "failures": [
+          "index.html shows no canvas"
+        ]
+      }
+    }
+  },
+  "errors": [
+    {
+      "trial": 0,
+      "task": "sheet-squeezed",
+      "error": "provider failed mid-run after 5 calls: LLM request failed: HTTP Error: request timed out: stream interrupted: error decoding response body"
+    },
+    {
+      "trial": 0,
+      "task": "sheet-normal",
+      "error": "provider failed mid-run after 3 calls: LLM request failed: HTTP Error: request timed out: stream interrupted: error decoding response body"
+    }
+  ],
+  "rows": [
+    {
+      "task": "threejs-normal",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "Done. Here's what I built and how it checks out.\n\n## Files\n\n**`src/scene.js`** — exports `createScene(THREE)` → `{ scene, camera, update }`. Pure scene construction: no renderer, no DOM access (proven by running it in Node, which has no DOM).\n\n- **Ground + street grid**: dark asphalt plane, plus a 4",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "delete_file"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 1166207,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "threejs-squeezed",
+      "tool": "threejs",
+      "passed": false,
+      "why": "index.html shows no canvas",
+      "answer": "Notes are cleared — all three tasks (scene, HTML, verification) are complete, so the open lines were closed rather than left pending.\n\nFinal answer: Built the night city scene in `src/scene.js` (`createScene(THREE)` → `{ scene, camera, update }`, DOM-free) and `index.html` (import map → `vendor/thre",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "delete_file"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 1,
+      "latency_ms": 1091058,
+      "via": "app",
+      "trial": 0
+    }
+  ]
+}

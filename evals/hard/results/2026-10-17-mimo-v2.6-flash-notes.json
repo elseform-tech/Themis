@@ -1,0 +1,26 @@
+{
+  "suite": "hard",
+  "model": "mimo-v2.6-flash",
+  "trials": 1,
+  "via": "runner",
+  "created": "2026-10-17T20:32:44+00:00",
+  "note": "Live-model benchmark audit; not an automated runtime check.",
+  "summary": {
+    "runs": 0,
+    "pass_rate": null,
+    "tasks": {}
+  },
+  "errors": [
+    {
+      "trial": 0,
+      "task": "sheet-squeezed-no-notes",
+      "error": "provider failed mid-run after 1 calls: LLM request failed: HTTP Error: request timed out: stream interrupted: error decoding response body"
+    },
+    {
+      "trial": 0,
+      "task": "sheet-squeezed",
+      "error": "provider failed mid-run after 3 calls: LLM request failed: HTTP Error: request timed out: stream interrupted: error decoding response body"
+    }
+  ],
+  "rows": []
+}

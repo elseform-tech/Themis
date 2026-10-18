@@ -1,0 +1,311 @@
+{
+  "suite": "hard",
+  "model": "glm-5.3-flash",
+  "trials": 1,
+  "via": "app",
+  "created": "2026-10-17T21:06:35+00:00",
+  "note": "Live-model benchmark audit; not an automated runtime check.",
+  "summary": {
+    "runs": 2,
+    "pass_rate": 0.5,
+    "tasks": {
+      "sheet-squeezed": {
+        "runs": 1,
+        "pass_rate": 0.0,
+        "mean_calls": 59.0,
+        "mean_compactions": 5.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 20.972716666666667,
+        "failures": [
+          "hidden tests failed: test_long_chain"
+        ]
+      },
+      "threejs-squeezed": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 23.0,
+        "mean_compactions": 1.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 6.952233333333333,
+        "failures": []
+      }
+    }
+  },
+  "errors": [],
+  "rows": [
+    {
+      "task": "threejs-squeezed",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "The night city scene is built and verified. Here's what's in the project:\n\n**`src/scene.js`** — exports `createScene(THREE)` returning `{ scene, camera, update }`; no renderer or DOM access:\n- **City**: a 600×600 dark ground plane topped by a 9×9 street grid with two crossing avenues through the mid",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 1,
+      "latency_ms": 417134,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "sheet-squeezed",
+      "tool": "sheet",
+      "passed": false,
+      "why": "hidden tests failed: test_long_chain",
+      "answer": "**Ran 37 in 0.085s — OK.** Full suite green. What I built:\n\n**Package layout** (`sheet/`, stdlib only, Python 3.10+)\n- `errors.py` — `SheetError(Exception)` with a `.code` attribute (`#REF!`, `#CYCLE!`, `#DIV/0!`, `#VALUE!`, `#NAME?`, `#ERROR!`).\n- `refs.py` — reference parsing: 1–2 letter column + ",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "move_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        }
+      ],
+      "compactions": 5,
+      "latency_ms": 1258363,
+      "via": "app",
+      "trial": 0
+    }
+  ]
+}
