@@ -8,9 +8,8 @@
 //! ```
 //!
 //! `task.json` holds `prompt`, and optionally `checkpoint` (a summary standing in for
-//! compacted history) and `evidence` (project-relative saved-originals directory, which also
-//! offers `recall` and `notes`), `offer_notes` (false withholds `notes`) and `followups`
-//! (later messages in the same chat). The key comes from `OPENCODE_KEY`; `--base-url` points at a mock.
+//! compacted history), `evidence` (project-relative saved-originals directory, which also
+//! offers `recall`) and `followups` (later messages in the same chat). The key comes from `OPENCODE_KEY`; `--base-url` points at a mock.
 
 use std::path::PathBuf;
 
@@ -69,7 +68,6 @@ async fn main() -> anyhow::Result<()> {
         recent_messages: task["recent_messages"]
             .as_u64()
             .map_or(20, |recent| recent as usize),
-        offer_notes: task["offer_notes"].as_bool().unwrap_or(true),
         followups: task["followups"]
             .as_array()
             .into_iter()

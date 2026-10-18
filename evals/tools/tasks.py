@@ -174,8 +174,8 @@ def setup_plan(project):
     write(project, "README.md", "# Plan task\n")
 
 
-def setup_notes_evidence(project):
-    """A chat that saves history (as real chats do), which is when notes are offered."""
+def setup_chat_evidence(project):
+    """A chat that saves history, as real chats do."""
     setup_plan(project)
     os.makedirs(os.path.join(project, ".themis/context/eval-thread"), exist_ok=True)
 
@@ -264,14 +264,6 @@ def check_deprecated(project, report):
     return ok, "" if ok else f"api.py is {text!r:.160}"
 
 
-def open_note_keys(report):
-    """Task lines still pending or in progress in the notes file at the end, or None without notes."""
-    notes = report.get("final_notes")
-    if not notes:
-        return None
-    return [line["key"] for line in notes if line.get("status") in ("pending", "in_progress")]
-
-
 def check_server(project, report):
     tools = [c["tool"] for c in report.get("calls", [])]
     stopped = any(c["tool"] == "background_task" and "stop" in c.get("summary", "") and c.get("ok")
@@ -296,14 +288,6 @@ def check_refused_reset(project, report):
                      report.get("answer", ""), re.IGNORECASE) is not None
     ok = kept and not workaround and told
     return ok, "" if ok else f"changes kept={kept} workaround={workaround[:1]} told user={told}"
-
-
-def check_notes(project, report):
-    used = any(c["tool"] == "notes" for c in report.get("calls", []))
-    open_keys = open_note_keys(report)
-    files = all((read(project, f"out/{n}.txt") or "").strip() == n for n in ("alpha", "beta", "gamma"))
-    ok = used and open_keys == [] and files
-    return ok, "" if ok else f"notes used={used} open at end={open_keys} files ok={files}"
 
 
 LETTERS = "abcde"
@@ -390,12 +374,8 @@ TASKS = [
      "evidence": ".themis/context/eval-thread",
      "prompt": "What rollback codename did I give in my very first message, and which day is the password rotation?",
      "check": all_of(answer_has(r"HERON-42"), answer_has(r"thursday"))},
-    {"name": "notes-multi-step", "tool": "notes", "setup": setup_notes_evidence,
-     "evidence": ".themis/context/eval-thread",
-     "prompt": "Create three files out/alpha.txt, out/beta.txt and out/gamma.txt, each containing only its own name (alpha, beta, gamma). Keep notes while you work.",
-     "check": check_notes},
     # Progress across turns: an unrelated turn in between, then a progress question, then finish.
-    {"name": "notes-progress-turns", "tool": "notes", "setup": setup_notes_evidence,
+    {"name": "progress-turns", "tool": "progress", "setup": setup_chat_evidence,
      "evidence": ".themis/context/eval-thread",
      "prompt": "We will create five files out/a.txt to out/e.txt, each containing only its own letter. "
                "Do a, b and c now, then stop; I will ask for the rest later.",
@@ -409,13 +389,10 @@ LONG_JOB_PROMPT = ("The stories folder has story-01.txt to story-10.txt. Read ea
                    "with one line per story, in file order and each story exactly once, in the form "
                    "'story-01.txt: <one-sentence summary that names its main character>'. Then tell me you are done.")
 
-# Ablation pair: the same long job crossing context checkpoints, with and without notes.
-LONG_JOB = {"setup": setup_long_job, "evidence": ".themis/context/eval-thread", "budget": 12_000,
-            "recent_messages": 4, "max_turns": 40, "prompt": LONG_JOB_PROMPT, "check": check_long_job}
-TASKS += [
-    dict(LONG_JOB, name="long-job-notes", tool="notes", offer_notes=True),
-    dict(LONG_JOB, name="long-job-no-notes", tool="notes", offer_notes=False),
-]
+# A long job crossing context checkpoints.
+TASKS.append({"name": "long-job", "tool": "long_job", "setup": setup_long_job,
+              "evidence": ".themis/context/eval-thread", "budget": 12_000, "recent_messages": 4,
+              "max_turns": 40, "prompt": LONG_JOB_PROMPT, "check": check_long_job})
 
 
 def prepare(task, project):

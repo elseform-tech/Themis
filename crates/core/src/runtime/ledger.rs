@@ -17,7 +17,7 @@ pub(super) const MARKERS: [&str; 4] = [
     LEGACY_BLOCKS[1].0,
     LEGACY_BLOCKS[2].0,
 ];
-/// The plan tool notes replaced; plans in older checkpoints migrate into notes.
+/// A plan tool older histories used; its calls are not actions.
 const LEGACY_PLAN_TOOL: &str = "update_plan";
 const LOCATION_FIELDS: [&str; 10] = [
     "found",
@@ -43,15 +43,9 @@ pub(super) struct Budget {
 
 #[derive(Default)]
 struct Collected {
-    plan: Option<Value>,
     actions: Vec<String>,
     // (coordinate key, full read with content when available, location)
     reads: Vec<(String, Option<Value>, Value)>,
-}
-
-/// The latest plan a checkpoint ledger written before notes carried, if any.
-pub(super) fn legacy_plan(messages: &[ChatMessage]) -> Option<Value> {
-    collect(messages, 0, None).plan
 }
 
 fn checkpoint_message(message: &ChatMessage) -> bool {
@@ -161,7 +155,6 @@ fn collect(
                     continue;
                 };
                 match value["kind"].as_str() {
-                    Some("plan") => collected.plan = Some(value["items"].clone()),
                     Some("action") => {
                         let mut action = value.clone();
                         action.as_object_mut().map(|action| action.remove("kind"));
@@ -202,7 +195,7 @@ fn collect(
                 for (result_index, result) in batch.iter().enumerate() {
                     let pointer =
                         format!("/message_type/ToolResult/{result_index}/function/arguments");
-                    // Notes have their own block; old plan calls are not actions either.
+                    // Calls of the retired notes and plan tools are not actions.
                     if [LEGACY_PLAN_TOOL, super::notes::TOOL]
                         .contains(&result.function.name.as_str())
                     {
@@ -449,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn plans_in_old_checkpoints_are_read_for_migration_but_not_rendered() {
+    fn plans_in_old_checkpoints_are_not_rendered() {
         let plan = json!({"kind":"plan","items":[{"step":"Fix parser","status":"done"}]});
         let restarted = initial_messages(
             vec![ConversationTurn {
@@ -458,7 +451,6 @@ mod tests {
             }],
             "Continue".into(),
         );
-        assert_eq!(legacy_plan(&restarted).unwrap()[0]["step"], "Fix parser");
         let again = render(
             &restarted,
             restarted.len(),

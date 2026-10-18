@@ -532,12 +532,7 @@ async fn run_task_with_evidence_inner(
         events.send(event).await
     };
     let caching = CachingApprovals::wrap(approvals);
-    let mut llm_tools: Vec<Tool> = tools.iter().map(to_llm_tool).collect();
-    // Notes live in the chat's evidence directory, so they need saved originals.
-    let notes_directory = evidence_directory.clone().filter(|_| offer_notes());
-    if notes_directory.is_some() && !tools.iter().any(|tool| tool.name() == notes::TOOL) {
-        llm_tools.push(notes::tool());
-    }
+    let llm_tools: Vec<Tool> = tools.iter().map(to_llm_tool).collect();
     // Byte estimates are approximate bookkeeping, not a model-specific tokenizer.
     let schema_tokens = serde_json::to_vec(&llm_tools)?.len().div_ceil(4);
     let answer_reserve = crate::providers::bounded_output_limit(
@@ -590,24 +585,12 @@ async fn run_task_with_evidence_inner(
             directory,
             llm_tools.iter().any(|tool| tool.function.name == "recall"),
         )?);
-        messages[0].content.push_str(if notes_directory.is_some() {
-            NOTES_INSTRUCTION
-        } else {
-            "\nThe task ledger keeps completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work."
-        });
-    }
-    if let Some(directory) = &notes_directory {
-        pin_notes(&mut messages, directory);
+        messages[0].content.push_str("\nThe task ledger keeps completed actions and recent reads across context checkpoints. When every step is done, verify if needed and give the final answer instead of re-inspecting finished work.");
     }
 
     let mut observations = HashSet::new();
     let mut last_shell_observation = None;
     let mut unchanged_results = 0;
-    let mut notes_used = false;
-    let mut notes_reminded = false;
-    let mut work_calls = 0usize;
-    let mut finish_checks = 0usize;
-    let mut work_at_check = 0usize;
     // Whether this run changed files, and whether its spec check was already sent.
     let mut changed_files = false;
     let mut spec_checked = false;
@@ -818,46 +801,6 @@ async fn run_task_with_evidence_inner(
         };
         check_stopped(&stopped, &events).await?;
         if calls.is_empty() {
-            // Finishing with open task lines gets a check when notes were kept during this run,
-            // or when the run did no work at all (an answer that only announces the next step):
-            // a long job must not end early because the agent lost track of what is left. Later
-            // checks need tool calls since the previous one, so narration alone still ends the run.
-            let check_due = !nudge_off("finish_checks")
-                && if finish_checks == 0 {
-                    notes_used || work_calls == 0
-                } else {
-                    finish_checks < MAX_FINISH_CHECKS && work_calls > work_at_check
-                };
-            if let (Some(directory), true) = (&notes_directory, check_due) {
-                let saved = notes::Notes::load(directory);
-                let open: Vec<&str> = saved.open().iter().map(|line| line.key.as_str()).collect();
-                if !open.is_empty() {
-                    let check = if notes_used {
-                        OPEN_TASKS_CHECK
-                    } else {
-                        IDLE_OPEN_TASKS_CHECK
-                    };
-                    finish_checks += 1;
-                    work_at_check = work_calls;
-                    #[cfg(feature = "eval")]
-                    let _ = EVAL_FINISH_CHECKS
-                        .try_with(|count| count.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
-                    messages.push(ChatMessage {
-                        role: ChatRole::Assistant,
-                        message_type: MessageType::Text,
-                        content: text.unwrap_or_default(),
-                    });
-                    messages.push(ChatMessage {
-                        role: ChatRole::User,
-                        message_type: MessageType::Text,
-                        content: format!(
-                            "{check}{}",
-                            open.iter().take(20).copied().collect::<Vec<_>>().join(", ")
-                        ),
-                    });
-                    continue;
-                }
-            }
             // A run that changed files checks its work against the request once before it
             // ends: agents report success when their own tests pass, though those cover only
             // what they remembered to test.
@@ -1012,34 +955,10 @@ async fn run_task_with_evidence_inner(
                         .to_string();
             }
         }
-        // One early reminder when work has started but the chat has no notes: tasks of one
-        // or two calls never see it, and it comes at most once per run.
-        let batch_has_notes = delivered_calls
-            .iter()
-            .any(|call| call.function.name == notes::TOOL);
-        work_calls += delivered_calls.len();
-        if let (Some(directory), false, false, true) = (
-            &notes_directory,
-            notes_reminded || nudge_off("notes_reminder"),
-            batch_has_notes || notes_used,
-            work_calls >= NOTES_REMINDER_AFTER,
-        ) {
-            if notes::Notes::load(directory).lines.is_empty() {
-                notes_reminded = results
-                    .iter_mut()
-                    .rev()
-                    .any(|result| annotate_result(result, "notes_reminder", NOTES_REMINDER));
-            }
-        }
         changed_files |= delivered_calls.iter().zip(&results).any(|(call, result)| {
             FILE_CHANGES.contains(&call.function.name.as_str())
                 && serde_json::from_str::<serde_json::Value>(&result.function.arguments)
                     .is_ok_and(|value| value["success"] == true)
-        });
-        notes_used |= delivered_calls.iter().zip(&results).any(|(call, result)| {
-            call.function.name == notes::TOOL
-                && serde_json::from_str::<serde_json::Value>(&result.function.arguments)
-                    .is_ok_and(|value| value["ok"] == true)
         });
         messages.push(ChatMessage {
             role: ChatRole::Assistant,
@@ -1519,21 +1438,6 @@ async fn execute_tool_calls(
             Err(format!("Not run: this batch had {} calls but only the first {runnable} fit the context budget. Nothing was executed for this call; request it again in a later, smaller batch.", calls.len()))
         } else if arguments_rejected {
             Err(format!("Tool arguments exceed {argument_allowance} serialized bytes (at most 64 KiB); rejected before execution. Use focused patches or approved shell/Python generators. No write was performed."))
-        } else if name == notes::TOOL && !tools.iter().any(|tool| tool.name() == notes::TOOL) {
-            // The agent's own notes file in this chat's evidence directory; no approval.
-            let outcome = match evidence_directory {
-                Some(directory) => notes::call(directory, &args),
-                None => Err("notes are not available in this run".to_owned()),
-            };
-            #[cfg(feature = "eval")]
-            let _ = EVAL_NOTES_LOG.try_with(|log| {
-                let saved = (outcome.is_ok())
-                    .then(|| evidence_directory.map(notes::Notes::load))
-                    .flatten()
-                    .and_then(|notes| serde_json::to_value(notes).ok());
-                log.lock().unwrap().push(saved.unwrap_or_default());
-            });
-            outcome
         } else {
             execute_call(tools, approvals, &name, &args, &summary, events, stopped).await
         };
@@ -1682,15 +1586,6 @@ fn tool_argument_allowance(batch_bytes: usize) -> usize {
     batch_bytes.saturating_mul(2).min(64 * 1024)
 }
 
-const NOTES_REMINDER_AFTER: usize = 3;
-const NOTES_REMINDER: &str = "Notes reminder (runtime, once): you have started work but this chat has no notes. If the task has several steps, call notes now: a `goal` line with the goal and the user's rules, one line per task with its status, then results as you finish each item. Older reads are summarised away at checkpoints; notes are not. Skip this if the task is nearly done.";
-
-/// Runtime message (user role, like other harness checks) when the agent would finish with
-/// open task lines.
-const OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] Your notes still list open task lines. Finish them now, or, if one is already done or no longer needed, update the notes (status done, or remove it) and say why in the answer. Then give the final answer. Open: ";
-
-/// Open-task checks per run: the first, then one more each time the agent worked after a check.
-const MAX_FINISH_CHECKS: usize = 3;
 /// Sent once when a run that changed files gives its final answer.
 const SPEC_CHECK: &str = "[Runtime check, not from the user] Before you finish, read the user's request again, requirement by requirement. For each one, check that it holds now, with a test or a command run in this task, and fix anything that does not. Do not repeat checks whose results you already have from after your last change. Then give the final answer and say briefly how the main requirements were verified.";
 /// Tools whose success changes project files.
@@ -1701,37 +1596,6 @@ const FILE_CHANGES: [&str; 5] = [
     "move_file",
     "copy_file",
 ];
-
-/// One check when a run that did no work ends while saved notes list open task lines.
-const IDLE_OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] You answered without using any tools while your notes list open task lines. If the user's latest message asks you to do that work, do it now with tool calls instead of describing it. If it only asks a question or asks you to wait, keep the lines open and give the answer. Open: ";
-
-const NOTES_INSTRUCTION: &str = "\nKeep notes with the notes tool for any task with several steps, starting with a notes call before other work: a `goal` line with the user's goal and constraints, one line per task with its status, and every result you will need later (counts, names, decisions, file paths). For a total over many items, keep a running total line and add each item's count as you finish it, instead of adding everything up at the end. Update a line as soon as its item is done, and keep result lines until the whole task is finished (remove only lines you will not need). Notes are shown to you after every context checkpoint and in later turns of this chat: they are how you remember the goal and progress, and how you answer questions about progress. The task ledger also keeps completed actions and recent reads. Before the final answer, check every task line: finish open ones, or mark them done or remove them with a reason. Then verify if needed and answer instead of re-inspecting finished work.";
-
-/// Shows the chat's saved notes before the current request. Notes from a checkpoint ledger
-/// written before notes existed are migrated once.
-fn pin_notes(messages: &mut Vec<ChatMessage>, directory: &std::path::Path) {
-    let mut saved = notes::Notes::load(directory);
-    if saved.lines.is_empty() {
-        if let Some(plan) = ledger::legacy_plan(messages) {
-            saved = notes::from_legacy_plan(&plan);
-            if !saved.lines.is_empty() {
-                let _ = saved.save(directory);
-            }
-        }
-    }
-    let block = saved.render();
-    if !block.is_empty() {
-        let request = messages.len() - 1;
-        messages.insert(
-            request,
-            ChatMessage {
-                role: ChatRole::Assistant,
-                message_type: MessageType::Text,
-                content: block.trim_start().to_owned(),
-            },
-        );
-    }
-}
 
 const CUT_OFF_NOTE: &str = "[Runtime note, not from the user] Your last reply was cut off at the output limit after the text above, which the user has already seen; any tool call in it was lost. Continue without repeating that text. Write a large file in parts: create it with the first part, then add the rest with writes that append to it.";
 
@@ -1746,7 +1610,7 @@ fn with_shown(shown: &str, text: Option<String>) -> Option<String> {
 
 const EMPTY_ANSWER_NOTE: &str = "[Runtime note, not from the user] Your last reply had no text and no tool call. Reply with your answer as text, or call a tool to continue the work.";
 
-const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. If an earlier read was summarised away and you still need it, keep what you learn this time in your notes or output; otherwise take the next unfinished step instead of repeating it.";
+const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. If an earlier read was summarised away and you still need it, keep what you learn this time in your output; otherwise take the next unfinished step instead of repeating it.";
 
 /// Adds the loop warning to a repeated result without dropping its content.
 fn warn_repeated_results(result: &mut ToolCall) {
@@ -1947,33 +1811,14 @@ tokio::task_local! { static SHORT_REPLY_TURN: bool; }
 
 #[cfg(feature = "eval")]
 tokio::task_local! {
-    /// Eval-only ablation switch: `false` withholds `notes` and its instruction.
-    pub static EVAL_OFFER_NOTES: bool;
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
-    /// Eval-only: the saved notes after every `notes` call (`null` when rejected), so the
-    /// long-horizon eval can check that each checkpoint carries the latest notes.
-    pub static EVAL_NOTES_LOG: Arc<Mutex<Vec<serde_json::Value>>>;
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
-    /// Eval-only: open-task checks sent in the run.
-    pub static EVAL_FINISH_CHECKS: Arc<std::sync::atomic::AtomicUsize>;
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
     /// Eval-only: loop warnings given in the run (each would once have stopped it after the first).
     pub static EVAL_LOOP_WARNINGS: Arc<std::sync::atomic::AtomicUsize>;
 }
 
 #[cfg(feature = "eval")]
 tokio::task_local! {
-    /// Eval-only ablation: runtime nudges switched off (`notes_reminder`, `finish_checks`,
-    /// `loop_warning`), to measure whether each one earns its place.
+    /// Eval-only ablation: runtime nudges switched off (`loop_warning`,
+    /// `repeat_receipt`, `spec_check`), to measure whether each one earns its place.
     pub static EVAL_NUDGES_OFF: Arc<Vec<String>>;
 }
 
@@ -1989,18 +1834,6 @@ fn nudge_off(name: &str) -> bool {
     {
         let _ = name;
         false
-    }
-}
-
-/// Whether runs that save evidence offer `notes` (always, outside evals).
-fn offer_notes() -> bool {
-    #[cfg(feature = "eval")]
-    {
-        EVAL_OFFER_NOTES.try_with(|offer| *offer).unwrap_or(true)
-    }
-    #[cfg(not(feature = "eval"))]
-    {
-        true
     }
 }
 
@@ -2588,25 +2421,6 @@ async fn replace_context(
             }
         }
     }
-    // Notes are the agent's goal and progress: every checkpoint carries them in full, and
-    // they count as fixed content, so shrinking caches never squeezes them out.
-    let notes_block = original_snapshot
-        .and_then(std::path::Path::parent)
-        .filter(|_| offer_notes())
-        .map(|directory| {
-            // Work since the last checkpoint without a notes update: results may be lost.
-            let older = &messages[1..split];
-            let (mut work, mut updated) = (0usize, false);
-            for message in older {
-                if let MessageType::ToolUse(batch) = &message.message_type {
-                    updated |= batch.iter().any(|call| call.function.name == notes::TOOL);
-                    work += batch.len();
-                }
-            }
-            notes::Notes::load(directory).checkpoint_block(work >= NOTES_REMINDER_AFTER && !updated)
-        })
-        .unwrap_or_default();
-    summary.push_str(&notes_block);
     let mut compacted = vec![messages[0].clone()];
     // The checkpoint includes work completed for this request; preserve that chronology.
     compacted.extend(active_request);
@@ -2660,7 +2474,7 @@ async fn replace_context(
         cache_bytes /= 2;
     }
     if estimated_tokens(&compacted) > policy.context_token_budget {
-        anyhow::bail!("checkpoint notes and active request exceed the context budget; original conversation preserved");
+        anyhow::bail!("checkpoint and active request exceed the context budget; original conversation preserved");
     }
     let mut durable_summary = summary;
     durable_summary.push_str("\nRecent completed context:\n");
@@ -3058,7 +2872,7 @@ fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMes
     for turn in history {
         if turn.role == ConversationRole::Checkpoint {
             let (summary, recent) = checkpoint_parts(&turn.text);
-            // Saved notes are pinned fresh from the notes file; drop the checkpoint's copy.
+            // Checkpoints saved while the notes tool existed carry its block; drop it.
             let summary = notes::strip_blocks(summary);
             messages.push(ChatMessage {
                 role: ChatRole::Assistant,
@@ -3238,17 +3052,6 @@ async fn execute_call(
 #[doc(hidden)]
 pub mod fuzzing {
     use super::*;
-
-    /// Parses a notes file from the project (untrusted bytes), applies a model-written
-    /// update, and returns the rendered block and whether the update applied.
-    pub fn notes_file_and_update(file: &[u8], update: &str) -> (String, bool) {
-        let saved = notes::parse(file).unwrap_or_default();
-        let value = serde_json::from_str(update).unwrap_or_default();
-        match saved.apply(&value) {
-            Ok(updated) => (updated.render(), true),
-            Err(_) => (saved.render(), false),
-        }
-    }
 
     /// Social-message detection and recall terms for arbitrary UI text.
     pub fn social_request(text: &str) -> (bool, Vec<String>) {
@@ -4076,92 +3879,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn notes_survive_repeated_checkpoints_when_caches_are_squeezed() {
-        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        let server = MockServer::start().await;
-        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Goal/constraints: summarise modules. Confirmed findings: modules read. Completed changes/tests: none. Unresolved work: continue. Next action: read the next module."},"finish_reason":"stop"}]}))).mount(&server).await;
-        let llm = crate::providers::resolve(
-            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
-                .with_model("test-model")
-                .with_base_url(server.uri()),
-        )
-        .await
-        .unwrap();
-        let call = |id: &str, name: &str, arguments: String| ToolCall {
-            id: id.into(),
-            call_type: "function".into(),
-            function: FunctionCall {
-                name: name.into(),
-                arguments,
-            },
-        };
-        // A long task leaves little cache room, so the checkpoint loop halves its allowances.
-        let mut messages = initial_messages(Vec::new(), "Summarise every module. ".repeat(1000));
-        let directory = tempfile::tempdir().unwrap();
-        // ~1 KB of notes, larger than the plan that vanished in the long-horizon eval.
-        let lines: Vec<_> = (1..=12)
-            .map(|n| serde_json::json!({"key":format!("mod-{n:02}"),"text":format!("{n} functions; notes/mod-{n:02}.md written with owner line"),"status":"done"}))
-            .collect();
-        notes::call(
-            directory.path(),
-            &serde_json::json!({ "set": lines }).to_string(),
-        )
-        .unwrap();
-        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let policy = RunPolicy {
-            total_turns: 20,
-            context_token_budget: 12_000,
-            recent_messages: 2,
-        };
-        for round in 0..3 {
-            for n in 0..6 {
-                let id = format!("read-{round}-{n}");
-                let content = format!("Module {round}-{n}: ").repeat(400);
-                messages.push(ChatMessage {
-                    role: ChatRole::Assistant,
-                    message_type: MessageType::ToolUse(vec![call(
-                        &id,
-                        "read_file",
-                        serde_json::json!({"file_path":format!("src/mod-{round}{n}.py")})
-                            .to_string(),
-                    )]),
-                    content: String::new(),
-                });
-                messages.push(ChatMessage {
-                    role: ChatRole::Tool,
-                    message_type: MessageType::ToolResult(vec![call(&id, "read_file", serde_json::json!({"found":true,"path":format!("src/mod-{round}{n}.py"),"content":content}).to_string())]),
-                    content: String::new(),
-                });
-            }
-            compact_context(
-                &llm,
-                &mut messages,
-                &policy,
-                &tx,
-                &AtomicBool::new(false),
-                Some(directory.path()),
-            )
-            .await
-            .unwrap();
-            while rx.try_recv().is_ok() {}
-            let checkpoint = messages
-                .iter()
-                .find(|m| m.content.starts_with("Earlier context checkpoint"))
-                .unwrap();
-            assert!(
-                checkpoint.content.contains(notes::START)
-                    && checkpoint.content.contains("- mod-12 [done]: 12 functions"),
-                "notes dropped at checkpoint {}",
-                round + 1
-            );
-            assert!(
-                checkpoint.content.contains("Your notes were not updated"),
-                "reads without a notes update mark the notes stale"
-            );
-        }
-    }
-
-    #[tokio::test]
     async fn small_context_summary_reserves_space_for_continuation() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
@@ -4969,8 +4686,7 @@ mod tests {
         EVAL_NUDGES_OFF
             .scope(Arc::new(vec!["loop_warning".to_owned()]), async {
                 assert!(nudge_off("loop_warning"));
-                assert!(!nudge_off("finish_checks"));
-                assert!(!nudge_off("notes_reminder"));
+                assert!(!nudge_off("spec_check"));
                 assert!(!nudge_off("repeat_receipt"));
             })
             .await;
