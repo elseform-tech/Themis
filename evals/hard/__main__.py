@@ -19,14 +19,14 @@ import time
 
 from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task_retrying
 
-from . import followup, notes_metrics, sheet, sheet_long, threejs
+from . import codebase, followup, notes_metrics, sheet, sheet_long, threejs
 from .app import run_app_task, themis_binary
 
 RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 # The app's defaults, and a small budget that forces many checkpoints mid-task.
 MEMORY = {"normal": {"budget": 200_000, "recent_messages": 20},
           "squeezed": {"budget": 32_000, "recent_messages": 8}}
-JOBS = {"threejs": threejs, "sheet": sheet, "sheet-long": sheet_long,
+JOBS = {"threejs": threejs, "sheet": sheet, "sheet-long": sheet_long, "codebase": codebase,
         "followup-sum": followup.SUM, "followup-tests": followup.TESTS, "followup-read": followup.READ}
 
 
@@ -100,10 +100,13 @@ def markdown(summary):
 
 def run_via_app(binary, make, args):
     """One task as a real app chat, run once more after two minutes if the provider lost it."""
-    row, error = run_app_task(binary, make(), args.model, args.timeout, args.keep)
+    task = make()
+    # A long task's own limit wins over a shorter --timeout, as in the runner.
+    timeout = max(args.timeout, task.get("timeout", 0))
+    row, error = run_app_task(binary, task, args.model, timeout, args.keep)
     if error and not args.no_retry and (error.startswith("provider") or error == "timeout"):
         time.sleep(120)
-        row, error = run_app_task(binary, make(), args.model, args.timeout, args.keep)
+        row, error = run_app_task(binary, make(), args.model, timeout, args.keep)
     return row, error, False
 
 
@@ -179,6 +182,32 @@ def run(args):
     return 0
 
 
+COMPARE = (("runs", "Runs"), ("pass_rate", "Pass"), ("mean_stages", "Stages"), ("mean_calls", "Calls"),
+           ("mean_calls_per_pass", "Calls per pass"), ("mean_compactions", "Checkpoints"),
+           ("mean_rereads_after_checkpoint", "Re-reads after checkpoint"), ("mean_wasted_repeats", "Wasted repeats"),
+           ("mean_redone_writes", "Redone writes"), ("mean_rewrites_after_checkpoint", "Rewrites after checkpoint"))
+
+
+def compare(paths):
+    """Markdown table of several result files side by side, one row per file and task. A file
+    can be labelled `name=path`; measures its runner did not record show n/a."""
+    lines = ["| Arm | Task | " + " | ".join(title for _, title in COMPARE) + " |",
+             "| --- | --- | " + " | ".join("---" for _ in COMPARE) + " |"]
+    for item in paths:
+        label, _, path = item.rpartition("=")
+        label = label or os.path.splitext(os.path.basename(path))[0]
+        with open(path, encoding="utf-8") as handle:
+            rows = json.load(handle)["rows"]
+        for name, row in summarize(rows)["tasks"].items():
+            stages = [r["extra"]["stages_passed"] for r in rows
+                      if r["task"] == name and "stages_passed" in (r.get("extra") or {})]
+            row = dict(row, mean_stages=_mean(stages))
+            cells = [fmt(row.get(key), key == "pass_rate") if key != "runs" else str(row["runs"])
+                     for key, _ in COMPARE]
+            lines.append(f"| {label} | {name} | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python3 -m evals.hard")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -205,7 +234,12 @@ def main(argv=None):
     cmd.add_argument("--no-retry", action="store_true", help="do not rerun runs lost to the provider")
     show = sub.add_parser("report")
     show.add_argument("result")
+    side = sub.add_parser("compare", help="several result files side by side, with the checkpoint measures")
+    side.add_argument("results", nargs="+", help="result files, each optionally labelled name=path")
     args = parser.parse_args(argv)
+    if args.command == "compare":
+        print(compare(args.results))
+        return 0
     if args.command == "report":
         with open(args.result, encoding="utf-8") as handle:
             print(markdown(json.load(handle)))

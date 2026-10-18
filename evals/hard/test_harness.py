@@ -1,12 +1,13 @@
 """Offline self-tests of the hard-task graders (no model involved)."""
 
+import json
 import os
 import shutil
 import tempfile
 import unittest
 
-from . import followup, notes_metrics, sheet, sheet_long, threejs
-from .__main__ import JOBS, make_task, markdown, notes_kept, summarize
+from . import codebase, followup, notes_metrics, sheet, sheet_long, threejs
+from .__main__ import JOBS, compare, make_task, markdown, notes_kept, summarize
 from .browser import chrome
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -87,6 +88,38 @@ class LongSheetGraderTest(unittest.TestCase):
         self.assertEqual(len(task["followups"]), 3)
         self.assertEqual(task["timeout"], 3 * 5400)
         self.assertIn("measure", task)
+
+
+class CodebaseGraderTest(unittest.TestCase):
+    def project(self):
+        project = tempfile.mkdtemp(prefix="hard-codebase-test-")
+        codebase.setup(project)
+        return project
+
+    def test_the_reference_fix_passes_every_stage(self):
+        project = self.project()
+        shutil.copytree(os.path.join(HERE, "reference", "iniconf", "iniconf"),
+                        os.path.join(project, "iniconf"), dirs_exist_ok=True)
+        result = codebase.hidden(project)
+        self.assertEqual(result["failed"], [], result["details"])
+        self.assertEqual(result["run"], codebase.ORIGINAL_TESTS + 6)
+
+    def test_the_planted_project_fails_every_stage_and_counts_its_suite(self):
+        project = self.project()
+        stages = codebase.stages(codebase.hidden(project))
+        self.assertEqual(stages, {"suite": False, "percent bug": False, "vars bug": False, "getlist": False})
+        self.assertEqual(sheet.own_tests(project), (False, codebase.ORIGINAL_TESTS))
+
+    def test_editing_the_projects_suite_does_not_pass_the_grader(self):
+        project = self.project()
+        with open(os.path.join(project, "tests", "test_iniconf.py"), "w", encoding="utf-8") as handle:
+            handle.write("import unittest\n")
+        self.assertFalse(codebase.stages(codebase.hidden(project))["suite"])
+
+    def test_a_missing_package_passes_no_stage(self):
+        project = self.project()
+        shutil.rmtree(os.path.join(project, "iniconf"))
+        self.assertEqual(sum(codebase.stages(codebase.hidden(project)).values()), 0)
 
 
 @unittest.skipUnless(chrome(), "needs Chrome or Chromium")
@@ -257,6 +290,20 @@ class NotesMetricsTests(unittest.TestCase):
         self.assertEqual(summary["tasks"]["t"]["mean_calls_per_pass"], 15)
         table = markdown({"model": "m", "summary": summary, "errors": []})
         self.assertIn("| t | 67% | 40.0 | 15.0 |", table)
+
+    def test_compare_puts_labelled_files_side_by_side(self):
+        def run(passed, stages):
+            return {"task": "t", "passed": passed, "why": "", "calls": [self.notes()] * 10, "compactions": 1,
+                    "latency_ms": 0, "checkpoints": [], "notes_refreshes": 0, "extra": {"stages_passed": stages}}
+        folder = tempfile.mkdtemp()
+        paths = []
+        for name, rows in (("a", [run(True, 4), run(False, 2)]), ("b", [run(False, 1)])):
+            paths.append(os.path.join(folder, f"{name}.json"))
+            with open(paths[-1], "w", encoding="utf-8") as handle:
+                json.dump({"rows": rows}, handle)
+        table = compare([f"before={paths[0]}", paths[1]])
+        self.assertIn("| before | t | 2 | 50% | 3.0 | 10.0 | 10.0 | 1.0 |", table)
+        self.assertIn("| b | t | 1 | 0% | 1.0 | 10.0 | n/a |", table)
 
     def test_reports_without_checkpoint_places_are_not_measured(self):
         self.assertIsNone(notes_metrics.measure({"calls": [], "checkpoints": [{"notes_calls_before": 0}]}))
