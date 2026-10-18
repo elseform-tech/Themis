@@ -203,6 +203,15 @@ class NotesMetricsTests(unittest.TestCase):
                          long_write, long_write]}  # cut-off summaries: not compared
         self.assertEqual(notes_metrics.wasted_repeats(row), 3)
 
+    def test_rereads_after_a_checkpoint_count_files_seen_before_it_once(self):
+        def read(path):
+            return {"tool": "read_file", "summary": f'call `read_file` with {{"file_path":"{path}"}}'}
+        row = {"calls": [read("a.py"), self.write("b.py"), read("c.py"),  # checkpoint at 3
+                         read("a.py"), read("a.py"), read("b.py"), read("new.py"),
+                         read("c.py")],  # second checkpoint at 7: c.py again
+               "checkpoints": [{"calls_before": 3}, {"calls_before": 7}]}
+        self.assertEqual(notes_metrics.rereads_after_checkpoints(row), 3)
+
     def test_the_summary_counts_calls_per_passing_run(self):
         def run(passed, calls):
             return {"task": "t", "passed": passed, "why": "", "calls": [self.notes()] * calls,

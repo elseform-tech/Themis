@@ -59,8 +59,8 @@ def summarize(rows):
         for name, runs in sorted(by_task.items())}}
 
 
-NOTES_MEASURES = ("stale_lines", "redone_writes", "rewrites_after_checkpoint", "notes_age", "wasted_repeats",
-                  "notes_refreshes")
+NOTES_MEASURES = ("stale_lines", "redone_writes", "rewrites_after_checkpoint", "notes_age",
+                  "rereads_after_checkpoint", "wasted_repeats", "notes_refreshes")
 
 
 def notes_measures(runs):
@@ -84,8 +84,9 @@ def markdown(summary):
              f"infrastructure errors (excluded): {len(summary['errors'])}. "
              "Benchmark audit, not an automated check.", "",
              "| Task | Pass | Calls | Calls per pass | Compactions | Checkpoints with notes | Stale lines | "
-             "Redone writes | Rewrites after checkpoint | Notes age | Wasted repeats | Refreshes | Minutes | Failures |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "Redone writes | Rewrites after checkpoint | Notes age | Re-reads after checkpoint | Wasted repeats | "
+             "Refreshes | Minutes | Failures |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for name, row in s["tasks"].items():
         lines.append(f"| {name} | {fmt(row['pass_rate'])} | {fmt(row['mean_calls'], False)} | "
                      f"{fmt(row.get('mean_calls_per_pass'), False)} | {fmt(row['mean_compactions'], False)} | {fmt(row.get('checkpoints_with_notes'))} | "

@@ -6,6 +6,8 @@ checkpoints with their notes and place in `calls`, the notes after every notes c
 - redone writes: after a checkpoint, a write_file call identical to one made before it;
 - rewrites: after a checkpoint, a write_file to a path already written before it;
 - notes age: tool calls since the last notes update, at each checkpoint;
+- re-reads after checkpoints: the first read of a file after a checkpoint when the run had
+  already read or written it before that checkpoint (what a checkpoint failed to carry);
 - wasted repeats: a call identical to an earlier one with only reads between them, so
   nothing it could see had changed (a test rerun after an edit is not counted);
 - refreshes: notes-only requests the runtime sent before checkpoints.
@@ -71,6 +73,22 @@ def writes_after_checkpoints(row):
     return redone, rewrites
 
 
+def rereads_after_checkpoints(row):
+    """First reads of a file after each checkpoint that the run had read or written before it."""
+    calls, rereads = row.get("calls") or [], 0
+    points = sorted(point.get("calls_before", 0) for point in row.get("checkpoints") or [])
+    for start, end in zip(points, points[1:] + [len(calls)]):
+        seen = {_path(c.get("summary")) for c in calls[:start] if c.get("tool") in ("read_file", "write_file")}
+        again = set()
+        for call in calls[start:end]:
+            path = _path(call.get("summary"))
+            if call.get("tool") == "read_file" and path in seen and path not in again:
+                rereads += 1
+            if path:
+                again.add(path)
+    return rereads
+
+
 def notes_age(row):
     """Mean tool calls since the last notes update at each checkpoint (None without any)."""
     calls, ages = row.get("calls") or [], []
@@ -106,4 +124,5 @@ def measure(row):
         return None
     redone, rewrites = writes_after_checkpoints(row)
     return {"stale_lines": stale_lines(row), "redone_writes": redone, "rewrites_after_checkpoint": rewrites,
-            "notes_age": notes_age(row), "wasted_repeats": wasted_repeats(row), "notes_refreshes": row.get("notes_refreshes", 0)}
+            "notes_age": notes_age(row), "rereads_after_checkpoint": rereads_after_checkpoints(row),
+            "wasted_repeats": wasted_repeats(row), "notes_refreshes": row.get("notes_refreshes", 0)}
