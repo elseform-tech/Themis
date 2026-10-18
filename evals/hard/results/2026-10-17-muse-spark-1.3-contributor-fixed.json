@@ -1,0 +1,374 @@
+{
+  "suite": "hard",
+  "model": "muse-spark-1.3-contributor",
+  "trials": 1,
+  "via": "app",
+  "created": "2026-10-17T19:55:31+00:00",
+  "note": "Live-model benchmark audit; not an automated runtime check.",
+  "summary": {
+    "runs": 4,
+    "pass_rate": 0.5,
+    "tasks": {
+      "sheet-normal": {
+        "runs": 1,
+        "pass_rate": 0.0,
+        "mean_calls": 28.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 3.4366833333333333,
+        "failures": [
+          "only 1 own tests"
+        ]
+      },
+      "sheet-squeezed": {
+        "runs": 1,
+        "pass_rate": 0.0,
+        "mean_calls": 25.0,
+        "mean_compactions": 2.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 4.105883333333334,
+        "failures": [
+          "only 9 own tests"
+        ]
+      },
+      "threejs-normal": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 16.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 1.2645666666666666,
+        "failures": []
+      },
+      "threejs-squeezed": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 18.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 1.31905,
+        "failures": []
+      }
+    }
+  },
+  "errors": [],
+  "rows": [
+    {
+      "task": "sheet-normal",
+      "tool": "sheet",
+      "passed": false,
+      "why": "only 1 own tests",
+      "answer": "Built a complete spreadsheet engine in `sheet` (stdlib only, Python 3.10+).\n\nPackage:\n- `sheet/__init__.py` — `Sheet`, `SheetError(code)` with full API: `set/text/get/display`, `from_csv/to_csv(values=True)`.\n- `sheet/__main__.py` — `python -m sheet eval FILE.csv` writes `to_csv()`; `python -m sheet",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 206201,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "sheet-squeezed",
+      "tool": "sheet",
+      "passed": false,
+      "why": "only 9 own tests",
+      "answer": "Done — all 9 tests pass (`python3 -m unittest discover -s tests -v` → OK).\n\nWhat I built:\n\n**`sheet` package (stdlib only, Python 3.10+):**\n- `sheet/__init__.py` — `Sheet`, `SheetError(code)` with `.code`.\n  - Refs: 1–2 letters + row 1–999, case-insensitive; bad refs raise `SheetError(\"#REF!\")` from",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 2,
+      "latency_ms": 246353,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "threejs-normal",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "Done — your night city is built. Open `index.html` (serve the project folder over HTTP, e.g. `python3 -m http.server`, since modules need a server) to see it.\n\n**What I built**\n\n- `src/scene.js` — exports `createScene(THREE)` returning `{ scene, camera, update }`, with no renderer and no DOM access:",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 75874,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "threejs-squeezed",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "Done — your night city is built. Open `index.html` over HTTP (e.g. `python3 -m http.server`) since module scripts + import maps need a server.\n\nWhat I built:\n\n**`src/scene.js`** — exports `createScene(THREE)` returning `{ scene, camera, update }`, with no renderer and no DOM access (verified: no `Re",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 79143,
+      "via": "app",
+      "trial": 0
+    }
+  ]
+}

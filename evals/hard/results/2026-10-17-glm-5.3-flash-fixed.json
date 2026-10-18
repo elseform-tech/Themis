@@ -1,0 +1,228 @@
+{
+  "suite": "hard",
+  "model": "glm-5.3-flash",
+  "trials": 1,
+  "via": "app",
+  "created": "2026-10-17T20:16:19+00:00",
+  "note": "Live-model benchmark audit; not an automated runtime check.",
+  "summary": {
+    "runs": 2,
+    "pass_rate": 1.0,
+    "tasks": {
+      "sheet-normal": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 26.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 18.094783333333332,
+        "failures": []
+      },
+      "threejs-normal": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 29.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 8.142083333333334,
+        "failures": []
+      }
+    }
+  },
+  "errors": [],
+  "rows": [
+    {
+      "task": "sheet-normal",
+      "tool": "sheet",
+      "passed": true,
+      "why": "",
+      "answer": "Done. I built the `sheet` package (standard library only, Python 3.10+) and all 48 tests pass (`python3 -m unittest discover -s tests` → **OK**, plus a manual 900-cell dependency-chain check).\n\n**What's in place:**\n\n- **`sheet/__init__.py`** — exports `Sheet` and `SheetError`; bumps the recursion li",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 1085687,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "threejs-normal",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "Done. Here's what I built and how it's verified.\n\n## What I built\n\n**`src/scene.js`** — exports `createScene(THREE)` → `{ scene, camera, update }`:\n- **Ground + street grid**: a 520×520 dark plane plus slightly lighter street strips along the block gaps, so the grid reads even at night.\n- **Building",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 488525,
+      "via": "app",
+      "trial": 0
+    }
+  ]
+}

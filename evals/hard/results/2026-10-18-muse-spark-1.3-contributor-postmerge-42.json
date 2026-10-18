@@ -1,0 +1,583 @@
+{
+  "suite": "hard",
+  "model": "muse-spark-1.3-contributor",
+  "trials": 2,
+  "via": "app",
+  "created": "2026-10-18T07:47:30+00:00",
+  "note": "Live-model benchmark audit; not an automated runtime check.",
+  "summary": {
+    "runs": 7,
+    "pass_rate": 0.42857142857142855,
+    "tasks": {
+      "sheet-normal": {
+        "runs": 2,
+        "pass_rate": 0.0,
+        "mean_calls": 18.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 2.4261666666666666,
+        "failures": [
+          "hidden tests failed: test_long_chain",
+          "hidden tests failed: test_extent_and_empty, test_quoting, test_round_trip_values_and_raw"
+        ]
+      },
+      "sheet-squeezed": {
+        "runs": 2,
+        "pass_rate": 0.0,
+        "mean_calls": 33.0,
+        "mean_compactions": 2.5,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 4.1347,
+        "failures": [
+          "hidden tests failed: test_long_chain",
+          "hidden tests failed: test_extent_and_empty, test_quoting, test_round_trip_values_and_raw"
+        ]
+      },
+      "threejs-normal": {
+        "runs": 2,
+        "pass_rate": 1.0,
+        "mean_calls": 12.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 0.79715,
+        "failures": []
+      },
+      "threejs-squeezed": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 14.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 0.9344166666666667,
+        "failures": []
+      }
+    }
+  },
+  "errors": [
+    {
+      "trial": 1,
+      "task": "threejs-squeezed",
+      "error": "provider failed mid-run after 5 calls: LLM request failed: Generic Error : Provider response was truncated"
+    }
+  ],
+  "rows": [
+    {
+      "task": "sheet-normal",
+      "tool": "sheet",
+      "passed": false,
+      "why": "hidden tests failed: test_long_chain",
+      "answer": "Done. I built a complete standard-library spreadsheet engine and verified it with 42 passing tests (`python3 -m unittest discover -s tests`).\n\nWhat was built:\n- `sheet/__init__.py` — `Sheet` + `SheetError(code)`:\n  - Refs `A1`–`ZZ999`, case-insensitive; bad refs raise `#REF!`.\n  - Plain numbers via ",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 137687,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "threejs-normal",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "Both flags are resolved — everything checks out. Done.\n\n**What I built**\n\n- **`src/scene.js`** — exports `createScene(THREE)` returning `{ scene, camera, update }`, with zero DOM/renderer access (verified: no `document`, `window`, `WebGLRenderer`, or `createElement` — the earlier flag was just the w",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 54377,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "sheet-squeezed",
+      "tool": "sheet",
+      "passed": false,
+      "why": "hidden tests failed: test_long_chain",
+      "answer": "Done — closing out the remaining tasks:\n\n- **tests → done:** converted `tests/test_sheet.py` from pytest to stdlib `unittest` because `pytest` is not installed in this environment. Covers refs, numbers/text, operators/precedence, aggregates, IF/ABS/ROUND, errors/cycles, reactivity, display, CSV, CLI",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 2,
+      "latency_ms": 234119,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "threejs-squeezed",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "Done — your night city is built and verified.\n\n**What I built**\n\n`src/scene.js` — exports `createScene(THREE)` returning `{ scene, camera, update }`, with no renderer and no DOM access (verified clean):\n- **Street grid city**: 49 buildings on a 7×7 grid spaced 22 units apart, with glowing street str",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 56065,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "sheet-normal",
+      "tool": "sheet",
+      "passed": false,
+      "why": "hidden tests failed: test_extent_and_empty, test_quoting, test_round_trip_values_and_raw",
+      "answer": "Built a complete `sheet` spreadsheet engine (stdlib only, Python 3.10+).\n\n**Package `sheet` (`from sheet import Sheet, SheetError`):**\n- `Sheet()`, `set(ref,text)` (`''` clears), `text(ref)` raw, `get(ref)` computed (`None`/`float`/`str`/`SheetError`), `display(ref)` as shown.\n- Refs `A1`–`ZZ999`, c",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 153453,
+      "via": "app",
+      "trial": 1
+    },
+    {
+      "task": "threejs-normal",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "Done! Your night city is built. Here's what I made:\n\n**`src/scene.js`** — exports `createScene(THREE)` returning `{ scene, camera, update }`. It touches no DOM and creates no renderer:\n- **Ground + street grid**: a dark asphalt plane with a 7×7 block road grid of slightly lighter strips.\n- **49 buil",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 41281,
+      "via": "app",
+      "trial": 1
+    },
+    {
+      "task": "sheet-squeezed",
+      "tool": "sheet",
+      "passed": false,
+      "why": "hidden tests failed: test_extent_and_empty, test_quoting, test_round_trip_values_and_raw",
+      "answer": "Built a stdlib-only spreadsheet engine `sheet` (Python 3.10+).\n\nPackage `sheet/__init__.py` (~756 lines):\n- `SheetError(Exception)` with `.code`, `Sheet()` with `set/text/get/display`, `from_csv/to_csv`, all refs validated `^[A-Za-z]{1,2}[0-9]{1,3}$` + row 1-999 (`#REF!`).\n- Cell model: raw text sto",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "create_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "delete_file"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 3,
+      "latency_ms": 262045,
+      "via": "app",
+      "trial": 1
+    }
+  ]
+}

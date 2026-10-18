@@ -1,0 +1,1011 @@
+{
+  "suite": "hard",
+  "model": "deepseek-v4.1-flash",
+  "trials": 1,
+  "via": "app",
+  "created": "2026-10-17T20:28:01+00:00",
+  "note": "Live-model benchmark audit; not an automated runtime check.",
+  "summary": {
+    "runs": 4,
+    "pass_rate": 0.75,
+    "tasks": {
+      "sheet-normal": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 54.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 7.12945,
+        "failures": []
+      },
+      "sheet-squeezed": {
+        "runs": 1,
+        "pass_rate": 0.0,
+        "mean_calls": 83.0,
+        "mean_compactions": 11.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 13.7916,
+        "failures": [
+          "hidden tests failed: test_long_chain"
+        ]
+      },
+      "threejs-normal": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 74.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 30.80555,
+        "failures": []
+      },
+      "threejs-squeezed": {
+        "runs": 1,
+        "pass_rate": 1.0,
+        "mean_calls": 89.0,
+        "mean_compactions": 6.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 15.351583333333334,
+        "failures": []
+      }
+    }
+  },
+  "errors": [],
+  "rows": [
+    {
+      "task": "sheet-normal",
+      "tool": "sheet",
+      "passed": true,
+      "why": "",
+      "answer": "Done — everything is built, tested and passing.\n\n## What I built\n\nA standard-library-only package `sheet` (Python 3.10+; ran on 3.14.6):\n\n| file | contents |\n| --- | --- |\n| `sheet/errors.py` | `SheetError` (an `Exception`) plus the codes `#DIV/0! #REF! #CYCLE! #NAME? #VALUE! #ERROR!`; errors compar",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 427767,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "sheet-squeezed",
+      "tool": "sheet",
+      "passed": false,
+      "why": "hidden tests failed: test_long_chain",
+      "answer": "Done — the `sheet` package is built, tested, and working. Standard library only, Python 3.10+.\n\n## Layout (~1030 lines of package code, ~900 lines of tests)\n\n| File | Role |\n|---|---|\n| `sheet/__init__.py` (213) | Public `Sheet`, `SheetError` re-export; cell store, dependency recompute, `set/text/ge",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        }
+      ],
+      "compactions": 11,
+      "latency_ms": 827496,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "threejs-squeezed",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "Built and checked. Here's what's in the project now.\n\n## `src/scene.js` (470 lines)\n\n`export function createScene(THREE, options)` at line 411 returns `{ scene, camera, update, stats }` (line 467). No renderer, no DOM, no `window`/`document` reference anywhere in the file.\n\n**City layout** — a 7×7 b",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 6,
+      "latency_ms": 921095,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "threejs-normal",
+      "tool": "threejs",
+      "passed": true,
+      "why": "",
+      "answer": "Done. Both files are in place and verified.\n\n## What I built\n\n**`src/scene.js`** (470 lines) — exports `createScene(THREE)` returning `{ scene, camera, update }`:\n- **Street grid**: 8×6 block layout (`src/scene.js:303-313`) with 4 blocks left empty as plazas/lots → **44 buildings**, all tagged `user",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "background_task"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        }
+      ],
+      "compactions": 0,
+      "latency_ms": 1848333,
+      "via": "app",
+      "trial": 0
+    }
+  ]
+}
