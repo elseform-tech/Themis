@@ -1,5 +1,6 @@
 // Shared backend-backed UI actions (used by Sidebar, Palette, Settings…).
 import { useCallback } from "react";
+import { DEFAULT_MODEL } from "../lib/models";
 import {
   createThread,
   discardThread,
@@ -77,7 +78,7 @@ export function useNewThread(): (projectRoot?: string | null) => Promise<void> {
         const thread = await createThread(
           root,
           state.settings.default_provider,
-          state.settings.default_model || "muse-spark-1.3-contributor",
+          state.settings.default_model || DEFAULT_MODEL,
         );
         dispatch({ type: "thread/created", projectRoot: root, thread });
       } catch (error: unknown) {

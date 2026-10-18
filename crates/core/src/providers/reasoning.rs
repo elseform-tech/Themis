@@ -11,6 +11,7 @@
 //!   must round-trip), before the message's text and tool uses.
 //! - Responses: the `reasoning` output items (with `encrypted_content`, requested because
 //!   requests are not stored), before the function calls.
+//! - Gemini: the `thoughtSignature` on the first function call (or on a final answer's text).
 //!
 //! A final answer's reasoning (a reply with no tool calls) is kept too, keyed by the answer
 //! text, so it goes back with that answer in later messages of the chat: the model keeps
@@ -45,6 +46,8 @@ pub(super) struct Reasoning {
     pub(super) blocks: Vec<serde_json::Value>,
     /// Responses `reasoning` items.
     pub(super) items: Vec<serde_json::Value>,
+    /// Gemini's `thoughtSignature` for the step.
+    pub(super) signature: Option<String>,
 }
 
 impl Reasoning {
@@ -53,6 +56,7 @@ impl Reasoning {
             && self.details.is_empty()
             && self.blocks.is_empty()
             && self.items.is_empty()
+            && self.signature.is_none()
     }
 }
 
@@ -151,7 +155,11 @@ pub(crate) fn replayed_tokens(message: &autoagents::llm::chat::ChatMessage) -> u
             .chain(&kept.items)
             .map(value_tokens)
             .sum();
-        kept.text.len().div_ceil(4) + structured
+        let signature = kept
+            .signature
+            .as_ref()
+            .map_or(0, |text| text.len().div_ceil(ENCRYPTED_CHARS_PER_TOKEN));
+        kept.text.len().div_ceil(4) + structured + signature
     })
 }
 
@@ -225,6 +233,12 @@ impl StreamedReasoning {
         if delta["reasoning_item"].is_object() {
             self.reasoning.items.push(delta["reasoning_item"].clone());
         }
+        if let (None, Some(signature)) = (
+            &self.reasoning.signature,
+            delta["thought_signature"].as_str(),
+        ) {
+            self.reasoning.signature = Some(signature.to_owned());
+        }
     }
 
     #[cfg(test)]
@@ -251,6 +265,7 @@ pub(super) fn from_message(message: &super::WireChoiceMessage) -> Reasoning {
         details: message.reasoning_details.clone(),
         blocks: message.thinking_blocks.clone(),
         items: message.reasoning_items.clone(),
+        signature: message.thought_signature.clone(),
     }
 }
 

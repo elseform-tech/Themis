@@ -21,6 +21,7 @@ import {
   updateAutomation,
 } from "../lib/tauri";
 import type { Automation, GoModel } from "../lib/types";
+import { modelLabel } from "../lib/models";
 import { describeError, toast, useApp } from "../state/store";
 import {
   automationToForm,
@@ -373,7 +374,7 @@ export function Automations() {
             <label className="themis-automations-field">Model
               <span className="themis-automations-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={selectedModel ? dialog.form.model : ""} disabled={saving || modelsLoading || !state.secretStatus.go || models.length === 0} onChange={event => patchForm({ model: event.target.value, effort: "" })}>
                 <option value="" disabled>{modelsLoading ? "Loading models…" : !state.secretStatus.go ? "Connect OpenCode Go to load models" : models.length === 0 ? "No models available" : selectedModel ? "Choose a model" : `Current model unavailable: ${dialog.form.model || "default"}`}</option>
-                {models.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
+                {models.map(model => <option key={model.id} value={model.id} disabled={!!model.unavailable_reason} title={model.unavailable_reason ?? undefined}>{modelLabel(model)}</option>)}
               </select></span>
             </label>
             <div className="themis-automations-field">

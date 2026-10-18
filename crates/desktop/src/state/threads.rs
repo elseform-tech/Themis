@@ -12,6 +12,16 @@ impl AppState {
             return Err("Only OpenCode Go is supported".to_owned());
         }
         let root = canonical_project_dir(&project_root)?;
+        let saved_default = self.inner.settings.get().await.default_model;
+        let model = match model.filter(|name| !name.trim().is_empty()) {
+            // A model chosen for this thread stands; a run on it reports if it is gone.
+            Some(chosen) if chosen != saved_default && chosen != GO_DEFAULT_MODEL => chosen,
+            // The saved or built-in default may have been retired by Go since it was saved.
+            chosen => usable_model(
+                &self.inner.go_catalog.read().await,
+                chosen.unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned()),
+            ),
+        };
         let is_git = is_git_repo(&root);
         let id = uuid::Uuid::new_v4().to_string();
         let preexisting = git_status_names(&root).unwrap_or_default();
@@ -22,9 +32,7 @@ impl AppState {
             project_root: root.clone(),
             is_git,
             provider,
-            model: model
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned()),
+            model,
             reasoning_effort: None,
             approval_mode: Default::default(),
             running: false,
@@ -652,5 +660,58 @@ impl AppState {
         };
         self.persist_registry().await;
         Ok(info)
+    }
+}
+
+/// The default model `wanted`, unless the loaded catalog shows it gone or unusable (Go
+/// retired it): then Themis's default model, else the first usable one. With no catalog
+/// loaded, `wanted` stands.
+fn usable_model(catalog: &[themis_core::providers::GoModel], wanted: String) -> String {
+    let usable = |id: &str| {
+        catalog
+            .iter()
+            .any(|model| model.id == id && model.unavailable_reason.is_none())
+    };
+    if catalog.is_empty() || usable(&wanted) {
+        return wanted;
+    }
+    if usable(GO_DEFAULT_MODEL) {
+        return GO_DEFAULT_MODEL.to_owned();
+    }
+    catalog
+        .iter()
+        .find(|model| model.unavailable_reason.is_none())
+        .map_or(wanted, |model| model.id.clone())
+}
+
+#[cfg(test)]
+mod usable_model_tests {
+    use super::*;
+    use themis_core::providers::GoModel;
+
+    fn listed(id: &str, unavailable: bool) -> GoModel {
+        GoModel {
+            id: id.into(),
+            unavailable_reason: unavailable.then(|| "unsupported".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_retired_or_unusable_default_falls_back_to_a_usable_model() {
+        let catalog = [
+            listed("glm-5.3", false),
+            listed(GO_DEFAULT_MODEL, false),
+            listed("odd", true),
+        ];
+        assert_eq!(usable_model(&catalog, "glm-5.3".into()), "glm-5.3");
+        assert_eq!(
+            usable_model(&catalog, "retired-model".into()),
+            GO_DEFAULT_MODEL
+        );
+        assert_eq!(usable_model(&catalog, "odd".into()), GO_DEFAULT_MODEL);
+        let without_default = [listed("odd", true), listed("glm-5.3", false)];
+        assert_eq!(usable_model(&without_default, "retired".into()), "glm-5.3");
+        assert_eq!(usable_model(&[], "anything".into()), "anything");
     }
 }

@@ -53,7 +53,7 @@ levels are listed.
 - **⌘/Ctrl+K** opens the command palette: jump to threads and projects, or run
   actions (new thread, open project, toggle theme, open settings). **Esc** closes the topmost layer.
 - The sidebar shows the chosen project's chats only. Switch projects, create
-  or open one, or rename the current project from the project switcher at the top.
+  or open one, or rename any project with the pencil icon on its row in the project switcher at the top.
   Hover or focus a chat and open its ⋮ menu to rename or remove it.
   Open the model pill at the top of the thread to choose a Go model and, when
   that model offers effort levels, the effort slider. A new chat shows a greeting,
@@ -217,9 +217,17 @@ Model resolution order for a run:
 2. The Go environment fallback: `THEMIS_GO_MODEL`.
 3. The built-in default: `muse-spark-1.3-contributor`.
 
-Go uses the OpenCode Go API at `https://opencode.ai/zen/go/v1`.
+Go uses the OpenCode Go API at `https://opencode.ai/inference/go/`, which serves
+each model family over its own protocol: Chat Completions and Responses under
+`openai/v1`, Messages under `anthropic/v1` and Gemini under `google/v1beta`.
+Themis reads each model's protocol and endpoint from the public models.dev
+catalog, so a model Go adds later is called correctly without an app update.
 Settings, the composer, and the automation editor select from current Go model
-IDs. Their effort controls follow the selected model's catalog levels.
+IDs. Their effort controls follow the selected model's catalog levels. A model
+whose protocol Themis does not support yet shows as "(unavailable)" with the
+reason as its tooltip and cannot be chosen. If your saved default model is no
+longer in Go's catalog, new chats use `muse-spark-1.3-contributor`, or the first
+usable model when that one is gone too.
 
 ## Settings reference
 
@@ -359,7 +367,7 @@ The collapsible sidebar lists the chosen project's **Chats** (most recent first;
 
 When a turn ends, its reply lists the files that turn edited; select one to open its diff in **Workspace**.
 
-To delete a project, open the project switcher and choose **Delete project**. After you confirm, Themis moves the project folder to the macOS Trash (recover it from there if needed) and forgets its chats, its automations and its place in recent projects. The built-in **Themis** project, folders outside the projects folder, and projects with a running chat cannot be deleted.
+To delete a project, open the project switcher and click the trash icon on that project's row; you do not need to switch to it first. After you confirm, Themis moves the project folder to the macOS Trash (recover it from there if needed) and forgets its chats, its automations and its place in recent projects. The built-in **Themis** project, folders outside the projects folder, and projects with a running chat cannot be deleted.
 
 Integrations keeps separate search and filter selections for Installed and Discover. Reset filters affects only the current view. Marketplace checks show the companion and real completed-check percentage, then reveal the checked catalog. Collapsed warnings expand to show compatibility limitations; unavailable local skills remain visible with their validation error.
 
