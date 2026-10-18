@@ -105,7 +105,8 @@ impl AppState {
         Ok(value)
     }
 
-    async fn require_thread(&self, thread_id: &str) -> Result<bool, String> {
+    /// Whether the chat runs now; an error for an unknown chat.
+    pub(super) async fn require_thread(&self, thread_id: &str) -> Result<bool, String> {
         self.inner
             .threads
             .read()
@@ -228,15 +229,10 @@ impl AppState {
         message_id: String,
     ) -> Result<(), String> {
         self.require_thread(&thread_id).await?;
-        let inbox = self
-            .inner
-            .steer_inboxes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&thread_id)
-            .cloned()
-            .ok_or_else(|| "No run is going; send the message instead".to_owned())?;
-        let text = self.edit_queue(sink.as_ref(), &thread_id, |queue| {
+        // Under the queue lock: closing the inbox takes the same lock, so the
+        // message lands either in a live inbox or back in the queue, never in
+        // an inbox that was already closed.
+        self.edit_queue(sink.as_ref(), &thread_id, |queue| {
             let index = queue
                 .iter()
                 .position(|message| message.id == message_id)
@@ -244,12 +240,21 @@ impl AppState {
             if !queue[index].attachments.is_empty() {
                 return Err("Messages with attachments wait for the next turn".to_owned());
             }
-            Ok(queue.remove(index).text)
+            let inboxes = self
+                .inner
+                .steer_inboxes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let inbox = inboxes
+                .get(&thread_id)
+                .ok_or_else(|| "No run is going; send the message instead".to_owned())?;
+            let text = queue.remove(index).text;
+            inbox
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push_back(text);
+            Ok(())
         })?;
-        inbox
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push_back(text);
         let _ = self.inner.diagnostics.append(
             "queue",
             "steered",
@@ -273,6 +278,12 @@ impl AppState {
     /// Closes the run's steer inbox; steers it never read go back to the
     /// front of the queue, in order, to be sent as the next message.
     pub(super) fn close_steer_inbox(&self, thread_id: &str) {
+        // Same lock order as steering: queue, then inboxes.
+        let _guard = self
+            .inner
+            .queue_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let Some(inbox) = self
             .inner
             .steer_inboxes
@@ -290,11 +301,6 @@ impl AppState {
         if unread.is_empty() {
             return;
         }
-        let _guard = self
-            .inner
-            .queue_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let mut queue = self.queue_for(thread_id);
         for text in unread.into_iter().rev() {
             queue.insert(
@@ -356,56 +362,126 @@ impl AppState {
 
     /// Sends the next waiting message if the chat is idle. Returns whether
     /// a message was sent (or will be, after the concurrency limit frees up).
+    /// A message that cannot be sent at all is recorded in the chat as a
+    /// failed send and the next one is tried, so the queue never stalls.
     pub(super) async fn dispatch_queue(&self, sink: Arc<dyn EventSink>, thread_id: &str) -> bool {
-        if self.require_thread(thread_id).await.unwrap_or(true) {
-            return false;
-        }
-        let next = {
-            let _guard = self
-                .inner
-                .queue_lock
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let mut queue = self.queue_for(thread_id);
-            let Some(index) = queue.iter().position(|message| !message.held) else {
+        loop {
+            if self.require_thread(thread_id).await.unwrap_or(true) {
                 return false;
+            }
+            let next = {
+                let _guard = self
+                    .inner
+                    .queue_lock
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let mut queue = self.queue_for(thread_id);
+                let Some(index) = queue.iter().position(|message| !message.held) else {
+                    return false;
+                };
+                let next = queue.remove(index);
+                self.save_queue(thread_id, &queue);
+                self.announce_queue(sink.as_ref(), thread_id, queue);
+                next
             };
-            let next = queue.remove(index);
-            self.save_queue(thread_id, &queue);
-            self.announce_queue(sink.as_ref(), thread_id, queue);
-            next
-        };
+            let run_id = uuid::Uuid::new_v4().to_string();
+            // The chat's current effort applies: the model may have changed
+            // since the message was queued.
+            let sent = Box::pin(self.send_message_with_options(
+                Arc::clone(&sink),
+                thread_id.to_owned(),
+                next.text.clone(),
+                run_id.clone(),
+                None,
+                next.attachments.clone(),
+            ))
+            .await;
+            match sent {
+                Ok(_) => {
+                    // Shown once the run exists, never for a retried message.
+                    self.announce_user_message(sink.as_ref(), thread_id, &next);
+                    return true;
+                }
+                Err(error) if super::threads::send_must_wait(&error) => {
+                    // Not this message's fault: it goes back to the front and waits.
+                    self.requeue_front(sink.as_ref(), thread_id, next);
+                    if error.contains(super::threads::CONCURRENCY_LIMIT) {
+                        self.retry_queue_later(sink, thread_id.to_owned());
+                    }
+                    return true;
+                }
+                Err(_)
+                    if self
+                        .inner
+                        .spawn_failed_runs
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&run_id) =>
+                {
+                    // The run was admitted and failed to start: its end step
+                    // already moves the queue along.
+                    self.announce_user_message(sink.as_ref(), thread_id, &next);
+                    return true;
+                }
+                Err(error) => {
+                    self.record_unsendable(sink.as_ref(), thread_id, &run_id, &next, &error);
+                }
+            }
+        }
+    }
+
+    fn announce_user_message(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        message: &QueuedMessage,
+    ) {
         sink.emit_thread_event(&ThreadEventEnvelope {
             thread_id: thread_id.to_owned(),
             run_id: String::new(),
             event: ThreadEvent::UserMessage {
-                text: next.text.clone(),
-                attachments: next.attachments.clone(),
+                text: message.text.clone(),
+                attachments: message.attachments.clone(),
             },
         });
-        let sent = Box::pin(self.send_message_with_options(
-            Arc::clone(&sink),
-            thread_id.to_owned(),
-            next.text.clone(),
-            uuid::Uuid::new_v4().to_string(),
-            next.reasoning_effort.clone(),
-            next.attachments.clone(),
-        ))
-        .await;
-        match sent {
-            Ok(_) => true,
-            Err(error) if error.contains("concurrency limit") || error.contains("is busy") => {
-                // Not this message's fault: it goes back to the front and waits.
-                self.requeue_front(sink.as_ref(), thread_id, next);
-                if error.contains("concurrency limit") {
-                    self.retry_queue_later(sink, thread_id.to_owned());
-                }
-                true
-            }
-            // A send that failed for its own reason was recorded as a failed
-            // run; its end already moved the queue along.
-            Err(_) => true,
+    }
+
+    /// A queued message refused before any run started (for example a bare
+    /// `/goal`): kept in the chat with the reason, so nothing is lost silently.
+    fn record_unsendable(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        run_id: &str,
+        message: &QueuedMessage,
+        error: &str,
+    ) {
+        if let Err(save) = self.inner.transcript.append_user_with_attachments(
+            thread_id,
+            run_id,
+            &message.text,
+            message.attachments.clone(),
+        ) {
+            self.record_error("save_thread_event", save);
         }
+        self.announce_user_message(sink, thread_id, message);
+        let failed = ThreadEventEnvelope {
+            thread_id: thread_id.to_owned(),
+            run_id: run_id.to_owned(),
+            event: ThreadEvent::Failed {
+                error: format!("Queued message not sent: {error}"),
+            },
+        };
+        if let Err(save) = self.inner.transcript.append_event(&failed) {
+            self.record_error("save_thread_event", save);
+        }
+        sink.emit_thread_event(&failed);
+        let _ = self.inner.diagnostics.append(
+            "queue",
+            "unsendable",
+            "warn",
+            json!({"thread_id": thread_id}),
+        );
     }
 
     fn requeue_front(&self, sink: &dyn EventSink, thread_id: &str, message: QueuedMessage) {

@@ -643,3 +643,165 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
         "the queued run's command is evidence for the turn after it"
     );
 }
+
+/// Review findings: a queued message refused before any run starts (a bare
+/// `/goal`) is recorded with its reason and the queue moves on; a steer with no
+/// run to receive it is refused and the message stays queued.
+#[tokio::test(flavor = "multi_thread")]
+async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            if mentions(&body(request), "first") && !mentions(&body(request), "after the bad one") {
+                reply("First done.").set_delay(Duration::from_millis(800))
+            } else {
+                reply("Later done.")
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "first".into())
+        .await
+        .unwrap();
+    state
+        .enqueue_message(sink.clone(), thread.clone(), "/goal".into(), None, vec![])
+        .await
+        .unwrap();
+    let held = state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "after the bad one".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    // Held while "edited": it waits until saved.
+    state
+        .update_queued_message(
+            sink.clone(),
+            thread.clone(),
+            held.id.clone(),
+            None,
+            Some(true),
+        )
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |event| {
+        matches!(event, ThreadEvent::Failed { error } if error.starts_with("Queued message not sent"))
+    })
+    .await;
+    // The held message is still waiting; with no run, it cannot be steered.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let refused = state
+        .steer_queued_message(sink.clone(), thread.clone(), held.id.clone())
+        .await
+        .unwrap_err();
+    assert!(refused.contains("No run is going"), "{refused}");
+    assert_eq!(state.list_queue(thread.clone()).await.unwrap().len(), 1);
+    // Saving the edit releases it, and the idle chat sends it.
+    state
+        .update_queued_message(sink, thread.clone(), held.id, None, Some(false))
+        .await
+        .unwrap();
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Later done."),
+    )
+    .await;
+    assert!(state.list_queue(thread.clone()).await.unwrap().is_empty());
+    let history = serde_json::to_string(&state.get_thread_history(&thread).await.unwrap()).unwrap();
+    assert!(history.contains("Queued message not sent"));
+}
+
+/// Review findings: a `/goal` whose run cannot start still continues (it
+/// retries as a failed turn instead of staying "running" with no turn), and a
+/// goal check that fails does not count as a turn without progress.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stall() {
+    let server = MockServer::start().await;
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            if is_check(&body(request)) {
+                // The first check fails twice (no decision); the next decides.
+                return if seen_checks.fetch_add(1, Ordering::SeqCst) < 2 {
+                    ResponseTemplate::new(500).set_body_string("checker down")
+                } else {
+                    reply(r#"{"verdict":"reached","reason":"Done."}"#)
+                };
+            }
+            reply("Worked on it.")
+        })
+        .mount(&server)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state.set_go_base_url_override(Some(server.uri()));
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into_owned(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap()
+        .id;
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    // No key yet: the goal's first run fails to start.
+    let error = state
+        .send_message(sink.clone(), thread.clone(), "/goal finish the work".into())
+        .await
+        .unwrap_err();
+    assert!(!error.is_empty());
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |event| {
+        matches!(
+            event,
+            ThreadEvent::GoalNote {
+                outcome: GoalNoteKind::Failed,
+                ..
+            }
+        )
+    })
+    .await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.status, GoalStatus::Running);
+    assert_eq!(
+        goal.failures, 1,
+        "counted as a failed turn, retried after a wait"
+    );
+    // With the key in place, a resume starts the next turn now.
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state
+        .pause_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
+    state
+        .resume_goal(sink.clone(), thread.clone())
+        .await
+        .unwrap();
+    until(&mut rx, &mut seen, |event| {
+        matches!(event, ThreadEvent::GoalNote { outcome: GoalNoteKind::NotYet, reason } if reason.contains("could not decide"))
+    })
+    .await;
+    assert_eq!(
+        state.goal_for(&thread).unwrap().stalls,
+        0,
+        "a failed check is not a stall"
+    );
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+}

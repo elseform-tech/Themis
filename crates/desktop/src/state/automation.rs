@@ -946,9 +946,7 @@ impl AppState {
                 // The check already ran for this slot. Record it and retry the
                 // model run on the next slot; never re-run the check every tick.
                 // The hash stays unchanged, so the next check fires again.
-                let saturated = err.contains(GATE_SATURATED_MARKER)
-                    || err.contains("is busy")
-                    || err.contains("concurrency limit");
+                let saturated = super::threads::send_must_wait(&err);
                 let advanced = self
                     .inner
                     .automations
@@ -1296,7 +1294,7 @@ impl AppState {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .remove(&run_id);
-                if err.contains(GATE_SATURATED_MARKER) || err.contains("is busy") {
+                if super::threads::send_must_wait(&err) {
                     // Lost a gate race with another run: skip WITHOUT
                     // advancing; the automation stays due for the next tick.
                     return Err(err);

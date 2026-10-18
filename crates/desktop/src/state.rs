@@ -267,6 +267,9 @@ struct AppStateInner {
     goal_turn_runs: std::sync::Mutex<HashSet<String>>,
     /// Bumped whenever a waiting goal timer must no longer fire.
     goal_generations: std::sync::Mutex<HashMap<String, u64>>,
+    /// Runs whose spawn failed after admission: their end step already runs,
+    /// so the caller that sent them must not handle the failure again.
+    spawn_failed_runs: std::sync::Mutex<HashSet<String>>,
 }
 
 /// Shared application state (cheap to clone; everything lives behind one `Arc`).
@@ -431,6 +434,7 @@ impl AppState {
                 goal_lock: std::sync::Mutex::new(()),
                 goal_turn_runs: std::sync::Mutex::new(HashSet::new()),
                 goal_generations: std::sync::Mutex::new(HashMap::new()),
+                spawn_failed_runs: std::sync::Mutex::new(HashSet::new()),
             }),
         }
     }

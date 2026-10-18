@@ -182,18 +182,8 @@ impl AppState {
 
     /// The chat's goal, for clients.
     pub async fn get_goal(&self, thread_id: String) -> Result<Option<Goal>, String> {
-        self.require_goal_thread(&thread_id).await?;
+        self.require_thread(&thread_id).await?;
         Ok(self.goal_for(&thread_id))
-    }
-
-    async fn require_goal_thread(&self, thread_id: &str) -> Result<bool, String> {
-        self.inner
-            .threads
-            .read()
-            .await
-            .get(thread_id)
-            .map(|record| record.running)
-            .ok_or_else(|| format!("unknown thread '{thread_id}'"))
     }
 
     /// Sets (or replaces) the chat's goal and marks it running. The caller's
@@ -216,6 +206,12 @@ impl AppState {
             stalls: 0,
             progress: None,
             failures: 0,
+            // Evidence for the first check starts here.
+            checked_seq: self
+                .inner
+                .transcript
+                .last_activity_seq(thread_id)
+                .unwrap_or(0),
         };
         self.bump_goal_generation(thread_id);
         self.store_goal(sink, thread_id, Some(goal.clone()));
@@ -230,7 +226,7 @@ impl AppState {
         thread_id: String,
         text: String,
     ) -> Result<Goal, String> {
-        let running = self.require_goal_thread(&thread_id).await?;
+        let running = self.require_thread(&thread_id).await?;
         let text = core_goal::normalize_goal(&text).ok_or("Describe the goal in one sentence")?;
         let goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
         if !running {
@@ -251,7 +247,7 @@ impl AppState {
         thread_id: String,
         text: String,
     ) -> Result<Goal, String> {
-        self.require_goal_thread(&thread_id).await?;
+        self.require_thread(&thread_id).await?;
         let text = core_goal::normalize_goal(&text).ok_or("The goal cannot be empty")?;
         self.update_goal(sink.as_ref(), &thread_id, |goal| {
             goal.text = text;
@@ -267,7 +263,7 @@ impl AppState {
         sink: Arc<dyn EventSink>,
         thread_id: String,
     ) -> Result<Goal, String> {
-        self.require_goal_thread(&thread_id).await?;
+        self.require_thread(&thread_id).await?;
         self.bump_goal_generation(&thread_id);
         let goal = self
             .update_goal(sink.as_ref(), &thread_id, |goal| {
@@ -286,7 +282,7 @@ impl AppState {
         sink: Arc<dyn EventSink>,
         thread_id: String,
     ) -> Result<Goal, String> {
-        let running = self.require_goal_thread(&thread_id).await?;
+        let running = self.require_thread(&thread_id).await?;
         let previous = self
             .goal_for(&thread_id)
             .ok_or_else(|| "This chat has no goal".to_owned())?;
@@ -435,7 +431,7 @@ impl AppState {
         thread_id: String,
         note: String,
     ) {
-        if self.require_goal_thread(&thread_id).await.unwrap_or(true) {
+        if self.require_thread(&thread_id).await.unwrap_or(true) {
             return; // That run's end continues the goal.
         }
         let Some(goal) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
@@ -451,31 +447,44 @@ impl AppState {
         let text = core_goal::turn_message(goal.turns, &goal.text, &note);
         let run_id = uuid::Uuid::new_v4().to_string();
         self.mark_goal_turn(&run_id);
-        sink.emit_thread_event(&ThreadEventEnvelope {
-            thread_id: thread_id.clone(),
-            run_id: String::new(),
-            event: ThreadEvent::UserMessage {
-                text: text.clone(),
-                attachments: Vec::new(),
-            },
-        });
         let sent = Box::pin(self.send_message_with_options(
             Arc::clone(&sink),
             thread_id.clone(),
-            text,
+            text.clone(),
             run_id.clone(),
             None,
             Vec::new(),
         ))
         .await;
-        if let Err(error) = sent {
+        let spawn_failed = sent.is_err()
+            && self
+                .inner
+                .spawn_failed_runs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&run_id);
+        if sent.is_ok() || spawn_failed {
+            // Shown once the run exists; a failed start is handled by its end step.
+            sink.emit_thread_event(&ThreadEventEnvelope {
+                thread_id: thread_id.clone(),
+                run_id: String::new(),
+                event: ThreadEvent::UserMessage {
+                    text,
+                    attachments: Vec::new(),
+                },
+            });
+        }
+        if let Err(error) = sent.as_ref().map(|_| ()).map_err(Clone::clone) {
+            if spawn_failed {
+                return;
+            }
             self.goal_turn_interrupted(&run_id);
             self.update_goal(sink.as_ref(), &thread_id, |goal| {
                 goal.turns = goal.turns.saturating_sub(1);
             });
-            if error.contains("concurrency limit") {
+            if error.contains(super::threads::CONCURRENCY_LIMIT) {
                 self.schedule_goal_turn(sink, thread_id, BUSY_RETRY, note);
-            } else if !error.contains("is busy") {
+            } else if !super::threads::send_must_wait(&error) {
                 // A turn that could not start counts as a failed turn.
                 let failures = self
                     .update_goal(sink.as_ref(), &thread_id, |goal| {
@@ -537,13 +546,22 @@ impl AppState {
             .await;
             return;
         }
-        let (evidence, changed_files) = self.turn_evidence(&thread_id);
+        let (evidence, changed_files, through_seq) =
+            self.turn_evidence(&thread_id, goal.checked_seq);
         let verdict = match self.goal_check_config(&thread_id).await {
-            Ok(config) => core_goal::check_with_config(&config, &goal.text, &answer, &evidence)
+            Ok(config) => {
+                // The same per-model routes and limits real runs use.
+                let catalog = self.inner.go_catalog.read().await.clone();
+                themis_core::providers::with_catalog_limits(
+                    &catalog,
+                    core_goal::check_with_config(&config, &goal.text, &answer, &evidence),
+                )
                 .await
-                .map_err(|error| format!("{error:#}")),
+                .map_err(|error| format!("{error:#}"))
+            }
             Err(error) => Err(error),
         };
+        let check_failed = verdict.is_err();
         // The goal may have been paused or edited while the check ran.
         let Some(goal) = self.goal_for(&thread_id) else {
             return;
@@ -590,6 +608,13 @@ impl AppState {
             "info",
             json!({"thread_id": thread_id, "run_id": run_id, "verdict": verdict.verdict}),
         );
+        // A decided check has judged this evidence; a failed one has not, so
+        // the next check reads it again.
+        if !check_failed {
+            self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                goal.checked_seq = through_seq;
+            });
+        }
         match verdict.verdict {
             Verdict::Reached => {
                 self.goal_note(
@@ -634,8 +659,11 @@ impl AppState {
                         .progress
                         .as_ref()
                         .is_some_and(|progress| Some(progress) != goal.progress.as_ref());
+                // The checker failing says nothing about the agent's progress.
                 let stalls = if progressed {
                     0
+                } else if check_failed {
+                    goal.stalls
                 } else {
                     goal.stalls.saturating_add(1)
                 };
@@ -746,36 +774,26 @@ impl AppState {
         }
     }
 
-    /// The commands every run since the previous goal check ran (the turn,
-    /// plus any user message or interrupted turn before it), with bounded
-    /// output, and whether those runs changed files. A turn that only reports
-    /// earlier results is judged on the evidence those runs produced.
-    fn turn_evidence(&self, thread_id: &str) -> (String, bool) {
+    /// The commands every run since the previous decided goal check ran
+    /// (the turn, plus any user message, failed or interrupted turn before
+    /// it), with bounded output; whether those runs changed files; and the
+    /// history position read through. Only history after `after_seq` is read.
+    fn turn_evidence(&self, thread_id: &str, after_seq: i64) -> (String, bool, i64) {
         let mut evidence = String::new();
         let mut changed = false;
-        let Ok(history) = self.inner.transcript.history(thread_id) else {
-            return (evidence, changed);
+        let through = self
+            .inner
+            .transcript
+            .last_activity_seq(thread_id)
+            .unwrap_or(after_seq);
+        let Ok(history) = self.inner.transcript.history_after(thread_id, after_seq) else {
+            return (evidence, changed, after_seq);
         };
         for item in history {
-            let envelope = match item {
-                crate::transcript::HistoryItem::Event { envelope } => envelope,
-                // A new `/goal` starts the evidence afresh.
-                crate::transcript::HistoryItem::User { text, .. }
-                    if core_goal::parse_goal_command(&text).is_some() =>
-                {
-                    evidence.clear();
-                    changed = false;
-                    continue;
-                }
-                _ => continue,
+            let crate::transcript::HistoryItem::Event { envelope } = item else {
+                continue;
             };
             let line = match envelope.event {
-                // The previous check already judged everything before it.
-                ThreadEvent::GoalNote { .. } => {
-                    evidence.clear();
-                    changed = false;
-                    continue;
-                }
                 ThreadEvent::ToolStarted { tool, summary } => format!("$ {tool}: {summary}\n"),
                 ThreadEvent::ToolFinished { ok, output, .. } => {
                     let output: String = output.chars().take(MAX_OUTPUT_CHARS).collect();
@@ -801,7 +819,7 @@ impl AppState {
             let skip = evidence.chars().count() - MAX_EVIDENCE_CHARS;
             evidence = format!("…\n{}", evidence.chars().skip(skip).collect::<String>());
         }
-        (evidence, changed)
+        (evidence, changed, through)
     }
 
     /// The provider for the goal check: the chat's current model.
@@ -924,6 +942,7 @@ mod tests {
             stalls: 0,
             progress: None,
             failures: 0,
+            checked_seq: 0,
         };
         set_status(&mut goal, GoalStatus::Paused, None);
         assert!(goal.running_since.is_none());

@@ -297,6 +297,10 @@ pub struct Goal {
     /// Consecutive failed turns (sets the retry wait).
     #[serde(default)]
     pub failures: u32,
+    /// History position the last decided goal check read through; the next
+    /// check reads only what came after.
+    #[serde(default)]
+    pub checked_seq: i64,
 }
 
 /// The kind of a goal note in the chat.

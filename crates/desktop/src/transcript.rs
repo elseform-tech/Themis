@@ -395,6 +395,23 @@ impl TranscriptStore {
         .collect()
     }
 
+    /// The chat's history items after `seq` (exclusive), in order: a bounded
+    /// read for callers that keep their own watermark.
+    pub fn history_after(&self, thread_id: &str, seq: i64) -> Result<Vec<HistoryItem>, String> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let mut statement = connection
+            .prepare("SELECT item FROM history WHERE thread_id = ?1 AND seq > ?2 ORDER BY seq")
+            .map_err(|e| format!("read session: {e}"))?;
+        let rows = statement
+            .query_map(params![thread_id, seq], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("read session: {e}"))?;
+        rows.map(|row| {
+            let text = row.map_err(|e| format!("read session: {e}"))?;
+            serde_json::from_str(&text).map_err(|e| format!("decode session item: {e}"))
+        })
+        .collect()
+    }
+
     pub fn context(
         &self,
         thread_id: &str,

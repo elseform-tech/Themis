@@ -1942,6 +1942,10 @@ fn nudge_off(name: &str) -> bool {
     }
 }
 
+/// How a run stopped by the user's Stop begins its failure text; callers
+/// (the goal supervisor among them) recognize a stop by it.
+pub const STOPPED_BY_YOU: &str = "Stopped by you";
+
 /// Longest new user message, in characters, that can count as a short conversational reply.
 pub const SHORT_REPLY_MAX_CHARS: usize = 200;
 
@@ -3010,7 +3014,7 @@ async fn check_stopped(
     events: &tokio::sync::mpsc::Sender<RunEvent>,
 ) -> anyhow::Result<()> {
     if stopped.load(Ordering::SeqCst) {
-        let error = "Stopped by you. Completed actions remain available for review.".to_owned();
+        let error = format!("{STOPPED_BY_YOU}. Completed actions remain available for review.");
         let _ = events
             .send(RunEvent::Failed {
                 error: error.clone(),

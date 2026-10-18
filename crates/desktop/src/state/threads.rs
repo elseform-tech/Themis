@@ -1,5 +1,15 @@
 use super::*;
 
+/// In the error of a send refused because the chat already runs.
+pub(super) const BUSY: &str = "is busy";
+/// In the error of a send refused by the global concurrency limit.
+pub(super) const CONCURRENCY_LIMIT: &str = GATE_SATURATED_MARKER;
+
+/// Whether a send error means "try again later" rather than a failure.
+pub(super) fn send_must_wait(error: &str) -> bool {
+    error.contains(BUSY) || error.contains(CONCURRENCY_LIMIT)
+}
+
 impl AppState {
     /// Threads share the project checkout, including existing uncommitted files.
     pub async fn create_thread(
@@ -418,7 +428,7 @@ impl AppState {
                 .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
             if record.running {
                 return Err(format!(
-                    "thread '{thread_id}' is busy: a run is already in progress"
+                    "thread '{thread_id}' {BUSY}: a run is already in progress"
                 ));
             }
             let limit = usize::try_from(settings.concurrency_limit).unwrap_or(usize::MAX);
@@ -426,7 +436,7 @@ impl AppState {
             // serialize here and the gate cannot be overrun.
             if self.inner.running_count.load(Ordering::SeqCst) >= limit {
                 return Err(format!(
-                    "concurrency limit reached ({}): wait for a run to finish and retry",
+                    "{CONCURRENCY_LIMIT} ({}): wait for a run to finish and retry",
                     settings.concurrency_limit
                 ));
             }
@@ -531,9 +541,15 @@ impl AppState {
             }
             self.finish_run(&thread_id).await;
             sink.emit_thread_event(&failed);
-            // A run that never started still lets the queue move on; a goal
-            // turn's caller handles its own failure.
-            self.spawn_dispatch_queue(sink, thread_id);
+            // A run that failed to start ended like any run: the queue moves on
+            // and a goal continues (or retries). Callers see the marker and
+            // leave that to this step.
+            self.inner
+                .spawn_failed_runs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(run_id.clone());
+            self.spawn_after_run(sink, thread_id, run_id, failed.event);
             return Err(error);
         }
         Ok(RunHandle { run_id })

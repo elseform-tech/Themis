@@ -214,10 +214,10 @@ pub enum Failure {
 /// provider says quota, credits, billing or usage limit, or asks to wait more
 /// than ten minutes (`Retry-After`).
 pub fn classify_failure(error: &str) -> Failure {
-    let lower = error.to_ascii_lowercase();
-    if lower.starts_with("stopped by you") {
+    if error.starts_with(crate::runtime::STOPPED_BY_YOU) {
         return Failure::Stopped;
     }
+    let lower = error.to_ascii_lowercase();
     let long_wait = lower
         .split("retry-after: ")
         .nth(1)
