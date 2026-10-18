@@ -54,20 +54,27 @@ def _tests_setup(project):
 
 
 def _fixed(project):
-    """Whether the original test passes against the agent's calc.py: in a sandboxed scratch
-    copy, with the test restored (the agent cannot edit the oracle) and no inherited secrets."""
+    """Whether the original test passes against the agent's calc.py. Only that file (a regular
+    file, not a link) is copied beside the pristine test into an empty sandboxed folder, so no
+    other project file can shadow the test runner; a pass needs the runner's own report."""
+    source = os.path.join(project, "calc.py")
+    if not os.path.isfile(source) or os.path.islink(source):
+        return False
     scratch = tempfile.mkdtemp(prefix="hard-followup-")
     try:
         work = os.path.join(scratch, "work")
-        shutil.copytree(project, work, ignore=shutil.ignore_patterns("__pycache__", ".themis", ".git"))
+        os.makedirs(work)
+        shutil.copyfile(source, os.path.join(work, "calc.py"), follow_symlinks=False)
         _write(work, "test_calc.py", TEST_CALC)
         try:
-            done = subprocess.run(sandboxed([sys.executable, "-B", "-m", "unittest", "-q", "test_calc"], work),
+            done = subprocess.run(sandboxed([sys.executable, "-B", "-E", "-s", "-m", "unittest", "-v", "test_calc"], work),
                                   cwd=work, capture_output=True, text=True, timeout=60, check=False,
                                   env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
         except subprocess.TimeoutExpired:
             return False
-        return done.returncode == 0
+        report = done.stderr
+        return (done.returncode == 0 and "test_add (test_calc.AddTests" in report and "... ok" in report
+                and re.search(r"^Ran 1 test in ", report, re.MULTILINE) is not None and report.rstrip().endswith("OK"))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

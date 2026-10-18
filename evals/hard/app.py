@@ -83,8 +83,10 @@ def run_app_task(binary, task, model, timeout=5400, keep=None):
             return None, f"provider: {error[:160]}"
         try:
             passed, why = task["check"](project, {"answer": end.get("result", ""), "turns": turn_reports})
-        except Exception as error:  # noqa: BLE001 - a grader bug must not abort the other runs
-            return None, f"grader: {type(error).__name__}: {str(error)[:160]}"
+        except Exception as error:  # noqa: BLE001 - one run's grading error must not abort the others
+            # It stays in the results as a failure, so a project that breaks the grader never
+            # leaves the denominator.
+            passed, why = False, f"grader error: {type(error).__name__}: {str(error)[:160]}"
         row = {"task": task["name"], "tool": task["tool"], "passed": passed and end["kind"] == "finished",
                "why": why if end["kind"] == "finished" else f"{end['kind']}: {(error or end.get('result', ''))[:160]}; {why}",
                "answer": (end.get("result") or "")[:300], "error_text": (error or "")[:300],
