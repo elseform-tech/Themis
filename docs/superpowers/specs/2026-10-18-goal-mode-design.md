@@ -287,6 +287,35 @@ for edits. This matches "configuration is captured once per run".
     was in progress before continuing."
   - A goal you paused stays paused.
 
+### Changing the model mid-goal (applies to every chat)
+
+The person decided: allowed, and it waits for the current turn.
+
+- **What exists today.** `set_provider` refuses to switch while a run is
+  active (`crates/desktop/src/state/threads.rs`, "cannot switch provider
+  mid-run"). That would lock a goal to its first model for hours.
+- **New behavior.** Picking a model while a run is going saves it as the
+  chat's **next model**. The header pill shows it right away, with a tooltip
+  "Applies from the next turn". The current run finishes on its snapshot's
+  model, and every later run (goal turns, queued messages, steers that fall
+  through to the next run) uses the new one. Nothing is stopped or restarted.
+  This replaces the busy error in all chats, not only goal chats.
+- **Reasoning effort** resets on a switch, as today. A new effort chosen
+  during a run also applies from the next turn.
+- **The goal check** uses the chat's current model, so it follows the switch.
+- **Quota pause:** when the goal is paused for quota, switching to a
+  different model resumes it immediately instead of waiting for the next
+  15-minute retry.
+- **Context size:** each run already sizes its budget from its model's
+  capacity. If the new model's window is smaller than the retained history,
+  the existing compaction and overflow recovery shrink it before the first
+  call.
+- **Reasoning replay:** the previous model's reasoning must not be replayed
+  to a different model. Switching between runs already exists, so this is
+  likely handled already. Add a regression test either way: one model's
+  turn, a switch, the next turn's provider request carries no foreign
+  reasoning.
+
 ### Your controls
 
 - **Edit:** the bar becomes a text field with Save and Discard icons. Saving
@@ -378,3 +407,6 @@ for edits. This matches "configuration is captured once per run".
   setting it.
 - **Goals in different chats** run side by side within the existing
   concurrency limit.
+- **A model switch during a quota pause** resumes the goal immediately.
+- **The pill shows the next model at once** (with a tooltip), rather than
+  keeping the old model's name until the run ends.
