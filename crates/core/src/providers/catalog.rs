@@ -1,9 +1,108 @@
-//! The OpenCode Go model catalog: which models exist, their limits and thinking options.
+//! The OpenCode Go model catalog: which models exist, how each is called, its limits and
+//! thinking options.
+//!
+//! Go serves its model families over four wire protocols at different endpoints. The
+//! public models.dev catalog names each model's protocol (as the AI SDK package that speaks
+//! it) and endpoint, so a new model is called correctly without an app update. Names only
+//! decide the protocol when the catalog cannot be loaded.
 
 use super::*;
 
 tokio::task_local! { pub(super) static MODEL_LIMITS: HashMap<String, (Option<usize>, Option<usize>)>; }
 tokio::task_local! { pub(super) static MODEL_THINKING: HashMap<String, (bool, Vec<String>)>; }
+tokio::task_local! { static MODEL_ROUTES: HashMap<String, (Protocol, Option<String>)>; }
+
+/// Root of Go's per-protocol endpoints (docs: opencode.ai/docs/go/#endpoints).
+const GO_INFERENCE_ROOT: &str = "https://opencode.ai/inference/go";
+
+/// The wire protocol a Go model is called with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    /// OpenAI Chat Completions, Go's default.
+    #[default]
+    ChatCompletions,
+    /// OpenAI Responses.
+    Responses,
+    /// Anthropic Messages.
+    Messages,
+    /// Google Gemini `generateContent`.
+    Gemini,
+    /// A protocol Themis does not speak yet; the model cannot be used.
+    Unsupported,
+}
+
+impl Protocol {
+    /// The protocol for a catalog AI SDK package (`None`: the provider's default).
+    fn from_package(package: &str) -> Self {
+        match package {
+            "@ai-sdk/openai-compatible" => Self::ChatCompletions,
+            "@ai-sdk/openai" => Self::Responses,
+            "@ai-sdk/anthropic" => Self::Messages,
+            "@ai-sdk/google" => Self::Gemini,
+            _ => Self::Unsupported,
+        }
+    }
+
+    /// The protocol a model name suggests, used only when the catalog is not loaded.
+    pub(crate) fn guess(model: &str) -> Self {
+        if ["muse-", "gpt-", "grok-"]
+            .iter()
+            .any(|prefix| model.starts_with(prefix))
+        {
+            Self::Responses
+        } else if ["qwen", "minimax-", "claude-"]
+            .iter()
+            .any(|prefix| model.starts_with(prefix))
+        {
+            Self::Messages
+        } else if model.starts_with("gemini-") {
+            Self::Gemini
+        } else {
+            Self::ChatCompletions
+        }
+    }
+
+    /// Go's documented endpoint for this protocol.
+    pub(crate) fn default_endpoint(self) -> String {
+        let path = match self {
+            Self::ChatCompletions | Self::Responses | Self::Unsupported => "openai/v1",
+            Self::Messages => "anthropic/v1",
+            Self::Gemini => "google/v1beta",
+        };
+        format!("{GO_INFERENCE_ROOT}/{path}")
+    }
+}
+
+/// A catalog endpoint is used only when it is an HTTPS OpenCode URL: the catalog comes from
+/// the network, and the request it names carries the API key.
+pub(super) fn trusted_endpoint(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches('/');
+    let rest = url.strip_prefix("https://opencode.ai/")?;
+    let safe = rest
+        .split('/')
+        .all(|part| !part.is_empty() && part != ".." && part != ".")
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'));
+    safe.then(|| url.to_owned())
+}
+
+/// How `model` is called: its protocol and endpoint from the loaded catalog, else the
+/// protocol its name suggests at Go's default endpoint for it.
+pub(crate) fn route(model: &str) -> (Protocol, String) {
+    let known = MODEL_ROUTES
+        .try_with(|routes| routes.get(model).cloned())
+        .ok()
+        .flatten();
+    let protocol = known
+        .as_ref()
+        .map_or_else(|| Protocol::guess(model), |(protocol, _)| *protocol);
+    let endpoint = known
+        .and_then(|(_, endpoint)| endpoint)
+        .unwrap_or_else(|| protocol.default_endpoint());
+    (protocol, endpoint)
+}
 
 /// Output tokens a reply may use from the start when the model has room: a thinking model's
 /// reasoning plus a whole file in one tool call does not fit a cap sized for the memory budget.
@@ -46,7 +145,13 @@ pub async fn with_catalog_limits<F: std::future::Future>(
                     .iter()
                     .map(|m| (m.id.clone(), (m.thinking_toggle, m.effort_levels.clone())))
                     .collect(),
-                future,
+                MODEL_ROUTES.scope(
+                    models
+                        .iter()
+                        .map(|m| (m.id.clone(), (m.protocol(), m.endpoint.clone())))
+                        .collect(),
+                    future,
+                ),
             ),
         )
         .await
@@ -78,13 +183,25 @@ pub(crate) fn thinking_default(model: &str) -> ThinkingDefault {
         .unwrap_or_default()
 }
 
+/// The no-thinking Go model that writes summaries for models whose thinking cannot be
+/// turned off reliably.
+const SUMMARY_FALLBACK_MODEL: &str = "longcat-2.5-preview-free";
+
 pub(crate) fn summary_model(model: &str) -> &str {
+    // A loaded catalog without the fallback model means Go retired it: summarize with the
+    // model itself rather than call a model that no longer exists.
+    let fallback_listed = MODEL_ROUTES
+        .try_with(|routes| routes.contains_key(SUMMARY_FALLBACK_MODEL))
+        .unwrap_or(true);
     if let Some(configured) = crate::runtime::compaction_config().summary_model {
         configured.as_str()
-    } else if model.starts_with("longcat-2.5-") || matches!(model, "gpt-5.6-luna" | "gpt-6-luna") {
+    } else if model.starts_with("longcat-2.5-")
+        || matches!(model, "gpt-5.6-luna" | "gpt-6-luna")
+        || !fallback_listed
+    {
         model
     } else {
-        "longcat-2.5-preview-free"
+        SUMMARY_FALLBACK_MODEL
     }
 }
 
@@ -122,8 +239,8 @@ struct WireModelList {
     data: Vec<WireModelEntry>,
 }
 
-/// Live Go model with effort choices from the OpenCode Go catalog.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Live Go model with its protocol and effort choices from the OpenCode Go catalog.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GoModel {
     pub id: String,
     pub effort_levels: Vec<String>,
@@ -134,6 +251,31 @@ pub struct GoModel {
     /// The catalog lists a thinking on/off switch for this model.
     #[serde(default)]
     pub thinking_toggle: bool,
+    /// The wire protocol the catalog names; `None` when the catalog does not describe the
+    /// model, so its name decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<Protocol>,
+    /// The catalog's endpoint for the model; `None` uses Go's default for its protocol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    /// Why the model cannot be used, when Themis does not speak its protocol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
+}
+
+impl GoModel {
+    /// A model known only by its ID.
+    pub(super) fn listed(id: String) -> Self {
+        Self {
+            id,
+            ..Self::default()
+        }
+    }
+
+    /// The protocol the model is called with.
+    pub fn protocol(&self) -> Protocol {
+        self.protocol.unwrap_or_else(|| Protocol::guess(&self.id))
+    }
 }
 
 #[derive(Deserialize)]
@@ -144,6 +286,9 @@ pub(super) struct CatalogRoot {
 
 #[derive(Deserialize)]
 struct CatalogProvider {
+    /// The provider's default AI SDK package and endpoint.
+    #[serde(flatten)]
+    access: CatalogAccess,
     models: HashMap<String, CatalogModel>,
 }
 
@@ -153,6 +298,16 @@ struct CatalogModel {
     reasoning_options: Vec<CatalogReasoningOption>,
     #[serde(default)]
     limit: CatalogLimits,
+    /// Per-model overrides of the provider's package and endpoint.
+    #[serde(default)]
+    provider: CatalogAccess,
+}
+
+/// How a catalog entry is reached: the AI SDK package (naming the protocol) and endpoint.
+#[derive(Default, Deserialize)]
+struct CatalogAccess {
+    npm: Option<String>,
+    api: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -188,12 +343,38 @@ pub(super) fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoM
                     .iter()
                     .any(|option| option.kind == "toggle")
             });
+            let access = catalog.go.models.get(&id).map(|model| &model.provider);
+            let package = access.and_then(|access| access.npm.as_deref()).or(catalog
+                .go
+                .access
+                .npm
+                .as_deref());
+            // A model the account lists but the catalog does not describe yet keeps `None`.
+            let protocol = catalog
+                .go
+                .models
+                .contains_key(&id)
+                .then(|| package.map_or(Protocol::ChatCompletions, Protocol::from_package));
+            let endpoint = access
+                .and_then(|access| access.api.as_deref())
+                .or(catalog.go.access.api.as_deref())
+                .filter(|_| protocol.is_some_and(|known| known != Protocol::Unsupported))
+                .and_then(trusted_endpoint);
+            let unavailable_reason = (protocol == Some(Protocol::Unsupported)).then(|| {
+                format!(
+                    "Needs {}, which Themis does not support yet",
+                    package.unwrap_or("an unknown protocol")
+                )
+            });
             GoModel {
                 id,
                 effort_levels,
                 context_tokens: limits.and_then(|l| l.context),
                 output_tokens: limits.and_then(|l| l.output),
                 thinking_toggle,
+                protocol,
+                endpoint,
+                unavailable_reason,
             }
         })
         .collect()
@@ -215,16 +396,7 @@ pub async fn refresh_go_catalog(base_url: &str, api_key: &str) -> Result<Vec<GoM
     .await;
     Ok(match catalog {
         Ok(catalog) => join_go_catalog(ids, catalog),
-        Err(_) => ids
-            .into_iter()
-            .map(|id| GoModel {
-                id,
-                effort_levels: Vec::new(),
-                context_tokens: None,
-                output_tokens: None,
-                thinking_toggle: false,
-            })
-            .collect(),
+        Err(_) => ids.into_iter().map(GoModel::listed).collect(),
     })
 }
 

@@ -1319,6 +1319,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_model_the_catalog_marks_unsupported_is_refused_before_any_request() {
+        use wiremock::MockServer;
+        let (state, dir) = test_state();
+        state
+            .set_secret("go".into(), "synthetic-test-key".into())
+            .await
+            .unwrap();
+        let server = MockServer::start().await;
+        state.set_go_base_url_override(Some(server.uri()));
+        let thread = state
+            .create_thread(
+                dir.path().to_string_lossy().into_owned(),
+                ProviderKind::Go,
+                Some("strange".to_owned()),
+            )
+            .await
+            .expect("create");
+        *state.inner.go_catalog.write().await = vec![themis_core::providers::GoModel {
+            id: "strange".to_owned(),
+            protocol: Some(themis_core::providers::Protocol::Unsupported),
+            unavailable_reason: Some("Needs @ai-sdk/xyz, which Themis does not support yet".into()),
+            ..Default::default()
+        }];
+        let (sink, _) = crate::sink::ChannelSink::channel();
+        let error = state
+            .send_message(Arc::new(sink), thread.id.clone(), "hello".into())
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("is unavailable: Needs @ai-sdk/xyz"),
+            "{error}"
+        );
+        assert!(!state.get_thread(&thread.id).await.unwrap().running);
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn thread_effort_follows_catalog_and_survives_restart() {
         let (state, dir) = test_state();
         let thread = state
@@ -1335,6 +1372,7 @@ mod tests {
             context_tokens: None,
             output_tokens: None,
             thinking_toggle: false,
+            ..Default::default()
         }];
         assert!(state
             .set_thread_effort(thread.id.clone(), Some("max".to_owned()))

@@ -95,7 +95,7 @@ pub(crate) fn note_stream_progress() {
 pub const GO_PROVIDER_NAME: &str = "OpenCode Go";
 
 /// Default Go API root (OpenAI chat-completions wire format).
-pub const GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
+pub const GO_BASE_URL: &str = "https://opencode.ai/inference/go/v1";
 
 /// Chat-completions endpoint path appended to the base URL.
 pub const CHAT_COMPLETIONS_PATH: &str = "chat/completions";
@@ -280,6 +280,8 @@ pub struct CompatibleProvider {
     provider_name: &'static str,
     api_key: String,
     base_url: String,
+    /// `base_url` was set explicitly (a test server): every protocol is served from it.
+    base_override: bool,
     model: String,
     reasoning_effort: Option<String>,
     extra_headers: Vec<(String, String)>,
@@ -516,6 +518,7 @@ impl CompatibleProvider {
         Self {
             provider_name: GO_PROVIDER_NAME,
             api_key,
+            base_override: base_url.is_some(),
             base_url: normalize_base(base_url.as_deref().unwrap_or(GO_BASE_URL)),
             model,
             extra_headers: vec![(GO_SESSION_HEADER.to_owned(), session)],
@@ -540,12 +543,33 @@ impl CompatibleProvider {
         &self.base_url
     }
 
+    /// The wire protocol for this provider's model (see [`catalog::route`]).
+    fn protocol(&self) -> Protocol {
+        if self.provider_name == GO_PROVIDER_NAME {
+            route(&self.model).0
+        } else {
+            Protocol::ChatCompletions
+        }
+    }
+
     fn uses_responses(&self) -> bool {
-        self.provider_name == GO_PROVIDER_NAME && go_chat_path(&self.model) == "responses"
+        self.protocol() == Protocol::Responses
     }
 
     fn uses_messages(&self) -> bool {
-        self.provider_name == GO_PROVIDER_NAME && go_chat_path(&self.model) == "messages"
+        self.protocol() == Protocol::Messages
+    }
+
+    /// Where `protocol` requests go: the explicit base URL, else the model's catalog
+    /// endpoint when it speaks `protocol`, else Go's default endpoint for it.
+    fn endpoint(&self, protocol: Protocol) -> String {
+        if self.base_override {
+            return self.base_url.clone();
+        }
+        match route(&self.model) {
+            (routed, endpoint) if routed == protocol => endpoint,
+            _ => protocol.default_endpoint(),
+        }
     }
 
     fn chat_request(
@@ -555,6 +579,12 @@ impl CompatibleProvider {
         stream: bool,
         sampling: Option<&SamplingOverrides>,
     ) -> Result<reqwest::RequestBuilder, LLMError> {
+        if self.protocol() == Protocol::Unsupported {
+            return Err(LLMError::invalid_request(format!(
+                "Model '{}' needs a protocol Themis does not support yet",
+                self.model
+            )));
+        }
         let mut body = if self.uses_responses() {
             responses_body(
                 &self.model,
@@ -642,22 +672,22 @@ impl CompatibleProvider {
             }
         }
         let request = if self.uses_responses() {
-            self.post("responses")
+            self.post(Protocol::Responses, "responses")
         } else if self.uses_messages() {
-            self.post("messages")
+            self.post(Protocol::Messages, "messages")
                 .header("anthropic-version", "2023-06-01")
                 .header("x-api-key", &self.api_key)
         } else {
-            self.post(CHAT_COMPLETIONS_PATH)
+            self.post(Protocol::ChatCompletions, CHAT_COMPLETIONS_PATH)
         };
         Ok(request.json(&body))
     }
 
-    /// POST builder for `{base}/{path}` with auth, Themis user agent, and extras.
-    fn post(&self, path: &str) -> reqwest::RequestBuilder {
+    /// POST builder for `{endpoint}/{path}` with auth, Themis user agent, and extras.
+    fn post(&self, protocol: Protocol, path: &str) -> reqwest::RequestBuilder {
         let mut request = self
             .client
-            .post(format!("{}/{}", self.base_url, path))
+            .post(format!("{}/{}", self.endpoint(protocol), path))
             .bearer_auth(&self.api_key)
             .header("User-Agent", themis_user_agent());
         for (name, value) in &self.extra_headers {
@@ -960,7 +990,7 @@ impl CompletionProvider for CompatibleProvider {
             tools: None,
         };
         let response = self
-            .post(CHAT_COMPLETIONS_PATH)
+            .post(Protocol::ChatCompletions, CHAT_COMPLETIONS_PATH)
             .json(&body)
             .send()
             .await
@@ -1014,7 +1044,7 @@ impl EmbeddingProvider for CompatibleProvider {
             "input": input,
         });
         let response = self
-            .post("embeddings")
+            .post(Protocol::ChatCompletions, "embeddings")
             .json(&body)
             .send()
             .await

@@ -354,6 +354,7 @@ async fn configured_summary_model_routes_without_changing_ordinary_model() {
             context_tokens: Some(100000),
             output_tokens: Some(1000),
             thinking_toggle: false,
+            ..Default::default()
         },
         GoModel {
             id: "longcat-2.5-preview-free".into(),
@@ -361,6 +362,7 @@ async fn configured_summary_model_routes_without_changing_ordinary_model() {
             context_tokens: Some(200000),
             output_tokens: Some(8192),
             thinking_toggle: false,
+            ..Default::default()
         },
     ];
     let provider = CompatibleProvider::go(
@@ -1198,6 +1200,7 @@ async fn long_replies_get_room_when_the_model_window_is_far_beyond_the_budget() 
         context_tokens: Some(context),
         output_tokens: Some(output),
         thinking_toggle: false,
+        ..Default::default()
     };
     let catalog = [
         model("wide", 1_000_000, 131_072),
@@ -1233,6 +1236,7 @@ async fn thinking_is_on_by_default_for_answers_but_not_for_summaries() {
         context_tokens: None,
         output_tokens: None,
         thinking_toggle: toggle,
+        ..Default::default()
     };
     let catalog = [
         model("longcat-test", true, &[]),
@@ -2122,6 +2126,195 @@ async fn empty_go_key_rejected() {
 }
 
 #[test]
+fn the_catalog_names_each_models_protocol_and_endpoint() {
+    let catalog: CatalogRoot = serde_json::from_value(json!({
+        "opencode-go": {
+            "npm": "@ai-sdk/openai-compatible",
+            "api": "https://opencode.ai/inference/go/openai/v1",
+            "models": {
+                "plain": {},
+                "muse-like": {"provider": {"npm": "@ai-sdk/openai", "api": "https://opencode.ai/inference/go/openai/v1"}},
+                "qwen-like": {"provider": {"npm": "@ai-sdk/anthropic", "api": "https://opencode.ai/inference/go/anthropic/v1/"}},
+                "argon": {"provider": {"npm": "@ai-sdk/google", "api": "https://opencode.ai/inference/go/google/v1beta"}},
+                "strange": {"provider": {"npm": "@ai-sdk/xyz", "api": "https://opencode.ai/inference/go/xyz/v1"}},
+                "elsewhere": {"provider": {"npm": "@ai-sdk/anthropic", "api": "https://example.com/v1"}}
+            }
+        }
+    }))
+    .unwrap();
+    let ids = [
+        "plain",
+        "muse-like",
+        "qwen-like",
+        "argon",
+        "strange",
+        "elsewhere",
+        "gemini-new",
+    ];
+    let models = join_go_catalog(ids.map(String::from).to_vec(), catalog);
+    let got: Vec<_> = models
+        .iter()
+        .map(|m| {
+            (
+                m.id.as_str(),
+                m.protocol,
+                m.endpoint.as_deref(),
+                m.unavailable_reason.is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (
+                "plain",
+                Some(Protocol::ChatCompletions),
+                Some("https://opencode.ai/inference/go/openai/v1"),
+                false
+            ),
+            (
+                "muse-like",
+                Some(Protocol::Responses),
+                Some("https://opencode.ai/inference/go/openai/v1"),
+                false
+            ),
+            (
+                "qwen-like",
+                Some(Protocol::Messages),
+                Some("https://opencode.ai/inference/go/anthropic/v1"),
+                false
+            ),
+            (
+                "argon",
+                Some(Protocol::Gemini),
+                Some("https://opencode.ai/inference/go/google/v1beta"),
+                false
+            ),
+            ("strange", Some(Protocol::Unsupported), None, true),
+            // An endpoint off opencode.ai would receive the API key: Go's default is used.
+            ("elsewhere", Some(Protocol::Messages), None, false),
+            // Listed by the account before the catalog knows it: the name decides.
+            ("gemini-new", None, None, false),
+        ]
+    );
+    assert_eq!(models[6].protocol(), Protocol::Gemini);
+    assert!(models[4]
+        .unavailable_reason
+        .as_deref()
+        .unwrap()
+        .contains("@ai-sdk/xyz"));
+}
+
+#[tokio::test]
+async fn requests_follow_the_catalog_protocol_and_endpoint_not_the_name() {
+    let catalog = [
+        GoModel {
+            id: "muse-renamed".into(),
+            protocol: Some(Protocol::Messages),
+            endpoint: Some("https://opencode.ai/inference/go/anthropic/v1".into()),
+            ..Default::default()
+        },
+        GoModel {
+            id: "argon".into(),
+            protocol: Some(Protocol::Gemini),
+            ..Default::default()
+        },
+    ];
+    with_catalog_limits(&catalog, async {
+        let provider = CompatibleProvider::go("k".into(), "muse-renamed".into(), None, None);
+        assert_eq!(provider.protocol(), Protocol::Messages);
+        assert_eq!(
+            provider.endpoint(Protocol::Messages),
+            "https://opencode.ai/inference/go/anthropic/v1"
+        );
+        // Another protocol for the same model (embeddings, completions) uses Go's default.
+        assert_eq!(
+            provider.endpoint(Protocol::ChatCompletions),
+            "https://opencode.ai/inference/go/openai/v1"
+        );
+        let argon = CompatibleProvider::go("k".into(), "argon".into(), None, None);
+        assert_eq!(
+            argon.endpoint(Protocol::Gemini),
+            "https://opencode.ai/inference/go/google/v1beta"
+        );
+        // Not in the catalog: the name decides, at Go's default endpoint.
+        let unknown = CompatibleProvider::go("k".into(), "gpt-9".into(), None, None);
+        assert_eq!(unknown.protocol(), Protocol::Responses);
+        // A test server serves every protocol from its one root.
+        let local = CompatibleProvider::go(
+            "k".into(),
+            "argon".into(),
+            Some("http://127.0.0.1:9/".into()),
+            None,
+        );
+        assert_eq!(local.endpoint(Protocol::Gemini), "http://127.0.0.1:9");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_unsupported_model_is_refused_before_any_request() {
+    let catalog = [GoModel {
+        id: "strange".into(),
+        protocol: Some(Protocol::Unsupported),
+        ..Default::default()
+    }];
+    let server = MockServer::start().await;
+    with_catalog_limits(&catalog, async {
+        let provider =
+            CompatibleProvider::go("k".into(), "strange".into(), Some(server.uri()), None);
+        let error = provider
+            .chat_with_tools(&[ChatMessage::user().content("hi").build()], None, None)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("does not support yet"),
+            "{error}"
+        );
+    })
+    .await;
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn summaries_use_the_model_itself_once_go_retires_the_fallback_summarizer() {
+    let with = |ids: &[&str]| {
+        ids.iter()
+            .map(|id| GoModel::listed(id.to_string()))
+            .collect::<Vec<_>>()
+    };
+    let listed = with(&["glm-5.3", "longcat-2.5-preview-free"]);
+    let retired = with(&["glm-5.3"]);
+    assert_eq!(
+        with_catalog_limits(&listed, async { summary_model("glm-5.3").to_owned() }).await,
+        "longcat-2.5-preview-free"
+    );
+    assert_eq!(
+        with_catalog_limits(&retired, async { summary_model("glm-5.3").to_owned() }).await,
+        "glm-5.3"
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn catalog_endpoints_off_opencode_are_never_trusted(url in "\\PC{0,80}") {
+        if let Some(trusted) = trusted_endpoint(&url) {
+            proptest::prop_assert!(trusted.starts_with("https://opencode.ai/"));
+            proptest::prop_assert!(!trusted.contains(".."));
+            proptest::prop_assert!(!trusted["https://opencode.ai/".len()..].contains("//"));
+        }
+    }
+
+    #[test]
+    fn any_catalog_json_joins_without_panicking(raw in "\\PC{0,200}", ids in proptest::collection::vec("[a-z0-9.-]{0,12}", 0..4)) {
+        if let Ok(catalog) = serde_json::from_str::<CatalogRoot>(&raw) {
+            let models = join_go_catalog(ids.clone(), catalog);
+            proptest::prop_assert_eq!(models.len(), ids.len());
+        }
+    }
+}
+
+#[test]
 fn catalog_effort_levels_follow_go_metadata_and_live_ids() {
     let catalog: CatalogRoot = serde_json::from_value(json!({
         "opencode-go": {"models": {
@@ -2139,6 +2332,8 @@ fn catalog_effort_levels_follow_go_metadata_and_live_ids() {
                 context_tokens: Some(1000000),
                 output_tokens: Some(65536),
                 thinking_toggle: true,
+                protocol: Some(Protocol::ChatCompletions),
+                ..Default::default()
             },
             GoModel {
                 id: "model-b".into(),
@@ -2146,6 +2341,8 @@ fn catalog_effort_levels_follow_go_metadata_and_live_ids() {
                 context_tokens: None,
                 output_tokens: None,
                 thinking_toggle: false,
+                protocol: Some(Protocol::ChatCompletions),
+                ..Default::default()
             },
         ]
     );

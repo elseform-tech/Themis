@@ -152,20 +152,6 @@ pub(super) fn to_wire_messages(messages: &[ChatMessage]) -> Result<Vec<WireMessa
     Ok(wire)
 }
 
-/// Go's model families use three distinct wire protocols (docs/go/#endpoints).
-pub(super) fn go_chat_path(model: &str) -> &'static str {
-    if model.starts_with("muse-") || model.starts_with("gpt-") || model.starts_with("grok-") {
-        "responses"
-    } else if model.starts_with("qwen")
-        || model.starts_with("minimax-")
-        || model.starts_with("claude-")
-    {
-        "messages"
-    } else {
-        CHAT_COMPLETIONS_PATH
-    }
-}
-
 /// `ChatResponse` implementation returned by [`CompatibleProvider`].
 #[derive(Debug)]
 pub(super) struct CompatibleChatResponse {

@@ -94,6 +94,20 @@ impl AppState {
                 Ok::<_, String>(key)
             } => key?,
         };
+        if let Some(reason) = self
+            .inner
+            .go_catalog
+            .read()
+            .await
+            .iter()
+            .find(|model| model.id == snapshot.model)
+            .and_then(|model| model.unavailable_reason.clone())
+        {
+            return Err(format!(
+                "Model '{}' is unavailable: {reason}",
+                snapshot.model
+            ));
+        }
         if let Some(effort) = &snapshot.reasoning_effort {
             let catalog = self.inner.go_catalog.read().await;
             let supported = catalog
