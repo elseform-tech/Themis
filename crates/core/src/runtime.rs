@@ -159,6 +159,11 @@ pub enum RunEvent {
         /// Human-readable failure reason.
         error: String,
     },
+    /// A message the user steered into this run was handed to the model.
+    Steered {
+        /// The user's text, as written.
+        text: String,
+    },
 }
 
 /// Byte-estimated context accounting for the composer meter. Counts are
@@ -640,6 +645,16 @@ async fn run_task_with_evidence_inner(
     while turn < policy.total_turns {
         turn += 1;
         check_stopped(&stopped, &events).await?;
+        // Steered messages join the conversation at this boundary, after any
+        // running tool finished and before the next model request.
+        for text in take_steers() {
+            messages.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: steered_message(&text),
+            });
+            events.send(RunEvent::Steered { text }).await.ok();
+        }
         // Compaction and maintenance compare raw estimates, so hand them the equivalent raw budget.
         context_policy.context_token_budget = calibration.raw_budget(input_budget, schema_tokens);
         let raw_size = estimated_tokens(&messages);
@@ -830,6 +845,23 @@ async fn run_task_with_evidence_inner(
             }
         };
         check_stopped(&stopped, &events).await?;
+        // A message steered in while the model wrote its answer keeps the run
+        // going: the answer stays, and the next request reads the message.
+        if calls.is_empty() && steer_waiting() {
+            let answer = text.unwrap_or_default();
+            if !answer.trim().is_empty() {
+                events
+                    .send(RunEvent::AssistantText("\n\n".into()))
+                    .await
+                    .ok();
+            }
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: answer,
+            });
+            continue;
+        }
         if calls.is_empty() {
             // A run that changed files checks its work against the request once before it
             // ends: agents report success when their own tests pass, though those cover only
@@ -1838,6 +1870,44 @@ fn effective_context_budget(requested: usize) -> usize {
 
 tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
 tokio::task_local! { static SHORT_REPLY_TURN: bool; }
+tokio::task_local! { static STEER_INBOX: SteerInbox; }
+
+/// Messages the user steers into a running run, oldest first. The caller
+/// pushes; the run takes them before its next model request.
+pub type SteerInbox = Arc<Mutex<std::collections::VecDeque<String>>>;
+
+/// Runs `future` with a steer inbox; without one, steering is unavailable.
+pub async fn with_steer_inbox<F: std::future::Future>(inbox: SteerInbox, future: F) -> F::Output {
+    STEER_INBOX.scope(inbox, future).await
+}
+
+/// Takes every steered message waiting for this run.
+fn take_steers() -> Vec<String> {
+    STEER_INBOX
+        .try_with(|inbox| {
+            inbox
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .drain(..)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether a steered message is waiting for this run.
+fn steer_waiting() -> bool {
+    STEER_INBOX
+        .try_with(|inbox| !inbox.lock().unwrap_or_else(|e| e.into_inner()).is_empty())
+        .unwrap_or(false)
+}
+
+/// The model-facing form of a steered message: the user's words, marked as
+/// arriving mid-run so the model adjusts the work it is doing.
+pub fn steered_message(text: &str) -> String {
+    format!(
+        "[The user sent this while you were working; take it into account from here on]\n{text}"
+    )
+}
 
 #[cfg(feature = "eval")]
 tokio::task_local! {
@@ -4707,6 +4777,126 @@ mod tests {
             (answer.as_str(), bodies.len(), checks(&bodies)),
             ("Done.", 2, 0)
         );
+    }
+
+    /// A steered message reaches the model at the next request boundary, once, and in order;
+    /// one that arrives while the model writes its final answer keeps the run going.
+    #[tokio::test]
+    async fn steered_messages_reach_the_next_model_request() {
+        use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+        async fn run(first_calls_tool: bool) -> (String, Vec<serde_json::Value>, Vec<RunEvent>) {
+            let server = MockServer::start().await;
+            let inbox: SteerInbox = Arc::default();
+            let pushed = Arc::new(AtomicBool::new(false));
+            let (server_inbox, server_pushed) = (Arc::clone(&inbox), Arc::clone(&pushed));
+            Mock::given(method("POST"))
+                .respond_with(move |request: &Request| {
+                    let body: serde_json::Value = request.body_json().unwrap();
+                    let steered = body["messages"].as_array().unwrap().iter().any(|message| {
+                        message["content"].as_str().is_some_and(|text| text.ends_with("Use tabs."))
+                    });
+                    // The user steers while the first request is in flight.
+                    if !server_pushed.swap(true, Ordering::SeqCst) {
+                        let mut queue = server_inbox.lock().unwrap();
+                        queue.push_back("Use tabs.".into());
+                        queue.push_back("And keep it short.".into());
+                    }
+                    let reply = if steered {
+                        serde_json::json!({"content":"Adjusted."})
+                    } else if first_calls_tool {
+                        serde_json::json!({"content":"Looking.","tool_calls":[{"id":"l","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]})
+                    } else {
+                        serde_json::json!({"content":"Done early."})
+                    };
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":reply,"finish_reason":"stop"}]}))
+                })
+                .mount(&server)
+                .await;
+            let llm = crate::providers::resolve(
+                &crate::providers::ProviderConfig::new(
+                    crate::providers::ProviderKind::Go,
+                    "synthetic",
+                )
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+            )
+            .await
+            .unwrap();
+            let root = tempfile::tempdir().unwrap();
+            let tools =
+                crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook))
+                    .unwrap();
+            let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+            let policy = RunPolicy {
+                total_turns: 8,
+                context_token_budget: 24000,
+                recent_messages: 4,
+            };
+            let answer = with_steer_inbox(
+                Arc::clone(&inbox),
+                run_task_with_evidence(
+                    llm,
+                    tools,
+                    "Format the file.".into(),
+                    vec![],
+                    Arc::new(crate::tools::AllowAllHook),
+                    policy,
+                    tx,
+                    Arc::new(AtomicBool::new(false)),
+                    String::new(),
+                    None,
+                ),
+            )
+            .await
+            .unwrap();
+            let mut events = Vec::new();
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+            assert!(inbox.lock().unwrap().is_empty());
+            let bodies = server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .map(|request| request.body_json().unwrap())
+                .collect();
+            (answer, bodies, events)
+        }
+        for first_calls_tool in [true, false] {
+            let (answer, bodies, events) = run(first_calls_tool).await;
+            assert_eq!(answer, "Adjusted.");
+            assert_eq!(bodies.len(), 2);
+            let messages = bodies[1]["messages"].as_array().unwrap();
+            let steered: Vec<_> = messages
+                .iter()
+                .filter(|message| message["role"] == "user")
+                .filter_map(|message| message["content"].as_str())
+                .filter(|text| text.starts_with("[The user sent this while you were working"))
+                .collect();
+            assert_eq!(
+                steered,
+                [
+                    steered_message("Use tabs."),
+                    steered_message("And keep it short.")
+                ]
+            );
+            let seen: Vec<_> = events
+                .iter()
+                .filter_map(|event| match event {
+                    RunEvent::Steered { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(seen, ["Use tabs.", "And keep it short."]);
+            if !first_calls_tool {
+                // The early answer stays in the conversation the model sees.
+                assert!(messages
+                    .iter()
+                    .any(|message| message["role"] == "assistant"
+                        && message["content"] == "Done early."));
+            }
+        }
     }
 
     #[cfg(feature = "eval")]
