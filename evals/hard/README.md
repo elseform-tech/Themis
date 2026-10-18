@@ -34,9 +34,14 @@ python3 -m evals.hard compare before=/tmp/off.json after=/tmp/glm.json
 | Job | What the agent builds | How it is graded |
 | --- | --- | --- |
 | `threejs` | A three.js night city: `src/scene.js` exporting `createScene(THREE)` (40+ tagged buildings, 8+ heights, glowing windows, two lights, fog, an orbiting camera) and a full-window `index.html` | The grader's own page imports the agent's module in headless Chrome (WebGL on SwiftShader), counts buildings, heights, emissive materials, lights and fog, checks the camera moves, renders a frame and checks it reads as night with glowing windows; `index.html` must show a canvas without console errors |
-| `sheet` | A spreadsheet engine in Python: formulas with precedence, ranges, SUM/AVG/MIN/MAX/COUNT/IF/ABS/ROUND, error values (`#DIV/0!`, `#REF!`, `#CYCLE!`, `#NAME?`, `#VALUE!`, `#ERROR!`), recalculation, CSV and a command line, with its own tests | 36 hidden test methods in a sandboxed subprocess (no network, no access under `/Users`), plus the agent's own tests (at least 10, passing) |
+| `sheet` | A spreadsheet engine in Python: formulas with precedence, ranges, SUM/AVG/MIN/MAX/COUNT/IF/ABS/ROUND, error values (`#DIV/0!`, `#REF!`, `#CYCLE!`, `#NAME?`, `#VALUE!`, `#ERROR!`), recalculation, CSV and a command line, with its own tests | 36 hidden test methods in a sandboxed subprocess (no network, no access under `/Users`), plus the agent's own tests (at least 10, passing; the prompt asks for `unittest` tests, which is how they are run) |
 | `sheet-long` (run when named: `--job sheet-long`, best with `--memory normal`) | The `sheet` task, then three follow-up messages in the same chat that build on it: named references, text in formulas (string literals, CONCAT, LEN, UPPER, LOWER, IFERROR), and a command line with `eval --raw` and `set` | One hidden suite at the end with the 36 `sheet` tests and 9 for the follow-ups, so forgetting an earlier requirement fails too; reported per stage (engine, names, text, command line) as `extra.stages_passed`, plus the agent's own tests |
 | `codebase` (run when named) | Two reported bugs fixed and a `getlist` feature added in `iniconf`, a 1,400-line INI parser (Python's configparser, see `vendor/iniconf/NOTICE.md`) the agent did not write, keeping its 344-test suite passing, with tests added | The original suite (pristine, so editing the project's copy does not help) and 6 hidden tests, reported per stage (suite, percent bug, vars bug, getlist), plus the agent's own suite, which must pass and have grown |
+
+Since 2026-10-19 the `sheet` prompt (also used by `sheet-long`) asks for `unittest` tests that
+`python3 -m unittest discover -s tests` runs. Earlier results used "tests in tests/" only, and
+agents that wrote pytest-style tests were graded as having none ("no own tests"), so those
+`sheet` pass rates are not directly comparable with later ones.
 
 Benchmark audit 2026-10-18 (normal memory, 3 trials): glm-5.3-flash and muse-spark-1.3 passed `codebase` in every run, so it does not yet separate runtime arms; it needs harder planted bugs.
 

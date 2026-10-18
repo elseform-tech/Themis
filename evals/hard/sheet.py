@@ -11,8 +11,8 @@ import tempfile
 from evals.project.grade import sandboxed
 
 PROMPT = """Build a small spreadsheet engine as a Python package `sheet` in this project (standard
-library only, Python 3.10+), with tests in tests/. Work through it fully: it should all work when
-you are done.
+library only, Python 3.10+), with `unittest` tests in tests/ that `python3 -m unittest discover -s
+tests` runs. Work through it fully: it should all work when you are done.
 
 API (`from sheet import Sheet, SheetError`):
 - `Sheet()`; `sheet.set(ref, text)` sets a cell's text ('' clears it); `sheet.text(ref)` returns

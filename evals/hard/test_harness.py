@@ -157,6 +157,11 @@ class ThreejsGraderTest(unittest.TestCase):
 
 
 class TaskTest(unittest.TestCase):
+    def test_the_sheet_prompt_asks_for_tests_the_grader_can_run(self):
+        # The grader runs the agent's own tests with `unittest discover`; pytest-style tests count as none.
+        for job in ("sheet", "sheet-long"):
+            self.assertIn("python3 -m unittest discover -s\ntests", JOBS[job].PROMPT)
+
     def test_tasks_run_with_app_memory_or_squeezed_memory(self):
         for job in JOBS:
             self.assertEqual(make_task(job, "normal")["budget"], 200_000)
