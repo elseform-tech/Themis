@@ -149,10 +149,40 @@ pub(crate) fn replayed_tokens(message: &autoagents::llm::chat::ChatMessage) -> u
             .iter()
             .chain(&kept.blocks)
             .chain(&kept.items)
-            .map(|value| value.to_string().len())
+            .map(value_tokens)
             .sum();
-        (kept.text.len() + structured).div_ceil(4)
+        kept.text.len().div_ceil(4) + structured
     })
+}
+
+/// Fields that hold encrypted reasoning (Responses `encrypted_content`, Messages thinking
+/// `signature` and `redacted_thinking` `data`, encrypted `reasoning_details`).
+const ENCRYPTED_FIELDS: &[&str] = &["encrypted_content", "signature", "data"];
+
+/// Characters per token of encrypted reasoning. Providers bill a replayed blob as the
+/// reasoning tokens it holds, not its length: muse returned 10,983 characters for 1,167
+/// reasoning tokens, and replaying it cost 1,173 input tokens (about 9.4 per token).
+const ENCRYPTED_CHARS_PER_TOKEN: usize = 9;
+
+/// Estimated tokens of one reasoning entry: readable text at 4 characters per token,
+/// encrypted fields at `ENCRYPTED_CHARS_PER_TOKEN`, and a little for the structure.
+fn value_tokens(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.iter()
+                .map(|(key, field)| match field.as_str() {
+                    Some(text) if ENCRYPTED_FIELDS.contains(&key.as_str()) => {
+                        text.len().div_ceil(ENCRYPTED_CHARS_PER_TOKEN)
+                    }
+                    _ => value_tokens(field),
+                })
+                .sum::<usize>()
+                + 2
+        }
+        serde_json::Value::Array(items) => items.iter().map(value_tokens).sum(),
+        serde_json::Value::String(text) => text.len().div_ceil(4),
+        _ => 1,
+    }
 }
 
 /// Collects the reasoning of one streamed reply, whatever the wire protocol.
@@ -267,5 +297,23 @@ impl WireReasoning {
             reasoning: text.filter(|_| kept.text_as_reasoning),
             reasoning_details: Some(kept.details).filter(|details| !details.is_empty()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encrypted_reasoning_is_estimated_by_what_it_holds_not_its_length() {
+        // Measured on muse: 10,983 characters of encrypted_content for 1,167 tokens.
+        let blob = "A".repeat(10_983);
+        let item = serde_json::json!({"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":blob});
+        let tokens = value_tokens(&item);
+        assert!((1_100..=1_400).contains(&tokens), "{tokens}");
+        // Readable thinking text stays at 4 characters per token; its signature is cheap.
+        let block = serde_json::json!({"type":"thinking","thinking":"x".repeat(4_000),"signature":"s".repeat(900)});
+        let tokens = value_tokens(&block);
+        assert!((1_100..=1_120).contains(&tokens), "{tokens}");
     }
 }
