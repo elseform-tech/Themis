@@ -56,16 +56,24 @@ def run_app_task(binary, task, model, timeout=5400, keep=None):
                     json.dumps({"threadId": thread, "mode": "yolo"}))
         if mode.returncode != 0:
             return None, f"approval mode: {mode.stderr[-200:]}"
-        try:
-            sent = _cli(binary, data, env, "thread", "send", thread, task["prompt"], "--json", timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return None, "timeout"
-        events = []
-        for line in sent.stdout.splitlines():
+        turns = []
+        for prompt in [task["prompt"], *task.get("followups", [])]:
             try:
-                events.append(json.loads(line)["payload"]["event"])
-            except (ValueError, KeyError, TypeError):
-                continue
+                sent = _cli(binary, data, env, "thread", "send", thread, prompt, "--json", timeout=timeout)
+            except subprocess.TimeoutExpired:
+                return None, "timeout"
+            turn = []
+            for line in sent.stdout.splitlines():
+                try:
+                    turn.append(json.loads(line)["payload"]["event"])
+                except (ValueError, KeyError, TypeError):
+                    continue
+            turns.append(turn)
+        events = [event for turn in turns for event in turn]
+        # Each turn's answer and tool calls, for checks of follow-ups.
+        turn_reports = [{"answer": next((e.get("result", "") for e in reversed(turn) if e.get("kind") == "finished"), ""),
+                         "calls": [{"tool": e.get("tool"), "summary": e.get("summary", "")}
+                                   for e in turn if e.get("kind") == "tool_started"]} for turn in turns]
         kinds = [event.get("kind") for event in events]
         end = next((e for e in reversed(events) if e.get("kind") in ("finished", "failed", "incomplete")), None)
         if end is None:
@@ -73,12 +81,13 @@ def run_app_task(binary, task, model, timeout=5400, keep=None):
         error = end.get("error") if end["kind"] != "finished" else None
         if error and error.startswith("LLM request failed") and kinds.count("tool_started") == 0:
             return None, f"provider: {error[:160]}"
-        passed, why = task["check"](project, {"answer": end.get("result", "")})
+        passed, why = task["check"](project, {"answer": end.get("result", ""), "turns": turn_reports})
         row = {"task": task["name"], "tool": task["tool"], "passed": passed and end["kind"] == "finished",
                "why": why if end["kind"] == "finished" else f"{end['kind']}: {(error or end.get('result', ''))[:160]}; {why}",
                "answer": (end.get("result") or "")[:300], "error_text": (error or "")[:300],
                "calls": [{"tool": e.get("tool")} for e in events if e.get("kind") == "tool_started"],
                "compactions": kinds.count("context_compacting"),
+               "turn_calls": [len(turn["calls"]) for turn in turn_reports],
                "latency_ms": int((time.monotonic() - started) * 1000), "via": "app"}
         return row, None
     finally:

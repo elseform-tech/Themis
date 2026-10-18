@@ -19,14 +19,15 @@ import time
 
 from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task_retrying
 
-from . import sheet, threejs
+from . import followup, sheet, threejs
 from .app import run_app_task, themis_binary
 
 RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 # The app's defaults, and a small budget that forces many checkpoints mid-task.
 MEMORY = {"normal": {"budget": 200_000, "recent_messages": 20},
           "squeezed": {"budget": 32_000, "recent_messages": 8}}
-JOBS = {"threejs": threejs, "sheet": sheet}
+JOBS = {"threejs": threejs, "sheet": sheet,
+        "followup-sum": followup.SUM, "followup-tests": followup.TESTS, "followup-read": followup.READ}
 
 
 def make_task(job, memory, notes=True):
@@ -34,6 +35,7 @@ def make_task(job, memory, notes=True):
     return {"name": f"{job}-{memory}" + ("" if notes else "-no-notes"), "tool": job, "job": job, "memory": memory,
             "notes": notes,
             "setup": module.setup, "check": module.check, "prompt": module.PROMPT,
+            "followups": getattr(module, "FOLLOWUPS", []),
             "evidence": ".themis/context/eval-thread", "offer_notes": notes, "timeout": 5400,
             # YOLO-style approvals as a developer would use them; the OS sandbox still applies.
             "allow_all": True, **MEMORY[memory]}
@@ -187,7 +189,7 @@ def main(argv=None):
         with open(args.result, encoding="utf-8") as handle:
             print(markdown(json.load(handle)))
         return 0
-    args.job = args.job or sorted(JOBS)
+    args.job = args.job or ["sheet", "threejs"]  # the follow-up jobs run when named
     return run(args)
 
 
