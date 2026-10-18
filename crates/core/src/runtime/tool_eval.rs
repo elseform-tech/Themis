@@ -49,6 +49,8 @@ pub struct TurnRecord {
     pub loop_warnings: usize,
     /// Open-task checks sent before this turn's answer was accepted.
     pub finish_checks: usize,
+    /// Spec checks sent before this turn's answer was accepted (at most one).
+    pub spec_checks: u64,
 }
 
 /// Result of one tool-use task.
@@ -100,7 +102,7 @@ pub struct ToolTaskOptions {
     /// applies). Off: destructive actions are refused, as by a cautious person in Custom mode.
     pub allow_all: bool,
     /// Ablation: runtime nudges to switch off (`notes_reminder`, `finish_checks`, `loop_warning`,
-    /// `repeat_receipt`).
+    /// `repeat_receipt`, `spec_check`).
     pub nudges_off: Vec<String>,
     /// Ablation: tools withheld from the agent (for example the file tools, leaving the shell).
     pub hide_tools: Vec<String>,
@@ -240,6 +242,9 @@ pub async fn run_tool_task(
             calls: run.calls.len(),
             loop_warnings: run.loop_warnings,
             finish_checks: run.finish_checks,
+            spec_checks: run.metrics["activities"]["spec_checks"]
+                .as_u64()
+                .unwrap_or(0),
         });
         report.loop_warnings += run.loop_warnings;
         report.finished &= run.error.is_none() && !run.answer.trim().is_empty();

@@ -162,8 +162,8 @@ async fn forced_checkpoint_resumes_task_at_24k_200k_and_256k_without_replaying_w
             .collect::<Vec<_>>();
         assert_eq!(
             ordinary_packets.len(),
-            3,
-            "one discarded attempt, one useful write, one completion"
+            4,
+            "one discarded attempt, one useful write, one completion, one spec check"
         );
         for packet in &ordinary_packets {
             let system = packet["messages"][0]["content"].as_str().unwrap();
@@ -414,7 +414,8 @@ async fn automatic_summary_retries_do_not_repeat_a_completed_write() {
         std::fs::read_to_string(project.path().join("receipt.txt")).unwrap(),
         "once\n"
     );
-    assert_eq!(ordinary.load(Ordering::SeqCst), 2);
+    // The write, then the completion and its spec check.
+    assert_eq!(ordinary.load(Ordering::SeqCst), 3);
     assert_eq!(summaries.load(Ordering::SeqCst), 3);
     assert!(
         summaries_follow_write.load(Ordering::SeqCst),
@@ -2125,8 +2126,8 @@ async fn context_overflow_compacts_once_and_retries_without_replaying_tools() {
     );
     assert!(run.summary_requests >= 1);
     assert_eq!(
-        run.ordinary_requests, 3,
-        "overflowed request, retry, final answer"
+        run.ordinary_requests, 4,
+        "overflowed request, retry, final answer, spec check"
     );
     let writes = run
         .events

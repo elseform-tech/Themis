@@ -119,8 +119,8 @@ async fn cli_run_reports_calibration_and_recovers_from_one_context_overflow() {
     assert_eq!(terminal["kind"], "finished", "{terminal}");
     assert_eq!(
         ordinary.load(Ordering::SeqCst),
-        3,
-        "overflow, one retry, final answer"
+        4,
+        "overflow, one retry, final answer, spec check"
     );
     assert_eq!(
         std::fs::read_to_string(root_path.join("hello.txt")).unwrap(),

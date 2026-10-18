@@ -865,7 +865,8 @@ async fn cli_answer_retries_empty_and_transient_responses_without_replaying_comp
     );
     {
         let times = times.lock().unwrap();
-        assert_eq!(times.len(), 6);
+        // The last request is the spec check after the completed write.
+        assert_eq!(times.len(), 7);
         assert!(
             times[2].duration_since(times[1]) >= std::time::Duration::from_secs(1),
             "Empty output must recover before claiming completion"

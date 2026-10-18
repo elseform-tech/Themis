@@ -175,7 +175,8 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
         })
         .collect::<Vec<_>>();
     let kinds = event_kinds(&run.events);
-    // The final turn emits its text as `assistant_text`, then `finished`.
+    // The first answer is shown, then (the run changed a file) a paragraph break and the
+    // answer after the spec check, then `finished`.
     assert_eq!(
         kinds,
         vec![
@@ -184,14 +185,16 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
             "approval_decided",
             "tool_finished",
             "assistant_text",
+            "assistant_text",
+            "assistant_text",
             "files_changed",
             "finished",
         ],
         "{kinds:?}"
     );
     // The turn reports the file it wrote, just before it finishes.
-    let ThreadEvent::FilesChanged { files } = events[5] else {
-        panic!("expected files_changed, got {:?}", events[5]);
+    let ThreadEvent::FilesChanged { files } = events[7] else {
+        panic!("expected files_changed, got {:?}", events[7]);
     };
     assert_eq!(
         files
