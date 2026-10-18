@@ -83,10 +83,3 @@ path = "fuzz_targets/shell_wrapped.rs"
 test = false
 doc = false
 bench = false
-
-[[bin]]
-name = "notes_file"
-path = "fuzz_targets/notes_file.rs"
-test = false
-doc = false
-bench = false

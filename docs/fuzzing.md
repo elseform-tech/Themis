@@ -40,7 +40,6 @@ internal parsers through the off-by-default `fuzzing` feature of
 | `sandbox_config` | User and project `runtime.jsonc` text plus command output: resolving never panics, a project never disables the sandbox, changes the backend, allows a blocked network or adds writable paths; no path reaches the Seatbelt profile text; denial scanning stays bounded |
 | `social_request` | UI message text for greeting/thanks detection and recall terms: bounded output, a non-social word always makes a task |
 | `patch_apply` | Model-written `apply_patch` hunks against file text: never panics, applied lines come from the file or the patch |
-| `notes_file` | A notes file from the project plus a model-written `notes` update: parsing and applying never panic, the rendered block stays within 8 KiB and has one frame end |
 | `shell_wrapped` | Shell argv, often behind `sh -c`/`sudo`/`env`/`eval`/`cmd /c`: reading wrapped commands never panics, stays bounded and yields no empty commands |
 
 ```sh

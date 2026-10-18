@@ -33,7 +33,8 @@ in the app.
 | `background_task` | start a server, fetch its page, stop it |
 | `git` | which file changed; latest commit subject; a refused `git reset --hard` that must stay undone, with no workaround and the user told |
 | `recall` | a detail from compacted history |
-| `notes` | a three-file job that asks for notes (no open task lines at the end); a four-turn chat that does part of a job, answers an unrelated question, reports what is left without doing it, then finishes |
+| progress | a four-turn chat that does part of a job, answers an unrelated question, reports what is left without doing it, then finishes |
+| long job | ten stories summarised into one report across context checkpoints |
 
 ## Metrics
 

@@ -1304,7 +1304,7 @@ async fn cli_recent_script_receipt_survives_stale_summary_without_replaying_edit
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_notes_survive_checkpoint_and_budget_events_reach_clients() {
+async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::create_dir(project.path().join(".themis")).unwrap();
@@ -1328,10 +1328,8 @@ async fn cli_notes_survive_checkpoint_and_budget_events_reach_clients() {
         let shell = |id: String, fill: char| json!({"id":id,"type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",format!("print('{fill}'*11000)")],"cwd":""}).to_string()}});
         if index == 0 {
             let offered = body["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "notes");
-            assert!(offered, "production runs offer the notes tool");
-            let notes = json!({"set":[{"key":"goal","text":"write and verify result.txt"},{"key":"write","text":"Write result.txt","status":"done"},{"key":"verify","text":"Verify result.txt","status":"done"}]}).to_string();
-            let mut tool_calls = vec![json!({"id":"notes","type":"function","function":{"name":"notes","arguments":notes}})];
-            tool_calls.extend(['a', 'b', 'c'].map(|fill| shell(format!("first-{fill}"), fill)));
+            assert!(!offered, "the notes tool is retired");
+            let tool_calls: Vec<Value> = ['a', 'b', 'c'].iter().map(|fill| shell(format!("first-{fill}"), *fill)).collect();
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Planned; gathering output.","tool_calls":tool_calls},"finish_reason":"tool_calls"}]}));
         }
         let context = messages.iter().filter_map(|m| m["content"].as_str()).collect::<Vec<_>>().join("\n");
@@ -1340,9 +1338,8 @@ async fn cli_notes_survive_checkpoint_and_budget_events_reach_clients() {
             let tool_calls: Vec<Value> = fills[(index - 1) * 3 % 15..][..3].iter().map(|fill| shell(format!("more-{index}-{fill}"), *fill)).collect();
             return ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"More output.","tool_calls":tool_calls},"finish_reason":"tool_calls"}]}));
         }
-        assert!(context.contains("Saved notes (written by you"), "notes survive the checkpoint");
-        assert!(context.contains("- verify [done]: Verify result.txt"));
-        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Notes survived."},"finish_reason":"stop"}]}))
+        assert!(context.contains("Goal/constraints: write and verify result.txt"), "the goal survives the checkpoint");
+        ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"Goal survived."},"finish_reason":"stop"}]}))
     }).mount(&provider).await;
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
@@ -1391,7 +1388,7 @@ async fn cli_notes_survive_checkpoint_and_budget_events_reach_clients() {
     .await
     .unwrap();
     assert_eq!(terminal["kind"], "finished", "{terminal}");
-    assert_eq!(terminal["result"], "Notes survived.");
+    assert_eq!(terminal["result"], "Goal survived.");
     assert_eq!(compactions, 1);
     let requests = calls.load(std::sync::atomic::Ordering::SeqCst);
     assert!(requests >= 3);

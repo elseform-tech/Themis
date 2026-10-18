@@ -1,8 +1,7 @@
 //! Shared server + `themis` CLI journeys for long jobs: an oversized tool batch runs what fits
-//! and the run continues, unchanged re-reads are warned and never end the run, notes carry
-//! progress into later messages, and open task lines send the agent back to work (again only
-//! after it worked since the last check). The provider is scripted: this checks wiring, not
-//! model quality.
+//! and the run continues, unchanged re-reads are warned and never end the run, and a run that
+//! changed files is checked against the request once before it ends. The provider is
+//! scripted: this checks wiring, not model quality.
 
 use serde_json::{json, Value};
 use std::{
@@ -189,19 +188,13 @@ async fn cli_long_job_survives_oversized_batches_and_one_loop_streak() {
     serving.abort();
 }
 
-/// Notes kept in one message are shown in the next (which carries no tool history), live in
-/// the chat's evidence directory, and an early finish with open task lines is checked once,
-/// including in a later message answered without any tool call.
+/// A message that changes a file is checked against the request once before its answer is
+/// accepted (the chat gets the checked answer); a later question that changes nothing is
+/// not. No `notes` tool is offered.
 #[tokio::test(flavor = "multi_thread")]
-async fn cli_notes_carry_progress_into_later_messages() {
+async fn cli_spec_check_runs_once_after_a_change_and_no_notes_tool_is_offered() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
-    std::fs::write(
-        project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":64000,"recent_messages":8,"total_turns":10}"#,
-    )
-    .unwrap();
     let provider = MockServer::start().await;
     let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
     let sink = requests.clone();
@@ -213,19 +206,16 @@ async fn cli_notes_carry_progress_into_later_messages() {
             let last = messages.last().unwrap();
             let text = last["content"].as_str().unwrap_or_default();
             if text.contains("[Runtime check, not from the user]") {
-                return reply(json!({"content":"Part one is done; part two is still open."}));
+                return reply(json!({"content":"Checked: version.txt holds 2.0.0."}));
             }
             if last["role"] == "tool" {
-                return reply(json!({"content":"Part one is done."}));
+                return reply(json!({"content":"Wrote the version."}));
             }
-            if text.contains("Start the release") {
-                let notes = json!({"set":[
-                    {"key":"goal","text":"release v2: changelog, then tag"},
-                    {"key":"changelog","text":"written, 14 entries","status":"done"},
-                    {"key":"tag","text":"tag v2.0.0 after review","status":"pending"}]});
-                return reply(json!({"tool_calls":[{"id":"n1","type":"function","function":{"name":"notes","arguments":notes.to_string()}}]}));
+            if text.contains("Set the version") {
+                let write = json!({"file_path":"version.txt","content":"2.0.0\n"});
+                return reply(json!({"tool_calls":[{"id":"w1","type":"function","function":{"name":"write_file","arguments":write.to_string()}}]}));
             }
-            reply(json!({"content":"Changelog done (14 entries); tagging is still pending."}))
+            reply(json!({"content":"It is 2.0.0."}))
         })
         .mount(&provider)
         .await;
@@ -245,125 +235,55 @@ async fn cli_notes_carry_progress_into_later_messages() {
         json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
     );
     let id = thread["id"].as_str().unwrap().to_owned();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
 
-    let done = send(data.path(), &mut events, &id, "Start the release").await;
+    let done = send(data.path(), &mut events, &id, "Set the version to 2.0.0").await;
     assert_eq!(done["kind"], "finished", "{done}");
     assert_eq!(
         done["result"].as_str().unwrap(),
-        "Part one is done; part two is still open.",
-        "the open task line got one runtime check before the answer"
+        "Checked: version.txt holds 2.0.0."
     );
-    let saved = std::fs::read_to_string(
-        project
-            .path()
-            .join(".themis/context")
-            .join(&id)
-            .join("notes.json"),
-    )
-    .unwrap();
-    assert!(saved.contains("tag v2.0.0 after review"), "{saved}");
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("version.txt")).unwrap(),
+        "2.0.0\n"
+    );
+    let first: Vec<Value> = requests.lock().unwrap().clone();
+    // The write, the first answer, then the one spec check.
+    assert_eq!(first.len(), 3);
+    let checks = first
+        .iter()
+        .filter(|body| {
+            body["messages"].as_array().unwrap().last().unwrap()["content"]
+                .as_str()
+                .is_some_and(|text| {
+                    text.starts_with("[Runtime check, not from the user] Before you finish")
+                })
+        })
+        .count();
+    assert_eq!(checks, 1);
+    for body in &first {
+        let tools: Vec<&str> = body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["function"]["name"].as_str())
+            .collect();
+        assert!(!tools.contains(&"notes"), "{tools:?}");
+        assert!(!body["messages"].to_string().contains("notes tool"));
+    }
 
-    let before = requests.lock().unwrap().len();
-    let progress = send(
-        data.path(),
-        &mut events,
-        &id,
-        "Where are we with the release?",
-    )
-    .await;
-    assert_eq!(progress["kind"], "finished", "{progress}");
-    let wire =
-        serde_json::to_string(&requests.lock().unwrap().last().unwrap()["messages"]).unwrap();
-    assert!(
-        wire.contains("Saved notes (written by you with the notes tool"),
-        "{wire}"
-    );
-    assert!(wire.contains("- goal: release v2: changelog, then tag"));
-    assert!(wire.contains("- tag [pending]: tag v2.0.0 after review"));
-    // Answering with no tool call while a task line is open gets one idle check, which lets a
-    // question be answered as is; the answer after it is accepted.
+    let answer = send(data.path(), &mut events, &id, "Which version is it?").await;
+    assert_eq!(answer["kind"], "finished", "{answer}");
+    assert_eq!(answer["result"].as_str().unwrap(), "It is 2.0.0.");
     assert_eq!(
         requests.lock().unwrap().len(),
-        before + 2,
-        "one idle check, then the answer"
+        4,
+        "no check without a change"
     );
-    assert!(wire.contains("You answered without using any tools") && wire.contains("Open: tag"));
-    assert_eq!(
-        progress["result"].as_str().unwrap(),
-        "Part one is done; part two is still open."
-    );
-    serving.abort();
-}
-
-/// A model that keeps narrating with open task lines is sent back after each stretch of real
-/// work (at most three times); narration right after a check is accepted as the answer.
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_open_task_checks_repeat_only_after_work() {
-    let data = tempfile::tempdir().unwrap();
-    let project = tempfile::tempdir().unwrap();
-    std::fs::write(project.path().join("a.txt"), "A").unwrap();
-    let provider = MockServer::start().await;
-    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
-    let sink = requests.clone();
-    let notes = json!({"set":[{"key":"goal","text":"ship it"},
-                              {"key":"step","text":"not done","status":"pending"}]});
-    let script = [
-        json!({"tool_calls":[{"id":"n1","type":"function","function":{"name":"notes","arguments":notes.to_string()}}]}),
-        json!({"content":"Let me continue."}),
-        json!({"tool_calls":[read_call("r1", "a.txt")]}),
-        json!({"content":"Now I will finish."}),
-        json!({"content":"Stopping; the step is still open."}),
-    ];
-    Mock::given(method("POST"))
-        .respond_with(move |request: &Request| {
-            let body: Value = request.body_json().unwrap();
-            let mut seen = sink.lock().unwrap();
-            seen.push(body);
-            reply(script[(seen.len() - 1).min(script.len() - 1)].clone())
-        })
-        .mount(&provider)
-        .await;
-    let state = AppState::new_for_test(data.path().join("settings.json"));
-    state
-        .set_secret("go".into(), "test-key".into())
-        .await
-        .unwrap();
-    state.set_go_base_url_override(Some(provider.uri()));
-    let server = Server::bind(state, data.path()).await.unwrap();
-    let serving = tokio::spawn(server.run());
-    let client = Client::new(data.path().into());
-    let mut events = client.subscribe().await.unwrap();
-    let thread = cli(
-        data.path(),
-        "create_thread",
-        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
-    );
-    let id = thread["id"].as_str().unwrap().to_owned();
-    let done = send(data.path(), &mut events, &id, "Ship it").await;
-    assert_eq!(done["kind"], "finished", "{done}");
-    assert_eq!(
-        done["result"].as_str().unwrap(),
-        "Stopping; the step is still open."
-    );
-    let seen = requests.lock().unwrap();
-    assert_eq!(
-        seen.len(),
-        5,
-        "a check after the notes, one after the read, then the answer"
-    );
-    let checks: Vec<usize> = seen
-        .iter()
-        .map(|body| {
-            serde_json::to_string(&body["messages"])
-                .unwrap()
-                .matches("[Runtime check, not from the user]")
-                .count()
-        })
-        .collect();
-    assert_eq!(checks, vec![0, 0, 1, 1, 2]);
-    let system = seen[0]["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("a reply without tool calls ends your turn"));
-    assert!(!system.contains("private reasoning"));
     serving.abort();
 }
 

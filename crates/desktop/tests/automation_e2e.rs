@@ -199,8 +199,7 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
             "save_skill",
             "manage_integrations",
             "manage_automations",
-            "recall",
-            "notes"
+            "recall"
         ]
     );
     // ... and the skill instructions reached the model in the prompt.
