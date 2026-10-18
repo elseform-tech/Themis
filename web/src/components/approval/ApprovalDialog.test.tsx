@@ -87,6 +87,14 @@ describe("ApprovalDialog", () => {
     expect(onDecide).toHaveBeenCalledWith("deny");
   });
 
+  it("ignores a click outside the dialog: only an explicit choice decides", () => {
+    const { onDecide } = setup();
+    const overlay = document.querySelector(".themis-dialog-overlay")!;
+    fireEvent.mouseDown(overlay);
+    expect(onDecide).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
   it("renders nothing when closed", () => {
     const onDecide = vi.fn();
     render(<ApprovalDialog request={REQUEST} open={false} onDecide={onDecide} />);

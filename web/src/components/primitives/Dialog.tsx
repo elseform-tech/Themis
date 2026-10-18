@@ -9,10 +9,12 @@ export interface DialogProps {
   label?: string;
   /** Extra panel class, e.g. for a borderless palette. */
   className?: string;
+  /** A click outside the panel closes it (default). Off where closing is a decision. */
+  closeOnOutsideClick?: boolean;
   children: ReactNode;
 }
 
-export function Dialog({ open, onClose, title, label, className, children }: DialogProps) {
+export function Dialog({ open, onClose, title, label, className, closeOnOutsideClick = true, children }: DialogProps) {
   const focusableSelector = "button:not(:disabled), input:not(:disabled):not([type='hidden']), select:not(:disabled), textarea:not(:disabled), summary, [href], [contenteditable='true'], [tabindex]:not([tabindex='-1'])";
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -52,7 +54,7 @@ export function Dialog({ open, onClose, title, label, className, children }: Dia
     <div
       className="themis-dialog-overlay"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (closeOnOutsideClick && event.target === event.currentTarget) onClose();
       }}
     >
       <div
