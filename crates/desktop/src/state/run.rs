@@ -329,6 +329,12 @@ impl AppState {
                 return Err("Duplicate plugin tool identity".into());
             }
         }
+        tools.push(Box::new(super::goal_tool::GoalTool {
+            state: self.clone(),
+            sink: Arc::clone(sink),
+            thread_id: thread_id.to_owned(),
+            run: check_approval.clone(),
+        }));
         tools.extend(self.integration_management_tools_for_run(
             approvals.clone(),
             snapshot.work_root.clone(),
@@ -379,6 +385,14 @@ impl AppState {
                 },
             )));
         }
+        let steer_inbox = self
+            .inner
+            .steer_inboxes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+            .cloned()
+            .unwrap_or_default();
         let state = self.clone();
         let thread_id = thread_id.to_owned();
         let run_id = run_id.to_owned();
@@ -491,6 +505,16 @@ impl AppState {
                             .await;
                     }
                     pump_sink.emit_thread_event(&envelope);
+                    if terminal {
+                        // The next queued message or goal turn starts after
+                        // observers saw this run end.
+                        pump_state.spawn_after_run(
+                            Arc::clone(&pump_sink),
+                            pump_thread_id.clone(),
+                            pump_run.clone(),
+                            envelope.event,
+                        );
+                    }
                 }
                 if !pending_text.is_empty() {
                     let envelope = ThreadEventEnvelope {
@@ -552,7 +576,9 @@ impl AppState {
                                                         return Err(error);
                                                     }
                                                 }
-                                                run_task_with_evidence(
+                                                // Boxed: the run's future is large, and the
+                                                // steer scope must not copy it on the stack.
+                                                themis_core::runtime::with_steer_inbox(steer_inbox, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 if yolo {
                                                     tools
@@ -569,7 +595,7 @@ impl AppState {
                                                 stopped,
                                                 skill_catalog,
                                                 Some(evidence_directory),
-                                            ).await
+                                            ))).await
                                             }))
                                         },
                                     ),
@@ -606,6 +632,7 @@ impl AppState {
                     state.record_error("save_thread_event", error);
                 }
                 sink.emit_thread_event(&envelope);
+                state.spawn_after_run(sink, thread_id, run_id, envelope.event);
             }
         });
         Ok(())
@@ -615,6 +642,7 @@ impl AppState {
 impl AppState {
     /// Marks a run idle, releases its concurrency permit, and persists.
     pub(super) async fn finish_run(&self, thread_id: &str) {
+        self.close_steer_inbox(thread_id);
         self.inner
             .stop_flags
             .lock()

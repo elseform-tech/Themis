@@ -17,7 +17,7 @@ use super::AppState;
 pub(super) const CHAT_GRANTS_DIR: &str = "chat_grants";
 
 /// Chat ids are generated UUIDs; anything else never maps to a file.
-fn safe_chat_id(id: &str) -> bool {
+pub(super) fn safe_chat_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
         && id

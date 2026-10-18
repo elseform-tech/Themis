@@ -199,6 +199,9 @@ impl AppState {
         reasoning_effort: Option<String>,
         attachments: Vec<String>,
     ) -> Result<RunHandle, String> {
+        if themis_core::goal::parse_goal_command(&text).is_some_and(|goal| goal.is_empty()) {
+            return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
+        }
         let automation_run = self
             .inner
             .automation_runs
@@ -426,6 +429,7 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(thread_id.clone(), Arc::new(AtomicBool::new(false)));
+            self.open_steer_inbox(&thread_id);
             if !record.titled {
                 record.title = title_from_message(&text);
                 record.titled = true;
@@ -458,6 +462,15 @@ impl AppState {
                 skill_catalog,
                 short_reply: themis_core::runtime::is_short_reply(&text, !attachments.is_empty()),
                 automation_run,
+            }
+        };
+        // `/goal` sets the goal, a reply resumes a goal waiting for the user;
+        // every run while a goal runs is told about it.
+        let resolved_text = match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id) {
+            Ok(context) => format!("{resolved_text}{context}"),
+            Err(error) => {
+                self.finish_run(&thread_id).await;
+                return Err(error);
             }
         };
         if let Err(error) = self.inner.transcript.append_user_with_attachments(
@@ -510,6 +523,9 @@ impl AppState {
             }
             self.finish_run(&thread_id).await;
             sink.emit_thread_event(&failed);
+            // A run that never started still lets the queue move on; a goal
+            // turn's caller handles its own failure.
+            self.spawn_dispatch_queue(sink, thread_id);
             return Err(error);
         }
         Ok(RunHandle { run_id })
@@ -581,12 +597,15 @@ impl AppState {
         };
         drop(record);
         self.forget_chat_grants(std::slice::from_ref(&thread_id));
+        self.forget_queues(std::slice::from_ref(&thread_id));
+        self.forget_goals(std::slice::from_ref(&thread_id));
         self.forget_background_tasks(&[thread_id]).await;
         self.persist_registry().await;
         Ok(())
     }
 
-    /// Switches a thread's provider/model (rejected while a run is active).
+    /// Switches a thread's provider/model. During a run the switch applies from
+    /// the next turn: the running turn keeps the model it started with.
     pub async fn set_provider(
         &self,
         thread_id: String,
@@ -601,11 +620,6 @@ impl AppState {
             let record = threads
                 .get_mut(&thread_id)
                 .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
-            if record.running {
-                return Err(format!(
-                    "thread '{thread_id}' is busy: cannot switch provider mid-run"
-                ));
-            }
             record.provider = provider;
             record.model = model.unwrap_or_default();
             record.reasoning_effort = None;
@@ -615,7 +629,8 @@ impl AppState {
         Ok(info)
     }
 
-    /// Persists the thread's selected effort for manual and scheduled runs.
+    /// Persists the thread's selected effort for manual and scheduled runs; a
+    /// change during a run applies from the next turn.
     pub async fn set_thread_effort(
         &self,
         thread_id: String,
@@ -630,11 +645,6 @@ impl AppState {
             let record = threads
                 .get_mut(&thread_id)
                 .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
-            if record.running {
-                return Err(format!(
-                    "thread '{thread_id}' is busy: cannot change effort mid-run"
-                ));
-            }
             if let Some(value) = effort.as_deref() {
                 let catalog = self.inner.go_catalog.read().await;
                 if !catalog.iter().any(|model| {

@@ -211,6 +211,104 @@ pub enum ThreadEvent {
     /// A background task of this chat started, finished or was stopped.
     /// Sent outside any run (`run_id` is empty); clients refresh the task feed.
     BackgroundTasksChanged,
+    /// A message the user steered into this run reached the model.
+    Steered {
+        text: String,
+    },
+    /// The server started this run with a user message from the queue, or a
+    /// goal turn. Live only: the history already holds the message.
+    UserMessage {
+        text: String,
+        #[serde(default)]
+        attachments: Vec<String>,
+    },
+    /// The chat's queue changed. Live only; `run_id` is empty.
+    QueueChanged {
+        queue: Vec<QueuedMessage>,
+    },
+    /// The chat's goal changed. Live only; `run_id` is empty.
+    GoalChanged {
+        goal: Option<Goal>,
+    },
+    /// What the goal check (or the goal supervisor) concluded after a turn.
+    GoalNote {
+        outcome: GoalNoteKind,
+        reason: String,
+    },
+}
+
+/// A message waiting in a chat's queue for the current run to end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedMessage {
+    pub id: String,
+    pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    /// Being edited: the queue skips it until it is saved.
+    #[serde(default)]
+    pub held: bool,
+}
+
+/// Where a chat's goal stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalStatus {
+    /// Turns keep starting until the goal is reached.
+    Running,
+    /// Paused by the user; Resume continues.
+    Paused,
+    /// Waiting for the user's answer; their reply resumes it.
+    Waiting,
+    /// Genuinely stuck (no progress, or unreachable as written).
+    Stuck,
+    /// The model quota is used up; it retries on its own.
+    Quota,
+    /// The goal check found it reached.
+    Reached,
+}
+
+/// A chat's goal (`goals/<chat id>.json` in the app data dir).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Goal {
+    pub text: String,
+    pub status: GoalStatus,
+    /// Why it paused, got stuck or was reached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Unix milliseconds.
+    pub started_at: i64,
+    /// Running time already counted, in milliseconds.
+    #[serde(default)]
+    pub active_ms: u64,
+    /// Unix milliseconds since the goal last started running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_since: Option<i64>,
+    /// Goal turns started so far.
+    #[serde(default)]
+    pub turns: u32,
+    /// Consecutive turns without progress.
+    #[serde(default)]
+    pub stalls: u32,
+    /// The last measured progress the check reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<String>,
+    /// Consecutive failed turns (sets the retry wait).
+    #[serde(default)]
+    pub failures: u32,
+}
+
+/// The kind of a goal note in the chat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalNoteKind {
+    Reached,
+    NotYet,
+    Stuck,
+    Waiting,
+    Quota,
+    Failed,
 }
 
 impl From<RunEvent> for ThreadEvent {
@@ -240,6 +338,7 @@ impl From<RunEvent> for ThreadEvent {
                 model: None,
             },
             RunEvent::Failed { error } => Self::Failed { error },
+            RunEvent::Steered { text } => Self::Steered { text },
         }
     }
 }

@@ -11,6 +11,8 @@ mod background;
 mod changes;
 mod chat_grants;
 pub(crate) mod configuration;
+mod goal;
+mod goal_tool;
 mod integration_tools;
 mod mcp;
 mod mcp_consent;
@@ -18,6 +20,7 @@ mod permissions;
 mod plugins;
 mod preferences;
 mod projects;
+mod queue;
 mod reviews;
 mod run;
 mod skills;
@@ -248,6 +251,22 @@ struct AppStateInner {
     background: Arc<themis_core::tools::background::BackgroundRegistry>,
     /// Recent command failures, oldest-first, capped at [`MAX_RECENT_ERRORS`].
     recent_errors: std::sync::Mutex<VecDeque<DiagnosticsError>>,
+    /// Per-chat prompt queues (`queues/<chat id>.json`), loaded on first use.
+    queues: std::sync::Mutex<HashMap<String, Vec<crate::types::QueuedMessage>>>,
+    queues_dir: PathBuf,
+    /// Serializes queue changes, so a message is sent or edited exactly once.
+    queue_lock: std::sync::Mutex<()>,
+    /// Steer inboxes of running runs, by chat.
+    steer_inboxes: std::sync::Mutex<HashMap<String, themis_core::runtime::SteerInbox>>,
+    /// Per-chat goals (`goals/<chat id>.json`), loaded on first use.
+    goals: std::sync::Mutex<HashMap<String, Option<crate::types::Goal>>>,
+    goals_dir: PathBuf,
+    /// Serializes goal changes.
+    goal_lock: std::sync::Mutex<()>,
+    /// Runs started as goal turns (checked when they end).
+    goal_turn_runs: std::sync::Mutex<HashSet<String>>,
+    /// Bumped whenever a waiting goal timer must no longer fire.
+    goal_generations: std::sync::Mutex<HashMap<String, u64>>,
 }
 
 /// Shared application state (cheap to clone; everything lives behind one `Arc`).
@@ -403,6 +422,15 @@ impl AppState {
                     themis_core::tools::background::storage_dir(&app_dir),
                 )),
                 recent_errors: std::sync::Mutex::new(VecDeque::new()),
+                queues: std::sync::Mutex::new(HashMap::new()),
+                queues_dir: app_dir.join(queue::QUEUES_DIR),
+                queue_lock: std::sync::Mutex::new(()),
+                steer_inboxes: std::sync::Mutex::new(HashMap::new()),
+                goals: std::sync::Mutex::new(HashMap::new()),
+                goals_dir: app_dir.join(goal::GOALS_DIR),
+                goal_lock: std::sync::Mutex::new(()),
+                goal_turn_runs: std::sync::Mutex::new(HashSet::new()),
+                goal_generations: std::sync::Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -428,6 +456,12 @@ impl AppState {
     /// wires the Tauri sink right after construction).
     pub fn set_scheduler_sink(&self, sink: Arc<dyn EventSink>) {
         self.install_background_notifier(Arc::clone(&sink));
+        // Goals and queued messages carry on after a restart.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let state = self.clone();
+            let boot_sink = Arc::clone(&sink);
+            runtime.spawn(async move { state.resume_after_boot(boot_sink).await });
+        }
         *self
             .inner
             .scheduler_sink

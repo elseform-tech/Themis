@@ -111,6 +111,11 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::Incomplete { .. } => "incomplete",
             ThreadEvent::FilesChanged { .. } => "files_changed",
             ThreadEvent::BackgroundTasksChanged => "background_tasks_changed",
+            ThreadEvent::Steered { .. } => "steered",
+            ThreadEvent::UserMessage { .. } => "user_message",
+            ThreadEvent::QueueChanged { .. } => "queue_changed",
+            ThreadEvent::GoalChanged { .. } => "goal_changed",
+            ThreadEvent::GoalNote { .. } => "goal_note",
         })
         .collect()
 }
@@ -253,7 +258,7 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
 }
 
 #[tokio::test]
-async fn busy_thread_rejects_second_send_and_provider_switch() {
+async fn busy_thread_rejects_second_send_and_defers_provider_switch() {
     if !git_available() {
         eprintln!("skipping: git binary not found");
         return;
@@ -292,17 +297,23 @@ async fn busy_thread_rejects_second_send_and_provider_switch() {
         .await
         .expect_err("busy");
     assert!(busy.contains("busy"), "{busy}");
+    // A model switch mid-run is accepted and applies from the next turn.
     let switched = state
-        .set_provider(thread.id.clone(), ProviderKind::Go, None)
+        .set_provider(
+            thread.id.clone(),
+            ProviderKind::Go,
+            Some("next-model".to_owned()),
+        )
         .await
-        .expect_err("busy switch");
-    assert!(switched.contains("busy"), "{switched}");
+        .expect("switch during a run");
+    assert_eq!(switched.model, "next-model");
 
-    // ... and answering the dialog lets the run finish normally.
+    // ... and answering the dialog lets the run finish normally, on the
+    // model it started with.
     let run = drive_run(&state, &mut rx, &thread.id, &handle.run_id).await;
     assert!(matches!(
         run.events.last(),
-        Some(ThreadEvent::Finished { .. })
+        Some(ThreadEvent::Finished { model: Some(model), .. }) if model == "test-model"
     ));
 }
 

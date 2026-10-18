@@ -195,6 +195,7 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
         tool_names,
         vec![
             "read_file",
+            "set_goal",
             "list_plugins",
             "save_skill",
             "manage_integrations",

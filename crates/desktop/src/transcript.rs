@@ -666,6 +666,17 @@ fn context_turn(item: &HistoryItem) -> Option<ConversationTurn> {
             role: ConversationRole::Assistant,
             text: progress.clone(),
         }),
+        // A steered message is the user's words, in the order the model saw them.
+        HistoryItem::Event {
+            envelope:
+                ThreadEventEnvelope {
+                    event: ThreadEvent::Steered { text },
+                    ..
+                },
+        } => Some(ConversationTurn {
+            role: ConversationRole::User,
+            text: text.clone(),
+        }),
         HistoryItem::User { text, .. } => Some(ConversationTurn {
             role: ConversationRole::User,
             text: text.clone(),

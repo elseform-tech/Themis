@@ -714,15 +714,64 @@ async fn dispatch_command(
                 )
                 .await
         ),
-        "set_provider" => output!(
-            state
+        "set_provider" => {
+            let thread_id: String = arg(&args, "threadId")?;
+            let info = state
                 .set_provider(
-                    arg(&args, "threadId")?,
+                    thread_id.clone(),
                     arg::<ProviderKind>(&args, "provider")?,
-                    arg(&args, "model")?
+                    arg(&args, "model")?,
+                )
+                .await?;
+            state.goal_model_changed(sink, &thread_id).await;
+            output!(info)
+        }
+        "list_queue" => output!(state.list_queue(arg(&args, "threadId")?).await?),
+        "enqueue_message" => output!(
+            state
+                .enqueue_message(
+                    sink,
+                    arg(&args, "threadId")?,
+                    arg(&args, "text")?,
+                    arg(&args, "reasoningEffort")?,
+                    arg::<Option<Vec<String>>>(&args, "attachments")?.unwrap_or_default(),
                 )
                 .await?
         ),
+        "update_queued_message" => output!(
+            state
+                .update_queued_message(
+                    sink,
+                    arg(&args, "threadId")?,
+                    arg(&args, "messageId")?,
+                    arg(&args, "text")?,
+                    arg(&args, "held")?,
+                )
+                .await?
+        ),
+        "remove_queued_message" => done!(
+            state
+                .remove_queued_message(sink, arg(&args, "threadId")?, arg(&args, "messageId")?)
+                .await
+        ),
+        "steer_queued_message" => done!(
+            state
+                .steer_queued_message(sink, arg(&args, "threadId")?, arg(&args, "messageId")?)
+                .await
+        ),
+        "get_goal" => output!(state.get_goal(arg(&args, "threadId")?).await?),
+        "set_goal" => output!(
+            state
+                .set_goal(sink, arg(&args, "threadId")?, arg(&args, "text")?)
+                .await?
+        ),
+        "edit_goal" => output!(
+            state
+                .edit_goal(sink, arg(&args, "threadId")?, arg(&args, "text")?)
+                .await?
+        ),
+        "pause_goal" => output!(state.pause_goal(sink, arg(&args, "threadId")?).await?),
+        "resume_goal" => output!(state.resume_goal(sink, arg(&args, "threadId")?).await?),
         "set_thread_effort" => output!(
             state
                 .set_thread_effort(arg(&args, "threadId")?, arg(&args, "effort")?)

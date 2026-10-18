@@ -1,0 +1,904 @@
+//! Goal mode: one editable sentence per chat, worked on turn after turn
+//! until a separate check finds it reached.
+//!
+//! The goal lives in `goals/<chat id>.json` beside `threads.json`. Each goal
+//! turn is an ordinary run. When a run ends and nothing is queued, the
+//! supervisor here runs the goal check and either ends the goal, starts the
+//! next turn, or pauses it. A goal pauses only when it is reached, genuinely
+//! stuck, waiting for the user, or out of model quota; errors and restarts
+//! never stop it.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::json;
+use themis_core::goal::{self as core_goal, Failure, Verdict};
+
+use super::chat_grants::safe_chat_id;
+use super::AppState;
+use crate::sink::EventSink;
+use crate::types::{
+    Goal, GoalNoteKind, GoalStatus, ProviderKind, ThreadEvent, ThreadEventEnvelope,
+};
+
+/// Directory name under the app data directory.
+pub(super) const GOALS_DIR: &str = "goals";
+/// Turns without progress before a goal counts as stuck.
+const STALL_TURNS: u32 = 3;
+/// How often a goal out of quota tries again.
+const QUOTA_RETRY: Duration = Duration::from_secs(15 * 60);
+/// Longest wait between attempts after failed turns.
+const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
+/// Wait before retrying a goal turn the concurrency limit turned away.
+const BUSY_RETRY: Duration = Duration::from_secs(20);
+/// Most command evidence the goal check reads, in characters.
+const MAX_EVIDENCE_CHARS: usize = 12_000;
+const MAX_OUTPUT_CHARS: usize = 1_500;
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// The wait before the next attempt after `failures` failed turns in a row:
+/// 30 s, 1 min, 2 min … capped at 15 min.
+pub(super) fn backoff(failures: u32) -> Duration {
+    let seconds = 30u64.saturating_mul(1 << failures.saturating_sub(1).min(10));
+    Duration::from_secs(seconds).min(MAX_BACKOFF)
+}
+
+/// Moves a goal to `status`, counting running time only while it runs.
+fn set_status(goal: &mut Goal, status: GoalStatus, reason: Option<String>) {
+    let now = now_ms();
+    if let Some(since) = goal.running_since.take() {
+        goal.active_ms = goal
+            .active_ms
+            .saturating_add(u64::try_from(now.saturating_sub(since)).unwrap_or(0));
+    }
+    if status == GoalStatus::Running {
+        goal.running_since = Some(now);
+    }
+    goal.status = status;
+    goal.reason = reason;
+}
+
+impl AppState {
+    fn goal_path(&self, thread_id: &str) -> Option<PathBuf> {
+        safe_chat_id(thread_id).then(|| self.inner.goals_dir.join(format!("{thread_id}.json")))
+    }
+
+    /// The chat's goal, if it has one. A damaged file counts as no goal and is
+    /// noted in diagnostics with a fixed reason.
+    pub fn goal_for(&self, thread_id: &str) -> Option<Goal> {
+        let mut goals = self.inner.goals.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(goal) = goals.get(thread_id) {
+            return goal.clone();
+        }
+        let goal = match self.goal_path(thread_id).map(std::fs::read_to_string) {
+            Some(Ok(text)) => serde_json::from_str(&text).map_or_else(
+                |_| {
+                    let _ = self.inner.diagnostics.append(
+                        "goal",
+                        "goal_ignored",
+                        "warn",
+                        json!({"thread_id": thread_id, "reason": "unreadable goal file"}),
+                    );
+                    None
+                },
+                Some,
+            ),
+            _ => None,
+        };
+        goals.insert(thread_id.to_owned(), goal.clone());
+        goal
+    }
+
+    /// Saves and announces the chat's goal (`None` removes it).
+    fn store_goal(&self, sink: &dyn EventSink, thread_id: &str, goal: Option<Goal>) {
+        let previous = self
+            .inner
+            .goals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(thread_id.to_owned(), goal.clone())
+            .flatten();
+        if let Some(path) = self.goal_path(thread_id) {
+            let result = match &goal {
+                Some(goal) => super::write_json_file(&path, goal),
+                None => match std::fs::remove_file(&path) {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                        Err(error.to_string())
+                    }
+                    _ => Ok(()),
+                },
+            };
+            if let Err(error) = result {
+                self.record_error("save_goal", error);
+            }
+        }
+        let status = goal.as_ref().map(|goal| goal.status);
+        if previous.map(|goal| goal.status) != status {
+            let _ = self.inner.diagnostics.append(
+                "goal",
+                "status",
+                "info",
+                json!({"thread_id": thread_id, "status": status, "turns": goal.as_ref().map(|goal| goal.turns)}),
+            );
+        }
+        sink.emit_thread_event(&ThreadEventEnvelope {
+            thread_id: thread_id.to_owned(),
+            run_id: String::new(),
+            event: ThreadEvent::GoalChanged { goal },
+        });
+    }
+
+    /// Changes the chat's goal with `change` and saves it; `None` if it has none.
+    fn update_goal(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        change: impl FnOnce(&mut Goal),
+    ) -> Option<Goal> {
+        let _guard = self
+            .inner
+            .goal_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut goal = self.goal_for(thread_id)?;
+        change(&mut goal);
+        self.store_goal(sink, thread_id, Some(goal.clone()));
+        Some(goal)
+    }
+
+    /// Posts a goal note into the chat, attached to the run it concerns.
+    fn goal_note(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        run_id: &str,
+        outcome: GoalNoteKind,
+        reason: &str,
+    ) {
+        let envelope = ThreadEventEnvelope {
+            thread_id: thread_id.to_owned(),
+            run_id: run_id.to_owned(),
+            event: ThreadEvent::GoalNote {
+                outcome,
+                reason: core_goal::one_line(reason, 400),
+            },
+        };
+        if let Err(error) = self.inner.transcript.append_event(&envelope) {
+            self.record_error("save_thread_event", error);
+        }
+        sink.emit_thread_event(&envelope);
+    }
+
+    /// The chat's goal, for clients.
+    pub async fn get_goal(&self, thread_id: String) -> Result<Option<Goal>, String> {
+        self.require_goal_thread(&thread_id).await?;
+        Ok(self.goal_for(&thread_id))
+    }
+
+    async fn require_goal_thread(&self, thread_id: &str) -> Result<bool, String> {
+        self.inner
+            .threads
+            .read()
+            .await
+            .get(thread_id)
+            .map(|record| record.running)
+            .ok_or_else(|| format!("unknown thread '{thread_id}'"))
+    }
+
+    /// Sets (or replaces) the chat's goal and marks it running. The caller's
+    /// run, if any, is its first turn.
+    pub(super) fn begin_goal(&self, sink: &dyn EventSink, thread_id: &str, text: &str) -> Goal {
+        let _guard = self
+            .inner
+            .goal_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let now = now_ms();
+        let goal = Goal {
+            text: text.to_owned(),
+            status: GoalStatus::Running,
+            reason: None,
+            started_at: now,
+            active_ms: 0,
+            running_since: Some(now),
+            turns: 0,
+            stalls: 0,
+            progress: None,
+            failures: 0,
+        };
+        self.bump_goal_generation(thread_id);
+        self.store_goal(sink, thread_id, Some(goal.clone()));
+        goal
+    }
+
+    /// Sets the chat's goal from the agent's `set_goal` tool. The run that
+    /// called it continues; the goal's turns follow when it ends.
+    pub async fn set_goal(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        text: String,
+    ) -> Result<Goal, String> {
+        let running = self.require_goal_thread(&thread_id).await?;
+        let text = core_goal::normalize_goal(&text).ok_or("Describe the goal in one sentence")?;
+        let goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
+        if !running {
+            self.start_goal_turn(
+                sink,
+                thread_id,
+                "The goal was just set; start on it.".into(),
+            )
+            .await;
+        }
+        Ok(goal)
+    }
+
+    /// Replaces the goal's sentence; the next turn reads the new one.
+    pub async fn edit_goal(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        text: String,
+    ) -> Result<Goal, String> {
+        self.require_goal_thread(&thread_id).await?;
+        let text = core_goal::normalize_goal(&text).ok_or("The goal cannot be empty")?;
+        self.update_goal(sink.as_ref(), &thread_id, |goal| {
+            goal.text = text;
+            // A changed goal gets a fresh look: old stalls no longer apply.
+            goal.stalls = 0;
+        })
+        .ok_or_else(|| "This chat has no goal".to_owned())
+    }
+
+    /// Pauses the goal after the current turn; nothing is undone.
+    pub async fn pause_goal(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+    ) -> Result<Goal, String> {
+        self.require_goal_thread(&thread_id).await?;
+        self.bump_goal_generation(&thread_id);
+        let goal = self
+            .update_goal(sink.as_ref(), &thread_id, |goal| {
+                if goal.status != GoalStatus::Reached {
+                    set_status(goal, GoalStatus::Paused, None);
+                }
+            })
+            .ok_or_else(|| "This chat has no goal".to_owned())?;
+        Ok(goal)
+    }
+
+    /// Resumes a paused, stuck, waiting or out-of-quota goal; starts a turn
+    /// now when no run is going.
+    pub async fn resume_goal(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+    ) -> Result<Goal, String> {
+        let running = self.require_goal_thread(&thread_id).await?;
+        let previous = self
+            .goal_for(&thread_id)
+            .ok_or_else(|| "This chat has no goal".to_owned())?;
+        if previous.status == GoalStatus::Reached {
+            return Err("This goal is already reached; send /goal to start a new one".to_owned());
+        }
+        let goal = self
+            .update_goal(sink.as_ref(), &thread_id, |goal| {
+                if goal.status != GoalStatus::Running {
+                    set_status(goal, GoalStatus::Running, None);
+                }
+                goal.stalls = 0;
+                goal.failures = 0;
+            })
+            .ok_or_else(|| "This chat has no goal".to_owned())?;
+        if !running && previous.status != GoalStatus::Running {
+            let note = match previous.status {
+                GoalStatus::Quota => "Resumed after the model quota pause.",
+                GoalStatus::Stuck => {
+                    "The user resumed the goal; read any change to it and try a different approach."
+                }
+                _ => "The user resumed the goal.",
+            };
+            self.start_goal_turn(sink, thread_id, note.into()).await;
+        }
+        Ok(goal)
+    }
+
+    /// Called by the send path before a user message starts a run: `/goal`
+    /// sets the goal, a reply resumes a goal waiting for the user, and a new
+    /// message after a reached goal clears it. Returns the text the run sees
+    /// about the goal (empty when there is none running), and whether this
+    /// run is a goal turn.
+    pub(super) fn goal_for_message(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        text: &str,
+        run_id: &str,
+    ) -> Result<String, String> {
+        let is_turn = core_goal::turn_number(text).is_some();
+        if let Some(sentence) = core_goal::parse_goal_command(text) {
+            if sentence.is_empty() {
+                return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
+            }
+            self.begin_goal(sink, thread_id, &sentence);
+            self.update_goal(sink, thread_id, |goal| goal.turns = 1);
+            self.mark_goal_turn(run_id);
+        } else if !is_turn {
+            match self.goal_for(thread_id).map(|goal| goal.status) {
+                Some(GoalStatus::Waiting) => {
+                    self.update_goal(sink, thread_id, |goal| {
+                        set_status(goal, GoalStatus::Running, None);
+                    });
+                }
+                Some(GoalStatus::Reached) => {
+                    let _guard = self
+                        .inner
+                        .goal_lock
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    self.store_goal(sink, thread_id, None);
+                }
+                _ => {}
+            }
+        }
+        Ok(match self.goal_for(thread_id) {
+            Some(goal) if goal.status == GoalStatus::Running => core_goal::goal_context(&goal.text),
+            _ => String::new(),
+        })
+    }
+
+    fn mark_goal_turn(&self, run_id: &str) {
+        self.inner
+            .goal_turn_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(run_id.to_owned());
+    }
+
+    /// Forgets that `run_id` was a goal turn: a queued message ran after it,
+    /// so the goal continues after that message without checking this turn.
+    pub(super) fn goal_turn_interrupted(&self, run_id: &str) {
+        self.inner
+            .goal_turn_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(run_id);
+    }
+
+    /// Invalidates any timer waiting to continue this chat's goal.
+    fn bump_goal_generation(&self, thread_id: &str) -> u64 {
+        let mut generations = self
+            .inner
+            .goal_generations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let generation = generations.entry(thread_id.to_owned()).or_insert(0);
+        *generation += 1;
+        *generation
+    }
+
+    fn goal_generation(&self, thread_id: &str) -> u64 {
+        self.inner
+            .goal_generations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Starts the next goal turn after `delay`, unless the goal changed in between.
+    fn schedule_goal_turn(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        delay: Duration,
+        note: String,
+    ) {
+        let generation = self.bump_goal_generation(&thread_id);
+        let state = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            if state.goal_generation(&thread_id) != generation {
+                return;
+            }
+            let Some(goal) = state.goal_for(&thread_id) else {
+                return;
+            };
+            if goal.status == GoalStatus::Quota {
+                state.update_goal(sink.as_ref(), &thread_id, |goal| {
+                    set_status(goal, GoalStatus::Running, None);
+                });
+            } else if goal.status != GoalStatus::Running {
+                return;
+            }
+            state.start_goal_turn(sink, thread_id, note).await;
+        });
+    }
+
+    /// Starts goal turn N+1 now, if the goal runs and the chat is idle.
+    pub(super) async fn start_goal_turn(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        note: String,
+    ) {
+        if self.require_goal_thread(&thread_id).await.unwrap_or(true) {
+            return; // That run's end continues the goal.
+        }
+        let Some(goal) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
+            if goal.status == GoalStatus::Running {
+                goal.turns = goal.turns.saturating_add(1);
+            }
+        }) else {
+            return;
+        };
+        if goal.status != GoalStatus::Running {
+            return;
+        }
+        let text = core_goal::turn_message(goal.turns, &goal.text, &note);
+        let run_id = uuid::Uuid::new_v4().to_string();
+        self.mark_goal_turn(&run_id);
+        sink.emit_thread_event(&ThreadEventEnvelope {
+            thread_id: thread_id.clone(),
+            run_id: String::new(),
+            event: ThreadEvent::UserMessage {
+                text: text.clone(),
+                attachments: Vec::new(),
+            },
+        });
+        let sent = Box::pin(self.send_message_with_options(
+            Arc::clone(&sink),
+            thread_id.clone(),
+            text,
+            run_id.clone(),
+            None,
+            Vec::new(),
+        ))
+        .await;
+        if let Err(error) = sent {
+            self.goal_turn_interrupted(&run_id);
+            self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                goal.turns = goal.turns.saturating_sub(1);
+            });
+            if error.contains("concurrency limit") {
+                self.schedule_goal_turn(sink, thread_id, BUSY_RETRY, note);
+            } else if !error.contains("is busy") {
+                // A turn that could not start counts as a failed turn.
+                let failures = self
+                    .update_goal(sink.as_ref(), &thread_id, |goal| {
+                        goal.failures = goal.failures.saturating_add(1);
+                    })
+                    .map_or(1, |goal| goal.failures);
+                let _ = self.inner.diagnostics.append(
+                    "goal",
+                    "turn_not_started",
+                    "warn",
+                    json!({"thread_id": thread_id, "failures": failures}),
+                );
+                self.schedule_goal_turn(
+                    sink,
+                    thread_id,
+                    backoff(failures),
+                    "The previous turn could not start; continue toward the goal.".into(),
+                );
+            }
+        }
+    }
+
+    /// The supervisor step after a run ended with nothing queued.
+    pub(super) async fn goal_after_run(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        run_id: String,
+        terminal: ThreadEvent,
+    ) {
+        let was_turn = self
+            .inner
+            .goal_turn_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&run_id);
+        let Some(goal) = self.goal_for(&thread_id) else {
+            return;
+        };
+        if goal.status != GoalStatus::Running {
+            return;
+        }
+        let answer = match terminal {
+            ThreadEvent::Failed { error } => {
+                self.goal_turn_failed(sink, thread_id, run_id, &error);
+                return;
+            }
+            ThreadEvent::Finished { result, .. } | ThreadEvent::Incomplete { result, .. } => result,
+            _ => return,
+        };
+        self.update_goal(sink.as_ref(), &thread_id, |goal| goal.failures = 0);
+        if !was_turn {
+            // The run answered the user (or set the goal): no check, just continue.
+            self.start_goal_turn(
+                sink,
+                thread_id,
+                "The user's message was handled; continue toward the goal.".into(),
+            )
+            .await;
+            return;
+        }
+        let (evidence, changed_files) = self.turn_evidence(&thread_id, &run_id);
+        let verdict = match self.goal_check_config(&thread_id).await {
+            Ok(config) => core_goal::check_with_config(&config, &goal.text, &answer, &evidence)
+                .await
+                .map_err(|error| format!("{error:#}")),
+            Err(error) => Err(error),
+        };
+        // The goal may have been paused or edited while the check ran.
+        let Some(goal) = self.goal_for(&thread_id) else {
+            return;
+        };
+        if goal.status != GoalStatus::Running {
+            return;
+        }
+        let verdict = match verdict {
+            Ok(verdict) => verdict,
+            Err(error) => {
+                let _ = self.inner.diagnostics.append(
+                    "goal",
+                    "check_failed",
+                    "warn",
+                    json!({"thread_id": thread_id, "run_id": run_id}),
+                );
+                let reason = if matches!(core_goal::classify_failure(&error), Failure::Quota) {
+                    // The check itself ran out of quota: so will the next turn.
+                    self.goal_turn_failed(sink, thread_id, run_id, &error);
+                    return;
+                } else {
+                    "The goal check could not decide this time; continuing."
+                };
+                core_goal::GoalVerdict {
+                    verdict: Verdict::NotYet,
+                    reason: reason.into(),
+                    progress: None,
+                }
+            }
+        };
+        let _ = self.inner.diagnostics.append(
+            "goal",
+            "checked",
+            "info",
+            json!({"thread_id": thread_id, "run_id": run_id, "verdict": verdict.verdict}),
+        );
+        match verdict.verdict {
+            Verdict::Reached => {
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Reached,
+                    &verdict.reason,
+                );
+                self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                    goal.progress = verdict.progress.clone().or(goal.progress.take());
+                    set_status(goal, GoalStatus::Reached, Some(verdict.reason.clone()));
+                });
+            }
+            Verdict::Unreachable => {
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Stuck,
+                    &verdict.reason,
+                );
+                self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                    set_status(goal, GoalStatus::Stuck, Some(verdict.reason.clone()));
+                });
+            }
+            Verdict::NeedsUser => {
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Waiting,
+                    &verdict.reason,
+                );
+                self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                    set_status(goal, GoalStatus::Waiting, Some(verdict.reason.clone()));
+                });
+            }
+            Verdict::NotYet => {
+                let progressed = changed_files
+                    || verdict
+                        .progress
+                        .as_ref()
+                        .is_some_and(|progress| Some(progress) != goal.progress.as_ref());
+                let stalls = if progressed {
+                    0
+                } else {
+                    goal.stalls.saturating_add(1)
+                };
+                if stalls >= STALL_TURNS {
+                    let reason = format!(
+                        "No progress over the last {STALL_TURNS} turns: {}",
+                        verdict.reason
+                    );
+                    self.goal_note(
+                        sink.as_ref(),
+                        &thread_id,
+                        &run_id,
+                        GoalNoteKind::Stuck,
+                        &reason,
+                    );
+                    self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                        goal.stalls = stalls;
+                        set_status(goal, GoalStatus::Stuck, Some(reason.clone()));
+                    });
+                    return;
+                }
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::NotYet,
+                    &verdict.reason,
+                );
+                self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                    goal.stalls = stalls;
+                    if verdict.progress.is_some() {
+                        goal.progress = verdict.progress.clone();
+                    }
+                });
+                self.start_goal_turn(sink, thread_id, verdict.reason).await;
+            }
+        }
+    }
+
+    /// A goal turn failed: Stop continues with the next turn, a used-up quota
+    /// pauses and retries every 15 minutes, anything else retries after a wait.
+    fn goal_turn_failed(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+        run_id: String,
+        error: &str,
+    ) {
+        match core_goal::classify_failure(error) {
+            Failure::Stopped => {
+                self.schedule_goal_turn(
+                    sink,
+                    thread_id,
+                    Duration::ZERO,
+                    "The user stopped the previous turn; check what it left unfinished, then continue toward the goal.".into(),
+                );
+            }
+            Failure::Quota => {
+                let reason = "The model quota is used up; trying again every 15 minutes.";
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Quota,
+                    reason,
+                );
+                self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                    set_status(goal, GoalStatus::Quota, Some(reason.into()));
+                });
+                self.schedule_goal_turn(
+                    sink,
+                    thread_id,
+                    QUOTA_RETRY,
+                    "Resumed after the model quota pause.".into(),
+                );
+            }
+            Failure::Transient | Failure::Other => {
+                let failures = self
+                    .update_goal(sink.as_ref(), &thread_id, |goal| {
+                        goal.failures = goal.failures.saturating_add(1);
+                    })
+                    .map_or(1, |goal| goal.failures);
+                let wait = backoff(failures);
+                self.goal_note(
+                    sink.as_ref(),
+                    &thread_id,
+                    &run_id,
+                    GoalNoteKind::Failed,
+                    &format!(
+                        "The turn failed; retrying in {}.",
+                        if wait.as_secs() < 60 {
+                            format!("{} s", wait.as_secs())
+                        } else {
+                            format!("{} min", wait.as_secs() / 60)
+                        }
+                    ),
+                );
+                self.schedule_goal_turn(
+                    sink,
+                    thread_id,
+                    wait,
+                    format!(
+                        "The previous turn failed ({}); check what it finished, then continue.",
+                        core_goal::one_line(error, 200)
+                    ),
+                );
+            }
+        }
+    }
+
+    /// The commands a turn ran with bounded output, and whether it changed files.
+    fn turn_evidence(&self, thread_id: &str, run_id: &str) -> (String, bool) {
+        let mut evidence = String::new();
+        let mut changed = false;
+        let Ok(history) = self.inner.transcript.history(thread_id) else {
+            return (evidence, changed);
+        };
+        for item in history {
+            let crate::transcript::HistoryItem::Event { envelope } = item else {
+                continue;
+            };
+            if envelope.run_id != run_id {
+                continue;
+            }
+            let line = match envelope.event {
+                ThreadEvent::ToolStarted { tool, summary } => format!("$ {tool}: {summary}\n"),
+                ThreadEvent::ToolFinished { ok, output, .. } => {
+                    let output: String = output.chars().take(MAX_OUTPUT_CHARS).collect();
+                    format!("{}{output}\n\n", if ok { "" } else { "(failed) " })
+                }
+                ThreadEvent::FilesChanged { files } => {
+                    changed |= !files.is_empty();
+                    format!(
+                        "Files changed: {}\n",
+                        files
+                            .iter()
+                            .map(|file| file.path.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+                _ => continue,
+            };
+            evidence.push_str(&line);
+        }
+        if evidence.chars().count() > MAX_EVIDENCE_CHARS {
+            // Keep the end: the last commands carry the latest measurements.
+            let skip = evidence.chars().count() - MAX_EVIDENCE_CHARS;
+            evidence = format!("…\n{}", evidence.chars().skip(skip).collect::<String>());
+        }
+        (evidence, changed)
+    }
+
+    /// The provider for the goal check: the chat's current model.
+    async fn goal_check_config(
+        &self,
+        thread_id: &str,
+    ) -> Result<themis_core::providers::ProviderConfig, String> {
+        let model = self
+            .inner
+            .threads
+            .read()
+            .await
+            .get(thread_id)
+            .map(|record| record.model.clone())
+            .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
+        let key = self.api_key_for(ProviderKind::Go).await?;
+        let mut config = themis_core::providers::ProviderConfig::new(
+            themis_core::providers::ProviderKind::Go,
+            key,
+        );
+        if !model.trim().is_empty() {
+            config = config.with_model(model);
+        }
+        if let Some(url) = self
+            .inner
+            .go_base_url_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            config = config.with_base_url(url);
+        }
+        Ok(config)
+    }
+
+    /// On start: goals that were running carry on (the cut-off turn is
+    /// rechecked by the next one), goals out of quota retry, queued messages
+    /// of idle chats go out.
+    pub(super) async fn resume_after_boot(&self, sink: Arc<dyn EventSink>) {
+        let thread_ids: Vec<String> = self.inner.threads.read().await.keys().cloned().collect();
+        for thread_id in thread_ids {
+            if self.dispatch_queue(Arc::clone(&sink), &thread_id).await {
+                continue;
+            }
+            let Some(goal) = self.goal_for(&thread_id) else {
+                continue;
+            };
+            match goal.status {
+                GoalStatus::Running => {
+                    // Time with the app closed does not count.
+                    self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                        goal.running_since = Some(now_ms());
+                    });
+                    self.start_goal_turn(
+                        Arc::clone(&sink),
+                        thread_id,
+                        "The previous turn was interrupted when Themis closed; re-check what was in progress before continuing.".into(),
+                    )
+                    .await;
+                }
+                GoalStatus::Quota => {
+                    self.schedule_goal_turn(
+                        Arc::clone(&sink),
+                        thread_id,
+                        Duration::ZERO,
+                        "Resumed after the model quota pause.".into(),
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// A model switch ends a quota pause at once: the new model may have quota.
+    pub async fn goal_model_changed(&self, sink: Arc<dyn EventSink>, thread_id: &str) {
+        if self.goal_for(thread_id).map(|goal| goal.status) == Some(GoalStatus::Quota) {
+            self.schedule_goal_turn(
+                sink,
+                thread_id.to_owned(),
+                Duration::ZERO,
+                "The model was switched after a quota pause; continue toward the goal.".into(),
+            );
+        }
+    }
+
+    /// Removes the goals of deleted chats.
+    pub(super) fn forget_goals(&self, thread_ids: &[String]) {
+        let mut goals = self.inner.goals.lock().unwrap_or_else(|e| e.into_inner());
+        for id in thread_ids {
+            goals.remove(id);
+            if let Some(path) = self.goal_path(id) {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_doubles_up_to_fifteen_minutes() {
+        let waits: Vec<u64> = (1..=8).map(|n| backoff(n).as_secs()).collect();
+        assert_eq!(waits, [30, 60, 120, 240, 480, 900, 900, 900]);
+        assert_eq!(backoff(0).as_secs(), 30);
+        assert_eq!(backoff(u32::MAX), MAX_BACKOFF);
+    }
+
+    #[test]
+    fn running_time_counts_only_while_running() {
+        let mut goal = Goal {
+            text: "g".into(),
+            status: GoalStatus::Running,
+            reason: None,
+            started_at: 0,
+            active_ms: 1_000,
+            running_since: Some(now_ms() - 5_000),
+            turns: 1,
+            stalls: 0,
+            progress: None,
+            failures: 0,
+        };
+        set_status(&mut goal, GoalStatus::Paused, None);
+        assert!(goal.running_since.is_none());
+        assert!((6_000..7_000).contains(&goal.active_ms));
+        let paused = goal.active_ms;
+        set_status(&mut goal, GoalStatus::Running, None);
+        assert_eq!(goal.active_ms, paused);
+        assert!(goal.running_since.is_some());
+    }
+}
