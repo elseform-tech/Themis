@@ -107,6 +107,9 @@ def run(args):
         def runner_call(make):
             return run_task_retrying(runner, make, args)
     memories = ["normal", "squeezed"] if args.memory == "both" else [args.memory]
+    if args.nudges_off and args.via == "app":
+        print("--nudges-off needs --via runner: the app has no eval switches", file=sys.stderr)
+        return 2
     if args.no_notes and args.via == "app":
         print("--no-notes needs --via runner: the app always offers notes", file=sys.stderr)
         return 2
@@ -129,7 +132,8 @@ def run(args):
         return summary
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(runner_call, lambda job=job, memory=memory, notes=notes: make_task(job, memory, notes)):
+        futures = {pool.submit(runner_call, lambda job=job, memory=memory, notes=notes:
+                               dict(make_task(job, memory, notes), nudges_off=args.nudges_off)):
                    (trial, job, memory, notes) for trial, job, memory, notes in jobs}
         for future in concurrent.futures.as_completed(futures):
             trial, job, memory, notes = futures[future]
@@ -161,6 +165,8 @@ def main(argv=None):
     cmd.add_argument("--model", default="muse-spark-1.3-contributor")
     cmd.add_argument("--memory", choices=("normal", "squeezed", "both"), default="both")
     cmd.add_argument("--jobs", type=int, default=2)
+    cmd.add_argument("--nudges-off", type=lambda text: [item for item in text.split(",") if item], default=[],
+                     help="runner only: comma-separated runtime nudges to switch off (e.g. next_line,notes_refresh)")
     cmd.add_argument("--no-notes", action="store_true",
                      help="also run each task with the notes tool withheld (needs --via runner)")
     cmd.add_argument("--via", choices=("app", "runner"), default="app",
