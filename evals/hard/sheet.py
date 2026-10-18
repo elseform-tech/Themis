@@ -247,7 +247,8 @@ def hidden(project):
                 handle.write(text)
         try:
             done = subprocess.run(sandboxed([sys.executable, "-m", "_hidden.run"], work), cwd=work,
-                                  capture_output=True, text=True, timeout=300, check=False)
+                                  capture_output=True, text=True, timeout=300, check=False,
+                                  env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
         except subprocess.TimeoutExpired:
             return {"run": 0, "failed": ["timeout"], "details": []}
         try:
@@ -267,7 +268,8 @@ def own_tests(project):
         try:
             # Without `-t`: a tests/ folder with or without __init__.py both count.
             done = subprocess.run(sandboxed([sys.executable, "-m", "unittest", "discover", "-s", "tests"], work),
-                                  cwd=work, capture_output=True, text=True, timeout=300, check=False)
+                                  cwd=work, capture_output=True, text=True, timeout=300, check=False,
+                                  env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
         except subprocess.TimeoutExpired:
             return False, 0
         ran = re.search(r"Ran (\d+) test", done.stderr)

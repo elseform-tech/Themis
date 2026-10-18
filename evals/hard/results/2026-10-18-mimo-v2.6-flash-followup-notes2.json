@@ -1,0 +1,308 @@
+{
+  "suite": "hard",
+  "model": "mimo-v2.6-flash",
+  "trials": 4,
+  "via": "app",
+  "created": "2026-10-18T08:37:14+00:00",
+  "note": "Live-model benchmark audit; not an automated runtime check.",
+  "summary": {
+    "runs": 9,
+    "pass_rate": 1.0,
+    "tasks": {
+      "followup-read-normal": {
+        "runs": 3,
+        "pass_rate": 1.0,
+        "mean_calls": 4.333333333333333,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 0.9789833333333333,
+        "failures": []
+      },
+      "followup-sum-normal": {
+        "runs": 3,
+        "pass_rate": 1.0,
+        "mean_calls": 2.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 0.4531611111111111,
+        "failures": []
+      },
+      "followup-tests-normal": {
+        "runs": 3,
+        "pass_rate": 1.0,
+        "mean_calls": 5.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 0.7965722222222222,
+        "failures": []
+      }
+    }
+  },
+  "errors": [],
+  "rows": [
+    {
+      "task": "followup-sum-normal",
+      "tool": "followup-sum",
+      "passed": true,
+      "why": "",
+      "answer": "4259 + 100 = **4359**",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        0
+      ],
+      "latency_ms": 31109,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "followup-tests-normal",
+      "tool": "followup-tests",
+      "passed": true,
+      "why": "",
+      "answer": "Yes. I just re-ran `python3 -m unittest -v` and it passed:\n\n```\ntest_add (test_calc.AddTests.test_add) ... ok\nRan 1 test in 0.000s\nOK\n```\n\nExit code 0 — the single test in test_calc.py passes with the `add()` fix (calc.py:2 now returns `a + b`).",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "recall"
+        },
+        {
+          "tool": "shell"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        4,
+        2
+      ],
+      "latency_ms": 54579,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "followup-sum-normal",
+      "tool": "followup-sum",
+      "passed": true,
+      "why": "",
+      "answer": "4259 + 100 = **4359**",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        0
+      ],
+      "latency_ms": 28251,
+      "via": "app",
+      "trial": 1
+    },
+    {
+      "task": "followup-tests-normal",
+      "tool": "followup-tests",
+      "passed": true,
+      "why": "",
+      "answer": "Yes — after the fix, `python3 -m unittest -v` ran 1 test (`test_add`) and it passed: `Ran 1 test ... OK`, exit code 0.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        4,
+        0
+      ],
+      "latency_ms": 29532,
+      "via": "app",
+      "trial": 1
+    },
+    {
+      "task": "followup-read-normal",
+      "tool": "followup-read",
+      "passed": true,
+      "why": "",
+      "answer": "Honest answer: I couldn't verify my earlier claim from memory, so I've now read the actual file. The answer stands — `config.toml` sets:\n\n```toml\n[server]\nhost = \"0.0.0.0\"\nport = 8443\n```\n\nSo the port is **8443**, confirmed directly from the file, not a guess.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        2
+      ],
+      "latency_ms": 95574,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "followup-sum-normal",
+      "tool": "followup-sum",
+      "passed": true,
+      "why": "",
+      "answer": "4359 (4259 + 100).",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        0
+      ],
+      "latency_ms": 22209,
+      "via": "app",
+      "trial": 2
+    },
+    {
+      "task": "followup-read-normal",
+      "tool": "followup-read",
+      "passed": true,
+      "why": "",
+      "answer": "Read directly from `config.toml` — not a guess. The file's full contents are:\n\n```toml\n[server]\nhost = \"0.0.0.0\"\nport = 8443\n\n[log]\nlevel = \"info\"\n```\n\nSo the port is 8443.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        3,
+        3
+      ],
+      "latency_ms": 40815,
+      "via": "app",
+      "trial": 1
+    },
+    {
+      "task": "followup-read-normal",
+      "tool": "followup-read",
+      "passed": true,
+      "why": "",
+      "answer": "It was read from the file, not a guess — and I just re-read it again to be sure. The file contains exactly:\n\n```toml\n[server]\nhost = \"0.0.0.0\"\nport = 8443\n\n[log]\nlevel = \"info\"\n```\n\nSo `port = 8443` is confirmed. Note that in this session, full file contents are kept outside the visible conversation",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        1
+      ],
+      "latency_ms": 39828,
+      "via": "app",
+      "trial": 2
+    },
+    {
+      "task": "followup-tests-normal",
+      "tool": "followup-tests",
+      "passed": true,
+      "why": "",
+      "answer": "Yes — I just re-ran `python3 -m unittest` to confirm: **1 test ran, `OK`** (exit code 0), so the tests pass after the fix.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "shell"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        4,
+        1
+      ],
+      "latency_ms": 59272,
+      "via": "app",
+      "trial": 2
+    }
+  ]
+}

@@ -7,7 +7,10 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
+
+from evals.project.grade import sandboxed
 
 
 def _write(project, name, text):
@@ -40,19 +43,37 @@ SUM = SimpleNamespace(
 )
 
 
+TEST_CALC = ("import unittest\n\nfrom calc import add\n\n\n"
+             "class AddTests(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\n"
+             "if __name__ == '__main__':\n    unittest.main()\n")
+
+
 def _tests_setup(project):
     _write(project, "calc.py", "def add(a, b):\n    return a - b\n")
-    _write(project, "test_calc.py", "import unittest\n\nfrom calc import add\n\n\n"
-           "class AddTests(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\n"
-           "if __name__ == '__main__':\n    unittest.main()\n")
+    _write(project, "test_calc.py", TEST_CALC)
+
+
+def _fixed(project):
+    """Whether the original test passes against the agent's calc.py: in a sandboxed scratch
+    copy, with the test restored (the agent cannot edit the oracle) and no inherited secrets."""
+    scratch = tempfile.mkdtemp(prefix="hard-followup-")
+    try:
+        work = os.path.join(scratch, "work")
+        shutil.copytree(project, work, ignore=shutil.ignore_patterns("__pycache__", ".themis", ".git"))
+        _write(work, "test_calc.py", TEST_CALC)
+        try:
+            done = subprocess.run(sandboxed([sys.executable, "-B", "-m", "unittest", "-q", "test_calc"], work),
+                                  cwd=work, capture_output=True, text=True, timeout=60, check=False,
+                                  env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+        except subprocess.TimeoutExpired:
+            return False
+        return done.returncode == 0
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def _tests_check(project, report):
-    # -B: never trust bytecode cached before the fix (same-second edits keep a stale .pyc).
-    shutil.rmtree(os.path.join(project, "__pycache__"), ignore_errors=True)
-    run = subprocess.run([sys.executable, "-B", "-m", "unittest", "-q", "test_calc"], cwd=project,
-                         capture_output=True, text=True, timeout=60, check=False)
-    fixed = run.returncode == 0
+    fixed = _fixed(project)
     second = _turn(report, 1)
     said_pass = re.search(r"\b(yes|pass(ed|es)?|succeed\w*|green|OK)\b", second["answer"], re.IGNORECASE) is not None
     ok = fixed and said_pass

@@ -1,0 +1,395 @@
+{
+  "suite": "hard",
+  "model": "mimo-v2.6-flash",
+  "trials": 4,
+  "via": "app",
+  "created": "2026-10-18T08:37:21+00:00",
+  "note": "Live-model benchmark audit; not an automated runtime check.",
+  "summary": {
+    "runs": 12,
+    "pass_rate": 1.0,
+    "tasks": {
+      "followup-read-normal": {
+        "runs": 4,
+        "pass_rate": 1.0,
+        "mean_calls": 3.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 0.652825,
+        "failures": []
+      },
+      "followup-sum-normal": {
+        "runs": 4,
+        "pass_rate": 1.0,
+        "mean_calls": 2.0,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 0.3208375,
+        "failures": []
+      },
+      "followup-tests-normal": {
+        "runs": 4,
+        "pass_rate": 1.0,
+        "mean_calls": 6.25,
+        "mean_compactions": 0.0,
+        "checkpoints_with_notes": null,
+        "mean_minutes": 0.7641500000000001,
+        "failures": []
+      }
+    }
+  },
+  "errors": [],
+  "rows": [
+    {
+      "task": "followup-sum-normal",
+      "tool": "followup-sum",
+      "passed": true,
+      "why": "",
+      "answer": "**4359** (4259 + 100)",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        0
+      ],
+      "latency_ms": 19387,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "followup-tests-normal",
+      "tool": "followup-tests",
+      "passed": true,
+      "why": "",
+      "answer": "Yes. After fixing `calc.py`, `python3 -m unittest` ran 1 test and reported `OK` with exit code 0 — all tests passed.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        6,
+        0
+      ],
+      "latency_ms": 41355,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "followup-sum-normal",
+      "tool": "followup-sum",
+      "passed": true,
+      "why": "",
+      "answer": "4259 + 100 = **4359**",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        0
+      ],
+      "latency_ms": 21644,
+      "via": "app",
+      "trial": 1
+    },
+    {
+      "task": "followup-read-normal",
+      "tool": "followup-read",
+      "passed": true,
+      "why": "",
+      "answer": "I've now read the file directly to confirm: `config.toml` contains\n\n```toml\n[server]\nhost = \"0.0.0.0\"\nport = 8443\n```\n\nSo **8443** is correct, verified from the file itself (the earlier answer came from prior context in this session, but it matches the file).",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        2
+      ],
+      "latency_ms": 55213,
+      "via": "app",
+      "trial": 0
+    },
+    {
+      "task": "followup-read-normal",
+      "tool": "followup-read",
+      "passed": true,
+      "why": "",
+      "answer": "I've now read it directly from the file to be sure — `config.toml` contains:\n\n```toml\n[server]\nhost = \"0.0.0.0\"\nport = 8443\n```\n\nSo `port = 8443` is confirmed from the file, not a guess.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        1
+      ],
+      "latency_ms": 58312,
+      "via": "app",
+      "trial": 1
+    },
+    {
+      "task": "followup-tests-normal",
+      "tool": "followup-tests",
+      "passed": true,
+      "why": "",
+      "answer": "Yes — I just re-ran them to confirm: `python3 -m unittest -v` reports `Ran 1 test in 0.000s` and `OK` (test_add ok). `calc.py` still has the fixed `return a + b`.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        6,
+        2
+      ],
+      "latency_ms": 76640,
+      "via": "app",
+      "trial": 1
+    },
+    {
+      "task": "followup-sum-normal",
+      "tool": "followup-sum",
+      "passed": true,
+      "why": "",
+      "answer": "**4359** (4259 + 100)",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        0
+      ],
+      "latency_ms": 20955,
+      "via": "app",
+      "trial": 2
+    },
+    {
+      "task": "followup-tests-normal",
+      "tool": "followup-tests",
+      "passed": true,
+      "why": "",
+      "answer": "Yes. After fixing `calc.py:2` (it returned `a - b` instead of `a + b`), I ran `python3 -m unittest -v` and the suite passed: `test_add ... ok`, `OK`, exit code 0.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        4,
+        0
+      ],
+      "latency_ms": 25572,
+      "via": "app",
+      "trial": 2
+    },
+    {
+      "task": "followup-read-normal",
+      "tool": "followup-read",
+      "passed": true,
+      "why": "",
+      "answer": "I've now read it directly from the file to confirm: **yes, it's from `config.toml`, not a guess.** The `[server]` section contains `host = \"0.0.0.0\"` and `port = 8443`.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "search_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        1
+      ],
+      "latency_ms": 21536,
+      "via": "app",
+      "trial": 2
+    },
+    {
+      "task": "followup-sum-normal",
+      "tool": "followup-sum",
+      "passed": true,
+      "why": "",
+      "answer": "4259 + 100 = **4359**.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "write_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        2,
+        0
+      ],
+      "latency_ms": 15015,
+      "via": "app",
+      "trial": 3
+    },
+    {
+      "task": "followup-read-normal",
+      "tool": "followup-read",
+      "passed": true,
+      "why": "",
+      "answer": "I read it from the file — and I've just re-verified by reading `config.toml` directly. It contains:\n\n```toml\n[server]\nhost = \"0.0.0.0\"\nport = 8443\n```\n\nSo **8443** is confirmed, not a guess.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        1,
+        1
+      ],
+      "latency_ms": 21617,
+      "via": "app",
+      "trial": 3
+    },
+    {
+      "task": "followup-tests-normal",
+      "tool": "followup-tests",
+      "passed": true,
+      "why": "",
+      "answer": "Yes — after changing `calc.py:2` to return `a + b`, `python3 -m unittest -v` ran 1 test and it passed: `test_add ... ok`, ending with `OK` and exit code 0.",
+      "error_text": "",
+      "calls": [
+        {
+          "tool": "notes"
+        },
+        {
+          "tool": "list_dir"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "read_file"
+        },
+        {
+          "tool": "apply_patch"
+        },
+        {
+          "tool": "shell"
+        },
+        {
+          "tool": "notes"
+        }
+      ],
+      "compactions": 0,
+      "turn_calls": [
+        7,
+        0
+      ],
+      "latency_ms": 39829,
+      "via": "app",
+      "trial": 3
+    }
+  ]
+}

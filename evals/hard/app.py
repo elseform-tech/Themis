@@ -81,7 +81,10 @@ def run_app_task(binary, task, model, timeout=5400, keep=None):
         error = end.get("error") if end["kind"] != "finished" else None
         if error and error.startswith("LLM request failed") and kinds.count("tool_started") == 0:
             return None, f"provider: {error[:160]}"
-        passed, why = task["check"](project, {"answer": end.get("result", ""), "turns": turn_reports})
+        try:
+            passed, why = task["check"](project, {"answer": end.get("result", ""), "turns": turn_reports})
+        except Exception as error:  # noqa: BLE001 - a grader bug must not abort the other runs
+            return None, f"grader: {type(error).__name__}: {str(error)[:160]}"
         row = {"task": task["name"], "tool": task["tool"], "passed": passed and end["kind"] == "finished",
                "why": why if end["kind"] == "finished" else f"{end['kind']}: {(error or end.get('result', ''))[:160]}; {why}",
                "answer": (end.get("result") or "")[:300], "error_text": (error or "")[:300],
