@@ -1278,8 +1278,11 @@ async fn request_answer_inner(
     let mut cut_offs = 0u32;
     // After an empty reply the retry says so, instead of resending the same request.
     let mut request = std::borrow::Cow::Borrowed(messages);
+    // Text already shown from replies that were cut off; the answer continues after it.
+    let mut shown = String::new();
     loop {
         let mut published = false;
+        let mut attempt_text = String::new();
         let messages: &[ChatMessage] = &request;
         let attempt = crate::context_metrics::with_attempt(retries as usize, async {
             // Bound handshake, complete stream and non-streaming fallback together.
@@ -1301,6 +1304,7 @@ async fn request_answer_inner(
                                 match chunk? {
                                     StreamChunk::Text(delta) => {
                                         published |= !delta.is_empty();
+                                        attempt_text.push_str(&delta);
                                         text.push_str(&delta);
                                         events.send(RunEvent::AssistantText(delta)).await.ok();
                                     }
@@ -1321,6 +1325,7 @@ async fn request_answer_inner(
                             let text = response.text().filter(|text| !text.is_empty());
                             if let Some(text) = text.clone() {
                                 published = true;
+                                attempt_text.push_str(&text);
                                 events.send(RunEvent::AssistantText(text)).await.ok();
                             }
                             Ok((text, response.tool_calls().unwrap_or_default()))
@@ -1356,7 +1361,7 @@ async fn request_answer_inner(
             .err()
             .and_then(|error| error.downcast_ref::<autoagents::llm::error::LLMError>())
         else {
-            return result;
+            return result.map(|(text, calls)| (with_shown(&shown, text), calls));
         };
         let empty_output = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == EMPTY_ANSWER);
         let truncated = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == "Provider response was truncated");
@@ -1369,14 +1374,35 @@ async fn request_answer_inner(
         // it costs far more than waiting, so those get more and longer retries (still inside
         // the overall answer deadline).
         let rate_limited = error.http_status_code() == Some(429);
+        // Shown text cannot be taken back, so a reply cut off after it continues from it;
+        // any other failure after it ends the answer.
         if retries >= answer_retry_limit(rate_limited, truncated)
-            || published
+            || (published && !truncated)
             || (!error.is_retryable() && !empty_output && !truncated && !stream_dropped)
         {
             return result;
         }
         if truncated {
             cut_offs += 1;
+        }
+        if published {
+            let mut retry = request.into_owned();
+            retry.push(ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::Text,
+                content: attempt_text.clone(),
+            });
+            retry.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: CUT_OFF_NOTE.to_owned(),
+            });
+            request = std::borrow::Cow::Owned(retry);
+            shown = with_shown(&shown, Some(attempt_text)).unwrap_or_default();
+            events
+                .send(RunEvent::AssistantText("\n\n".into()))
+                .await
+                .ok();
         }
         if empty_output {
             let mut retry = request.into_owned();
@@ -1660,6 +1686,17 @@ fn pin_notes(messages: &mut Vec<ChatMessage>, directory: &std::path::Path) {
                 content: block.trim_start().to_owned(),
             },
         );
+    }
+}
+
+const CUT_OFF_NOTE: &str = "[Runtime note, not from the user] Your last reply was cut off at the output limit after the text above, which the user has already seen; any tool call in it was lost. Continue without repeating that text. Write a large file in parts: create it with the first part, then add the rest with writes that append to it.";
+
+/// The answer text after `shown`, the text of earlier cut-off replies, as the user saw it.
+fn with_shown(shown: &str, text: Option<String>) -> Option<String> {
+    match (shown.is_empty(), text) {
+        (true, text) => text,
+        (false, None) => Some(shown.to_owned()),
+        (false, Some(text)) => Some(format!("{shown}\n\n{text}")),
     }
 }
 
@@ -4586,15 +4623,17 @@ mod tests {
                 let published = streaming && public;
                 assert_eq!(
                     calls.load(Ordering::SeqCst),
-                    if published {
-                        1
-                    } else {
-                        (failures + 1).min(TRUNCATED_RETRIES as usize + 1)
-                    }
+                    (failures + 1).min(TRUNCATED_RETRIES as usize + 1)
                 );
-                if !published && failures <= TRUNCATED_RETRIES as usize {
+                if failures <= TRUNCATED_RETRIES as usize {
                     let (text, tools) = result.unwrap();
-                    assert_eq!(text.as_deref(), Some("Recovered"));
+                    // A reply cut off after shown text continues after it; the answer keeps both.
+                    let expected = if published {
+                        "Partial\n\nRecovered"
+                    } else {
+                        "Recovered"
+                    };
+                    assert_eq!(text.as_deref(), Some(expected));
                     assert!(
                         tools.is_empty(),
                         "discarded attempts must not return tool calls"
@@ -4611,7 +4650,7 @@ mod tests {
                 assert_eq!(
                     texts,
                     if published {
-                        vec!["Partial"]
+                        vec!["Partial", "\n\n", "Recovered"]
                     } else if failures <= TRUNCATED_RETRIES as usize {
                         vec!["Recovered"]
                     } else {
@@ -4624,6 +4663,14 @@ mod tests {
                 {
                     let body: serde_json::Value = request.body_json().unwrap();
                     assert_eq!(body["max_tokens"], 8192 << attempt.min(2));
+                    // The continuation sees the shown text as its own reply, then the note.
+                    if published && attempt == 1 {
+                        let sent = body["messages"].as_array().unwrap();
+                        let n = sent.len();
+                        assert_eq!(sent[n - 2]["role"], "assistant");
+                        assert_eq!(sent[n - 2]["content"], "Partial");
+                        assert_eq!(sent[n - 1]["content"], CUT_OFF_NOTE);
+                    }
                     assert_eq!(body["model"], "test-model");
                 }
             }

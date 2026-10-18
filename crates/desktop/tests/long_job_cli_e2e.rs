@@ -544,6 +544,66 @@ async fn cli_retries_a_stream_that_dropped_part_way() {
     serving.abort();
 }
 
+/// A reply cut off at the output limit after its first words were shown (a short preamble,
+/// then a large write) continues after them instead of losing the run; the lost tool call
+/// never runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_continues_a_reply_cut_off_after_shown_text() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let provider = MockServer::start().await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = calls.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = if seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                format!(
+                    "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                    json!({"choices":[{"delta":{"content":"Writing the scene now.","tool_calls":[{"index":0,"id":"cut-1",
+                        "function":{"name":"write_file","arguments":"{\"file_path\":\"scene.html\",\"content\":\"<html"}}]}}]}),
+                    json!({"choices":[{"delta":{},"finish_reason":"length"}]})
+                )
+            } else {
+                let sent: Value = request.body_json().unwrap();
+                let messages = sent["messages"].as_array().unwrap();
+                assert_eq!(messages[messages.len() - 2]["content"], "Writing the scene now.");
+                assert!(messages[messages.len() - 1]["content"].as_str().unwrap().contains("cut off"));
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"choices":[{"delta":{"content":"I will write it in parts."},"finish_reason":"stop"}]})
+                )
+            };
+            ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    let done = send(data.path(), &mut events, &id, "Build the scene").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    assert_eq!(
+        done["result"].as_str().unwrap(),
+        "Writing the scene now.\n\nI will write it in parts."
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(!project.path().join("scene.html").exists());
+    serving.abort();
+}
+
 /// Reasoning that comes as `reasoning` with `reasoning_details` (Kimi, Hunyuan) goes back in
 /// those same fields with the tool call it led to.
 #[tokio::test(flavor = "multi_thread")]
