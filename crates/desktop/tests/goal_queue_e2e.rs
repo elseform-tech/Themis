@@ -541,3 +541,105 @@ async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
         "the agent's own run set it; one goal turn followed"
     );
 }
+
+/// Found in a live run: the work happened in a queued message's run, the next
+/// goal turn only reported it, and the check (seeing that turn alone) asked the
+/// user. Evidence now spans every run since the previous check, and "waiting
+/// for you" needs a question in the answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a_question() {
+    let server = MockServer::start().await;
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
+                    reply(r#"{"verdict":"needs_user","reason":"No fresh evidence this turn."}"#)
+                } else {
+                    reply(r#"{"verdict":"reached","reason":"Listing shown."}"#)
+                };
+            }
+            let tool_done = body["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+            let last_user = body["messages"]
+                .as_array()
+                .and_then(|messages| messages.iter().rev().find(|m| m["role"] == "user"))
+                .and_then(|m| m["content"].as_str())
+                .unwrap_or_default()
+                .to_owned();
+            if last_user.contains("list the folder") && !tool_done {
+                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"l","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}))
+            } else if last_user.contains("list the folder") {
+                reply("Listed the folder.")
+            } else if last_user.contains("/goal") {
+                reply("Starting.").set_delay(Duration::from_millis(1200))
+            } else {
+                reply("Already done earlier.")
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    state
+        .set_thread_approval_mode(
+            thread.clone(),
+            themis_core::configuration::ApprovalMode::Yolo,
+        )
+        .await
+        .unwrap();
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal show the folder listing".into(),
+        )
+        .await
+        .unwrap();
+    state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "list the folder".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |event| {
+        matches!(
+            event,
+            ThreadEvent::GoalNote {
+                outcome: GoalNoteKind::Reached,
+                ..
+            }
+        )
+    })
+    .await;
+    let outcomes: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            ThreadEvent::GoalNote { outcome, .. } => Some(*outcome),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outcomes, [GoalNoteKind::NotYet, GoalNoteKind::Reached]);
+    let first_check = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(body)
+        .find(is_check)
+        .unwrap();
+    assert!(
+        mentions(&first_check, "list_dir"),
+        "the queued run's command is evidence for the turn after it"
+    );
+}

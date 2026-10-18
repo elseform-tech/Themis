@@ -530,7 +530,7 @@ impl AppState {
             .await;
             return;
         }
-        let (evidence, changed_files) = self.turn_evidence(&thread_id, &run_id);
+        let (evidence, changed_files) = self.turn_evidence(&thread_id);
         let verdict = match self.goal_check_config(&thread_id).await {
             Ok(config) => core_goal::check_with_config(&config, &goal.text, &answer, &evidence)
                 .await
@@ -566,6 +566,16 @@ impl AppState {
                     progress: None,
                 }
             }
+        };
+        // "Waiting for you" needs a question to the user in the answer; a check
+        // that only lacks evidence means not yet.
+        let verdict = if verdict.verdict == Verdict::NeedsUser && !answer.contains('?') {
+            core_goal::GoalVerdict {
+                verdict: Verdict::NotYet,
+                ..verdict
+            }
+        } else {
+            verdict
         };
         let _ = self.inner.diagnostics.append(
             "goal",
@@ -729,21 +739,36 @@ impl AppState {
         }
     }
 
-    /// The commands a turn ran with bounded output, and whether it changed files.
-    fn turn_evidence(&self, thread_id: &str, run_id: &str) -> (String, bool) {
+    /// The commands every run since the previous goal check ran (the turn,
+    /// plus any user message or interrupted turn before it), with bounded
+    /// output, and whether those runs changed files. A turn that only reports
+    /// earlier results is judged on the evidence those runs produced.
+    fn turn_evidence(&self, thread_id: &str) -> (String, bool) {
         let mut evidence = String::new();
         let mut changed = false;
         let Ok(history) = self.inner.transcript.history(thread_id) else {
             return (evidence, changed);
         };
         for item in history {
-            let crate::transcript::HistoryItem::Event { envelope } = item else {
-                continue;
+            let envelope = match item {
+                crate::transcript::HistoryItem::Event { envelope } => envelope,
+                // A new `/goal` starts the evidence afresh.
+                crate::transcript::HistoryItem::User { text, .. }
+                    if core_goal::parse_goal_command(&text).is_some() =>
+                {
+                    evidence.clear();
+                    changed = false;
+                    continue;
+                }
+                _ => continue,
             };
-            if envelope.run_id != run_id {
-                continue;
-            }
             let line = match envelope.event {
+                // The previous check already judged everything before it.
+                ThreadEvent::GoalNote { .. } => {
+                    evidence.clear();
+                    changed = false;
+                    continue;
+                }
                 ThreadEvent::ToolStarted { tool, summary } => format!("$ {tool}: {summary}\n"),
                 ThreadEvent::ToolFinished { ok, output, .. } => {
                     let output: String = output.chars().take(MAX_OUTPUT_CHARS).collect();
