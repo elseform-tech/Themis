@@ -195,6 +195,28 @@ DESIGN.md and docs/ui-rules.md.
 - Live-sweep failures caused by quota/rate limits or account access are reported
   as such, not treated as app bugs.
 
+## As built (differences from the plan above)
+
+- Protocol modules are flat files (`providers/{catalog,responses,messages,gemini}.rs`)
+  beside the shared `wire.rs`, and tests moved to `providers/tests.rs`; the route
+  travels in the same task-locals as limits and thinking.
+- `GoModel.protocol` is optional: `None` means the catalog does not describe the
+  model, so its name decides (this keeps catalogs built without protocols routed as
+  before).
+- `summary_model` keeps its verified list of models whose thinking can be turned off;
+  it only stops naming `longcat-2.5-preview-free` once a loaded catalog no longer lists
+  it. Replacing the list with "the same model" would change summary behavior for every
+  model, which the plan did not intend.
+- The Claude adaptive-thinking branch stays keyed on `claude-`: Qwen and MiniMax on
+  Messages take a fixed budget instead.
+- Gemini tools use `parametersJsonSchema` (full JSON Schema, confirmed live), so no
+  schema keywords are stripped.
+- Gemini thought signatures are required live: a missing one is refused with HTTP 400.
+  The placeholder `skip_thought_signature_validator` was confirmed to pass.
+- Gemini is not served at the old `/zen/go/v1` root (HTTP 404).
+- The default-model fallback for new chats lives in the desktop server
+  (`create_thread`), so the CLI gets it too.
+
 ## Left to the builder
 
 - Exact trait vs. enum dispatch for protocols; where the route is carried.

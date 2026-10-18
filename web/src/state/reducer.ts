@@ -24,6 +24,7 @@ import type {
 import type { ToastItem, ToastTone } from "../components";
 import { reduceCollectionActions } from "./reducer/collections";
 import { reduceUiActions } from "./reducer/ui";
+import { DEFAULT_MODEL } from "../lib/models";
 
 export type MessageRole = PersistedMessage["role"];
 export type ChatMessage = PersistedMessage;
@@ -188,7 +189,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebar_hover: true,
   theme: "dark",
   default_provider: "go",
-  default_model: "muse-spark-1.3-contributor",
+  default_model: DEFAULT_MODEL,
   max_turns: 20,
   max_total_turns: 200,
   context_token_budget: 200000,

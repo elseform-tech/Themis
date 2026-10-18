@@ -704,4 +704,17 @@ describe("Workspace journey", () => {
     await act(async () => fireEvent.change(select, { target: { value: "gpt-5.6-luna" } }));
     expect(bridge.updateSettings).toHaveBeenCalledWith({ default_model: "gpt-5.6-luna" });
   });
+  it("shows a model Themis cannot call as unavailable and never lets it be chosen", async () => {
+    vi.mocked(bridge.listGoModels).mockResolvedValueOnce([
+      { id: "muse-spark-1.3-contributor", effort_levels: [] },
+      { id: "odd-model", effort_levels: [], unavailable_reason: "Needs @ai-sdk/xyz, which Themis does not support yet" },
+    ]);
+    await mount();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Models" })));
+    const option = screen.getByRole("option", { name: "odd-model (unavailable)" });
+    expect(option).toBeDisabled();
+    expect(option).toHaveAttribute("title", "Needs @ai-sdk/xyz, which Themis does not support yet");
+    expect(screen.getByRole("option", { name: "muse-spark-1.3-contributor" })).toBeEnabled();
+  });
 });

@@ -7,6 +7,8 @@ export type ProviderKind = 'go' | 'legacy';
 export interface GoModel {
   id: string;
   effort_levels: string[];
+  /** Set when Themis does not speak the model's protocol; such a model cannot be chosen. */
+  unavailable_reason?: string | null;
 }
 export type RiskLevel = 'read' | 'write' | 'execute' | 'network' | 'destructive';
 /** `chat` is "Allow in this chat": allow now and for every later run of this chat. */

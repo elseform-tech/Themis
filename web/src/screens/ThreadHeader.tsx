@@ -1,4 +1,5 @@
 import type { GoModel, ThreadInfo } from "../lib/types";
+import { modelLabel } from "../lib/models";
 import { TaskIndicator } from "./TaskIndicator";
 import type { TaskCounts } from "./threadTasks";
 // Official OpenCode theme assets: https://github.com/anomalyco/opencode/tree/dev/packages/console/app/src/asset
@@ -41,9 +42,10 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, switc
               <span>Go</span>
             </span>
             <select aria-label="Model" title="Model" value={thread.model} disabled={busy || switching} onChange={event => onProviderChange(event.target.value)}>
-              {[...new Set([thread.model, ...models.map(model => model.id)])].map(model => (
-                <option key={model} value={model}>{model || "Choose a Go model"}</option>
-              ))}
+              {[...new Set([thread.model, ...models.map(model => model.id)])].map(id => {
+                const model = models.find(entry => entry.id === id);
+                return <option key={id} value={id} disabled={!!model?.unavailable_reason} title={model?.unavailable_reason ?? undefined}>{model ? modelLabel(model) : id || "Choose a Go model"}</option>;
+              })}
             </select>
           </div>
           <div className="themis-composer-effort-panel" title="Reasoning effort">

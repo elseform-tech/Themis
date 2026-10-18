@@ -7,9 +7,10 @@
 //!
 //! # Go wiring
 //!
-//! Go routes GPT, Grok, and Muse through Responses; Qwen and MiniMax use
-//! Messages; other catalog models use Chat Completions. All three protocols
-//! use [`CompatibleProvider`] with Go session headers.
+//! Go serves its models over four wire protocols: Chat Completions, Responses,
+//! Messages and Gemini, each at its own endpoint. The catalog names each model's
+//! protocol and endpoint (see `catalog`); all four use [`CompatibleProvider`] with Go
+//! session headers.
 //!
 //! # Session-header spike (verdict)
 //!

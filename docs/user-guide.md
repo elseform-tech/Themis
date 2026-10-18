@@ -217,9 +217,17 @@ Model resolution order for a run:
 2. The Go environment fallback: `THEMIS_GO_MODEL`.
 3. The built-in default: `muse-spark-1.3-contributor`.
 
-Go uses the OpenCode Go API at `https://opencode.ai/zen/go/v1`.
+Go uses the OpenCode Go API at `https://opencode.ai/inference/go/`, which serves
+each model family over its own protocol: Chat Completions and Responses under
+`openai/v1`, Messages under `anthropic/v1` and Gemini under `google/v1beta`.
+Themis reads each model's protocol and endpoint from the public models.dev
+catalog, so a model Go adds later is called correctly without an app update.
 Settings, the composer, and the automation editor select from current Go model
-IDs. Their effort controls follow the selected model's catalog levels.
+IDs. Their effort controls follow the selected model's catalog levels. A model
+whose protocol Themis does not support yet shows as "(unavailable)" with the
+reason as its tooltip and cannot be chosen. If your saved default model is no
+longer in Go's catalog, new chats use `muse-spark-1.3-contributor`, or the first
+usable model when that one is gone too.
 
 ## Settings reference
 
