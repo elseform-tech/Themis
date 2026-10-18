@@ -1810,7 +1810,9 @@ fn outgoing_tool_input(model: &str, raw: &str) -> Value {
         .build()
         .unwrap();
     let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
-    if provider.uses_responses() {
+    if provider.protocol() == Protocol::Gemini {
+        body["contents"][0]["parts"][0]["functionCall"]["args"].clone()
+    } else if provider.uses_responses() {
         serde_json::from_str(body["input"][0]["arguments"].as_str().unwrap()).unwrap()
     } else if provider.uses_messages() {
         body["messages"][0]["content"][0]["input"].clone()
@@ -1862,7 +1864,7 @@ proptest::proptest! {
     #[test]
     fn any_tool_arguments_encode_as_a_json_object(raw in proptest::prelude::any::<String>(), object in proptest::option::of(proptest::collection::btree_map("[a-z]{1,6}", "[ -~]{0,12}", 0..4))) {
         let raw = object.map_or(raw, |object| serde_json::to_string(&object).unwrap());
-        for model in ["mimo-v2.6-flash", "muse-spark-1.3-contributor", "claude-haiku-4-5"] {
+        for model in ["mimo-v2.6-flash", "muse-spark-1.3-contributor", "claude-haiku-4-5", "gemini-4-argon-contributor"] {
             let input = outgoing_tool_input(model, &raw);
             proptest::prop_assert!(input.is_object(), "{model}: {input}");
             match serde_json::from_str::<Value>(&raw) {
@@ -1879,6 +1881,7 @@ async fn rejected_tool_arguments_do_not_poison_history_in_any_protocol() {
         "mimo-v2.6-flash",
         "muse-spark-1.3-contributor",
         "claude-haiku-4-5",
+        "gemini-4-argon-contributor",
     ] {
         for raw in [
             r#"{"command":"python3","args":["-c","print(\'x\')"]}"#,
@@ -1919,7 +1922,9 @@ async fn rejected_tool_arguments_do_not_poison_history_in_any_protocol() {
                 .unwrap();
             let body: Value =
                 serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
-            let input = if provider.uses_responses() {
+            let input = if provider.protocol() == Protocol::Gemini {
+                body["contents"][0]["parts"][0]["functionCall"]["args"].clone()
+            } else if provider.uses_responses() {
                 serde_json::from_str::<Value>(body["input"][0]["arguments"].as_str().unwrap())
                     .unwrap()
             } else if provider.uses_messages() {
@@ -2137,7 +2142,8 @@ fn the_catalog_names_each_models_protocol_and_endpoint() {
                 "qwen-like": {"provider": {"npm": "@ai-sdk/anthropic", "api": "https://opencode.ai/inference/go/anthropic/v1/"}},
                 "argon": {"provider": {"npm": "@ai-sdk/google", "api": "https://opencode.ai/inference/go/google/v1beta"}},
                 "strange": {"provider": {"npm": "@ai-sdk/xyz", "api": "https://opencode.ai/inference/go/xyz/v1"}},
-                "elsewhere": {"provider": {"npm": "@ai-sdk/anthropic", "api": "https://example.com/v1"}}
+                "elsewhere": {"provider": {"npm": "@ai-sdk/anthropic", "api": "https://example.com/v1"}},
+                "package-only": {"provider": {"npm": "@ai-sdk/anthropic"}}
             }
         }
     }))
@@ -2150,6 +2156,7 @@ fn the_catalog_names_each_models_protocol_and_endpoint() {
         "strange",
         "elsewhere",
         "gemini-new",
+        "package-only",
     ];
     let models = join_go_catalog(ids.map(String::from).to_vec(), catalog);
     let got: Vec<_> = models
@@ -2195,6 +2202,8 @@ fn the_catalog_names_each_models_protocol_and_endpoint() {
             ("elsewhere", Some(Protocol::Messages), None, false),
             // Listed by the account before the catalog knows it: the name decides.
             ("gemini-new", None, None, false),
+            // Another package without its own endpoint: not the provider's OpenAI endpoint.
+            ("package-only", Some(Protocol::Messages), None, false),
         ]
     );
     assert_eq!(models[6].protocol(), Protocol::Gemini);
@@ -2291,6 +2300,12 @@ async fn summaries_use_the_model_itself_once_go_retires_the_fallback_summarizer(
     );
     assert_eq!(
         with_catalog_limits(&retired, async { summary_model("glm-5.3").to_owned() }).await,
+        "glm-5.3"
+    );
+    let mut unusable = with(&["glm-5.3", "longcat-2.5-preview-free"]);
+    unusable[1].protocol = Some(Protocol::Unsupported);
+    assert_eq!(
+        with_catalog_limits(&unusable, async { summary_model("glm-5.3").to_owned() }).await,
         "glm-5.3"
     );
 }
@@ -2481,6 +2496,29 @@ fn a_gemini_call_without_its_kept_signature_sends_googles_placeholder() {
     assert_eq!(body["contents"].as_array().unwrap().len(), 3);
     assert_eq!(body["contents"][2]["parts"].as_array().unwrap().len(), 2);
     assert!(body.get("tools").is_none());
+    // A user message after the results starts its own turn.
+    let later = [
+        user_message("read it"),
+        ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(vec![call("never-seen-3")]),
+            content: String::new(),
+        },
+        ChatMessage {
+            role: ChatRole::Tool,
+            message_type: MessageType::ToolResult(vec![call("never-seen-3")]),
+            content: String::new(),
+        },
+        user_message("thanks, now stop"),
+    ];
+    let body = gemini::gemini_body(&later, None).unwrap();
+    let contents = body["contents"].as_array().unwrap();
+    assert_eq!(contents.len(), 4);
+    assert!(contents[2]["parts"][0]["functionResponse"].is_object());
+    assert_eq!(
+        contents[3],
+        json!({"role": "user", "parts": [{"text": "thanks, now stop"}]})
+    );
 }
 
 #[tokio::test]

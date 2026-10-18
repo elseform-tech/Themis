@@ -1356,6 +1356,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_retired_default_model_is_replaced_but_a_chosen_model_stands() {
+        let (state, dir) = test_state();
+        *state.inner.go_catalog.write().await = vec![themis_core::providers::GoModel {
+            id: "glm-5.3".to_owned(),
+            ..Default::default()
+        }];
+        let root = dir.path().to_string_lossy().into_owned();
+        let default = state
+            .create_thread(root.clone(), ProviderKind::Go, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            default.model, "glm-5.3",
+            "the built-in default is gone from Go"
+        );
+        let chosen = state
+            .create_thread(root, ProviderKind::Go, Some("retired-model".to_owned()))
+            .await
+            .unwrap();
+        assert_eq!(chosen.model, "retired-model");
+    }
+
+    #[tokio::test]
     async fn thread_effort_follows_catalog_and_survives_restart() {
         let (state, dir) = test_state();
         let thread = state

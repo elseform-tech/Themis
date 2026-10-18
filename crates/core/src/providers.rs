@@ -993,6 +993,13 @@ impl CompletionProvider for CompatibleProvider {
         request: &CompletionRequest,
         _json_schema: Option<StructuredOutputFormat>,
     ) -> Result<CompletionResponse, LLMError> {
+        // Completions speak Chat Completions only; never send another protocol's model there.
+        if matches!(self.protocol(), Protocol::Gemini | Protocol::Unsupported) {
+            return Err(LLMError::invalid_request(format!(
+                "Model '{}' cannot be used for plain completions",
+                self.model
+            )));
+        }
         if self.api_key.is_empty() {
             return Err(LLMError::missing_api_key(format!(
                 "Missing {} API key",

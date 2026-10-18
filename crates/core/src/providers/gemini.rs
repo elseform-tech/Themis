@@ -20,6 +20,18 @@ const SKIP_SIGNATURE: &str = "skip_thought_signature_validator";
 /// Numbers tool calls that come without an ID.
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Makes synthesized call IDs unique across restarts: a chat's history outlives the
+/// counter, and tool results and kept reasoning are matched to calls by ID.
+fn call_id_prefix() -> &'static str {
+    static PREFIX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PREFIX.get_or_init(|| {
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        format!("gemini_call_{started:x}")
+    })
+}
+
 impl CompatibleProvider {
     /// A `generateContent` request: output cap, sampling and thinking level go in
     /// `generationConfig`. Summaries think as little as Gemini allows.
@@ -118,9 +130,21 @@ pub(super) fn gemini_body(
         if parts.is_empty() {
             continue;
         }
-        // Consecutive turns of one role (parallel tool results) form one content.
+        // Parallel tool results form one content; any other turn starts its own, so a
+        // function-response turn holds only the responses to the call turn before it.
+        let responses = |parts: &[Value]| {
+            parts
+                .iter()
+                .all(|part| part["functionResponse"].is_object())
+        };
+        let joins = contents.last().is_some_and(|last| {
+            last["parts"]
+                .as_array()
+                .is_some_and(|known| responses(known))
+                && responses(&parts)
+        });
         match contents.last_mut() {
-            Some(last) if last["role"] == role => {
+            Some(last) if joins => {
                 if let Some(known) = last["parts"].as_array_mut() {
                     known.extend(parts);
                 }
@@ -209,10 +233,8 @@ fn read_parts(value: &Value, first_index: usize) -> (String, Vec<Value>, Option<
         if call.is_object() {
             let id = call["id"].as_str().filter(|id| !id.is_empty()).map_or_else(
                 || {
-                    format!(
-                        "gemini_call_{}",
-                        CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
-                    )
+                    let number = CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
+                    format!("{}_{number}", call_id_prefix())
                 },
                 str::to_owned,
             );

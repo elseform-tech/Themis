@@ -12,12 +12,16 @@ impl AppState {
             return Err("Only OpenCode Go is supported".to_owned());
         }
         let root = canonical_project_dir(&project_root)?;
-        let model = usable_model(
-            &self.inner.go_catalog.read().await,
-            model
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned()),
-        );
+        let saved_default = self.inner.settings.get().await.default_model;
+        let model = match model.filter(|name| !name.trim().is_empty()) {
+            // A model chosen for this thread stands; a run on it reports if it is gone.
+            Some(chosen) if chosen != saved_default && chosen != GO_DEFAULT_MODEL => chosen,
+            // The saved or built-in default may have been retired by Go since it was saved.
+            chosen => usable_model(
+                &self.inner.go_catalog.read().await,
+                chosen.unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned()),
+            ),
+        };
         let is_git = is_git_repo(&root);
         let id = uuid::Uuid::new_v4().to_string();
         let preexisting = git_status_names(&root).unwrap_or_default();
@@ -659,8 +663,8 @@ impl AppState {
     }
 }
 
-/// `wanted`, unless the loaded catalog shows it gone or unusable (Go retired the saved
-/// default): then Themis's default model, else the first usable one. With no catalog
+/// The default model `wanted`, unless the loaded catalog shows it gone or unusable (Go
+/// retired it): then Themis's default model, else the first usable one. With no catalog
 /// loaded, `wanted` stands.
 fn usable_model(catalog: &[themis_core::providers::GoModel], wanted: String) -> String {
     let usable = |id: &str| {

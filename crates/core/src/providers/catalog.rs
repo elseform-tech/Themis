@@ -191,7 +191,11 @@ pub(crate) fn summary_model(model: &str) -> &str {
     // A loaded catalog without the fallback model means Go retired it: summarize with the
     // model itself rather than call a model that no longer exists.
     let fallback_listed = MODEL_ROUTES
-        .try_with(|routes| routes.contains_key(SUMMARY_FALLBACK_MODEL))
+        .try_with(|routes| {
+            routes
+                .get(SUMMARY_FALLBACK_MODEL)
+                .is_some_and(|(protocol, _)| *protocol != Protocol::Unsupported)
+        })
         .unwrap_or(true);
     if let Some(configured) = crate::runtime::compaction_config().summary_model {
         configured.as_str()
@@ -355,9 +359,17 @@ pub(super) fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoM
                 .models
                 .contains_key(&id)
                 .then(|| package.map_or(Protocol::ChatCompletions, Protocol::from_package));
+            // The provider's endpoint serves the provider's package: a model that names
+            // another package without an endpoint gets Go's default for its protocol.
+            let provider_endpoint = catalog
+                .go
+                .access
+                .api
+                .as_deref()
+                .filter(|_| access.and_then(|access| access.npm.as_deref()).is_none());
             let endpoint = access
                 .and_then(|access| access.api.as_deref())
-                .or(catalog.go.access.api.as_deref())
+                .or(provider_endpoint)
                 .filter(|_| protocol.is_some_and(|known| known != Protocol::Unsupported))
                 .and_then(trusted_endpoint);
             let unavailable_reason = (protocol == Some(Protocol::Unsupported)).then(|| {
