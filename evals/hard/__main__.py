@@ -89,11 +89,14 @@ def run_via_app(binary, make, args):
 
 def run(args):
     if args.via == "app":
-        built = subprocess.run(["cargo", "build", "-q", "-p", "themis-desktop", "--bin", "themis"], cwd=ROOT,
-                               check=False)
-        if built.returncode != 0:
-            return built.returncode
-        binary = themis_binary(ROOT)
+        if args.themis:
+            binary = os.path.abspath(args.themis)
+        else:
+            built = subprocess.run(["cargo", "build", "-q", "-p", "themis-desktop", "--bin", "themis"], cwd=ROOT,
+                                   check=False)
+            if built.returncode != 0:
+                return built.returncode
+            binary = themis_binary(ROOT)
 
         def runner_call(make):
             return run_via_app(binary, make, args)
@@ -166,6 +169,7 @@ def main(argv=None):
     cmd.add_argument("--timeout", type=int, default=5400)
     cmd.add_argument("--base-url")
     cmd.add_argument("--runner", help="prebuilt tool_eval binary")
+    cmd.add_argument("--themis", help="prebuilt themis CLI for --via app (default: build this checkout's)")
     cmd.add_argument("--sandbox", choices=("auto", "off"), default="auto")
     cmd.add_argument("--out")
     cmd.add_argument("--keep", help="save each run's .themis/ (full tool evidence) under this folder")
