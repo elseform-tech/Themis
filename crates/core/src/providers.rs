@@ -42,12 +42,14 @@
 
 use futures_util::{stream, Stream};
 mod catalog;
+mod gemini;
 mod messages;
 pub mod reasoning;
 mod responses;
 mod wire;
 
 pub use catalog::*;
+use gemini::*;
 use messages::*;
 use responses::*;
 use wire::*;
@@ -298,21 +300,23 @@ struct ChatEventStream {
     reasoning: reasoning::StreamedReasoning,
     messages_api: bool,
     responses_api: bool,
+    gemini_api: bool,
     done: bool,
     finished_choice: bool,
     trace: Option<crate::context_metrics::RequestTrace>,
 }
 
 impl ChatEventStream {
-    fn new(response: reqwest::Response, messages_api: bool, responses_api: bool) -> Self {
+    fn new(response: reqwest::Response, protocol: Protocol) -> Self {
         Self {
             response,
             buffer: Vec::new(),
             ready: std::collections::VecDeque::new(),
             calls: std::collections::BTreeMap::new(),
             reasoning: reasoning::StreamedReasoning::default(),
-            messages_api,
-            responses_api,
+            messages_api: protocol == Protocol::Messages,
+            responses_api: protocol == Protocol::Responses,
+            gemini_api: protocol == Protocol::Gemini,
             done: false,
             finished_choice: false,
             trace: None,
@@ -423,7 +427,14 @@ impl ChatEventStream {
             }
             return Ok(());
         }
-        let value = if self.responses_api {
+        if self.gemini_api {
+            if let Some(trace) = &mut self.trace {
+                trace.usage(&gemini_usage(&value["usageMetadata"]));
+            }
+        }
+        let value = if self.gemini_api {
+            gemini_stream_event(value, self.calls.len())?
+        } else if self.responses_api {
             responses_stream_event(value)
         } else if self.messages_api {
             messages_stream_event(value)
@@ -585,6 +596,9 @@ impl CompatibleProvider {
                 self.model
             )));
         }
+        if self.protocol() == Protocol::Gemini {
+            return self.gemini_request(messages, tools, stream, sampling);
+        }
         let mut body = if self.uses_responses() {
             responses_body(
                 &self.model,
@@ -685,11 +699,15 @@ impl CompatibleProvider {
 
     /// POST builder for `{endpoint}/{path}` with auth, Themis user agent, and extras.
     fn post(&self, protocol: Protocol, path: &str) -> reqwest::RequestBuilder {
-        let mut request = self
+        let request = self
             .client
             .post(format!("{}/{}", self.endpoint(protocol), path))
-            .bearer_auth(&self.api_key)
             .header("User-Agent", themis_user_agent());
+        let mut request = if protocol == Protocol::Gemini {
+            request.header("x-goog-api-key", &self.api_key)
+        } else {
+            request.bearer_auth(&self.api_key)
+        };
         for (name, value) in &self.extra_headers {
             request = request.header(name.as_str(), value.as_str());
         }
@@ -820,8 +838,11 @@ impl ChatProvider for CompatibleProvider {
             .map_err(|err| transport_error("failed to read chat response", err))?;
         if let Ok(raw_usage) = serde_json::from_str::<serde_json::Value>(&raw) {
             trace.usage(&raw_usage["usage"]);
+            trace.usage(&gemini_usage(&raw_usage["usageMetadata"]));
         }
-        let parsed: WireChatResponse = if provider.uses_responses() {
+        let parsed: WireChatResponse = if provider.protocol() == Protocol::Gemini {
+            gemini_response(serde_json::from_str(&raw)?)?
+        } else if provider.uses_responses() {
             responses_response(serde_json::from_str(&raw)?)?
         } else if provider.uses_messages() {
             messages_response(serde_json::from_str(&raw)?)?
@@ -892,8 +913,7 @@ impl ChatProvider for CompatibleProvider {
                 .try_with(|limit| bounded_output_limit(&self.model, *limit))
                 .ok(),
         );
-        let messages_api = self.uses_messages();
-        let responses_api = self.uses_responses();
+        let protocol = self.protocol();
         let response = self
             .chat_request(messages, tools, true, None)?
             .send()
@@ -913,9 +933,12 @@ impl ChatProvider for CompatibleProvider {
                 .await
                 .map_err(|error| transport_error("invalid chat response", error))?;
             trace.usage(&value["usage"]);
-            let parsed: WireChatResponse = if responses_api {
+            let parsed: WireChatResponse = if protocol == Protocol::Gemini {
+                trace.usage(&gemini_usage(&value["usageMetadata"]));
+                gemini_response(value)?
+            } else if protocol == Protocol::Responses {
                 responses_response(value)?
-            } else if messages_api {
+            } else if protocol == Protocol::Messages {
                 messages_response(value)?
             } else {
                 serde_json::from_value(value)?
@@ -949,7 +972,7 @@ impl ChatProvider for CompatibleProvider {
             trace.complete();
             return Ok(Box::pin(stream::iter(chunks)));
         }
-        let mut state = ChatEventStream::new(response, messages_api, responses_api);
+        let mut state = ChatEventStream::new(response, protocol);
         state.trace = Some(trace);
         Ok(Box::pin(stream::unfold(state, |mut state| async move {
             let item = state.next_chunk().await?;
@@ -1133,6 +1156,7 @@ pub mod fuzzing {
             "mimo-v2.6-flash",
             "muse-spark-1.3-contributor",
             "claude-haiku-4-5",
+            "gemini-4-argon-contributor",
         ]
         .into_iter()
         .map(|model| {
@@ -1157,10 +1181,13 @@ pub mod fuzzing {
     pub fn convert_provider_json(value: serde_json::Value) {
         let _ = responses::responses_response(value.clone());
         let _ = messages::messages_response(value.clone());
+        let _ = gemini::gemini_response(value.clone());
+        let _ = gemini::gemini_usage(&value);
         let mut kept = reasoning::StreamedReasoning::default();
         for event in [
             responses::responses_stream_event(value.clone()),
             messages::messages_stream_event(value.clone()),
+            gemini::gemini_stream_event(value.clone(), 0).unwrap_or_default(),
             value,
         ] {
             for choice in event["choices"].as_array().into_iter().flatten() {

@@ -2347,3 +2347,303 @@ fn catalog_effort_levels_follow_go_metadata_and_live_ids() {
         ]
     );
 }
+
+fn gemini_reply(parts: Value) -> Value {
+    json!({"candidates": [{"finishReason": "STOP", "content": {"role": "model", "parts": parts}}],
+           "usageMetadata": {"promptTokenCount": 40, "candidatesTokenCount": 8, "thoughtsTokenCount": 5, "totalTokenCount": 53}})
+}
+
+#[tokio::test]
+async fn gemini_round_trip_keeps_the_signature_with_its_call() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/models/gemini-test:generateContent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(gemini_reply(json!([
+            {"thoughtSignature": "SIG-ROUND-TRIP", "functionCall": {"id": "call_g_round", "name": "read_file", "args": {"path": "a"}}}
+        ]))))
+        .mount(&server)
+        .await;
+    let provider = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "synthetic-key")
+            .with_model("gemini-test")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let tools = [test_tool()];
+    let system = ChatMessage {
+        role: ChatRole::System,
+        message_type: MessageType::Text,
+        content: "Be helpful.".into(),
+    };
+    let response = provider
+        .chat_with_tools(&[system, user_message("read it")], Some(&tools), None)
+        .await
+        .unwrap();
+    let calls = response.tool_calls().unwrap();
+    assert_eq!(calls[0].id, "call_g_round");
+    assert_eq!(calls[0].function.arguments, r#"{"path":"a"}"#);
+    assert_eq!(response.usage().unwrap().completion_tokens, 13);
+    let mut result = calls[0].clone();
+    result.function.arguments = "contents".into();
+    provider
+        .chat_with_tools(
+            &[
+                user_message("read it"),
+                ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::ToolUse(calls),
+                    content: String::new(),
+                },
+                ChatMessage {
+                    role: ChatRole::Tool,
+                    message_type: MessageType::ToolResult(vec![result]),
+                    content: String::new(),
+                },
+            ],
+            Some(&tools),
+            None,
+        )
+        .await
+        .unwrap();
+    let requests = server.received_requests().await.unwrap();
+    for request in &requests {
+        assert_eq!(request.headers["x-goog-api-key"], "synthetic-key");
+        assert!(!request.headers.contains_key("authorization"));
+        assert!(request.headers.contains_key(GO_SESSION_HEADER));
+    }
+    let first: Value = requests[0].body_json().unwrap();
+    assert_eq!(
+        first["systemInstruction"]["parts"][0]["text"],
+        "Be helpful."
+    );
+    assert_eq!(
+        first["contents"][0],
+        json!({"role": "user", "parts": [{"text": "read it"}]})
+    );
+    let declaration = &first["tools"][0]["functionDeclarations"][0];
+    assert_eq!(declaration["name"], "read_file");
+    assert_eq!(declaration["parametersJsonSchema"]["type"], "object");
+    let second: Value = requests[1].body_json().unwrap();
+    let call = &second["contents"][1];
+    assert_eq!(call["role"], "model");
+    assert_eq!(call["parts"][0]["thoughtSignature"], "SIG-ROUND-TRIP");
+    assert_eq!(
+        call["parts"][0]["functionCall"]["args"],
+        json!({"path": "a"})
+    );
+    assert_eq!(
+        second["contents"][2]["parts"][0]["functionResponse"],
+        json!({"id": "call_g_round", "name": "read_file", "response": {"result": "contents"}})
+    );
+}
+
+#[test]
+fn a_gemini_call_without_its_kept_signature_sends_googles_placeholder() {
+    let call = |id: &str| ToolCall {
+        id: id.into(),
+        call_type: "function".into(),
+        function: FunctionCall {
+            name: "read_file".into(),
+            arguments: r#"{"path":"a"}"#.into(),
+        },
+    };
+    let calls = vec![call("never-seen-1"), call("never-seen-2")];
+    let mut results = calls.clone();
+    for result in &mut results {
+        result.function.arguments = "done".into();
+    }
+    let body = gemini::gemini_body(
+        &[
+            user_message("read both"),
+            ChatMessage {
+                role: ChatRole::Assistant,
+                message_type: MessageType::ToolUse(calls),
+                content: String::new(),
+            },
+            ChatMessage {
+                role: ChatRole::Tool,
+                message_type: MessageType::ToolResult(results),
+                content: String::new(),
+            },
+        ],
+        None,
+    )
+    .unwrap();
+    let parts = &body["contents"][1]["parts"];
+    assert_eq!(
+        parts[0]["thoughtSignature"],
+        "skip_thought_signature_validator"
+    );
+    // Only the first call of a step carries the signature.
+    assert!(parts[1].get("thoughtSignature").is_none());
+    // Parallel results go back in one user turn.
+    assert_eq!(body["contents"].as_array().unwrap().len(), 3);
+    assert_eq!(body["contents"][2]["parts"].as_array().unwrap().len(), 2);
+    assert!(body.get("tools").is_none());
+}
+
+#[tokio::test]
+async fn gemini_streams_text_and_whole_tool_calls() {
+    use futures_util::StreamExt;
+    let server = MockServer::start().await;
+    let events = [
+        json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "Look"}]}}]}),
+        json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "ing.", "thought": false}, {"text": "private summary", "thought": true}]}}]}),
+        json!({"candidates": [{"content": {"role": "model", "parts": [
+            {"thoughtSignature": "SIG-STREAM", "functionCall": {"id": "call_s1", "name": "read_file", "args": {"path": "a"}}},
+            {"functionCall": {"name": "read_file", "args": {"path": "b"}}}
+        ]}}]}),
+        json!({"candidates": [{"finishReason": "STOP", "content": {"role": "model", "parts": [{"text": ""}]}}],
+               "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 4, "totalTokenCount": 14}}),
+    ]
+    .iter()
+    .map(|event| format!("data: {event}\r\n\r\n"))
+    .collect::<String>();
+    Mock::given(method("POST"))
+        .and(path("/models/gemini-test:streamGenerateContent"))
+        .and(wiremock::matchers::query_param("alt", "sse"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(events, "text/event-stream"))
+        .mount(&server)
+        .await;
+    let provider = CompatibleProvider::go(
+        "synthetic".into(),
+        "gemini-test".into(),
+        Some(server.uri()),
+        None,
+    );
+    let mut stream = provider
+        .chat_stream_with_tools(&[user_message("hi")], Some(&[test_tool()]), None)
+        .await
+        .unwrap();
+    let (mut text, mut calls, mut indexes, mut stop) =
+        (String::new(), Vec::new(), Vec::new(), None);
+    while let Some(chunk) = stream.next().await {
+        match chunk.unwrap() {
+            StreamChunk::Text(delta) => text.push_str(&delta),
+            StreamChunk::ToolUseComplete { index, tool_call } => {
+                indexes.push(index);
+                calls.push(tool_call);
+            }
+            StreamChunk::Done { stop_reason } => stop = Some(stop_reason),
+            _ => {}
+        }
+    }
+    assert_eq!(text, "Looking.");
+    assert_eq!(indexes, vec![0, 1]);
+    assert_eq!(calls[0].id, "call_s1");
+    assert!(calls[1].id.starts_with("gemini_call_"), "{}", calls[1].id);
+    assert_eq!(calls[1].function.arguments, r#"{"path":"b"}"#);
+    assert_eq!(stop.as_deref(), Some("stop"));
+    // The streamed signature goes back with the first call of the step.
+    let body = gemini::gemini_body(
+        &[ChatMessage {
+            role: ChatRole::Assistant,
+            message_type: MessageType::ToolUse(calls),
+            content: String::new(),
+        }],
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        body["contents"][0]["parts"][0]["thoughtSignature"],
+        "SIG-STREAM"
+    );
+}
+
+#[tokio::test]
+async fn gemini_settings_go_in_generation_config() {
+    let body = |effort: Option<&str>| {
+        let mut provider = CompatibleProvider::go("k".into(), "gemini-test".into(), None, None);
+        provider.reasoning_effort = effort.map(str::to_owned);
+        let request = provider
+            .chat_request(&[user_message("hi")], None, false, None)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert!(request
+            .url()
+            .as_str()
+            .ends_with("/models/gemini-test:generateContent"));
+        assert_eq!(
+            request.url().host_str(),
+            Some("opencode.ai"),
+            "Go's Gemini endpoint by default"
+        );
+        serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap()).unwrap()
+    };
+    let capped = OUTPUT_LIMIT.scope(4096, async { body(Some("high")) }).await;
+    assert_eq!(capped["generationConfig"]["maxOutputTokens"], 4096);
+    assert_eq!(
+        capped["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+        "high"
+    );
+    let catalog = [GoModel {
+        id: "gemini-test".into(),
+        effort_levels: vec!["low".into(), "medium".into(), "high".into()],
+        ..Default::default()
+    }];
+    let default = with_catalog_limits(&catalog, async { body(None) }).await;
+    assert_eq!(
+        default["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+        "medium"
+    );
+    let summary = COMPACTION_REQUEST
+        .scope((), async { body(Some("high")) })
+        .await;
+    assert_eq!(
+        summary["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+        "low"
+    );
+    assert!(gemini::gemini_path("a/b", false).is_err());
+    assert!(gemini::gemini_path("x?alt=json", true).is_err());
+}
+
+#[test]
+fn gemini_cut_off_and_blocked_replies_are_errors() {
+    let reply = |reason: &str| json!({"candidates": [{"finishReason": reason, "content": {"parts": [{"text": "partial"}]}}]});
+    let truncated = gemini::gemini_response(reply("MAX_TOKENS")).err().unwrap();
+    assert!(truncated.to_string().contains("truncated"), "{truncated}");
+    let blocked = gemini::gemini_response(reply("SAFETY")).err().unwrap();
+    assert!(blocked.to_string().contains("SAFETY"), "{blocked}");
+    assert!(gemini::gemini_stream_event(reply("RECITATION"), 0).is_err());
+    let empty = gemini::gemini_response(gemini_reply(json!([])))
+        .err()
+        .unwrap();
+    assert!(empty.to_string().contains("no text or tools"), "{empty}");
+    let error = gemini::gemini_response(json!({"error": {"code": 400}}))
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("400"), "{error}");
+}
+
+proptest::proptest! {
+    #[test]
+    fn any_gemini_parts_convert_without_panicking(
+        parts in proptest::collection::vec(
+            (0usize..5, "[ -~]{0,10}", proptest::option::of("[A-Z_]{0,10}")),
+            0..6,
+        )
+    ) {
+        let parts: Vec<Value> = parts
+            .iter()
+            .map(|(kind, text, _)| match kind {
+                0 => json!({"text": text}),
+                1 => json!({"text": text, "thought": true}),
+                2 => json!({"functionCall": {"name": text, "args": {"x": text}}}),
+                3 => json!({"functionCall": {"id": text, "name": text, "args": text}}),
+                _ => json!({"thoughtSignature": text}),
+            })
+            .collect();
+        let reason = parts.len().is_multiple_of(2);
+        let value = json!({"candidates": [{"finishReason": if reason { json!("STOP") } else { Value::Null }, "content": {"parts": parts}}]});
+        if let Ok(event) = gemini::gemini_stream_event(value.clone(), 3) {
+            for call in event["choices"][0]["delta"]["tool_calls"].as_array().into_iter().flatten() {
+                proptest::prop_assert!(call["index"].as_u64().unwrap() >= 3);
+                let args: Value = serde_json::from_str(call["function"]["arguments"].as_str().unwrap()).unwrap();
+                proptest::prop_assert!(args.is_object());
+            }
+        }
+        let _ = gemini::gemini_response(value);
+    }
+}

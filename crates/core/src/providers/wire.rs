@@ -68,6 +68,9 @@ pub(super) struct WireChoiceMessage {
     /// Responses `reasoning` items (normalized responses only).
     #[serde(default)]
     pub(super) reasoning_items: Vec<serde_json::Value>,
+    /// Gemini's reasoning signature (normalized responses only).
+    #[serde(default)]
+    pub(super) thought_signature: Option<String>,
 }
 
 /// Converts SDK messages to the OpenAI wire shape.

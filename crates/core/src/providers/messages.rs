@@ -105,6 +105,7 @@ pub(super) fn messages_response(value: serde_json::Value) -> Result<WireChatResp
                 reasoning_details: Vec::new(),
                 thinking_blocks,
                 reasoning_items: Vec::new(),
+                thought_signature: None,
             },
         }],
         usage: None,
