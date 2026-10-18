@@ -41,9 +41,15 @@
 //! `From` conversion (both versions coexist in the dependency tree).
 
 use futures_util::{stream, Stream};
+mod catalog;
+mod messages;
 pub mod reasoning;
+mod responses;
 mod wire;
 
+pub use catalog::*;
+use messages::*;
+use responses::*;
 use wire::*;
 
 use std::collections::HashMap;
@@ -71,8 +77,6 @@ use serde::{Deserialize, Serialize};
 // The SDK sampling overrides do not carry request purpose; keep this task-local
 // so internal summary settings cannot leak into concurrent answer requests.
 tokio::task_local! { pub(crate) static COMPACTION_REQUEST: (); }
-tokio::task_local! { static MODEL_LIMITS: HashMap<String, (Option<usize>, Option<usize>)>; }
-tokio::task_local! { static MODEL_THINKING: HashMap<String, (bool, Vec<String>)>; }
 // When provider bytes last arrived for the current answer request (see `note_stream_progress`).
 tokio::task_local! { pub(crate) static STREAM_PROGRESS: Arc<std::sync::Mutex<tokio::time::Instant>>; }
 
@@ -81,111 +85,6 @@ pub(crate) fn note_stream_progress() {
     let _ = STREAM_PROGRESS.try_with(|last| {
         *last.lock().unwrap_or_else(|e| e.into_inner()) = tokio::time::Instant::now();
     });
-}
-
-/// Output tokens a reply may use from the start when the model has room: a thinking model's
-/// reasoning plus a whole file in one tool call does not fit a cap sized for the memory budget.
-const LONG_REPLY_TOKENS: usize = 32_768;
-
-/// The output cap for answer requests. The memory budget is this app's compaction threshold,
-/// not the model's window, so when the catalog shows a window well beyond it, a reply may use
-/// up to `LONG_REPLY_TOKENS` (never more than the model's own limit), but at most a third of
-/// the budget: a single reply larger than that could never fit a later checkpoint. Otherwise
-/// one eighth of the budget, at most 8,192, as before.
-pub(crate) fn answer_output_cap(model: &str, budget: usize) -> u32 {
-    let base = (budget / 8).clamp(1, 8192);
-    MODEL_LIMITS
-        .try_with(|limits| limits.get(model).copied())
-        .ok()
-        .flatten()
-        .and_then(|(context, output)| {
-            let (context, output) = (context?, output?);
-            (context >= budget + LONG_REPLY_TOKENS)
-                .then(|| base.max(LONG_REPLY_TOKENS.min(output).min(budget / 3)))
-        })
-        .unwrap_or(base) as u32
-}
-
-pub async fn with_catalog_limits<F: std::future::Future>(
-    models: &[GoModel],
-    future: F,
-) -> F::Output {
-    if models.is_empty() {
-        return future.await;
-    }
-    MODEL_LIMITS
-        .scope(
-            models
-                .iter()
-                .map(|m| (m.id.clone(), (m.context_tokens, m.output_tokens)))
-                .collect(),
-            MODEL_THINKING.scope(
-                models
-                    .iter()
-                    .map(|m| (m.id.clone(), (m.thinking_toggle, m.effort_levels.clone())))
-                    .collect(),
-                future,
-            ),
-        )
-        .await
-}
-
-/// How a request turns thinking on when the person chose no effort: the catalog's switch
-/// when the model has one, else a default effort (`medium`, else `high`). Claude takes
-/// adaptive thinking with an effort. Models not in the loaded catalog keep their default.
-#[derive(Debug, Default, PartialEq)]
-pub(crate) struct ThinkingDefault {
-    pub(crate) switch_on: bool,
-    pub(crate) effort: Option<&'static str>,
-}
-
-pub(crate) fn thinking_default(model: &str) -> ThinkingDefault {
-    MODEL_THINKING
-        .try_with(|models| {
-            let Some((toggle, efforts)) = models.get(model) else {
-                return ThinkingDefault::default();
-            };
-            let effort = ["medium", "high"]
-                .into_iter()
-                .find(|level| efforts.iter().any(|known| known == level));
-            ThinkingDefault {
-                switch_on: *toggle,
-                effort,
-            }
-        })
-        .unwrap_or_default()
-}
-
-pub(crate) fn summary_model(model: &str) -> &str {
-    if let Some(configured) = crate::runtime::compaction_config().summary_model {
-        configured.as_str()
-    } else if model.starts_with("longcat-2.5-") || matches!(model, "gpt-5.6-luna" | "gpt-6-luna") {
-        model
-    } else {
-        "longcat-2.5-preview-free"
-    }
-}
-
-pub(crate) fn summary_context_limit(model: &str) -> Option<usize> {
-    MODEL_LIMITS
-        .try_with(|limits| {
-            limits
-                .get(summary_model(model))
-                .and_then(|limit| limit.0)
-                .unwrap_or(24_000)
-        })
-        .ok()
-}
-
-pub(crate) fn bounded_output_limit(model: &str, limit: u32) -> u32 {
-    MODEL_LIMITS
-        .try_with(|limits| {
-            limits
-                .get(model)
-                .and_then(|limit| limit.1)
-                .map_or(limit, |cap| limit.min(cap.min(u32::MAX as usize) as u32))
-        })
-        .unwrap_or(limit)
 }
 
 /// Canonical provider name reported for OpenCode Go in errors and diagnostics.
@@ -657,42 +556,13 @@ impl CompatibleProvider {
         sampling: Option<&SamplingOverrides>,
     ) -> Result<reqwest::RequestBuilder, LLMError> {
         let mut body = if self.uses_responses() {
-            let mut input = Vec::new();
-            for message in to_wire_messages(messages)? {
-                if let Some(id) = message.tool_call_id {
-                    input.push(serde_json::json!({"type":"function_call_output", "call_id":id, "output":message.content.unwrap_or_default()}));
-                } else {
-                    if message.role == "assistant" && message.tool_calls.is_none() {
-                        // An earlier final answer goes back after its own reasoning.
-                        if let Some(kept) = message
-                            .content
-                            .as_deref()
-                            .and_then(reasoning::replay_answer)
-                        {
-                            input.extend(kept.items);
-                        }
-                    }
-                    if let Some(content) = message.content {
-                        input.push(serde_json::json!({"role":message.role, "content":content}));
-                    }
-                    let calls = message.tool_calls.unwrap_or_default();
-                    if let Some(kept) = reasoning::replay(&calls) {
-                        input.extend(kept.items);
-                    }
-                    for call in calls {
-                        input.push(serde_json::json!({"type":"function_call", "call_id":call.id, "name":call.function.name, "arguments":call.function.arguments}));
-                    }
-                }
-            }
-            // Requests are not stored, so reasoning comes back encrypted to be replayed.
-            let mut body = serde_json::json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
-            if let Some(tools) = tools {
-                body["tools"] = tools.iter().map(|tool| serde_json::json!({"type":"function","name":tool.function.name,"description":tool.function.description,"parameters":tool.function.parameters,"strict":false})).collect();
-            }
-            if let Some(effort) = &self.reasoning_effort {
-                body["reasoning"] = serde_json::json!({"effort":effort});
-            }
-            body
+            responses_body(
+                &self.model,
+                messages,
+                tools,
+                stream,
+                self.reasoning_effort.as_deref(),
+            )?
         } else if self.uses_messages() {
             messages_body(&self.model, messages, tools, stream)?
         } else {
@@ -1200,154 +1070,6 @@ pub async fn resolve(config: &ProviderConfig) -> Result<Arc<dyn LLMProvider>> {
     Ok(Arc::new(provider))
 }
 
-/// Single entry of an OpenAI-shaped `/models` response.
-#[derive(Deserialize)]
-struct WireModelEntry {
-    id: String,
-}
-
-/// OpenAI-shaped `{data: [{id, ...}]}` models response.
-#[derive(Deserialize)]
-struct WireModelList {
-    data: Vec<WireModelEntry>,
-}
-
-/// Live Go model with effort choices from the OpenCode Go catalog.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GoModel {
-    pub id: String,
-    pub effort_levels: Vec<String>,
-    #[serde(default)]
-    pub context_tokens: Option<usize>,
-    #[serde(default)]
-    pub output_tokens: Option<usize>,
-    /// The catalog lists a thinking on/off switch for this model.
-    #[serde(default)]
-    pub thinking_toggle: bool,
-}
-
-#[derive(Deserialize)]
-struct CatalogRoot {
-    #[serde(rename = "opencode-go")]
-    go: CatalogProvider,
-}
-
-#[derive(Deserialize)]
-struct CatalogProvider {
-    models: HashMap<String, CatalogModel>,
-}
-
-#[derive(Deserialize)]
-struct CatalogModel {
-    #[serde(default)]
-    reasoning_options: Vec<CatalogReasoningOption>,
-    #[serde(default)]
-    limit: CatalogLimits,
-}
-
-#[derive(Default, Deserialize)]
-struct CatalogLimits {
-    context: Option<usize>,
-    output: Option<usize>,
-}
-
-#[derive(Deserialize)]
-struct CatalogReasoningOption {
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default)]
-    values: Vec<String>,
-}
-
-fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoModel> {
-    ids.into_iter()
-        .map(|id| {
-            let effort_levels = catalog
-                .go
-                .models
-                .get(&id)
-                .into_iter()
-                .flat_map(|model| &model.reasoning_options)
-                .filter(|option| option.kind == "effort")
-                .flat_map(|option| option.values.iter().cloned())
-                .collect();
-            let limits = catalog.go.models.get(&id).map(|model| &model.limit);
-            let thinking_toggle = catalog.go.models.get(&id).is_some_and(|model| {
-                model
-                    .reasoning_options
-                    .iter()
-                    .any(|option| option.kind == "toggle")
-            });
-            GoModel {
-                id,
-                effort_levels,
-                context_tokens: limits.and_then(|l| l.context),
-                output_tokens: limits.and_then(|l| l.output),
-                thinking_toggle,
-            }
-        })
-        .collect()
-}
-
-/// Joins account-available Go IDs with OpenCode's public Go capability catalog.
-pub async fn refresh_go_catalog(base_url: &str, api_key: &str) -> Result<Vec<GoModel>> {
-    let ids = refresh_go_models(base_url, api_key).await?;
-    let catalog = async {
-        http_client()
-            .get("https://models.dev/api.json")
-            .header("User-Agent", themis_user_agent())
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<CatalogRoot>()
-            .await
-    }
-    .await;
-    Ok(match catalog {
-        Ok(catalog) => join_go_catalog(ids, catalog),
-        Err(_) => ids
-            .into_iter()
-            .map(|id| GoModel {
-                id,
-                effort_levels: Vec::new(),
-                context_tokens: None,
-                output_tokens: None,
-                thinking_toggle: false,
-            })
-            .collect(),
-    })
-}
-
-/// Refreshes the Go model table: `GET {base_url}/models`, parsed as OpenAI-shaped
-/// `{data: [{id, ...}]}`, returning the model IDs.
-///
-/// `base_url` is the API root (e.g. [`GO_BASE_URL`]); the Themis user agent is
-/// sent. Errors on transport failure, non-2xx status (with status code and a body
-/// excerpt), and malformed payloads.
-pub async fn refresh_go_models(base_url: &str, api_key: &str) -> Result<Vec<String>> {
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let response = http_client()
-        .get(&url)
-        .bearer_auth(api_key)
-        .header("User-Agent", themis_user_agent())
-        .header(GO_SESSION_HEADER, go_session_id())
-        .send()
-        .await
-        .with_context(|| format!("Go models request to {url} failed"))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .context("failed to read Go models response")?;
-    if !status.is_success() {
-        let excerpt: String = body.chars().take(500).collect();
-        bail!("Go models request failed with HTTP {status}: {excerpt}");
-    }
-    let parsed: WireModelList = serde_json::from_str(&body)
-        .with_context(|| format!("failed to parse Go models response: {body}"))?;
-    Ok(parsed.data.into_iter().map(|entry| entry.id).collect())
-}
-
 /// Entry points for the `fuzz/` cargo-fuzz targets; not a stable API.
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
@@ -1403,12 +1125,12 @@ pub mod fuzzing {
 
     /// Feeds one provider JSON value through every response and stream converter.
     pub fn convert_provider_json(value: serde_json::Value) {
-        let _ = wire::responses_response(value.clone());
-        let _ = wire::messages_response(value.clone());
+        let _ = responses::responses_response(value.clone());
+        let _ = messages::messages_response(value.clone());
         let mut kept = reasoning::StreamedReasoning::default();
         for event in [
-            wire::responses_stream_event(value.clone()),
-            wire::messages_stream_event(value.clone()),
+            responses::responses_stream_event(value.clone()),
+            messages::messages_stream_event(value.clone()),
             value,
         ] {
             for choice in event["choices"].as_array().into_iter().flatten() {
@@ -2806,7 +2528,7 @@ mod tests {
             user_message("next"),
         ];
         for (model, kept) in [("qwen-test", true), ("claude-test", false)] {
-            let body = wire::messages_body(model, &history, None, false).unwrap();
+            let body = messages::messages_body(model, &history, None, false).unwrap();
             let first = &body["messages"][1]["content"][0]["type"];
             assert_eq!(first == "thinking", kept, "{model}: {body}");
         }
