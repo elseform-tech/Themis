@@ -1,12 +1,13 @@
 """Offline self-tests of the hard-task graders (no model involved)."""
 
+import json
 import os
 import shutil
 import tempfile
 import unittest
 
-from . import followup, sheet, threejs
-from .__main__ import JOBS, make_task, notes_kept
+from . import codebase, followup, moves, sheet, sheet_long, threejs
+from .__main__ import JOBS, compare, make_task, markdown, summarize
 from .browser import chrome
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -52,6 +53,75 @@ class SheetGraderTest(unittest.TestCase):
         self.assertIn("own tests", why)
 
 
+class LongSheetGraderTest(unittest.TestCase):
+    def test_the_full_reference_passes_every_stage(self):
+        project = copy_reference("sheet_long")
+        result = sheet.hidden(project, sheet_long.TESTS)
+        self.assertGreaterEqual(result["run"], 40)
+        self.assertEqual(result["failed"], [], result["details"])
+        self.assertEqual(sheet_long.measure(project, {}), {"stages_passed": 4})
+
+    def test_the_first_turn_alone_passes_only_the_engine(self):
+        result = sheet.hidden(copy_reference("sheet"), sheet_long.TESTS)
+        self.assertEqual(sheet_long.stages(result),
+                         {"engine": True, "names": False, "text": False, "command line": False})
+
+    def test_a_broken_follow_up_fails_its_own_stage(self):
+        project = copy_reference("sheet_long")
+        path = os.path.join(project, "sheet", "__init__.py")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text.replace("self.defined.pop(name.upper(), None)", "pass"))
+        result = sheet.hidden(project, sheet_long.TESTS)
+        self.assertEqual(result["failed"], ["test_names_follow_changes_and_removal"])
+        self.assertFalse(sheet_long.stages(result)["names"])
+
+    def test_a_suite_that_never_ran_passes_no_stage(self):
+        for result in ({"run": 0, "failed": ["timeout"]}, {"run": 0, "failed": ["import"]},
+                       {"run": 45, "failed": ["import"]}):
+            with self.subTest(result=result):
+                self.assertEqual(sum(sheet_long.stages(result).values()), 0)
+
+    def test_the_task_has_three_follow_ups_and_a_longer_limit(self):
+        task = make_task("sheet-long", "normal")
+        self.assertEqual(len(task["followups"]), 3)
+        self.assertEqual(task["timeout"], 3 * 5400)
+        self.assertIn("measure", task)
+
+
+class CodebaseGraderTest(unittest.TestCase):
+    def project(self):
+        project = tempfile.mkdtemp(prefix="hard-codebase-test-")
+        codebase.setup(project)
+        return project
+
+    def test_the_reference_fix_passes_every_stage(self):
+        project = self.project()
+        shutil.copytree(os.path.join(HERE, "reference", "iniconf", "iniconf"),
+                        os.path.join(project, "iniconf"), dirs_exist_ok=True)
+        result = codebase.hidden(project)
+        self.assertEqual(result["failed"], [], result["details"])
+        self.assertEqual(result["run"], codebase.ORIGINAL_TESTS + 6)
+
+    def test_the_planted_project_fails_every_stage_and_counts_its_suite(self):
+        project = self.project()
+        stages = codebase.stages(codebase.hidden(project))
+        self.assertEqual(stages, {"suite": False, "percent bug": False, "vars bug": False, "getlist": False})
+        self.assertEqual(sheet.own_tests(project), (False, codebase.ORIGINAL_TESTS))
+
+    def test_editing_the_projects_suite_does_not_pass_the_grader(self):
+        project = self.project()
+        with open(os.path.join(project, "tests", "test_iniconf.py"), "w", encoding="utf-8") as handle:
+            handle.write("import unittest\n")
+        self.assertFalse(codebase.stages(codebase.hidden(project))["suite"])
+
+    def test_a_missing_package_passes_no_stage(self):
+        project = self.project()
+        shutil.rmtree(os.path.join(project, "iniconf"))
+        self.assertEqual(sum(codebase.stages(codebase.hidden(project)).values()), 0)
+
+
 @unittest.skipUnless(chrome(), "needs Chrome or Chromium")
 class ThreejsGraderTest(unittest.TestCase):
     def project(self, mutate=None):
@@ -92,18 +162,6 @@ class TaskTest(unittest.TestCase):
             self.assertEqual(make_task(job, "normal")["budget"], 200_000)
             self.assertEqual(make_task(job, "squeezed")["budget"], 32_000)
             self.assertTrue(make_task(job, "normal")["allow_all"])
-
-    def test_the_notes_arm_withholds_notes_only(self):
-        with_notes, without = make_task("sheet", "squeezed"), make_task("sheet", "squeezed", notes=False)
-        self.assertTrue(with_notes["offer_notes"])
-        self.assertFalse(without["offer_notes"])
-        self.assertEqual(without["name"], "sheet-squeezed-no-notes")
-        self.assertEqual({k: v for k, v in without.items() if k not in ("offer_notes", "notes", "name")},
-                         {k: v for k, v in with_notes.items() if k not in ("offer_notes", "notes", "name")})
-
-    def test_notes_kept_is_the_share_of_checkpoints_with_notes(self):
-        self.assertIsNone(notes_kept({"checkpoints": []}))
-        self.assertEqual(notes_kept({"checkpoints": [{"notes": [{"key": "goal"}]}, {"notes": None}]}), 0.5)
 
 
 class FollowupTests(unittest.TestCase):
@@ -164,3 +222,64 @@ class FollowupTests(unittest.TestCase):
             with open(os.path.join(project, "calc.py"), "w", encoding="utf-8") as handle:
                 handle.write('"""Calculator."""\n\n\ndef add(a, b):\n    """Sum."""\n    return a + b\n')
             self.assertTrue(followup.TESTS.check(project, self.turns(("fixed", []), ("Yes, they passed.", [])))[0])
+
+
+class MovesTests(unittest.TestCase):
+    def write(self, path, content="x"):
+        return {"tool": "write_file", "summary": f'call `write_file` with {{"file_path":"{path}","content":"{content}"}}'}
+
+    def list_dir(self):
+        return {"tool": "list_dir", "summary": "call `list_dir` with {}"}
+
+    def test_writes_after_a_checkpoint_count_as_redone_or_rewritten(self):
+        row = {"calls": [self.write("a.py", "1"), self.write("b.py", "1"), self.write("a.py", "1"),
+                         self.write("b.py", "2"), self.write("c.py")],
+               "checkpoints": [{"calls_before": 2}]}
+        self.assertEqual(moves.writes_after_checkpoints(row), (1, 1))
+        self.assertEqual(moves.measure(row)["redone_writes"], 1)
+
+    def test_only_repeats_with_nothing_changed_between_are_wasted(self):
+        read = {"tool": "read_file", "summary": 'call `read_file` with {"file_path":"a.py"}'}
+        tests = {"tool": "shell", "summary": 'call `shell` with {"command":"python3 -m unittest"}'}
+        long_write = self.write("a.py", "x" * 300)
+        row = {"calls": [read, read, self.list_dir(), read,  # two wasted re-reads
+                         tests, self.write("a.py"), tests,  # rerun after an edit: fine
+                         tests, read,  # same rerun again: wasted; read after shell: fine
+                         long_write, long_write]}  # cut-off summaries: not compared
+        self.assertEqual(moves.wasted_repeats(row), 3)
+
+    def test_rereads_after_a_checkpoint_count_files_seen_before_it_once(self):
+        def read(path):
+            return {"tool": "read_file", "summary": f'call `read_file` with {{"file_path":"{path}"}}'}
+        row = {"calls": [read("a.py"), self.write("b.py"), read("c.py"),  # checkpoint at 3
+                         read("a.py"), read("a.py"), read("b.py"), read("new.py"),
+                         read("c.py")],  # second checkpoint at 7: c.py again
+               "checkpoints": [{"calls_before": 3}, {"calls_before": 7}]}
+        self.assertEqual(moves.rereads_after_checkpoints(row), 3)
+
+    def test_the_summary_counts_calls_per_passing_run(self):
+        def run(passed, calls):
+            return {"task": "t", "passed": passed, "why": "", "calls": [self.list_dir()] * calls,
+                    "compactions": 0, "latency_ms": 0, "checkpoints": []}
+        summary = summarize([run(True, 10), run(True, 20), run(False, 90)])
+        self.assertEqual(summary["tasks"]["t"]["mean_calls_per_pass"], 15)
+        table = markdown({"model": "m", "summary": summary, "errors": []})
+        self.assertIn("| t | 67% | 40.0 | 15.0 |", table)
+
+    def test_compare_puts_labelled_files_side_by_side(self):
+        def run(passed, stages):
+            return {"task": "t", "passed": passed, "why": "", "calls": [self.list_dir()] * 10, "compactions": 1,
+                    "latency_ms": 0, "checkpoints": [], "extra": {"stages_passed": stages}}
+        folder = tempfile.mkdtemp()
+        paths = []
+        for name, rows in (("a", [run(True, 4), run(False, 2)]), ("b", [run(False, 1)])):
+            paths.append(os.path.join(folder, f"{name}.json"))
+            with open(paths[-1], "w", encoding="utf-8") as handle:
+                json.dump({"rows": rows}, handle)
+        table = compare([f"before={paths[0]}", paths[1]])
+        self.assertIn("| before | t | 2 | 50% | 3.0 | 10.0 | 10.0 | 1.0 |", table)
+        self.assertIn("| b | t | 1 | 0% | 1.0 | 10.0 | n/a |", table)
+
+    def test_reports_without_checkpoint_places_are_not_measured(self):
+        self.assertIsNone(moves.measure({"calls": [], "checkpoints": [{"turn": 0}]}))
+        self.assertIsNotNone(moves.measure({"calls": [], "checkpoints": []}))

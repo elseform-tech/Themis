@@ -319,8 +319,38 @@ fn take_char_prefix(input: &str, limit: usize) -> (String, bool) {
     (prefix, chars.next().is_some())
 }
 
+/// Arguments that say what a call acts on: listed first in its summary, so a long `content`
+/// cannot push the path out of the cut-off summary that the chat, the steps record and evals see.
+const SUMMARY_FIRST_KEYS: [&str; 7] = [
+    "file_path",
+    "path",
+    "source",
+    "destination",
+    "directory",
+    "command",
+    "args",
+];
+
+fn summary_arguments(args: &str) -> String {
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(args) else {
+        return args.to_owned();
+    };
+    let first = SUMMARY_FIRST_KEYS
+        .iter()
+        .filter_map(|key| map.get_key_value(*key));
+    let rest = map
+        .iter()
+        .filter(|(key, _)| !SUMMARY_FIRST_KEYS.contains(&key.as_str()));
+    let fields: Vec<String> = first
+        .chain(rest)
+        .map(|(key, value)| format!("{}:{value}", serde_json::Value::String(key.clone())))
+        .collect();
+    format!("{{{}}}", fields.join(","))
+}
+
 fn summarize_call(name: &str, args: &str) -> String {
     const MAX_CHARS: usize = 200;
+    let args = summary_arguments(args);
     let single_line = args.split_whitespace().collect::<Vec<_>>().join(" ");
     let full = format!("call `{name}` with {single_line}");
     let (mut summary, truncated) = take_char_prefix(&full, MAX_CHARS);
@@ -6626,7 +6656,18 @@ mod tests {
     #[test]
     fn summary_folds_whitespace_and_truncates() {
         let short = summarize_call("git", "{\"args\": [\"status\"]}");
-        assert_eq!(short, "call `git` with {\"args\": [\"status\"]}");
+        assert_eq!(short, "call `git` with {\"args\":[\"status\"]}");
+        // The path comes first even when the model sent a long content first.
+        let write = summarize_call(
+            "write_file",
+            &serde_json::json!({"content": "x".repeat(500), "file_path": "src/scene.js"})
+                .to_string(),
+        );
+        assert!(
+            write
+                .starts_with("call `write_file` with {\"file_path\":\"src/scene.js\",\"content\":"),
+            "{write}"
+        );
         let long = summarize_call("shell", &"x".repeat(500));
         assert!(long.chars().count() <= 201, "{long}");
         assert!(long.ends_with('…'), "{long}");

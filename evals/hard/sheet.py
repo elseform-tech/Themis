@@ -235,14 +235,15 @@ def setup(project):
     os.makedirs(os.path.join(project, "tests"), exist_ok=True)
 
 
-def hidden(project):
-    """{run, failed, details} for the hidden tests against a copy of the project."""
+def hidden(project, tests=None):
+    """{run, failed, details} for the hidden tests (`tests`, default HIDDEN) against a copy of
+    the project."""
     scratch = tempfile.mkdtemp(prefix="hard-sheet-")
     try:
         work = os.path.join(scratch, "work")
         shutil.copytree(project, work, ignore=shutil.ignore_patterns("__pycache__", ".themis", ".git"))
         os.makedirs(os.path.join(work, "_hidden"), exist_ok=True)
-        for name, text in (("__init__.py", ""), ("test_hidden.py", HIDDEN), ("run.py", RUNNER)):
+        for name, text in (("__init__.py", ""), ("test_hidden.py", tests or HIDDEN), ("run.py", RUNNER)):
             with open(os.path.join(work, "_hidden", name), "w", encoding="utf-8") as handle:
                 handle.write(text)
         try:
