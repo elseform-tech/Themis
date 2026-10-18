@@ -608,6 +608,9 @@ async fn run_task_with_evidence_inner(
     let mut work_calls = 0usize;
     let mut finish_checks = 0usize;
     let mut work_at_check = 0usize;
+    // Whether this run changed files, and whether its spec check was already sent.
+    let mut changed_files = false;
+    let mut spec_checked = false;
     let config = compaction_config();
     // Prior turns arrive as text or as checkpoint-retained messages that a
     // checkpoint already summarized; only this run's new work is unsummarized.
@@ -855,6 +858,24 @@ async fn run_task_with_evidence_inner(
                     continue;
                 }
             }
+            // Experiment: a run that changed files checks its work against the request once
+            // before it ends; agents report success when their own tests pass, though those
+            // cover only what they remembered to test.
+            if changed_files && !spec_checked && experiment_on("spec_check") {
+                spec_checked = true;
+                crate::context_metrics::activity("spec_checks");
+                messages.push(ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::Text,
+                    content: text.unwrap_or_default(),
+                });
+                messages.push(ChatMessage {
+                    role: ChatRole::User,
+                    message_type: MessageType::Text,
+                    content: SPEC_CHECK.to_owned(),
+                });
+                continue;
+            }
             let result = text.unwrap_or_default();
             emit(RunEvent::Finished {
                 result: result.clone(),
@@ -1002,6 +1023,11 @@ async fn run_task_with_evidence_inner(
                     .any(|result| annotate_result(result, "notes_reminder", NOTES_REMINDER));
             }
         }
+        changed_files |= delivered_calls.iter().zip(&results).any(|(call, result)| {
+            FILE_CHANGES.contains(&call.function.name.as_str())
+                && serde_json::from_str::<serde_json::Value>(&result.function.arguments)
+                    .is_ok_and(|value| value["success"] == true)
+        });
         notes_used |= delivered_calls.iter().zip(&results).any(|(call, result)| {
             call.function.name == notes::TOOL
                 && serde_json::from_str::<serde_json::Value>(&result.function.arguments)
@@ -1657,6 +1683,16 @@ const OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] Your notes st
 
 /// Open-task checks per run: the first, then one more each time the agent worked after a check.
 const MAX_FINISH_CHECKS: usize = 3;
+/// Sent once when a run that changed files gives its final answer.
+const SPEC_CHECK: &str = "[Runtime check, not from the user] Before you finish, read the user's request again, requirement by requirement. For each one, check that it holds now, with a test or a command run in this task, and fix anything that does not. Do not repeat checks whose results you already have from after your last change. Then give the final answer and say briefly how the main requirements were verified.";
+/// Tools whose success changes project files.
+const FILE_CHANGES: [&str; 5] = [
+    "write_file",
+    "apply_patch",
+    "delete_file",
+    "move_file",
+    "copy_file",
+];
 
 /// One check when a run that did no work ends while saved notes list open task lines.
 const IDLE_OPEN_TASKS_CHECK: &str = "[Runtime check, not from the user] You answered without using any tools while your notes list open task lines. If the user's latest message asks you to do that work, do it now with tool calls instead of describing it. If it only asks a question or asks you to wait, keep the lines open and give the answer. Open: ";
@@ -1939,6 +1975,28 @@ fn nudge_off(name: &str) -> bool {
     {
         EVAL_NUDGES_OFF
             .try_with(|off| off.iter().any(|item| item == name))
+            .unwrap_or(false)
+    }
+    #[cfg(not(feature = "eval"))]
+    {
+        let _ = name;
+        false
+    }
+}
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only experiments switched on (`spec_check`): behavior still being measured, off
+    /// in the app until an eval shows it earns its place.
+    pub static EVAL_EXPERIMENTS: Arc<Vec<String>>;
+}
+
+/// Whether an eval switched this experiment on (never, outside evals).
+fn experiment_on(name: &str) -> bool {
+    #[cfg(feature = "eval")]
+    {
+        EVAL_EXPERIMENTS
+            .try_with(|on| on.iter().any(|item| item == name))
             .unwrap_or(false)
     }
     #[cfg(not(feature = "eval"))]
@@ -4818,6 +4876,104 @@ mod tests {
             Err(())
         );
         assert_eq!(started.elapsed(), ATTEMPT_CEILING);
+    }
+
+    /// The spec check experiment: a run that changed files gets one request to verify its
+    /// work against the user's request before it ends; a run that changed nothing does not,
+    /// and without the experiment (the app) nothing changes.
+    #[cfg(feature = "eval")]
+    #[tokio::test]
+    async fn spec_check_experiment_asks_once_after_file_changes() {
+        use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+        async fn run(experiments: Vec<String>, write: bool) -> (String, Vec<serde_json::Value>) {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(move |request: &Request| {
+                    let body: serde_json::Value = request.body_json().unwrap();
+                    let messages = body["messages"].as_array().unwrap();
+                    let last = messages.last().unwrap();
+                    let reply = if last["content"].as_str().is_some_and(|text| text.starts_with("[Runtime check")) {
+                        serde_json::json!({"content":"Verified: a.txt holds 1."})
+                    } else if write && !messages.iter().any(|message| message["role"] == "tool") {
+                        serde_json::json!({"content":"Writing.","tool_calls":[{"id":"w","type":"function","function":{"name":"write_file","arguments":"{\"file_path\":\"a.txt\",\"content\":\"1\"}"}}]})
+                    } else {
+                        serde_json::json!({"content":"Done."})
+                    };
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":reply,"finish_reason":"stop"}]}))
+                })
+                .mount(&server)
+                .await;
+            let llm = crate::providers::resolve(
+                &crate::providers::ProviderConfig::new(
+                    crate::providers::ProviderKind::Go,
+                    "synthetic",
+                )
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+            )
+            .await
+            .unwrap();
+            let root = tempfile::tempdir().unwrap();
+            let tools =
+                crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook))
+                    .unwrap();
+            let (tx, _rx) = tokio::sync::mpsc::channel(256);
+            let policy = RunPolicy {
+                total_turns: 8,
+                context_token_budget: 24000,
+                recent_messages: 4,
+            };
+            let answer = EVAL_EXPERIMENTS
+                .scope(
+                    Arc::new(experiments),
+                    run_task_with_evidence(
+                        llm,
+                        tools,
+                        "Write a.txt with 1.".into(),
+                        vec![],
+                        Arc::new(crate::tools::AllowAllHook),
+                        policy,
+                        tx,
+                        Arc::new(AtomicBool::new(false)),
+                        String::new(),
+                        None,
+                    ),
+                )
+                .await
+                .unwrap();
+            let bodies = server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .map(|request| request.body_json().unwrap())
+                .collect();
+            (answer, bodies)
+        }
+        let checks = |bodies: &[serde_json::Value]| {
+            bodies
+                .iter()
+                .filter(|body| {
+                    body["messages"].as_array().unwrap().last().unwrap()["content"] == SPEC_CHECK
+                })
+                .count()
+        };
+        let (answer, bodies) = run(vec!["spec_check".into()], true).await;
+        assert_eq!(answer, "Verified: a.txt holds 1.");
+        assert_eq!((bodies.len(), checks(&bodies)), (3, 1));
+        // The answer before the check stays in the conversation the model sees.
+        let checked = bodies[2]["messages"].as_array().unwrap();
+        assert_eq!(checked[checked.len() - 2]["content"], "Done.");
+        let (answer, bodies) = run(vec!["spec_check".into()], false).await;
+        assert_eq!(
+            (answer.as_str(), bodies.len(), checks(&bodies)),
+            ("Done.", 1, 0)
+        );
+        let (answer, bodies) = run(Vec::new(), true).await;
+        assert_eq!(
+            (answer.as_str(), bodies.len(), checks(&bodies)),
+            ("Done.", 2, 0)
+        );
     }
 
     #[cfg(feature = "eval")]

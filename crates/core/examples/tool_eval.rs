@@ -79,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
         snapshots: task["snapshots"].as_bool().unwrap_or(false),
         allow_all: task["allow_all"].as_bool().unwrap_or(false),
         nudges_off: strings(&task["nudges_off"]),
+        experiments: strings(&task["experiments"]),
         hide_tools: strings(&task["hide_tools"]),
         replay_reasoning: task["replay_reasoning"].as_bool().unwrap_or(true),
     };
