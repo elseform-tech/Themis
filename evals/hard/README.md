@@ -20,8 +20,8 @@ python3 -m evals.hard run --model glm-5.3-flash --trials 3 --out /tmp/glm.json
 # One named job; long tasks want ordinary memory:
 python3 -m evals.hard run --job sheet-long --memory normal --model glm-5.3-flash --out /tmp/long.json
 python3 -m evals.hard run --job codebase --memory normal --model glm-5.3-flash --out /tmp/code.json
-# Runtime A/B with the tool-eval runner (eval switches, notes off as a second arm):
-python3 -m evals.hard run --via runner --nudges-off=working_files --no-notes --out /tmp/off.json
+# Runtime A/B with the tool-eval runner, here without the spec check:
+python3 -m evals.hard run --via runner --nudges-off=spec_check --out /tmp/off.json
 # Side by side, with pass rate, stages, calls per pass and the checkpoint measures:
 python3 -m evals.hard compare before=/tmp/off.json after=/tmp/glm.json
 ```
@@ -37,6 +37,8 @@ python3 -m evals.hard compare before=/tmp/off.json after=/tmp/glm.json
 | `sheet` | A spreadsheet engine in Python: formulas with precedence, ranges, SUM/AVG/MIN/MAX/COUNT/IF/ABS/ROUND, error values (`#DIV/0!`, `#REF!`, `#CYCLE!`, `#NAME?`, `#VALUE!`, `#ERROR!`), recalculation, CSV and a command line, with its own tests | 36 hidden test methods in a sandboxed subprocess (no network, no access under `/Users`), plus the agent's own tests (at least 10, passing) |
 | `sheet-long` (run when named: `--job sheet-long`, best with `--memory normal`) | The `sheet` task, then three follow-up messages in the same chat that build on it: named references, text in formulas (string literals, CONCAT, LEN, UPPER, LOWER, IFERROR), and a command line with `eval --raw` and `set` | One hidden suite at the end with the 36 `sheet` tests and 9 for the follow-ups, so forgetting an earlier requirement fails too; reported per stage (engine, names, text, command line) as `extra.stages_passed`, plus the agent's own tests |
 | `codebase` (run when named) | Two reported bugs fixed and a `getlist` feature added in `iniconf`, a 1,400-line INI parser (Python's configparser, see `vendor/iniconf/NOTICE.md`) the agent did not write, keeping its 344-test suite passing, with tests added | The original suite (pristine, so editing the project's copy does not help) and 6 hidden tests, reported per stage (suite, percent bug, vars bug, getlist), plus the agent's own suite, which must pass and have grown |
+
+Benchmark audit 2026-10-18 (normal memory, 3 trials): glm-5.3-flash and muse-spark-1.3 passed `codebase` in every run, so it does not yet separate runtime arms; it needs harder planted bugs.
 
 The three.js copy in `vendor/three/` (MIT, r182) is the only three.js the agent has; the grader
 uses its own copy, so the agent cannot change what is measured. `reference/` holds the grader's

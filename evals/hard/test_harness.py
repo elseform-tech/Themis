@@ -6,8 +6,8 @@ import shutil
 import tempfile
 import unittest
 
-from . import codebase, followup, notes_metrics, sheet, sheet_long, threejs
-from .__main__ import JOBS, compare, make_task, markdown, notes_kept, summarize
+from . import codebase, followup, moves, sheet, sheet_long, threejs
+from .__main__ import JOBS, compare, make_task, markdown, summarize
 from .browser import chrome
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -163,18 +163,6 @@ class TaskTest(unittest.TestCase):
             self.assertEqual(make_task(job, "squeezed")["budget"], 32_000)
             self.assertTrue(make_task(job, "normal")["allow_all"])
 
-    def test_the_notes_arm_withholds_notes_only(self):
-        with_notes, without = make_task("sheet", "squeezed"), make_task("sheet", "squeezed", notes=False)
-        self.assertTrue(with_notes["offer_notes"])
-        self.assertFalse(without["offer_notes"])
-        self.assertEqual(without["name"], "sheet-squeezed-no-notes")
-        self.assertEqual({k: v for k, v in without.items() if k not in ("offer_notes", "notes", "name")},
-                         {k: v for k, v in with_notes.items() if k not in ("offer_notes", "notes", "name")})
-
-    def test_notes_kept_is_the_share_of_checkpoints_with_notes(self):
-        self.assertIsNone(notes_kept({"checkpoints": []}))
-        self.assertEqual(notes_kept({"checkpoints": [{"notes": [{"key": "goal"}]}, {"notes": None}]}), 0.5)
-
 
 class FollowupTests(unittest.TestCase):
     def turns(self, *turns):
@@ -236,42 +224,29 @@ class FollowupTests(unittest.TestCase):
             self.assertTrue(followup.TESTS.check(project, self.turns(("fixed", []), ("Yes, they passed.", [])))[0])
 
 
-class NotesMetricsTests(unittest.TestCase):
+class MovesTests(unittest.TestCase):
     def write(self, path, content="x"):
         return {"tool": "write_file", "summary": f'call `write_file` with {{"file_path":"{path}","content":"{content}"}}'}
 
-    def notes(self):
-        return {"tool": "notes", "summary": "call `notes` with {}"}
-
-    def test_lines_finished_before_a_checkpoint_but_open_in_it_are_stale(self):
-        row = {"calls": [self.notes(), self.write("a.py"), self.notes(), self.write("b.py")],
-               "notes_log": [{"lines": [{"key": "a", "status": "in_progress"}, {"key": "b", "status": "pending"}]},
-                             {"lines": [{"key": "a", "status": "done"}, {"key": "b", "status": "pending"}]}],
-               "checkpoints": [{"calls_before": 2, "notes_calls_before": 1,
-                                "notes": [{"key": "a", "status": "in_progress"}, {"key": "b", "status": "pending"}]}],
-               "notes_refreshes": 0}
-        self.assertEqual(notes_metrics.stale_lines(row), 1)
-        # An update after other work does not show what was done at the checkpoint.
-        row["calls"] = [self.notes(), self.write("a.py"), self.write("c.py"), self.notes()]
-        self.assertEqual(notes_metrics.stale_lines(row), 0)
+    def list_dir(self):
+        return {"tool": "list_dir", "summary": "call `list_dir` with {}"}
 
     def test_writes_after_a_checkpoint_count_as_redone_or_rewritten(self):
         row = {"calls": [self.write("a.py", "1"), self.write("b.py", "1"), self.write("a.py", "1"),
                          self.write("b.py", "2"), self.write("c.py")],
-               "checkpoints": [{"calls_before": 2, "notes_calls_before": 0, "notes": []}], "notes_refreshes": 2}
-        self.assertEqual(notes_metrics.writes_after_checkpoints(row), (1, 1))
-        self.assertEqual(notes_metrics.notes_age(row), 2)
-        self.assertEqual(notes_metrics.measure(row)["notes_refreshes"], 2)
+               "checkpoints": [{"calls_before": 2}]}
+        self.assertEqual(moves.writes_after_checkpoints(row), (1, 1))
+        self.assertEqual(moves.measure(row)["redone_writes"], 1)
 
     def test_only_repeats_with_nothing_changed_between_are_wasted(self):
         read = {"tool": "read_file", "summary": 'call `read_file` with {"file_path":"a.py"}'}
         tests = {"tool": "shell", "summary": 'call `shell` with {"command":"python3 -m unittest"}'}
         long_write = self.write("a.py", "x" * 300)
-        row = {"calls": [read, read, self.notes(), read,  # two wasted re-reads
+        row = {"calls": [read, read, self.list_dir(), read,  # two wasted re-reads
                          tests, self.write("a.py"), tests,  # rerun after an edit: fine
                          tests, read,  # same rerun again: wasted; read after shell: fine
                          long_write, long_write]}  # cut-off summaries: not compared
-        self.assertEqual(notes_metrics.wasted_repeats(row), 3)
+        self.assertEqual(moves.wasted_repeats(row), 3)
 
     def test_rereads_after_a_checkpoint_count_files_seen_before_it_once(self):
         def read(path):
@@ -280,12 +255,12 @@ class NotesMetricsTests(unittest.TestCase):
                          read("a.py"), read("a.py"), read("b.py"), read("new.py"),
                          read("c.py")],  # second checkpoint at 7: c.py again
                "checkpoints": [{"calls_before": 3}, {"calls_before": 7}]}
-        self.assertEqual(notes_metrics.rereads_after_checkpoints(row), 3)
+        self.assertEqual(moves.rereads_after_checkpoints(row), 3)
 
     def test_the_summary_counts_calls_per_passing_run(self):
         def run(passed, calls):
-            return {"task": "t", "passed": passed, "why": "", "calls": [self.notes()] * calls,
-                    "compactions": 0, "latency_ms": 0, "checkpoints": [], "notes_refreshes": 0}
+            return {"task": "t", "passed": passed, "why": "", "calls": [self.list_dir()] * calls,
+                    "compactions": 0, "latency_ms": 0, "checkpoints": []}
         summary = summarize([run(True, 10), run(True, 20), run(False, 90)])
         self.assertEqual(summary["tasks"]["t"]["mean_calls_per_pass"], 15)
         table = markdown({"model": "m", "summary": summary, "errors": []})
@@ -293,8 +268,8 @@ class NotesMetricsTests(unittest.TestCase):
 
     def test_compare_puts_labelled_files_side_by_side(self):
         def run(passed, stages):
-            return {"task": "t", "passed": passed, "why": "", "calls": [self.notes()] * 10, "compactions": 1,
-                    "latency_ms": 0, "checkpoints": [], "notes_refreshes": 0, "extra": {"stages_passed": stages}}
+            return {"task": "t", "passed": passed, "why": "", "calls": [self.list_dir()] * 10, "compactions": 1,
+                    "latency_ms": 0, "checkpoints": [], "extra": {"stages_passed": stages}}
         folder = tempfile.mkdtemp()
         paths = []
         for name, rows in (("a", [run(True, 4), run(False, 2)]), ("b", [run(False, 1)])):
@@ -306,5 +281,5 @@ class NotesMetricsTests(unittest.TestCase):
         self.assertIn("| b | t | 1 | 0% | 1.0 | 10.0 | n/a |", table)
 
     def test_reports_without_checkpoint_places_are_not_measured(self):
-        self.assertIsNone(notes_metrics.measure({"calls": [], "checkpoints": [{"notes_calls_before": 0}]}))
-        self.assertIsNone(notes_metrics.measure({"calls": [], "checkpoints": []}))
+        self.assertIsNone(moves.measure({"calls": [], "checkpoints": [{"turn": 0}]}))
+        self.assertIsNotNone(moves.measure({"calls": [], "checkpoints": []}))

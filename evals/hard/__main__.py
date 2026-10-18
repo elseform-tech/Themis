@@ -19,7 +19,7 @@ import time
 
 from evals.tools.__main__ import ROOT, _mean, cargo_build, fmt, run_task_retrying
 
-from . import codebase, followup, notes_metrics, sheet, sheet_long, threejs
+from . import codebase, followup, moves, sheet, sheet_long, threejs
 from .app import run_app_task, themis_binary
 
 RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
@@ -30,13 +30,12 @@ JOBS = {"threejs": threejs, "sheet": sheet, "sheet-long": sheet_long, "codebase"
         "followup-sum": followup.SUM, "followup-tests": followup.TESTS, "followup-read": followup.READ}
 
 
-def make_task(job, memory, notes=True):
+def make_task(job, memory):
     module = JOBS[job]
-    return {"name": f"{job}-{memory}" + ("" if notes else "-no-notes"), "tool": job, "job": job, "memory": memory,
-            "notes": notes,
+    return {"name": f"{job}-{memory}", "tool": job, "job": job, "memory": memory,
             "setup": module.setup, "check": module.check, "prompt": module.PROMPT,
             "followups": getattr(module, "FOLLOWUPS", []),
-            "evidence": ".themis/context/eval-thread", "offer_notes": notes,
+            "evidence": ".themis/context/eval-thread",
             "timeout": getattr(module, "TIMEOUT", 5400),
             **({"measure": module.measure} if hasattr(module, "measure") else {}),
             # YOLO-style approvals as a developer would use them; the OS sandbox still applies.
@@ -53,30 +52,16 @@ def summarize(rows):
                # Moves a finished task took: fewer is better at the same pass rate.
                "mean_calls_per_pass": _mean([len(r["calls"]) for r in runs if r["passed"]]),
                "mean_compactions": _mean([r["compactions"] for r in runs]),
-               # Notes carried by every checkpoint: the goal and task lines survive compaction.
-               "checkpoints_with_notes": _mean([notes_kept(r) for r in runs if r.get("checkpoints")]),
                "mean_minutes": _mean([r["latency_ms"] / 60000 for r in runs]),
-               **notes_measures(runs),
+               **move_measures(runs),
                "failures": [r["why"][:200] for r in runs if not r["passed"]][:3]}
         for name, runs in sorted(by_task.items())}}
 
 
-NOTES_MEASURES = ("stale_lines", "redone_writes", "rewrites_after_checkpoint", "notes_age",
-                  "rereads_after_checkpoint", "wasted_repeats", "notes_refreshes")
-
-
-def notes_measures(runs):
-    """Mean of each notes measure over runs whose runner recorded checkpoint places."""
-    measured = [m for m in map(notes_metrics.measure, runs) if m]
-    return {f"mean_{key}": _mean([m[key] for m in measured]) for key in NOTES_MEASURES}
-
-
-def notes_kept(row):
-    """Share of the run's checkpoints that carried notes lines (None without checkpoints)."""
-    points = row.get("checkpoints") or []
-    if not points:
-        return None
-    return sum(1 for point in points if point.get("notes")) / len(points)
+def move_measures(runs):
+    """Mean of each measure over runs whose runner recorded checkpoint places."""
+    measured = [m for m in map(moves.measure, runs) if m]
+    return {f"mean_{key}": _mean([m[key] for m in measured]) for key in moves.MEASURES}
 
 
 def markdown(summary):
@@ -85,14 +70,13 @@ def markdown(summary):
              f"Via: {summary.get('via', 'runner')}. Runs: {s['runs']}; "
              f"infrastructure errors (excluded): {len(summary['errors'])}. "
              "Benchmark audit, not an automated check.", "",
-             "| Task | Pass | Calls | Calls per pass | Compactions | Checkpoints with notes | Stale lines | "
-             "Redone writes | Rewrites after checkpoint | Notes age | Re-reads after checkpoint | Wasted repeats | "
-             "Refreshes | Minutes | Failures |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "| Task | Pass | Calls | Calls per pass | Compactions | Redone writes | Rewrites after checkpoint | "
+             "Re-reads after checkpoint | Wasted repeats | Minutes | Failures |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for name, row in s["tasks"].items():
         lines.append(f"| {name} | {fmt(row['pass_rate'])} | {fmt(row['mean_calls'], False)} | "
-                     f"{fmt(row.get('mean_calls_per_pass'), False)} | {fmt(row['mean_compactions'], False)} | {fmt(row.get('checkpoints_with_notes'))} | "
-                     + " | ".join(fmt(row.get(f"mean_{key}"), False) for key in NOTES_MEASURES) + " | "
+                     f"{fmt(row.get('mean_calls_per_pass'), False)} | {fmt(row['mean_compactions'], False)} | "
+                     + " | ".join(fmt(row.get(f"mean_{key}"), False) for key in moves.MEASURES) + " | "
                      f"{fmt(row['mean_minutes'], False)} | "
                      f"{'; '.join(row['failures']) or '-'} |")
     return "\n".join(lines) + "\n"
@@ -133,12 +117,7 @@ def run(args):
     if args.nudges_off and args.via == "app":
         print("--nudges-off needs --via runner: the app has no eval switches", file=sys.stderr)
         return 2
-    if args.no_notes and args.via == "app":
-        print("--no-notes needs --via runner: the app always offers notes", file=sys.stderr)
-        return 2
-    notes_arms = [True, False] if args.no_notes else [True]
-    jobs = [(trial, job, memory, notes) for trial in range(args.trials) for job in args.job for memory in memories
-            for notes in notes_arms]
+    jobs = [(trial, job, memory) for trial in range(args.trials) for job in args.job for memory in memories]
     rows, errors = [], []
     os.makedirs(RESULTS, exist_ok=True)
     out = args.out or os.path.join(RESULTS, f"{datetime.date.today()}-{args.model}.json")
@@ -155,18 +134,18 @@ def run(args):
         return summary
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(runner_call, lambda job=job, memory=memory, notes=notes:
-                               dict(make_task(job, memory, notes), nudges_off=args.nudges_off)):
-                   (trial, job, memory, notes) for trial, job, memory, notes in jobs}
+        futures = {pool.submit(runner_call, lambda job=job, memory=memory:
+                               dict(make_task(job, memory), nudges_off=args.nudges_off)):
+                   (trial, job, memory) for trial, job, memory in jobs}
         for future in concurrent.futures.as_completed(futures):
-            trial, job, memory, notes = futures[future]
+            trial, job, memory = futures[future]
             try:
                 row, error, _ = future.result()
             except Exception as failure:  # noqa: BLE001 - one run must never abort the suite
                 row, error = None, f"harness: {type(failure).__name__}: {str(failure)[:160]}"
             if row and row.get("error_text", "").startswith("LLM request failed"):
                 error = f"provider failed mid-run after {len(row['calls'])} calls: {row['error_text'][:120]}"
-            name = f"{job}-{memory}" + ("" if notes else "-no-notes")
+            name = f"{job}-{memory}"
             if error:
                 errors.append({"trial": trial, "task": name, "error": error})
                 print(f"trial {trial + 1} {name}: error {error}", flush=True)
@@ -218,9 +197,7 @@ def main(argv=None):
     cmd.add_argument("--memory", choices=("normal", "squeezed", "both"), default="both")
     cmd.add_argument("--jobs", type=int, default=2)
     cmd.add_argument("--nudges-off", type=lambda text: [item for item in text.split(",") if item], default=[],
-                     help="runner only: comma-separated runtime nudges to switch off (e.g. next_line,notes_refresh)")
-    cmd.add_argument("--no-notes", action="store_true",
-                     help="also run each task with the notes tool withheld (needs --via runner)")
+                     help="runner only: comma-separated runtime nudges to switch off (e.g. spec_check,loop_warning)")
     cmd.add_argument("--via", choices=("app", "runner"), default="app",
                      help="app: the real themis app server and CLI (default); runner: the tool-eval runner")
     cmd.add_argument("--max-turns", type=int, default=200)
