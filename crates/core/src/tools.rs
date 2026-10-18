@@ -100,7 +100,8 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
 /// anything else; the dispatcher therefore neither prompts nor arms a permit.
 #[must_use]
 pub fn tool_approves_itself(name: &str) -> bool {
-    name == "manage_automations"
+    // `set_goal` only sets the calling chat's goal; its deny rules apply inside.
+    matches!(name, "manage_automations" | "set_goal")
 }
 
 pub fn integration_approval_identity(name: &str, args: &Value) -> String {

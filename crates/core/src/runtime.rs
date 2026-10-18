@@ -1389,9 +1389,14 @@ async fn request_answer_inner(
         // it costs far more than waiting, so those get more and longer retries (still inside
         // the overall answer deadline).
         let rate_limited = error.http_status_code() == Some(429);
+        // A used-up quota does not clear in minutes: waiting out the retries only delays
+        // the failure (a goal then pauses and retries on its own schedule).
+        let quota_used_up = rate_limited
+            && crate::goal::classify_failure(&error.to_string()) == crate::goal::Failure::Quota;
         // Shown text cannot be taken back, so a reply cut off after it continues from it;
         // any other failure after it ends the answer.
-        if retries >= answer_retry_limit(rate_limited, truncated)
+        if quota_used_up
+            || retries >= answer_retry_limit(rate_limited, truncated)
             || (published && !truncated)
             || (!error.is_retryable() && !empty_output && !truncated && !stream_dropped)
         {

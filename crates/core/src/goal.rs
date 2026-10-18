@@ -5,7 +5,55 @@
 //! fresh context reads the goal, the turn's final answer and the commands it
 //! ran, and answers with a small JSON verdict. Everything it reads is data.
 
+use autoagents::llm::chat::{ChatMessage, ChatRole, MessageType};
+use autoagents::llm::LLMProvider;
 use serde::{Deserialize, Serialize};
+
+/// Runs the goal check with the provider `config` describes.
+pub async fn check_with_config(
+    config: &crate::providers::ProviderConfig,
+    goal: &str,
+    answer: &str,
+    evidence: &str,
+) -> anyhow::Result<GoalVerdict> {
+    let llm = crate::providers::resolve(config).await?;
+    check(llm.as_ref(), goal, answer, evidence).await
+}
+
+/// Runs the goal check with `llm`: one request, retried once when the reply
+/// is unusable. An error means the check could not decide.
+pub async fn check(
+    llm: &dyn LLMProvider,
+    goal: &str,
+    answer: &str,
+    evidence: &str,
+) -> anyhow::Result<GoalVerdict> {
+    let (system, user) = check_prompt(goal, answer, evidence);
+    let messages = [
+        ChatMessage {
+            role: ChatRole::System,
+            message_type: MessageType::Text,
+            content: system,
+        },
+        ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content: user,
+        },
+    ];
+    let mut last_error = anyhow::anyhow!("the goal check gave no usable answer");
+    for _ in 0..2 {
+        match llm.chat(&messages, None).await {
+            Ok(reply) => {
+                if let Some(verdict) = reply.text().as_deref().and_then(parse_verdict) {
+                    return Ok(verdict);
+                }
+            }
+            Err(error) => last_error = anyhow::anyhow!("goal check request failed: {error}"),
+        }
+    }
+    Err(last_error)
+}
 
 /// Marks a message the runtime sends to continue a goal; never the user's words.
 pub const GOAL_TURN_MARKER: &str = "[Goal — runtime, not from the user]";
@@ -163,11 +211,26 @@ pub enum Failure {
 }
 
 /// Classifies a run's failure text. A rate limit counts as quota only when the
-/// provider says quota, credits, billing or usage limit.
+/// provider says quota, credits, billing or usage limit, or asks to wait more
+/// than ten minutes (`Retry-After`).
 pub fn classify_failure(error: &str) -> Failure {
     let lower = error.to_ascii_lowercase();
     if lower.starts_with("stopped by you") {
         return Failure::Stopped;
+    }
+    let long_wait = lower
+        .split("retry-after: ")
+        .nth(1)
+        .and_then(|rest| {
+            rest.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse::<u64>()
+                .ok()
+        })
+        .is_some_and(|seconds| seconds > 600);
+    if long_wait {
+        return Failure::Quota;
     }
     let quota_words = [
         "quota",
@@ -264,6 +327,14 @@ mod tests {
         );
         assert_eq!(
             classify_failure("LLM request failed: request timed out"),
+            Failure::Transient
+        );
+        assert_eq!(
+            classify_failure("Rate Limit Error (429): slow down. Retry-After: 3600s"),
+            Failure::Quota
+        );
+        assert_eq!(
+            classify_failure("Rate Limit Error (429): slow down. Retry-After: 30s"),
             Failure::Transient
         );
         assert_eq!(classify_failure("agent run panicked: boom"), Failure::Other);
