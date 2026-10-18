@@ -302,6 +302,7 @@ impl AppState {
             return;
         }
         let mut queue = self.queue_for(thread_id);
+        let unread_count = unread.len();
         for text in unread.into_iter().rev() {
             queue.insert(
                 0,
@@ -315,6 +316,15 @@ impl AppState {
             );
         }
         self.save_queue(thread_id, &queue);
+        let _ = self.inner.diagnostics.append(
+            "queue",
+            "steer_requeued",
+            "info",
+            json!({"thread_id": thread_id, "count": unread_count}),
+        );
+        if let Some(sink) = self.scheduler_sink() {
+            self.announce_queue(sink.as_ref(), thread_id, queue);
+        }
     }
 
     /// Runs [`AppState::after_run`] on its own task. A plain function (not an
@@ -360,10 +370,67 @@ impl AppState {
         self.goal_after_run(sink, thread_id, run_id, terminal).await;
     }
 
+    /// Sends a message on the server's own behalf (a queued message or a
+    /// goal turn). Returns the send result and whether the run was admitted
+    /// but failed to start, in which case its end step already continues.
+    pub(super) async fn send_from_server(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: &str,
+        text: String,
+        run_id: &str,
+        reasoning_effort: Option<String>,
+        attachments: Vec<String>,
+    ) -> (Result<(), String>, bool) {
+        self.inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(run_id.to_owned(), false);
+        let sent = Box::pin(self.send_message_with_options(
+            sink,
+            thread_id.to_owned(),
+            text,
+            run_id.to_owned(),
+            reasoning_effort,
+            attachments,
+        ))
+        .await;
+        let spawn_failed = self
+            .inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(run_id)
+            .unwrap_or(false);
+        (sent.map(|_| ()), spawn_failed)
+    }
+
+    /// The effort a queued message was queued with, if the chat's current
+    /// model still offers it; otherwise the chat's own effort applies.
+    async fn current_effort(&self, thread_id: &str, effort: Option<String>) -> Option<String> {
+        let effort = effort?;
+        let model = self
+            .inner
+            .threads
+            .read()
+            .await
+            .get(thread_id)
+            .map(|record| record.model.clone())?;
+        self.inner
+            .go_catalog
+            .read()
+            .await
+            .iter()
+            .any(|entry| entry.id == model && entry.effort_levels.contains(&effort))
+            .then_some(effort)
+    }
+
     /// Sends the next waiting message if the chat is idle. Returns whether
     /// a message was sent (or will be, after the concurrency limit frees up).
-    /// A message that cannot be sent at all is recorded in the chat as a
-    /// failed send and the next one is tried, so the queue never stalls.
+    /// A message that cannot be sent is kept, held, with the reason in the
+    /// chat, and the next one is tried: the queue never stalls and nothing is
+    /// lost, even when the cause is the chat's and not the message's.
     pub(super) async fn dispatch_queue(&self, sink: Arc<dyn EventSink>, thread_id: &str) -> bool {
         loop {
             if self.require_thread(thread_id).await.unwrap_or(true) {
@@ -385,23 +452,23 @@ impl AppState {
                 next
             };
             let run_id = uuid::Uuid::new_v4().to_string();
-            // The chat's current effort applies: the model may have changed
-            // since the message was queued.
-            let sent = Box::pin(self.send_message_with_options(
-                Arc::clone(&sink),
-                thread_id.to_owned(),
-                next.text.clone(),
-                run_id.clone(),
-                None,
-                next.attachments.clone(),
-            ))
-            .await;
+            let effort = self
+                .current_effort(thread_id, next.reasoning_effort.clone())
+                .await;
+            let (sent, spawn_failed) = self
+                .send_from_server(
+                    Arc::clone(&sink),
+                    thread_id,
+                    next.text.clone(),
+                    &run_id,
+                    effort,
+                    next.attachments.clone(),
+                )
+                .await;
             match sent {
-                Ok(_) => {
-                    // Shown once the run exists, never for a retried message.
-                    self.announce_user_message(sink.as_ref(), thread_id, &next);
-                    return true;
-                }
+                Ok(()) => return true,
+                // Admitted and failed to start: its end step moves the queue on.
+                Err(_) if spawn_failed => return true,
                 Err(error) if super::threads::send_must_wait(&error) => {
                     // Not this message's fault: it goes back to the front and waits.
                     self.requeue_front(sink.as_ref(), thread_id, next);
@@ -410,66 +477,30 @@ impl AppState {
                     }
                     return true;
                 }
-                Err(_)
-                    if self
-                        .inner
-                        .spawn_failed_runs
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&run_id) =>
-                {
-                    // The run was admitted and failed to start: its end step
-                    // already moves the queue along.
-                    self.announce_user_message(sink.as_ref(), thread_id, &next);
-                    return true;
-                }
-                Err(error) => {
-                    self.record_unsendable(sink.as_ref(), thread_id, &run_id, &next, &error);
-                }
+                Err(error) => self.hold_unsendable(sink.as_ref(), thread_id, next, &error),
             }
         }
     }
 
-    fn announce_user_message(
+    /// A queued message refused before any run started (a bare `/goal`, an
+    /// unavailable skill): it goes back to the front, held, and the chat
+    /// says why. Editing it (or saving it unchanged) sends it again.
+    fn hold_unsendable(
         &self,
         sink: &dyn EventSink,
         thread_id: &str,
-        message: &QueuedMessage,
-    ) {
-        sink.emit_thread_event(&ThreadEventEnvelope {
-            thread_id: thread_id.to_owned(),
-            run_id: String::new(),
-            event: ThreadEvent::UserMessage {
-                text: message.text.clone(),
-                attachments: message.attachments.clone(),
-            },
-        });
-    }
-
-    /// A queued message refused before any run started (for example a bare
-    /// `/goal`): kept in the chat with the reason, so nothing is lost silently.
-    fn record_unsendable(
-        &self,
-        sink: &dyn EventSink,
-        thread_id: &str,
-        run_id: &str,
-        message: &QueuedMessage,
+        mut message: QueuedMessage,
         error: &str,
     ) {
-        if let Err(save) = self.inner.transcript.append_user_with_attachments(
-            thread_id,
-            run_id,
-            &message.text,
-            message.attachments.clone(),
-        ) {
-            self.record_error("save_thread_event", save);
-        }
-        self.announce_user_message(sink, thread_id, message);
+        message.held = true;
+        self.requeue_front(sink, thread_id, message);
         let failed = ThreadEventEnvelope {
             thread_id: thread_id.to_owned(),
-            run_id: run_id.to_owned(),
+            run_id: uuid::Uuid::new_v4().to_string(),
             event: ThreadEvent::Failed {
-                error: format!("Queued message not sent: {error}"),
+                error: format!(
+                    "Queued message not sent: {error}. It stays in the queue; edit it to send it again."
+                ),
             },
         };
         if let Err(save) = self.inner.transcript.append_event(&failed) {

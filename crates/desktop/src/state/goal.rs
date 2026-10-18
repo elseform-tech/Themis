@@ -35,6 +35,10 @@ const BUSY_RETRY: Duration = Duration::from_secs(20);
 /// Most command evidence the goal check reads, in characters.
 const MAX_EVIDENCE_CHARS: usize = 12_000;
 const MAX_OUTPUT_CHARS: usize = 1_500;
+/// Most history items one check reads (the newest ones after its position):
+/// a goal from before positions were kept, or a checker that keeps failing,
+/// never reads a whole long chat.
+const MAX_EVIDENCE_ITEMS: usize = 2_000;
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -447,36 +451,19 @@ impl AppState {
         let text = core_goal::turn_message(goal.turns, &goal.text, &note);
         let run_id = uuid::Uuid::new_v4().to_string();
         self.mark_goal_turn(&run_id);
-        let sent = Box::pin(self.send_message_with_options(
-            Arc::clone(&sink),
-            thread_id.clone(),
-            text.clone(),
-            run_id.clone(),
-            None,
-            Vec::new(),
-        ))
-        .await;
-        let spawn_failed = sent.is_err()
-            && self
-                .inner
-                .spawn_failed_runs
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&run_id);
-        if sent.is_ok() || spawn_failed {
-            // Shown once the run exists; a failed start is handled by its end step.
-            sink.emit_thread_event(&ThreadEventEnvelope {
-                thread_id: thread_id.clone(),
-                run_id: String::new(),
-                event: ThreadEvent::UserMessage {
-                    text,
-                    attachments: Vec::new(),
-                },
-            });
-        }
-        if let Err(error) = sent.as_ref().map(|_| ()).map_err(Clone::clone) {
+        let (sent, spawn_failed) = self
+            .send_from_server(
+                Arc::clone(&sink),
+                &thread_id,
+                text,
+                &run_id,
+                None,
+                Vec::new(),
+            )
+            .await;
+        if let Err(error) = sent {
             if spawn_failed {
-                return;
+                return; // Its end step counts the failure and retries.
             }
             self.goal_turn_interrupted(&run_id);
             self.update_goal(sink.as_ref(), &thread_id, |goal| {
@@ -548,6 +535,7 @@ impl AppState {
         }
         let (evidence, changed_files, through_seq) =
             self.turn_evidence(&thread_id, goal.checked_seq);
+        let checked_goal = goal.started_at;
         let verdict = match self.goal_check_config(&thread_id).await {
             Ok(config) => {
                 // The same per-model routes and limits real runs use.
@@ -610,9 +598,13 @@ impl AppState {
         );
         // A decided check has judged this evidence; a failed one has not, so
         // the next check reads it again.
+        // Only for the goal that was checked: one set while the check ran keeps
+        // its own starting point.
         if !check_failed {
             self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                goal.checked_seq = through_seq;
+                if goal.started_at == checked_goal {
+                    goal.checked_seq = through_seq;
+                }
             });
         }
         match verdict.verdict {
@@ -781,15 +773,16 @@ impl AppState {
     fn turn_evidence(&self, thread_id: &str, after_seq: i64) -> (String, bool, i64) {
         let mut evidence = String::new();
         let mut changed = false;
-        let through = self
-            .inner
-            .transcript
-            .last_activity_seq(thread_id)
-            .unwrap_or(after_seq);
-        let Ok(history) = self.inner.transcript.history_after(thread_id, after_seq) else {
+        let Ok(history) =
+            self.inner
+                .transcript
+                .history_after(thread_id, after_seq, MAX_EVIDENCE_ITEMS)
+        else {
             return (evidence, changed, after_seq);
         };
-        for item in history {
+        // Read through exactly what was read, so nothing counts twice.
+        let through = history.last().map_or(after_seq, |(seq, _)| *seq);
+        for (_, item) in history {
             let crate::transcript::HistoryItem::Event { envelope } = item else {
                 continue;
             };

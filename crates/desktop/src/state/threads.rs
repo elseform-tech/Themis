@@ -491,6 +491,7 @@ impl AppState {
                 return Err(error);
             }
         };
+        let shown_attachments = attachments.clone();
         if let Err(error) = self.inner.transcript.append_user_with_attachments(
             &thread_id,
             &run_id,
@@ -499,6 +500,24 @@ impl AppState {
         ) {
             self.finish_run(&thread_id).await;
             return Err(error);
+        }
+        // A message the server sends itself shows in open windows now, saved
+        // and before any of its run's events.
+        if self
+            .inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&run_id)
+        {
+            sink.emit_thread_event(&ThreadEventEnvelope {
+                thread_id: thread_id.clone(),
+                run_id: String::new(),
+                event: ThreadEvent::UserMessage {
+                    text: text.clone(),
+                    attachments: shown_attachments,
+                },
+            });
         }
         self.persist_registry().await;
         let policy = RunPolicy {
@@ -544,11 +563,15 @@ impl AppState {
             // A run that failed to start ended like any run: the queue moves on
             // and a goal continues (or retries). Callers see the marker and
             // leave that to this step.
-            self.inner
-                .spawn_failed_runs
+            if let Some(spawn_failed) = self
+                .inner
+                .server_sends
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .insert(run_id.clone());
+                .get_mut(&run_id)
+            {
+                *spawn_failed = true;
+            }
             self.spawn_after_run(sink, thread_id, run_id, failed.event);
             return Err(error);
         }

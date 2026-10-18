@@ -645,8 +645,9 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
 }
 
 /// Review findings: a queued message refused before any run starts (a bare
-/// `/goal`) is recorded with its reason and the queue moves on; a steer with no
-/// run to receive it is refused and the message stays queued.
+/// `/goal`) stays in the queue, held, with its reason in the chat, and the
+/// queue moves on; a steer with no run to receive it is refused and the message
+/// stays queued.
 #[tokio::test(flavor = "multi_thread")]
 async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
     let server = MockServer::start().await;
@@ -704,7 +705,15 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
         .await
         .unwrap_err();
     assert!(refused.contains("No run is going"), "{refused}");
-    assert_eq!(state.list_queue(thread.clone()).await.unwrap().len(), 1);
+    let waiting = state.list_queue(thread.clone()).await.unwrap();
+    assert_eq!(
+        waiting
+            .iter()
+            .map(|m| (m.text.as_str(), m.held))
+            .collect::<Vec<_>>(),
+        [("/goal", true), ("after the bad one", true)],
+        "nothing is lost: the unsendable message waits, held, for an edit"
+    );
     // Saving the edit releases it, and the idle chat sends it.
     state
         .update_queued_message(sink, thread.clone(), held.id, None, Some(false))
@@ -716,9 +725,21 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
         |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Later done."),
     )
     .await;
-    assert!(state.list_queue(thread.clone()).await.unwrap().is_empty());
-    let history = serde_json::to_string(&state.get_thread_history(&thread).await.unwrap()).unwrap();
-    assert!(history.contains("Queued message not sent"));
+    let left = state.list_queue(thread.clone()).await.unwrap();
+    assert_eq!(
+        left.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+        ["/goal"]
+    );
+    let items = serde_json::to_value(state.get_thread_history(&thread).await.unwrap()).unwrap();
+    assert!(items.to_string().contains("Queued message not sent"));
+    // The message that ran was saved once as the user's.
+    let users = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["kind"] == "user" && item["text"] == "after the bad one")
+        .count();
+    assert_eq!(users, 1);
 }
 
 /// Review findings: a `/goal` whose run cannot start still continues (it
