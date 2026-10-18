@@ -11,6 +11,8 @@ interface ThreadHeaderProps {
   effortLevels: string[];
   effort: string;
   busy: boolean;
+  /** A run is going: a model or effort change applies from the next turn. */
+  running?: boolean;
   switching: boolean;
   onProviderChange: (model: string) => void;
   onEffortChange: (effort: string) => void;
@@ -22,7 +24,7 @@ interface ThreadHeaderProps {
 }
 
 /** Model and effort live in one header pill; review opens as a side panel. */
-export function ThreadHeader({ thread, models, effortLevels, effort, busy, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview, taskCounts, onOpenTasks }: ThreadHeaderProps) {
+export function ThreadHeader({ thread, models, effortLevels, effort, busy, running = false, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview, taskCounts, onOpenTasks }: ThreadHeaderProps) {
   const choices = ["", ...effortLevels];
   const effortIndex = Math.max(0, choices.indexOf(effort));
   return (
@@ -40,7 +42,7 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, switc
               <img className="themis-composer-logo-light" src={opencodeLogoLight} alt="" />
               <span>Go</span>
             </span>
-            <select aria-label="Model" title="Model" value={thread.model} disabled={busy || switching} onChange={event => onProviderChange(event.target.value)}>
+            <select aria-label="Model" title={running ? "Model · applies from the next turn" : "Model"} value={thread.model} disabled={busy || switching} onChange={event => onProviderChange(event.target.value)}>
               {[...new Set([thread.model, ...models.map(model => model.id)])].map(model => (
                 <option key={model} value={model}>{model || "Choose a Go model"}</option>
               ))}

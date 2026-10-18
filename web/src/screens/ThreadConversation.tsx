@@ -6,6 +6,7 @@ import { useActiveProject, useApp } from "../state/store";
 import type { ChangedFile } from "../lib/types";
 import { useEffect, useRef, useState } from "react";
 import { ResponseBody } from "../components/ResponseBody";
+import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
 import { groupConversation, type ConversationRow } from "./conversation";
@@ -224,8 +225,30 @@ function CheckpointDivider({ checkpoint }: { checkpoint: NonNullable<ChatMessage
   return <div className="themis-checkpoint-divider" role="note"><span>Context compacted{change}</span></div>;
 }
 
+const GOAL_NOTE_TITLE: Record<NonNullable<ChatMessage["goalNote"]>["outcome"], string> = {
+  reached: "Goal reached.",
+  not_yet: "Not reached yet.",
+  stuck: "Paused — stuck.",
+  waiting: "Paused — waiting for your reply.",
+  quota: "Paused — quota used up.",
+  failed: "Turn failed.",
+};
+
+/** What the goal check concluded after a turn. */
+function GoalNote({ note }: { note: NonNullable<ChatMessage["goalNote"]> }) {
+  return (
+    <div className="themis-goal-note" role="note" data-outcome={note.outcome}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></svg>
+      <span><strong>{GOAL_NOTE_TITLE[note.outcome]}</strong> {note.reason}</span>
+    </div>
+  );
+}
+
 function Message({ message, threadId, activeRunId, skills, plugins }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
   if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
+  // A goal turn starts with a runtime message: a divider, not a bubble from the user.
+  if (message.goalTurn !== undefined) return <div className="themis-goal-turn" role="separator" aria-label={`Goal turn ${message.goalTurn}`}>Turn {message.goalTurn}</div>;
+  if (message.goalNote) return <GoalNote note={message.goalNote} />;
   const text = message.attachments?.length ? message.text.split("\n\nAttached files (local paths;")[0]! : message.text;
   const isActiveRun = activeRunId !== undefined && message.runId === activeRunId;
   const actionWaiting = isActiveRun && message.role === "assistant" && !message.final && !message.tool;
@@ -270,7 +293,12 @@ function Message({ message, threadId, activeRunId, skills, plugins }: { message:
           </div>}
         </>
       ) : (
-        <p className="themis-thread-text"><PromptText value={text} skills={skills} plugins={plugins} /></p>
+        <>
+          {message.steered && <span className="themis-steered-label">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 12h12M12 6l6 6-6 6" /></svg>Steered in during the run
+          </span>}
+          <p className="themis-thread-text"><PromptText value={text} skills={skills} plugins={plugins} /></p>
+        </>
       )}
     </div>
     </>

@@ -1,0 +1,81 @@
+/* Goal bar and prompt queue, both on top of the composer (canvas boards 16–20). */
+
+.themis-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Icon buttons carry their label as a tooltip. */
+.themis-icon-tip { position: relative; }
+.themis-icon-tip::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  padding: 4px 8px; border-radius: 6px; border: 1px solid var(--themis-border);
+  background: var(--themis-raised); color: var(--themis-text);
+  font-size: .75rem; font-weight: 500; line-height: 1.3; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity .12s ease; z-index: 60;
+}
+.themis-icon-tip:hover::after, .themis-icon-tip:focus-visible::after { opacity: 1; }
+
+.themis-goal-icon {
+  display: grid; place-items: center; flex: none; width: 36px; height: 36px;
+  border: 0; border-radius: 50%; background: transparent; color: var(--themis-text-2); cursor: pointer;
+}
+.themis-goal-icon:hover:not(:disabled) { color: var(--themis-text); background: var(--themis-nav-hover-bg); }
+.themis-goal-icon:disabled { opacity: .5; cursor: not-allowed; }
+.themis-goal-icon.is-primary { background: var(--themis-accent); color: var(--themis-accent-ink); }
+.themis-goal-icon.is-primary:hover:not(:disabled) { background: var(--themis-accent-hover); color: var(--themis-accent-ink); }
+
+.themis-goal-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin: -4px -4px 4px -10px; padding: 2px 2px 8px 10px;
+  border-bottom: 1px solid var(--themis-border-subtle);
+}
+.themis-goal-bar.is-expanded, .themis-goal-bar.is-editing { align-items: flex-start; }
+.themis-goal-mark { flex: none; color: var(--themis-accent); }
+.themis-goal-bar.is-expanded .themis-goal-mark, .themis-goal-bar.is-editing .themis-goal-mark { margin-top: 9px; }
+.themis-goal-text {
+  flex: 1; min-width: 0; margin: 0; font-size: .875rem; font-weight: 600; line-height: 1.5;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.themis-goal-bar.is-expanded .themis-goal-text { padding-top: 7px; white-space: normal; overflow-wrap: anywhere; }
+.themis-goal-meta { display: flex; align-items: center; gap: 8px; flex: none; font-size: .75rem; color: var(--themis-text-2); }
+.themis-goal-bar.is-expanded .themis-goal-meta { margin-top: 10px; }
+.themis-goal-state { color: var(--themis-text); }
+.themis-goal-bar[data-status="stuck"] .themis-goal-state, .themis-goal-bar[data-status="quota"] .themis-goal-state { color: var(--themis-warning); }
+.themis-goal-bar[data-status="reached"] .themis-goal-state { color: var(--themis-success); }
+.themis-goal-elapsed { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; border-radius: 6px; }
+.themis-goal-elapsed:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; }
+.themis-goal-input {
+  flex: 1; min-width: 0; padding: 7px 10px; resize: none;
+  border: 1px solid var(--themis-border); border-radius: 12px; background: var(--themis-canvas);
+  color: var(--themis-text); font: inherit; font-size: .875rem; font-weight: 600; line-height: 1.5;
+}
+.themis-goal-input:focus { outline: 2px solid color-mix(in srgb, var(--themis-accent) 55%, transparent); outline-offset: 0; }
+
+.themis-queue {
+  display: flex; flex-direction: column; gap: 2px; margin: -4px -4px 4px -10px; padding: 0 0 6px;
+  list-style: none; border-bottom: 1px solid var(--themis-border-subtle);
+}
+.themis-queue-row { display: flex; align-items: center; gap: 6px; min-height: 36px; padding-left: 10px; border-radius: 14px; }
+.themis-queue-row:hover { background: var(--themis-nav-hover-bg); }
+.themis-queue-index { flex: none; width: 14px; font-size: .75rem; color: var(--themis-text-3); font-variant-numeric: tabular-nums; }
+.themis-queue-text { flex: 1; min-width: 0; font-size: .875rem; color: var(--themis-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.themis-queue-text small { color: var(--themis-text-3); }
+.themis-queue-input {
+  flex: 1; min-width: 0; height: 32px; padding: 0 10px;
+  border: 1px solid var(--themis-border); border-radius: 10px; background: var(--themis-canvas);
+  color: var(--themis-text); font: inherit; font-size: .875rem;
+}
+.themis-queue-input:focus { outline: 2px solid color-mix(in srgb, var(--themis-accent) 55%, transparent); outline-offset: 0; }
+
+/* Conversation: steered messages, goal turn dividers and goal notes. */
+.themis-steered-label { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-bottom: 4px; font-size: .75rem; color: var(--themis-text-2); }
+.themis-goal-turn { display: flex; align-items: center; gap: 10px; margin: 4px 0; font-size: .75rem; color: var(--themis-text-2); }
+.themis-goal-turn::before, .themis-goal-turn::after { content: ""; flex: 1; height: 1px; background: var(--themis-border-subtle); }
+.themis-goal-note {
+  display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px;
+  border-radius: 16px; border: 1px solid var(--themis-border-subtle); background: var(--themis-surface);
+  font-size: .8125rem; line-height: 1.5; color: var(--themis-text-2);
+}
+.themis-goal-note strong { color: var(--themis-text); font-weight: 600; }
+.themis-goal-note svg { flex: none; margin-top: 2px; color: var(--themis-accent); }
+.themis-goal-note[data-outcome="reached"] svg { color: var(--themis-success); }
+.themis-goal-note[data-outcome="stuck"] svg, .themis-goal-note[data-outcome="failed"] svg { color: var(--themis-danger); }

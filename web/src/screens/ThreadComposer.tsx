@@ -1,12 +1,16 @@
 import { AttachmentPreview } from "./AttachmentPreview";
-import { PromptInput } from "../components/PromptInput";
-import { useEffect, useRef } from "react";
+import { PromptInput, type PromptCommand } from "../components/PromptInput";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { Attachment } from "../lib/tauri";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
 import type { ContextBudget, ThreadInfo } from "../lib/types";
 import { isModeInitial } from "../lib/keyboard";
 import { ContextMeter } from "./ContextMeter";
+
+const COMMANDS: PromptCommand[] = [
+  { id: "goal", name: "/goal", description: "Keep working until a goal is met — checked before every stop", command: true },
+];
 
 interface ThreadComposerProps {
   thread: ThreadInfo;
@@ -36,6 +40,8 @@ interface ThreadComposerProps {
   compacting?: boolean;
   /** Centred, larger composer for an empty conversation. */
   hero?: boolean;
+  /** Shown on top of the composer: the chat's goal bar and queued messages. */
+  top?: ReactNode;
 }
 
 export function ThreadComposer({
@@ -63,6 +69,7 @@ export function ThreadComposer({
   compacting = false,
   hero = false,
   location,
+  top,
 }: ThreadComposerProps) {
   const stopAction = useRef(onStop);
   stopAction.current = onStop;
@@ -97,6 +104,7 @@ export function ThreadComposer({
       {sendError && <p className="themis-thread-senderror" role="alert">{sendError}</p>}
       <div onClick={focusEditorFromBox} className={`themis-thread-composer${hero ? " themis-thread-composer--hero" : ""}${running ? " is-running" : ""}`}>
         {running && <span className="themis-composer-ring" aria-hidden="true" />}
+        {top}
         {!secretConfigured && !running && (
           <p className="themis-thread-hint">
             Connect OpenCode Go to send your first message. {" "}
@@ -109,8 +117,8 @@ export function ThreadComposer({
             <button type="button" aria-label={`Remove ${file.name}`} disabled={composerDisabled} onClick={() => onRemoveAttachment?.(file.path)}>×</button>
           </li>)}
         </ul>}
-        <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} history={history} disabled={composerDisabled}
-          placeholder={running ? "Run in progress…" : readOnly ? "Start a new thread to continue" : "Ask Themis… @ for plugins, / for skills"}
+        <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} commands={COMMANDS} history={history} disabled={composerDisabled}
+          placeholder={running ? "Queue a message — or steer it in" : readOnly ? "Start a new thread to continue" : "Ask Themis… @ for plugins, / for skills"}
           onChange={onDraftChange} onSubmit={onSend} />
         <div className="themis-thread-composer-actions">
           <details className="themis-composer-add" data-popover>
@@ -141,12 +149,12 @@ export function ThreadComposer({
 
           <span className="themis-composer-spacer" />
           <ContextMeter budget={budget} compacting={compacting} running={running} />
-          {running ? (
+          {running && (
             <Button
               className="themis-send"
               variant="ghost"
               aria-label={stopping ? "Stopping" : "Stop"}
-              title={stopping ? "Stopping…" : "Stop (Esc twice)"}
+              title={stopping ? "Stopping…" : "Stop this turn (Esc twice)"}
               disabled={stopping}
               onClick={onStop}
             >
@@ -154,12 +162,13 @@ export function ThreadComposer({
                 <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor" />
               </svg>
             </Button>
-          ) : (
+          )}
+          {(!running || draft.trim() !== "" || attachments.length > 0) && (
             <Button
               className="themis-send"
               variant="primary"
-              aria-label="Send"
-              title="Send (Enter) · Shift+Enter for a new line · ⌘/Ctrl+Shift+O new thread"
+              aria-label={running ? "Queue message" : "Send"}
+              title={running ? "Queue (Enter) · sent when this turn ends, or steer it in" : "Send (Enter) · Shift+Enter for a new line · ⌘/Ctrl+Shift+O new thread"}
               disabled={composerDisabled || (draft.trim() === "" && attachments.length === 0)}
               onClick={onSend}
             >

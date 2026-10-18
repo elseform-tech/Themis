@@ -2,7 +2,11 @@ import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { promptParts, skillToken, pluginToken, type PromptSkill, type PromptPlugin } from "../lib/prompt";
 import "./PromptInput.css";
 
-interface Props { value:string; onChange:(value:string)=>void; skills:PromptSkill[]; plugins?:PromptPlugin[]; label:string; id?:string; disabled?:boolean; placeholder?:string; onSubmit?:()=>void; history?:string[] }
+/** A built-in command offered first in the `/` menu, at the start of a message only. */
+export interface PromptCommand { id:string; name:string; description:string; command:true }
+interface Props { value:string; onChange:(value:string)=>void; skills:PromptSkill[]; plugins?:PromptPlugin[]; commands?:PromptCommand[]; label:string; id?:string; disabled?:boolean; placeholder?:string; onSubmit?:()=>void; history?:string[] }
+type Choice=PromptSkill|PromptPlugin|PromptCommand;
+export function GoalIcon() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/></svg>; }
 function serialize(node:Node):string {
   if (node.nodeType===Node.TEXT_NODE) return node.textContent ?? "";
   if (node instanceof HTMLElement && node.dataset.skill) return skillToken(node.dataset.skill);
@@ -46,14 +50,16 @@ export function PromptText({value,skills,plugins=[]}:{value:string;skills:Prompt
     return <span key={index} className="themis-skill-chip" title={skill?.plugin ?? "Unavailable skill"}><SkillIcon /><span className="themis-reference-label themis-shimmer">{skill?.name ?? (part.skill==="create-skill"?"Create skill":"Unavailable skill")}</span></span>;
   })}</>;
 }
-export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,placeholder,onSubmit,history=[]}:Props) {
+export function PromptInput({value,onChange,skills,plugins=[],commands=[],label,id,disabled,placeholder,onSubmit,history=[]}:Props) {
   const editor=useRef<HTMLDivElement>(null),pendingCaret=useRef<number|null>(null),recall=useRef({index:-1,draft:""}),undo=useRef<string[]>([]),redo=useRef<string[]>([]);
   const [slash,setSlash]=useState<{start:number;end:number;query:string;kind:"skill"|"plugin"}|null>(null);
   const [active,setActive]=useState(0);
   const activeOption=useRef<HTMLButtonElement>(null);
   const labels = skills.map(s=>`${s.id}:${s.name}`).join("|")+plugins.map(p=>`${p.id}:${p.name}:${p.icon ?? ""}:${p.enabled}`).join("|");
   const previousLabels = useRef(labels);
-  const choices:Array<PromptSkill|PromptPlugin>=slash?.kind==="plugin" ? plugins.filter(p=>p.enabled && `${p.name} ${p.origin}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12) : skills.filter(s=>!s.retired).filter(s=>!slash?.query || slash.query==="skill" || `${s.name} ${s.plugin} ${s.id}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12);
+  // Commands only work as the first word of a message.
+  const commandChoices=slash?.kind==="skill" && value.slice(0,slash.start).trim()==="" ? commands.filter(c=>c.id.startsWith(slash.query.toLowerCase())) : [];
+  const choices:Choice[]=slash?.kind==="plugin" ? plugins.filter(p=>p.enabled && `${p.name} ${p.origin}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12) : [...commandChoices, ...skills.filter(s=>!s.retired).filter(s=>!slash?.query || slash.query==="skill" || `${s.name} ${s.plugin} ${s.id}`.toLowerCase().includes(slash.query.toLowerCase())).slice(0,12)];
   const activeChoiceId=choices[active]?.id;
   useLayoutEffect(()=>{
     activeOption.current?.scrollIntoView?.({block:"nearest",inline:"nearest"});
@@ -102,9 +108,9 @@ export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,
       const selection=window.getSelection();selection?.removeAllRanges();selection?.addRange(range);pendingCaret.current=null;
     }
   },[value,skills,plugins,labels]);
-  function select(choice:PromptSkill|PromptPlugin) {
+  function select(choice:Choice) {
     if (!slash)return;
-    const token=(slash.kind==="plugin"?pluginToken(choice.id):skillToken(choice.id))+" ";pendingCaret.current=slash.start+token.length;
+    const token=("command" in choice?choice.name:slash.kind==="plugin"?pluginToken(choice.id):skillToken(choice.id))+" ";pendingCaret.current=slash.start+token.length;
     update(value.slice(0,slash.start)+token+value.slice(slash.end));setSlash(null);editor.current?.focus();
   }
   function keyDown(event:KeyboardEvent<HTMLDivElement>) {
@@ -126,7 +132,11 @@ export function PromptInput({value,onChange,skills,plugins=[],label,id,disabled,
   return <div className="themis-prompt-input">
     <div ref={editor} id={id} role="textbox" aria-label={label} aria-multiline="true" aria-disabled={disabled} aria-autocomplete="list" aria-controls={slash?listId:undefined} aria-activedescendant={slash&&choices[active]?`${listId}-${active}`:undefined} contentEditable={!disabled} tabIndex={disabled ? -1 : 0} suppressContentEditableWarning className="themis-prompt-editor" data-placeholder={placeholder} onFocus={detectSlash} onKeyUp={event=>{if(!["ArrowUp","ArrowDown","Enter","Tab","Escape"].includes(event.key))detectSlash();}} onKeyDown={keyDown} onInput={()=>{if(editor.current){update(serialize(editor.current));recall.current.index=-1;detectSlash();}}} onPaste={event=>{event.preventDefault();const text=event.clipboardData.getData("text/plain");document.execCommand("insertText",false,text);if(editor.current){update(serialize(editor.current));detectSlash();}}} onCopy={event=>{const selection=window.getSelection();if(selection?.rangeCount){event.clipboardData.setData("text/plain",serialize(selection.getRangeAt(0).cloneContents()));event.preventDefault();}}} />
     {slash&&<div className="themis-prompt-menu" id={listId} role="listbox" aria-label={slash.kind==="plugin"?"Plugins":"Skills"}>
-      {choices.length===0?<p>No matching {slash.kind==="plugin"?"plugins":"skills"}</p>:choices.map((choice,index)=><button key={choice.id} ref={index===active?activeOption:undefined} type="button" id={`${listId}-${index}`} role="option" aria-selected={index===active} onMouseDown={event=>event.preventDefault()} onClick={()=>select(choice)}>{"origin" in choice?<PluginIcon plugin={choice} />:<SkillIcon />}<span>{choice.name}<small title={choice.description}>{"origin" in choice?choice.origin:skillOrigin(choice)} · {choice.description}</small></span></button>)}
+      {choices.length===0?<p>No matching {slash.kind==="plugin"?"plugins":"skills"}</p>:choices.map((choice,index)=>{
+        const heading=commandChoices.length>0 && (index===0?"Commands":index===commandChoices.length?"Skills":null);
+        const option=<button key={choice.id} ref={index===active?activeOption:undefined} type="button" id={`${listId}-${index}`} role="option" aria-selected={index===active} onMouseDown={event=>event.preventDefault()} onClick={()=>select(choice)}>{"command" in choice?<GoalIcon />:"origin" in choice?<PluginIcon plugin={choice} />:<SkillIcon />}<span>{choice.name}<small title={choice.description}>{"command" in choice?choice.description:<>{"origin" in choice?choice.origin:skillOrigin(choice)} · {choice.description}</>}</small></span></button>;
+        return heading?[<p key={`${heading}-heading`} className="themis-prompt-menu-heading" role="presentation">{heading}</p>,option]:option;
+      })}
     </div>}
   </div>;
 }
