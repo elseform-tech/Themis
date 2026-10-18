@@ -543,15 +543,10 @@ export function reducer(state: AppState, action: AppAction): AppState {
       };
     }
     case "thread/created": {
+      // The server's own `created` event can arrive before this reply: upsert, never append twice.
+      const synced = reducer(state, { type: "thread/synced", projectRoot: action.projectRoot, thread: action.thread });
       return {
-        ...state,
-        threadsByProject: {
-          ...state.threadsByProject,
-          [action.projectRoot]: [
-            ...(state.threadsByProject[action.projectRoot] ?? []),
-            action.thread,
-          ],
-        },
+        ...synced,
         activeProjectRoot: action.projectRoot,
         activeThreadId: action.thread.id,
         mainView: "thread",

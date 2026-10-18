@@ -720,6 +720,14 @@ describe("thread/changed", () => {
     // Replaying the same event is harmless.
     expect(reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "n1", thread: updated } })).toEqual(s);
   });
+  it("lists a new chat once when the server's created event arrives before the create reply", () => {
+    let s = withThread();
+    const fresh = info({ id: "n2", title: "New thread" });
+    s = reducer(s, { type: "thread/changed", change: { kind: "created", project_root: PROJECT.root, thread_id: "n2", thread: fresh } });
+    s = reducer(s, { type: "thread/created", projectRoot: PROJECT.root, thread: fresh });
+    expect(s.threadsByProject[PROJECT.root]?.map(t => t.id)).toEqual([THREAD.id, "n2"]);
+    expect(s.activeThreadId).toBe("n2");
+  });
   it("removes a thread and ignores an update without info", () => {
     const s = withThread();
     expect(reducer(s, { type: "thread/changed", change: { kind: "updated", project_root: PROJECT.root, thread_id: "x" } })).toBe(s);
