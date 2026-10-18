@@ -319,6 +319,20 @@ automations and watches post into the same chat and inherit its grants; a watch'
 `check_command` follows normal shell policy plus the chat's grants. Deny rules always beat a
 grant, and YOLO is unchanged. Discarding a chat, or deleting its project, removes its file.
 Neither `chat_grants/*.json` nor `mcp_consent.json` has integrity protection: both live in app data like the plugin registry. Sandboxed commands and Themis' file tools cannot write the app-data folder, but a command you let run outside the sandbox (or any command while the sandbox is off or unavailable) can edit them. Writes are serialized, merge with concurrent runs, and use unique temporary files.
+**Queues and goals.** A chat's queued messages live in `queues/<chat id>.json` and its goal
+in `goals/<chat id>.json` (app data, beside `threads.json`): `[{"id","text","attachments",
+"reasoning_effort","held"}]` (at most 50 messages of 100,000 characters) and `{"text","status",
+"reason","started_at","active_ms","running_since","turns","stalls","progress","failures"}` with
+`status` one of `running`, `paused`, `waiting`, `stuck`, `quota`, `reached` (the goal sentence is
+at most 2,000 characters). They grant nothing; a damaged file is ignored (fixed
+`queue_ignored`/`goal_ignored` diagnostics, never the contents), and discarding a chat or its
+project removes both. Diagnostics record queue and goal ids, status changes, check verdict kinds
+and retry counts, never message text, the goal sentence or check prompts. The goal check, the
+stall rule (three turns without progress), quota retries (every 15 minutes) and error backoff
+(30 s doubling to 15 minutes) are fixed, not runtime configuration. App server commands:
+`list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
+`steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`
+(also through `themis call`).
 **To undo** a grant, edit or delete its entry in the chat's file, or start a new chat; there is
 deliberately no UI for this, and the composer shield stays YOLO/Custom only.
 Destructive actions (the variants below and the `destructive` risk class such as
