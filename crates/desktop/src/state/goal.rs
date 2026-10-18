@@ -93,8 +93,15 @@ impl AppState {
         goal
     }
 
-    /// Saves and announces the chat's goal (`None` removes it).
-    fn store_goal(&self, sink: &dyn EventSink, thread_id: &str, goal: Option<Goal>) {
+    /// Saves and announces the chat's goal (`None` removes it). Running time
+    /// so far is banked on every save, so a crash loses at most part of a turn.
+    fn store_goal(&self, sink: &dyn EventSink, thread_id: &str, mut goal: Option<Goal>) {
+        if let Some(goal) = goal
+            .as_mut()
+            .filter(|goal| goal.status == GoalStatus::Running)
+        {
+            set_status(goal, GoalStatus::Running, goal.reason.clone());
+        }
         let previous = self
             .inner
             .goals
