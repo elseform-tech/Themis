@@ -100,7 +100,8 @@
 
 /* Composer: a rounded pill. A sweeping ring marks an active run. */
 .themis-thread-senderror { width: min(calc(100% - 40px), 740px); margin: 0 auto 6px; color: var(--themis-danger); font-size: .8125rem; }
-.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 40px), 740px); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; }
+/* z-index 2: the composer's pop-ups (context, menus) open over the sticky run-progress row (z-index 1). */
+.themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 40px), 740px); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
 .themis-thread-composer:focus-within { box-shadow: 0 0 0 1px var(--themis-border); }
 .themis-thread-composer--hero { margin: 0; width: min(100%, 760px); padding: 16px 14px 12px 22px; }
 .themis-composer-ring { position: absolute; inset: -1.5px; z-index: -1; border-radius: inherit; overflow: hidden; pointer-events: none; }
