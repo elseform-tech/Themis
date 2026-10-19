@@ -669,6 +669,8 @@ async fn mcp_application_error_keeps_session_available_for_next_run() {
             let body: serde_json::Value = request.body_json().unwrap();
             ResponseTemplate::new(200).set_body_json(if body["params"]["arguments"]["reject"] == true {
                 json!({"jsonrpc":"2.0","id":body["id"],"error":{"code":-32602,"message":"Invalid arguments"}})
+            } else if body["params"]["arguments"]["throw"] == true {
+                json!({"jsonrpc":"2.0","id":body["id"],"result":{"isError":true,"content":[{"type":"text","text":"Error: ReferenceError: planets is not defined"}]}})
             } else { json!({"jsonrpc":"2.0","id":body["id"],"result":{"content":[]}}) })
         }).mount(&server).await;
     let root = tempfile::tempdir().unwrap();
@@ -686,6 +688,16 @@ async fn mcp_application_error_keeps_session_available_for_next_run() {
         .unwrap();
     assert!(tools[0].execute(json!({"reject":true})).await.is_err());
     assert!(session.is_connected());
+    // A tool-level error reaches the agent with the server's own explanation.
+    let error = tools[0]
+        .execute(json!({"throw":true}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("ReferenceError: planets is not defined"),
+        "{error}"
+    );
     let (next_run, _) = session
         .tools("docs", std::sync::Arc::new(AllowAllHook))
         .unwrap();

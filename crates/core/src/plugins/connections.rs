@@ -420,12 +420,41 @@ impl ToolRuntime for McpTool {
                 ToolCallError::RuntimeError(e.to_string().into())
             })?;
         if result["isError"] == true {
-            return Err(ToolCallError::RuntimeError(
-                "MCP tool reported an error".into(),
-            ));
+            return Err(ToolCallError::RuntimeError(tool_error_text(&result).into()));
         }
         Ok(result)
     }
+}
+
+/// Most characters of an MCP tool's own error text passed to the model.
+const MAX_TOOL_ERROR_CHARS: usize = 4_000;
+
+/// An MCP tool's error with the server's explanation (its text content,
+/// bounded), so the agent can fix the call instead of retrying blind.
+fn tool_error_text(result: &Value) -> String {
+    let text = result["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = text.trim();
+    if text.is_empty() {
+        return "MCP tool reported an error".to_owned();
+    }
+    let count = text.chars().count();
+    let mut message = format!(
+        "MCP tool reported an error: {}",
+        text.chars().take(MAX_TOOL_ERROR_CHARS).collect::<String>()
+    );
+    if count > MAX_TOOL_ERROR_CHARS {
+        message.push_str(&format!(
+            " [… {} more characters]",
+            count - MAX_TOOL_ERROR_CHARS
+        ));
+    }
+    message
 }
 impl ToolT for McpTool {
     fn name(&self) -> &str {
