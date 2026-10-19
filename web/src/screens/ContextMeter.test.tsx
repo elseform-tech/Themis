@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ContextBudget } from "../lib/types";
 import { ContextMeter } from "./ContextMeter";
+import { readFileSync } from "node:fs";
 
 const budget: ContextBudget = { budget_tokens: 200000, usable_tokens: 187000, used_tokens: 158000, tool_definition_tokens: 9800, output_reserve_tokens: 8192, safety_margin_tokens: 4000, maintenance_at_tokens: 155210, compaction_at_tokens: 166000, compaction_soon: true, breakdown: { system: 8400, checkpoint: 4100, attachments: 10600, conversation: 38500, tool_activity: 96400 } };
 afterEach(cleanup);
@@ -39,4 +40,10 @@ describe("ContextMeter", () => {
     const { container } = render(<ContextMeter budget={undefined} running />);
     expect(container).toBeEmptyDOMElement();
   });
+});
+
+it("opens over the sticky run-progress row, which shows only during a run", () => {
+  const css = readFileSync("src/screens/ThreadView.css", "utf8");
+  const zIndex = (selector: string) => Number(new RegExp(`\\${selector} \\{[^}]*z-index: (\\d+)`).exec(css)?.[1]);
+  expect(zIndex(".themis-thread-composer")).toBeGreaterThan(zIndex(".themis-run-progress"));
 });

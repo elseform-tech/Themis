@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { promptParts, skillToken, pluginToken, type PromptSkill, type PromptPlugin } from "../lib/prompt";
+import { goalCommand, promptParts, skillToken, pluginToken, type PromptSkill, type PromptPlugin } from "../lib/prompt";
 import "./PromptInput.css";
 
 /** A built-in command offered first in the `/` menu, at the start of a message only. */
@@ -11,6 +11,7 @@ function serialize(node:Node):string {
   if (node.nodeType===Node.TEXT_NODE) return node.textContent ?? "";
   if (node instanceof HTMLElement && node.dataset.skill) return skillToken(node.dataset.skill);
   if (node instanceof HTMLElement && node.dataset.plugin) return pluginToken(node.dataset.plugin);
+  if (node instanceof HTMLElement && node.dataset.command) return node.dataset.command;
   if (node instanceof HTMLBRElement) return "\n";
   const text=Array.from(node.childNodes).map(serialize).join("");
   return node instanceof HTMLElement && ["DIV","P"].includes(node.tagName) && node.previousSibling ? "\n"+text : text;
@@ -40,6 +41,8 @@ export function PluginIcon({plugin}:{plugin?:PromptPlugin}) {
   return plugin?.icon ? <img className="themis-prompt-plugin-icon" src={plugin.icon} alt="" referrerPolicy="no-referrer" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0ZM12 18v4"/></svg>;
 }
 export function PromptText({value,skills,plugins=[]}:{value:string;skills:PromptSkill[];plugins?:PromptPlugin[]}) {
+  const command=goalCommand(value);
+  if (command) return <><span className="themis-skill-chip themis-command-chip" title="Goal: keeps working until it is met"><GoalIcon /><span className="themis-reference-label">Goal</span></span><PromptText value={value.slice(command.length)} skills={skills} plugins={plugins} /></>;
   return <>{promptParts(value).map((part,index)=> {
     if ("text" in part) return part.text;
     if ("plugin" in part) {
@@ -78,9 +81,19 @@ export function PromptInput({value,onChange,skills,plugins=[],commands=[],label,
     const labelsChanged = previousLabels.current !== labels;
     previousLabels.current = labels;
     if (labelsChanged && element.contains(window.getSelection()?.anchorNode ?? null)) pendingCaret.current = caret(element);
-    if (serialize(element)!==value || element.childNodes.length===0 || labelsChanged) {
+    const command=goalCommand(value);
+    // A typed `/goal` becomes its sticker too, keeping the caret where it was.
+    const commandMissing=command!==null && !(element.firstChild instanceof HTMLElement && element.firstChild.dataset.command===command);
+    if (commandMissing && pendingCaret.current===null && element.contains(window.getSelection()?.anchorNode ?? null)) pendingCaret.current=caret(element);
+    if (serialize(element)!==value || element.childNodes.length===0 || labelsChanged || commandMissing) {
       element.replaceChildren();
-      for (const part of promptParts(value)) {
+      if (command) {
+        const chip=document.createElement("span"),icon=document.createElement("span");
+        chip.className="themis-skill-chip themis-command-chip";chip.contentEditable="false";chip.dataset.command=command;chip.title="Goal: keeps working until it is met";
+        icon.textContent="◎";icon.setAttribute("aria-hidden","true");
+        chip.append(icon,referenceLabel("Goal"));element.append(chip);
+      }
+      for (const part of promptParts(value.slice(command?.length ?? 0))) {
         if ("text" in part) {element.append(document.createTextNode(part.text));continue;}
         if ("plugin" in part) {
           const plugin=plugins.find(p=>p.id===part.plugin),chip=document.createElement("span");
@@ -97,7 +110,7 @@ export function PromptInput({value,onChange,skills,plugins=[],commands=[],label,
         chip.append(icon,referenceLabel(skill?.name ?? (part.skill==="create-skill"?"Create skill":"Unavailable skill")));
         element.append(chip);
       }
-      if (!element.lastChild || (element.lastChild instanceof HTMLElement && (element.lastChild.dataset.skill || element.lastChild.dataset.plugin))) element.append(document.createTextNode(""));
+      if (!element.lastChild || (element.lastChild instanceof HTMLElement && (element.lastChild.dataset.skill || element.lastChild.dataset.plugin || element.lastChild.dataset.command))) element.append(document.createTextNode(""));
     }
     if (pendingCaret.current!==null) {
       let offset=pendingCaret.current;const range=document.createRange();range.selectNodeContents(element);range.collapse(false);

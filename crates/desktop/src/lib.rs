@@ -169,6 +169,27 @@ fn set_dock_icon() -> Result<(), String> {
     Ok(())
 }
 
+/// Worker stack for the runtime that hosts the backend. A run's future nests
+/// deeply (context scopes, hooks, providers); in a debug build, building a
+/// request with MCP tool schemas overflowed tokio's 2 MiB default.
+const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+/// The async runtime for the app, its headless server and the CLI.
+pub fn runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(WORKER_STACK_BYTES)
+        .build()
+}
+
+/// Makes [`runtime`] Tauri's async runtime. Call once, first thing in `main`.
+pub fn install_runtime() {
+    let runtime = runtime().expect("could not start the async runtime");
+    tauri::async_runtime::set(runtime.handle().clone());
+    // Tauri keeps only the handle; the runtime lives for the whole process.
+    std::mem::forget(runtime);
+}
+
 /// The same executable can host the backend without starting a window.
 pub fn run_headless_server(data_dir: PathBuf) -> Result<(), String> {
     tauri::async_runtime::block_on(run_headless_server_async(data_dir))
@@ -312,4 +333,23 @@ fn pdf_thumbnail_renders_and_rejects_escaped_cache() {
     assert!(pdf_thumbnail(source.to_str().unwrap())
         .unwrap_err()
         .contains("Invalid preview directory"));
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    /// Uses well over tokio's 2 MiB default worker stack (24 frames of 64+ KiB).
+    fn deep(levels: u32) -> u64 {
+        let frame = std::hint::black_box([levels as u8; 64 * 1024]);
+        if levels == 0 {
+            return u64::from(frame[0]);
+        }
+        u64::from(frame[1]) + deep(levels - 1)
+    }
+
+    #[test]
+    fn backend_workers_have_room_for_deep_runs() {
+        let runtime = super::runtime().unwrap();
+        let sum = runtime.block_on(async { tokio::spawn(async { deep(24) }).await.unwrap() });
+        assert_eq!(sum, (0..=24).sum::<u64>());
+    }
 }

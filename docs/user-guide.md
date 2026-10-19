@@ -88,27 +88,38 @@ A goal is one sentence the agent keeps working toward, turn after turn, until it
 is reached; for example `/goal optimize this app to speed up p95`.
 
 - **Start one** with `/goal <sentence>` (the first entry of the `/` menu, at the
-  start of a message). It starts right away. When you ask for an ongoing outcome in
+  start of a message). The command shows as a **Goal** sticker in the composer
+  and in the sent message. It starts right away. When you ask for an ongoing outcome in
   plain words, the agent may ask once whether to make it a goal; if you agree, it
   sets the goal itself.
-- **The goal bar** on the composer shows the sentence and the elapsed time (time
-  spent paused, waiting or with Themis closed does not count). Its icons are
+- **The goal bar** on the composer shows the sentence and the goal's total elapsed
+  time across all its turns (time spent paused, waiting or with Themis closed does
+  not count). Its icons are
   **Edit** (applies from the next turn; the current turn keeps running),
-  **Pause** (after this turn) or **Resume**, and **Show/Hide** for the full sentence.
+  **Pause** (after this turn) or **Resume**, **Remove** (the current turn finishes;
+  no further turns or checks), and **Show/Hide** for the full sentence.
 - **After each turn** a separate check, with a fresh context, reads the goal, the
   turn's answer and the commands it ran, and decides: reached, not yet (the next
   turn starts by itself, told why), or not reachable as written. With a number in
   the goal, that number is the bar; without one, the check decides when further
   gains are not worth it and says why.
+  The check reads only the commands of the turn it judges (long outputs keep their
+  start and end), never earlier turns or the agent's claims, so the agent ends a
+  turn it thinks finishes the goal with one compact verification of every
+  requirement. The check also says whether the turn moved the work forward; turns
+  that only re-check count toward being stuck.
 - **It keeps going.** There is no time, turn or cost limit. Your messages are
   handled first, then the goal continues. Errors are retried with growing waits;
   **Stop** ends only the current turn; a closed app resumes running goals when it
   opens again. A goal pauses only when it is reached, genuinely stuck (no progress
-  over three turns, or not reachable as written; edit it, then Resume), waiting
+  over three turns, not reachable as written, or three turns in a row failing with
+  an error that retrying will not fix, such as a rejected request; fix it or edit
+  the goal, then Resume), waiting
   for your answer (your reply resumes it), or out of model quota (it retries every
   15 minutes; switching the model resumes it at once).
 - A goal never grants permissions: approvals and the sandbox apply as usual, and
-  while an approval waits the goal waits too. Sending a new message after a goal
+  while an approval waits the goal waits too. A reached goal leaves the composer;
+  its note stays in the conversation. Sending a new message after a goal
   is reached clears it; `/goal` again replaces the current goal.
 - **⌘/Ctrl+B** collapses or pins the sidebar. Hovering at the left edge reveals
   an overlay after 300 ms. It closes 700 ms after leaving, unless focus is inside.

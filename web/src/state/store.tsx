@@ -42,7 +42,7 @@ import {
 import { failureMessage as describeError } from "../lib/errors";
 import { reviewToast } from "../screens/reviewFlow";
 import { readSession, writeSession } from "./session";
-import { loadPhase4Lists, restoreRecentProjects } from "./boot";
+import { loadPhase4Lists, openProjectOfNewChat, restoreRecentProjects } from "./boot";
 import {
   initialState,
   newId,
@@ -229,9 +229,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
           eventVersion++;
           dispatch({ type: "approval/expired", approvalId: expired.approval_id });
         });
+        const opening = new Set<string>();
         const offThreadChanged = await onThreadChanged((change) => {
           if (cancelled) return;
           dispatch({ type: "thread/changed", change });
+          if (opening.has(change.project_root)) return;
+          opening.add(change.project_root);
+          void openProjectOfNewChat(change, {
+            isOpen: root => currentState.current.threadsByProject[root] !== undefined,
+            api: { openProject, listThreads },
+            dispatch: action => { if (!cancelled) dispatch(action); },
+          })
+            .catch(error => toast(dispatch, `Could not open the new chat's project: ${describeError(error)}`, "warning"))
+            .finally(() => opening.delete(change.project_root));
         });
         const offReview = await onReviewItemAdded((item) => {
           if (cancelled) return;
