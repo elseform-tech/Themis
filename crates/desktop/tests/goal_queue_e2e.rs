@@ -412,7 +412,34 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
     };
     tokio::time::sleep(Duration::from_millis(2500)).await;
     let requests = server.received_requests().await.unwrap();
-    assert_eq!(turns_and_checks(&requests), 0, "only the first turn ran");
+    assert_eq!(
+        turns_and_checks(&requests),
+        0,
+        "only the first turn ran; goal now {:?}; requests: {:#?}",
+        state.goal_for(&thread),
+        requests
+            .iter()
+            .map(|request| {
+                let body = body(request);
+                let last = body["messages"]
+                    .as_array()
+                    .and_then(|messages| messages.last())
+                    .map(|message| {
+                        message["content"]
+                            .to_string()
+                            .chars()
+                            .take(160)
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default();
+                format!(
+                    "check={} stream={} last={last}",
+                    is_check(&body),
+                    body["stream"]
+                )
+            })
+            .collect::<Vec<_>>()
+    );
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(
         turns_and_checks(&server.received_requests().await.unwrap()),
