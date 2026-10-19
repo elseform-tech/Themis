@@ -88,7 +88,8 @@ A goal is one sentence the agent keeps working toward, turn after turn, until it
 is reached; for example `/goal optimize this app to speed up p95`.
 
 - **Start one** with `/goal <sentence>` (the first entry of the `/` menu, at the
-  start of a message). It starts right away. When you ask for an ongoing outcome in
+  start of a message). The command shows as a **Goal** sticker in the composer
+  and in the sent message. It starts right away. When you ask for an ongoing outcome in
   plain words, the agent may ask once whether to make it a goal; if you agree, it
   sets the goal itself.
 - **The goal bar** on the composer shows the sentence and the elapsed time (time
