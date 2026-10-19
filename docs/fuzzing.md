@@ -37,6 +37,7 @@ internal parsers through the off-by-default `fuzzing` feature of
 | `recall_search` | Arbitrary bytes as a saved JSONL snapshot, plus query, source filter and `around` token for the `recall` tool |
 | `provider_wire` | Model tool arguments and provider JSON for all response/stream converters |
 | `chat_grants` | Arbitrary bytes as a chat's `chat_grants/<id>.json`: accepted entries are valid, bounded and never destructive |
+| `goal_verdict` | Arbitrary text as the goal check's reply (model output) and as a `/goal` message: never panics; a kept verdict is bounded, one line, free of control characters |
 | `sandbox_config` | User and project `runtime.jsonc` text plus command output: resolving never panics, a project never disables the sandbox, changes the backend, allows a blocked network or adds writable paths; no path reaches the Seatbelt profile text; denial scanning stays bounded |
 | `social_request` | UI message text for greeting/thanks detection and recall terms: bounded output, a non-social word always makes a task |
 | `patch_apply` | Model-written `apply_patch` hunks against file text: never panics, applied lines come from the file or the patch |

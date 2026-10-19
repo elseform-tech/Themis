@@ -1,5 +1,15 @@
 use super::*;
 
+/// In the error of a send refused because the chat already runs.
+pub(super) const BUSY: &str = "is busy";
+/// In the error of a send refused by the global concurrency limit.
+pub(super) const CONCURRENCY_LIMIT: &str = GATE_SATURATED_MARKER;
+
+/// Whether a send error means "try again later" rather than a failure.
+pub(super) fn send_must_wait(error: &str) -> bool {
+    error.contains(BUSY) || error.contains(CONCURRENCY_LIMIT)
+}
+
 impl AppState {
     /// Threads share the project checkout, including existing uncommitted files.
     pub async fn create_thread(
@@ -207,6 +217,9 @@ impl AppState {
         reasoning_effort: Option<String>,
         attachments: Vec<String>,
     ) -> Result<RunHandle, String> {
+        if themis_core::goal::parse_goal_command(&text).is_some_and(|goal| goal.is_empty()) {
+            return Err("Add the goal after /goal, for example: /goal speed up p95".to_owned());
+        }
         let automation_run = self
             .inner
             .automation_runs
@@ -415,7 +428,7 @@ impl AppState {
                 .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
             if record.running {
                 return Err(format!(
-                    "thread '{thread_id}' is busy: a run is already in progress"
+                    "thread '{thread_id}' {BUSY}: a run is already in progress"
                 ));
             }
             let limit = usize::try_from(settings.concurrency_limit).unwrap_or(usize::MAX);
@@ -423,7 +436,7 @@ impl AppState {
             // serialize here and the gate cannot be overrun.
             if self.inner.running_count.load(Ordering::SeqCst) >= limit {
                 return Err(format!(
-                    "concurrency limit reached ({}): wait for a run to finish and retry",
+                    "{CONCURRENCY_LIMIT} ({}): wait for a run to finish and retry",
                     settings.concurrency_limit
                 ));
             }
@@ -434,6 +447,7 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .insert(thread_id.clone(), Arc::new(AtomicBool::new(false)));
+            self.open_steer_inbox(&thread_id, Arc::clone(&sink));
             if !record.titled {
                 record.title = title_from_message(&text);
                 record.titled = true;
@@ -468,6 +482,16 @@ impl AppState {
                 automation_run,
             }
         };
+        // `/goal` sets the goal, a reply resumes a goal waiting for the user;
+        // every run while a goal runs is told about it.
+        let resolved_text = match self.goal_for_message(sink.as_ref(), &thread_id, &text, &run_id) {
+            Ok(context) => format!("{resolved_text}{context}"),
+            Err(error) => {
+                self.finish_run(&thread_id).await;
+                return Err(error);
+            }
+        };
+        let shown_attachments = attachments.clone();
         if let Err(error) = self.inner.transcript.append_user_with_attachments(
             &thread_id,
             &run_id,
@@ -476,6 +500,26 @@ impl AppState {
         ) {
             self.finish_run(&thread_id).await;
             return Err(error);
+        }
+        // A message the server sends itself shows in open windows now, saved
+        // and before any of its run's events.
+        let server_send = self
+            .inner
+            .server_sends
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&run_id)
+            .map(|state| *state = super::queue::ServerSend::Saved)
+            .is_some();
+        if server_send {
+            sink.emit_thread_event(&ThreadEventEnvelope {
+                thread_id: thread_id.clone(),
+                run_id: String::new(),
+                event: ThreadEvent::UserMessage {
+                    text: text.clone(),
+                    attachments: shown_attachments,
+                },
+            });
         }
         self.persist_registry().await;
         let policy = RunPolicy {
@@ -518,6 +562,19 @@ impl AppState {
             }
             self.finish_run(&thread_id).await;
             sink.emit_thread_event(&failed);
+            // A run that failed to start ended like any run: the queue moves on
+            // and a goal continues (or retries). Callers see the marker and
+            // leave that to this step.
+            if let Some(state) = self
+                .inner
+                .server_sends
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&run_id)
+            {
+                *state = super::queue::ServerSend::SpawnFailed;
+            }
+            self.spawn_after_run(sink, thread_id, run_id, failed.event);
             return Err(error);
         }
         Ok(RunHandle { run_id })
@@ -589,12 +646,15 @@ impl AppState {
         };
         drop(record);
         self.forget_chat_grants(std::slice::from_ref(&thread_id));
+        self.forget_queues(std::slice::from_ref(&thread_id));
+        self.forget_goals(std::slice::from_ref(&thread_id));
         self.forget_background_tasks(&[thread_id]).await;
         self.persist_registry().await;
         Ok(())
     }
 
-    /// Switches a thread's provider/model (rejected while a run is active).
+    /// Switches a thread's provider/model. During a run the switch applies from
+    /// the next turn: the running turn keeps the model it started with.
     pub async fn set_provider(
         &self,
         thread_id: String,
@@ -609,11 +669,6 @@ impl AppState {
             let record = threads
                 .get_mut(&thread_id)
                 .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
-            if record.running {
-                return Err(format!(
-                    "thread '{thread_id}' is busy: cannot switch provider mid-run"
-                ));
-            }
             record.provider = provider;
             record.model = model.unwrap_or_default();
             record.reasoning_effort = None;
@@ -623,7 +678,8 @@ impl AppState {
         Ok(info)
     }
 
-    /// Persists the thread's selected effort for manual and scheduled runs.
+    /// Persists the thread's selected effort for manual and scheduled runs; a
+    /// change during a run applies from the next turn.
     pub async fn set_thread_effort(
         &self,
         thread_id: String,
@@ -638,17 +694,8 @@ impl AppState {
             let record = threads
                 .get_mut(&thread_id)
                 .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
-            if record.running {
-                return Err(format!(
-                    "thread '{thread_id}' is busy: cannot change effort mid-run"
-                ));
-            }
             if let Some(value) = effort.as_deref() {
-                let catalog = self.inner.go_catalog.read().await;
-                if !catalog.iter().any(|model| {
-                    model.id == record.model
-                        && model.effort_levels.iter().any(|level| level == value)
-                }) {
+                if !offers_effort(&self.inner.go_catalog.read().await, &record.model, value) {
                     return Err(format!(
                         "Effort '{value}' is unavailable for model '{}'",
                         record.model

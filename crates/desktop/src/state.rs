@@ -11,6 +11,8 @@ mod background;
 mod changes;
 mod chat_grants;
 pub(crate) mod configuration;
+mod goal;
+mod goal_tool;
 mod integration_tools;
 mod mcp;
 mod mcp_consent;
@@ -18,6 +20,7 @@ mod permissions;
 mod plugins;
 mod preferences;
 mod projects;
+mod queue;
 mod reviews;
 mod run;
 mod skills;
@@ -194,6 +197,9 @@ impl RegistryEntry {
     }
 }
 
+/// A running run's steer inbox and the sink its events go to.
+type SteerEntry = (themis_core::runtime::SteerInbox, Arc<dyn EventSink>);
+
 struct AppStateInner {
     stop_flags: std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>,
     projects: tokio::sync::RwLock<HashMap<String, ProjectInfo>>,
@@ -248,6 +254,29 @@ struct AppStateInner {
     background: Arc<themis_core::tools::background::BackgroundRegistry>,
     /// Recent command failures, oldest-first, capped at [`MAX_RECENT_ERRORS`].
     recent_errors: std::sync::Mutex<VecDeque<DiagnosticsError>>,
+    /// Per-chat prompt queues (`queues/<chat id>.json`), loaded on first use.
+    queues: std::sync::Mutex<HashMap<String, Vec<crate::types::QueuedMessage>>>,
+    queues_dir: PathBuf,
+    /// Serializes queue changes, so a message is sent or edited exactly once.
+    queue_lock: std::sync::Mutex<()>,
+    /// Steer inboxes of running runs, by chat.
+    /// Steer inboxes of running runs, by chat, with the sink of the run (to
+    /// announce steers put back in the queue when the run ends).
+    steer_inboxes: std::sync::Mutex<HashMap<String, SteerEntry>>,
+    /// Per-chat goals (`goals/<chat id>.json`), loaded on first use.
+    goals: std::sync::Mutex<HashMap<String, Option<crate::types::Goal>>>,
+    goals_dir: PathBuf,
+    /// Serializes goal changes.
+    goal_lock: std::sync::Mutex<()>,
+    /// Runs started as goal turns (checked when they end).
+    goal_turn_runs: std::sync::Mutex<HashSet<String>>,
+    /// Bumped whenever a waiting goal timer must no longer fire.
+    goal_generations: std::sync::Mutex<HashMap<String, u64>>,
+    /// Runs the server itself sends (queued messages, goal turns), by run id:
+    /// the send path announces their user message once it is saved, and marks
+    /// `true` when the run was admitted but failed to start (its end step then
+    /// handles it, so the sender must not). The sender removes its entry.
+    server_sends: std::sync::Mutex<HashMap<String, queue::ServerSend>>,
 }
 
 /// Shared application state (cheap to clone; everything lives behind one `Arc`).
@@ -403,6 +432,16 @@ impl AppState {
                     themis_core::tools::background::storage_dir(&app_dir),
                 )),
                 recent_errors: std::sync::Mutex::new(VecDeque::new()),
+                queues: std::sync::Mutex::new(HashMap::new()),
+                queues_dir: app_dir.join(queue::QUEUES_DIR),
+                queue_lock: std::sync::Mutex::new(()),
+                steer_inboxes: std::sync::Mutex::new(HashMap::new()),
+                goals: std::sync::Mutex::new(HashMap::new()),
+                goals_dir: app_dir.join(goal::GOALS_DIR),
+                goal_lock: std::sync::Mutex::new(()),
+                goal_turn_runs: std::sync::Mutex::new(HashSet::new()),
+                goal_generations: std::sync::Mutex::new(HashMap::new()),
+                server_sends: std::sync::Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -428,6 +467,12 @@ impl AppState {
     /// wires the Tauri sink right after construction).
     pub fn set_scheduler_sink(&self, sink: Arc<dyn EventSink>) {
         self.install_background_notifier(Arc::clone(&sink));
+        // Goals and queued messages carry on after a restart.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let state = self.clone();
+            let boot_sink = Arc::clone(&sink);
+            runtime.spawn(async move { state.resume_after_boot(boot_sink).await });
+        }
         *self
             .inner
             .scheduler_sink
@@ -589,6 +634,14 @@ impl AppState {
         Ok(models)
     }
 
+    /// Whether the Go catalog says `model` offers `effort`, loading the
+    /// catalog first when it is empty. The one effort check for runs,
+    /// automations and queued messages.
+    pub(super) async fn effort_offered(&self, model: &str, effort: &str) -> bool {
+        let _ = self.ensure_go_catalog().await;
+        offers_effort(&self.inner.go_catalog.read().await, model, effort)
+    }
+
     async fn ensure_go_catalog(&self) -> Result<(), String> {
         let unloaded = self.inner.go_catalog.read().await.is_empty();
         if unloaded {
@@ -703,6 +756,13 @@ fn settings_app_dir(settings_path: &Path) -> PathBuf {
         .map(Path::to_path_buf)
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Whether `model` in `catalog` offers reasoning `effort`.
+fn offers_effort(catalog: &[themis_core::providers::GoModel], model: &str, effort: &str) -> bool {
+    catalog
+        .iter()
+        .any(|entry| entry.id == model && entry.effort_levels.iter().any(|level| level == effort))
 }
 
 /// Atomically writes a JSON store file (temp file + rename, so a crash
@@ -929,6 +989,9 @@ fn project_name(root: &Path) -> String {
 }
 
 fn title_from_message(text: &str) -> String {
+    // A chat started with `/goal` is named after the goal, not the command.
+    let goal = themis_core::goal::parse_goal_command(text);
+    let text = goal.as_deref().unwrap_or(text);
     let first = text.lines().next().unwrap_or_default().trim();
     if first.is_empty() {
         return UNTITLED_THREAD.to_owned();
@@ -1468,6 +1531,12 @@ mod tests {
             .await
             .expect("create");
         assert_eq!(thread.model, GO_DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn a_goal_chat_is_named_after_the_goal() {
+        assert_eq!(title_from_message("/goal speed up p95"), "speed up p95");
+        assert_eq!(title_from_message("/goals list"), "/goals list");
     }
 
     #[tokio::test]

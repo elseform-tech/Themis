@@ -83,3 +83,10 @@ path = "fuzz_targets/shell_wrapped.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "goal_verdict"
+path = "fuzz_targets/goal_verdict.rs"
+test = false
+doc = false
+bench = false

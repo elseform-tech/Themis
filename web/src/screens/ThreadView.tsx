@@ -4,13 +4,15 @@ import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components";
 import type { GoModel, WorkspaceInfo } from "../lib/types";
-import { attachFiles, getThread, getWorkspace, listDiff, listGoModels, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, stopThread } from "../lib/tauri";
+import { attachFiles, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
 import { ThreadComposer } from "./ThreadComposer";
 import { ThreadConversation } from "./ThreadConversation";
 import { ThreadHeader } from "./ThreadHeader";
+import { GoalBar } from "./GoalBar";
+import { QueueStack } from "./QueueStack";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { countTasks, useThreadTasksSync } from "./threadTasks";
@@ -77,8 +79,8 @@ export function ThreadView() {
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
   const readOnly = project !== null && !project.is_git && thread?.approval_mode !== "yolo";
-  const composerDisabled = thread === null || thread.provider !== "go" || running || sending || attaching || permissionSaving || readOnly || project === null;
-  const composerBusy = running || sending || attaching;
+  // A message sent while a run is going waits in the chat's queue.
+  const composerDisabled = thread === null || thread.provider !== "go" || sending || attaching || permissionSaving || readOnly || project === null;
   const trace = thread ? state.traces[thread.id] ?? [] : [];
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -107,6 +109,14 @@ export function ThreadView() {
     listDiff(threadId).then(diff => { if (!cancelled) dispatch({ type: "diff/set", threadId, diff }); }).catch(() => {});
     return () => { cancelled = true; };
   }, [threadId, diffKnown, gitProject, dispatch]);
+  // The chat's queue and goal; events keep them current afterwards.
+  useEffect(() => {
+    if (threadId === undefined) return;
+    let cancelled = false;
+    listQueue(threadId).then(queue => { if (!cancelled) dispatch({ type: "queue/loaded", threadId, queue }); }).catch(() => {});
+    getGoal(threadId).then(goal => { if (!cancelled) dispatch({ type: "goal/loaded", threadId, goal }); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [threadId, dispatch]);
   useEffect(() => {
     let cancelled = false;
     setModels([]);
@@ -157,6 +167,18 @@ export function ThreadView() {
     if (text === "" || composerDisabled) return;
     setDraft("");
     setSending(true);
+    if (running) {
+      try {
+        await enqueueMessage(thread.id, text, effort, attachments.map(file => file.path));
+        updateAttachments(thread.id, files => files.filter(file => !attachments.some(sent => sent.path === file.path)));
+      } catch (error: unknown) {
+        setDraft(text);
+        toast(dispatch, `Could not queue the message: ${describeError(error)}`, "danger");
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
     dispatch({
       type: "message/append",
       threadId: thread.id,
@@ -191,7 +213,7 @@ export function ThreadView() {
   }
 
   async function applyProvider(selectedModel: string) {
-    if (thread === null || running) return;
+    if (thread === null) return;
     setSwitching(true);
     try {
       const model = selectedModel.trim();
@@ -232,6 +254,8 @@ export function ThreadView() {
   }
 
   const budget = state.contextBudgets[thread.id];
+  const goal = state.goals[thread.id] ?? null;
+  const queue = state.queues[thread.id] ?? [];
   const compacting = state.compacting[thread.id] ?? false;
   const diff = state.diffs[thread.id];
   const changedFiles = diff?.available ? diff.files.length : undefined;
@@ -271,6 +295,17 @@ export function ThreadView() {
       budget={budget}
       compacting={compacting}
       location={{ name: project.name, root: project.root, branch: workspace?.root === project.root ? workspace.branch : null }}
+      top={<>
+        {goal && <GoalBar goal={goal}
+          onEdit={async text => { try { await editGoal(thread.id, text); } catch (error) { toast(dispatch, `Could not save the goal: ${describeError(error)}`, "danger"); throw error; } }}
+          onPause={() => void pauseGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))}
+          onResume={() => void resumeGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))} />}
+        <QueueStack queue={queue} running={running}
+          onSteer={id => void steerQueuedMessage(thread.id, id).catch(error => toast(dispatch, describeError(error), "danger"))}
+          onHold={(id, held) => void updateQueuedMessage(thread.id, id, { held }).catch(() => {})}
+          onSave={async (id, text) => { try { await updateQueuedMessage(thread.id, id, { text, held: false }); } catch (error) { toast(dispatch, describeError(error), "danger"); } }}
+          onRemove={id => void removeQueuedMessage(thread.id, id).catch(error => toast(dispatch, describeError(error), "danger"))} />
+      </>}
     />
   );
 
@@ -282,7 +317,8 @@ export function ThreadView() {
         models={models}
         effortLevels={effortLevels}
         effort={effort}
-        busy={composerBusy}
+        busy={sending || attaching}
+        running={running}
         switching={switching}
         onProviderChange={model => void applyProvider(model)}
         onEffortChange={value => {

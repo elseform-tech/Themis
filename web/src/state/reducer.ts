@@ -20,6 +20,8 @@ import type {
   ThreadInfo,
   ThreadChange,
   ThreadTasks,
+  QueuedMessage,
+  Goal,
 } from "../lib/types";
 import type { ToastItem, ToastTone } from "../components";
 import { reduceCollectionActions } from "./reducer/collections";
@@ -123,6 +125,10 @@ export interface AppState {
   workspaceTabRequest: { tab: "tasks"; at: number } | null;
   /** Per-chat task feed behind the header indicator and the Tasks tab. */
   tasks: Record<string, ThreadTasks>;
+  /** Messages waiting for each chat's current run to end. */
+  queues: Record<string, QueuedMessage[]>;
+  /** Each chat's goal (`null` when it has none). */
+  goals: Record<string, Goal | null>;
   paletteOpen: boolean;
   projectDialogOpen: boolean;
 }
@@ -144,6 +150,8 @@ export type AppAction =
   | { type: "thread/merged"; threadId: string; result: MergeResult }
   | { type: "thread/send-failed"; threadId: string; error: string }
   | { type: "thread/send-cleared"; threadId: string }
+  | { type: "queue/loaded"; threadId: string; queue: QueuedMessage[] }
+  | { type: "goal/loaded"; threadId: string; goal: Goal | null }
   | {
       type: "threads/restored";
       projects: ProjectInfo[];
@@ -242,6 +250,8 @@ export const initialState: AppState = {
   diffFocus: null,
   workspaceTabRequest: null,
   tasks: {},
+  queues: {},
+  goals: {},
   paletteOpen: false,
   projectDialogOpen: false,
 };
@@ -301,6 +311,26 @@ function appendTrace(
       ...state.traces,
       [threadId]: [...(state.traces[threadId] ?? []), entry],
     },
+  };
+}
+
+/** The marker the runtime puts on the message that starts a goal turn. */
+export const GOAL_TURN_MARKER = "[Goal — runtime, not from the user]";
+
+/** The turn number of a goal-turn message, if `text` is one. */
+export function goalTurnNumber(text: string): number | undefined {
+  if (!text.startsWith(GOAL_TURN_MARKER)) return undefined;
+  const match = /^\s*Turn (\d+)/.exec(text.slice(GOAL_TURN_MARKER.length));
+  return match ? Number(match[1]) : undefined;
+}
+
+/** A user message row; a goal-turn message becomes a divider row. */
+function userMessage(text: string, runId: string | undefined, attachments?: string[]): ChatMessage {
+  const goalTurn = goalTurnNumber(text);
+  return {
+    id: newId("msg"), role: "user", text, runId,
+    ...(attachments?.length ? { attachments } : {}),
+    ...(goalTurn === undefined ? {} : { goalTurn }),
   };
 }
 
@@ -411,6 +441,22 @@ export function applyThreadEvent(
     case "context_usage":
     case "context_suspended":
     case "background_tasks_changed": return state;
+    case "steered": {
+      // Text streamed so far came before the steer; keep the order the model saw.
+      let next = state;
+      const text = state.streams[threadId];
+      if (text) next = appendMessage(next, threadId, { id: newId("msg"), role: "assistant", text, runId });
+      next = { ...next, streams: { ...next.streams, [threadId]: "" } };
+      return appendMessage(next, threadId, { id: newId("msg"), role: "user", text: event.text, runId, steered: true });
+    }
+    case "user_message":
+      return appendMessage(state, threadId, userMessage(event.text, undefined, event.attachments));
+    case "queue_changed":
+      return { ...state, queues: { ...state.queues, [threadId]: event.queue } };
+    case "goal_changed":
+      return { ...state, goals: { ...state.goals, [threadId]: event.goal } };
+    case "goal_note":
+      return appendMessage(state, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalNote: { outcome: event.outcome, reason: event.reason } });
     case "context_budget": {
       const rows = state.messages[threadId] ?? [];
       const last = rows[rows.length - 1];
@@ -684,6 +730,10 @@ export function reducer(state: AppState, action: AppAction): AppState {
         sendErrors: { ...next.sendErrors, [action.threadId]: message },
       };
     }
+    case "queue/loaded":
+      return { ...state, queues: { ...state.queues, [action.threadId]: action.queue } };
+    case "goal/loaded":
+      return { ...state, goals: { ...state.goals, [action.threadId]: action.goal } };
     case "thread/send-cleared": {
       const rest = { ...state.sendErrors };
       delete rest[action.threadId];
@@ -723,7 +773,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         traces: { ...state.traces, [action.threadId]: [] },
       };
       for (const item of action.history) {
-        if (item.kind === "user") next = appendMessage(next, action.threadId, { id: newId("msg"), role: "user", text: item.text, attachments: item.attachments, runId: item.run_id });
+        if (item.kind === "user") next = appendMessage(next, action.threadId, userMessage(item.text, item.run_id, item.attachments));
         else if (item.kind === "legacy") next = appendMessage(next, action.threadId, item.message);
         else next = applyThreadEvent(next, item.envelope, false);
       }

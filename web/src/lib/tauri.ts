@@ -16,6 +16,8 @@ import type {
   FileView,
   WorkspaceInfo,
   GoModel,
+  Goal,
+  QueuedMessage,
   HistoryItem,
   PersistedMessage,
   UpdateStatus,
@@ -113,6 +115,45 @@ const pendingPermissionChanges = new Map<string, Promise<ThreadInfo>>();
 export async function sendMessage(threadId: string, text: string, reasoningEffort?: string, attachments: string[] = []): Promise<RunHandle> {
   while (pendingPermissionChanges.has(threadId)) await pendingPermissionChanges.get(threadId);
   return invoke('send_message', { threadId, text, reasoningEffort: reasoningEffort || null, attachments });
+}
+
+export function listQueue(threadId: string): Promise<QueuedMessage[]> {
+  return invoke('list_queue', { threadId });
+}
+
+/** Queues a message while a run is going; it is sent when the run ends. */
+export async function enqueueMessage(threadId: string, text: string, reasoningEffort?: string, attachments: string[] = []): Promise<QueuedMessage> {
+  while (pendingPermissionChanges.has(threadId)) await pendingPermissionChanges.get(threadId);
+  return invoke('enqueue_message', { threadId, text, reasoningEffort: reasoningEffort || null, attachments });
+}
+
+export function updateQueuedMessage(threadId: string, messageId: string, change: { text?: string; held?: boolean }): Promise<QueuedMessage> {
+  return invoke('update_queued_message', { threadId, messageId, text: change.text ?? null, held: change.held ?? null });
+}
+
+export function removeQueuedMessage(threadId: string, messageId: string): Promise<void> {
+  return invoke('remove_queued_message', { threadId, messageId });
+}
+
+/** Delivers a queued message into the running run, read before its next step. */
+export function steerQueuedMessage(threadId: string, messageId: string): Promise<void> {
+  return invoke('steer_queued_message', { threadId, messageId });
+}
+
+export function getGoal(threadId: string): Promise<Goal | null> {
+  return invoke('get_goal', { threadId });
+}
+
+export function editGoal(threadId: string, text: string): Promise<Goal> {
+  return invoke('edit_goal', { threadId, text });
+}
+
+export function pauseGoal(threadId: string): Promise<Goal> {
+  return invoke('pause_goal', { threadId });
+}
+
+export function resumeGoal(threadId: string): Promise<Goal> {
+  return invoke('resume_goal', { threadId });
 }
 
 export function getThreadHistory(threadId: string): Promise<HistoryItem[]> {

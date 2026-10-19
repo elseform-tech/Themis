@@ -302,7 +302,46 @@ export type ThreadEvent =
   | { kind: 'incomplete'; result: string; model?: string }
   | { kind: 'finished'; result: string; model?: string }
   | { kind: 'failed'; error: string }
-  | { kind: 'background_tasks_changed' };
+  | { kind: 'background_tasks_changed' }
+  /** A queued message the user steered into this run reached the model. */
+  | { kind: 'steered'; text: string }
+  /** The server started this run with a queued message or a goal turn (live only). */
+  | { kind: 'user_message'; text: string; attachments?: string[] }
+  | { kind: 'queue_changed'; queue: QueuedMessage[] }
+  | { kind: 'goal_changed'; goal: Goal | null }
+  | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string };
+
+/** A message waiting for the chat's current run to end. */
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  attachments: string[];
+  reasoning_effort?: string;
+  /** Being edited, or refused (see `note`): the queue skips it until it is saved. */
+  held: boolean;
+  /** Why the server held it (it could not be sent); an edit clears it. */
+  note?: string;
+}
+
+export type GoalStatus = 'running' | 'paused' | 'waiting' | 'stuck' | 'quota' | 'reached';
+export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed';
+
+/** A chat's goal: one sentence the agent keeps working toward. */
+export interface Goal {
+  text: string;
+  status: GoalStatus;
+  reason?: string;
+  /** Unix milliseconds. */
+  started_at: number;
+  /** Running time already counted, in milliseconds. */
+  active_ms: number;
+  /** Unix milliseconds since the goal last started running. */
+  running_since?: number;
+  turns: number;
+  stalls: number;
+  progress?: string;
+  failures: number;
+}
 
 export interface ThreadEventEnvelope {
   thread_id: string;
@@ -353,6 +392,12 @@ export interface PersistedMessage {
   checkpoint?: { before?: number; after?: number };
   /** Files this run changed, shown under its final response. */
   changedFiles?: ChangedFile[];
+  /** A message the user steered into a running run. */
+  steered?: boolean;
+  /** A runtime message that started goal turn N; shown as a divider, not a bubble. */
+  goalTurn?: number;
+  /** What the goal check concluded after a turn. */
+  goalNote?: { outcome: GoalNoteKind; reason: string };
 }
 
 export type HistoryItem =

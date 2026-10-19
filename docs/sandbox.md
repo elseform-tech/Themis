@@ -44,7 +44,7 @@ error. Each backend is probed once per app-server process.
   (`$TMPDIR` and, on macOS, its sibling per-user cache folder, `/tmp`,
   `/var/tmp`, and `/dev/shm` on Linux) and `sandbox.writable_paths`.
 - **Never write** to the Themis app-data folder (`runtime.jsonc`,
-  `chat_grants/`, `mcp_consent.json`, `plugins/registry.json`,
+  `chat_grants/`, `queues/`, `goals/`, `mcp_consent.json`, `plugins/registry.json`,
   `sessions.sqlite3`, ...) or to the project's `.themis/` folder, even inside a
   writable folder, so an agent cannot grant itself permissions.
 - **Read** everything else except these secret locations under your home folder,

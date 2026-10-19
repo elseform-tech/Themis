@@ -9,6 +9,7 @@ pub mod chat_grants;
 pub mod configuration;
 pub mod context_metrics;
 pub mod diagnostics;
+pub mod goal;
 pub mod plugins;
 pub mod providers;
 pub mod runtime;

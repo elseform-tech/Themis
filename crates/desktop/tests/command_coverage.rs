@@ -35,6 +35,8 @@ fn server_exposes_all_frontend_backend_commands() {
             "get_thread_history_page",
             // CLI path to the global runtime.jsonc; the desktop uses open_runtime_config.
             "ensure_runtime_config",
+            // The agent's set_goal tool and the CLI set goals; the desktop sends `/goal`.
+            "set_goal",
         ])
         .collect();
     let handled: BTreeSet<_> = server

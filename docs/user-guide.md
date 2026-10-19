@@ -67,6 +67,49 @@ levels are listed.
   Thinking/using-tool status and elapsed time remain visible during gaps.
 - **Stop** requests cancellation at the next safe boundary. A request or tool
   already executing finishes first; completed edits remain available to review.
+- **While a run is going** you can keep typing: **Send** queues the message
+  above the composer, and queued messages go out by themselves, oldest first,
+  when the run ends. Each one has three icons: **Steer** sends it into the
+  running run now (the agent reads it before its next step, without stopping;
+  a message with attached files waits for the next turn instead), **Edit**
+  changes it while it waits (it is skipped while you edit), and **Remove**
+  takes it out of the queue. A steered message shows in the chat as
+  *Steered in during the run*. A steer the run never got to read is sent as
+  the next message. A message that cannot be sent (a bare `/goal`, a broken
+  project configuration) stays in the queue marked **Needs an edit**, with the
+  reason as its tooltip and in the chat; edit it (or save it unchanged) to send
+  it again. Queued messages survive a restart.
+- **Changing the model or effort during a run** applies from the next turn:
+  the running turn finishes on the model it started with.
+
+### Goals
+
+A goal is one sentence the agent keeps working toward, turn after turn, until it
+is reached; for example `/goal optimize this app to speed up p95`.
+
+- **Start one** with `/goal <sentence>` (the first entry of the `/` menu, at the
+  start of a message). It starts right away. When you ask for an ongoing outcome in
+  plain words, the agent may ask once whether to make it a goal; if you agree, it
+  sets the goal itself.
+- **The goal bar** on the composer shows the sentence and the elapsed time (time
+  spent paused, waiting or with Themis closed does not count). Its icons are
+  **Edit** (applies from the next turn; the current turn keeps running),
+  **Pause** (after this turn) or **Resume**, and **Show/Hide** for the full sentence.
+- **After each turn** a separate check, with a fresh context, reads the goal, the
+  turn's answer and the commands it ran, and decides: reached, not yet (the next
+  turn starts by itself, told why), or not reachable as written. With a number in
+  the goal, that number is the bar; without one, the check decides when further
+  gains are not worth it and says why.
+- **It keeps going.** There is no time, turn or cost limit. Your messages are
+  handled first, then the goal continues. Errors are retried with growing waits;
+  **Stop** ends only the current turn; a closed app resumes running goals when it
+  opens again. A goal pauses only when it is reached, genuinely stuck (no progress
+  over three turns, or not reachable as written; edit it, then Resume), waiting
+  for your answer (your reply resumes it), or out of model quota (it retries every
+  15 minutes; switching the model resumes it at once).
+- A goal never grants permissions: approvals and the sandbox apply as usual, and
+  while an approval waits the goal waits too. Sending a new message after a goal
+  is reached clears it; `/goal` again replaces the current goal.
 - **⌘/Ctrl+B** collapses or pins the sidebar. Hovering at the left edge reveals
   an overlay after 300 ms. It closes 700 ms after leaving, unless focus is inside.
   Hover reveal can be disabled in Appearance. A visible button always reopens it.

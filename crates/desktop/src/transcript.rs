@@ -395,6 +395,34 @@ impl TranscriptStore {
         .collect()
     }
 
+    /// Up to `limit` history items after `seq` (exclusive), oldest first,
+    /// each with its position: one page for callers that keep their own
+    /// watermark and page forward from the last position read.
+    pub fn history_after(
+        &self,
+        thread_id: &str,
+        seq: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, HistoryItem)>, String> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let mut statement = connection
+            .prepare("SELECT seq,item FROM history WHERE thread_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3")
+            .map_err(|e| format!("read session: {e}"))?;
+        let rows = statement
+            .query_map(
+                params![thread_id, seq, i64::try_from(limit).unwrap_or(i64::MAX)],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .map_err(|e| format!("read session: {e}"))?;
+        rows.map(|row| {
+            let (seq, text) = row.map_err(|e| format!("read session: {e}"))?;
+            serde_json::from_str(&text)
+                .map(|item| (seq, item))
+                .map_err(|e| format!("decode session item: {e}"))
+        })
+        .collect()
+    }
+
     pub fn context(
         &self,
         thread_id: &str,
@@ -665,6 +693,17 @@ fn context_turn(item: &HistoryItem) -> Option<ConversationTurn> {
         } => Some(ConversationTurn {
             role: ConversationRole::Assistant,
             text: progress.clone(),
+        }),
+        // A steered message is the user's words, in the order the model saw them.
+        HistoryItem::Event {
+            envelope:
+                ThreadEventEnvelope {
+                    event: ThreadEvent::Steered { text },
+                    ..
+                },
+        } => Some(ConversationTurn {
+            role: ConversationRole::User,
+            text: text.clone(),
         }),
         HistoryItem::User { text, .. } => Some(ConversationTurn {
             role: ConversationRole::User,
@@ -980,5 +1019,44 @@ mod document_tests {
             .load_document_capsule("thread", &wanted)
             .unwrap()
             .is_none());
+    }
+}
+
+#[cfg(test)]
+mod history_after_tests {
+    use super::*;
+
+    /// The goal check's paged read: only items after the position, at most
+    /// `limit` per page, oldest first, each with its position.
+    #[test]
+    fn history_after_pages_forward_from_a_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TranscriptStore::open(&dir.path().join("sessions.sqlite3")).unwrap();
+        for text in ["one", "two", "three", "four"] {
+            store.append_user("chat", "run", text).unwrap();
+        }
+        store.append_user("other", "run", "elsewhere").unwrap();
+        let all = store.history_after("chat", 0, 100).unwrap();
+        let texts = |items: &[(i64, HistoryItem)]| {
+            items
+                .iter()
+                .map(|(_, item)| match item {
+                    HistoryItem::User { text, .. } => text.clone(),
+                    _ => String::new(),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(texts(&all), ["one", "two", "three", "four"]);
+        assert!(all.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        let after_second = store.history_after("chat", all[1].0, 100).unwrap();
+        assert_eq!(texts(&after_second), ["three", "four"]);
+        let first_page = store.history_after("chat", 0, 2).unwrap();
+        assert_eq!(texts(&first_page), ["one", "two"]);
+        let next_page = store.history_after("chat", first_page[1].0, 2).unwrap();
+        assert_eq!(texts(&next_page), ["three", "four"]);
+        assert!(store
+            .history_after("chat", all[3].0, 100)
+            .unwrap()
+            .is_empty());
     }
 }

@@ -243,3 +243,27 @@ it("handles WebKit retaining a stale element caret after the composer is cleared
     expect(screen.queryByRole("listbox")).toBeNull();
   } finally {selection.mockRestore();}
 });
+
+it("offers /goal first under Commands, only at the start of a message", () => {
+  function Harness({ initial }: { initial: string }) {
+    const [value, setValue] = useState(initial);
+    return <PromptInput label="Message" value={value} onChange={setValue} skills={[{ id: "review", name: "Review", description: "Review", plugin: "review" }]} commands={[{ id: "goal", name: "/goal", description: "Keep working until a goal is met", command: true }]} />;
+  }
+  const { unmount } = render(<Harness initial="/go" />);
+  const input = screen.getByRole("textbox", { name: "Message" });
+  const range = document.createRange(); range.selectNodeContents(input); range.collapse(false);
+  window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+  fireEvent.focus(input);
+  const options = screen.getAllByRole("option");
+  expect(options[0]).toHaveTextContent("/goal");
+  expect(screen.getByText("Commands")).toBeInTheDocument();
+  fireEvent.click(options[0]!);
+  expect(input.textContent).toBe("/goal ");
+  unmount();
+  render(<Harness initial="please /go" />);
+  const later = screen.getByRole("textbox", { name: "Message" });
+  const end = document.createRange(); end.selectNodeContents(later); end.collapse(false);
+  window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(end);
+  fireEvent.focus(later);
+  expect(screen.queryByText("/goal")).toBeNull();
+});
