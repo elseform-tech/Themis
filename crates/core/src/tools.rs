@@ -906,6 +906,38 @@ fn tool_error(message: String) -> ToolCallError {
     ToolCallError::RuntimeError(message.into())
 }
 
+/// Parse a tool's arguments. A failure names the offending argument so the model can fix
+/// that one field: serde alone reports only "invalid type: map, expected a string".
+pub(crate) fn parse_tool_args<T: serde::de::DeserializeOwned>(
+    tool: &str,
+    args: Value,
+) -> Result<T, ToolCallError> {
+    let error = match T::deserialize(&args) {
+        Ok(parsed) => return Ok(parsed),
+        Err(error) => error,
+    };
+    // The culprit is the field whose removal makes the rest parse, or leaves only that
+    // field missing.
+    let culprit = args.as_object().and_then(|object| {
+        object.keys().find(|key| {
+            let mut rest = object.clone();
+            rest.remove(*key);
+            match T::deserialize(&Value::Object(rest)) {
+                Ok(_) => true,
+                Err(other) => other
+                    .to_string()
+                    .starts_with(&format!("missing field `{key}`")),
+            }
+        })
+    });
+    Err(tool_error(match culprit {
+        Some(key) => {
+            format!("{tool}: argument '{key}' is invalid: {error}. Fix '{key}' and call again.")
+        }
+        None => format!("{tool}: invalid arguments: {error}"),
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // Approval-gating wrapper for third-party tools
 // ---------------------------------------------------------------------------
@@ -2253,7 +2285,7 @@ impl ToolRuntime for ShellTool {
             cwd,
             background,
             background_timeout_secs,
-        } = serde_json::from_value(args)?;
+        } = parse_tool_args("shell", args)?;
         let mut argv = normalize_argv(std::iter::once(command).chain(args).collect());
         let command = argv.remove(0);
         let args = argv;
@@ -2492,7 +2524,7 @@ impl ApplyPatchTool {
 #[async_trait]
 impl ToolRuntime for ApplyPatchTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let ApplyPatchArgs { patch } = serde_json::from_value(args)?;
+        let ApplyPatchArgs { patch } = parse_tool_args("apply_patch", args)?;
         // Plan first (validates every path and hunk), approve, then commit.
         let plan = plan_tool_patch(&self.root, &patch, self.unrestricted)
             .map_err(|e| tool_error(format!("apply_patch: {e}. No files were changed. Use --- a/path, +++ b/path and numbered @@ -old_start,old_count +new_start,new_count @@ hunks; prefix every body line. Count context on both sides. Do not use *** Begin Patch markers. For larger edits, generate a unified diff locally with Python difflib or edit with approved Python/bash.")))?;
@@ -2607,7 +2639,7 @@ impl GitTool {
 #[async_trait]
 impl ToolRuntime for GitTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let GitArgs { args } = serde_json::from_value(args)?;
+        let GitArgs { args } = parse_tool_args("git", args)?;
         let Some(subcommand) = args.first().map(String::as_str) else {
             return Err(tool_error("git: no subcommand given".to_string()));
         };
@@ -4506,6 +4538,25 @@ mod tests {
             "unsupported patch must not report an empty successful edit"
         );
         assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "old\n");
+    }
+
+    #[tokio::test]
+    async fn a_mistyped_shell_argument_is_named_in_the_error() {
+        let (_tmp, root) = rooted_case();
+        let tool = ShellTool::new(root, allow_all());
+        let error = tool
+            .execute(json!({"command": "sh", "args": ["-c", "true"], "cwd": {}}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("argument 'cwd' is invalid"), "{error}");
+        assert!(error.contains("expected a string"), "{error}");
+        let error = tool
+            .execute(json!({"command": 3}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("argument 'command' is invalid"), "{error}");
     }
 
     #[test]
