@@ -9,7 +9,7 @@ import { ResponseBody } from "../components/ResponseBody";
 import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
-import { groupConversation, type ConversationRow } from "./conversation";
+import { groupConversation, toolDisplayName, type ConversationRow } from "./conversation";
 
 interface ThreadConversationProps {
   threadId: string;
@@ -102,7 +102,7 @@ export function ThreadConversation({
                 : compacting
                   ? "Compacting context…"
                   : toolPending
-                    ? `Using ${toolPending.tool.replace(/_/g, " ")}…`
+                    ? `Using ${toolDisplayName(toolPending.tool, toolPending.label)}…`
                     : "Thinking…"}
             </span>
             <time aria-label="Elapsed time">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</time>
@@ -263,7 +263,7 @@ function Message({ message, threadId, activeRunId, skills, plugins }: { message:
           <summary className={message.tool.ok === undefined && isActiveRun ? "themis-shimmer" : ""}>
             <span className="themis-tool-chevron" aria-hidden="true">›</span>
             <span aria-hidden="true">{message.tool.ok === undefined ? "◌" : message.tool.ok ? "✓" : "!"}</span>
-            {message.tool.name.replace(/_/g, " ")}
+            {toolDisplayName(message.tool.name, message.tool.label)}
             <span className="themis-tool-status">
               {message.tool.ok === undefined ? isActiveRun ? "Running" : "Interrupted" : message.tool.ok ? "Done" : "Failed"}
             </span>
