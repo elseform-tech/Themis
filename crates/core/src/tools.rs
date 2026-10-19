@@ -1662,7 +1662,14 @@ fn plan_tool_patch(
             .or_else(|_| file.path.strip_prefix(root))
             .map_or_else(
                 |_| file.path.to_string_lossy().into_owned(),
-                |inside| inside.to_string_lossy().into_owned(),
+                // `/` on every platform, like the restricted tool's patch paths.
+                |inside| {
+                    inside
+                        .components()
+                        .map(|part| part.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                },
             );
     }
     Ok(plan)
