@@ -207,25 +207,29 @@ async fn a_model_switch_mid_run_applies_next_turn_without_foreign_reasoning() {
         .send_message(sink, thread.id.clone(), "and again".into())
         .await
         .unwrap();
-    while llm.received_requests().await.unwrap().len() < 3 {
+    let bodies = || async {
+        llm.received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|request| request.body_json::<Value>().unwrap())
+            .collect::<Vec<_>>()
+    };
+    let second = |body: &Value| body.to_string().contains("and again");
+    while !bodies().await.iter().any(second) {
         assert!(std::time::Instant::now() < deadline);
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let bodies: Vec<Value> = llm
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .map(|request| request.body_json().unwrap())
-        .collect();
-    // The first run kept its model to the end; the next turn used the new one.
-    assert_eq!(bodies[0]["model"], "first-model");
-    assert_eq!(bodies[1]["model"], "first-model");
-    assert_eq!(bodies[2]["model"], "second-model");
+    // The first run kept its model to the end (both its requests, plus any
+    // plain retry of a stream attempt); the next turn used the new one.
+    let all = bodies().await;
+    let (next, first): (Vec<&Value>, Vec<&Value>) = all.iter().partition(|body| second(body));
+    assert!(first.len() >= 2);
+    assert!(first.iter().all(|body| body["model"] == "first-model"));
+    assert!(next.iter().all(|body| body["model"] == "second-model"));
     assert!(
-        !bodies[2]
-            .to_string()
-            .contains("FIRST-MODEL-PRIVATE-REASONING"),
+        next.iter()
+            .all(|body| !body.to_string().contains("FIRST-MODEL-PRIVATE-REASONING")),
         "the new model never sees the old model's reasoning"
     );
 }

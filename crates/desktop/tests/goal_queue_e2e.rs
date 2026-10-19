@@ -14,7 +14,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-const DEADLINE: Duration = Duration::from_secs(60);
+/// Generous: CI runs every test binary at once.
+const DEADLINE: Duration = Duration::from_secs(120);
 const CHECK_MARKER: &str = "You decide whether an agent has reached a goal";
 
 fn reply(text: &str) -> ResponseTemplate {
@@ -25,6 +26,16 @@ fn reply(text: &str) -> ResponseTemplate {
 
 fn body(request: &Request) -> Value {
     request.body_json().unwrap_or(Value::Null)
+}
+
+/// Requests with distinct conversations: a stream attempt and its plain retry
+/// carry the same messages and count once.
+fn distinct(bodies: Vec<Value>) -> Vec<Value> {
+    let mut seen = std::collections::HashSet::new();
+    bodies
+        .into_iter()
+        .filter(|body| seen.insert(body["messages"].to_string()))
+        .collect()
 }
 
 fn is_check(body: &Value) -> bool {
@@ -208,13 +219,15 @@ async fn queued_messages_wait_steers_reach_the_run_and_the_queue_drains() {
         |event| matches!(event, ThreadEvent::UserMessage { text, .. } if text == "second message")
     ));
     // The steer reached the model once, before the queued message was sent.
-    let bodies: Vec<Value> = server
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .map(body)
-        .collect();
+    let bodies: Vec<Value> = distinct(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(body)
+            .collect(),
+    );
     assert_eq!(
         bodies
             .iter()
@@ -301,13 +314,15 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
     .await;
     assert!(seen.iter().any(|event| matches!(event, ThreadEvent::GoalNote { outcome: GoalNoteKind::NotYet, reason } if reason == "Counter is 1; needs 2.")));
     // The second turn was started by the runtime, carrying the check's reason.
-    let bodies: Vec<Value> = server
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .map(body)
-        .collect();
+    let bodies: Vec<Value> = distinct(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(body)
+            .collect(),
+    );
     let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
     assert_eq!(turns.len(), 2);
     assert!(mentions(turns[0], "Active goal for this chat"));
@@ -355,12 +370,24 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
         .await
         .unwrap();
     assert_eq!(paused.status, GoalStatus::Paused);
-    // The running turn finishes; no further turn (and no check) starts while paused.
+    // The running turn finishes; no further turn and no check starts while
+    // paused. (One turn can make more than one request: a stream attempt and
+    // its plain retry; so count goal turns and checks, not requests.)
+    let turns_and_checks = |requests: &[Request]| {
+        requests
+            .iter()
+            .map(body)
+            .filter(|body| is_check(body) || mentions(body, "[Goal — runtime, not from the user]"))
+            .count()
+    };
     tokio::time::sleep(Duration::from_millis(2500)).await;
-    let before = server.received_requests().await.unwrap().len();
-    assert_eq!(before, 1, "only the first turn ran");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(turns_and_checks(&requests), 0, "only the first turn ran");
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    assert_eq!(
+        turns_and_checks(&server.received_requests().await.unwrap()),
+        0
+    );
     let elapsed = state.goal_for(&thread).unwrap().active_ms;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
@@ -486,6 +513,7 @@ async fn a_running_goal_resumes_when_the_app_starts_again() {
     )
     .unwrap();
     // The restarted app reads it fresh.
+    let restart = std::time::Instant::now();
     let restarted = AppState::new_for_test(data.path().join("settings.json"));
     restarted
         .set_secret("go".into(), "synthetic-test-key".into())
@@ -498,8 +526,14 @@ async fn a_running_goal_resumes_when_the_app_starts_again() {
     goal_until(&restarted, &thread, |status| status == GoalStatus::Reached).await;
     let goal = restarted.goal_for(&thread).unwrap();
     assert_eq!(goal.turns, 4);
-    // Time with the app closed did not count.
-    assert!(goal.active_ms < 60_000, "{}", goal.active_ms);
+    // Time with the app closed did not count: only the 5 s already counted
+    // plus the time since the restart (the file says it ran since 1970).
+    let since_restart = u64::try_from(restart.elapsed().as_millis()).unwrap();
+    assert!(
+        goal.active_ms <= 5_000 + since_restart,
+        "{} > 5000 + {since_restart}",
+        goal.active_ms
+    );
     let first = server
         .received_requests()
         .await
@@ -870,8 +904,19 @@ async fn a_chat_wide_error_holds_one_message_and_keeps_the_rest_in_order() {
         matches!(event, ThreadEvent::Failed { error } if error.starts_with("Queued message not sent"))
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let queue = state.list_queue(thread.clone()).await.unwrap();
+    // Wait until the refused second message is back (it is out of the queue
+    // while its send is attempted).
+    let queue = tokio::time::timeout(DEADLINE, async {
+        loop {
+            let queue = state.list_queue(thread.clone()).await.unwrap();
+            if queue.len() == 3 {
+                return queue;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the queue settles");
     assert_eq!(
         queue
             .iter()
