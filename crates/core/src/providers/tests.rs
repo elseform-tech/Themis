@@ -1591,6 +1591,51 @@ async fn responses_reasoning_items_return_before_their_function_calls() {
 }
 
 #[tokio::test]
+async fn a_repeated_answer_sends_its_reasoning_item_once() {
+    // A goal chat repeated one final answer word for word; replaying its
+    // reasoning with each copy made the Responses API reject every request
+    // ("Duplicate item found with id rs_...").
+    let answer = "Every planetarium check still passes; nothing left to change.";
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"output":[
+            {"type":"reasoning","id":"rs_repeat","summary":[],"encrypted_content":"enc-repeat"},
+            {"type":"message","content":[{"type":"output_text","text":answer}]}]})))
+        .mount(&server)
+        .await;
+    let provider =
+        CompatibleProvider::go("test".into(), "gpt-test".into(), Some(server.uri()), None);
+    let reply = provider.chat(&[user_message("check")], None).await.unwrap();
+    assert_eq!(reply.text().unwrap_or_default(), answer);
+    let said = || ChatMessage {
+        role: ChatRole::Assistant,
+        message_type: MessageType::Text,
+        content: answer.to_owned(),
+    };
+    let history = [
+        user_message("check"),
+        said(),
+        user_message("continue"),
+        said(),
+        user_message("continue"),
+    ];
+    let body = provider
+        .chat_request(&history, None, false, None)
+        .unwrap()
+        .build()
+        .unwrap();
+    let body: Value = serde_json::from_slice(body.body().unwrap().as_bytes().unwrap()).unwrap();
+    let ids: Vec<&str> = body["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    assert_eq!(ids, ["rs_repeat"]);
+}
+
+#[tokio::test]
 async fn reasoning_effort_reaches_wire() {
     let server = MockServer::start().await;
     Mock::given(method("POST")).and(path("/responses"))

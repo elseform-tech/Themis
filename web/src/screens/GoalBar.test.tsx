@@ -16,7 +16,7 @@ describe("GoalBar", () => {
   it("shows the sentence and the elapsed time, ticking only while it runs", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000 + 24_000);
-    render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} />);
+    render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByRole("region", { name: "Goal" })).toHaveTextContent("Optimize this app to bring p95 under 200 ms");
     expect(screen.getByText("1:00:24")).toBeInTheDocument();
     act(() => { vi.advanceTimersByTime(2000); });
@@ -26,23 +26,36 @@ describe("GoalBar", () => {
 
   it("offers only edit, pause and show while running, and resume when paused", () => {
     const pause = vi.fn(), resume = vi.fn();
-    const { rerender } = render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={pause} onResume={resume} />);
-    expect(screen.getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Edit goal", "Pause goal after this turn", "Show goal"]);
+    const { rerender } = render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={pause} onResume={resume} onRemove={vi.fn()} />);
+    expect(screen.getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Edit goal", "Pause goal after this turn", "Remove goal", "Show goal"]);
     fireEvent.click(screen.getByRole("button", { name: "Pause goal after this turn" }));
     expect(pause).toHaveBeenCalled();
-    rerender(<GoalBar goal={goal({ status: "quota", running_since: undefined })} onEdit={vi.fn()} onPause={pause} onResume={resume} />);
+    rerender(<GoalBar goal={goal({ status: "quota", running_since: undefined })} onEdit={vi.fn()} onPause={pause} onResume={resume} onRemove={vi.fn()} />);
     expect(screen.getByText("Paused · quota used up")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Resume goal" }));
     expect(resume).toHaveBeenCalled();
-    rerender(<GoalBar goal={goal({ status: "reached", running_since: undefined })} onEdit={vi.fn()} onPause={pause} onResume={resume} />);
-    expect(screen.getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Show goal"]);
     // Every icon button names itself for the tooltip.
     expect(screen.getByRole("button", { name: "Show goal" })).toHaveAttribute("data-tooltip", "Show goal");
   });
 
+  it("removes the goal from its own icon", () => {
+    const remove = vi.fn();
+    render(<GoalBar goal={goal({ status: "paused", running_since: undefined })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={remove} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove goal" }));
+    expect(remove).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Remove goal" })).toHaveAttribute("data-tooltip", "Remove goal");
+  });
+
+  it("leaves the composer once the goal is reached", () => {
+    const { container, rerender } = render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Goal" })).toBeInTheDocument();
+    rerender(<GoalBar goal={goal({ status: "reached", running_since: undefined })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("expands, remembers it, and edits the sentence in place", async () => {
     const edit = vi.fn().mockResolvedValue(undefined);
-    render(<GoalBar goal={goal()} onEdit={edit} onPause={vi.fn()} onResume={vi.fn()} />);
+    render(<GoalBar goal={goal()} onEdit={edit} onPause={vi.fn()} onResume={vi.fn()} onRemove={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Show goal" }));
     expect(screen.getByRole("button", { name: "Hide goal" })).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(screen.getByRole("button", { name: "Edit goal" }));
