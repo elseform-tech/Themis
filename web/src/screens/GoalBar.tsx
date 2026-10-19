@@ -37,11 +37,12 @@ interface GoalBarProps {
   onEdit: (text: string) => Promise<void>;
   onPause: () => void;
   onResume: () => void;
+  onRemove: () => void;
 }
 
 /** The chat's unfinished goal on top of the composer: its sentence, elapsed time, and
- *  icon controls for edit, pause/resume and show/hide. */
-export function GoalBar({ goal, onEdit, onPause, onResume }: GoalBarProps) {
+ *  icon controls for edit, pause/resume, remove and show/hide. */
+export function GoalBar({ goal, onEdit, onPause, onResume, onRemove }: GoalBarProps) {
   const [now, setNow] = useState(() => Date.now());
   const [expanded, setExpanded] = useState(readExpanded);
   const [draft, setDraft] = useState<string | null>(null);
@@ -118,6 +119,9 @@ export function GoalBar({ goal, onEdit, onPause, onResume }: GoalBarProps) {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5v14l12-7Z" /></svg>
         </button>
       )}
+      <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="Remove goal" aria-label="Remove goal" onClick={onRemove}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12h10l1-12M9 7V4h6v3" /></svg>
+      </button>
       <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip={expanded ? "Hide goal" : "Show goal"} aria-label={expanded ? "Hide goal" : "Show goal"} aria-expanded={expanded} onClick={toggle}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d={expanded ? "m6 9 6 6 6-6" : "m6 15 6-6 6 6"} /></svg>
       </button>
