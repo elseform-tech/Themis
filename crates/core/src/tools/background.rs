@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::{async_trait, tool_error, ToolCallError, ToolRuntime, ToolT};
+use super::{async_trait, parse_tool_args, tool_error, ToolCallError, ToolRuntime, ToolT};
 
 /// Rolling log capacity per task, in bytes.
 pub const MAX_LOG_BYTES: usize = 64 * 1024;
@@ -986,7 +986,7 @@ impl ToolRuntime for BackgroundTool {
             task_id,
             offset,
             max_bytes,
-        } = serde_json::from_value(args)?;
+        } = parse_tool_args("background_task", args)?;
         let scope = self.scope.clone().ok_or_else(|| {
             tool_error("background_task: background tasks are not available in this context".into())
         })?;

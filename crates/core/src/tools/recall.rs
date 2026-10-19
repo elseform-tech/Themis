@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use super::{async_trait, tool_error, ToolCallError, ToolRuntime, ToolT};
+use super::{async_trait, parse_tool_args, tool_error, ToolCallError, ToolRuntime, ToolT};
 
 /// Hits returned when `limit` is omitted.
 pub const DEFAULT_LIMIT: usize = 5;
@@ -151,7 +151,7 @@ impl RecallTool {
 #[async_trait]
 impl ToolRuntime for RecallTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
-        let args: RecallArgs = serde_json::from_value(args)?;
+        let args: RecallArgs = parse_tool_args("recall", args)?;
         let scope = Arc::clone(&self.scope);
         tokio::task::spawn_blocking(move || recall(&scope, &args, &Limits::default()))
             .await
