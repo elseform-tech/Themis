@@ -211,6 +211,15 @@ describe("thread lifecycle events", () => {
     });
   });
 
+  it("keeps an MCP tool's readable label on its message and trace", () => {
+    const s = applyThreadEvent(
+      withThread(),
+      envelope({ kind: "tool_started", tool: "mcp_932fdceefae46ddd0ad259c8_browser_navigate", summary: "{}", label: "playwright · browser_navigate" }),
+    );
+    expect(s.traces[THREAD.id]?.[0]?.label).toBe("playwright · browser_navigate");
+    expect(s.messages[THREAD.id]?.[s.messages[THREAD.id]!.length - 1]?.tool?.label).toBe("playwright · browser_navigate");
+  });
+
   it("keeps tools between the user message and final reply across runs", () => {
     let s = withThread();
     s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "I will read the file." }));

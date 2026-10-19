@@ -311,6 +311,10 @@ fn strip_trailing_phrases(token: &str) -> &str {
 /// word. "continue", acknowledgements ("ok", "perfect", "great") and anything with task
 /// content are not social: they refer back to the conversation.
 pub fn is_social_request(request: &str) -> bool {
+    // Tokens stop at MAX_CHARS, so a longer message would be judged by its start alone.
+    if request.chars().nth(MAX_CHARS).is_some() {
+        return false;
+    }
     let words = tokens(request);
     if words.is_empty() {
         return false;
@@ -411,6 +415,17 @@ mod tests {
         ] {
             assert!(is_social_request(text), "{text:?}");
         }
+    }
+
+    #[test]
+    fn a_greeting_followed_by_a_task_past_the_scan_limit_is_not_social() {
+        // Fuzz crash (social_request): "ola", 2,000+ filler characters, then a task word.
+        let text = format!("ola{} | qzxyzzy |", "&".repeat(MAX_CHARS));
+        assert!(!is_social_request(&text));
+        assert!(is_social_request(&format!(
+            "ola{}",
+            "&".repeat(MAX_CHARS - 10)
+        )));
     }
 
     #[test]
