@@ -29,6 +29,27 @@ fn call(data: &Path, command: &str, args: Value) -> Value {
     serde_json::from_slice(&output.stdout).unwrap_or(Value::Null)
 }
 
+/// Holds a scripted answer until the test opens it, so actions that must land
+/// while a run is going (queue, steer, pause, switch) do so however slow the
+/// machine is.
+#[derive(Clone, Default)]
+struct Gate(Arc<std::sync::atomic::AtomicBool>);
+
+impl Gate {
+    fn open(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn wait(&self) {
+        let waited = std::time::Instant::now();
+        while !self.0.load(std::sync::atomic::Ordering::SeqCst)
+            && waited.elapsed() < Duration::from_secs(60)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 fn reply(text: &str) -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_json(json!({
         "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]
@@ -50,12 +71,15 @@ fn is_check(request: &Request) -> bool {
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
     let llm = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
     Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
+        .respond_with(move |request: &Request| {
             if is_check(request) {
                 reply(r#"{"verdict":"reached","reason":"The README has a title.","progress":"title present"}"#)
             } else {
-                reply("Added a title.").set_delay(Duration::from_millis(800))
+                held.wait();
+                reply("Added a title.")
             }
         })
         .mount(&llm)
@@ -98,6 +122,7 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
         assert_eq!(queued["text"], "also add a license line");
         let listed = call(&data_dir, "list_queue", json!({"threadId": thread_id}));
         assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
+        gate.open();
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         loop {
             let goal = call(&data_dir, "get_goal", json!({"threadId": thread_id}));
@@ -143,16 +168,18 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_model_switch_mid_run_applies_next_turn_without_foreign_reasoning() {
     let llm = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
     Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
+        .respond_with(move |request: &Request| {
             let body: Value = request.body_json().unwrap();
             let has_tool_result = body["messages"]
                 .as_array()
                 .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
             if body["model"] == "first-model" && !has_tool_result {
+                held.wait();
                 ResponseTemplate::new(200)
                     .set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"reasoning_content":"FIRST-MODEL-PRIVATE-REASONING","tool_calls":[{"id":"l","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}))
-                    .set_delay(Duration::from_millis(600))
             } else {
                 reply("Listed.")
             }
@@ -198,6 +225,7 @@ async fn a_model_switch_mid_run_applies_next_turn_without_foreign_reasoning() {
         .await
         .unwrap();
     assert_eq!(switched.model, "second-model");
+    gate.open();
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while state.get_thread(&thread.id).await.unwrap().running {
         assert!(std::time::Instant::now() < deadline);

@@ -18,6 +18,27 @@ use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 const DEADLINE: Duration = Duration::from_secs(120);
 const CHECK_MARKER: &str = "You decide whether an agent has reached a goal";
 
+/// Holds a scripted answer until the test opens it, so actions that must land
+/// while a run is going (queue, steer, pause, switch) do so however slow the
+/// machine is.
+#[derive(Clone, Default)]
+struct Gate(Arc<std::sync::atomic::AtomicBool>);
+
+impl Gate {
+    fn open(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn wait(&self) {
+        let waited = std::time::Instant::now();
+        while !self.0.load(std::sync::atomic::Ordering::SeqCst)
+            && waited.elapsed() < Duration::from_secs(60)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 fn reply(text: &str) -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_json(json!({
         "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]
@@ -116,16 +137,19 @@ async fn goal_until(state: &AppState, thread_id: &str, done: impl Fn(GoalStatus)
 #[tokio::test(flavor = "multi_thread")]
 async fn queued_messages_wait_steers_reach_the_run_and_the_queue_drains() {
     let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
     Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
+        .respond_with(move |request: &Request| {
             let body = body(request);
             if mentions(&body, "Use tabs.") && !mentions(&body, "second message") {
                 reply("Adjusted to tabs.")
             } else if mentions(&body, "second message") {
                 reply("Second done.")
             } else {
-                // Slow enough for the test to queue and steer while it runs.
-                reply("First done.").set_delay(Duration::from_millis(1500))
+                // Answers once the test has queued and steered.
+                held.wait();
+                reply("First done.")
             }
         })
         .mount(&server)
@@ -191,6 +215,7 @@ async fn queued_messages_wait_steers_reach_the_run_and_the_queue_drains() {
         .steer_queued_message(sink.clone(), thread.clone(), steer.id)
         .await
         .unwrap();
+    gate.open();
 
     let mut seen = Vec::new();
     until(
@@ -346,15 +371,19 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
 #[tokio::test(flavor = "multi_thread")]
 async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
     let server = MockServer::start().await;
+    // The first turn's answer waits for the test to pause the goal, so the
+    // pause always lands while that turn runs, however slow the machine.
+    let released = Gate::default();
+    let gate = released.clone();
     Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
+        .respond_with(move |request: &Request| {
             if is_check(&body(request)) {
-                reply(r#"{"verdict":"not_yet","reason":"Still 300 ms.","progress":"p95 300 ms"}"#)
-            } else {
-                // Long enough that the pause lands while the first turn runs,
-                // even on a slow CI machine.
-                reply("Tried another cache setting.").set_delay(Duration::from_millis(1200))
+                return reply(
+                    r#"{"verdict":"not_yet","reason":"Still 300 ms.","progress":"p95 300 ms"}"#,
+                );
             }
+            gate.wait();
+            reply("Tried another cache setting.")
         })
         .mount(&server)
         .await;
@@ -370,6 +399,7 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
         .await
         .unwrap();
     assert_eq!(paused.status, GoalStatus::Paused);
+    released.open();
     // The running turn finishes; no further turn and no check starts while
     // paused. (One turn can make more than one request: a stream attempt and
     // its plain retry; so count goal turns and checks, not requests.)
@@ -587,6 +617,8 @@ async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a_question() {
     let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
     let checks = Arc::new(AtomicUsize::new(0));
     let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
@@ -613,7 +645,8 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
             } else if last_user.contains("list the folder") {
                 reply("Listed the folder.")
             } else if last_user.contains("/goal") {
-                reply("Starting.").set_delay(Duration::from_millis(1200))
+                held.wait();
+                reply("Starting.")
             } else {
                 reply("Already done earlier.")
             }
@@ -648,6 +681,7 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
         )
         .await
         .unwrap();
+    gate.open();
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
     let mut seen = Vec::new();
     until(&mut rx, &mut seen, |event| {
@@ -689,10 +723,13 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
 #[tokio::test(flavor = "multi_thread")]
 async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
     let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held_answer = gate.clone();
     Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
+        .respond_with(move |request: &Request| {
             if mentions(&body(request), "first") && !mentions(&body(request), "after the bad one") {
-                reply("First done.").set_delay(Duration::from_millis(800))
+                held_answer.wait();
+                reply("First done.")
             } else {
                 reply("Later done.")
             }
@@ -731,6 +768,7 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
         )
         .await
         .unwrap();
+    gate.open();
     let mut seen = Vec::new();
     until(&mut rx, &mut seen, |event| {
         matches!(event, ThreadEvent::Failed { error } if error.starts_with("Queued message not sent"))
@@ -879,8 +917,13 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
 #[tokio::test(flavor = "multi_thread")]
 async fn a_chat_wide_error_holds_one_message_and_keeps_the_rest_in_order() {
     let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
     Mock::given(method("POST"))
-        .respond_with(|_: &Request| reply("Done.").set_delay(Duration::from_millis(800)))
+        .respond_with(move |_: &Request| {
+            held.wait();
+            reply("Done.")
+        })
         .mount(&server)
         .await;
     let (state, _data, project, thread) = chat(&server).await;
@@ -899,6 +942,7 @@ async fn a_chat_wide_error_holds_one_message_and_keeps_the_rest_in_order() {
     // While the run goes, the project's configuration breaks.
     std::fs::create_dir_all(project.path().join(".themis")).unwrap();
     std::fs::write(project.path().join(".themis/config.jsonc"), "{ not json").unwrap();
+    gate.open();
     let mut seen = Vec::new();
     until(&mut rx, &mut seen, |event| {
         matches!(event, ThreadEvent::Failed { error } if error.starts_with("Queued message not sent"))
