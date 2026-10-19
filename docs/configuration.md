@@ -328,7 +328,8 @@ edited or after the server refused it, with the reason in `note`; `reasoning_eff
 while the chat's current model offers it) and `{"text","status","reason","started_at","active_ms",
 "running_since","turns","stalls","progress","failures","checked_seq"}` with
 `status` one of `running`, `paused`, `waiting`, `stuck`, `quota`, `reached` (the goal sentence is
-at most 2,000 characters). They grant nothing; a damaged file is ignored (fixed
+at most 2,000 characters; `active_ms` is the goal's total running time, saved every minute while
+it runs, so a crash or quit loses at most a minute of it). They grant nothing; a damaged file is ignored (fixed
 `queue_ignored`/`goal_ignored` diagnostics, never the contents), and discarding a chat or its
 project removes both. Diagnostics record queue and goal ids, status changes, check verdict kinds
 and retry counts, never message text, the goal sentence or check prompts. Each goal check reads

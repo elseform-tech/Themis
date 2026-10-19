@@ -92,8 +92,9 @@ is reached; for example `/goal optimize this app to speed up p95`.
   and in the sent message. It starts right away. When you ask for an ongoing outcome in
   plain words, the agent may ask once whether to make it a goal; if you agree, it
   sets the goal itself.
-- **The goal bar** on the composer shows the sentence and the elapsed time (time
-  spent paused, waiting or with Themis closed does not count). Its icons are
+- **The goal bar** on the composer shows the sentence and the goal's total elapsed
+  time across all its turns (time spent paused, waiting or with Themis closed does
+  not count). Its icons are
   **Edit** (applies from the next turn; the current turn keeps running),
   **Pause** (after this turn) or **Resume**, **Remove** (the current turn finishes;
   no further turns or checks), and **Show/Hide** for the full sentence.

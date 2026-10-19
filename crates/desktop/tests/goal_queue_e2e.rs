@@ -451,6 +451,43 @@ async fn turns_that_only_re_verify_stall_even_when_the_check_rewords_its_progres
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_running_goal_saves_its_elapsed_time_during_a_turn() {
+    // A live goal showed only the current turn's time: elapsed time was saved
+    // at turn boundaries, so each app restart mid-turn lost the whole turn.
+    let server = MockServer::start().await;
+    let released = Gate::default();
+    let gate = released.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            if is_check(&body(request)) {
+                return reply(r#"{"verdict":"reached","reason":"Done.","progress":"done"}"#);
+            }
+            gate.wait();
+            reply("Worked on it.")
+        })
+        .mount(&server)
+        .await;
+    let (state, data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal keep working".into())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    state.bank_running_goals(sink.as_ref());
+    let saved: themis_desktop::types::Goal = serde_json::from_str(
+        &std::fs::read_to_string(data.path().join("goals").join(format!("{thread}.json"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.status, GoalStatus::Running);
+    assert!(saved.active_ms >= 300, "saved {} ms", saved.active_ms);
+    released.open();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    settle(&state, &thread).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
     let server = MockServer::start().await;
     // The first turn's answer waits for the test to pause the goal, so the

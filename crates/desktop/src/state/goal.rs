@@ -34,6 +34,9 @@ const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
 /// request, a bad configuration) before the goal pauses as stuck: retrying
 /// the same request would fail the same way.
 const MAX_FAILED_TURNS: u32 = 3;
+/// How often a running goal's time is saved, so a crash or quit mid-turn
+/// loses at most this much of the elapsed time.
+pub(super) const BANK_INTERVAL: Duration = Duration::from_secs(60);
 /// Wait before retrying a goal turn the concurrency limit turned away.
 const BUSY_RETRY: Duration = Duration::from_secs(20);
 /// Most command evidence the goal check reads, in characters.
@@ -283,6 +286,26 @@ impl AppState {
             })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
         Ok(goal)
+    }
+
+    /// Saves the running time of every running goal (see [`BANK_INTERVAL`]).
+    /// Saving banks the time since `running_since` into `active_ms`.
+    pub fn bank_running_goals(&self, sink: &dyn EventSink) {
+        let running: Vec<String> = self
+            .inner
+            .goals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, goal)| {
+                goal.as_ref()
+                    .is_some_and(|goal| goal.status == GoalStatus::Running)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for thread_id in running {
+            self.update_goal(sink, &thread_id, |_| {});
+        }
     }
 
     /// Removes the chat's goal. A turn already running finishes as an
