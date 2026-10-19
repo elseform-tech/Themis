@@ -109,7 +109,8 @@ is reached; for example `/goal optimize this app to speed up p95`.
   for your answer (your reply resumes it), or out of model quota (it retries every
   15 minutes; switching the model resumes it at once).
 - A goal never grants permissions: approvals and the sandbox apply as usual, and
-  while an approval waits the goal waits too. Sending a new message after a goal
+  while an approval waits the goal waits too. A reached goal leaves the composer;
+  its note stays in the conversation. Sending a new message after a goal
   is reached clears it; `/goal` again replaces the current goal.
 - **⌘/Ctrl+B** collapses or pins the sidebar. Hovering at the left edge reveals
   an overlay after 300 ms. It closes 700 ms after leaving, unless focus is inside.

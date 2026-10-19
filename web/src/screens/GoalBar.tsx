@@ -25,7 +25,7 @@ const STATUS_LABEL: Record<Goal["status"], string | null> = {
   waiting: "Waiting for your reply",
   stuck: "Paused · needs a change",
   quota: "Paused · quota used up",
-  reached: "Reached",
+  reached: null,
 };
 
 function readExpanded(): boolean {
@@ -39,7 +39,7 @@ interface GoalBarProps {
   onResume: () => void;
 }
 
-/** The chat's goal on top of the composer: its sentence, elapsed time, and
+/** The chat's unfinished goal on top of the composer: its sentence, elapsed time, and
  *  icon controls for edit, pause/resume and show/hide. */
 export function GoalBar({ goal, onEdit, onPause, onResume }: GoalBarProps) {
   const [now, setNow] = useState(() => Date.now());
@@ -66,8 +66,10 @@ export function GoalBar({ goal, onEdit, onPause, onResume }: GoalBarProps) {
   }
   const label = STATUS_LABEL[goal.status];
   const paused = goal.status === "paused" || goal.status === "stuck" || goal.status === "quota";
-  const editable = goal.status !== "reached" && goal.status !== "waiting";
+  const editable = goal.status !== "waiting";
   const elapsed = formatElapsed(goalElapsedMs(goal, now));
+  // A reached goal leaves the composer; its note stays in the conversation.
+  if (goal.status === "reached") return null;
 
   if (draft !== null) {
     return (

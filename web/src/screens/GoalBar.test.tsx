@@ -34,10 +34,15 @@ describe("GoalBar", () => {
     expect(screen.getByText("Paused · quota used up")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Resume goal" }));
     expect(resume).toHaveBeenCalled();
-    rerender(<GoalBar goal={goal({ status: "reached", running_since: undefined })} onEdit={vi.fn()} onPause={pause} onResume={resume} />);
-    expect(screen.getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Show goal"]);
     // Every icon button names itself for the tooltip.
     expect(screen.getByRole("button", { name: "Show goal" })).toHaveAttribute("data-tooltip", "Show goal");
+  });
+
+  it("leaves the composer once the goal is reached", () => {
+    const { container, rerender } = render(<GoalBar goal={goal()} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Goal" })).toBeInTheDocument();
+    rerender(<GoalBar goal={goal({ status: "reached", running_since: undefined })} onEdit={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("expands, remembers it, and edits the sentence in place", async () => {
