@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::diff::{
     git_diff_cached, git_diff_head, git_diff_worktree, git_head, git_untracked, is_git_repo,
-    is_readable_change, untracked_diff_file, MAX_DIFF_FILES,
+    is_readable_change, untracked_diff_file, MAX_DIFF_FILES, MAX_LISTED_DIFF_LINES,
 };
 use crate::types::{DiffState, MergeResult};
 use crate::worktree;
@@ -103,6 +103,18 @@ impl AppState {
             notes.push(format!(
                 "truncated: showing {MAX_DIFF_FILES} of {total} changed files"
             ));
+        }
+        // The whole listing stays bounded too: once it holds
+        // MAX_LISTED_DIFF_LINES lines, later files are listed without them.
+        let mut room = MAX_LISTED_DIFF_LINES;
+        for file in &mut files {
+            let lines: usize = file.hunks.iter().map(|hunk| hunk.lines.len()).sum();
+            if lines > room {
+                file.hunks.clear();
+                file.too_large = true;
+            } else {
+                room -= lines;
+            }
         }
         if hidden > 0 {
             notes.push(format!(

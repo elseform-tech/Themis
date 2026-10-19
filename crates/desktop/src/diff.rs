@@ -12,6 +12,13 @@ use crate::types::{ChangedFile, DiffFile, DiffHunk, DiffLine, DiffLineKind, Diff
 /// Maximum files returned by one diff listing (older entries are dropped and
 /// the state's `reason` notes the truncation).
 pub const MAX_DIFF_FILES: usize = 200;
+/// Most bytes of a new (untracked) file read for its diff.
+pub const MAX_SHOWN_FILE_BYTES: u64 = 1024 * 1024;
+/// Most diff lines shown for one file; a larger change shows its first lines
+/// and is marked `too_large`.
+pub const MAX_SHOWN_DIFF_LINES: usize = 5_000;
+/// Most diff lines in one listing across all its files.
+pub const MAX_LISTED_DIFF_LINES: usize = 50_000;
 
 /// Returns true when `root` is inside a git work tree.
 #[must_use]
@@ -243,14 +250,31 @@ pub fn is_readable_change(root: &Path, relative: &str) -> bool {
 /// hunk of additions (empty files get no hunks).
 #[must_use]
 pub fn untracked_diff_file(root: &Path, relative: &str) -> DiffFile {
-    let bytes = std::fs::read(root.join(relative)).unwrap_or_default();
-    let lines: Vec<DiffLine> = String::from_utf8_lossy(&bytes)
+    let mut bytes = Vec::new();
+    let mut too_large = false;
+    if let Ok(file) = std::fs::File::open(root.join(relative)) {
+        let _ = std::io::Read::read_to_end(
+            &mut std::io::Read::take(file, MAX_SHOWN_FILE_BYTES + 1),
+            &mut bytes,
+        );
+        if bytes.len() as u64 > MAX_SHOWN_FILE_BYTES {
+            too_large = true;
+            // Keep whole lines only.
+            bytes.truncate(bytes.iter().rposition(|b| *b == b'\n').unwrap_or(0));
+        }
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<DiffLine> = text
         .lines()
         .map(|text| DiffLine {
             kind: DiffLineKind::Add,
             text: text.to_owned(),
         })
         .collect();
+    if lines.len() > MAX_SHOWN_DIFF_LINES {
+        lines.truncate(MAX_SHOWN_DIFF_LINES);
+        too_large = true;
+    }
     let hunks = if lines.is_empty() {
         Vec::new()
     } else {
@@ -268,6 +292,7 @@ pub fn untracked_diff_file(root: &Path, relative: &str) -> DiffFile {
         status: DiffStatus::Added,
         preexisting: false,
         hunks,
+        too_large,
     }
 }
 
@@ -393,14 +418,46 @@ impl FileBuilder {
         } else {
             (DiffStatus::Modified, self.new_path.clone(), None)
         };
+        let (hunks, too_large) = first_lines(self.hunks, MAX_SHOWN_DIFF_LINES);
         DiffFile {
             path,
             old_path,
             status,
             preexisting: false,
-            hunks: self.hunks,
+            hunks,
+            too_large,
         }
     }
+}
+
+/// The hunks holding a file's first `max` diff lines, and whether any were cut.
+/// A cut hunk's counts describe the lines it keeps.
+fn first_lines(hunks: Vec<DiffHunk>, max: usize) -> (Vec<DiffHunk>, bool) {
+    let mut kept = Vec::new();
+    let mut room = max;
+    for mut hunk in hunks {
+        if room == 0 {
+            return (kept, true);
+        }
+        if hunk.lines.len() > room {
+            hunk.lines.truncate(room);
+            hunk.old_lines = hunk
+                .lines
+                .iter()
+                .filter(|line| line.kind != DiffLineKind::Add)
+                .count();
+            hunk.new_lines = hunk
+                .lines
+                .iter()
+                .filter(|line| line.kind != DiffLineKind::Del)
+                .count();
+            kept.push(hunk);
+            return (kept, true);
+        }
+        room -= hunk.lines.len();
+        kept.push(hunk);
+    }
+    (kept, false)
 }
 
 fn push_hunk_line(hunk: &mut HunkBuilder, line: &str) {
@@ -705,6 +762,37 @@ index 5555555..6666666 100644
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "café.txt");
+    }
+
+    #[test]
+    fn oversized_changes_are_listed_without_their_lines() {
+        // A 34 MB downloaded catalog made the change list exceed 8 MiB.
+        let root = tempfile::tempdir().unwrap();
+        let big = "a,b,c\n".repeat(usize::try_from(MAX_SHOWN_FILE_BYTES).unwrap() / 6 + 1);
+        std::fs::write(root.path().join("stars.csv"), &big).unwrap();
+        std::fs::write(root.path().join("small.txt"), "one\ntwo\n").unwrap();
+        let file = untracked_diff_file(root.path(), "stars.csv");
+        // Its first lines are shown, whole, within the bounds.
+        assert!(file.too_large);
+        assert_eq!(file.status, DiffStatus::Added);
+        assert_eq!(file.hunks[0].lines.len(), MAX_SHOWN_DIFF_LINES);
+        assert!(file.hunks[0].lines.iter().all(|line| line.text == "a,b,c"));
+        let small = untracked_diff_file(root.path(), "small.txt");
+        assert!(!small.too_large);
+        assert_eq!(small.hunks[0].lines.len(), 2);
+
+        let added: String = (0..=MAX_SHOWN_DIFF_LINES)
+            .map(|n| format!("+row {n}\n"))
+            .collect();
+        let text = format!(
+            "diff --git a/data.csv b/data.csv\n--- a/data.csv\n+++ b/data.csv\n@@ -0,0 +1,{} @@\n{added}",
+            MAX_SHOWN_DIFF_LINES + 1
+        );
+        let files = parse_diff(&text);
+        assert!(files[0].too_large);
+        assert_eq!(files[0].hunks[0].lines.len(), MAX_SHOWN_DIFF_LINES);
+        assert_eq!(files[0].hunks[0].new_lines, MAX_SHOWN_DIFF_LINES);
+        assert_eq!(files[0].path, "data.csv");
     }
 
     #[test]

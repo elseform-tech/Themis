@@ -69,7 +69,9 @@ export function DiffView({ file }: DiffViewProps) {
         </span>
       </div>
 
-      {file.hunks.length === 0 ? (
+      {file.too_large && file.hunks.length === 0 ? (
+        <EmptyState title="Too large to show" hint={`${file.path} changed too much to show line by line.`} />
+      ) : file.hunks.length === 0 ? (
         <EmptyState title="No changes" hint={`${file.path} has no hunks to display.`} />
       ) : (
         <div className="themis-diff-unified">
@@ -101,6 +103,7 @@ export function DiffView({ file }: DiffViewProps) {
               ))}
             </div>
           ))}
+          {file.too_large && <p className="themis-diff-note">Showing the first lines only; the rest of this change is too large to show.</p>}
         </div>
       )}
     </div>

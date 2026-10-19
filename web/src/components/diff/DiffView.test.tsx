@@ -40,6 +40,17 @@ describe("DiffView", () => {
     expect(container.querySelector(".themis-diff-text")).toBeInTheDocument();
   });
 
+  it("says when a change is too large to show", () => {
+    render(<DiffView file={{ path: "data/stars.csv", status: "added", preexisting: false, hunks: [], too_large: true }} />);
+    expect(screen.getByText("Too large to show")).toBeInTheDocument();
+  });
+
+  it("shows the first lines of a large change with a note", () => {
+    render(<DiffView file={{ ...FILE, too_large: true }} />);
+    expect(screen.getByText(/Showing the first lines only/)).toBeInTheDocument();
+    expect(screen.getByText(line("new line"))).toBeInTheDocument();
+  });
+
   it("shows add/del counts", () => {
     render(<DiffView file={FILE} />);
     expect(screen.getByText("+1")).toBeInTheDocument();

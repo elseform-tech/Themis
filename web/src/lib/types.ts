@@ -517,6 +517,8 @@ export interface DiffFile {
   /** True when the file already differed from HEAD before the thread started. */
   preexisting: boolean;
   hunks: DiffHunk[];
+  /** Too large to show line by line (a dataset, a generated file); listed without hunks. */
+  too_large?: boolean;
 }
 export interface DiffState {
   available: boolean;

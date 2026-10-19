@@ -126,7 +126,9 @@ is reached; for example `/goal optimize this app to speed up p95`.
   shows the before → after usage. Nothing is deleted: originals stay on disk.
 - **Workspace** in a thread's header opens a read-only monitor of the project:
   **Changes** (readable changed files and their wrapped, highlighted diff,
-  updating live while the agent works; binary and generated files are hidden), **Files**, **Branches**, **Pull requests** (needs
+  updating live while the agent works; binary and generated files are hidden; a
+  change too large to show whole, such as a downloaded dataset, shows its first
+  5,000 lines with a note), **Files**, **Branches**, **Pull requests** (needs
   the GitHub CLI signed in) and **Tasks**. Tasks lists this chat's running work and
   the automations that continue it and programs the agent started in the
   background (dev servers, watchers), with **Stop** (the current run, or one
