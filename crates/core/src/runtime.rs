@@ -3045,6 +3045,23 @@ pub async fn run_task_skilled(
     run_task(llm, tools, task, approvals, max_turns, events).await
 }
 
+/// The one MCP tool a garbled MCP name most likely meant: models copy the
+/// opaque `mcp_<id>_<tool>` names imperfectly (a prefix added, a digit lost,
+/// another tool's id). Matches on the server's own tool name after the id.
+fn mcp_tool_meant<'a>(name: &str, available: &[&'a str]) -> Option<&'a str> {
+    fn tool_part(name: &str) -> Option<&str> {
+        let rest = &name[name.find("mcp_")? + 4..];
+        let tool = rest.trim_start_matches(|c: char| c.is_ascii_hexdigit());
+        (tool.len() < rest.len()).then_some(tool.strip_prefix('_')?)
+    }
+    let wanted = tool_part(name).filter(|tool| !tool.is_empty())?;
+    let mut matches = available
+        .iter()
+        .filter(|candidate| candidate.starts_with("mcp_") && tool_part(candidate) == Some(wanted));
+    let meant = matches.next()?;
+    matches.next().is_none().then_some(*meant)
+}
+
 /// Approval-checks and executes one tool call.
 ///
 /// Returns the result text for the model on success, or the error text (denial,
@@ -3061,8 +3078,11 @@ async fn execute_call(
 ) -> Result<String, String> {
     let Some(tool) = tools.iter().find(|tool| tool.name() == name) else {
         let available: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
+        let hint = mcp_tool_meant(name, &available)
+            .map(|meant| format!(" Did you mean '{meant}'? Copy the name exactly."))
+            .unwrap_or_default();
         return Err(format!(
-            "unknown tool '{name}' (available: {})",
+            "unknown tool '{name}'.{hint} (available: {})",
             available.join(", ")
         ));
     };
@@ -4044,6 +4064,32 @@ mod tests {
         }
     }
     use super::*;
+
+    #[test]
+    fn garbled_mcp_names_point_at_the_tool_meant() {
+        let available = [
+            "shell",
+            "mcp_932fdceefae46dddc7a81f4f_browser_resize",
+            "mcp_932fdceefae46dddc59c252d_browser_console_messages",
+            "mcp_1111111111111111aaaaaaaa_browser_console_messages_extra",
+        ];
+        // Seen live: a "default." prefix, a lost digit, another tool's id.
+        for garbled in [
+            "default.mcp_932fdceefae46ddd59c252d_browser_console_messages",
+            "default.mcp_932fdceefae46dddc7a81f4f_browser_console_messages",
+            "mcp_932fdceefae46ddd_browser_console_messages",
+        ] {
+            assert_eq!(
+                mcp_tool_meant(garbled, &available),
+                Some("mcp_932fdceefae46dddc59c252d_browser_console_messages"),
+                "{garbled}"
+            );
+        }
+        assert_eq!(mcp_tool_meant("browser_console_messages", &available), None);
+        assert_eq!(mcp_tool_meant("mcp_abc_browser_close", &available), None);
+        let twice = ["mcp_aa_navigate", "mcp_bb_navigate"];
+        assert_eq!(mcp_tool_meant("mcp_cc_navigate", &twice), None);
+    }
 
     proptest::proptest! {
         /// Truncation keeps whole characters and reports exactly when text was cut.
