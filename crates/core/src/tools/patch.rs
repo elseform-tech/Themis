@@ -115,6 +115,11 @@ pub(super) fn parse_hunk(lines: &[&str], at: usize) -> anyhow::Result<(Hunk, usi
         if line.starts_with("@@ ") || line.starts_with("--- ") || line.starts_with("diff --git ") {
             break;
         }
+        // Models often close a valid unified diff with a stray `*** End Patch` line. It can
+        // never be a body line, so it ends the hunk instead of rejecting the whole edit.
+        if line.trim_end() == "*** End Patch" {
+            break;
+        }
         if line.starts_with('\\') {
             if line != "\\ No newline at end of file" {
                 anyhow::bail!("malformed patch: unexpected line '{line}'");

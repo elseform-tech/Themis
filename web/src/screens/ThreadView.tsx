@@ -3,7 +3,7 @@ import type { Attachment } from "../lib/tauri";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components";
-import type { GoModel, WorkspaceInfo } from "../lib/types";
+import type { GoModel } from "../lib/types";
 import { attachFiles, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
@@ -15,6 +15,7 @@ import { GoalBar } from "./GoalBar";
 import { QueueStack } from "./QueueStack";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
+import { useProjectWorkspace } from "./useProjectWorkspace";
 import { countTasks, useThreadTasksSync } from "./threadTasks";
 import { skillToken } from "../lib/prompt";
 import "./ThreadView.css";
@@ -91,16 +92,8 @@ export function ThreadView() {
     document.addEventListener("keydown", shortcut);
     return () => document.removeEventListener("keydown", shortcut);
   }, [newThread]);
-  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
-  const projectRoot = project?.root;
   const runningNow = threadId !== undefined && (state.running[threadId] ?? false);
-  // Directory and branch for the composer; refreshed when a run ends.
-  useEffect(() => {
-    if (projectRoot === undefined || runningNow) return;
-    let cancelled = false;
-    getWorkspace(projectRoot).then(info => { if (!cancelled) setWorkspace(info); }).catch(() => { if (!cancelled) setWorkspace(null); });
-    return () => { cancelled = true; };
-  }, [projectRoot, runningNow]);
+  const workspace = useProjectWorkspace(project?.root, runningNow, getWorkspace);
   const diffKnown = threadId !== undefined && state.diffs[threadId] !== undefined;
   const gitProject = project?.is_git === true;
   useEffect(() => {
@@ -294,7 +287,7 @@ export function ThreadView() {
       onOpenSettings={() => dispatch({ type: "ui/view", view: "settings" })}
       budget={budget}
       compacting={compacting}
-      location={{ name: project.name, root: project.root, branch: workspace?.root === project.root ? workspace.branch : null }}
+      location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null }}
       top={<>
         {goal && <GoalBar goal={goal}
           onEdit={async text => { try { await editGoal(thread.id, text); } catch (error) { toast(dispatch, `Could not save the goal: ${describeError(error)}`, "danger"); throw error; } }}

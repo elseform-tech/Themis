@@ -27,3 +27,4 @@
 .themis-diff-cell { display: flex; align-items: baseline; min-width: 0; overflow-x: auto; white-space: pre; }
 .themis-diff-cell + .themis-diff-cell { border-left: 1px solid var(--themis-border-subtle); }
 [data-theme="light"] .themis-diff { --cb-string: var(--themis-code-string-light); --cb-keyword: var(--themis-link-light); --cb-number: var(--themis-code-number-light); }
+.themis-diff-note { margin: 8px 12px 0; font-size: .75rem; color: var(--themis-text-2); }

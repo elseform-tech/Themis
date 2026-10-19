@@ -1678,12 +1678,33 @@ fn plan_tool_patch(
         }
         normalized.push('\n');
     }
-    plan_patch(
+    let mut plan = plan_patch(
         root.ancestors()
             .last()
             .ok_or_else(|| anyhow::anyhow!("filesystem root unavailable"))?,
         &normalized,
-    )
+    )?;
+    // Planned against `/`, paths read as `private/tmp/...`: report them
+    // relative to the project, or whole when outside it.
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    for file in &mut plan {
+        file.relative = file
+            .path
+            .strip_prefix(&canonical_root)
+            .or_else(|_| file.path.strip_prefix(root))
+            .map_or_else(
+                |_| file.path.to_string_lossy().into_owned(),
+                // `/` on every platform, like the restricted tool's patch paths.
+                |inside| {
+                    inside
+                        .components()
+                        .map(|part| part.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                },
+            );
+    }
+    Ok(plan)
 }
 
 /// Collapse `.` and `..` lexically (no filesystem access).
@@ -3864,6 +3885,11 @@ mod tests {
                 let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
                 let (hunk, _) = parse_hunk(&refs, 0).unwrap();
                 let applied = apply_hunks(&old, &[hunk], "f").unwrap();
+                // A stray closing marker changes nothing.
+                let mut marked = refs.clone();
+                marked.push("*** End Patch");
+                let (marked_hunk, _) = parse_hunk(&marked, 0).unwrap();
+                prop_assert_eq!(&apply_hunks(&old, &[marked_hunk], "f").unwrap(), &applied);
                 let mut expected = old[..start].to_vec();
                 expected.extend(replacement.iter().map(|l| format!("new-{l}")));
                 expected.extend_from_slice(&old[end..]);
@@ -4467,6 +4493,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unrestricted_apply_patch_reports_project_relative_paths() {
+        // YOLO plans against `/`; the result read `private/tmp/.../src/main.js`.
+        let (_tmp, root) = rooted_case();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.js"), "a\n").unwrap();
+        let tool = ApplyPatchTool::new(root.clone(), allow_all()).with_unrestricted_paths(true);
+        let absolute = root.join("src/main.js");
+        for path in ["src/main.js", absolute.to_str().unwrap()] {
+            let patch = format!("--- a/{path}\n+++ b/{path}\n@@ -1 +1,2 @@\n a\n+b\n");
+            let result = tool.execute(json!({ "patch": patch })).await.unwrap();
+            assert_eq!(result["files"], json!(["src/main.js"]), "{path}");
+            fs::write(&absolute, "a\n").unwrap();
+        }
+    }
+
+    #[tokio::test]
     async fn apply_patch_forgives_the_mistakes_models_make_but_not_ambiguity() {
         let (_tmp, root) = rooted_case();
         let tool = ApplyPatchTool::new(root.clone(), allow_all());
@@ -4557,6 +4599,20 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("argument 'command' is invalid"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn apply_patch_ignores_a_stray_end_marker_after_a_unified_diff() {
+        let (_tmp, root) = rooted_case();
+        fs::write(root.join("file.txt"), "keep\nold\n").unwrap();
+        let tool = ApplyPatchTool::new(root.clone(), allow_all());
+        let patch =
+            "--- a/file.txt\n+++ b/file.txt\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n*** End Patch\n";
+        tool.execute(json!({ "patch": patch })).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).unwrap(),
+            "keep\nnew\n"
+        );
     }
 
     #[test]
