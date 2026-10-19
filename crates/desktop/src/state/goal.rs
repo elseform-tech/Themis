@@ -30,11 +30,18 @@ const STALL_TURNS: u32 = 3;
 const QUOTA_RETRY: Duration = Duration::from_secs(15 * 60);
 /// Longest wait between attempts after failed turns.
 const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
+/// Turns in a row that may fail with a non-transient error (a rejected
+/// request, a bad configuration) before the goal pauses as stuck: retrying
+/// the same request would fail the same way.
+const MAX_FAILED_TURNS: u32 = 3;
 /// Wait before retrying a goal turn the concurrency limit turned away.
 const BUSY_RETRY: Duration = Duration::from_secs(20);
 /// Most command evidence the goal check reads, in characters.
-const MAX_EVIDENCE_CHARS: usize = 12_000;
-const MAX_OUTPUT_CHARS: usize = 1_500;
+const MAX_EVIDENCE_CHARS: usize = 32_000;
+/// A long command output keeps its start and its end (where results and
+/// summaries are), in characters.
+const OUTPUT_HEAD_CHARS: usize = 2_000;
+const OUTPUT_TAIL_CHARS: usize = 4_000;
 /// History items read per page while gathering evidence (memory stays
 /// bounded; the text kept is capped by `MAX_EVIDENCE_CHARS`).
 const EVIDENCE_PAGE_ITEMS: usize = 2_000;
@@ -276,6 +283,22 @@ impl AppState {
             })
             .ok_or_else(|| "This chat has no goal".to_owned())?;
         Ok(goal)
+    }
+
+    /// Removes the chat's goal. A turn already running finishes as an
+    /// ordinary run; no further turn or check starts.
+    pub async fn remove_goal(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: String,
+    ) -> Result<(), String> {
+        self.require_thread(&thread_id).await?;
+        if self.goal_for(&thread_id).is_none() {
+            return Err("This chat has no goal".to_owned());
+        }
+        self.bump_goal_generation(&thread_id);
+        self.store_goal(sink.as_ref(), &thread_id, None);
+        Ok(())
     }
 
     /// Resumes a paused, stuck, waiting or out-of-quota goal; starts a turn
@@ -576,6 +599,7 @@ impl AppState {
                     verdict: Verdict::NotYet,
                     reason: reason.into(),
                     progress: None,
+                    progressed: None,
                 }
             }
         };
@@ -645,11 +669,16 @@ impl AppState {
                 });
             }
             Verdict::NotYet => {
-                let progressed = changed_files
-                    || verdict
-                        .progress
-                        .as_ref()
-                        .is_some_and(|progress| Some(progress) != goal.progress.as_ref());
+                // The check judges progress; a reworded measurement is not.
+                // Without its judgement, fall back to changed files or a new
+                // measured fact.
+                let progressed = verdict.progressed.unwrap_or_else(|| {
+                    changed_files
+                        || verdict
+                            .progress
+                            .as_ref()
+                            .is_some_and(|progress| Some(progress) != goal.progress.as_ref())
+                });
                 // The checker failing says nothing about the agent's progress.
                 let stalls = if progressed {
                     0
@@ -703,7 +732,8 @@ impl AppState {
         run_id: String,
         error: &str,
     ) {
-        match core_goal::classify_failure(error) {
+        let failure = core_goal::classify_failure(error);
+        match failure {
             Failure::Stopped => {
                 self.schedule_goal_turn(
                     sink,
@@ -714,21 +744,23 @@ impl AppState {
             }
             Failure::Quota => {
                 let reason = "The model quota is used up; trying again every 15 minutes.";
+                // Schedule before anyone can see the pause: a model switch
+                // that follows it must replace this retry, not be replaced.
+                self.schedule_goal_turn(
+                    Arc::clone(&sink),
+                    thread_id.clone(),
+                    QUOTA_RETRY,
+                    "Resumed after the model quota pause.".into(),
+                );
+                self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                    set_status(goal, GoalStatus::Quota, Some(reason.into()));
+                });
                 self.goal_note(
                     sink.as_ref(),
                     &thread_id,
                     &run_id,
                     GoalNoteKind::Quota,
                     reason,
-                );
-                self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                    set_status(goal, GoalStatus::Quota, Some(reason.into()));
-                });
-                self.schedule_goal_turn(
-                    sink,
-                    thread_id,
-                    QUOTA_RETRY,
-                    "Resumed after the model quota pause.".into(),
                 );
             }
             Failure::Transient | Failure::Other => {
@@ -737,6 +769,23 @@ impl AppState {
                         goal.failures = goal.failures.saturating_add(1);
                     })
                     .map_or(1, |goal| goal.failures);
+                if stops_retrying(failure, failures) {
+                    let reason = format!(
+                        "The last {failures} turns failed ({}). Fix the cause or switch the model, then Resume.",
+                        core_goal::one_line(error, 160)
+                    );
+                    self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                        set_status(goal, GoalStatus::Stuck, Some(reason.clone()));
+                    });
+                    self.goal_note(
+                        sink.as_ref(),
+                        &thread_id,
+                        &run_id,
+                        GoalNoteKind::Stuck,
+                        &reason,
+                    );
+                    return;
+                }
                 let wait = backoff(failures);
                 self.goal_note(
                     sink.as_ref(),
@@ -787,9 +836,11 @@ impl AppState {
                     continue;
                 };
                 let line = match envelope.event {
-                    ThreadEvent::ToolStarted { tool, summary } => format!("$ {tool}: {summary}\n"),
+                    ThreadEvent::ToolStarted { tool, summary, .. } => {
+                        format!("$ {tool}: {summary}\n")
+                    }
                     ThreadEvent::ToolFinished { ok, output, .. } => {
-                        let output: String = output.chars().take(MAX_OUTPUT_CHARS).collect();
+                        let output = clip_output(&output);
                         format!("{}{output}\n\n", if ok { "" } else { "(failed) " })
                     }
                     ThreadEvent::FilesChanged { files } => {
@@ -924,9 +975,53 @@ impl AppState {
     }
 }
 
+/// Whether a goal stops retrying after `failures` failed turns in a row:
+/// only errors that are not transient, since those would fail the same way.
+fn stops_retrying(failure: Failure, failures: u32) -> bool {
+    failure == Failure::Other && failures >= MAX_FAILED_TURNS
+}
+
+/// A long command output without its middle, marked where it was cut.
+fn clip_output(output: &str) -> String {
+    let count = output.chars().count();
+    if count <= OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS {
+        return output.to_owned();
+    }
+    let head: String = output.chars().take(OUTPUT_HEAD_CHARS).collect();
+    let tail: String = output.chars().skip(count - OUTPUT_TAIL_CHARS).collect();
+    let omitted = count - OUTPUT_HEAD_CHARS - OUTPUT_TAIL_CHARS;
+    format!("{head}\n[… {omitted} characters clipped …]\n{tail}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_hard_failures_pause_but_transient_ones_keep_retrying() {
+        let rejected = core_goal::classify_failure(
+            "LLM request failed: HTTP Status Error (400): Duplicate item found with id `rs_1`",
+        );
+        assert_eq!(rejected, Failure::Other);
+        assert!(!stops_retrying(rejected, 2));
+        assert!(stops_retrying(rejected, 3));
+        let outage = core_goal::classify_failure("HTTP 503 service unavailable");
+        assert!(!stops_retrying(outage, 50));
+    }
+
+    #[test]
+    fn long_outputs_keep_their_start_and_their_results() {
+        let table: String = (1..=200)
+            .map(|n| format!("| {n} | check number {n} with its details | PASS |\n"))
+            .collect();
+        let output = format!("# CHECKS\n{table}Summary: 200/200 PASS");
+        let clipped = clip_output(&output);
+        assert!(clipped.starts_with("# CHECKS\n| 1 |"));
+        assert!(clipped.ends_with("Summary: 200/200 PASS"));
+        assert!(clipped.contains("characters clipped"));
+        assert!(clipped.chars().count() < OUTPUT_HEAD_CHARS + OUTPUT_TAIL_CHARS + 50);
+        assert_eq!(clip_output("short"), "short");
+    }
 
     #[test]
     fn backoff_doubles_up_to_fifteen_minutes() {

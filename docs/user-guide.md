@@ -95,17 +95,25 @@ is reached; for example `/goal optimize this app to speed up p95`.
 - **The goal bar** on the composer shows the sentence and the elapsed time (time
   spent paused, waiting or with Themis closed does not count). Its icons are
   **Edit** (applies from the next turn; the current turn keeps running),
-  **Pause** (after this turn) or **Resume**, and **Show/Hide** for the full sentence.
+  **Pause** (after this turn) or **Resume**, **Remove** (the current turn finishes;
+  no further turns or checks), and **Show/Hide** for the full sentence.
 - **After each turn** a separate check, with a fresh context, reads the goal, the
   turn's answer and the commands it ran, and decides: reached, not yet (the next
   turn starts by itself, told why), or not reachable as written. With a number in
   the goal, that number is the bar; without one, the check decides when further
   gains are not worth it and says why.
+  The check reads only the commands of the turn it judges (long outputs keep their
+  start and end), never earlier turns or the agent's claims, so the agent ends a
+  turn it thinks finishes the goal with one compact verification of every
+  requirement. The check also says whether the turn moved the work forward; turns
+  that only re-check count toward being stuck.
 - **It keeps going.** There is no time, turn or cost limit. Your messages are
   handled first, then the goal continues. Errors are retried with growing waits;
   **Stop** ends only the current turn; a closed app resumes running goals when it
   opens again. A goal pauses only when it is reached, genuinely stuck (no progress
-  over three turns, or not reachable as written; edit it, then Resume), waiting
+  over three turns, not reachable as written, or three turns in a row failing with
+  an error that retrying will not fix, such as a rejected request; fix it or edit
+  the goal, then Resume), waiting
   for your answer (your reply resumes it), or out of model quota (it retries every
   15 minutes; switching the model resumes it at once).
 - A goal never grants permissions: approvals and the sandbox apply as usual, and

@@ -154,7 +154,7 @@ async fn settle(state: &AppState, thread_id: &str) {
 
 /// Waits until the chat's goal satisfies `done`.
 async fn goal_until(state: &AppState, thread_id: &str, done: impl Fn(GoalStatus) -> bool) {
-    tokio::time::timeout(DEADLINE, async {
+    let reached = tokio::time::timeout(DEADLINE, async {
         loop {
             if state
                 .goal_for(thread_id)
@@ -165,8 +165,14 @@ async fn goal_until(state: &AppState, thread_id: &str, done: impl Fn(GoalStatus)
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     })
-    .await
-    .expect("goal state before the deadline");
+    .await;
+    if reached.is_err() {
+        let running = state.get_thread(thread_id).await.map(|t| t.running);
+        panic!(
+            "goal state before the deadline; goal: {:?}; running: {running:?}",
+            state.goal_for(thread_id)
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -402,6 +408,45 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         .await
         .unwrap();
     assert!(state.goal_for(&thread).is_none());
+    settle(&state, &thread).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turns_that_only_re_verify_stall_even_when_the_check_rewords_its_progress() {
+    // A live goal looped for ten turns: each re-ran a few checks, the check
+    // said "not shown this turn" and phrased its measured fact differently,
+    // which counted as progress. The check's own progress judgement decides.
+    let server = MockServer::start().await;
+    let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = Arc::clone(&checks);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            if is_check(&body(request)) {
+                let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                return reply(&format!(
+                    r#"{{"verdict":"not_yet","reason":"Not all requirements shown this turn.","progress":"re-check {n} of the same 34 tests","progressed":{}}}"#,
+                    n == 0
+                ));
+            }
+            reply("All requirements still hold; verified in earlier turns.")
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal pass every check".into(),
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Stuck).await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.stalls, 3);
+    assert_eq!(checks.load(std::sync::atomic::Ordering::SeqCst), 4);
     settle(&state, &thread).await;
 }
 

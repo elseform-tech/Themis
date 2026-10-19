@@ -333,12 +333,15 @@ at most 2,000 characters). They grant nothing; a damaged file is ignored (fixed
 project removes both. Diagnostics record queue and goal ids, status changes, check verdict kinds
 and retry counts, never message text, the goal sentence or check prompts. Each goal check reads
 the commands and file changes recorded since `checked_seq` (the history position the last decided
-check read through), in pages of 2,000 items, keeping the newest 12,000 characters of command
-output; a check that fails does not move it. The goal check, the
-stall rule (three turns without progress), quota retries (every 15 minutes) and error backoff
+check read through), in pages of 2,000 items, keeping the newest 32,000 characters of command
+output; an output longer than 6,000 characters keeps its first 2,000 and last 4,000 with a
+clipped marker, and the check asks for a compact proof (a count, a grep) rather than a whole file.
+A check that fails does not move it. The goal check, the
+stall rule (three turns without progress), the failure rule (three failed turns in a row
+with an error that is not a rate limit, timeout or server error pause the goal), quota retries (every 15 minutes) and error backoff
 (30 s doubling to 15 minutes) are fixed, not runtime configuration. App server commands:
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
-`steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`
+`steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
 (also through `themis call`).
 **To undo** a grant, edit or delete its entry in the chat's file, or start a new chat; there is
 deliberately no UI for this, and the composer shield stays YOLO/Custom only.
