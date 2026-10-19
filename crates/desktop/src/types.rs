@@ -167,6 +167,9 @@ pub enum ThreadEvent {
     ToolStarted {
         tool: String,
         summary: String,
+        /// A readable name for tools whose wire name is opaque (MCP: "server · tool").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
     },
     ToolFinished {
         tool: String,
@@ -323,7 +326,11 @@ impl From<RunEvent> for ThreadEvent {
         match event {
             RunEvent::Started { task, max_turns } => Self::Started { task, max_turns },
             RunEvent::AssistantText(text) => Self::AssistantText { text },
-            RunEvent::ToolCallStarted { tool, summary } => Self::ToolStarted { tool, summary },
+            RunEvent::ToolCallStarted { tool, summary } => Self::ToolStarted {
+                tool,
+                summary,
+                label: None,
+            },
             RunEvent::ToolCallFinished { tool, ok, output } => {
                 Self::ToolFinished { tool, ok, output }
             }
@@ -1121,8 +1128,17 @@ mod tests {
                 ThreadEvent::ToolStarted {
                     tool: "shell".to_owned(),
                     summary: "run".to_owned(),
+                    label: None,
                 },
                 json!({"kind": "tool_started", "tool": "shell", "summary": "run"}),
+            ),
+            (
+                ThreadEvent::ToolStarted {
+                    tool: "mcp_0123456789abcdef01234567_browser_navigate".to_owned(),
+                    summary: "{}".to_owned(),
+                    label: Some("playwright · browser_navigate".to_owned()),
+                },
+                json!({"kind": "tool_started", "tool": "mcp_0123456789abcdef01234567_browser_navigate", "summary": "{}", "label": "playwright · browser_navigate"}),
             ),
             (
                 ThreadEvent::ToolFinished {
@@ -1195,6 +1211,7 @@ mod tests {
             ThreadEvent::ToolStarted {
                 tool: "t".to_owned(),
                 summary: "s".to_owned(),
+                label: None,
             }
         );
         assert_eq!(

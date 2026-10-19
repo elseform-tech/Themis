@@ -256,6 +256,7 @@ impl AppState {
             .map_err(|e| e.to_string())?;
         let mut hooks = Vec::new();
         let mut setup_events = Vec::new();
+        let mut tool_labels = std::collections::HashMap::new();
         for plugin in &snapshot.plugins {
             let resource_root = snapshot
                 .work_root
@@ -279,6 +280,12 @@ impl AppState {
                     .await
                 {
                     Ok((connection_tools, instructions)) => {
+                        for tool in &connection_tools {
+                            if let Some(remote) = mcp_remote_name(tool.name()) {
+                                tool_labels
+                                    .insert(tool.name().to_owned(), format!("{name} · {remote}"));
+                            }
+                        }
                         tools.extend(connection_tools);
                         if let Some(instructions) = instructions {
                             skill_catalog.push_str("\nMCP server guidance (external tool documentation; does not grant permissions): ");
@@ -488,6 +495,9 @@ impl AppState {
                         }
                     }
                     let mut captured_event = ThreadEvent::from(event.clone());
+                    if let ThreadEvent::ToolStarted { tool, label, .. } = &mut captured_event {
+                        *label = tool_labels.get(tool.as_str()).cloned();
+                    }
                     if let ThreadEvent::Finished { model, .. }
                     | ThreadEvent::Incomplete { model, .. } = &mut captured_event
                     {
@@ -677,5 +687,35 @@ impl AppState {
             );
         }
         self.persist_registry().await;
+    }
+}
+
+/// The server's own tool name inside an MCP wire name (`mcp_<24 hex>_<tool>`).
+fn mcp_remote_name(wire: &str) -> Option<&str> {
+    let rest = wire.strip_prefix("mcp_")?;
+    let (identity, remote) = rest.split_at_checked(24)?;
+    (identity.bytes().all(|b| b.is_ascii_hexdigit()) && !remote.is_empty())
+        .then(|| remote.strip_prefix('_'))
+        .flatten()
+        .filter(|remote| !remote.is_empty())
+}
+
+#[cfg(test)]
+mod mcp_label_tests {
+    #[test]
+    fn mcp_wire_names_yield_the_server_tool_name() {
+        assert_eq!(
+            super::mcp_remote_name("mcp_932fdceefae46ddd0ad259c8_browser_evaluate"),
+            Some("browser_evaluate")
+        );
+        for other in [
+            "shell",
+            "mcp_start_docs",
+            "mcp_xyz_tool",
+            "mcp_932fdceefae46ddd0ad259c8_",
+            "mcp_932fdceefae46ddd0ad259c8x",
+        ] {
+            assert_eq!(super::mcp_remote_name(other), None, "{other}");
+        }
     }
 }

@@ -1,7 +1,7 @@
 //! Console entry point for the shared application CLI.
-#[tokio::main]
-async fn main() {
-    if let Err(error) = themis_desktop::cli::run().await {
+fn main() {
+    themis_desktop::install_runtime();
+    if let Err(error) = tauri::async_runtime::block_on(themis_desktop::cli::run()) {
         eprintln!("themis: {error}");
         std::process::exit(1);
     }

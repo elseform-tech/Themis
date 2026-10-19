@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    themis_desktop::install_runtime();
     let cli_mode = std::env::args_os().next().is_some_and(|path| {
         std::path::Path::new(&path).file_name() == Some(std::ffi::OsStr::new("themis"))
     }) || std::env::args_os().nth(1).as_deref()

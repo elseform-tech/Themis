@@ -8,6 +8,7 @@ import type {
   ProjectInfo,
   ReviewItem,
   Skill,
+  ThreadChange,
   ThreadInfo,
 } from "../lib/types";
 import { failureMessage } from "../lib/errors";
@@ -153,6 +154,29 @@ export async function restoreRecentProjects(
         }
       }
     }
+  }
+  return true;
+}
+
+/** A chat created by another client (the CLI, an automation) in a project this
+ *  window has not opened: open the project, unselected, so it appears in the
+ *  project switcher with its chats. Other changes are left to the reducer. */
+export async function openProjectOfNewChat(
+  change: ThreadChange,
+  context: {
+    isOpen: (root: string) => boolean;
+    api: {
+      openProject: (root: string) => Promise<ProjectInfo>;
+      listThreads: (root: string) => Promise<ThreadInfo[]>;
+    };
+    dispatch: (action: AppAction) => void;
+  },
+): Promise<boolean> {
+  if (change.kind !== "created" || context.isOpen(change.project_root)) return false;
+  const project = await context.api.openProject(change.project_root);
+  context.dispatch({ type: "project/opened", project, select: false });
+  for (const thread of await context.api.listThreads(project.root)) {
+    context.dispatch({ type: "thread/synced", projectRoot: project.root, thread });
   }
   return true;
 }

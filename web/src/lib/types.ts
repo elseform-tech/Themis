@@ -290,7 +290,7 @@ export interface RunHandle {
 export type ThreadEvent =
   | { kind: 'started'; task: string; max_turns: number }
   | { kind: 'assistant_text'; text: string }
-  | { kind: 'tool_started'; tool: string; summary: string }
+  | { kind: 'tool_started'; tool: string; summary: string; /** Readable name for an MCP tool, "server · tool". */ label?: string }
   | { kind: 'tool_finished'; tool: string; ok: boolean; output?: string }
   | { kind: 'approval_decided'; tool: string; decision: ApprovalDecision }
   | { kind: 'context_compacting' }
@@ -387,7 +387,7 @@ export interface PersistedMessage {
   incomplete?: boolean;
   /** Partial answer kept after the run was stopped by the user or failed. */
   interrupted?: 'stopped' | 'failed';
-  tool?: { name: string; ok?: boolean; output?: string };
+  tool?: { name: string; label?: string; ok?: boolean; output?: string };
   /** Context checkpoint divider; percentages of usable context before and after. */
   checkpoint?: { before?: number; after?: number };
   /** Files this run changed, shown under its final response. */
