@@ -10,5 +10,7 @@ export function promptParts(value: string): PromptPart[] {
   if (end < value.length) parts.push({ text: value.slice(end) });
   return parts;
 }
+/** The `/goal` command at the start of a message (the server reads it there), or null. */
+export function goalCommand(value: string): string | null { return value.match(/^\s*\/goal(?=\s|$)/)?.[0] ?? null; }
 export function skillToken(id: string) { return `[[skill:${id}]]`; }
 export function pluginToken(id: string) { return `[[plugin:${id}]]`; }

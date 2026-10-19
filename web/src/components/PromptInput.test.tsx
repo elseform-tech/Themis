@@ -258,7 +258,8 @@ it("offers /goal first under Commands, only at the start of a message", () => {
   expect(options[0]).toHaveTextContent("/goal");
   expect(screen.getByText("Commands")).toBeInTheDocument();
   fireEvent.click(options[0]!);
-  expect(input.textContent).toBe("/goal ");
+  expect(input.querySelector("[data-command]")).toHaveTextContent("Goal");
+  expect(input.textContent).toBe("◎Goal ");
   unmount();
   render(<Harness initial="please /go" />);
   const later = screen.getByRole("textbox", { name: "Message" });
@@ -266,4 +267,34 @@ it("offers /goal first under Commands, only at the start of a message", () => {
   window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(end);
   fireEvent.focus(later);
   expect(screen.queryByText("/goal")).toBeNull();
+});
+
+it("shows a typed /goal as its sticker and still sends the command text", () => {
+  const onChange = vi.fn();
+  function Harness() {
+    const [value, setValue] = useState("");
+    return <PromptInput label="Message" value={value} onChange={next => { onChange(next); setValue(next); }} skills={[]} />;
+  }
+  render(<Harness />);
+  const input = screen.getByRole("textbox", { name: "Message" });
+  input.textContent = "/goal speed up p95";
+  fireEvent.input(input);
+  expect(onChange).toHaveBeenLastCalledWith("/goal speed up p95");
+  const chip = input.querySelector<HTMLElement>("[data-command]");
+  expect(chip).toHaveTextContent("Goal");
+  expect(chip!.contentEditable).toBe("false");
+  expect(input.textContent).toBe("◎Goal speed up p95");
+  input.append(document.createTextNode("!"));
+  fireEvent.input(input);
+  expect(onChange).toHaveBeenLastCalledWith("/goal speed up p95!");
+});
+
+it("renders a sent /goal as a sticker, but not /goal later in the message or /goals", () => {
+  const { container, rerender } = render(<PromptText value="/goal make p95 faster" skills={[]} />);
+  expect(container.querySelector(".themis-command-chip")).toHaveTextContent("Goal");
+  expect(container).toHaveTextContent("Goal make p95 faster");
+  rerender(<PromptText value="what is /goal for?" skills={[]} />);
+  expect(container.querySelector(".themis-command-chip")).toBeNull();
+  rerender(<PromptText value="/goals list" skills={[]} />);
+  expect(container.querySelector(".themis-command-chip")).toBeNull();
 });

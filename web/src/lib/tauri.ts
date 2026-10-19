@@ -156,6 +156,10 @@ export function resumeGoal(threadId: string): Promise<Goal> {
   return invoke('resume_goal', { threadId });
 }
 
+export function removeGoal(threadId: string): Promise<null> {
+  return invoke('remove_goal', { threadId });
+}
+
 export function getThreadHistory(threadId: string): Promise<HistoryItem[]> {
   return invoke('get_thread_history', { threadId });
 }

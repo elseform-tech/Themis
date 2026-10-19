@@ -472,6 +472,14 @@ impl AppState {
             let state = self.clone();
             let boot_sink = Arc::clone(&sink);
             runtime.spawn(async move { state.resume_after_boot(boot_sink).await });
+            let state = self.clone();
+            let bank_sink = Arc::clone(&sink);
+            runtime.spawn(async move {
+                loop {
+                    tokio::time::sleep(goal::BANK_INTERVAL).await;
+                    state.bank_running_goals(bank_sink.as_ref());
+                }
+            });
         }
         *self
             .inner

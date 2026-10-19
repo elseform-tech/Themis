@@ -188,6 +188,15 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
             .output()
             .unwrap();
         assert!(!refused.status.success());
+        // Removing the goal clears it; the chat has none afterwards.
+        assert_eq!(
+            call(&data_dir, "remove_goal", json!({"threadId": thread_id})),
+            Value::Null
+        );
+        assert_eq!(
+            call(&data_dir, "get_goal", json!({"threadId": thread_id})),
+            Value::Null
+        );
     })
     .await
     .unwrap();
