@@ -7,7 +7,11 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use themis_desktop::sink::ChannelSink;
-use themis_desktop::{server::Server, state::AppState, types::ProviderKind};
+use themis_desktop::{
+    server::Server,
+    state::AppState,
+    types::{GoalStatus, ProviderKind},
+};
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
@@ -48,6 +52,41 @@ impl Gate {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+}
+
+/// Leaves the chat quiet before the test ends: runs live on the app's shared
+/// runtime and would outlive the test, and a later test's mock server can get
+/// this one's port. Pausing also cancels any goal retry timer.
+async fn settle(state: &AppState, thread_id: &str) {
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(ChannelSink::channel().0);
+    if state
+        .goal_for(thread_id)
+        .is_some_and(|goal| !matches!(goal.status, GoalStatus::Paused | GoalStatus::Reached))
+    {
+        let _ = state
+            .pause_goal(Arc::clone(&sink), thread_id.to_owned())
+            .await;
+    }
+    for message in state
+        .list_queue(thread_id.to_owned())
+        .await
+        .unwrap_or_default()
+    {
+        let _ = state
+            .remove_queued_message(Arc::clone(&sink), thread_id.to_owned(), message.id)
+            .await;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    while state
+        .get_thread(thread_id)
+        .await
+        .is_ok_and(|thread| thread.running)
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // A goal check that started before the pause finishes against this server.
+    tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
 fn reply(text: &str) -> ResponseTemplate {
@@ -163,6 +202,7 @@ async fn cli_starts_a_goal_queues_a_message_and_reads_the_goal_back() {
         .iter()
         .any(|body| body.to_string().contains("also add a license line")));
     task.abort();
+    settle(&state, &thread.id).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -260,4 +300,5 @@ async fn a_model_switch_mid_run_applies_next_turn_without_foreign_reasoning() {
             .all(|body| !body.to_string().contains("FIRST-MODEL-PRIVATE-REASONING")),
         "the new model never sees the old model's reasoning"
     );
+    settle(&state, &thread.id).await;
 }

@@ -117,6 +117,41 @@ async fn until(
     .expect("expected event before the deadline");
 }
 
+/// Leaves the chat quiet before the test ends: runs live on the app's shared
+/// runtime and would outlive the test, and a later test's mock server can get
+/// this one's port. Pausing also cancels any goal retry timer.
+async fn settle(state: &AppState, thread_id: &str) {
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(ChannelSink::channel().0);
+    if state
+        .goal_for(thread_id)
+        .is_some_and(|goal| !matches!(goal.status, GoalStatus::Paused | GoalStatus::Reached))
+    {
+        let _ = state
+            .pause_goal(Arc::clone(&sink), thread_id.to_owned())
+            .await;
+    }
+    for message in state
+        .list_queue(thread_id.to_owned())
+        .await
+        .unwrap_or_default()
+    {
+        let _ = state
+            .remove_queued_message(Arc::clone(&sink), thread_id.to_owned(), message.id)
+            .await;
+    }
+    let deadline = std::time::Instant::now() + DEADLINE;
+    while state
+        .get_thread(thread_id)
+        .await
+        .is_ok_and(|thread| thread.running)
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // A goal check that started before the pause finishes against this server.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+}
+
 /// Waits until the chat's goal satisfies `done`.
 async fn goal_until(state: &AppState, thread_id: &str, done: impl Fn(GoalStatus) -> bool) {
     tokio::time::timeout(DEADLINE, async {
@@ -275,11 +310,12 @@ async fn queued_messages_wait_steers_reach_the_run_and_the_queue_drains() {
         .await
         .unwrap();
     let error = state
-        .steer_queued_message(sink, thread, idle.id)
+        .steer_queued_message(sink, thread.clone(), idle.id)
         .await
         .err();
     // The idle chat sent "after" at once, so it is no longer queued.
     assert!(error.is_some());
+    settle(&state, &thread).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -366,6 +402,7 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
         .await
         .unwrap();
     assert!(state.goal_for(&thread).is_none());
+    settle(&state, &thread).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -488,7 +525,8 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
         .await
         .unwrap();
     assert_eq!(state.goal_for(&thread).unwrap().status, GoalStatus::Running);
-    state.pause_goal(sink, thread).await.unwrap();
+    state.pause_goal(sink, thread.clone()).await.unwrap();
+    settle(&state, &thread).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -546,6 +584,7 @@ async fn a_used_up_quota_pauses_the_goal_and_a_model_switch_resumes_it() {
         .rfind(|body| !is_check(body))
         .unwrap();
     assert_eq!(last_turn["model"], "other-model");
+    settle(&state, &thread).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -600,6 +639,7 @@ async fn a_running_goal_resumes_when_the_app_starts_again() {
         .find(|body| !is_check(body))
         .unwrap();
     assert!(mentions(&first, "interrupted when Themis closed"));
+    settle(&restarted, &thread).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -635,6 +675,7 @@ async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
         goal.turns, 1,
         "the agent's own run set it; one goal turn followed"
     );
+    settle(&state, &thread).await;
 }
 
 /// Found in a live run: the work happened in a queued message's run, the next
@@ -741,6 +782,7 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
         mentions(&first_check, "list_dir"),
         "the queued run's command is evidence for the turn after it"
     );
+    settle(&state, &thread).await;
 }
 
 /// Review findings: a queued message refused before any run starts (a bare
@@ -851,6 +893,7 @@ async fn unsendable_queued_messages_are_recorded_and_the_queue_moves_on() {
         .filter(|item| item["kind"] == "user" && item["text"] == "after the bad one")
         .count();
     assert_eq!(users, 1);
+    settle(&state, &thread).await;
 }
 
 /// Review findings: a `/goal` whose run cannot start still continues (it
@@ -936,6 +979,7 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
         "a failed check is not a stall"
     );
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    settle(&state, &thread).await;
 }
 
 /// Third review: an error that belongs to the chat (its project's
@@ -1007,4 +1051,5 @@ async fn a_chat_wide_error_holds_one_message_and_keeps_the_rest_in_order() {
         .filter(|item| item.to_string().contains("Queued message not sent"))
         .count();
     assert_eq!(notes, 1, "one note for one cause");
+    settle(&state, &thread).await;
 }
