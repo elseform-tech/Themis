@@ -1646,12 +1646,33 @@ fn plan_tool_patch(
         }
         normalized.push('\n');
     }
-    plan_patch(
+    let mut plan = plan_patch(
         root.ancestors()
             .last()
             .ok_or_else(|| anyhow::anyhow!("filesystem root unavailable"))?,
         &normalized,
-    )
+    )?;
+    // Planned against `/`, paths read as `private/tmp/...`: report them
+    // relative to the project, or whole when outside it.
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    for file in &mut plan {
+        file.relative = file
+            .path
+            .strip_prefix(&canonical_root)
+            .or_else(|_| file.path.strip_prefix(root))
+            .map_or_else(
+                |_| file.path.to_string_lossy().into_owned(),
+                // `/` on every platform, like the restricted tool's patch paths.
+                |inside| {
+                    inside
+                        .components()
+                        .map(|part| part.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                },
+            );
+    }
+    Ok(plan)
 }
 
 /// Collapse `.` and `..` lexically (no filesystem access).
@@ -4432,6 +4453,22 @@ mod tests {
             fs::read_to_string(root.join("new.txt")).unwrap(),
             "one\ntwo\n"
         );
+    }
+
+    #[tokio::test]
+    async fn unrestricted_apply_patch_reports_project_relative_paths() {
+        // YOLO plans against `/`; the result read `private/tmp/.../src/main.js`.
+        let (_tmp, root) = rooted_case();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.js"), "a\n").unwrap();
+        let tool = ApplyPatchTool::new(root.clone(), allow_all()).with_unrestricted_paths(true);
+        let absolute = root.join("src/main.js");
+        for path in ["src/main.js", absolute.to_str().unwrap()] {
+            let patch = format!("--- a/{path}\n+++ b/{path}\n@@ -1 +1,2 @@\n a\n+b\n");
+            let result = tool.execute(json!({ "patch": patch })).await.unwrap();
+            assert_eq!(result["files"], json!(["src/main.js"]), "{path}");
+            fs::write(&absolute, "a\n").unwrap();
+        }
     }
 
     #[tokio::test]
