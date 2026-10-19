@@ -13,6 +13,7 @@ import type {
 } from "../lib/types";
 import {
   loadPhase4Lists,
+  openProjectOfNewChat,
   restoreRecentProjects,
   type Phase4ListsApi,
   type RecentProjectApi,
@@ -198,5 +199,30 @@ describe("restoreRecentProjects", () => {
 
     expect(warnings).toEqual(["Could not reopen /missing: folder missing"]);
     expect(actions).toContainEqual({ type: "project/opened", project: PROJECT });
+  });
+});
+
+describe("openProjectOfNewChat", () => {
+  it("opens, unselected, the project of a chat another client created", async () => {
+    const actions: AppAction[] = [];
+    const opened = await openProjectOfNewChat(
+      { kind: "created", project_root: PROJECT.root, thread_id: THREAD.id, thread: THREAD },
+      { isOpen: () => false, api: { openProject: () => Promise.resolve(PROJECT), listThreads: () => Promise.resolve([THREAD]) }, dispatch: action => actions.push(action) },
+    );
+    expect(opened).toBe(true);
+    expect(actions).toEqual([
+      { type: "project/opened", project: PROJECT, select: false },
+      { type: "thread/synced", projectRoot: PROJECT.root, thread: THREAD },
+    ]);
+    const state = actions.reduce(reducer, initialState);
+    expect(state.projects.map(project => project.root)).toEqual([PROJECT.root]);
+    expect(state.threadsByProject[PROJECT.root]?.map(thread => thread.id)).toEqual([THREAD.id]);
+  });
+
+  it("leaves open projects and other changes to the reducer", async () => {
+    const api = { openProject: () => Promise.reject(new Error("not called")), listThreads: () => Promise.resolve([]) };
+    const created = { kind: "created" as const, project_root: PROJECT.root, thread_id: THREAD.id, thread: THREAD };
+    expect(await openProjectOfNewChat(created, { isOpen: () => true, api, dispatch: () => {} })).toBe(false);
+    expect(await openProjectOfNewChat({ ...created, kind: "updated" }, { isOpen: () => false, api, dispatch: () => {} })).toBe(false);
   });
 });

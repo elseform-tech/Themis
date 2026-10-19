@@ -772,6 +772,7 @@ async fn dispatch_command(
         ),
         "pause_goal" => output!(state.pause_goal(sink, arg(&args, "threadId")?).await?),
         "resume_goal" => output!(state.resume_goal(sink, arg(&args, "threadId")?).await?),
+        "remove_goal" => output!(state.remove_goal(sink, arg(&args, "threadId")?).await?),
         "set_thread_effort" => output!(
             state
                 .set_thread_effort(arg(&args, "threadId")?, arg(&args, "effort")?)

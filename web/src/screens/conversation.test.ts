@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { groupConversation } from "./conversation";
+import { describe, expect, it } from "vitest";
+import { groupConversation, toolDisplayName } from "./conversation";
 import type { ChatMessage } from "../state/reducer";
 
 it("groups tools under milestones and keeps only the current milestone active", () => {
@@ -48,4 +48,12 @@ it("keeps untagged legacy replies static when the active run ID is unavailable",
     { id: "old", role: "assistant", text: "Previous reply" },
   ], true);
   expect(rows[0]).toMatchObject({ kind: "message", message: { text: "Previous reply" } });
+});
+
+describe("toolDisplayName", () => {
+  it("names MCP tools by server and tool, never by their wire id", () => {
+    expect(toolDisplayName("mcp_932fdceefae46ddd0ad259c8_browser_navigate", "playwright · browser_navigate")).toBe("playwright · browser navigate");
+    expect(toolDisplayName("mcp_932fdceefae46ddd0ad259c8_browser_navigate")).toBe("MCP · browser navigate");
+    expect(toolDisplayName("read_file")).toBe("read file");
+  });
 });

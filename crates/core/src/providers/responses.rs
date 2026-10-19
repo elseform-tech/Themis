@@ -72,6 +72,20 @@ pub(super) fn responses_body(
     effort: Option<&str>,
 ) -> Result<serde_json::Value, LLMError> {
     let mut input = Vec::new();
+    // A reasoning item may be sent only once per request; the same answer
+    // text repeated in a chat would otherwise replay its reasoning twice.
+    let mut sent_reasoning = std::collections::HashSet::new();
+    let mut once = |items: Vec<serde_json::Value>| {
+        items
+            .into_iter()
+            .filter(
+                |item| match item.get("id").and_then(serde_json::Value::as_str) {
+                    Some(id) => sent_reasoning.insert(id.to_owned()),
+                    None => true,
+                },
+            )
+            .collect::<Vec<_>>()
+    };
     for message in to_wire_messages(messages)? {
         if let Some(id) = message.tool_call_id {
             input.push(serde_json::json!({"type":"function_call_output", "call_id":id, "output":message.content.unwrap_or_default()}));
@@ -83,7 +97,7 @@ pub(super) fn responses_body(
                     .as_deref()
                     .and_then(reasoning::replay_answer)
                 {
-                    input.extend(kept.items);
+                    input.extend(once(kept.items));
                 }
             }
             if let Some(content) = message.content {
@@ -91,7 +105,7 @@ pub(super) fn responses_body(
             }
             let calls = message.tool_calls.unwrap_or_default();
             if let Some(kept) = reasoning::replay(&calls) {
-                input.extend(kept.items);
+                input.extend(once(kept.items));
             }
             for call in calls {
                 input.push(serde_json::json!({"type":"function_call", "call_id":call.id, "name":call.function.name, "arguments":call.function.arguments}));

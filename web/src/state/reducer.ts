@@ -34,6 +34,7 @@ export type ChatMessage = PersistedMessage;
 export interface ToolTraceEntry {
   id: string;
   tool: string;
+  label?: string;
   summary: string;
   /** Undefined while the tool is still running. */
   ok?: boolean;
@@ -387,10 +388,11 @@ export function applyThreadEvent(
       const text = state.streams[threadId];
       if (text) next = appendMessage(next, threadId, { id: newId("msg"), role: "assistant", text, runId });
       next = { ...next, streams: { ...next.streams, [threadId]: "" } };
-      next = appendMessage(next, threadId, { id: newId("tool"), role: "assistant", text: event.summary, runId, tool: { name: event.tool } });
+      next = appendMessage(next, threadId, { id: newId("tool"), role: "assistant", text: event.summary, runId, tool: { name: event.tool, ...(event.label ? { label: event.label } : {}) } });
       return appendTrace(next, threadId, {
         id: newId("trace"),
         tool: event.tool,
+        ...(event.label ? { label: event.label } : {}),
         summary: event.summary,
       });
     }

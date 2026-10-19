@@ -4,7 +4,7 @@ import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components";
 import type { GoModel } from "../lib/types";
-import { attachFiles, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
+import { attachFiles, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
@@ -292,7 +292,8 @@ export function ThreadView() {
         {goal && <GoalBar goal={goal}
           onEdit={async text => { try { await editGoal(thread.id, text); } catch (error) { toast(dispatch, `Could not save the goal: ${describeError(error)}`, "danger"); throw error; } }}
           onPause={() => void pauseGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))}
-          onResume={() => void resumeGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))} />}
+          onResume={() => void resumeGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))}
+          onRemove={() => void removeGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))} />}
         <QueueStack queue={queue} running={running}
           onSteer={id => void steerQueuedMessage(thread.id, id).catch(error => toast(dispatch, describeError(error), "danger"))}
           onHold={(id, held) => void updateQueuedMessage(thread.id, id, { held }).catch(() => {})}
