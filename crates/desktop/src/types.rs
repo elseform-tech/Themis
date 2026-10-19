@@ -451,6 +451,10 @@ pub struct DiffFile {
     pub status: DiffStatus,
     pub preexisting: bool,
     pub hunks: Vec<DiffHunk>,
+    /// The change is too large to show whole (a downloaded dataset, a
+    /// generated file): `hunks` hold only its first lines.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub too_large: bool,
 }
 
 /// Diff listing (`DiffState` in types.ts).
@@ -1358,8 +1362,10 @@ mod tests {
             status: DiffStatus::Modified,
             preexisting: false,
             hunks: vec![hunk],
+            too_large: false,
         };
         let json = to_value(&file);
+        assert!(json.get("too_large").is_none());
         assert_eq!(json["path"], "a.rs");
         assert_eq!(json["status"], "modified");
         assert!(json.get("old_path").is_none());
