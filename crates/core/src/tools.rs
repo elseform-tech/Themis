@@ -3832,6 +3832,11 @@ mod tests {
                 let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
                 let (hunk, _) = parse_hunk(&refs, 0).unwrap();
                 let applied = apply_hunks(&old, &[hunk], "f").unwrap();
+                // A stray closing marker changes nothing.
+                let mut marked = refs.clone();
+                marked.push("*** End Patch");
+                let (marked_hunk, _) = parse_hunk(&marked, 0).unwrap();
+                prop_assert_eq!(&apply_hunks(&old, &[marked_hunk], "f").unwrap(), &applied);
                 let mut expected = old[..start].to_vec();
                 expected.extend(replacement.iter().map(|l| format!("new-{l}")));
                 expected.extend_from_slice(&old[end..]);
@@ -4506,6 +4511,20 @@ mod tests {
             "unsupported patch must not report an empty successful edit"
         );
         assert_eq!(fs::read_to_string(root.join("file.txt")).unwrap(), "old\n");
+    }
+
+    #[tokio::test]
+    async fn apply_patch_ignores_a_stray_end_marker_after_a_unified_diff() {
+        let (_tmp, root) = rooted_case();
+        fs::write(root.join("file.txt"), "keep\nold\n").unwrap();
+        let tool = ApplyPatchTool::new(root.clone(), allow_all());
+        let patch =
+            "--- a/file.txt\n+++ b/file.txt\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n*** End Patch\n";
+        tool.execute(json!({ "patch": patch })).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("file.txt")).unwrap(),
+            "keep\nnew\n"
+        );
     }
 
     #[test]
