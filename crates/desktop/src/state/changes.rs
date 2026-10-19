@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::diff::{
     git_diff_cached, git_diff_head, git_diff_worktree, git_head, git_untracked, is_git_repo,
-    is_readable_change, untracked_diff_file, MAX_DIFF_FILES, MAX_LISTED_DIFF_LINES,
+    is_readable_change, untracked_diff_file, MAX_DIFF_FILES, MAX_LISTED_DIFF_BYTES,
 };
 use crate::types::{DiffState, MergeResult};
 use crate::worktree;
@@ -105,15 +105,20 @@ impl AppState {
             ));
         }
         // The whole listing stays bounded too: once it holds
-        // MAX_LISTED_DIFF_LINES lines, later files are listed without them.
-        let mut room = MAX_LISTED_DIFF_LINES;
+        // MAX_LISTED_DIFF_BYTES of text, later files are listed without lines.
+        let mut room = MAX_LISTED_DIFF_BYTES;
         for file in &mut files {
-            let lines: usize = file.hunks.iter().map(|hunk| hunk.lines.len()).sum();
-            if lines > room {
+            let bytes: usize = file
+                .hunks
+                .iter()
+                .flat_map(|hunk| &hunk.lines)
+                .map(|line| line.text.len() + 1)
+                .sum();
+            if bytes > room {
                 file.hunks.clear();
                 file.too_large = true;
             } else {
-                room -= lines;
+                room -= bytes;
             }
         }
         if hidden > 0 {

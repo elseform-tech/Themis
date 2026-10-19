@@ -16,9 +16,9 @@ pub const MAX_DIFF_FILES: usize = 200;
 pub const MAX_SHOWN_FILE_BYTES: u64 = 1024 * 1024;
 /// Most diff lines shown for one file; a larger change shows its first lines
 /// and is marked `too_large`.
-pub const MAX_SHOWN_DIFF_LINES: usize = 5_000;
-/// Most diff lines in one listing across all its files.
-pub const MAX_LISTED_DIFF_LINES: usize = 50_000;
+pub const MAX_SHOWN_DIFF_LINES: usize = 2_000;
+/// Most diff text in one listing across all its files, in bytes.
+pub const MAX_LISTED_DIFF_BYTES: usize = 2 * 1024 * 1024;
 
 /// Returns true when `root` is inside a git work tree.
 #[must_use]
