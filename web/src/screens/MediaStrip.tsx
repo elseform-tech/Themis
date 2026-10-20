@@ -24,13 +24,10 @@ function useMediaUrl(threadId: string, path: string) {
 
 const label = (file: AttachedMedia) => file.caption || file.name;
 
-/** The media an agent attached under its reply: one large preview, a row of tiles, or three tiles and "+N". */
+/** The media an agent attached under its reply: a row of small thumbnails, or three and "+N". */
 export function MediaStrip({ files }: { files: AttachedMedia[] }) {
   const gallery = useContext(MediaGallery);
   if (!gallery || files.length === 0) return null;
-  if (files.length === 1) {
-    return <div className="themis-media-strip themis-media-strip--single"><MediaTile file={files[0]} large /></div>;
-  }
   const folded = files.length > SHOWN + 1;
   const shown = folded ? files.slice(0, SHOWN) : files;
   return (
@@ -48,11 +45,11 @@ export function MediaStrip({ files }: { files: AttachedMedia[] }) {
   );
 }
 
-function MediaTile({ file, large = false }: { file: AttachedMedia; large?: boolean }) {
+function MediaTile({ file }: { file: AttachedMedia }) {
   const gallery = useContext(MediaGallery)!;
   const { url, failed } = useMediaUrl(gallery.threadId, file.path);
   return (
-    <button type="button" className={`themis-media-tile${large ? " is-large" : ""}`} aria-label={`${file.kind === "video" ? "Play" : "Open"} ${label(file)}`} onClick={() => gallery.open(file.path)}>
+    <button type="button" className="themis-media-tile" aria-label={`${file.kind === "video" ? "Play" : "Open"} ${label(file)}`} onClick={() => gallery.open(file.path)}>
       <span className="themis-media-frame">
         {failed ? <span className="themis-media-missing">Preview unavailable</span>
           : url && file.kind === "image" ? <img src={url} alt="" />

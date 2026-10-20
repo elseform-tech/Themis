@@ -16,10 +16,11 @@ function renderStrip(files: AttachedMedia[], open = vi.fn()) {
 afterEach(() => cleanup());
 
 describe("MediaStrip", () => {
-  it("shows one item as a large preview", async () => {
+  it("shows one item as the same small thumbnail as several", async () => {
     await act(async () => { renderStrip([file("shot.png", "image", "Sign-up error")]); });
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
     const tile = screen.getByRole("button", { name: "Open Sign-up error" });
-    expect(tile).toHaveClass("is-large");
+    expect(tile).not.toHaveClass("is-large");
     expect(tile.querySelector("img")).toHaveAttribute("src", "asset:///p/.themis/attachments/shot.png");
   });
 
