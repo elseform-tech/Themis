@@ -354,6 +354,114 @@ pub async fn behavior_turn(
     })
 }
 
+/// One step of a [`task_run`]: a tool call (with whether it succeeded) or a checkpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskStep {
+    /// `"call"` or `"checkpoint"`.
+    pub kind: &'static str,
+    /// Tool name for a call.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub tool: String,
+    /// One-line call summary (tool arguments); empty for a checkpoint.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub summary: String,
+    /// Whether the call succeeded; `None` for a checkpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ok: Option<bool>,
+}
+
+/// A whole agent run of one task, compacting mid-turn whenever the budget requires.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskRun {
+    pub steps: Vec<TaskStep>,
+    pub result: String,
+    pub error: Option<String>,
+}
+
+/// Lets file tools edit the throwaway project; refuses `shell` and `git`, so no
+/// model-written command runs on the machine that hosts the eval.
+struct FileToolsOnly;
+
+impl crate::tools::ApprovalHook for FileToolsOnly {
+    fn approve(&self, action: &crate::tools::ToolAction) -> crate::tools::Approval {
+        if matches!(action.tool.as_str(), "shell" | "git") {
+            crate::tools::Approval::Deny
+        } else {
+            crate::tools::Approval::AllowOnce
+        }
+    }
+}
+
+/// Runs `task` from an empty conversation in `project`, as a chat turn would, and
+/// records every tool call and in-run checkpoint in order.
+pub async fn task_run(
+    llm: &Arc<dyn LLMProvider>,
+    task: &str,
+    project: &std::path::Path,
+    policy: EvalPolicy,
+    max_turns: usize,
+) -> anyhow::Result<TaskRun> {
+    use crate::tools::{boxed_tools, ApprovalHook};
+    let evidence = project.join(".themis/context/task");
+    std::fs::create_dir_all(&evidence)?;
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(FileToolsOnly);
+    let (events, mut receiver) = tokio::sync::mpsc::channel(4096);
+    let collector = tokio::spawn(async move {
+        let mut steps: Vec<TaskStep> = Vec::new();
+        while let Some(event) = receiver.recv().await {
+            match event {
+                RunEvent::ToolCallStarted { tool, summary } => steps.push(TaskStep {
+                    kind: "call",
+                    tool,
+                    summary,
+                    ok: None,
+                }),
+                RunEvent::ToolCallFinished { ok, .. } => {
+                    if let Some(step) = steps.iter_mut().rev().find(|s| s.kind == "call") {
+                        step.ok.get_or_insert(ok);
+                    }
+                }
+                RunEvent::ContextCheckpoint { .. } => steps.push(TaskStep {
+                    kind: "checkpoint",
+                    tool: String::new(),
+                    summary: String::new(),
+                    ok: None,
+                }),
+                _ => {}
+            }
+        }
+        steps
+    });
+    let tools = boxed_tools(project, approvals.clone())?;
+    let result = run_task_with_evidence(
+        llm.clone(),
+        tools,
+        task.to_owned(),
+        Vec::new(),
+        approvals,
+        RunPolicy {
+            total_turns: max_turns,
+            context_token_budget: policy.context_token_budget,
+            recent_messages: policy.recent_messages,
+        },
+        events,
+        Arc::new(AtomicBool::new(false)),
+        String::new(),
+        Some(evidence),
+    )
+    .await;
+    let steps = collector.await?;
+    let (result, error) = match result {
+        Ok(text) => (text, None),
+        Err(error) => (String::new(), Some(error.to_string())),
+    };
+    Ok(TaskRun {
+        steps,
+        result,
+        error,
+    })
+}
+
 /// What one tool call returned to the agent during a probe (bounded), so a harness can
 /// check that a correct answer was grounded in material the agent actually read.
 #[derive(Debug, Clone, Serialize)]
