@@ -354,6 +354,12 @@ of:
 
 ## Diagnostics
 
+The top right of the window shows Themis's own resource use: CPU (its share
+of all cores), memory and the window's frame rate. A value turns amber when CPU
+passes half the machine, when memory has kept growing for half an hour, or when
+the window draws under 30 frames a second. Click it for the split between the
+app, the built-in browser and tools such as dev servers.
+
 The desktop keeps configuration files and logs out of normal user flows.
 Advanced users can inspect local rotating JSONL logs and configure User or
 Project runtime JSONC through files and the shared CLI/API. Global integration

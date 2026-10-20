@@ -59,6 +59,10 @@ export function pluginAction<T>(args: Record<string, unknown>): Promise<T> { ret
 export function openRuntimeConfig(): Promise<void> { return invoke("open_runtime_config"); }
 export function getEffectivePermissions(projectRoot: string | null, threadId: string | null): Promise<EffectivePermissions> { return invoke("get_effective_permissions", { projectRoot, threadId }); }
 
+/** Themis's own CPU and memory use (app, built-in browser, tools), sampled every 5 s; null before the first sample. */
+export interface ResourceGroup { group: "app" | "browser" | "tools"; cpu_percent: number; memory_bytes: number; processes: number; growing_bytes?: number }
+export interface ResourceUsage { sampled_at_ms: number; cpu_percent: number; memory_bytes: number; cores: number; groups: ResourceGroup[] }
+export function resourceUsage(): Promise<ResourceUsage | null> { return invoke("resource_usage"); }
 export function getWorkspace(projectRoot: string, pullRequests = false): Promise<WorkspaceInfo> { return invoke("get_workspace", { projectRoot, pullRequests }); }
 export function listProjectDir(projectRoot: string, path: string): Promise<DirListing> { return invoke("list_project_dir", { projectRoot, path }); }
 export function readProjectFile(projectRoot: string, path: string): Promise<FileView> { return invoke("read_project_file", { projectRoot, path }); }

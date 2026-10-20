@@ -21,6 +21,7 @@ import {
 } from "./screens";
 import { SidebarIcon } from "./screens/Sidebar";
 import { isTauri } from "@tauri-apps/api/core";
+import { ResourceMeter } from "./screens/ResourceMeter";
 import "./screens/shell.css";
 import { applyAppearance } from "./theme/appearance";
 import { KnightCompanion, KnightControl, KnightLoading, readCompanionPreferences, type CompanionPreferences, type KnightMood } from "./components/KnightCompanion";
@@ -99,6 +100,7 @@ function Shell() {
             <Button id="sidebar-toggle" variant="ghost" size="small" aria-label={collapsed ? "Show sidebar" : "Collapse sidebar"} aria-controls="themis-sidebar" aria-expanded={!collapsed} onClick={toggleSidebar}><SidebarIcon name="panel" /></Button>
             <span>{state.mainView === "thread" ? (state.projects.find(p => p.root === state.activeProjectRoot)?.name ?? "Workspace") : ({ skills: "Integrations", automations: "Automations", settings: "Settings", queue: "Review queue" }[state.mainView])}</span>
           </div>
+          {isTauri() && <ResourceMeter />}
         </header>
         <div className="themis-shell-body">
           <Sidebar collapsed={collapsed} companionControl={<KnightControl preferences={companion} onChange={updateCompanion} />} />
