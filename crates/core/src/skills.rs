@@ -252,6 +252,7 @@ pub fn materialize_scripts(skills: &[Skill], work_root: &Path) -> anyhow::Result
                 work_root.display()
             )
         })?;
+        ensure_git_excluded(dir.parent().expect("skill dir has a parent"))?;
         let definition = dir.join("SKILL.md");
         if definition
             .symlink_metadata()
@@ -631,6 +632,26 @@ mod tests {
         assert!(
             String::from_utf8_lossy(&status.stdout).trim().is_empty(),
             "managed skill catalogs must not show as project changes"
+        );
+    }
+
+    #[test]
+    fn slash_selected_skills_stay_out_of_the_project_diff() {
+        let root = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        materialize_scripts(&[skill("review", "Review", &[], vec![])], root.path()).unwrap();
+        let status = git(&["status", "--porcelain", "--untracked-files=all"]);
+        assert!(
+            String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+            "materialized skill definitions must not show as project changes"
         );
     }
 
