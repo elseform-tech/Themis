@@ -337,6 +337,13 @@ async fn the_workspace_stream_sends_frames_and_takes_over_on_input() {
     .expect("a screencast frame");
     assert!(!frame.0.is_empty());
     assert_eq!(frame.1, 800);
+    // The view asks again (remount, resize) while the tab is already streaming.
+    chat.start_screencast(800, 600, 1.0)
+        .await
+        .expect("restarting on the same tab");
+    chat.start_screencast(640, 480, 1.0)
+        .await
+        .expect("resizing on the same tab");
     chat.user_input(&themis_core::browser::UserInput::Mouse {
         kind: "move".into(),
         x: 10.0,

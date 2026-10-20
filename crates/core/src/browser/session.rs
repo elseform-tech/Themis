@@ -1488,7 +1488,9 @@ impl ChatBrowser {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .replace(tab.session_id.clone());
-        if let Some(previous) = previous.filter(|p| !p.is_empty() && *p != tab.session_id) {
+        // Chrome refuses a second start on a streaming tab, and a restart is
+        // what applies a new size, so stop whichever tab is streaming first.
+        if let Some(previous) = previous.filter(|p| !p.is_empty()) {
             let _ = cdp
                 .call(Some(&previous), "Page.stopScreencast", json!({}))
                 .await;
