@@ -434,7 +434,10 @@ class MidturnEndToEndTests(unittest.TestCase):
                 result = json.load(handle)
         self.assertEqual(result["failed_runs"], [])
         steps = result["details"][0]["steps"]
-        self.assertEqual([(s["kind"], s["tool"], s["ok"]) for s in steps], [("call", "read_file", True)])
+        self.assertEqual([(s["tool"], s["ok"]) for s in steps if s["kind"] == "call"], [("read_file", True)])
+        # Each model request is preceded by a context snapshot.
+        self.assertGreaterEqual(sum(s["kind"] == "budget" for s in steps), 2)
+        self.assertTrue(all(s["budget"]["usable_tokens"] > 0 for s in steps if s["kind"] == "budget"))
         self.assertEqual(result["summary"]["reads"]["mean"], 1)
 
 

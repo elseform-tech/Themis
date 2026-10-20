@@ -354,10 +354,10 @@ pub async fn behavior_turn(
     })
 }
 
-/// One step of a [`task_run`]: a tool call (with whether it succeeded) or a checkpoint.
+/// One step of a [`task_run`]: a tool call, a checkpoint or a context snapshot.
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskStep {
-    /// `"call"` or `"checkpoint"`.
+    /// `"call"`, `"checkpoint"` or `"budget"`.
     pub kind: &'static str,
     /// Tool name for a call.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -368,6 +368,29 @@ pub struct TaskStep {
     /// Whether the call succeeded; `None` for a checkpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ok: Option<bool>,
+    /// Call: what the agent said since the previous call. Checkpoint: the summary text.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    /// Call: characters of the result shown to the agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_chars: Option<usize>,
+    /// `"budget"` steps: the context snapshot taken before a model request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<ContextBudget>,
+}
+
+impl TaskStep {
+    fn new(kind: &'static str) -> Self {
+        Self {
+            kind,
+            tool: String::new(),
+            summary: String::new(),
+            ok: None,
+            text: String::new(),
+            output_chars: None,
+            budget: None,
+        }
+    }
 }
 
 /// A whole agent run of one task, compacting mid-turn whenever the budget requires.
@@ -412,24 +435,31 @@ pub async fn task_run(
     let (events, mut receiver) = tokio::sync::mpsc::channel(4096);
     let collector = tokio::spawn(async move {
         let mut steps: Vec<TaskStep> = Vec::new();
+        let mut said = String::new();
         while let Some(event) = receiver.recv().await {
             match event {
+                RunEvent::AssistantText(delta) => said.push_str(&delta),
                 RunEvent::ToolCallStarted { tool, summary } => steps.push(TaskStep {
-                    kind: "call",
                     tool,
                     summary,
-                    ok: None,
+                    text: std::mem::take(&mut said),
+                    ..TaskStep::new("call")
                 }),
-                RunEvent::ToolCallFinished { ok, .. } => {
+                RunEvent::ToolCallFinished { ok, output, .. } => {
                     if let Some(step) = steps.iter_mut().rev().find(|s| s.kind == "call") {
-                        step.ok.get_or_insert(ok);
+                        if step.ok.is_none() {
+                            step.ok = Some(ok);
+                            step.output_chars = Some(output.chars().count());
+                        }
                     }
                 }
-                RunEvent::ContextCheckpoint { .. } => steps.push(TaskStep {
-                    kind: "checkpoint",
-                    tool: String::new(),
-                    summary: String::new(),
-                    ok: None,
+                RunEvent::ContextCheckpoint { summary } => steps.push(TaskStep {
+                    text: summary,
+                    ..TaskStep::new("checkpoint")
+                }),
+                RunEvent::ContextBudget(budget) => steps.push(TaskStep {
+                    budget: Some(budget),
+                    ..TaskStep::new("budget")
                 }),
                 _ => {}
             }
