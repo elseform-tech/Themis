@@ -63,6 +63,8 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   return (
     <aside ref={panel} className={`themis-workspace-panel${dragging ? " is-resizing" : ""}`} aria-label="Workspace (read-only)" style={{ width }}>
       <div className="themis-workspace-resize" role="separator" aria-label="Resize workspace panel" aria-orientation="vertical" aria-valuemin={MIN_WIDTH} aria-valuemax={MAX_WIDTH} aria-valuenow={width} tabIndex={0}
+        // WebKit starts a text selection on mousedown even when pointerdown is cancelled.
+        onMouseDown={event => event.preventDefault()}
         onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); drag.current = { x: event.clientX, width: panel.current?.getBoundingClientRect().width ?? width }; setDragging(true); event.currentTarget.setPointerCapture(event.pointerId); }}
         onPointerMove={event => preview(event.clientX)}
         onPointerUp={finish}
@@ -151,6 +153,8 @@ export function DiffSplit({ children }: { children: [ReactNode, ReactNode] }) {
     <div ref={split} className={`themis-workspace-split${dragging ? " is-resizing" : ""}`} style={{ "--themis-diff-list": `${width}px` } as CSSProperties}>
       {children[0]}
       <div className="themis-split-resize" role="separator" aria-label="Resize file list" aria-orientation="vertical" aria-valuemin={LIST_MIN_WIDTH} aria-valuemax={LIST_MAX_WIDTH} aria-valuenow={width} tabIndex={0}
+        // WebKit starts a text selection on mousedown even when pointerdown is cancelled.
+        onMouseDown={event => event.preventDefault()}
         onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); drag.current = { x: event.clientX, width: rendered() }; setDragging(true); event.currentTarget.setPointerCapture(event.pointerId); }}
         onPointerMove={event => { if (drag.current) setWidth(clampListWidth(drag.current.width + event.clientX - drag.current.x)); }}
         onPointerUp={() => { if (drag.current) resize(Math.min(width, rendered())); drag.current = null; setDragging(false); }}

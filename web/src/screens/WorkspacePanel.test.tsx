@@ -58,6 +58,9 @@ describe("WorkspacePanel", () => {
     expect(split).toHaveAttribute("aria-valuenow", "120");
     fireEvent.doubleClick(split);
     expect(split).toHaveAttribute("aria-valuenow", "200");
+    // Dragging a divider never starts a text selection (WebKit selects on mousedown).
+    expect(fireEvent.mouseDown(panel)).toBe(false);
+    expect(fireEvent.mouseDown(split)).toBe(false);
   });
   it("refreshes the diff live: after each completed tool call and every few seconds during a run", async () => {
     vi.useFakeTimers();
