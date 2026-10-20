@@ -97,7 +97,11 @@ page never gets a "yes" the agent did not give. Everything is untrusted data.
 Back, Forward, Reload and the address bar work as in any browser. The person and
 the agent use the page at the same time: clicking, typing, scrolling or entering an
 address goes straight to the page and never pauses the agent. While the agent acts,
-one line says what it is doing. **DevTools** opens
+one line says what it is doing. The speaker button turns page sound on or off (off by
+default for each chat). Sound plays from the hidden browser straight to the Mac's
+speakers; Chrome has no per-tab mute, so a script in every page mutes media elements
+and suspends Web Audio while it is off (frames from another site inside the page may
+still play). Recordings have no sound. **DevTools** opens
 Chrome's own DevTools for the current tab below the page; a red count shows console
 errors.
 

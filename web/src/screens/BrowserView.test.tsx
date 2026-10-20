@@ -18,6 +18,7 @@ vi.mock("../lib/browser", async importOriginal => ({
   browserSwitchTab: vi.fn(async () => undefined),
   browserCloseTab: vi.fn(async () => undefined),
   browserDevtoolsUrl: vi.fn(async () => "http://127.0.0.1:9222/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/T"),
+  browserSetMuted: vi.fn(async () => undefined),
   browserCapture: vi.fn(async () => ({ path: "/p/.themis/attachments/x/screenshot-1701-12.png", name: "screenshot-1701-12.png", size: 10 })),
   browserRecordStart: vi.fn(async () => null),
   browserRecordStop: vi.fn(async () => ({ path: "/p/.themis/attachments/y/recording-1702-00.mp4", name: "recording-1702-00.mp4", size: 20, seconds: 12 })),
@@ -26,7 +27,7 @@ vi.mock("../lib/browser", async importOriginal => ({
 const page: BrowserState = {
   open: true, available: true, tabs: [{ title: "Sign up", url: "http://localhost:5173/signup" }], current: 0,
   url: "http://localhost:5173/signup", title: "Sign up", can_go_back: true, can_go_forward: false,
-  controller: "agent", activity: "clicking “Create account”", console_errors: 1, loading: false,
+  controller: "agent", activity: "clicking “Create account”", console_errors: 1, loading: false, muted: true,
 };
 
 beforeEach(() => {
@@ -106,5 +107,14 @@ describe("BrowserView", () => {
     await act(async () => { render(<BrowserView threadId="t2" />); });
     expect(screen.getByText("No page open")).toBeInTheDocument();
     expect(screen.getByLabelText("Address")).toHaveValue("");
+  });
+
+  it("starts with the sound off and turns it on and off", async () => {
+    await act(async () => { render(<BrowserView threadId="t1" />); });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Turn sound on" })));
+    expect(bridge.browserSetMuted).toHaveBeenCalledWith("t1", false);
+    act(() => push({ kind: "state", state: { ...page, muted: false } }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Turn sound off" })));
+    expect(bridge.browserSetMuted).toHaveBeenCalledWith("t1", true);
   });
 });

@@ -232,6 +232,17 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             call(&data_dir, "browser_state", json!({"threadId": thread_id}))["controller"],
             "idle"
         );
+        // The speaker starts off and the person can turn it on.
+        assert_eq!(browser["muted"], true, "{browser}");
+        call(
+            &data_dir,
+            "browser_set_muted",
+            json!({"threadId": thread_id, "muted": false}),
+        );
+        assert_eq!(
+            call(&data_dir, "browser_state", json!({"threadId": thread_id}))["muted"],
+            false
+        );
         // The reply's media is saved with the conversation.
         let history = call(
             &data_dir,

@@ -127,6 +127,12 @@ impl AppState {
         self.chat_browser(thread_id).await?.user_input(&input).await
     }
 
+    /// The Workspace speaker: `muted` turns page sound off.
+    pub async fn browser_set_muted(&self, thread_id: &str, muted: bool) -> Result<(), String> {
+        self.chat_browser(thread_id).await?.set_muted(muted).await;
+        Ok(())
+    }
+
     /// The person typed an address. Bare hosts get `https://`.
     pub async fn browser_open_url(&self, thread_id: &str, address: &str) -> Result<(), String> {
         let address = address.trim();

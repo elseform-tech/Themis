@@ -914,6 +914,11 @@ async fn dispatch_command(
                 .browser_input(&arg::<String>(&args, "threadId")?, args["input"].clone())
                 .await
         ),
+        "browser_set_muted" => done!(
+            state
+                .browser_set_muted(&arg::<String>(&args, "threadId")?, arg(&args, "muted")?)
+                .await
+        ),
         "browser_open_url" => done!(
             state
                 .browser_open_url(

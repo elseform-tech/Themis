@@ -377,3 +377,40 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
     chat.stop_screencast().await;
     hub.close_chat("chat-3").await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-sound", project.path());
+    let page = "data:text/html,<audio></audio><p id=s>?</p><script>setInterval(()=>{s.textContent='sound '+(document.querySelector('audio').muted?'off':'on')},50)</script>";
+    let shows = |text: &'static str| {
+        let chat = Arc::clone(&chat);
+        async move {
+            for _ in 0..40 {
+                let outline = chat.snapshot(None).await.unwrap().snapshot;
+                if outline.contains(text) {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            panic!(
+                "the page never showed {text:?}: {}",
+                chat.snapshot(None).await.unwrap().snapshot
+            );
+        }
+    };
+    chat.open(page, false).await.unwrap();
+    assert!(chat.state().await.muted);
+    shows("sound off").await;
+    chat.set_muted(false).await;
+    assert!(!chat.state().await.muted);
+    shows("sound on").await;
+    // A page loaded later follows the speaker too.
+    chat.navigate("reload").await.unwrap();
+    shows("sound on").await;
+    chat.set_muted(true).await;
+    shows("sound off").await;
+    hub.close_chat("chat-sound").await;
+}

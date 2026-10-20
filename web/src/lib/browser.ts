@@ -21,6 +21,8 @@ export interface BrowserState {
   activity: string | null;
   console_errors: number;
   loading: boolean;
+  /** The speaker is off (the default): pages play no sound. */
+  muted: boolean;
   /** A recording in progress. */
   recording?: { by: "agent" | "user"; seconds: number; max_seconds: number } | null;
 }
@@ -48,6 +50,7 @@ export const browserScreencast = (threadId: string, width: number, height: numbe
 export const browserScreencastStop = (threadId: string) => invoke<void>("browser_screencast_stop", { threadId });
 export const browserInput = (threadId: string, input: BrowserInput) => invoke<void>("browser_input", { threadId, input });
 export const browserOpenUrl = (threadId: string, address: string) => invoke<void>("browser_open_url", { threadId, address });
+export const browserSetMuted = (threadId: string, muted: boolean) => invoke<void>("browser_set_muted", { threadId, muted });
 export const browserNavigate = (threadId: string, action: "back" | "forward" | "reload") => invoke<void>("browser_navigate", { threadId, action });
 export const browserSwitchTab = (threadId: string, tab: number) => invoke<void>("browser_tab", { threadId, action: "switch", tab });
 export const browserCloseTab = (threadId: string, tab: number) => invoke<void>("browser_tab", { threadId, action: "close", tab });

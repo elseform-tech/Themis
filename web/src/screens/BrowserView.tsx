@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState } from "../components";
 import {
-  browserCapture, browserCloseTab, browserRecordStart, browserRecordStop, browserDevtoolsUrl, browserInput, browserNavigate, browserOpenUrl, browserScreencast,
+  browserCapture, browserCloseTab, browserRecordStart, browserSetMuted, browserRecordStop, browserDevtoolsUrl, browserInput, browserNavigate, browserOpenUrl, browserScreencast,
   browserScreencastStop, browserState, browserStream, browserSwitchTab, keyText, modifierBits, MOUSE_BUTTONS,
   type BrowserInput, type BrowserState, type SavedMedia,
 } from "../lib/browser";
@@ -156,6 +156,7 @@ export function BrowserView({ threadId }: { threadId: string }) {
           <input id={`browser-address-${threadId}`} value={address} placeholder="Enter an address" spellCheck={false} autoComplete="off"
             onFocus={() => setEditing(true)} onBlur={() => setEditing(false)} onChange={event => setAddress(event.target.value)} />
         </form>
+        <button type="button" className="themis-browser-icon" aria-label={state.muted ? "Turn sound on" : "Turn sound off"} title={state.muted ? "Sound off" : "Sound on"} disabled={!open} onClick={() => void act(() => browserSetMuted(threadId, !state.muted))}><Speaker muted={state.muted} /></button>
         <button type="button" className="themis-browser-icon" aria-label="Capture screenshot to the message" title="Capture" disabled={!open} onClick={() => void capture()}><Camera /></button>
         <button type="button" className={`themis-browser-icon${recording ? " is-recording" : ""}`} aria-pressed={recording !== null} aria-label={recording ? "Stop recording" : "Record the browser"} title={recording ? "Stop recording" : "Record"} disabled={!open} onClick={() => void toggleRecording()}><RecordIcon /></button>
         <button type="button" className={`themis-browser-icon${devtools ? " is-on" : ""}`} aria-pressed={devtools !== null} disabled={!open}
@@ -200,6 +201,10 @@ function Chevron({ left = false }: { left?: boolean }) {
 
 function Reload() {
   return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>;
+}
+
+function Speaker({ muted }: { muted: boolean }) {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />{muted ? <path d="m16 9.5 5 5m0-5-5 5" /> : <path d="M16 9a4.5 4.5 0 0 1 0 6m2.5-8.5a8 8 0 0 1 0 11" />}</svg>;
 }
 
 function Camera() {

@@ -64,6 +64,8 @@ pub struct BrowserState {
     pub activity: Option<String>,
     pub console_errors: usize,
     pub loading: bool,
+    /// The Workspace speaker is off.
+    pub muted: bool,
     /// A recording in progress.
     pub recording: Option<RecordingInfo>,
 }
@@ -106,6 +108,8 @@ struct Tab {
     names: HashMap<i64, String>,
     seen_document: u64,
     watcher: tokio::task::JoinHandle<()>,
+    /// The new-document script that applies the speaker setting.
+    audio_script: Option<String>,
 }
 
 impl Drop for Tab {
@@ -213,6 +217,7 @@ impl BrowserHub {
                 ui_stream: AtomicBool::new(false),
                 recording: Mutex::new(None),
                 viewport: Mutex::new(Viewport::default()),
+                muted: AtomicBool::new(true),
             })
         }))
     }
@@ -357,6 +362,8 @@ pub struct ChatBrowser {
     ui_stream: AtomicBool,
     recording: Mutex<Option<Recording>>,
     viewport: Mutex<Viewport>,
+    /// The Workspace speaker is off (the default): pages play no sound.
+    muted: AtomicBool,
 }
 
 impl std::fmt::Debug for ChatBrowser {
@@ -493,6 +500,30 @@ fn cap(text: &str, limit: usize) -> String {
         out.push('…');
     }
     out
+}
+
+/// Applies the speaker setting to the tab's current and future documents;
+/// returns the new-document script's id.
+async fn install_audio(cdp: &Cdp, session: &str, muted: bool) -> Option<String> {
+    let source = format!(
+        "{}\nwindow.__themisAudio({muted});",
+        include_str!("audio.js")
+    );
+    let _ = cdp
+        .call(
+            Some(session),
+            "Runtime.evaluate",
+            json!({"expression": source}),
+        )
+        .await;
+    cdp.call(
+        Some(session),
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": source}),
+    )
+    .await
+    .ok()
+    .and_then(|added| added["identifier"].as_str().map(str::to_owned))
 }
 
 fn push_note(state: &Mutex<TabState>, note: String) {
@@ -740,6 +771,30 @@ impl ChatBrowser {
         }
     }
 
+    /// Turns the Workspace speaker off (`muted`) or on for every tab.
+    pub async fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Ordering::SeqCst);
+        {
+            let mut inner = self.inner.lock().await;
+            if let Some(browser) = inner.browser.clone() {
+                for tab in &mut inner.tabs {
+                    if let Some(old) = tab.audio_script.take() {
+                        let _ = browser
+                            .cdp
+                            .call(
+                                Some(&tab.session_id),
+                                "Page.removeScriptToEvaluateOnNewDocument",
+                                json!({"identifier": old}),
+                            )
+                            .await;
+                    }
+                    tab.audio_script = install_audio(&browser.cdp, &tab.session_id, muted).await;
+                }
+            }
+        }
+        self.publish_state_waiting().await;
+    }
+
     /// The current state, for the Workspace view.
     pub async fn state(&self) -> BrowserState {
         let inner = self.inner.lock().await;
@@ -809,6 +864,7 @@ impl ChatBrowser {
             activity,
             console_errors: errors,
             loading,
+            muted: self.muted.load(Ordering::SeqCst),
             recording: self
                 .recording
                 .lock()
@@ -939,6 +995,7 @@ impl ChatBrowser {
                 json!({"width": viewport.width, "height": viewport.height, "deviceScaleFactor": viewport.scale, "mobile": false}),
             )
             .await;
+        let audio_script = install_audio(cdp, &session_id, self.muted.load(Ordering::SeqCst)).await;
         inner.tabs.push(Tab {
             target_id,
             session_id,
@@ -947,6 +1004,7 @@ impl ChatBrowser {
             names: HashMap::new(),
             seen_document: 0,
             watcher,
+            audio_script,
         });
         inner.current = inner.tabs.len() - 1;
         Ok(())

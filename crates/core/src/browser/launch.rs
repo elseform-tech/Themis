@@ -87,7 +87,7 @@ pub fn launch_args(profile: &Path, headless: bool) -> Vec<String> {
         "--disable-background-timer-throttling".to_owned(),
         "--disable-renderer-backgrounding".to_owned(),
         "--disable-backgrounding-occluded-windows".to_owned(),
-        "--mute-audio".to_owned(),
+        // No --mute-audio: the Workspace speaker mutes pages (audio.js).
         // Headless screencasts ignore emulated device scale; render at Retina
         // scale so the Workspace view stays sharp (frames are capped to the view).
         "--force-device-scale-factor=2".to_owned(),
