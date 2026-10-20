@@ -8,7 +8,19 @@ A turn is graded from the reply text and the attempted tool calls reported by th
 - `return`: the user names an earlier topic; score = share of `facts` present in the reply.
 - `continue`: a vague continuation resumes the latest task (`resume` matches the reply or a tool
   call) and does not drift to an older topic (`wrong_topic`).
+- `no_redo`: resuming after a compaction does not re-read sources the checkpoint already records.
+  Each tool call is `progress` (a write whose call matches `resume`), `redo` (any other call matching
+  `redo`) or `other`. The first call is the headline: the eval denies every approval and starts from
+  an empty folder, so later calls react to that rather than to the checkpoint.
 """
+
+WRITES = r"^(write_file|apply_patch)\b|cat\s*>|\btee\b"
+
+
+def classify_call(call, resume, redo):
+    if _hit(WRITES, call) and _hit(resume, call):
+        return "progress"
+    return "redo" if _hit(redo, call) else "other"
 
 import re
 
@@ -42,6 +54,11 @@ def grade_turn(case, spec, turn):
         drifted = _hit(spec.get("wrong_topic"), joined)
         row["resumed"] = resumed_latest and not drifted
         row["pass"] = row["resumed"]
+    elif kind == "no_redo":
+        kinds = [classify_call(call, spec["resume"], spec["redo"]) for call in calls]
+        row.update(first_call=kinds[0] if kinds else None, redo_calls=kinds.count("redo"),
+                   progress=_hit(spec["resume"], joined))
+        row["pass"] = row["progress"] and row["first_call"] != "redo"
     else:
         raise ValueError(f"unknown behavior kind {kind!r}")
     return row
@@ -62,6 +79,8 @@ def summarize(rows):
     def of(kind):
         return [r for r in rows if r["kind"] == kind]
     greet, unrel, back, cont = of("greeting"), of("unrelated"), of("return"), of("continue")
+    redo = of("no_redo")
+    with_calls = [r for r in redo if r["first_call"]]
     unwanted = [r for r in greet + unrel if r["resumed"]]
     facts_total = sum(r["facts_total"] for r in back)
     return {
@@ -75,6 +94,10 @@ def summarize(rows):
         "topic_return_fact_retention": round(sum(r["facts_found"] for r in back) / facts_total, 4) if facts_total else None,
         "topic_return_pass_rate": _rate([r["pass"] for r in back]),
         "continue_resume_rate": _rate([r["pass"] for r in cont]),
+        "no_redo_pass_rate": _rate([r["pass"] for r in redo]),
+        "first_call_redo_rate": _rate([r["first_call"] == "redo" for r in with_calls]),
+        "first_call_progress_rate": _rate([r["first_call"] == "progress" for r in with_calls]),
+        "redo_calls_per_turn": round(sum(r["redo_calls"] for r in redo) / len(redo), 2) if redo else None,
         "errors": sum(1 for r in rows if r["error"]),
     }
 

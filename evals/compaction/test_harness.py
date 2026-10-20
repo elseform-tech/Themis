@@ -250,14 +250,29 @@ class BehaviorGradeTests(unittest.TestCase):
         self.assertFalse(behavior.grade_turn(self.CASE, spec, {"reply": "round_cents and pancake", "tool_calls": []})["pass"])
         self.assertFalse(behavior.grade_turn(self.CASE, spec, {"reply": "What task?", "tool_calls": []})["pass"])
 
+    def test_no_redo_classifies_the_first_call(self):
+        spec = {"id": "n", "kind": "no_redo", "resume": r"(?i)ephemeris", "redo": r"(?i)data/vsop87|curl"}
+        write = 'write_file: call `write_file` with {"file_path":"src/astro/ephemeris.js","content":"load(\'data/vsop87/VSOP87D.ear\')"}'
+        reread = 'shell: call `shell` with {"command":"head","args":["data/vsop87/VSOP87D.ear"]}'
+        look = 'shell: call `shell` with {"command":"ls","args":["src/astro"]}'
+        row = behavior.grade_turn(self.CASE, spec, {"reply": "", "tool_calls": [write, reread]})
+        self.assertEqual((row["first_call"], row["redo_calls"], row["pass"]), ("progress", 1, True))
+        row = behavior.grade_turn(self.CASE, spec, {"reply": "", "tool_calls": [reread, write]})
+        self.assertEqual((row["first_call"], row["pass"]), ("redo", False))
+        row = behavior.grade_turn(self.CASE, spec, {"reply": "", "tool_calls": [look, write]})
+        self.assertEqual((row["first_call"], row["pass"]), ("other", True))
+        row = behavior.grade_turn(self.CASE, spec, {"reply": "Done.", "tool_calls": []})
+        self.assertEqual((row["first_call"], row["pass"]), (None, False))
+
     def test_every_behavior_case_is_well_formed(self):
         cases = harness.load_cases("behavior")
         self.assertEqual(sorted(c["name"] for c in cases), [
-            "behavior-continue", "behavior-greeting", "behavior-topic-return", "behavior-unrelated"])
+            "behavior-continue", "behavior-greeting", "behavior-no-redo", "behavior-topic-return",
+            "behavior-unrelated"])
         for case in cases:
             ids = [t["id"] for t in case["behavior"]["turns"]]
             self.assertEqual(len(ids), len(set(ids)))
-            self.assertTrue(all(t["kind"] in ("greeting", "unrelated", "return", "continue")
+            self.assertTrue(all(t["kind"] in ("greeting", "unrelated", "return", "continue", "no_redo")
                                 for t in case["behavior"]["turns"]))
         greeting = next(c for c in cases if c["name"] == "behavior-greeting")
         self.assertTrue(any(not t["message"].isascii() for t in greeting["behavior"]["turns"]))

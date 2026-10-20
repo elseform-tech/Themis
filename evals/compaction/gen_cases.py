@@ -567,10 +567,62 @@ def behavior_continue():
            suites=["behavior"], behavior=behavior)
 
 
+VSOP_HEAD = """ VSOP87 VERSION D4    EARTH     VARIABLE 1 (LBR)       *T**0    559 TERMS    HELIOCENTRIC DYNAMICAL ECLIPTIC AND EQUINOX OF THE DATE
+ 4310    1  0  0  0  0  0  0  0  0  0  0  0  0     1.75347045673 0.00000000000      0.00000000000
+ 4310    2  0  0  1 -2  0  0  0  0  0  0  0  0     0.03341656456 4.66925680417   6283.07584999140
+ 4310    3  0  0  2 -4  0  0  0  0  0  0  0  0     0.00034894275 4.62610241759  12566.15169998280
+ VSOP87 VERSION D4    EARTH     VARIABLE 1 (LBR)       *T**1    341 TERMS    HELIOCENTRIC DYNAMICAL ECLIPTIC AND EQUINOX OF THE DATE
+ 4311    1  0  0  1 -2  0  0  0  0  0  0  0  0  6283.31966747491 0.00000000000      0.00000000000
+"""
+
+
+def behavior_no_redo():
+    """The live Planetarium goal re-read sources its checkpoints already recorded."""
+    t = Transcript(75)
+    t.scale = 3
+    t.user("Build src/astro/ephemeris.js: planet positions from the VSOP87D series in data/vsop87/ (VSOP87D.ear, VSOP87D.mar, ...), checked against data/horizons_reference.json. Plain JavaScript, no new dependencies.")
+    t.asst("I'll confirm the data format first.")
+    c_head = shell(t, "head -6 data/vsop87/VSOP87D.ear", VSOP_HEAD)
+    t.asst("Format confirmed from the file: a header line starts with ' VSOP87 VERSION D' and gives VARIABLE n (1=L, 2=B, 3=R) and the power *T**k. In each term line the last three numbers are A (amplitude), B (phase, radians) and C (frequency, radians per Julian millennium). Each series is sum A*cos(B + C*T) times T^k, with T = (JDE - 2451545.0) / 365250. L and B are radians, R is au.")
+    c_doc = shell(t, "curl -sL https://example.org/vsop87/vsop87.txt | sed -n '40,70p'",
+                  "Each term: A*cos(B+C*T). T is measured in thousands of Julian years from J2000 (JD 2451545.0).\nVersion D: heliocentric spherical variables L, B, R referred to the ecliptic and equinox of the date.\nColumns 80-97: A (au or rad), 98-111: B (rad), 112-131: C (rad per thousand years).\n" + t.prose(6))
+    t.asst("The VSOP87 notes agree: version D is heliocentric L, B, R for the equinox of date, and the columns are A, B, C as above. No need to read the notes again.")
+    c_ref = shell(t, "cat data/horizons_reference.json",
+                  '{"epoch_utc": "2026-10-19T21:00:00Z", "site": "Berlin 52.52 N 13.405 E", "mars": {"ra_deg": 213.47121, "dec_deg": -12.80233}, "jupiter": {"ra_deg": 118.03594, "dec_deg": 21.14520}}')
+    t.asst("Reference values recorded: at 2026-10-19T21:00:00Z from Berlin, Mars RA 213.47121 deg, Dec -12.80233 deg; Jupiter RA 118.03594, Dec 21.14520.")
+    explore(t, 9, "python", "tools", "Reviewing the data tools.")
+    t.call("write_file", {"file_path": "src/astro/vsop87.js", "content": "export function parseVsop87(text) { /* header + term lines -> {L,B,R}[k] arrays of [A,B,C] */ }\nexport function evaluate(series, T) { /* sum A*cos(B+C*T) * T^k */ }"},
+           '{"ok":true,"path":"src/astro/vsop87.js"}')
+    shell(t, "node --test tests/vsop87.test.js", "# tests 4\n# pass 4\n# fail 0")
+    t.asst("src/astro/vsop87.js parses every series; tests/vsop87.test.js passes 4 of 4.")
+    t.boundary()
+    explore(t, 6, "python", "tools/derived", "Checking the derived-data scripts.")
+    c_next = t.asst("Next action: write src/astro/ephemeris.js using parseVsop87 and evaluate from src/astro/vsop87.js: heliocentric L, B, R for Earth and each planet, geocentric ecliptic coordinates, then RA/Dec with the FK5 correction, nutation and aberration. Then add tests/ephemeris.test.js comparing Mars and Jupiter with data/horizons_reference.json within 1 arcminute.")
+    probes = [
+        P("columns", "identifier", "In a VSOP87D term line, what are the last three numbers?", c_head + 1, regex=r"(?is)amplitude.*phase.*frequency"),
+        P("millennia", "identifier", "How is T computed for the VSOP87 series?", c_head + 1, regex=r"365250"),
+        P("mars_ra", "identifier", "What is the reference RA of Mars?", c_ref, regex=r"213\.47"),
+    ]
+    goal = "Build src/astro/ephemeris.js from data/vsop87 and match data/horizons_reference.json within 1 arcminute"
+    resume = r"(?i)ephemeris"
+    redo = r"(?i)data/vsop87|VSOP87D\.|vsop87\.txt|\bcurl\b|\bwget\b|web_?fetch"
+    behavior = {"turns": [
+        turn_spec("continue", "continue", "no_redo", False, resume=resume, redo=redo),
+        turn_spec("goal_turn", f"[Goal — runtime, not from the user] Turn 5. Goal: {goal}\nLast check: not_yet | src/astro/ephemeris.js and its Horizons comparison test are missing.\nContinue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement.",
+                  "no_redo", False, resume=resume, redo=redo),
+        turn_spec("keep_going", "keep going", "no_redo", False, resume=resume, redo=redo),
+    ], "markers": r"(?i)$^", "max_chars": 6000}
+    finish(os.path.join(CASES, "behavior-no-redo"), "behavior-no-redo", "behavior", t, probes,
+           "Write src/astro/ephemeris.js and tests/ephemeris.test.js.",
+           "Data format, documentation and reference values were read and recorded before compaction; resuming should not read them again.",
+           suites=["behavior"], behavior=behavior)
+
+
 def main():
     for build in (coding_rate_limiter, coding_csv_migration, coding_rust_parser, parked_trip_bugfix,
                   parked_budget_recipe, superseded_deploy_plan, constraints_api_design, narrative_lighthouse,
-                  behavior_greeting, behavior_unrelated, behavior_topic_return, behavior_continue):
+                  behavior_greeting, behavior_unrelated, behavior_topic_return, behavior_continue,
+                  behavior_no_redo):
         build()
 
 

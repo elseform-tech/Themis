@@ -1,0 +1,30 @@
+{
+  "turns": [
+    {
+      "id": "continue",
+      "message": "continue",
+      "kind": "no_redo",
+      "social": false,
+      "resume": "(?i)ephemeris",
+      "redo": "(?i)data/vsop87|VSOP87D\\.|vsop87\\.txt|\\bcurl\\b|\\bwget\\b|web_?fetch"
+    },
+    {
+      "id": "goal_turn",
+      "message": "[Goal — runtime, not from the user] Turn 5. Goal: Build src/astro/ephemeris.js from data/vsop87 and match data/horizons_reference.json within 1 arcminute\nLast check: not_yet | src/astro/ephemeris.js and its Horizons comparison test are missing.\nContinue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement.",
+      "kind": "no_redo",
+      "social": false,
+      "resume": "(?i)ephemeris",
+      "redo": "(?i)data/vsop87|VSOP87D\\.|vsop87\\.txt|\\bcurl\\b|\\bwget\\b|web_?fetch"
+    },
+    {
+      "id": "keep_going",
+      "message": "keep going",
+      "kind": "no_redo",
+      "social": false,
+      "resume": "(?i)ephemeris",
+      "redo": "(?i)data/vsop87|VSOP87D\\.|vsop87\\.txt|\\bcurl\\b|\\bwget\\b|web_?fetch"
+    }
+  ],
+  "markers": "(?i)$^",
+  "max_chars": 6000
+}

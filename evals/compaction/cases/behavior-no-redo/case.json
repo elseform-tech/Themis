@@ -1,0 +1,14 @@
+{
+  "name": "behavior-no-redo",
+  "kind": "behavior",
+  "description": "Data format, documentation and reference values were read and recorded before compaction; resuming should not read them again.",
+  "suites": [
+    "behavior"
+  ],
+  "records": 47,
+  "chunks": [
+    34,
+    47
+  ],
+  "next_action": "Write src/astro/ephemeris.js and tests/ephemeris.test.js."
+}
