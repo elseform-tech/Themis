@@ -42,6 +42,18 @@ describe("WorkspacePanel", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Pull requests" })));
     expect(screen.getByText("GitHub CLI (gh) is not installed")).toBeInTheDocument();
   });
+  it("keeps the tabs, where the agent works and Close in one header row", () => {
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    const head = document.querySelector(".themis-workspace-head")!;
+    expect(head.querySelector("nav[aria-label='Workspace views']")).not.toBeNull();
+    expect(head).toHaveTextContent("repo");
+    expect(head).toHaveTextContent("main");
+    const close = screen.getByRole("button", { name: "Close workspace" });
+    expect(head.contains(close)).toBe(true);
+    expect(close).not.toHaveTextContent("✕");
+    fireEvent.click(close);
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui/diff-panel", open: false });
+  });
   it("resizes from a narrow 300px panel up to a wide one, and remembers the diff split", () => {
     render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     const panel = screen.getByRole("separator", { name: "Resize workspace panel" });

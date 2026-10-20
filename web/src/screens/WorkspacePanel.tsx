@@ -71,22 +71,25 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         onLostPointerCapture={finish}
         onDoubleClick={() => resize(defaultWidth)}
         onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); resize(width + 40); } else if (event.key === "ArrowRight") { event.preventDefault(); resize(width - 40); } }} />
+      {/* One row: the tabs, where the agent works (hidden when narrow) and Close. */}
       <header className="themis-workspace-head">
+        <nav className="themis-workspace-tabs" aria-label="Workspace views">
+          {TABS.map(([value, label]) => (
+            <button key={value} type="button" aria-pressed={tab === value} onClick={() => choose(value)}>
+              {label}{value === "changes" && changed > 0 ? <span className="themis-workspace-count">{changed}</span> : null}
+              {value === "tasks" && taskCount > 0 ? <span className="themis-workspace-count themis-workspace-count--tasks">{taskCount}</span> : null}
+            </button>
+          ))}
+        </nav>
         <div className="themis-workspace-where">
           <strong>{workspace?.name ?? "Workspace"}</strong>
           {workspace?.branch && <span className="themis-workspace-branch"><BranchIcon />{workspace.branch}</span>}
         </div>
-        <button type="button" className="themis-link-button" aria-label="Close workspace" onClick={() => dispatch({ type: "ui/diff-panel", open: false })}>✕</button>
+        <button type="button" className="themis-workspace-close" aria-label="Close workspace" title="Close workspace" onClick={() => dispatch({ type: "ui/diff-panel", open: false })}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16M16.5 9.5 19 12l-2.5 2.5" /></svg>
+        </button>
       </header>
-      <nav className="themis-workspace-tabs" aria-label="Workspace views">
-        {TABS.map(([value, label]) => (
-          <button key={value} type="button" aria-pressed={tab === value} onClick={() => choose(value)}>
-            {label}{value === "changes" && changed > 0 ? <span className="themis-workspace-count">{changed}</span> : null}
-            {value === "tasks" && taskCount > 0 ? <span className="themis-workspace-count themis-workspace-count--tasks">{taskCount}</span> : null}
-          </button>
-        ))}
-      </nav>
-      <div className="themis-workspace-body">
+      <div className={`themis-workspace-body${tab === "browser" ? " is-browser" : ""}`}>
         {tab === "changes" && <ChangesView threadId={threadId} />}
         {tab === "files" && <FilesView projectRoot={projectRoot} />}
         {tab === "branches" && <BranchesView workspace={workspace} />}
