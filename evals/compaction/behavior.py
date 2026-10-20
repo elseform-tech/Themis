@@ -14,6 +14,8 @@ A turn is graded from the reply text and the attempted tool calls reported by th
   an empty folder, so later calls react to that rather than to the checkpoint.
 """
 
+import re
+
 WRITES = r"^(write_file|apply_patch)\b|cat\s*>|\btee\b"
 
 
@@ -21,8 +23,6 @@ def classify_call(call, resume, redo):
     if _hit(WRITES, call) and _hit(resume, call):
         return "progress"
     return "redo" if _hit(redo, call) else "other"
-
-import re
 
 
 def _hit(pattern, text):

@@ -624,7 +624,7 @@ def behavior_no_redo():
     t.asst("I'll confirm the data format first.")
     c_head = shell(t, "head -6 data/vsop87/VSOP87D.ear", VSOP_HEAD)
     t.asst("Format confirmed from the file: a header line starts with ' VSOP87 VERSION D' and gives VARIABLE n (1=L, 2=B, 3=R) and the power *T**k. In each term line the last three numbers are A (amplitude), B (phase, radians) and C (frequency, radians per Julian millennium). Each series is sum A*cos(B + C*T) times T^k, with T = (JDE - 2451545.0) / 365250. L and B are radians, R is au.")
-    c_doc = shell(t, "curl -sL https://example.org/vsop87/vsop87.txt | sed -n '40,70p'",
+    shell(t, "curl -sL https://example.org/vsop87/vsop87.txt | sed -n '40,70p'",
                   "Each term: A*cos(B+C*T). T is measured in thousands of Julian years from J2000 (JD 2451545.0).\nVersion D: heliocentric spherical variables L, B, R referred to the ecliptic and equinox of the date.\nColumns 80-97: A (au or rad), 98-111: B (rad), 112-131: C (rad per thousand years).\n" + t.prose(6))
     t.asst("The VSOP87 notes agree: version D is heliocentric L, B, R for the equinox of date, and the columns are A, B, C as above. No need to read the notes again.")
     c_ref = shell(t, "cat data/horizons_reference.json",
@@ -637,7 +637,7 @@ def behavior_no_redo():
     t.asst("src/astro/vsop87.js parses every series; tests/vsop87.test.js passes 4 of 4.")
     t.boundary()
     explore(t, 6, "python", "tools/derived", "Checking the derived-data scripts.")
-    c_next = t.asst("Next action: write src/astro/ephemeris.js using parseVsop87 and evaluate from src/astro/vsop87.js: heliocentric L, B, R for Earth and each planet, geocentric ecliptic coordinates, then RA/Dec with the FK5 correction, nutation and aberration. Then add tests/ephemeris.test.js comparing Mars and Jupiter with data/horizons_reference.json within 1 arcminute.")
+    t.asst("Next action: write src/astro/ephemeris.js using parseVsop87 and evaluate from src/astro/vsop87.js: heliocentric L, B, R for Earth and each planet, geocentric ecliptic coordinates, then RA/Dec with the FK5 correction, nutation and aberration. Then add tests/ephemeris.test.js comparing Mars and Jupiter with data/horizons_reference.json within 1 arcminute.")
     probes = [
         P("columns", "identifier", "In a VSOP87D term line, what are the last three numbers?", c_head + 1, regex=r"(?is)amplitude.*phase.*frequency"),
         P("millennia", "identifier", "How is T computed for the VSOP87 series?", c_head + 1, regex=r"365250"),
@@ -680,7 +680,7 @@ def behavior_no_redo_chain():
         if module != "src/app/main.js":
             t.boundary()
     t.user("Now the ephemeris.")
-    c_next = t.asst("Next action: write src/astro/ephemeris.js using parseVsop87 and evaluate from src/astro/vsop87.js: heliocentric L, B, R for Earth and each planet, geocentric ecliptic coordinates, then RA/Dec with the FK5 correction, nutation and aberration. Then add tests/ephemeris.test.js comparing Mars and Jupiter with data/horizons_reference.json within 1 arcminute.")
+    t.asst("Next action: write src/astro/ephemeris.js using parseVsop87 and evaluate from src/astro/vsop87.js: heliocentric L, B, R for Earth and each planet, geocentric ecliptic coordinates, then RA/Dec with the FK5 correction, nutation and aberration. Then add tests/ephemeris.test.js comparing Mars and Jupiter with data/horizons_reference.json within 1 arcminute.")
     probes = [
         P("columns", "identifier", "In a VSOP87D term line, what are the last three numbers?", c_head + 1, regex=r"(?is)amplitude.*phase.*frequency"),
         P("millennia", "identifier", "How is T computed for the VSOP87 series?", c_head + 1, regex=r"365250"),

@@ -71,6 +71,9 @@ def grade_run(report):
         "rereads_after_checkpoint": rereads, "repeated_reads": repeats,
         "reread_share": round(rereads / reads_after, 4) if reads_after else None,
         "outputs_written": len(report.get("outputs_written") or []),
+        # How often the runtime's own repeat reminder and loop warning fired.
+        "repeat_reminders": report.get("repeat_reminders"),
+        "loop_warnings": report.get("loop_warnings"),
         "error": report.get("error"),
     }
 
@@ -84,6 +87,6 @@ def summarize(rows):
                 "sd": round(statistics.stdev(values), 3) if len(values) > 1 else 0.0,
                 "min": min(values), "max": max(values)}
     keys = ("checkpoints", "calls", "failed_calls", "reads", "evidence_reads", "rereads_after_checkpoint",
-            "repeated_reads", "reread_share", "outputs_written")
+            "repeated_reads", "reread_share", "outputs_written", "repeat_reminders", "loop_warnings")
     return {"runs": len(rows), "errors": sum(1 for r in rows if r["error"]),
             **{key: stats(key) for key in keys}}
