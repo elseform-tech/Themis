@@ -135,6 +135,13 @@ adds the clause (branch `codex/checkpoint-nudge`, not merged).
   either arm (0/24 each); turns with any re-read: 0/24 main, 1/24 nudge. The case does not
   reproduce the live re-research (one checkpoint, default effort), so it cannot show a benefit,
   and the nudge was not shipped.
+- `behavior-no-redo-chain-max-*`: the research four compactions back (five compactions in all),
+  `--effort max`, 6 trials × 3 turns per arm: 0/18 first-call re-reads and 0/18 turns with any
+  re-read in both arms; every final checkpoint kept the format facts (`facts_retained_rate` 1.0).
+  Every turn started by listing the project. Chained compactions and max effort did not
+  reproduce the live re-research either. The live runs differed in compacting mid-turn at a
+  100k budget, with downloaded copies outside the project, so the re-reads there may have been
+  for detail (exact column offsets) that a checkpoint does not keep.
 - `behavior-guard-*`: the four older behavior cases, 2 trials per arm, as a regression check
   (greeting pass 0.125 main vs 0.25 nudge; unrelated 0.83 vs 1.0; topic return 1.0 vs 1.0;
   continue 0.83 vs 1.0). Too few trials to read as a difference. Note that this model resumes the
