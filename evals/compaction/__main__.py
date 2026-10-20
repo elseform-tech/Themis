@@ -294,6 +294,8 @@ def midturn(args):
         for flag, value in (("--model", args.model), ("--effort", args.effort), ("--base-url", args.base_url)):
             if value:
                 command += [flag, value]
+        if args.no_replay:
+            command.append("--no-replay")
         try:
             done = subprocess.run(command, capture_output=True, text=True, timeout=args.timeout)
             if done.returncode != 0:
@@ -314,8 +316,10 @@ def midturn(args):
             graded = redo_grading.grade_run(report)
             rows.append(graded)
             raw.append({"trial": trial, "case": name, "graded": graded, "steps": report["steps"],
+                        "request_failures": report.get("request_failures"),
                         "outputs_written": report.get("outputs_written"), "error": report.get("error")})
     summary = {"suite": "midturn", "model": args.model, "effort": args.effort, "budget": args.budget,
+               "replay_reasoning": not args.no_replay,
                "turns": args.turns, "trials_requested": args.trials, "failed_runs": failures,
                "summary": redo_grading.summarize(rows),
                "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -374,6 +378,8 @@ def main(argv=None):
     mid.add_argument("--timeout", type=int, default=2400)
     mid.add_argument("--runner", default=None)
     mid.add_argument("--out", default=None)
+    mid.add_argument("--no-replay", action="store_true",
+                     help="do not send the model's earlier reasoning back (eval comparison)")
     beh.add_argument("--out", default=None)
     again = sub.add_parser("regrade", help="re-grade a stored result offline")
     again.add_argument("result")

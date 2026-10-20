@@ -4,7 +4,7 @@
 //!
 //!   cargo run --release -p themis-core --features eval --example redo_eval -- \
 //!     --case evals/compaction/cases/midturn-ephemeris --model M --budget 16000 \
-//!     [--turns 40] [--effort max] [--base-url URL] [--trace steps.jsonl]
+//!     [--turns 40] [--effort max] [--base-url URL] [--trace steps.jsonl] [--no-replay]
 //!
 //! `shell` and `git` are always denied; file tools may write inside the temporary project.
 
@@ -75,18 +75,24 @@ async fn main() -> anyhow::Result<()> {
     } else {
         Vec::new()
     };
-    let run = themis_core::providers::with_catalog_limits(
-        &catalog,
-        task_run(
-            &llm,
-            task,
-            project.path(),
-            policy,
-            turns,
-            arg("--trace").map(PathBuf::from),
-        ),
-    )
-    .await?;
+    // `--no-replay` stops sending the model's earlier reasoning back with each request.
+    let replay = !std::env::args().any(|a| a == "--no-replay");
+    let run = themis_core::providers::reasoning::REPLAY_REASONING
+        .scope(
+            replay,
+            themis_core::providers::with_catalog_limits(
+                &catalog,
+                task_run(
+                    &llm,
+                    task,
+                    project.path(),
+                    policy,
+                    turns,
+                    arg("--trace").map(PathBuf::from),
+                ),
+            ),
+        )
+        .await?;
     let written: Vec<String> = spec["outputs"]
         .as_array()
         .into_iter()
@@ -96,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
         .map(str::to_owned)
         .collect();
     let report = json!({
-        "case": spec["name"], "model": model, "budget": budget, "turns": turns,
+        "case": spec["name"], "model": model, "budget": budget, "turns": turns, "replay_reasoning": replay,
         "steps": run.steps, "error": run.error, "outputs_written": written,
         "repeat_reminders": run.repeat_reminders, "loop_warnings": run.loop_warnings,
         "request_failures": run.request_failures,
