@@ -227,9 +227,19 @@ impl ToolRuntime for BrowserSnapshot {
 /// Arguments for `browser_click`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct ClickArgs {
-    #[serde(alias = "ref")]
-    #[input(description = "The element's ref from the latest snapshot, like e14")]
+    #[serde(default, alias = "ref")]
+    #[input(
+        description = "The element's ref from the latest snapshot, like e14; omit when clicking a point"
+    )]
     pub reference: String,
+    #[serde(default)]
+    #[input(
+        description = "A point to click instead of a ref: CSS pixels from the left of the visible page, as in a browser_screenshot (for canvas, maps and games)"
+    )]
+    pub x: Option<f64>,
+    #[serde(default)]
+    #[input(description = "The point's CSS pixels from the top of the visible page; goes with x")]
+    pub y: Option<f64>,
     #[serde(default)]
     #[input(description = "Double-click instead")]
     pub double: bool,
@@ -237,7 +247,7 @@ pub struct ClickArgs {
 
 #[tool(
     name = "browser_click",
-    description = "Click an element of the current page by its ref (buttons, links, checkboxes, tabs). Waits for the page to settle and returns a fresh snapshot. Example: {\"ref\":\"e14\"}.",
+    description = "Click an element of the current page by its ref (buttons, links, checkboxes, tabs), or a point of the visible page by x and y when there is no ref (a canvas, map or game; read the point from a browser_screenshot of the visible page). Waits for the page to settle and returns a fresh snapshot. Examples: {\"ref\":\"e14\"}, {\"x\":412,\"y\":230}.",
     input = ClickArgs,
 )]
 struct BrowserClick {
@@ -249,6 +259,39 @@ impl ToolRuntime for BrowserClick {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let args: ClickArgs = parse_tool_args("browser_click", args)?;
         let reference = args.reference.trim().to_owned();
+        let point = match (args.x, args.y) {
+            (None, None) if reference.is_empty() => {
+                return Err(tool_error(
+                    "browser_click: give a ref, or x and y".to_owned(),
+                ))
+            }
+            (None, None) => None,
+            (Some(x), Some(y)) if reference.is_empty() => Some((x, y)),
+            (Some(_), Some(_)) => {
+                return Err(tool_error(
+                    "browser_click: give a ref or a point, not both".to_owned(),
+                ))
+            }
+            _ => {
+                return Err(tool_error(
+                    "browser_click: a point needs both x and y".to_owned(),
+                ))
+            }
+        };
+        if let Some((x, y)) = point {
+            let label = format!("the point ({}, {})", x.round(), y.round());
+            return self
+                .base
+                .act(
+                    "browser_click",
+                    RiskLevel::Network,
+                    None,
+                    format!("browser_click {label}"),
+                    format!("clicking {label}"),
+                    |chat| async move { chat.click_point(x, y, args.double).await },
+                )
+                .await;
+        }
         let name = self.base.scope.chat.name_of(&reference).await;
         let label = name.as_deref().map_or_else(|| reference.clone(), quote);
         self.base

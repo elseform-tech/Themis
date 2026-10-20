@@ -91,6 +91,9 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
                     "attach_file",
                     json!({"files": [{"path": results[3]["path"], "caption": "Counter at one"}]}),
                 ),
+                // A point of the page, as a canvas game would need, and one outside it.
+                5 => tool_call("c6", "browser_click", json!({"x": 5, "y": 5})),
+                6 => tool_call("c7", "browser_click", json!({"x": 5, "y": 100_000})),
                 _ => ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "Clicked it."}, "finish_reason": "stop"}]
                 })),
@@ -152,7 +155,7 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             .await
             .unwrap_or_default()
             .iter()
-            .any(|request| tool_results(&request.body_json().unwrap_or(Value::Null)).len() >= 5);
+            .any(|request| tool_results(&request.body_json().unwrap_or(Value::Null)).len() >= 7);
         if done && !state.get_thread(&thread.id).await.is_ok_and(|t| t.running) {
             break;
         }
@@ -210,6 +213,16 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         results[4]["attached"][0]["caption"], "Counter at one",
         "{}",
         results[4]
+    );
+    assert!(
+        results[5]["snapshot"].as_str().unwrap().contains("text: 1"),
+        "{}",
+        results[5]
+    );
+    assert!(
+        results[6].to_string().contains("outside the visible page"),
+        "{}",
+        results[6]
     );
 
     tokio::task::spawn_blocking(move || {

@@ -66,7 +66,7 @@ a chat closes its tabs; the browser exits when no chat of the project uses it.
 | `browser_open` | Opens a URL (optionally in a new tab) |
 | `browser_navigate` | Back, forward or reload |
 | `browser_snapshot` | Reads the page again (or one element's part) |
-| `browser_click` | Clicks an element by ref (`double` for a double-click) |
+| `browser_click` | Clicks an element by ref, or a point of the visible page by `x`/`y` in CSS pixels as a viewport screenshot shows it (a canvas, map or game; a point outside the page is refused); `double` for a double-click |
 | `browser_type` | Types into a field (`clear` first, `submit` with Enter) |
 | `browser_select` | Chooses `<select>` options by value or label |
 | `browser_press` | Presses a key: `Enter`, `Escape`, `Tab`, arrows, `Control+a` |

@@ -1166,6 +1166,51 @@ impl ChatBrowser {
         report
     }
 
+    /// Clicks a point of the visible page in CSS pixels, as a viewport
+    /// screenshot shows it: for canvas, maps and games, which have no refs.
+    pub async fn click_point(
+        self: &Arc<Self>,
+        x: f64,
+        y: f64,
+        double: bool,
+    ) -> Result<ActionReport, String> {
+        let mut inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .clone()
+            .ok_or("no page is open; use browser_open first")?;
+        let session = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open; use browser_open first")?
+            .session_id
+            .clone();
+        let metrics = browser
+            .cdp
+            .call(Some(&session), "Page.getLayoutMetrics", json!({}))
+            .await?;
+        let view = &metrics["cssVisualViewport"];
+        let width = view["clientWidth"].as_f64().unwrap_or(0.0);
+        let height = view["clientHeight"].as_f64().unwrap_or(0.0);
+        if !(x.is_finite()
+            && y.is_finite()
+            && (0.0..width).contains(&x)
+            && (0.0..height).contains(&y))
+        {
+            return Err(format!(
+                "the point ({x}, {y}) is outside the visible page ({}×{} CSS pixels); take a browser_screenshot and use a point inside it",
+                width.round(),
+                height.round()
+            ));
+        }
+        click_at(&browser.cdp, &session, x, y, if double { 2 } else { 1 }).await?;
+        self.settle(&inner, false).await;
+        let report = self.report(&mut inner, None).await;
+        drop(inner);
+        self.publish_state().await;
+        report
+    }
+
     /// Types into an element, optionally clearing it first and pressing Enter after.
     pub async fn type_text(
         self: &Arc<Self>,

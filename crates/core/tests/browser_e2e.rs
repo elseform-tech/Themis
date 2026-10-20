@@ -418,3 +418,67 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
     shows("sound off").await;
     hub.close_chat("chat-sound").await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::start().await;
+    Mock::given(path("/board"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Board</title><body style="margin:0">
+<canvas id="c" width="400" height="300" style="display:block"></canvas><p id="out">none</p>
+<script>document.getElementById('c').addEventListener('click', e => {
+  document.getElementById('out').textContent = 'square ' + Math.floor(e.offsetX / 50) + ',' + Math.floor(e.offsetY / 50) + ' x' + e.detail;
+});</script></body>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-4", project.path());
+    let tools = themis_core::browser::tools::browser_tools(
+        Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
+        themis_core::browser::tools::BrowserScope {
+            chat: Arc::clone(&chat),
+            cancel: None,
+            media: None,
+        },
+    );
+    let tool = |name: &str| tools.iter().find(|tool| tool.name() == name).unwrap();
+    tool("browser_open")
+        .execute(json!({"url": format!("{}/board", site.uri())}))
+        .await
+        .unwrap();
+    let clicked = tool("browser_click")
+        .execute(json!({"x": 175, "y": 125}))
+        .await
+        .unwrap();
+    let snapshot = clicked["snapshot"].as_str().unwrap();
+    assert!(snapshot.contains("square 3,2 x1"), "{snapshot}");
+    let twice = tool("browser_click")
+        .execute(json!({"x": 25, "y": 25, "double": true}))
+        .await
+        .unwrap();
+    assert!(
+        twice["snapshot"]
+            .as_str()
+            .unwrap()
+            .contains("square 0,0 x2"),
+        "{twice}"
+    );
+    for wrong in [
+        json!({}),
+        json!({"x": 10}),
+        json!({"ref": "e1", "x": 10, "y": 10}),
+        json!({"x": -1, "y": 10}),
+        json!({"x": 10, "y": 99999}),
+    ] {
+        let error = tool("browser_click")
+            .execute(wrong.clone())
+            .await
+            .unwrap_err();
+        assert!(!error.to_string().is_empty(), "{wrong}");
+    }
+    hub.close_chat("chat-4").await;
+}
