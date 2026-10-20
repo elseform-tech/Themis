@@ -88,6 +88,9 @@ pub fn launch_args(profile: &Path, headless: bool) -> Vec<String> {
         "--disable-renderer-backgrounding".to_owned(),
         "--disable-backgrounding-occluded-windows".to_owned(),
         "--mute-audio".to_owned(),
+        // Headless screencasts ignore emulated device scale; render at Retina
+        // scale so the Workspace view stays sharp (frames are capped to the view).
+        "--force-device-scale-factor=2".to_owned(),
         format!(
             "--window-size={},{}",
             DEFAULT_VIEWPORT.0, DEFAULT_VIEWPORT.1

@@ -241,6 +241,9 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     let png = std::fs::read(shot["path"].as_str().unwrap()).unwrap();
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
     assert!(shot["width"].as_u64().unwrap() > 100, "{shot}");
+    // The browser renders at Retina scale, but the model gets CSS pixels.
+    let png_width = u32::from_be_bytes(png[16..20].try_into().unwrap());
+    assert_eq!(u64::from(png_width), shot["width"].as_u64().unwrap());
     let state = chat.snapshot(None).await.unwrap();
     let heading_button = ref_of(&state.snapshot, "\"Create account\"");
     let part = tool("browser_screenshot")
@@ -341,9 +344,29 @@ async fn the_workspace_stream_sends_frames_and_takes_over_on_input() {
     chat.start_screencast(800, 600, 1.0)
         .await
         .expect("restarting on the same tab");
-    chat.start_screencast(640, 480, 1.0)
+    chat.start_screencast(640, 480, 2.0)
         .await
         .expect("resizing on the same tab");
+    // A Retina view gets frames at device pixels, not blurry CSS pixels.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        use base64::Engine;
+        loop {
+            if let Ok(themis_core::browser::BrowserUpdate::Frame { data, .. }) =
+                updates.recv().await
+            {
+                let jpeg = base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .unwrap();
+                let mut decoder = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(jpeg));
+                decoder.decode_headers().unwrap();
+                if decoder.info().unwrap().width == 1280 {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("a frame at twice the view's width");
     chat.user_input(&themis_core::browser::UserInput::Mouse {
         kind: "move".into(),
         x: 10.0,

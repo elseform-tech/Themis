@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 416c6b53c66b58c0e9719199698cdc88bae73f64299e0eaae034950acbe8573a # shrinks to shape = [(0, "textbox", "", None, None), (0, "textbox", "", None, None), (4, "textbox", "", None, None), (0, "textbox", "", Some("4090"), Some(0)), (0, "textbox", "", None, None), (0, "", "", None, None), (0, "textbox", "", Some("4090"), None)], limit = 76

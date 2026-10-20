@@ -1719,10 +1719,15 @@ impl ChatBrowser {
                 params["captureBeyondViewport"] = json!(true);
                 (w, h)
             }
-            None => (
-                view["clientWidth"].as_f64().unwrap_or(1280.0),
-                view["clientHeight"].as_f64().unwrap_or(800.0),
-            ),
+            // A clip at scale 1 gives CSS pixels even though Chrome renders
+            // at Retina scale for the Workspace view.
+            None => {
+                let w = view["clientWidth"].as_f64().unwrap_or(1280.0);
+                let h = view["clientHeight"].as_f64().unwrap_or(800.0);
+                params["clip"] =
+                    json!({"x": page_x, "y": page_y, "width": w, "height": h, "scale": 1});
+                (w, h)
+            }
         };
         let shot = cdp
             .call_with_timeout(
