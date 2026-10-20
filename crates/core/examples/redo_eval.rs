@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
         (Some(_), Err(_)) => "mock-key".to_owned(),
         (None, Err(_)) => anyhow::bail!("OPENCODE_KEY is not set"),
     };
-    let mut config = ProviderConfig::new(ProviderKind::Go, key);
+    let mut config = ProviderConfig::new(ProviderKind::Go, key.clone());
     if let Some(model) = &model {
         config = config.with_model(model);
     }
@@ -66,7 +66,20 @@ async fn main() -> anyhow::Result<()> {
         context_token_budget: budget,
         recent_messages: recent,
     };
-    let run = task_run(&llm, task, project.path(), policy, turns).await?;
+    // As the app does: the live catalog's output limits and thinking switches apply (without
+    // them a 24k budget caps each reply at 3k tokens and long file writes are cut off).
+    let catalog = if arg("--base-url").is_none() {
+        themis_core::providers::refresh_go_catalog(themis_core::providers::GO_BASE_URL, &key)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let run = themis_core::providers::with_catalog_limits(
+        &catalog,
+        task_run(&llm, task, project.path(), policy, turns),
+    )
+    .await?;
     let written: Vec<String> = spec["outputs"]
         .as_array()
         .into_iter()
