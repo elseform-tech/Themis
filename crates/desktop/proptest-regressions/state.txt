@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 29c8d080569a6c49657c426d219a646b42c0ba990a13246fccf9030a8616ef32 # shrinks to text = "éplugin:skill:éplugin:plugin:skill:skill: éskill:é[[é [[[[a [["

@@ -1023,7 +1023,8 @@ fn title_from_message(text: &str) -> String {
     if title.is_empty() {
         return UNTITLED_THREAD.to_owned();
     }
-    title.chars().take(MAX_TITLE_CHARS).collect()
+    let title: String = title.chars().take(MAX_TITLE_CHARS).collect();
+    title.trim_end().to_owned()
 }
 
 /// `text` without skill/plugin tokens (whitespace collapsed), and their ids.
