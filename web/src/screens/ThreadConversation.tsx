@@ -3,10 +3,11 @@ import { MediaGallery, MediaStrip, MediaViewer } from "./MediaStrip";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
-import { useActiveProject, useApp } from "../state/store";
+import { describeError, toast, useActiveProject, useApp } from "../state/store";
+import { browserOpenUrl } from "../lib/browser";
 import type { ChangedFile } from "../lib/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ResponseBody } from "../components/ResponseBody";
+import { ResponseBody, ResponseLinks } from "../components/ResponseBody";
 import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
@@ -50,6 +51,12 @@ export function ThreadConversation({
   const [viewing, setViewing] = useState<number | null>(null);
   const openMedia = useCallback((path: string) => { const index = media.findIndex(file => file.path === path); if (index >= 0) setViewing(index); }, [media]);
   const gallery = useMemo(() => ({ threadId, items: media, open: openMedia }), [threadId, media, openMedia]);
+  const { dispatch } = useApp();
+  // Links in replies open in this chat's browser, shown in the Workspace Browser tab.
+  const openLink = useCallback((url: string) => {
+    dispatch({ type: "ui/diff-panel", open: true, tab: "browser" });
+    browserOpenUrl(threadId, url).catch(error => toast(dispatch, `Could not open the link: ${describeError(error)}`, "danger"));
+  }, [dispatch, threadId]);
   const elapsed = Math.max(0, Math.floor((now - (runStartedAt ?? now)) / 1000));
 
   useEffect(() => {
@@ -70,6 +77,7 @@ export function ThreadConversation({
 
   return (
     <MediaGallery.Provider value={gallery}>
+    <ResponseLinks.Provider value={openLink}>
     <div
       ref={scrollRef}
       className="themis-thread-stream"
@@ -118,6 +126,7 @@ export function ThreadConversation({
       <div ref={endRef} />
     </div>
     {viewing !== null && media[viewing] && <MediaViewer threadId={threadId} items={media} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
+    </ResponseLinks.Provider>
     </MediaGallery.Provider>
   );
 }
