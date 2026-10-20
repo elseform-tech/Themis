@@ -35,6 +35,10 @@ describe("WorkspacePanel", () => {
     fireEvent.keyDown(separator, { key: "ArrowLeft" });
     expect(separator).toHaveAttribute("aria-valuenow", "600");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Files" })));
+    // The file view sits beside the tree in the content column, not in the divider's.
+    const tree = screen.getByRole("list", { name: "Project files" });
+    expect(tree.nextElementSibling).toHaveAttribute("role", "separator");
+    expect(tree.nextElementSibling?.nextElementSibling).toHaveTextContent("Pick a file");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "README.md" })));
     expect(screen.getByText("hello")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Branches" }));

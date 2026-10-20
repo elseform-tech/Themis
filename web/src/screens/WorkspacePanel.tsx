@@ -206,7 +206,7 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
   }
   const language = file?.path.split(".").pop();
   return (
-    <div className="themis-workspace-split">
+    <DiffSplit>
       <ul className="themis-files-tree" aria-label="Project files">{renderDir("", 0)}</ul>
       <div className="themis-files-view">
         {error && <p className="themis-workspace-note">{error}</p>}
@@ -217,7 +217,7 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
               <CodeBlock code={file.content ?? ""} language={language} showLineNumbers />
             </>}
       </div>
-    </div>
+    </DiffSplit>
   );
 }
 
