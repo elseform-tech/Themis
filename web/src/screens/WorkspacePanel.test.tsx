@@ -42,6 +42,23 @@ describe("WorkspacePanel", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Pull requests" })));
     expect(screen.getByText("GitHub CLI (gh) is not installed")).toBeInTheDocument();
   });
+  it("resizes from a narrow 300px panel up to a wide one, and remembers the diff split", () => {
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    const panel = screen.getByRole("separator", { name: "Resize workspace panel" });
+    expect(panel).toHaveAttribute("aria-valuemin", "300");
+    expect(panel).toHaveAttribute("aria-valuemax", "1600");
+    for (let step = 0; step < 10; step += 1) fireEvent.keyDown(panel, { key: "ArrowRight" });
+    expect(panel).toHaveAttribute("aria-valuenow", "300");
+    const split = screen.getByRole("separator", { name: "Resize file list" });
+    expect(split).toHaveAttribute("aria-valuenow", "200");
+    fireEvent.keyDown(split, { key: "ArrowRight" });
+    expect(split).toHaveAttribute("aria-valuenow", "240");
+    expect(localStorage.getItem("themis:workspaceDiffListWidth")).toBe("240");
+    for (let step = 0; step < 10; step += 1) fireEvent.keyDown(split, { key: "ArrowLeft" });
+    expect(split).toHaveAttribute("aria-valuenow", "120");
+    fireEvent.doubleClick(split);
+    expect(split).toHaveAttribute("aria-valuenow", "200");
+  });
   it("refreshes the diff live: after each completed tool call and every few seconds during a run", async () => {
     vi.useFakeTimers();
     appState = { ...appState, running: { t1: true }, traces: { t1: [] } };

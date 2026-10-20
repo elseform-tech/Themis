@@ -140,7 +140,7 @@ export function ThreadComposer({
           <details className="themis-composer-permissions" data-popover data-mode={thread.approval_mode ?? "custom"}>
             <summary onMouseDown={event => event.preventDefault()} aria-label={`Permissions: ${thread.approval_mode === "yolo" ? "YOLO" : "Custom"}`} title={thread.approval_mode === "yolo" ? "YOLO: no approval prompts; the sandbox still applies" : "Custom applies your rules and asks for tool approvals"}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 3 4 6.5V12c0 4.5 8 9 8 9s8-4.5 8-9V6.5Z" /></svg>
-              <span>{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>
+              <span className="themis-composer-label">{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>
             </summary>
             <div className="themis-permissions-panel"><p>{thread.approval_mode === "yolo" ? "No approval prompts; the sandbox still applies." : "Apply your rules and ask for tool approvals."} Changes apply to the next run.</p>
               <label><select aria-label="Approval mode" onKeyDown={event => { if (!event.nativeEvent.isComposing && isModeInitial(event.nativeEvent)) event.preventDefault(); }} value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
@@ -178,10 +178,10 @@ export function ThreadComposer({
             </Button>
           )}
         </div>
-        {location && <div className="themis-composer-location" title={location.root}>
+        {location && <div className="themis-composer-location" title={location.branch ? `${location.name} · ${location.branch}\n${location.root}` : `${location.name}\n${location.root}`} aria-label={location.branch ? `${location.name}, branch ${location.branch}` : location.name}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
-            <span>{location.name}</span>
-            {location.branch && <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg><span className="themis-composer-branch">{location.branch}</span></>}
+            <span className="themis-composer-label">{location.name}</span>
+            {location.branch && <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg><span className="themis-composer-branch themis-composer-label">{location.branch}</span></>}
           </div>}
       </div>
     </>

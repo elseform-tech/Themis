@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { DiffView, EmptyState, FileTree } from "../components";
 import { CodeBlock } from "../components/CodeBlock";
 import type { DirEntry, FileView, WorkspaceInfo } from "../lib/types";
@@ -12,11 +12,19 @@ import "./WorkspacePanel.css";
 
 type Tab = "changes" | "files" | "branches" | "pulls" | "tasks" | "browser";
 const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["browser", "Browser"]];
-const MIN_WIDTH = 380;
-const MAX_WIDTH = 1200;
+const MIN_WIDTH = 300;
+const MAX_WIDTH = 1600;
 const DEFAULT_WIDTH = 560;
 /** The Browser tab needs room for a page; it remembers its own width. */
 const BROWSER_DEFAULT_WIDTH = 760;
+/** The Changes file list beside the diff; the diff keeps at least DIFF_MIN_WIDTH (CSS). */
+const LIST_MIN_WIDTH = 120;
+const LIST_MAX_WIDTH = 640;
+const LIST_DEFAULT_WIDTH = 200;
+
+function clampListWidth(value: number) {
+  return Math.round(Math.max(LIST_MIN_WIDTH, Math.min(LIST_MAX_WIDTH, value)));
+}
 
 function clampWidth(value: number) {
   return Math.round(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, value)));
@@ -121,11 +129,35 @@ function ChangesView({ threadId }: { threadId: string }) {
     <div className="themis-workspace-changes">
       {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
       {file === null ? <EmptyState title="No changes" hint="The checkout matches its last commit." /> : (
-        <div className="themis-workspace-split">
+        <DiffSplit>
           <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />
           <DiffView file={file} />
-        </div>
+        </DiffSplit>
       )}
+    </div>
+  );
+}
+
+/** File list | diff, with a draggable divider whose position is remembered. */
+export function DiffSplit({ children }: { children: [ReactNode, ReactNode] }) {
+  const [width, setWidth] = useState(() => clampListWidth(Number(readSession("workspaceDiffListWidth", LIST_DEFAULT_WIDTH)) || LIST_DEFAULT_WIDTH));
+  const split = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; width: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  function resize(next: number) { const value = clampListWidth(next); setWidth(value); writeSession("workspaceDiffListWidth", value); }
+  // Store what is visible: CSS keeps room for the diff, so a wide value may render narrower.
+  function rendered() { return split.current?.firstElementChild?.getBoundingClientRect().width || width; }
+  return (
+    <div ref={split} className={`themis-workspace-split${dragging ? " is-resizing" : ""}`} style={{ "--themis-diff-list": `${width}px` } as CSSProperties}>
+      {children[0]}
+      <div className="themis-split-resize" role="separator" aria-label="Resize file list" aria-orientation="vertical" aria-valuemin={LIST_MIN_WIDTH} aria-valuemax={LIST_MAX_WIDTH} aria-valuenow={width} tabIndex={0}
+        onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); drag.current = { x: event.clientX, width: rendered() }; setDragging(true); event.currentTarget.setPointerCapture(event.pointerId); }}
+        onPointerMove={event => { if (drag.current) setWidth(clampListWidth(drag.current.width + event.clientX - drag.current.x)); }}
+        onPointerUp={() => { if (drag.current) resize(Math.min(width, rendered())); drag.current = null; setDragging(false); }}
+        onLostPointerCapture={() => { drag.current = null; setDragging(false); }}
+        onDoubleClick={() => resize(LIST_DEFAULT_WIDTH)}
+        onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); resize(width - 40); } else if (event.key === "ArrowRight") { event.preventDefault(); resize(width + 40); } }} />
+      {children[1]}
     </div>
   );
 }
