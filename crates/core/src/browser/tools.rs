@@ -193,7 +193,7 @@ impl ToolRuntime for BrowserNavigate {
 /// Arguments for `browser_snapshot`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct SnapshotArgs {
-    #[serde(default, rename = "ref")]
+    #[serde(default, alias = "ref")]
     #[input(
         description = "Only this element's part of the page (a ref like e12); omit for the whole page"
     )]
@@ -230,7 +230,7 @@ impl ToolRuntime for BrowserSnapshot {
 /// Arguments for `browser_click`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct ClickArgs {
-    #[serde(rename = "ref")]
+    #[serde(alias = "ref")]
     #[input(description = "The element's ref from the latest snapshot, like e14")]
     pub reference: String,
     #[serde(default)]
@@ -270,7 +270,7 @@ impl ToolRuntime for BrowserClick {
 /// Arguments for `browser_type`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct TypeArgs {
-    #[serde(rename = "ref")]
+    #[serde(alias = "ref")]
     #[input(description = "The text field's ref from the latest snapshot")]
     pub reference: String,
     #[input(description = "Text to type")]
@@ -323,7 +323,7 @@ impl ToolRuntime for BrowserType {
 /// Arguments for `browser_select`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct SelectArgs {
-    #[serde(rename = "ref")]
+    #[serde(alias = "ref")]
     #[input(description = "The dropdown's ref from the latest snapshot")]
     pub reference: String,
     #[input(
@@ -408,7 +408,7 @@ impl ToolRuntime for BrowserPress {
 pub struct ScrollArgs {
     #[input(description = "up, down, left or right")]
     pub direction: String,
-    #[serde(default, rename = "ref")]
+    #[serde(default, alias = "ref")]
     #[input(description = "Scroll inside this element (a ref) instead of the page")]
     pub reference: String,
 }
@@ -495,7 +495,7 @@ impl ToolRuntime for BrowserTabs {
 /// Arguments for `browser_screenshot`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
 pub struct ScreenshotArgs {
-    #[serde(default, rename = "ref")]
+    #[serde(default, alias = "ref")]
     #[input(description = "Only this element (a ref); omit for the visible page")]
     pub reference: String,
     #[serde(default)]
@@ -624,5 +624,76 @@ impl ToolRuntime for BrowserRecord {
                 "browser_record: action must be start or stop, not '{other}'"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoMedia;
+    impl MediaSink for NoMedia {
+        fn save(&self, _: &str, _: &[u8]) -> Result<String, String> {
+            Err("unused".into())
+        }
+    }
+
+    fn parses(tool: &str, args: Value) -> Result<(), ToolCallError> {
+        match tool {
+            "browser_open" => parse_tool_args::<OpenArgs>(tool, args).map(|_| ()),
+            "browser_navigate" => parse_tool_args::<NavigateArgs>(tool, args).map(|_| ()),
+            "browser_snapshot" => parse_tool_args::<SnapshotArgs>(tool, args).map(|_| ()),
+            "browser_click" => parse_tool_args::<ClickArgs>(tool, args).map(|_| ()),
+            "browser_type" => parse_tool_args::<TypeArgs>(tool, args).map(|_| ()),
+            "browser_select" => parse_tool_args::<SelectArgs>(tool, args).map(|_| ()),
+            "browser_press" => parse_tool_args::<PressArgs>(tool, args).map(|_| ()),
+            "browser_scroll" => parse_tool_args::<ScrollArgs>(tool, args).map(|_| ()),
+            "browser_tabs" => parse_tool_args::<TabsArgs>(tool, args).map(|_| ()),
+            "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
+            "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),
+            other => panic!("untested tool {other}"),
+        }
+    }
+
+    /// A model fills in exactly what a tool's schema advertises; every one of
+    /// those names must parse (a live run once lost three calls to `reference`
+    /// in the schema but `ref` in the parser).
+    #[test]
+    fn every_advertised_argument_parses_and_ref_is_accepted_too() {
+        let hub = super::super::BrowserHub::new(super::super::BrowserConfig {
+            root: std::env::temp_dir(),
+            executable: None,
+            headless: true,
+        });
+        let tools = browser_tools(
+            Arc::new(crate::tools::AllowAllHook),
+            BrowserScope {
+                chat: hub.chat("schema-test", &std::env::temp_dir()),
+                cancel: None,
+                media: Some(Arc::new(NoMedia)),
+            },
+        );
+        let sample = |schema: &Value| match schema["type"].as_str() {
+            Some("boolean") => json!(true),
+            Some("integer" | "number") => json!(1),
+            Some("array") => json!(["x"]),
+            _ => json!("e1"),
+        };
+        for tool in &tools {
+            let schema = tool.args_schema();
+            let properties = schema["properties"].as_object().cloned().unwrap_or_default();
+            let args: serde_json::Map<String, Value> = properties
+                .iter()
+                .map(|(name, spec)| (name.clone(), sample(spec)))
+                .collect();
+            let parsed = parses(tool.name(), Value::Object(args));
+            assert!(parsed.is_ok(), "{}: {parsed:?} from {schema}", tool.name());
+        }
+        assert_eq!(tools.len(), 11);
+        let click: ClickArgs = parse_tool_args("browser_click", json!({"ref": "e4"})).unwrap();
+        assert_eq!(click.reference, "e4");
+        let click: ClickArgs =
+            parse_tool_args("browser_click", json!({"reference": "e5"})).unwrap();
+        assert_eq!(click.reference, "e5");
     }
 }

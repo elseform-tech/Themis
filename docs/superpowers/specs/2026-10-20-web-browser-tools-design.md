@@ -86,6 +86,18 @@ dialogs, failed requests, downloads).
 A project may only set `browser.enabled: false` and may not set `web.search_url`
 or `browser.executable`.
 
+## As built (2026-10-20)
+
+- `web_search` asks per site like `fetch_url` (a search sends the query to the
+  configured instance), instead of never prompting.
+- Element arguments are advertised as `reference` (the tool schema takes the Rust
+  field name) and also accepted as `ref`; a live run lost three calls when only
+  `ref` parsed.
+- One recording per chat; an agent's recording left running is saved when its run
+  ends. Captured frames are capped at 256 MB.
+- Image input for vision models (step 5) is not built: screenshots reach the model
+  as a path, and the person sees them through `attach_file`.
+
 ## Build order
 
 1. `fetch_url`, `web_search`, configuration, per-site approvals; fuzz + property tests.
