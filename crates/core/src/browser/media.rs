@@ -137,10 +137,11 @@ pub fn frame_schedule(frames: &[Frame], fps: u32, until: Duration) -> Vec<usize>
     schedule
 }
 
-/// Encodes frames to an H.264 MP4 at [`RECORD_FPS`]. The size is that of the
-/// first frame (rounded down to even numbers); other sizes are scaled by
-/// cropping or padding at the edges.
-pub fn encode_mp4(frames: &[Frame], length: Duration) -> Result<Vec<u8>, String> {
+/// Encodes frames to an H.264 MP4 at [`RECORD_FPS`]. Frames are first shrunk
+/// by `shrink` (the view's device scale, so a Retina recording is encoded at
+/// CSS size: a quarter of the pixels). The size is that of the first frame
+/// (rounded down to even numbers); other sizes are cropped or padded.
+pub fn encode_mp4(frames: &[Frame], length: Duration, shrink: usize) -> Result<Vec<u8>, String> {
     use openh264::encoder::{
         BitRate, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, QpRange, RateControlMode,
         UsageType,
@@ -148,8 +149,9 @@ pub fn encode_mp4(frames: &[Frame], length: Duration) -> Result<Vec<u8>, String>
     use openh264::formats::{RgbSliceU8, YUVBuffer};
 
     let first = frames.first().ok_or("the recording has no frames")?;
+    let shrink = shrink.max(1);
     let (_, width, height) = decode_jpeg(&first.jpeg)?;
-    let (width, height) = (width & !1, height & !1);
+    let (width, height) = ((width / shrink) & !1, (height / shrink) & !1);
     if width < 16 || height < 16 {
         return Err("the recorded page is too small".into());
     }
@@ -174,6 +176,7 @@ pub fn encode_mp4(frames: &[Frame], length: Duration) -> Result<Vec<u8>, String>
     for index in schedule {
         if decoded.as_ref().is_none_or(|(at, _)| *at != index) {
             let (rgb, w, h) = decode_jpeg(&frames[index].jpeg)?;
+            let (rgb, w, h) = reduce(&rgb, w, h, shrink);
             decoded = Some((index, fit(&rgb, w, h, width, height)));
         }
         let rgb = &decoded.as_ref().expect("decoded above").1;
@@ -279,6 +282,32 @@ pub fn decode_jpeg(jpeg: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
     Ok((pixels, width, height))
 }
 
+/// `rgb` (`w`×`h`) shrunk by a whole `factor`, each pixel the average of its block.
+fn reduce(rgb: &[u8], w: usize, h: usize, factor: usize) -> (Vec<u8>, usize, usize) {
+    if factor <= 1 {
+        return (rgb.to_vec(), w, h);
+    }
+    let (out_w, out_h) = (w / factor, h / factor);
+    let area = (factor * factor) as u32;
+    let mut out = Vec::with_capacity(out_w * out_h * 3);
+    for y in 0..out_h {
+        for x in 0..out_w {
+            let mut sum = [0u32; 3];
+            for dy in 0..factor {
+                let row = (y * factor + dy) * w;
+                for dx in 0..factor {
+                    let at = (row + x * factor + dx) * 3;
+                    for (channel, total) in sum.iter_mut().enumerate() {
+                        *total += u32::from(rgb[at + channel]);
+                    }
+                }
+            }
+            out.extend(sum.map(|total| (total / area) as u8));
+        }
+    }
+    (out, out_w, out_h)
+}
+
 /// `rgb` (`w`×`h`) cropped or padded with white to `width`×`height`.
 fn fit(rgb: &[u8], w: usize, h: usize, width: usize, height: usize) -> Vec<u8> {
     if w == width && h == height {
@@ -338,6 +367,22 @@ mod tests {
         assert_eq!(&padded[..6], &rgb[..6]);
         assert_eq!(&padded[6..9], &[255, 255, 255]);
         assert_eq!(fit(&rgb, 2, 2, 1, 1), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn reduce_averages_blocks_into_a_smaller_image() {
+        // 4×2 pixels: a black and a white 2×2 block, then halved to 2×1.
+        let mut rgb = vec![0u8; 4 * 2 * 3];
+        for row in 0..2 {
+            for col in 2..4 {
+                rgb[(row * 4 + col) * 3..(row * 4 + col) * 3 + 3].copy_from_slice(&[255, 255, 255]);
+            }
+        }
+        rgb[0] = 100; // one red value in the black block
+        let (out, w, h) = reduce(&rgb, 4, 2, 2);
+        assert_eq!((w, h), (2, 1));
+        assert_eq!(out, vec![25, 0, 0, 255, 255, 255]);
+        assert_eq!(reduce(&rgb, 4, 2, 1), (rgb.clone(), 4, 2));
     }
 
     #[test]

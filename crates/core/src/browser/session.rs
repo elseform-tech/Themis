@@ -547,6 +547,22 @@ fn short_url(url: &str) -> String {
 }
 
 /// Updates a tab's state from its events. Runs until the browser closes.
+/// The shortest gap between streamed frames: about 30 a second, smooth to
+/// watch at half the JPEG work of 60. Recordings sample 10 a second.
+const FRAME_GAP: Duration = Duration::from_millis(33);
+
+/// Counts events a tab watcher missed (see [`lagged_events`]).
+static LAGGED_EVENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn tracing_lagged(missed: u64) {
+    LAGGED_EVENTS.fetch_add(missed, Ordering::Relaxed);
+}
+
+/// Browser protocol events tab watchers have missed since start (diagnostics).
+pub fn lagged_events() -> u64 {
+    LAGGED_EVENTS.load(Ordering::Relaxed)
+}
+
 fn spawn_watcher(
     cdp: Arc<Cdp>,
     target_id: String,
@@ -556,10 +572,28 @@ fn spawn_watcher(
 ) -> tokio::task::JoinHandle<()> {
     let mut events = cdp.subscribe();
     tokio::spawn(async move {
+        // When the next frame may be acknowledged (see FRAME_GAP).
+        let mut next_ack = std::time::Instant::now();
         loop {
             let event = match events.recv().await {
                 Ok(event) => event,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    // A dropped frame is never acknowledged, and Chrome sends
+                    // no more until it is: restart this tab's stream.
+                    tracing_lagged(missed);
+                    if let Some(chat) = chat.upgrade() {
+                        let streaming = chat
+                            .screencast
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .as_deref()
+                            == Some(session_id.as_str());
+                        if streaming {
+                            tokio::spawn(async move { chat.restart_screencast().await });
+                        }
+                    }
+                    continue;
+                }
                 Err(broadcast::error::RecvError::Closed) => break,
             };
             if event.session.as_deref() != Some(session_id.as_str()) {
@@ -586,11 +620,22 @@ fn spawn_watcher(
             }
             handle_tab_event(&cdp, &target_id, &session_id, &state, &event);
             if event.method == "Page.screencastFrame" {
-                cdp.send(
-                    Some(&session_id),
-                    "Page.screencastFrameAck",
-                    json!({"sessionId": event.params["sessionId"]}),
-                );
+                // Chrome sends the next frame only after this acknowledgement;
+                // spacing them caps the stream without skipping a still page's
+                // only frame.
+                let ack = json!({"sessionId": event.params["sessionId"]});
+                let now = std::time::Instant::now();
+                let wait = next_ack.saturating_duration_since(now);
+                next_ack = now.max(next_ack) + FRAME_GAP;
+                if wait.is_zero() {
+                    cdp.send(Some(&session_id), "Page.screencastFrameAck", ack);
+                } else {
+                    let (cdp, session_id) = (Arc::clone(&cdp), session_id.clone());
+                    tokio::spawn(async move {
+                        tokio::time::sleep(wait).await;
+                        cdp.send(Some(&session_id), "Page.screencastFrameAck", ack);
+                    });
+                }
                 if let Some(chat) = chat.upgrade() {
                     let streaming = chat
                         .screencast
@@ -1728,14 +1773,21 @@ impl ChatBrowser {
         self.publish_state().await;
         let length = recording.elapsed();
         let frames = recording.frames;
+        let shrink = self
+            .viewport
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .scale
+            .round() as usize;
         if frames.is_empty() {
             return Err(
                 "the page did not paint while recording, so there is nothing to save".into(),
             );
         }
-        let video = tokio::task::spawn_blocking(move || super::media::encode_mp4(&frames, length))
-            .await
-            .map_err(|e| e.to_string())??;
+        let video =
+            tokio::task::spawn_blocking(move || super::media::encode_mp4(&frames, length, shrink))
+                .await
+                .map_err(|e| e.to_string())??;
         Ok((video, length))
     }
 

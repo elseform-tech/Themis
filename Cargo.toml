@@ -3,3 +3,12 @@ resolver = "2"
 members = ["crates/core", "crates/desktop"]
 # cargo-fuzz targets build separately on nightly.
 exclude = ["fuzz"]
+
+# Browser recordings decode JPEG frames and encode H.264 in process; unoptimized,
+# a few seconds of video take minutes in debug builds and tests.
+[profile.dev.package.openh264-sys2]
+opt-level = 3
+[profile.dev.package.openh264]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3

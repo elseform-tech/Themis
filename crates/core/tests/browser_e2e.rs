@@ -358,6 +358,27 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
     let (png, width, _) = chat.screenshot(None, false).await.unwrap();
     assert_eq!(width, 640);
     assert_eq!(u32::from_be_bytes(png[16..20].try_into().unwrap()), 640);
+    // A recording from a Retina view is encoded at CSS size too, so it stays quick.
+    chat.start_recording(
+        themis_core::browser::media::Recorder::Agent,
+        std::time::Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    chat.open("data:text/html,<h1>Recorded</h1>", false)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    let (video, _) = chat
+        .stop_recording(themis_core::browser::media::Recorder::Agent)
+        .await
+        .unwrap();
+    let avc1 = video
+        .windows(4)
+        .rposition(|w| w == b"avc1")
+        .expect("an H.264 track");
+    let width = u16::from_be_bytes([video[avc1 + 28], video[avc1 + 29]]);
+    assert_eq!(width, 640);
     chat.user_input(&themis_core::browser::UserInput::Mouse {
         kind: "move".into(),
         x: 10.0,
@@ -481,4 +502,92 @@ async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
         assert!(!error.to_string().is_empty(), "{wrong}");
     }
     hub.close_chat("chat-4").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_animated_page_streams_at_about_thirty_frames_a_second() {
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-5", project.path());
+    chat.open(
+        "data:text/html,<body><script>let n=0;(function f(){n=(n+7)&255;document.body.style.background='rgb('+n+',80,120)';requestAnimationFrame(f)})()</script>",
+        false,
+    )
+    .await
+    .unwrap();
+    let mut updates = chat.subscribe();
+    chat.start_screencast(400, 300, 1.0).await.unwrap();
+    let start = std::time::Instant::now();
+    let mut frames = 0;
+    while start.elapsed() < std::time::Duration::from_secs(2) {
+        if let Ok(Ok(themis_core::browser::BrowserUpdate::Frame { .. })) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), updates.recv()).await
+        {
+            frames += 1;
+        }
+    }
+    // Paced to one frame per 33 ms (60 a second unpaced), and still flowing.
+    assert!((10..=70).contains(&frames), "{frames} frames in 2 s");
+    chat.stop_screencast().await;
+    hub.close_chat("chat-5").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_view_shows_the_page_after_a_first_open_was_refused() {
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::start().await;
+    Mock::given(path("/game"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<!doctype html><title>Game</title><body style=\"margin:0;background:rgb(0,160,0)\"><h1>Game</h1>",
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    // A port nothing listens on, as when a dev server is not up yet.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-6", project.path());
+    let mut updates = chat.subscribe();
+    let refused = chat
+        .open(&format!("http://127.0.0.1:{closed}/"), false)
+        .await;
+    assert!(
+        format!("{refused:?}").contains("ERR_CONNECTION_REFUSED"),
+        "{refused:?}"
+    );
+    chat.start_screencast(800, 600, 2.0).await.unwrap();
+    chat.open(&format!("{}/game", site.uri()), false)
+        .await
+        .unwrap();
+    // Frames that arrive after the page loaded show it, not the error page.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Ok(themis_core::browser::BrowserUpdate::Frame { data, .. }) =
+                updates.recv().await
+            {
+                use base64::Engine;
+                let jpeg = base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .unwrap();
+                let mut decoder = zune_jpeg::JpegDecoder::new(std::io::Cursor::new(jpeg));
+                let pixels = decoder.decode().unwrap();
+                let info = decoder.info().unwrap();
+                let (w, h) = (usize::from(info.width), usize::from(info.height));
+                let at = ((h * 3 / 4) * w + w / 2) * 3;
+                if pixels[at + 1] > 120 && pixels[at] < 60 {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("frames of the page once it loads");
+    chat.stop_screencast().await;
+    hub.close_chat("chat-6").await;
 }
