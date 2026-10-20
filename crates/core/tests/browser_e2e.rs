@@ -304,34 +304,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn agent_actions_wait_while_the_person_controls_the_browser() {
-    let data = tempfile::tempdir().unwrap();
-    let Some(hub) = hub(data.path()) else { return };
-    let project = tempfile::tempdir().unwrap();
-    let chat = hub.chat("chat-2", project.path());
-    chat.set_user_control(true).await;
-    let waiting = {
-        let chat = Arc::clone(&chat);
-        tokio::spawn(async move { chat.wait_for_control(None).await })
-    };
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-    assert!(
-        !waiting.is_finished(),
-        "the agent must wait during a take over"
-    );
-    chat.set_user_control(false).await;
-    waiting.await.unwrap().unwrap();
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    chat.set_user_control(true).await;
-    assert_eq!(
-        chat.wait_for_control(Some(&stop)).await.unwrap_err(),
-        "stopped"
-    );
-    hub.close_chat("chat-2").await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_workspace_stream_sends_frames_and_takes_over_on_input() {
+async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together() {
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
     let project = tempfile::tempdir().unwrap();
@@ -393,7 +366,12 @@ async fn the_workspace_stream_sends_frames_and_takes_over_on_input() {
     })
     .await
     .unwrap();
-    assert!(chat.user_controls(), "input takes over");
+    // The person's input never takes the browser from the agent.
+    assert_eq!(chat.state().await.controller, "idle");
+    tokio::time::timeout(std::time::Duration::from_secs(5), chat.snapshot(None))
+        .await
+        .expect("the agent acts right after the person")
+        .unwrap();
     let devtools = chat.devtools_url().await.unwrap();
     assert!(devtools.starts_with("http://127.0.0.1:"), "{devtools}");
     chat.stop_screencast().await;

@@ -221,19 +221,16 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             "{browser}"
         );
         assert_eq!(browser["controller"], "idle");
+        // The person opening an address never takes the browser from the agent.
+        let address = browser["url"].as_str().unwrap().to_owned();
         call(
             &data_dir,
-            "browser_control",
-            json!({"threadId": thread_id, "user": true}),
+            "browser_open_url",
+            json!({"threadId": thread_id, "address": address}),
         );
         assert_eq!(
             call(&data_dir, "browser_state", json!({"threadId": thread_id}))["controller"],
-            "user"
-        );
-        call(
-            &data_dir,
-            "browser_control",
-            json!({"threadId": thread_id, "user": false}),
+            "idle"
         );
         // The reply's media is saved with the conversation.
         let history = call(

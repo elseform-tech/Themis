@@ -31,8 +31,6 @@ pub const SETTLE_WAIT: Duration = Duration::from_secs(10);
 const QUIET: Duration = Duration::from_millis(500);
 /// Requests running longer than this (long polls, streams) do not block settling.
 const LONG_REQUEST: Duration = Duration::from_secs(3);
-/// Longest an agent action waits while the person controls the browser.
-pub const TAKEOVER_WAIT: Duration = Duration::from_secs(600);
 /// Notes kept per tab between agent looks.
 const MAX_NOTES: usize = 20;
 const NOTE_CHARS: usize = 300;
@@ -60,7 +58,7 @@ pub struct BrowserState {
     pub title: String,
     pub can_go_back: bool,
     pub can_go_forward: bool,
-    /// `agent`, `user` or `idle`.
+    /// `agent` while an agent action runs, otherwise `idle`.
     pub controller: String,
     /// What the agent is doing now, e.g. `clicking "Create account"`.
     pub activity: Option<String>,
@@ -209,7 +207,6 @@ impl BrowserHub {
                 hub: Arc::downgrade(self),
                 profile_key: profile_key(project),
                 inner: tokio::sync::Mutex::new(ChatInner::default()),
-                user_control: AtomicBool::new(false),
                 activity: Mutex::new(None),
                 updates,
                 screencast: Mutex::new(None),
@@ -352,7 +349,6 @@ pub struct ChatBrowser {
     hub: std::sync::Weak<BrowserHub>,
     profile_key: String,
     inner: tokio::sync::Mutex<ChatInner>,
-    user_control: AtomicBool,
     activity: Mutex<Option<String>>,
     updates: broadcast::Sender<BrowserUpdate>,
     /// Session id of the tab being streamed to the Workspace view.
@@ -731,17 +727,6 @@ impl ChatBrowser {
         self.updates.subscribe()
     }
 
-    /// Whether the person is controlling the browser.
-    pub fn user_controls(&self) -> bool {
-        self.user_control.load(Ordering::SeqCst)
-    }
-
-    /// Take over (`true`) or hand back (`false`).
-    pub async fn set_user_control(&self, user: bool) {
-        self.user_control.store(user, Ordering::SeqCst);
-        self.publish_state().await;
-    }
-
     /// Shows what the agent is doing (or nothing).
     pub async fn set_activity(&self, activity: Option<String>) {
         let done = activity.is_none();
@@ -753,25 +738,6 @@ impl ChatBrowser {
         } else {
             self.publish_state().await;
         }
-    }
-
-    /// Waits while the person controls the browser; `Err` when the run stops
-    /// or the wait runs out.
-    pub async fn wait_for_control(&self, cancel: Option<&AtomicBool>) -> Result<(), String> {
-        let started = Instant::now();
-        while self.user_controls() {
-            if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
-                return Err("stopped".to_owned());
-            }
-            if started.elapsed() > TAKEOVER_WAIT {
-                return Err(format!(
-                    "the user has been controlling the browser for {} minutes; ask them to hand it back",
-                    TAKEOVER_WAIT.as_secs() / 60
-                ));
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        Ok(())
     }
 
     /// The current state, for the Workspace view.
@@ -835,9 +801,7 @@ impl ChatBrowser {
             title,
             can_go_back: back,
             can_go_forward: forward,
-            controller: if self.user_controls() {
-                "user".into()
-            } else if activity.is_some() {
+            controller: if activity.is_some() {
                 "agent".into()
             } else {
                 "idle".into()
@@ -1761,12 +1725,9 @@ impl ChatBrowser {
         Ok((png, width.round() as u32, height.round() as u32))
     }
 
-    /// The person's mouse, wheel or key input on the Workspace view. Any input
-    /// takes over the browser.
+    /// The person's mouse, wheel or key input on the Workspace view. The
+    /// person and the agent use the browser at the same time; neither waits.
     pub async fn user_input(&self, input: &UserInput) -> Result<(), String> {
-        if !self.user_controls() {
-            self.set_user_control(true).await;
-        }
         let inner = self.inner.lock().await;
         let (Some(browser), Some(tab)) = (&inner.browser, inner.tabs.get(inner.current)) else {
             return Ok(());

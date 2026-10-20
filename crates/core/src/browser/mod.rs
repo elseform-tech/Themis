@@ -4,7 +4,7 @@
 //! - [`cdp`]: the protocol connection.
 //! - [`launch`]: finding and starting a browser with its own profile.
 //! - [`snapshot`]: the accessibility outline with refs the model acts on.
-//! - [`session`]: per-chat tabs, actions, take over and the Workspace stream.
+//! - [`session`]: per-chat tabs, actions and the Workspace stream (the person and the agent use it at once).
 //! - [`tools`]: the agent's `browser_*` tools.
 
 pub mod cdp;

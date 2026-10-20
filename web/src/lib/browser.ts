@@ -16,7 +16,7 @@ export interface BrowserState {
   can_go_back: boolean;
   can_go_forward: boolean;
   /** Who drives the browser now. */
-  controller: "agent" | "user" | "idle";
+  controller: "agent" | "idle";
   /** What the agent is doing, e.g. `clicking “Create account”`. */
   activity: string | null;
   console_errors: number;
@@ -47,7 +47,6 @@ export const browserScreencast = (threadId: string, width: number, height: numbe
   invoke<void>("browser_screencast", { threadId, width: Math.round(width), height: Math.round(height), scale });
 export const browserScreencastStop = (threadId: string) => invoke<void>("browser_screencast_stop", { threadId });
 export const browserInput = (threadId: string, input: BrowserInput) => invoke<void>("browser_input", { threadId, input });
-export const browserControl = (threadId: string, user: boolean) => invoke<void>("browser_control", { threadId, user });
 export const browserOpenUrl = (threadId: string, address: string) => invoke<void>("browser_open_url", { threadId, address });
 export const browserNavigate = (threadId: string, action: "back" | "forward" | "reload") => invoke<void>("browser_navigate", { threadId, action });
 export const browserSwitchTab = (threadId: string, tab: number) => invoke<void>("browser_tab", { threadId, action: "switch", tab });

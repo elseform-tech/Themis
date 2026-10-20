@@ -914,11 +914,6 @@ async fn dispatch_command(
                 .browser_input(&arg::<String>(&args, "threadId")?, args["input"].clone())
                 .await
         ),
-        "browser_control" => done!(
-            state
-                .browser_control(&arg::<String>(&args, "threadId")?, arg(&args, "user")?)
-                .await
-        ),
         "browser_open_url" => done!(
             state
                 .browser_open_url(

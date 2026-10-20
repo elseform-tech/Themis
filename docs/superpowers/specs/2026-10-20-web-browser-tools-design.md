@@ -24,8 +24,8 @@ can be shown inline in replies.
 - **One Chromium per chat, headless, own profile per project** (logins survive
   between chats of a project; the person's real browser profile is never used).
 - **Same browser for agent and person.** The Workspace Browser tab shows CDP
-  screencast frames and forwards the person's input. "Take over" pauses agent
-  browser actions ("the user is controlling the browser") until "Hand back".
+  screencast frames and forwards the person's input. (Revised 2026-10-20: the
+  person and the agent use the page at the same time; there is no take over.)
 - **Workspace rule exception.** Workspace stays read-only for project state. The
   Browser tab is the second interactive exception (after Tasks): navigation,
   input, take over, capture, record, DevTools. None of it changes project files.

@@ -157,7 +157,7 @@ describe("thread lifecycle events", () => {
     let s = withThread();
     s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "", event: { kind: "browser_changed", controller: "agent", recording: { by: "agent", seconds: 3, max_seconds: 30 } } });
     expect(s.browsers[THREAD.id]).toMatchObject({ controller: "agent", recording: { by: "agent", seconds: 3, max_seconds: 30 } });
-    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "", event: { kind: "browser_changed", controller: "user" } });
+    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "", event: { kind: "browser_changed", controller: "idle" } });
     expect(s.browsers[THREAD.id]?.recording).toBeUndefined();
     expect(s.running[THREAD.id]).toBeFalsy();
   });

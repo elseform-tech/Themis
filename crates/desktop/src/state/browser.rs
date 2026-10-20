@@ -127,15 +127,6 @@ impl AppState {
         self.chat_browser(thread_id).await?.user_input(&input).await
     }
 
-    /// Take over (`user` true) or hand back.
-    pub async fn browser_control(&self, thread_id: &str, user: bool) -> Result<(), String> {
-        self.chat_browser(thread_id)
-            .await?
-            .set_user_control(user)
-            .await;
-        Ok(())
-    }
-
     /// The person typed an address. Bare hosts get `https://`.
     pub async fn browser_open_url(&self, thread_id: &str, address: &str) -> Result<(), String> {
         let address = address.trim();
@@ -147,10 +138,10 @@ impl AppState {
             format!("https://{address}")
         };
         let url = themis_core::tools::web::checked_url(&url)?;
-        let chat = self.chat_browser(thread_id).await?;
-        // Typing an address is the person driving: the agent waits.
-        chat.set_user_control(true).await;
-        chat.open_for_user(url.as_str()).await
+        self.chat_browser(thread_id)
+            .await?
+            .open_for_user(url.as_str())
+            .await
     }
 
     pub async fn browser_navigate(&self, thread_id: &str, action: &str) -> Result<(), String> {

@@ -203,8 +203,8 @@ Page text and results are treated as untrusted. See [web tools](web-tools.md).
 
 Agents can also drive a built-in browser (an installed Chrome, Chromium or Edge,
 with its own profile per project). Open **Workspace → Browser** to watch it: the
-line above the page says what the agent is doing. Click, type or enter an address to
-take over; the agent waits until you press **Hand back**. **DevTools** opens Chrome's
+line above the page says what the agent is doing. You can click, type or enter an
+address at the same time; the agent keeps working. **DevTools** opens Chrome's
 DevTools for the page. Browser actions ask per site, like page reads. Start a
 message with **/browser-use** to have the agent do a task in the browser (it
 follows built-in guidance: act on snapshot refs, check console errors, never enter

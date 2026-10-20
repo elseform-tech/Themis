@@ -84,9 +84,6 @@ impl Base {
         Fut: std::future::Future<Output = Result<ActionReport, String>>,
     {
         let chat = Arc::clone(&self.scope.chat);
-        chat.wait_for_control(self.scope.cancel.as_deref())
-            .await
-            .map_err(|e| tool_error(format!("{tool}: {e}")))?;
         let site = match site {
             Some(site) => site,
             None => chat
@@ -466,9 +463,6 @@ impl ToolRuntime for BrowserTabs {
         let args: TabsArgs = parse_tool_args("browser_tabs", args)?;
         let action = args.action.trim().to_ascii_lowercase();
         let chat = Arc::clone(&self.base.scope.chat);
-        chat.wait_for_control(self.base.scope.cancel.as_deref())
-            .await
-            .map_err(|e| tool_error(format!("browser_tabs: {e}")))?;
         let risk = if action == "close" {
             RiskLevel::Network
         } else {

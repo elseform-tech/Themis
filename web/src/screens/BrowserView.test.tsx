@@ -13,7 +13,6 @@ vi.mock("../lib/browser", async importOriginal => ({
   browserScreencast: vi.fn(async () => undefined),
   browserScreencastStop: vi.fn(async () => undefined),
   browserInput: vi.fn(async () => undefined),
-  browserControl: vi.fn(async () => undefined),
   browserOpenUrl: vi.fn(async () => undefined),
   browserNavigate: vi.fn(async () => undefined),
   browserSwitchTab: vi.fn(async () => undefined),
@@ -37,7 +36,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe("BrowserView", () => {
-  it("shows the agent's page, its activity and Take over, and streams frames", async () => {
+  it("shows the agent's page and activity without a take-over control, and streams frames", async () => {
     await act(async () => { render(<BrowserView threadId="t1" />); });
     expect(screen.getByRole("status")).toHaveTextContent("Agent is clicking “Create account”");
     expect(screen.getByLabelText("Address")).toHaveValue("http://localhost:5173/signup");
@@ -48,14 +47,12 @@ describe("BrowserView", () => {
     expect(screen.queryByRole("tablist")).toBeNull();
     act(() => push({ kind: "frame", data: "AAAA", width: 800, height: 600 }));
     expect(document.querySelector(".themis-browser-page img")).toHaveAttribute("src", "data:image/jpeg;base64,AAAA");
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Take over" })));
-    expect(bridge.browserControl).toHaveBeenCalledWith("t1", true);
+    // The person and the agent use the page at the same time.
+    expect(screen.queryByRole("button", { name: "Take over" })).toBeNull();
   });
 
-  it("forwards input in page coordinates and offers Hand back while the person drives", async () => {
+  it("forwards input in page coordinates while the agent keeps working", async () => {
     await act(async () => { render(<BrowserView threadId="t1" />); });
-    act(() => push({ kind: "state", state: { ...page, controller: "user", activity: null } }));
-    expect(screen.getByRole("status")).toHaveTextContent("You are controlling the browser. The agent waits.");
     const view = screen.getByLabelText("Page: Sign up");
     view.getBoundingClientRect = () => ({ left: 100, top: 50, width: 800, height: 600, right: 900, bottom: 650, x: 100, y: 50, toJSON: () => ({}) });
     fireEvent.mouseDown(view, { clientX: 150, clientY: 80, button: 0, detail: 1 });
@@ -64,8 +61,8 @@ describe("BrowserView", () => {
     expect(bridge.browserInput).toHaveBeenCalledWith("t1", expect.objectContaining({ type: "key", kind: "down", key: "a", modifiers: 4, text: undefined }));
     fireEvent.keyDown(view, { key: "x", code: "KeyX", keyCode: 88 });
     expect(bridge.browserInput).toHaveBeenCalledWith("t1", expect.objectContaining({ key: "x", text: "x" }));
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Hand back" })));
-    expect(bridge.browserControl).toHaveBeenCalledWith("t1", false);
+    expect(screen.getByRole("status")).toHaveTextContent("Agent is clicking");
+    expect(screen.queryByRole("button", { name: "Hand back" })).toBeNull();
   });
 
   it("opens typed addresses, switches tabs and splits off DevTools", async () => {

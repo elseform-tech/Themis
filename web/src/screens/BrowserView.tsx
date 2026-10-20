@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState } from "../components";
 import {
-  browserCapture, browserCloseTab, browserControl, browserRecordStart, browserRecordStop, browserDevtoolsUrl, browserInput, browserNavigate, browserOpenUrl, browserScreencast,
+  browserCapture, browserCloseTab, browserRecordStart, browserRecordStop, browserDevtoolsUrl, browserInput, browserNavigate, browserOpenUrl, browserScreencast,
   browserScreencastStop, browserState, browserStream, browserSwitchTab, keyText, modifierBits, MOUSE_BUTTONS,
   type BrowserInput, type BrowserState, type SavedMedia,
 } from "../lib/browser";
@@ -135,7 +135,6 @@ export function BrowserView({ threadId }: { threadId: string }) {
   if (state.available === false && !open) {
     return <EmptyState title="No Chromium browser found" hint="Install Chrome, Chromium or Edge, or set browser.executable in runtime.jsonc." />;
   }
-  const user = state.controller === "user";
   return (
     <div className={`themis-browser${devtools ? " has-devtools" : ""}`}>
       {state.tabs.length > 1 && (
@@ -175,18 +174,11 @@ export function BrowserView({ threadId }: { threadId: string }) {
         <div className="themis-browser-status" role="status">
           <span className="themis-browser-spinner" aria-hidden="true" />
           <span className="themis-browser-status-text">Agent is {state.activity}</span>
-          <button type="button" className="themis-browser-action" onClick={() => void act(() => browserControl(threadId, true))}>Take over</button>
-        </div>
-      )}
-      {user && (
-        <div className="themis-browser-status is-user" role="status">
-          <span className="themis-browser-status-text">You are controlling the browser. The agent waits.</span>
-          <button type="button" className="themis-browser-action" onClick={() => void act(() => browserControl(threadId, false))}>Hand back</button>
         </div>
       )}
       {error && <p className="themis-workspace-note" role="alert">{error}</p>}
       {open ? (
-        <div ref={viewport} className={`themis-browser-page${recording ? " is-recording" : user ? " is-user" : ""}`} tabIndex={0} aria-label={`Page: ${state.title || state.url}`}
+        <div ref={viewport} className={`themis-browser-page${recording ? " is-recording" : ""}`} tabIndex={0} aria-label={`Page: ${state.title || state.url}`}
           onMouseDown={event => { event.preventDefault(); mouse("down", event); }} onMouseUp={event => mouse("up", event)} onMouseMove={event => mouse("move", event)}
           onWheel={event => send({ type: "mouse", kind: "wheel", ...point(event), delta_x: event.deltaX, delta_y: event.deltaY, modifiers: modifierBits(event) })}
           onContextMenu={event => event.preventDefault()}
