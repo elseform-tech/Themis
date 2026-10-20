@@ -229,6 +229,30 @@ describe("thread lifecycle events", () => {
     });
   });
 
+  it("shows the Browser tab once when the agent starts using the browser", () => {
+    const live = (s: AppState, event: ThreadEventEnvelope["event"], threadId = THREAD.id) =>
+      reducer(s, { type: "thread/event", envelope: envelope(event, threadId) });
+    let s = live(withThread(), { kind: "started", task: "check the page", max_turns: 20 });
+    s = live(s, { kind: "tool_started", tool: "read_file", summary: "a.ts" });
+    expect(s.diffPanelOpen).toBe(false);
+    s = live(s, { kind: "tool_started", tool: "browser_open", summary: "open" });
+    expect(s.diffPanelOpen).toBe(true);
+    expect(s.workspaceTabRequest?.tab).toBe("browser");
+    // The person closes it; later browser steps in the same run leave it closed.
+    s = reducer(s, { type: "ui/diff-panel", open: false });
+    s = live(s, { kind: "tool_started", tool: "browser_click", summary: "click" });
+    expect(s.diffPanelOpen).toBe(false);
+    // Another chat's browser, an MCP browser tool and history replay never open it.
+    s = live(s, { kind: "started", task: "again", max_turns: 20 });
+    s = live(s, { kind: "tool_started", tool: "browser_open", summary: "open" }, "other");
+    s = live(s, { kind: "tool_started", tool: "mcp_1_browser_navigate", summary: "{}" });
+    expect(s.diffPanelOpen).toBe(false);
+    s = reducer(s, { type: "thread/history-loaded", threadId: THREAD.id, running: false, history: [
+      { kind: "event", envelope: envelope({ kind: "tool_started", tool: "browser_open", summary: "open" }) },
+    ] });
+    expect(s.diffPanelOpen).toBe(false);
+  });
+
   it("keeps an MCP tool's readable label on its message and trace", () => {
     const s = applyThreadEvent(
       withThread(),

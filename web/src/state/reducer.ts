@@ -782,7 +782,16 @@ export function reducer(state: AppState, action: AppAction): AppState {
       };
     }
     case "thread/event": {
-      return applyThreadEvent(state, action.envelope);
+      const { thread_id: threadId, event } = action.envelope;
+      const next = applyThreadEvent(state, action.envelope);
+      // The agent's first browser step in a run shows the Browser tab of the
+      // chat on screen; later steps leave whatever the person chose.
+      const firstBrowserStep = event.kind === "tool_started" && event.tool.startsWith("browser_")
+        && threadId === state.activeThreadId && state.mainView === "thread"
+        && !(state.traces[threadId] ?? []).some((entry) => entry.tool.startsWith("browser_"));
+      return firstBrowserStep
+        ? { ...next, diffPanelOpen: true, workspaceTabRequest: { tab: "browser", at: Date.now() } }
+        : next;
     }
     case "thread/history-loaded": {
       let next: AppState = {

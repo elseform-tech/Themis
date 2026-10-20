@@ -202,7 +202,8 @@ offered. Both ask per site in Custom, and **Allow in this chat** covers that sit
 Page text and results are treated as untrusted. See [web tools](web-tools.md).
 
 Agents can also drive a built-in browser (an installed Chrome, Chromium or Edge,
-with its own profile per project). Open **Workspace → Browser** to watch it: the
+with its own profile per project). **Workspace → Browser** opens by itself when the
+agent starts using it in a run, so you can watch it: the
 line above the page says what the agent is doing. You can click, type or enter an
 address at the same time; the agent keeps working. The speaker button turns the
 page's sound on (it starts off). **DevTools** opens Chrome's

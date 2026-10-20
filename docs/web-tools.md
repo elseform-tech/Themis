@@ -94,6 +94,7 @@ and dialogs. Alerts are accepted; confirm and prompt dialogs are dismissed, so a
 page never gets a "yes" the agent did not give. Everything is untrusted data.
 
 **In Workspace.** The Browser tab streams the chat's current tab at the panel's size.
+The agent's first browser step in a run opens it for the chat on screen.
 Back, Forward, Reload and the address bar work as in any browser. The person and
 the agent use the page at the same time: clicking, typing, scrolling or entering an
 address goes straight to the page and never pauses the agent. While the agent acts,
