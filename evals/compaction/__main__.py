@@ -169,6 +169,8 @@ def behavior(args):
                             "--recent", str(args.recent), "--anchors", args.anchors]
         if args.model:
             command += ["--model", args.model]
+        if args.effort:
+            command += ["--effort", args.effort]
         if args.base_url:
             command += ["--base-url", args.base_url]
         try:
@@ -187,7 +189,8 @@ def behavior(args):
             graded = behavior_grading.grade_run(case, report)
             rows += graded
             raw.append({"trial": trial, "case": case["name"], "turns": report["turns"], "graded": graded})
-    summary = {"suite": "behavior", "anchors": args.anchors, "model": args.model, "budget": args.budget,
+    summary = {"suite": "behavior", "anchors": args.anchors, "model": args.model, "effort": args.effort,
+               "budget": args.budget,
                "trials_requested": args.trials, "failed_runs": failures,
                "summary": behavior_grading.summarize(rows),
                "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -279,6 +282,7 @@ def main(argv=None):
     beh.add_argument("--jobs", type=int, default=3)
     beh.add_argument("--timeout", type=int, default=1200)
     beh.add_argument("--runner", default=None)
+    beh.add_argument("--effort", default=None, help="reasoning effort sent to the provider (e.g. max)")
     beh.add_argument("--out", default=None)
     again = sub.add_parser("regrade", help="re-grade a stored result offline")
     again.add_argument("result")
