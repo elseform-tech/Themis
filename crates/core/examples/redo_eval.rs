@@ -99,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
         "case": spec["name"], "model": model, "budget": budget, "turns": turns,
         "steps": run.steps, "error": run.error, "outputs_written": written,
         "repeat_reminders": run.repeat_reminders, "loop_warnings": run.loop_warnings,
+        "request_failures": run.request_failures,
     });
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())

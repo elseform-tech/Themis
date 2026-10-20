@@ -407,6 +407,8 @@ pub struct TaskRun {
     pub repeat_reminders: usize,
     /// Loop warnings (three unchanged results in a row).
     pub loop_warnings: usize,
+    /// Failed model requests: the error, and any calls a cut-off reply was writing.
+    pub request_failures: Vec<serde_json::Value>,
 }
 
 /// Lets file tools edit the throwaway project; refuses `shell` and `git`, so no
@@ -508,33 +510,38 @@ pub async fn task_run(
     let tools = boxed_tools(project, approvals.clone())?;
     let reminders = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let failures = Arc::new(std::sync::Mutex::new(Vec::new()));
     let result = crate::context_metrics::with_level(
         crate::configuration::ContextMetricsLevel::Detailed,
-        EVAL_REPEAT_REMINDERS.scope(
-            reminders.clone(),
-            EVAL_LOOP_WARNINGS.scope(
-                warnings.clone(),
-                run_task_with_evidence(
-                    llm.clone(),
-                    tools,
-                    task.to_owned(),
-                    Vec::new(),
-                    approvals,
-                    RunPolicy {
-                        total_turns: max_turns,
-                        context_token_budget: policy.context_token_budget,
-                        recent_messages: policy.recent_messages,
-                    },
-                    events,
-                    Arc::new(AtomicBool::new(false)),
-                    String::new(),
-                    Some(evidence),
+        EVAL_REQUEST_FAILURES.scope(
+            failures.clone(),
+            EVAL_REPEAT_REMINDERS.scope(
+                reminders.clone(),
+                EVAL_LOOP_WARNINGS.scope(
+                    warnings.clone(),
+                    run_task_with_evidence(
+                        llm.clone(),
+                        tools,
+                        task.to_owned(),
+                        Vec::new(),
+                        approvals,
+                        RunPolicy {
+                            total_turns: max_turns,
+                            context_token_budget: policy.context_token_budget,
+                            recent_messages: policy.recent_messages,
+                        },
+                        events,
+                        Arc::new(AtomicBool::new(false)),
+                        String::new(),
+                        Some(evidence),
+                    ),
                 ),
             ),
         ),
     )
     .await;
     let steps = collector.await?;
+    let request_failures = std::mem::take(&mut *failures.lock().unwrap_or_else(|e| e.into_inner()));
     let (result, error) = match result {
         Ok(text) => (text, None),
         Err(error) => (String::new(), Some(error.to_string())),
@@ -545,6 +552,7 @@ pub async fn task_run(
         error,
         repeat_reminders: reminders.load(std::sync::atomic::Ordering::SeqCst),
         loop_warnings: warnings.load(std::sync::atomic::Ordering::SeqCst),
+        request_failures,
     })
 }
 

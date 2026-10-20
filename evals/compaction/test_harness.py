@@ -377,6 +377,11 @@ class RedoGradeTests(unittest.TestCase):
         self.assertEqual((row["checkpoints"], row["reads"], row["reads_after_checkpoint"]), (2, 10, 6))
         self.assertEqual((row["reread_share"], row["failed_calls"], row["outputs_written"]), (0.5, 1, 1))
         self.assertEqual(row["evidence_reads"], 2)
+        failures = [{"error": "Provider response was truncated", "retry": 0},
+                    {"cut_off_calls": [{"tool": "write_file", "argument_chars": 9000}]},
+                    {"cut_off_calls": [{"tool": "read_file", "argument_chars": 40}]}]
+        cut = redo.grade_run({"steps": [], "request_failures": failures})
+        self.assertEqual((cut["cut_offs"], cut["cut_off_writes"]), (2, 1))
         summary = redo.summarize([row, dict(row, rereads_after_checkpoint=1)])
         self.assertEqual(summary["rereads_after_checkpoint"]["mean"], 2)
         self.assertEqual(summary["runs"], 2)

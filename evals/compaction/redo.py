@@ -76,6 +76,10 @@ def grade_run(report):
         "requests": sum(s["kind"] == "request" for s in steps),
         "requests_not_completed": sum(s["kind"] == "request" and (s.get("request") or {}).get("status") != "completed"
                                       for s in steps),
+        # Replies cut off at the output limit, and those that were writing a file when cut.
+        "cut_offs": sum("cut_off_calls" in f for f in report.get("request_failures") or []),
+        "cut_off_writes": sum(any(c.get("tool") in ("write_file", "apply_patch") for c in f.get("cut_off_calls", []))
+                              for f in report.get("request_failures") or []),
         # How often the runtime's own repeat reminder and loop warning fired.
         "repeat_reminders": report.get("repeat_reminders"),
         "loop_warnings": report.get("loop_warnings"),
@@ -93,6 +97,6 @@ def summarize(rows):
                 "min": min(values), "max": max(values)}
     keys = ("checkpoints", "calls", "failed_calls", "reads", "evidence_reads", "rereads_after_checkpoint",
             "repeated_reads", "reread_share", "outputs_written", "repeat_reminders", "loop_warnings",
-            "requests", "requests_not_completed")
+            "requests", "requests_not_completed", "cut_offs", "cut_off_writes")
     return {"runs": len(rows), "errors": sum(1 for r in rows if r["error"]),
             **{key: stats(key) for key in keys}}
