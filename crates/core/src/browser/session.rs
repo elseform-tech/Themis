@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -551,16 +551,36 @@ fn short_url(url: &str) -> String {
 /// watch at half the JPEG work of 60. Recordings sample 10 a second.
 const FRAME_GAP: Duration = Duration::from_millis(33);
 
-/// Counts events a tab watcher missed (see [`lagged_events`]).
-static LAGGED_EVENTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Totals since the app started, for diagnostics (see [`stream_stats`]).
+static STREAM_STARTS: AtomicU64 = AtomicU64::new(0);
+static STREAM_STOPS: AtomicU64 = AtomicU64::new(0);
+static STREAM_RESTARTS_AFTER_LAG: AtomicU64 = AtomicU64::new(0);
+static FRAMES: AtomicU64 = AtomicU64::new(0);
+static LAGGED_EVENTS: AtomicU64 = AtomicU64::new(0);
 
 fn tracing_lagged(missed: u64) {
     LAGGED_EVENTS.fetch_add(missed, Ordering::Relaxed);
 }
 
-/// Browser protocol events tab watchers have missed since start (diagnostics).
-pub fn lagged_events() -> u64 {
-    LAGGED_EVENTS.load(Ordering::Relaxed)
+/// Workspace stream totals since the app started.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct StreamStats {
+    pub starts: u64,
+    pub stops: u64,
+    /// Restarts after a tab's protocol events overflowed (see `FRAME_GAP`).
+    pub restarts_after_lag: u64,
+    pub frames: u64,
+    pub lagged_events: u64,
+}
+
+pub fn stream_stats() -> StreamStats {
+    StreamStats {
+        starts: STREAM_STARTS.load(Ordering::Relaxed),
+        stops: STREAM_STOPS.load(Ordering::Relaxed),
+        restarts_after_lag: STREAM_RESTARTS_AFTER_LAG.load(Ordering::Relaxed),
+        frames: FRAMES.load(Ordering::Relaxed),
+        lagged_events: LAGGED_EVENTS.load(Ordering::Relaxed),
+    }
 }
 
 fn spawn_watcher(
@@ -589,6 +609,7 @@ fn spawn_watcher(
                             .as_deref()
                             == Some(session_id.as_str());
                         if streaming {
+                            STREAM_RESTARTS_AFTER_LAG.fetch_add(1, Ordering::Relaxed);
                             tokio::spawn(async move { chat.restart_screencast().await });
                         }
                     }
@@ -623,6 +644,7 @@ fn spawn_watcher(
                 // Chrome sends the next frame only after this acknowledgement;
                 // spacing them caps the stream without skipping a still page's
                 // only frame.
+                FRAMES.fetch_add(1, Ordering::Relaxed);
                 let ack = json!({"sessionId": event.params["sessionId"]});
                 let now = std::time::Instant::now();
                 let wait = next_ack.saturating_duration_since(now);
@@ -1646,6 +1668,7 @@ impl ChatBrowser {
                 .call(Some(&previous), "Page.stopScreencast", json!({}))
                 .await;
         }
+        STREAM_STARTS.fetch_add(1, Ordering::Relaxed);
         cdp.call(
             Some(&tab.session_id),
             "Page.startScreencast",
@@ -1679,6 +1702,7 @@ impl ChatBrowser {
         let inner = self.inner.lock().await;
         if let (Some(session), Some(browser)) = (session.filter(|s| !s.is_empty()), &inner.browser)
         {
+            STREAM_STOPS.fetch_add(1, Ordering::Relaxed);
             let _ = browser
                 .cdp
                 .call(Some(&session), "Page.stopScreencast", json!({}))

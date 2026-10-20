@@ -257,6 +257,8 @@ struct AppStateInner {
     background: Arc<themis_core::tools::background::BackgroundRegistry>,
     /// Built-in browsers (`browser/` in the app data dir: profiles, a downloaded Chromium).
     browsers: Arc<themis_core::browser::BrowserHub>,
+    /// The server's own CPU and memory use (see `resources`).
+    resources: Arc<crate::resources::Monitor>,
     /// Recent command failures, oldest-first, capped at [`MAX_RECENT_ERRORS`].
     recent_errors: std::sync::Mutex<VecDeque<DiagnosticsError>>,
     /// Per-chat prompt queues (`queues/<chat id>.json`), loaded on first use.
@@ -443,6 +445,7 @@ impl AppState {
                         headless: true,
                     },
                 ),
+                resources: Arc::default(),
                 recent_errors: std::sync::Mutex::new(VecDeque::new()),
                 queues: std::sync::Mutex::new(HashMap::new()),
                 queues_dir: app_dir.join(queue::QUEUES_DIR),

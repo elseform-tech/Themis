@@ -268,6 +268,21 @@ impl Server {
 
     pub async fn run(self) -> Result<(), String> {
         self.state.log_server_event("started");
+        // Samples Themis's own CPU and memory use for the title bar and the log.
+        let sampler = self.state.clone();
+        let mut sampler_stop = self.shutdown.subscribe();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(crate::resources::SAMPLE_EVERY);
+            loop {
+                tokio::select! {
+                    _ = every.tick() => {
+                        let state = sampler.clone();
+                        let _ = tokio::task::spawn_blocking(move || state.sample_resources()).await;
+                    }
+                    _ = sampler_stop.recv() => break,
+                }
+            }
+        });
         let mut stopped = self.shutdown.subscribe();
         let mut termination = Termination::install();
         loop {
@@ -1017,6 +1032,7 @@ async fn dispatch_command(
         "continue_review_item" => {
             output!(state.continue_review_item(arg(&args, "reviewId")?).await?)
         }
+        "resource_usage" => output!(state.resource_usage()),
         "get_diagnostics" => output!(
             state
                 .get_diagnostics_with_depth(

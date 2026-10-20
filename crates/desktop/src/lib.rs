@@ -10,6 +10,7 @@ pub mod cli;
 pub mod commands;
 pub mod diff;
 pub mod doctor;
+pub mod resources;
 pub mod secrets;
 pub mod server;
 pub mod settings;

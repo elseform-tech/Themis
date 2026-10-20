@@ -14,4 +14,7 @@ pub mod session;
 pub mod snapshot;
 pub mod tools;
 
-pub use session::{BrowserConfig, BrowserHub, BrowserState, BrowserUpdate, ChatBrowser, UserInput};
+pub use session::{
+    stream_stats, BrowserConfig, BrowserHub, BrowserState, BrowserUpdate, ChatBrowser, StreamStats,
+    UserInput,
+};

@@ -476,12 +476,38 @@ lower-severity records, including info-level approval events. CLI/API queries
 return the filtered records. An explicit MCP test checks only that invocation; it does not establish
 continuous health or guarantee future connections.
 
+### Resource use
+
+The server samples Themis's own process tree every 5 seconds: the app (the
+window process and the server), the built-in browser (Chrome and its helpers)
+and tools (dev servers, MCP servers, background commands and anything they
+start). CPU is CPU time spent between samples over the wall time (percent of
+one core, summed); memory is each process's physical footprint on macOS (as in
+Activity Monitor) and resident size elsewhere. The WebKit process that draws the
+window is started by macOS, not by Themis, and is not counted. One hour of
+samples stays in memory.
+
+- `resources`/`sample` (info, once a minute): CPU and memory per group, core
+  count, and the Workspace browser stream's counts for that minute (`starts`,
+  `stops`, `frames`, `lagged_events`, `restarts_after_lag`).
+- `resources`/`memory_growth` (warn, at most every 30 minutes per group): a
+  group whose memory rose steadily over the last 30 minutes — every sample of
+  the last 10 minutes above every sample of the first 10, and the averages at
+  least 64 MiB apart. A sawtooth (memory freed now and then) or a single spike
+  does not count.
+- `themis call resource_usage '{}'` returns the latest sample: `cpu_percent`,
+  `memory_bytes`, `cores` and `groups` (`app`, `browser`, `tools`, each with
+  `cpu_percent`, `memory_bytes`, `processes` and, when growing, `growing_bytes`),
+  or `null` before the first sample.
+
 The resolver and read/query APIs are available through the actual CLI:
 
 ```sh
 themis call get_runtime_configuration '{"projectRoot":"/path/to/project"}'
 themis call query_diagnostic_logs '{"service":"integration","limit":200}'
 themis call query_diagnostic_logs '{"operationId":"OPERATION_UUID"}'
+themis call query_diagnostic_logs '{"service":"resources","limit":60}'
+themis call resource_usage '{}'
 ```
 
 `save_runtime_configuration` accepts `scope` (`user`/`project`), optional
