@@ -70,7 +70,12 @@ def grade_run(report):
         "reads": reads, "reads_after_checkpoint": reads_after, "evidence_reads": evidence,
         "rereads_after_checkpoint": rereads, "repeated_reads": repeats,
         "reread_share": round(rereads / reads_after, 4) if reads_after else None,
-        "outputs_written": len(report.get("outputs_written") or []),
+        "outputs_written": (len(report["outputs_written"])
+                            if report.get("outputs_written") is not None else None),
+        # Model requests that did not complete (cut off, failed or cancelled), retried or not.
+        "requests": sum(s["kind"] == "request" for s in steps),
+        "requests_not_completed": sum(s["kind"] == "request" and (s.get("request") or {}).get("status") != "completed"
+                                      for s in steps),
         # How often the runtime's own repeat reminder and loop warning fired.
         "repeat_reminders": report.get("repeat_reminders"),
         "loop_warnings": report.get("loop_warnings"),
@@ -87,6 +92,7 @@ def summarize(rows):
                 "sd": round(statistics.stdev(values), 3) if len(values) > 1 else 0.0,
                 "min": min(values), "max": max(values)}
     keys = ("checkpoints", "calls", "failed_calls", "reads", "evidence_reads", "rereads_after_checkpoint",
-            "repeated_reads", "reread_share", "outputs_written", "repeat_reminders", "loop_warnings")
+            "repeated_reads", "reread_share", "outputs_written", "repeat_reminders", "loop_warnings",
+            "requests", "requests_not_completed")
     return {"runs": len(rows), "errors": sum(1 for r in rows if r["error"]),
             **{key: stats(key) for key in keys}}

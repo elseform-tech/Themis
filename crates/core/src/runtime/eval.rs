@@ -357,7 +357,7 @@ pub async fn behavior_turn(
 /// One step of a [`task_run`]: a tool call, a checkpoint or a context snapshot.
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskStep {
-    /// `"call"`, `"checkpoint"` or `"budget"`.
+    /// `"call"`, `"checkpoint"`, `"budget"` or `"request"`.
     pub kind: &'static str,
     /// Tool name for a call.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -377,6 +377,9 @@ pub struct TaskStep {
     /// `"budget"` steps: the context snapshot taken before a model request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget: Option<ContextBudget>,
+    /// `"request"` steps: one model request's record (status, output limit and tokens).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<serde_json::Value>,
 }
 
 impl TaskStep {
@@ -389,6 +392,7 @@ impl TaskStep {
             text: String::new(),
             output_chars: None,
             budget: None,
+            request: None,
         }
     }
 }
@@ -427,6 +431,7 @@ pub async fn task_run(
     project: &std::path::Path,
     policy: EvalPolicy,
     max_turns: usize,
+    trace: Option<std::path::PathBuf>,
 ) -> anyhow::Result<TaskRun> {
     use crate::tools::{boxed_tools, ApprovalHook};
     let evidence = project.join(".themis/context/task");
@@ -436,7 +441,27 @@ pub async fn task_run(
     let collector = tokio::spawn(async move {
         let mut steps: Vec<TaskStep> = Vec::new();
         let mut said = String::new();
+        let mut requests_seen = 0u64;
+        // Each step is appended to the trace as it happens, so a run cut off by a harness
+        // timeout still leaves its record.
+        let mut trace = trace.and_then(|path| std::fs::File::create(path).ok());
+        let mut written = 0;
         while let Some(event) = receiver.recv().await {
+            if let RunEvent::ContextUsage { metrics } = &event {
+                let total = metrics["total_requests"].as_u64().unwrap_or(requests_seen);
+                let records = metrics["recent_requests"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                let new = (total.saturating_sub(requests_seen) as usize).min(records.len());
+                for record in &records[records.len() - new..] {
+                    steps.push(TaskStep {
+                        request: Some(record.clone()),
+                        ..TaskStep::new("request")
+                    });
+                }
+                requests_seen = total;
+            }
             match event {
                 RunEvent::AssistantText(delta) => said.push_str(&delta),
                 RunEvent::ToolCallStarted { tool, summary } => steps.push(TaskStep {
@@ -463,14 +488,29 @@ pub async fn task_run(
                 }),
                 _ => {}
             }
+            if let Some(file) = trace.as_mut() {
+                use std::io::Write;
+                // A call is written once its result is in; earlier steps are complete.
+                let complete = steps.len()
+                    - usize::from(
+                        steps
+                            .last()
+                            .is_some_and(|s| s.kind == "call" && s.ok.is_none()),
+                    );
+                for step in &steps[written.min(complete)..complete] {
+                    let _ = writeln!(file, "{}", serde_json::to_string(step).unwrap_or_default());
+                }
+                written = written.max(complete);
+            }
         }
         steps
     });
     let tools = boxed_tools(project, approvals.clone())?;
     let reminders = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let result = EVAL_REPEAT_REMINDERS
-        .scope(
+    let result = crate::context_metrics::with_level(
+        crate::configuration::ContextMetricsLevel::Detailed,
+        EVAL_REPEAT_REMINDERS.scope(
             reminders.clone(),
             EVAL_LOOP_WARNINGS.scope(
                 warnings.clone(),
@@ -491,8 +531,9 @@ pub async fn task_run(
                     Some(evidence),
                 ),
             ),
-        )
-        .await;
+        ),
+    )
+    .await;
     let steps = collector.await?;
     let (result, error) = match result {
         Ok(text) => (text, None),

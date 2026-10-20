@@ -8,6 +8,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 
 from . import behavior as behavior_grading
 from . import redo as redo_grading
@@ -274,27 +275,41 @@ def midturn(args):
               else shlex.split(args.runner) if args.runner else build_redo_runner())
     jobs = [(trial, case) for trial in range(args.trials) for case in cases]
 
+    traces = tempfile.mkdtemp(prefix="midturn-")
+
+    def partial(trace, error):
+        """A run that did not finish still has the steps it streamed to its trace."""
+        try:
+            with open(trace, encoding="utf-8") as handle:
+                steps = [json.loads(line) for line in handle if line.strip()]
+        except OSError:
+            return None
+        return {"steps": steps, "error": f"incomplete: {error}", "outputs_written": None} if steps else None
+
     def work(job):
         trial, case = job
+        trace = os.path.join(traces, f"{os.path.basename(case)}-{trial}.jsonl")
         command = runner + ["--case", case, "--budget", str(args.budget), "--recent", str(args.recent),
-                            "--turns", str(args.turns)]
+                            "--turns", str(args.turns), "--trace", trace]
         for flag, value in (("--model", args.model), ("--effort", args.effort), ("--base-url", args.base_url)):
             if value:
                 command += [flag, value]
         try:
             done = subprocess.run(command, capture_output=True, text=True, timeout=args.timeout)
             if done.returncode != 0:
-                return job, None, (done.stderr or done.stdout).strip()[-400:]
+                error = (done.stderr or done.stdout).strip()[-400:]
+                return job, partial(trace, error), error
             return job, json.loads(done.stdout), None
         except (subprocess.TimeoutExpired, ValueError) as error:
-            return job, None, str(error)
+            return job, partial(trace, error), str(error)
 
     rows, failures, raw = [], [], []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for (trial, case), report, error in pool.map(work, jobs):
             name = os.path.basename(case)
+            if error:
+                failures.append({"trial": trial, "case": name, "error": error, "partial": bool(report)})
             if not report:
-                failures.append({"trial": trial, "case": name, "error": error})
                 continue
             graded = redo_grading.grade_run(report)
             rows.append(graded)

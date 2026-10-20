@@ -438,6 +438,9 @@ class MidturnEndToEndTests(unittest.TestCase):
         # Each model request is preceded by a context snapshot.
         self.assertGreaterEqual(sum(s["kind"] == "budget" for s in steps), 2)
         self.assertTrue(all(s["budget"]["usable_tokens"] > 0 for s in steps if s["kind"] == "budget"))
+        # Both model requests are recorded and completed.
+        self.assertEqual(result["details"][0]["graded"]["requests"], 2)
+        self.assertEqual(result["details"][0]["graded"]["requests_not_completed"], 0)
         self.assertEqual(result["summary"]["reads"]["mean"], 1)
 
 

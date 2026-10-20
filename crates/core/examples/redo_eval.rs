@@ -4,7 +4,7 @@
 //!
 //!   cargo run --release -p themis-core --features eval --example redo_eval -- \
 //!     --case evals/compaction/cases/midturn-ephemeris --model M --budget 16000 \
-//!     [--turns 40] [--effort max] [--base-url URL]
+//!     [--turns 40] [--effort max] [--base-url URL] [--trace steps.jsonl]
 //!
 //! `shell` and `git` are always denied; file tools may write inside the temporary project.
 
@@ -77,7 +77,14 @@ async fn main() -> anyhow::Result<()> {
     };
     let run = themis_core::providers::with_catalog_limits(
         &catalog,
-        task_run(&llm, task, project.path(), policy, turns),
+        task_run(
+            &llm,
+            task,
+            project.path(),
+            policy,
+            turns,
+            arg("--trace").map(PathBuf::from),
+        ),
     )
     .await?;
     let written: Vec<String> = spec["outputs"]
