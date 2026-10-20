@@ -264,6 +264,17 @@ class BehaviorGradeTests(unittest.TestCase):
         row = behavior.grade_turn(self.CASE, spec, {"reply": "Done.", "tool_calls": []})
         self.assertEqual((row["first_call"], row["pass"]), (None, False))
 
+    def test_no_redo_case_counts_rereads_not_listings(self):
+        case = next(c for c in harness.load_cases("behavior") if c["name"] == "behavior-no-redo")
+        spec = case["behavior"]["turns"][0]
+        self.assertTrue(os.path.isfile(os.path.join(case["directory"], "project", "data", "vsop87", "VSOP87D.ear")))
+        for call, kind in (('list_dir: call `list_dir` with {"directory_path":"data/vsop87"}', "other"),
+                           ('shell: call `shell` with {"command":"sh","args":["-c","ls data/vsop87; cat package.json"]}', "other"),
+                           ('shell: call `shell` with {"command":"sh","args":["-c","head -20 data/vsop87/VSOP87D.ear"]}', "redo"),
+                           ('read_file: call `read_file` with {"file_path":"data/vsop87/vsop87.txt"}', "redo"),
+                           ('read_file: call `read_file` with {"file_path":"data/horizons_reference.json"}', "other")):
+            self.assertEqual(behavior.classify_call(call, spec["resume"], spec["redo"]), kind, call)
+
     def test_every_behavior_case_is_well_formed(self):
         cases = harness.load_cases("behavior")
         self.assertEqual(sorted(c["name"] for c in cases), [

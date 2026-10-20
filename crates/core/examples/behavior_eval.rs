@@ -13,7 +13,7 @@
 //! historical anchors for every message); `new` skips them for social turns and when the
 //! text is already verbatim in the working context.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use themis_core::providers::{resolve, ProviderConfig, ProviderKind};
@@ -21,6 +21,22 @@ use themis_core::runtime::eval::{
     behavior_turn, compact_chunks, history_from_messages, parse_transcript, EvalPolicy,
 };
 use themis_core::runtime::{is_short_reply, ConversationRole, ConversationTurn};
+
+/// Copies a case's optional `project/` folder into the turn's project, so the files the
+/// conversation talks about exist when the agent looks.
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            std::fs::create_dir_all(&target)?;
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
 
 fn arg(flag: &str) -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
@@ -114,6 +130,9 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         let project = tempfile::tempdir()?;
+        if case.join("project").is_dir() {
+            copy_tree(&case.join("project"), project.path())?;
+        }
         let result = behavior_turn(
             &llm,
             history,

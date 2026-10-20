@@ -605,13 +605,28 @@ def behavior_no_redo():
     ]
     goal = "Build src/astro/ephemeris.js from data/vsop87 and match data/horizons_reference.json within 1 arcminute"
     resume = r"(?i)ephemeris"
-    redo = r"(?i)data/vsop87|VSOP87D\.|vsop87\.txt|\bcurl\b|\bwget\b|web_?fetch"
+    # Reading a recorded source's contents again; listing a folder is orientation.
+    redo = (r"(?i)\b(head|tail|sed|cat|awk|nl|less|grep)\b[^;&|\n]*(VSOP87D\.|vsop87\.txt)"
+            r'|"file_path":"[^"]*(VSOP87D\.|vsop87\.txt)|\bcurl\b|\bwget\b|web_?fetch')
     behavior = {"turns": [
         turn_spec("continue", "continue", "no_redo", False, resume=resume, redo=redo),
         turn_spec("goal_turn", f"[Goal — runtime, not from the user] Turn 5. Goal: {goal}\nLast check: not_yet | src/astro/ephemeris.js and its Horizons comparison test are missing.\nContinue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement.",
                   "no_redo", False, resume=resume, redo=redo),
         turn_spec("keep_going", "keep going", "no_redo", False, resume=resume, redo=redo),
     ], "markers": r"(?i)$^", "max_chars": 6000}
+    project = {
+        "data/vsop87/VSOP87D.ear": VSOP_HEAD,
+        "data/vsop87/vsop87.txt": "Each term: A*cos(B+C*T). T in thousands of Julian years from J2000.\n",
+        "data/horizons_reference.json": '{"mars": {"ra_deg": 213.47121, "dec_deg": -12.80233}, "jupiter": {"ra_deg": 118.03594, "dec_deg": 21.14520}}\n',
+        "src/astro/vsop87.js": "export function parseVsop87(text) {\n  // header + term lines -> {L,B,R}[k] arrays of [A,B,C]\n}\nexport function evaluate(series, T) {\n  // sum A*cos(B+C*T) * T^k\n}\n",
+        "tests/vsop87.test.js": "import test from 'node:test';\ntest('parses every series', () => {});\n",
+        "package.json": '{"name": "planetarium", "type": "module", "scripts": {"test": "node --test tests/*.test.js"}}\n',
+    }
+    for relative, text in project.items():
+        path = os.path.join(CASES, "behavior-no-redo", "project", relative)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
     finish(os.path.join(CASES, "behavior-no-redo"), "behavior-no-redo", "behavior", t, probes,
            "Write src/astro/ephemeris.js and tests/ephemeris.test.js.",
            "Data format, documentation and reference values were read and recorded before compaction; resuming should not read them again.",
