@@ -404,13 +404,13 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
     chat.open(page, false).await.unwrap();
     assert!(chat.state().await.muted);
     shows("sound off").await;
-    chat.set_muted(false).await;
+    chat.set_muted(false).await.unwrap();
     assert!(!chat.state().await.muted);
     shows("sound on").await;
     // A page loaded later follows the speaker too.
     chat.navigate("reload").await.unwrap();
     shows("sound on").await;
-    chat.set_muted(true).await;
+    chat.set_muted(true).await.unwrap();
     shows("sound off").await;
     hub.close_chat("chat-sound").await;
 }

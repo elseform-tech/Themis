@@ -504,26 +504,33 @@ fn cap(text: &str, limit: usize) -> String {
 
 /// Applies the speaker setting to the tab's current and future documents;
 /// returns the new-document script's id.
-async fn install_audio(cdp: &Cdp, session: &str, muted: bool) -> Option<String> {
+async fn install_audio(cdp: &Cdp, session: &str, muted: bool) -> Result<String, String> {
     let source = format!(
         "{}\nwindow.__themisAudio({muted});",
         include_str!("audio.js")
     );
-    let _ = cdp
+    let added = cdp
+        .call(
+            Some(session),
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": source}),
+        )
+        .await?;
+    let identifier = added["identifier"]
+        .as_str()
+        .ok_or("the browser did not accept the sound setting")?
+        .to_owned();
+    let ran = cdp
         .call(
             Some(session),
             "Runtime.evaluate",
             json!({"expression": source}),
         )
-        .await;
-    cdp.call(
-        Some(session),
-        "Page.addScriptToEvaluateOnNewDocument",
-        json!({"source": source}),
-    )
-    .await
-    .ok()
-    .and_then(|added| added["identifier"].as_str().map(str::to_owned))
+        .await?;
+    if ran.get("exceptionDetails").is_some() {
+        return Err("the page did not take the sound setting".into());
+    }
+    Ok(identifier)
 }
 
 fn push_note(state: &Mutex<TabState>, note: String) {
@@ -772,27 +779,39 @@ impl ChatBrowser {
     }
 
     /// Turns the Workspace speaker off (`muted`) or on for every tab.
-    pub async fn set_muted(&self, muted: bool) {
-        self.muted.store(muted, Ordering::SeqCst);
-        {
-            let mut inner = self.inner.lock().await;
-            if let Some(browser) = inner.browser.clone() {
-                for tab in &mut inner.tabs {
-                    if let Some(old) = tab.audio_script.take() {
-                        let _ = browser
-                            .cdp
-                            .call(
-                                Some(&tab.session_id),
-                                "Page.removeScriptToEvaluateOnNewDocument",
-                                json!({"identifier": old}),
-                            )
-                            .await;
-                    }
-                    tab.audio_script = install_audio(&browser.cdp, &tab.session_id, muted).await;
-                }
-            }
+    /// The setting is reported only once every tab took it; on failure the
+    /// previous setting stays (and is shown).
+    pub async fn set_muted(&self, muted: bool) -> Result<(), String> {
+        let previous = self.muted.swap(muted, Ordering::SeqCst);
+        let result = self.apply_muted(muted).await;
+        if result.is_err() {
+            self.muted.store(previous, Ordering::SeqCst);
+            let _ = self.apply_muted(previous).await;
         }
         self.publish_state_waiting().await;
+        result
+    }
+
+    async fn apply_muted(&self, muted: bool) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        let Some(browser) = inner.browser.clone() else {
+            return Ok(());
+        };
+        for tab in &mut inner.tabs {
+            // The new script goes in before the old one comes out.
+            let new = install_audio(&browser.cdp, &tab.session_id, muted).await?;
+            if let Some(old) = tab.audio_script.replace(new) {
+                let _ = browser
+                    .cdp
+                    .call(
+                        Some(&tab.session_id),
+                        "Page.removeScriptToEvaluateOnNewDocument",
+                        json!({"identifier": old}),
+                    )
+                    .await;
+            }
+        }
+        Ok(())
     }
 
     /// The current state, for the Workspace view.
@@ -995,7 +1014,9 @@ impl ChatBrowser {
                 json!({"width": viewport.width, "height": viewport.height, "deviceScaleFactor": viewport.scale, "mobile": false}),
             )
             .await;
-        let audio_script = install_audio(cdp, &session_id, self.muted.load(Ordering::SeqCst)).await;
+        // A tab that cannot take the sound setting is not opened.
+        let audio_script =
+            Some(install_audio(cdp, &session_id, self.muted.load(Ordering::SeqCst)).await?);
         inner.tabs.push(Tab {
             target_id,
             session_id,
