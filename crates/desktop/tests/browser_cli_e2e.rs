@@ -1,7 +1,8 @@
 //! The built-in browser through the real shared server and the `themis` CLI:
-//! a scripted model opens a local page and clicks a ref from the snapshot, a
-//! site rule refuses another host, and the Workspace commands (state, take
-//! over, hand back) answer for the same chat. Skipped without a Chromium.
+//! a scripted model opens a local page, clicks a ref from the snapshot and a
+//! point of the page, a site rule refuses another host, and the Workspace
+//! commands (state, open an address, sound) answer for the same chat. Skipped
+//! without a Chromium.
 
 use std::path::Path;
 use std::time::Duration;
