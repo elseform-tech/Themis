@@ -23,8 +23,8 @@ const MOVE_INTERVAL_MS = 50;
 
 /**
  * The chat's built-in browser: the same page the agent drives, streamed from
- * the backend. Any input takes over; the agent's browser actions wait until
- * Hand back. Nothing here changes project files.
+ * the backend. The person and the agent use it at the same time. Nothing here
+ * changes project files.
  */
 export function BrowserView({ threadId }: { threadId: string }) {
   const [state, setState] = useState<BrowserState | null>(null);
