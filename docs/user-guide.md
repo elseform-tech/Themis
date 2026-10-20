@@ -97,7 +97,8 @@ is reached; for example `/goal optimize this app to speed up p95`.
   not count). Its icons are
   **Edit** (applies from the next turn; the current turn keeps running),
   **Pause** (after this turn) or **Resume**, **Remove** (the current turn finishes;
-  no further turns or checks), and **Show/Hide** for the full sentence.
+  no further turns or checks), and **Show/Hide** for the full sentence. In a narrow
+  chat the sentence sits on its own line below the icons.
 - **After each turn** a separate check, with a fresh context, reads the goal, the
   turn's answer and the commands it ran, and decides: reached, not yet (the next
   turn starts by itself, told why), or not reachable as written. With a number in
