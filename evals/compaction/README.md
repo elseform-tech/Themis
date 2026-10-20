@@ -123,3 +123,19 @@ the harness changes), `...-ablate-single-pass`, `...-ablate-lean-prompt` (ablati
 branch) and parked-case reruns, plus `behavior-main-c34da50` and `behavior-simplify`. These use
 the current grader (probe request errors excluded), so compare them with each other rather than
 with the 2026-10-13/14 files. See `docs/verification/simplify-compaction-2026-10-15.md`.
+
+## Recorded results (2026-10-20)
+
+`results/2026-10-20-behavior-*` test a checkpoint-envelope nudge ("when resuming, start from its
+next action and re-read a source it records only for detail it lacks or when something
+contradicts it"), with minimax-m3.1-flash-free at a 24k budget. `-main` is main at the time; `-nudge`
+adds the clause (branch `codex/checkpoint-nudge`, not merged).
+
+- `behavior-no-redo`, 8 trials × 3 turns per arm: no first call re-read a recorded source in
+  either arm (0/24 each); turns with any re-read: 0/24 main, 1/24 nudge. The case does not
+  reproduce the live re-research (one checkpoint, default effort), so it cannot show a benefit,
+  and the nudge was not shipped.
+- `behavior-guard-*`: the four older behavior cases, 2 trials per arm, as a regression check
+  (greeting pass 0.125 main vs 0.25 nudge; unrelated 0.83 vs 1.0; topic return 1.0 vs 1.0;
+  continue 0.83 vs 1.0). Too few trials to read as a difference. Note that this model resumes the
+  task after most greetings in both arms.
