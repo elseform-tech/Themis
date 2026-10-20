@@ -16,6 +16,7 @@ import unittest
 
 from . import __main__ as harness
 from . import behavior
+from . import redo
 from .grade import grade, matches, position
 from .report import aggregate, spread, trial_rows, trial_summary
 
@@ -350,6 +351,88 @@ class BehaviorEndToEndTests(unittest.TestCase):
         self.assertEqual(len(greeting_requests), 4)
         # No anchor message reaches a social turn; the other cases may still carry one.
         self.assertTrue(BehaviorMock.anchored.count(False) >= 4)
+
+
+def _call(tool, args, ok=True):
+    return {"kind": "call", "tool": tool, "summary": f"call `{tool}` with {json.dumps(args)}", "ok": ok}
+
+
+class RedoGradeTests(unittest.TestCase):
+    def test_rereads_after_a_checkpoint_are_told_apart_from_plain_repeats(self):
+        doc = _call("read_file", {"file_path": "docs/vsop87.txt"})
+        data = _call("read_file", {"file_path": "data/vsop87/VSOP87D.ear", "offset": 0, "limit": 40})
+        other_slice = _call("read_file", {"file_path": "data/vsop87/VSOP87D.ear", "offset": 40, "limit": 40})
+        mine = _call("read_file", {"file_path": "src/astro/vsop87.js"})
+        write = _call("write_file", {"file_path": "src/astro/vsop87.js", "content": "x"})
+        patch = _call("apply_patch", {"patch": "--- a/src/astro/vsop87.js\n+++ b/src/astro/vsop87.js\n@@ -1 +1 @@\n-x\n+y\n"})
+        checkpoint = {"kind": "checkpoint"}
+        steps = [doc, data, doc, write, mine, checkpoint, doc, data, other_slice, mine, patch,
+                 checkpoint, mine, _call("shell", {"command": "ls"}, ok=False)]
+        row = redo.grade_run({"steps": steps, "outputs_written": ["src/astro/vsop87.js"]})
+        # doc twice before any checkpoint: a repeat; doc, data and the unchanged parser after one: rereads;
+        # the other slice is new; the parser read after the patch is a fresh read.
+        self.assertEqual((row["repeated_reads"], row["rereads_after_checkpoint"]), (1, 3))
+        self.assertEqual((row["checkpoints"], row["reads"], row["reads_after_checkpoint"]), (2, 9, 5))
+        self.assertEqual((row["reread_share"], row["failed_calls"], row["outputs_written"]), (0.6, 1, 1))
+        summary = redo.summarize([row, dict(row, rereads_after_checkpoint=1)])
+        self.assertEqual(summary["rereads_after_checkpoint"]["mean"], 2)
+        self.assertEqual(summary["runs"], 2)
+
+    def test_the_midturn_case_ships_its_project_and_task(self):
+        case = os.path.join(harness.CASES, "midturn-ephemeris")
+        with open(os.path.join(case, "task.json"), encoding="utf-8") as handle:
+            task = json.load(handle)
+        self.assertIn("shell is unavailable", task["task"])
+        for path in ("README.md", "docs/vsop87.txt", "data/vsop87/VSOP87D.ear", "src/astro/time.js"):
+            self.assertTrue(os.path.isfile(os.path.join(case, "project", path)), path)
+        with open(os.path.join(case, "project", "data", "vsop87", "VSOP87D.ear"), encoding="utf-8") as handle:
+            term = handle.read().splitlines()[1]
+        # The documented columns 80-97, 98-111 and 112-131 hold A, B and C.
+        float(term[79:97]), float(term[97:111]), float(term[111:131])
+
+
+@unittest.skipUnless(shutil.which("cargo"), "cargo is required to build the eval example")
+class MidturnEndToEndTests(unittest.TestCase):
+    """Plumbing only: a scripted provider that reads one file, then answers."""
+
+    def test_runner_records_calls_and_writes_a_graded_result(self):
+        subprocess.run(["cargo", "build", "-q", "-p", "themis-core", "--features", "eval",
+                        "--example", "redo_eval"], cwd=harness.ROOT, check=True)
+        runner = os.path.join(harness.target_dir(), "debug", "examples", "redo_eval" + harness.EXE)
+
+        class Scripted(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                done = any(m.get("role") == "tool" for m in body["messages"])
+                message = ({"role": "assistant", "content": "Done."} if done else
+                           {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function",
+                            "function": {"name": "read_file", "arguments": json.dumps({"file_path": "README.md"})}}]})
+                payload = json.dumps({"id": "x", "object": "chat.completion", "choices": [
+                    {"index": 0, "message": message, "finish_reason": "stop" if done else "tool_calls"}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Scripted)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "result.json")
+            code = harness.main(["midturn", "--trials", "1", "--model", "mock-model", "--runner", runner,
+                                 "--base-url", f"http://127.0.0.1:{server.server_address[1]}", "--out", out])
+            self.assertEqual(code, 0)
+            with open(out, encoding="utf-8") as handle:
+                result = json.load(handle)
+        self.assertEqual(result["failed_runs"], [])
+        steps = result["details"][0]["steps"]
+        self.assertEqual([(s["kind"], s["tool"], s["ok"]) for s in steps], [("call", "read_file", True)])
+        self.assertEqual(result["summary"]["reads"]["mean"], 1)
 
 
 KNOWN_WRONG = {
