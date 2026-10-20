@@ -174,6 +174,7 @@ impl AppState {
         self.forget_chat_grants(&ids);
         self.forget_queues(&ids);
         self.forget_goals(&ids);
+        self.forget_browsers(&ids).await;
         self.forget_background_tasks(&ids).await;
         self.persist_registry().await;
         let root_text = root.to_string_lossy().into_owned();

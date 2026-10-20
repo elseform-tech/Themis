@@ -201,6 +201,12 @@ SearXNG instance you run and name in the user `runtime.jsonc`
 offered. Both ask per site in Custom, and **Allow in this chat** covers that site.
 Page text and results are treated as untrusted. See [web tools](web-tools.md).
 
+Agents can also drive a built-in browser (an installed Chrome, Chromium or Edge,
+with its own profile per project). Open **Workspace → Browser** to watch it: the
+line above the page says what the agent is doing. Click, type or enter an address to
+take over; the agent waits until you press **Hand back**. **DevTools** opens Chrome's
+DevTools for the page. Browser actions ask per site, like page reads.
+
 ### The sandbox
 
 Commands the agent runs (shell commands, background tasks, the git tool and

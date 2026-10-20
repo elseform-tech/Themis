@@ -104,3 +104,10 @@ path = "fuzz_targets/searxng_results.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "browser_snapshot"
+path = "fuzz_targets/browser_snapshot.rs"
+test = false
+doc = false
+bench = false

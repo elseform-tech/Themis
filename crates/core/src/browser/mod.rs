@@ -1,0 +1,16 @@
+//! The built-in browser: a native Chrome DevTools Protocol client driving a
+//! headless Chromium that the agent and the person share.
+//!
+//! - [`cdp`]: the protocol connection.
+//! - [`launch`]: finding and starting a browser with its own profile.
+//! - [`snapshot`]: the accessibility outline with refs the model acts on.
+//! - [`session`]: per-chat tabs, actions, take over and the Workspace stream.
+//! - [`tools`]: the agent's `browser_*` tools.
+
+pub mod cdp;
+pub mod launch;
+pub mod session;
+pub mod snapshot;
+pub mod tools;
+
+pub use session::{BrowserConfig, BrowserHub, BrowserState, BrowserUpdate, ChatBrowser, UserInput};

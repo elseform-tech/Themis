@@ -141,6 +141,29 @@ impl Client {
         }
     }
 
+    /// One chat's browser updates (state and screencast frames); the first
+    /// value is the current state.
+    pub async fn subscribe_browser(&self, thread_id: &str) -> Result<(TcpStream, Value), String> {
+        let (mut stream, discovery) = self.connect().await?;
+        write_frame(
+            &mut stream,
+            &Request {
+                token: discovery.token,
+                method: "subscribe_browser".to_owned(),
+                args: json!({"threadId": thread_id}),
+            },
+        )
+        .await?;
+        let reply: Response = read_frame(&mut stream).await?;
+        if reply.ok {
+            Ok((stream, reply.value))
+        } else {
+            Err(reply
+                .error
+                .unwrap_or_else(|| "browser subscription failed".to_owned()))
+        }
+    }
+
     pub async fn next_event(stream: &mut TcpStream) -> Result<Value, String> {
         read_frame(stream).await
     }
@@ -376,6 +399,48 @@ async fn serve_connection(
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     write_frame(&mut stream, &json!({"name": "lagged", "payload": null})).await?;
                 }
+                Err(broadcast::error::RecvError::Closed) => return Ok(()),
+            }
+        }
+    }
+    if request.method == "subscribe_browser" {
+        // One chat's browser updates on their own connection, so screencast
+        // frames never crowd the app's event stream. Frames a slow reader
+        // misses are skipped; the next one replaces them.
+        let thread_id = arg::<String>(&request.args, "threadId")?;
+        let mut rx = match state.browser_updates(&thread_id).await {
+            Ok(rx) => rx,
+            Err(error) => {
+                return write_frame(
+                    &mut stream,
+                    &Response {
+                        ok: false,
+                        value: Value::Null,
+                        error: Some(error),
+                    },
+                )
+                .await;
+            }
+        };
+        write_frame(
+            &mut stream,
+            &Response {
+                ok: true,
+                value: state.browser_state(&thread_id).await.unwrap_or(Value::Null),
+                error: None,
+            },
+        )
+        .await?;
+        loop {
+            match rx.recv().await {
+                Ok(update) => {
+                    let payload = crate::state::browser_update_payload(&update);
+                    let bytes = serde_json::to_vec(&payload).map_err(|err| err.to_string())?;
+                    if bytes.len() <= MAX_FRAME {
+                        write_bytes(&mut stream, &bytes).await?;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => return Ok(()),
             }
         }
@@ -816,6 +881,70 @@ async fn dispatch_command(
                 .await?
         ),
         "list_automations" => output!(state.list_automations().await),
+        "browser_state" => {
+            state
+                .browser_state(&arg::<String>(&args, "threadId")?)
+                .await
+        }
+        "browser_screencast" => done!(
+            state
+                .browser_screencast(
+                    &arg::<String>(&args, "threadId")?,
+                    arg(&args, "width")?,
+                    arg(&args, "height")?,
+                    arg(&args, "scale")?,
+                )
+                .await
+        ),
+        "browser_screencast_stop" => {
+            done!(
+                state
+                    .browser_screencast_stop(&arg::<String>(&args, "threadId")?)
+                    .await
+            )
+        }
+        "browser_input" => done!(
+            state
+                .browser_input(&arg::<String>(&args, "threadId")?, args["input"].clone())
+                .await
+        ),
+        "browser_control" => done!(
+            state
+                .browser_control(&arg::<String>(&args, "threadId")?, arg(&args, "user")?)
+                .await
+        ),
+        "browser_open_url" => done!(
+            state
+                .browser_open_url(
+                    &arg::<String>(&args, "threadId")?,
+                    &arg::<String>(&args, "address")?,
+                )
+                .await
+        ),
+        "browser_navigate" => done!(
+            state
+                .browser_navigate(
+                    &arg::<String>(&args, "threadId")?,
+                    &arg::<String>(&args, "action")?,
+                )
+                .await
+        ),
+        "browser_tab" => done!(
+            state
+                .browser_tab(
+                    &arg::<String>(&args, "threadId")?,
+                    &arg::<String>(&args, "action")?,
+                    arg(&args, "tab")?,
+                )
+                .await
+        ),
+        "browser_devtools_url" => {
+            output!(
+                state
+                    .browser_devtools_url(&arg::<String>(&args, "threadId")?)
+                    .await?
+            )
+        }
         "get_thread_tasks" => output!(
             state
                 .get_thread_tasks(&arg::<String>(&args, "threadId")?)

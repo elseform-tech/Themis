@@ -648,6 +648,7 @@ impl AppState {
         self.forget_chat_grants(std::slice::from_ref(&thread_id));
         self.forget_queues(std::slice::from_ref(&thread_id));
         self.forget_goals(std::slice::from_ref(&thread_id));
+        self.forget_browsers(std::slice::from_ref(&thread_id)).await;
         self.forget_background_tasks(&[thread_id]).await;
         self.persist_registry().await;
         Ok(())

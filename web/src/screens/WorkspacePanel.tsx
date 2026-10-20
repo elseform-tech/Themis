@@ -5,29 +5,36 @@ import type { DirEntry, FileView, WorkspaceInfo } from "../lib/types";
 import { getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
+import { BrowserView } from "./BrowserView";
 import { TasksView } from "./TasksView";
 import { countTasks } from "./threadTasks";
 import "./WorkspacePanel.css";
 
-type Tab = "changes" | "files" | "branches" | "pulls" | "tasks";
-const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"]];
+type Tab = "changes" | "files" | "branches" | "pulls" | "tasks" | "browser";
+const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["browser", "Browser"]];
 const MIN_WIDTH = 380;
 const MAX_WIDTH = 1200;
 const DEFAULT_WIDTH = 560;
+/** The Browser tab needs room for a page; it remembers its own width. */
+const BROWSER_DEFAULT_WIDTH = 760;
 
 function clampWidth(value: number) {
   return Math.round(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, value)));
 }
 
-/** Read-only monitor of what agents change (diffs, files, branches, PRs) plus Stop and Pause for this chat's tasks. */
+/** Read-only monitor of what agents change (diffs, files, branches, PRs), Stop and Pause for this chat's tasks, and the chat's built-in browser. */
 export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRoot: string; threadId: string; workspace: WorkspaceInfo | null }) {
   const { state, dispatch } = useApp();
   const [tab, setTab] = useState<Tab>(() => state.workspaceTabRequest ? state.workspaceTabRequest.tab : readSession<Tab>("workspaceTab", "changes"));
-  const [width, setWidth] = useState(() => clampWidth(Number(readSession("workspacePanelWidth", DEFAULT_WIDTH)) || DEFAULT_WIDTH));
+  const widthKey = tab === "browser" ? "workspaceBrowserWidth" : "workspacePanelWidth";
+  const defaultWidth = tab === "browser" ? BROWSER_DEFAULT_WIDTH : DEFAULT_WIDTH;
+  const [widths, setWidths] = useState<Record<string, number>>({});
+  const width = widths[widthKey] ?? (clampWidth(Number(readSession(widthKey, defaultWidth)) || defaultWidth));
+  const setWidth = (value: number) => setWidths(previous => ({ ...previous, [widthKey]: value }));
   const panel = useRef<HTMLElement>(null);
   const drag = useRef<{ x: number; width: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-  function resize(next: number) { const value = clampWidth(next); setWidth(value); writeSession("workspacePanelWidth", value); }
+  function resize(next: number) { const value = clampWidth(next); setWidth(value); writeSession(widthKey, value); }
   // While dragging only the element width changes; state and storage update on release.
   const lastWidth = useRef<number | null>(null);
   function preview(clientX: number) { if (!drag.current || !panel.current) return; lastWidth.current = clampWidth(drag.current.width + drag.current.x - clientX); panel.current.style.width = `${lastWidth.current}px`; }
@@ -52,7 +59,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         onPointerMove={event => preview(event.clientX)}
         onPointerUp={finish}
         onLostPointerCapture={finish}
-        onDoubleClick={() => resize(DEFAULT_WIDTH)}
+        onDoubleClick={() => resize(defaultWidth)}
         onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); resize(width + 40); } else if (event.key === "ArrowRight") { event.preventDefault(); resize(width - 40); } }} />
       <header className="themis-workspace-head">
         <div className="themis-workspace-where">
@@ -75,6 +82,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         {tab === "branches" && <BranchesView workspace={workspace} />}
         {tab === "pulls" && <PullRequestsView projectRoot={projectRoot} />}
         {tab === "tasks" && <TasksView threadId={threadId} />}
+        {tab === "browser" && <BrowserView threadId={threadId} />}
       </div>
     </aside>
   );

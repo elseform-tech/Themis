@@ -1,0 +1,251 @@
+//! Finding and starting a Chromium browser for the agent.
+//!
+//! The browser runs headless with its own profile directory (never the
+//! person's real profile), a debugging port chosen by the OS, and no first-run
+//! UI. Its process group is killed when the handle drops.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+use super::cdp::Cdp;
+
+/// How long a starting browser may take to report its debugging address.
+const START_TIMEOUT: Duration = Duration::from_secs(20);
+/// Initial window size; the Workspace view resizes the page to fit itself.
+pub const DEFAULT_VIEWPORT: (u32, u32) = (1280, 800);
+
+/// Usual install locations of Chromium browsers, most preferred first.
+fn candidates() -> Vec<PathBuf> {
+    let mut list: Vec<PathBuf> = Vec::new();
+    if cfg!(target_os = "macos") {
+        for app in [
+            "Google Chrome.app/Contents/MacOS/Google Chrome",
+            "Chromium.app/Contents/MacOS/Chromium",
+            "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "Brave Browser.app/Contents/MacOS/Brave Browser",
+            "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        ] {
+            list.push(Path::new("/Applications").join(app));
+            if let Some(home) = std::env::var_os("HOME") {
+                list.push(Path::new(&home).join("Applications").join(app));
+            }
+        }
+    } else if cfg!(windows) {
+        for base in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
+            if let Some(base) = std::env::var_os(base) {
+                let base = PathBuf::from(base);
+                list.push(base.join("Google/Chrome/Application/chrome.exe"));
+                list.push(base.join("Microsoft/Edge/Application/msedge.exe"));
+                list.push(base.join("Chromium/Application/chrome.exe"));
+            }
+        }
+    } else {
+        for name in [
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium",
+            "chromium-browser",
+            "microsoft-edge",
+            "brave-browser",
+        ] {
+            if let Some(path) = std::env::var_os("PATH") {
+                for dir in std::env::split_paths(&path) {
+                    list.push(dir.join(name));
+                }
+            }
+        }
+    }
+    list
+}
+
+/// The browser to use: the configured one when given (it must exist), a
+/// downloaded private copy, else the first installed Chromium browser.
+pub fn find_browser(configured: Option<&Path>, downloaded: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = configured {
+        return path.is_file().then(|| path.to_path_buf());
+    }
+    downloaded
+        .filter(|path| path.is_file())
+        .map(Path::to_path_buf)
+        .or_else(|| candidates().into_iter().find(|path| path.is_file()))
+}
+
+/// The arguments a browser is started with.
+pub fn launch_args(profile: &Path, headless: bool) -> Vec<String> {
+    let mut args = vec![
+        format!("--user-data-dir={}", profile.display()),
+        "--remote-debugging-port=0".to_owned(),
+        "--no-first-run".to_owned(),
+        "--no-default-browser-check".to_owned(),
+        // Never touch the person's Keychain or saved passwords.
+        "--use-mock-keychain".to_owned(),
+        "--password-store=basic".to_owned(),
+        "--disable-features=Translate,MediaRouter,OptimizationHints".to_owned(),
+        "--disable-background-timer-throttling".to_owned(),
+        "--disable-renderer-backgrounding".to_owned(),
+        "--disable-backgrounding-occluded-windows".to_owned(),
+        "--mute-audio".to_owned(),
+        format!(
+            "--window-size={},{}",
+            DEFAULT_VIEWPORT.0, DEFAULT_VIEWPORT.1
+        ),
+    ];
+    if headless {
+        args.push("--headless=new".to_owned());
+    }
+    args.push("about:blank".to_owned());
+    args
+}
+
+/// The `ws://` address from a "DevTools listening on ..." line.
+pub fn devtools_address(line: &str) -> Option<String> {
+    let start = line.find("ws://")?;
+    let address = line[start..].split_whitespace().next()?;
+    let rest = address.strip_prefix("ws://")?;
+    let (host, path) = rest.split_once('/')?;
+    let (name, port) = host.rsplit_once(':')?;
+    (matches!(name, "127.0.0.1" | "localhost" | "[::1]")
+        && port.parse::<u16>().is_ok()
+        && path.starts_with("devtools/browser/"))
+    .then(|| address.to_owned())
+}
+
+/// A running browser and its protocol connection.
+#[derive(Debug)]
+pub struct BrowserProcess {
+    child: tokio::process::Child,
+    pub cdp: Arc<Cdp>,
+    /// `127.0.0.1:<port>` of the debugging server (for DevTools).
+    pub http_address: String,
+    pub executable: PathBuf,
+}
+
+impl BrowserProcess {
+    /// Starts `executable` with `profile` and connects to it.
+    pub async fn launch(executable: &Path, profile: &Path, headless: bool) -> anyhow::Result<Self> {
+        std::fs::create_dir_all(profile)?;
+        // A crashed earlier browser leaves its lock; the profile is ours alone.
+        for stale in [
+            "SingletonLock",
+            "SingletonSocket",
+            "SingletonCookie",
+            "DevToolsActivePort",
+        ] {
+            let _ = std::fs::remove_file(profile.join(stale));
+        }
+        let mut command = tokio::process::Command::new(executable);
+        command
+            .args(launch_args(profile, headless))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = command.spawn().map_err(|error| {
+            anyhow::anyhow!("could not start {}: {error}", executable.display())
+        })?;
+        let stderr = child.stderr.take().expect("piped stderr");
+        let address = tokio::time::timeout(START_TIMEOUT, async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(address) = devtools_address(&line) {
+                    // Keep draining so the browser never blocks on a full pipe.
+                    tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+                    return Some(address);
+                }
+            }
+            None
+        })
+        .await
+        .ok()
+        .flatten();
+        let Some(address) = address else {
+            let _ = child.start_kill();
+            anyhow::bail!(
+                "{} did not start its debugging server within {} s",
+                executable.display(),
+                START_TIMEOUT.as_secs()
+            );
+        };
+        let cdp = Cdp::connect(&address).await?;
+        let http_address = address
+            .trim_start_matches("ws://")
+            .split('/')
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        Ok(Self {
+            child,
+            cdp,
+            http_address,
+            executable: executable.to_path_buf(),
+        })
+    }
+
+    /// Whether the browser process is still running.
+    pub fn is_running(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None)) && !self.cdp.is_closed()
+    }
+}
+
+impl Drop for BrowserProcess {
+    fn drop(&mut self) {
+        // Renderer and GPU helpers share the browser's process group.
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            // SAFETY: plain signal to the process group this handle started.
+            unsafe {
+                libc::killpg(pid as libc::pid_t, libc::SIGTERM);
+            }
+        }
+        let _ = self.child.start_kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn devtools_address_accepts_only_local_browser_endpoints() {
+        assert_eq!(
+            devtools_address("DevTools listening on ws://127.0.0.1:53211/devtools/browser/0b6c-11"),
+            Some("ws://127.0.0.1:53211/devtools/browser/0b6c-11".into())
+        );
+        for bad in [
+            "DevTools listening on ws://evil.example:1/devtools/browser/x",
+            "ws://127.0.0.1:99999/devtools/browser/x",
+            "ws://127.0.0.1:9222/devtools/page/x",
+            "nothing here",
+        ] {
+            assert_eq!(devtools_address(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn launch_uses_its_own_profile_and_never_the_keychain() {
+        let args = launch_args(Path::new("/tmp/profile"), true);
+        assert!(args.contains(&"--user-data-dir=/tmp/profile".to_owned()));
+        assert!(args.contains(&"--use-mock-keychain".to_owned()));
+        assert!(args.contains(&"--headless=new".to_owned()));
+        assert!(!launch_args(Path::new("/p"), false).contains(&"--headless=new".to_owned()));
+    }
+
+    #[test]
+    fn a_configured_browser_must_exist() {
+        assert_eq!(find_browser(Some(Path::new("/no/such/chrome")), None), None);
+        let file = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(
+            find_browser(Some(file.path()), None),
+            Some(file.path().to_path_buf())
+        );
+        assert_eq!(
+            find_browser(None, Some(file.path())),
+            Some(file.path().to_path_buf())
+        );
+    }
+}

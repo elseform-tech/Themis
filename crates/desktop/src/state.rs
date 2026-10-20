@@ -8,6 +8,7 @@
 mod attachments;
 mod automation;
 mod background;
+mod browser;
 mod changes;
 mod chat_grants;
 pub(crate) mod configuration;
@@ -26,6 +27,7 @@ mod run;
 mod skills;
 mod threads;
 mod workspace;
+pub use browser::update_payload as browser_update_payload;
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
@@ -252,6 +254,8 @@ struct AppStateInner {
     scheduler_sink: std::sync::Mutex<Option<Arc<dyn EventSink>>>,
     /// Background shell tasks of every chat (`background/` in the app data dir).
     background: Arc<themis_core::tools::background::BackgroundRegistry>,
+    /// Built-in browsers (`browser/` in the app data dir: profiles, a downloaded Chromium).
+    browsers: Arc<themis_core::browser::BrowserHub>,
     /// Recent command failures, oldest-first, capped at [`MAX_RECENT_ERRORS`].
     recent_errors: std::sync::Mutex<VecDeque<DiagnosticsError>>,
     /// Per-chat prompt queues (`queues/<chat id>.json`), loaded on first use.
@@ -431,6 +435,13 @@ impl AppState {
                 background: themis_core::tools::background::BackgroundRegistry::open(Some(
                     themis_core::tools::background::storage_dir(&app_dir),
                 )),
+                browsers: themis_core::browser::BrowserHub::new(
+                    themis_core::browser::BrowserConfig {
+                        root: app_dir.join("browser"),
+                        executable: None,
+                        headless: true,
+                    },
+                ),
                 recent_errors: std::sync::Mutex::new(VecDeque::new()),
                 queues: std::sync::Mutex::new(HashMap::new()),
                 queues_dir: app_dir.join(queue::QUEUES_DIR),

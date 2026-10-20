@@ -26,6 +26,7 @@ QA builds with a different app identifier have separate data directories.
 | App-data `logs/diagnostics-0.jsonl` | Active structured diagnostic records | User/server |
 | App-data `logs/diagnostics-1.jsonl`, `diagnostics-2.jsonl` | Rotated records | User/server |
 | App-data `sessions.sqlite3` | Conversation history, run events, compaction checkpoints | User/server |
+| App-data `browser/profiles/<project key>/` | The built-in browser's profile (cookies, logins, cache) for one project's chats; never your own browser profile | Project, in app data |
 
 JSONC is configuration; JSONL is the diagnostic event stream. There is no
 separate approval-policy JSONL file. Approval decisions are diagnostic records;

@@ -356,6 +356,24 @@ impl AppState {
             approvals.clone(),
             &run_configuration.web,
         ));
+        // The chat's built-in browser, shared with the Workspace Browser tab.
+        if run_configuration.browser.enabled {
+            let hub = self.browser_hub();
+            hub.set_executable(
+                run_configuration
+                    .browser
+                    .executable
+                    .as_ref()
+                    .map(std::path::PathBuf::from),
+            );
+            tools.extend(themis_core::browser::tools::browser_tools(
+                approvals.clone(),
+                themis_core::browser::tools::BrowserScope {
+                    chat: hub.chat(thread_id, &snapshot.work_root),
+                    cancel: Some(Arc::clone(&stopped)),
+                },
+            ));
+        }
         tools.extend(self.integration_management_tools_for_run(
             approvals.clone(),
             snapshot.work_root.clone(),
