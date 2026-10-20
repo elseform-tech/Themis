@@ -234,7 +234,7 @@ pub struct ClickArgs {
     pub reference: String,
     #[serde(default)]
     #[input(
-        description = "A point to click instead of a ref: CSS pixels from the left of the visible page, as in a browser_screenshot (for canvas, maps and games)"
+        description = "A point to click instead of a ref: CSS pixels from the left of the visible page (for canvas, maps and games)"
     )]
     pub x: Option<f64>,
     #[serde(default)]
@@ -247,7 +247,7 @@ pub struct ClickArgs {
 
 #[tool(
     name = "browser_click",
-    description = "Click an element of the current page by its ref (buttons, links, checkboxes, tabs), or a point of the visible page by x and y when there is no ref (a canvas, map or game; read the point from a browser_screenshot of the visible page). Waits for the page to settle and returns a fresh snapshot. Examples: {\"ref\":\"e14\"}, {\"x\":412,\"y\":230}.",
+    description = "Click an element of the current page by its ref (buttons, links, checkboxes, tabs), or a point of the visible page by x and y in CSS pixels when there is no ref (a canvas, map or game). Waits for the page to settle and returns a fresh snapshot. Examples: {\"ref\":\"e14\"}, {\"x\":412,\"y\":230}.",
     input = ClickArgs,
 )]
 struct BrowserClick {
