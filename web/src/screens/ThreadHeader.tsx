@@ -1,4 +1,5 @@
-import type { GoModel, ThreadInfo } from "../lib/types";
+import { useEffect, useState } from "react";
+import type { BrowserRecording, GoModel, ThreadInfo } from "../lib/types";
 import { modelLabel } from "../lib/models";
 import { TaskIndicator } from "./TaskIndicator";
 import type { TaskCounts } from "./threadTasks";
@@ -22,10 +23,29 @@ interface ThreadHeaderProps {
   onToggleReview: () => void;
   taskCounts?: TaskCounts;
   onOpenTasks?: () => void;
+  /** The chat's browser is recording; `at` is when this was last reported. */
+  recording?: BrowserRecording & { at: number };
+  onOpenBrowser?: () => void;
+}
+
+/** Shown on every Workspace tab and with Workspace closed, so a recording never runs unnoticed. */
+function RecordingPill({ recording, onOpen }: { recording: BrowserRecording & { at: number }; onOpen: () => void }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = Math.min(recording.max_seconds, recording.seconds + Math.max(0, Math.floor((now - recording.at) / 1000)));
+  const time = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  return (
+    <button type="button" className="themis-recording-pill" onClick={onOpen} aria-label={`Recording the browser, ${time}. Opens the Browser tab`}>
+      <span className="themis-recording-dot" aria-hidden="true" />{time}
+    </button>
+  );
 }
 
 /** Model and effort live in one header pill; review opens as a side panel. */
-export function ThreadHeader({ thread, models, effortLevels, effort, busy, running = false, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview, taskCounts, onOpenTasks }: ThreadHeaderProps) {
+export function ThreadHeader({ thread, models, effortLevels, effort, busy, running = false, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview, taskCounts, onOpenTasks, recording, onOpenBrowser }: ThreadHeaderProps) {
   const choices = ["", ...effortLevels];
   const effortIndex = Math.max(0, choices.indexOf(effort));
   return (
@@ -62,6 +82,7 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, runni
         </div>
       </details>
       <span className="themis-thread-head-spacer" />
+      {recording && onOpenBrowser && <RecordingPill recording={recording} onOpen={onOpenBrowser} />}
       {taskCounts && onOpenTasks && <TaskIndicator counts={taskCounts} onOpen={onOpenTasks} />}
       <button type="button" className={`themis-workspace-toggle${reviewOpen ? " is-open" : ""}`} aria-pressed={reviewOpen} title="Changes, files, branches, pull requests and this chat's tasks" onClick={onToggleReview}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16" /></svg>

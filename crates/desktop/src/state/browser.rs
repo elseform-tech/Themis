@@ -20,7 +20,51 @@ impl AppState {
             .get(thread_id)
             .map(|record| record.project_root.clone())
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
-        Ok(self.inner.browsers.chat(thread_id, &root))
+        Ok(self.browser_of(thread_id, &root))
+    }
+
+    /// The chat's browser for `root`; the first time, its controller and
+    /// recording changes start reaching every window as `browser_changed`.
+    pub(super) fn browser_of(&self, thread_id: &str, root: &std::path::Path) -> Arc<ChatBrowser> {
+        let existed = self.inner.browsers.existing(thread_id).is_some();
+        let chat = self.inner.browsers.chat(thread_id, root);
+        if !existed {
+            let mut updates = chat.subscribe();
+            let state = self.clone();
+            let thread_id = thread_id.to_owned();
+            tokio::spawn(async move {
+                let mut last = None;
+                loop {
+                    let update = match updates.recv().await {
+                        Ok(update) => update,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    };
+                    let BrowserUpdate::State(browser) = update else {
+                        continue;
+                    };
+                    let key = (
+                        browser.controller.clone(),
+                        browser.recording.as_ref().map(|r| (r.by, r.max_seconds)),
+                    );
+                    if last.as_ref() == Some(&key) {
+                        continue;
+                    }
+                    last = Some(key);
+                    if let Some(sink) = state.scheduler_sink() {
+                        sink.emit_thread_event(&crate::types::ThreadEventEnvelope {
+                            thread_id: thread_id.clone(),
+                            run_id: String::new(),
+                            event: crate::types::ThreadEvent::BrowserChanged {
+                                controller: browser.controller,
+                                recording: browser.recording,
+                            },
+                        });
+                    }
+                }
+            });
+        }
+        chat
     }
 
     /// The app's browser hub (for run tools).
@@ -104,6 +148,71 @@ impl AppState {
             .await
     }
 
+    /// The person's Capture: a screenshot of the visible page saved with the
+    /// project's attachments, ready to add to the message being written.
+    pub async fn browser_capture(&self, thread_id: &str) -> Result<Value, String> {
+        use themis_core::browser::media::{media_name, MediaSink};
+        let chat = self.chat_browser(thread_id).await?;
+        let (png, _, _) = chat.screenshot(None, false).await?;
+        let path = self
+            .project_media(thread_id)
+            .await?
+            .save(&media_name("screenshot", "png"), &png)?;
+        Ok(attachment_value(&path, png.len()))
+    }
+
+    /// The person's Record: `start`, or `stop` to save the video with the
+    /// project's attachments. The person can stop the agent's recording too.
+    pub async fn browser_record(&self, thread_id: &str, action: &str) -> Result<Value, String> {
+        use themis_core::browser::media::{media_name, MediaSink, Recorder, RECORD_MAX};
+        let chat = self.chat_browser(thread_id).await?;
+        match action {
+            "start" => {
+                chat.start_recording(Recorder::User, RECORD_MAX).await?;
+                Ok(Value::Null)
+            }
+            "stop" => {
+                let (video, length) = chat.stop_recording(Recorder::User).await?;
+                let path = self
+                    .project_media(thread_id)
+                    .await?
+                    .save(&media_name("recording", "mp4"), &video)?;
+                let mut value = attachment_value(&path, video.len());
+                value["seconds"] = json!(length.as_secs());
+                Ok(value)
+            }
+            _ => Err("action must be start or stop".into()),
+        }
+    }
+
+    /// Saves a recording the agent left running when its run ended.
+    pub(super) async fn stop_agent_recording(&self, thread_id: &str) {
+        use themis_core::browser::media::{media_name, MediaSink, Recorder};
+        let Some(chat) = self.inner.browsers.existing(thread_id) else {
+            return;
+        };
+        if chat.recorder() != Some(Recorder::Agent) {
+            return;
+        }
+        if let Ok((video, _)) = chat.stop_recording(Recorder::Agent).await {
+            if let Ok(media) = self.project_media(thread_id).await {
+                let _ = media.save(&media_name("recording", "mp4"), &video);
+            }
+        }
+    }
+
+    async fn project_media(&self, thread_id: &str) -> Result<ProjectMedia, String> {
+        let root = self
+            .inner
+            .threads
+            .read()
+            .await
+            .get(thread_id)
+            .map(|record| record.project_root.clone())
+            .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
+        Ok(ProjectMedia { root })
+    }
+
     /// The person switched to or closed a tab (1-based).
     pub async fn browser_tab(
         &self,
@@ -143,6 +252,33 @@ impl AppState {
             self.inner.browsers.close_chat(thread_id).await;
         }
     }
+}
+
+/// Saves screenshots and recordings with the project's attachments
+/// (`.themis/attachments/<id>/<name>`), where replies and the composer can show them.
+pub(super) struct ProjectMedia {
+    pub(super) root: std::path::PathBuf,
+}
+
+impl themis_core::browser::media::MediaSink for ProjectMedia {
+    fn save(&self, name: &str, bytes: &[u8]) -> Result<String, String> {
+        let directory =
+            super::attachments::project_storage_directory(&self.root, &["attachments"])?;
+        let folder = directory.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir(&folder).map_err(|e| e.to_string())?;
+        let path = folder.join(name);
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
+/// A saved file as the composer's attachments list holds it.
+fn attachment_value(path: &str, size: usize) -> Value {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    json!({"path": path, "name": name, "size": size})
 }
 
 /// One update as the Browser tab receives it.

@@ -110,6 +110,8 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             }
             ThreadEvent::Incomplete { .. } => "incomplete",
             ThreadEvent::FilesChanged { .. } => "files_changed",
+            ThreadEvent::MediaAttached { .. } => "media_attached",
+            ThreadEvent::BrowserChanged { .. } => "browser_changed",
             ThreadEvent::BackgroundTasksChanged => "background_tasks_changed",
             ThreadEvent::Steered { .. } => "steered",
             ThreadEvent::UserMessage { .. } => "user_message",

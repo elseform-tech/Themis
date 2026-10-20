@@ -18,6 +18,7 @@ use tokio::sync::broadcast;
 
 use super::cdp::{Cdp, CdpEvent};
 use super::launch::{find_browser, BrowserProcess, DEFAULT_VIEWPORT};
+use super::media::{Recorder, Recording};
 use super::snapshot::{parse_ax_nodes, render, Outline, RefMap, RenderOptions};
 
 /// Tabs one chat may keep open.
@@ -65,6 +66,16 @@ pub struct BrowserState {
     pub activity: Option<String>,
     pub console_errors: usize,
     pub loading: bool,
+    /// A recording in progress.
+    pub recording: Option<RecordingInfo>,
+}
+
+/// A recording in progress, for the Browser tab and the thread header.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct RecordingInfo {
+    pub by: Recorder,
+    pub seconds: u64,
+    pub max_seconds: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
@@ -202,6 +213,8 @@ impl BrowserHub {
                 activity: Mutex::new(None),
                 updates,
                 screencast: Mutex::new(None),
+                ui_stream: AtomicBool::new(false),
+                recording: Mutex::new(None),
                 viewport: Mutex::new(Viewport::default()),
             })
         }))
@@ -344,6 +357,9 @@ pub struct ChatBrowser {
     updates: broadcast::Sender<BrowserUpdate>,
     /// Session id of the tab being streamed to the Workspace view.
     screencast: Mutex<Option<String>>,
+    /// The Workspace view is showing the stream (frames go to it).
+    ui_stream: AtomicBool,
+    recording: Mutex<Option<Recording>>,
     viewport: Mutex<Viewport>,
 }
 
@@ -548,9 +564,13 @@ fn spawn_watcher(
                         .unwrap_or_else(|e| e.into_inner())
                         .as_deref()
                         == Some(session_id.as_str());
+                    let data = event.params["data"].as_str().unwrap_or_default();
                     if streaming {
+                        chat.record_frame(data);
+                    }
+                    if streaming && chat.ui_stream.load(Ordering::SeqCst) {
                         let _ = chat.updates.send(BrowserUpdate::Frame {
-                            data: event.params["data"].as_str().unwrap_or_default().to_owned(),
+                            data: data.to_owned(),
                             width: event.params["metadata"]["deviceWidth"]
                                 .as_f64()
                                 .unwrap_or(0.0) as u32,
@@ -818,6 +838,16 @@ impl ChatBrowser {
             activity,
             console_errors: errors,
             loading,
+            recording: self
+                .recording
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .map(|recording| RecordingInfo {
+                    by: recording.by,
+                    seconds: recording.elapsed().as_secs(),
+                    max_seconds: recording.max.as_secs(),
+                }),
         }
     }
 
@@ -1421,6 +1451,12 @@ impl ChatBrowser {
         height: u32,
         scale: f64,
     ) -> Result<(), String> {
+        self.ui_stream.store(true, Ordering::SeqCst);
+        self.run_screencast(width, height, scale).await
+    }
+
+    /// Starts (or moves) the protocol screencast to the current tab.
+    async fn run_screencast(&self, width: u32, height: u32, scale: f64) -> Result<(), String> {
         {
             let mut viewport = self.viewport.lock().unwrap_or_else(|e| e.into_inner());
             *viewport = Viewport {
@@ -1466,8 +1502,22 @@ impl ChatBrowser {
         Ok(())
     }
 
-    /// Stops streaming (the Browser tab was closed or hidden).
+    /// Stops streaming (the Browser tab was closed or hidden). A recording
+    /// keeps the protocol screencast running.
     pub async fn stop_screencast(&self) {
+        self.ui_stream.store(false, Ordering::SeqCst);
+        if self
+            .recording
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+        {
+            return;
+        }
+        self.end_screencast().await;
+    }
+
+    async fn end_screencast(&self) {
         let session = self
             .screencast
             .lock()
@@ -1492,9 +1542,198 @@ impl ChatBrowser {
         if streaming {
             let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
             let _ = self
-                .start_screencast(viewport.width, viewport.height, viewport.scale)
+                .run_screencast(viewport.width, viewport.height, viewport.scale)
                 .await;
         }
+    }
+
+    /// Adds a screencast frame (base64 JPEG) to a recording in progress.
+    fn record_frame(&self, data: &str) {
+        use base64::Engine;
+        let mut recording = self.recording.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(recording) = recording.as_mut() else {
+            return;
+        };
+        if let Ok(jpeg) = base64::engine::general_purpose::STANDARD.decode(data) {
+            recording.push(jpeg);
+        }
+    }
+
+    /// Starts recording the current tab for up to `max`.
+    pub async fn start_recording(&self, by: Recorder, max: Duration) -> Result<(), String> {
+        {
+            let mut recording = self.recording.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(current) = recording.as_ref() {
+                let seconds = current.elapsed().as_secs();
+                return Err(format!(
+                    "already recording since {}:{:02}; stop it first",
+                    seconds / 60,
+                    seconds % 60
+                ));
+            }
+            if self
+                .inner
+                .try_lock()
+                .is_ok_and(|inner| inner.tabs.is_empty())
+            {
+                return Err("no page is open to record; use browser_open first".into());
+            }
+            *recording = Some(Recording::new(by, max));
+        }
+        let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(error) = self
+            .run_screencast(viewport.width, viewport.height, viewport.scale)
+            .await
+        {
+            *self.recording.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            return Err(error);
+        }
+        self.publish_state().await;
+        Ok(())
+    }
+
+    /// Who is recording, if anyone.
+    pub fn recorder(&self) -> Option<Recorder> {
+        self.recording
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|recording| recording.by)
+    }
+
+    /// Stops the recording and returns it as an MP4 with its length. The agent
+    /// may stop only its own recordings (`by` is who asks).
+    pub async fn stop_recording(&self, by: Recorder) -> Result<(Vec<u8>, Duration), String> {
+        let recording = {
+            let mut recording = self.recording.lock().unwrap_or_else(|e| e.into_inner());
+            match recording.as_ref() {
+                None => return Err("nothing is being recorded".into()),
+                Some(current) if by == Recorder::Agent && current.by == Recorder::User => {
+                    return Err("the user started this recording; only they can stop it".into());
+                }
+                Some(_) => recording.take().expect("checked above"),
+            }
+        };
+        if !self.ui_stream.load(Ordering::SeqCst) {
+            self.end_screencast().await;
+        }
+        self.publish_state().await;
+        let length = recording.elapsed();
+        let frames = recording.frames;
+        if frames.is_empty() {
+            return Err(
+                "the page did not paint while recording, so there is nothing to save".into(),
+            );
+        }
+        let video = tokio::task::spawn_blocking(move || super::media::encode_mp4(&frames, length))
+            .await
+            .map_err(|e| e.to_string())??;
+        Ok((video, length))
+    }
+
+    /// A PNG of the current page (the visible part, the whole page, or one
+    /// element) with its size in CSS pixels.
+    pub async fn screenshot(
+        &self,
+        reference: Option<&str>,
+        full_page: bool,
+    ) -> Result<(Vec<u8>, u32, u32), String> {
+        use base64::Engine;
+        let inner = self.inner.lock().await;
+        let browser = inner
+            .browser
+            .clone()
+            .ok_or("no page is open; use browser_open first")?;
+        let tab = inner
+            .tabs
+            .get(inner.current)
+            .ok_or("no page is open; use browser_open first")?;
+        let cdp = &browser.cdp;
+        let session = tab.session_id.clone();
+        let metrics = cdp
+            .call(Some(&session), "Page.getLayoutMetrics", json!({}))
+            .await?;
+        let view = &metrics["cssVisualViewport"];
+        let (page_x, page_y) = (
+            view["pageX"].as_f64().unwrap_or(0.0),
+            view["pageY"].as_f64().unwrap_or(0.0),
+        );
+        let mut params = json!({"format": "png", "fromSurface": true});
+        let (width, height) = match reference {
+            Some(reference) => {
+                let backend = tab.refs.resolve(reference).ok_or_else(|| {
+                    format!("no element {reference} on this page; take a new browser_snapshot")
+                })?;
+                let _ = cdp
+                    .call(
+                        Some(&session),
+                        "DOM.scrollIntoViewIfNeeded",
+                        json!({"backendNodeId": backend}),
+                    )
+                    .await;
+                let model = cdp
+                    .call(
+                        Some(&session),
+                        "DOM.getBoxModel",
+                        json!({"backendNodeId": backend}),
+                    )
+                    .await
+                    .map_err(|_| "that element is not visible on the page".to_owned())?;
+                let quad: Vec<f64> = model["model"]["border"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_f64)
+                    .collect();
+                if quad.len() != 8 {
+                    return Err("that element has no size on the page".into());
+                }
+                let xs = [quad[0], quad[2], quad[4], quad[6]];
+                let ys = [quad[1], quad[3], quad[5], quad[7]];
+                let (x, y) = (
+                    xs.iter().copied().fold(f64::MAX, f64::min),
+                    ys.iter().copied().fold(f64::MAX, f64::min),
+                );
+                let w = xs.iter().copied().fold(f64::MIN, f64::max) - x;
+                let h = ys.iter().copied().fold(f64::MIN, f64::max) - y;
+                // After scrolling into view the box is in viewport coordinates.
+                let metrics = cdp
+                    .call(Some(&session), "Page.getLayoutMetrics", json!({}))
+                    .await?;
+                let view = &metrics["cssVisualViewport"];
+                let (scroll_x, scroll_y) = (
+                    view["pageX"].as_f64().unwrap_or(page_x),
+                    view["pageY"].as_f64().unwrap_or(page_y),
+                );
+                params["clip"] = json!({"x": x + scroll_x, "y": y + scroll_y, "width": w.max(1.0), "height": h.max(1.0), "scale": 1});
+                params["captureBeyondViewport"] = json!(true);
+                (w, h)
+            }
+            None if full_page => {
+                let content = &metrics["cssContentSize"];
+                let w = content["width"].as_f64().unwrap_or(1280.0);
+                let h = content["height"].as_f64().unwrap_or(800.0).min(16_384.0);
+                params["clip"] = json!({"x": 0, "y": 0, "width": w, "height": h, "scale": 1});
+                params["captureBeyondViewport"] = json!(true);
+                (w, h)
+            }
+            None => (
+                view["clientWidth"].as_f64().unwrap_or(1280.0),
+                view["clientHeight"].as_f64().unwrap_or(800.0),
+            ),
+        };
+        let shot = cdp
+            .call_with_timeout(
+                Some(&session),
+                "Page.captureScreenshot",
+                params,
+                NAVIGATION_WAIT,
+            )
+            .await?;
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(shot["data"].as_str().unwrap_or_default())
+            .map_err(|_| "the browser returned an unreadable screenshot".to_owned())?;
+        Ok((png, width.round() as u32, height.round() as u32))
     }
 
     /// The person's mouse, wheel or key input on the Workspace view. Any input

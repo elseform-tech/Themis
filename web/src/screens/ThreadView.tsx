@@ -325,6 +325,8 @@ export function ThreadView() {
         onToggleReview={() => dispatch({ type: "ui/diff-panel", open: !state.diffPanelOpen })}
         taskCounts={countTasks(state.tasks[thread.id], state.settings.automations_enabled)}
         onOpenTasks={() => dispatch({ type: "ui/diff-panel", open: true, tab: "tasks" })}
+        recording={state.browsers[thread.id]?.recording ? { ...state.browsers[thread.id].recording!, at: state.browsers[thread.id].at } : undefined}
+        onOpenBrowser={() => dispatch({ type: "ui/diff-panel", open: true, tab: "browser" })}
       />
       {empty ? (
         <section className="themis-greeting" aria-label="New chat">

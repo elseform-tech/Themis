@@ -47,7 +47,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   // The header's task indicator asks for the Tasks tab.
   const tabRequestAt = state.workspaceTabRequest?.at;
   // The request is applied once, so the remembered tab wins the next time the panel opens.
-  useEffect(() => { if (tabRequestAt) { choose("tasks"); dispatch({ type: "ui/tab-request-consumed" }); } }, [tabRequestAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tabRequestAt && state.workspaceTabRequest) { choose(state.workspaceTabRequest.tab); dispatch({ type: "ui/tab-request-consumed" }); } }, [tabRequestAt]); // eslint-disable-line react-hooks/exhaustive-deps
   const diff = state.diffs[threadId];
   const changed = diff?.available ? diff.files.length : 0;
   const counts = countTasks(state.tasks[threadId], state.settings.automations_enabled);

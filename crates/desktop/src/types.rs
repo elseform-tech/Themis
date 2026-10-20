@@ -208,6 +208,19 @@ pub enum ThreadEvent {
     FilesChanged {
         files: Vec<ChangedFile>,
     },
+    /// Images, videos or PDFs the agent attached to this run's reply
+    /// (`attach_file`), in order.
+    MediaAttached {
+        files: Vec<AttachedMedia>,
+    },
+    /// Who controls the chat's built-in browser and whether it is recording
+    /// changed. Live only; `run_id` is empty.
+    BrowserChanged {
+        /// `agent`, `user` or `idle`.
+        controller: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recording: Option<themis_core::browser::session::RecordingInfo>,
+    },
     Failed {
         error: String,
     },
@@ -442,6 +455,18 @@ pub struct DiffHunk {
 pub struct ChangedFile {
     pub path: String,
     pub status: DiffStatus,
+}
+
+/// One file shown under a reply (`AttachedMedia` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachedMedia {
+    /// Absolute path inside the project's `.themis/attachments`.
+    pub path: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    /// `image`, `video` or `pdf`.
+    pub kind: String,
 }
 
 /// File change status (`DiffStatus` in types.ts).

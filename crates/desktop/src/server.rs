@@ -938,6 +938,19 @@ async fn dispatch_command(
                 )
                 .await
         ),
+        "browser_capture" => {
+            state
+                .browser_capture(&arg::<String>(&args, "threadId")?)
+                .await
+        }
+        "browser_record" => {
+            state
+                .browser_record(
+                    &arg::<String>(&args, "threadId")?,
+                    &arg::<String>(&args, "action")?,
+                )
+                .await
+        }
         "browser_devtools_url" => {
             output!(
                 state

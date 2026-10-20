@@ -1,6 +1,8 @@
 // Pure state model for the Themis app shell. No Tauri/DOM imports —
 // safe to load in node-based unit tests.
 import type {
+  AttachedMedia,
+  BrowserRecording,
   ChangedFile,
   ContextBudget,
   McpConnections,
@@ -104,6 +106,8 @@ export interface AppState {
   runDurations: Record<string, number>;
   /** Files a run changed, held until its final message arrives. */
   runChanges: Record<string, ChangedFile[]>;
+  /** Media attached during a run, waiting for its final response. */
+  runMedia: Record<string, AttachedMedia[]>;
   diffs: Record<string, DiffState | null>;
   comments: Record<string, ThreadComment[]>;
   approvals: ApprovalRequest[];
@@ -123,7 +127,9 @@ export interface AppState {
   /** A file to show in the Workspace changes view, e.g. from an edited-files list. */
   diffFocus: { path: string; at: number } | null;
   /** Asks the open (or next opened) Workspace panel to show a tab. */
-  workspaceTabRequest: { tab: "tasks"; at: number } | null;
+  workspaceTabRequest: { tab: "tasks" | "browser"; at: number } | null;
+  /** Each chat's built-in browser: who drives it and any recording (live only). */
+  browsers: Record<string, { controller: string; recording?: BrowserRecording; at: number }>;
   /** Per-chat task feed behind the header indicator and the Tasks tab. */
   tasks: Record<string, ThreadTasks>;
   /** Messages waiting for each chat's current run to end. */
@@ -184,7 +190,7 @@ export type AppAction =
   | { type: "toast/push"; toast: ToastItem }
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView }
-  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: "tasks" }
+  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: "tasks" | "browser" }
   | { type: "ui/tab-request-consumed" }
   | { type: "tasks/loaded"; threadId: string; tasks: ThreadTasks }
   | { type: "ui/palette"; open: boolean }
@@ -234,6 +240,7 @@ export const initialState: AppState = {
   runStartedAt: {},
   runDurations: {},
   runChanges: {},
+  runMedia: {},
   diffs: {},
   comments: {},
   approvals: [],
@@ -250,6 +257,7 @@ export const initialState: AppState = {
   diffPanelOpen: false,
   diffFocus: null,
   workspaceTabRequest: null,
+  browsers: {},
   tasks: {},
   queues: {},
   goals: {},
@@ -480,6 +488,13 @@ export function applyThreadEvent(
     }
     case "files_changed":
       return { ...state, runChanges: { ...state.runChanges, [runId]: event.files } };
+    case "browser_changed":
+      return { ...state, browsers: { ...state.browsers, [threadId]: { controller: event.controller, recording: event.recording, at: Date.now() } } };
+    case "media_attached": {
+      const previous = state.runMedia[runId] ?? [];
+      const added = event.files.filter(file => !previous.some(seen => seen.path === file.path));
+      return { ...state, runMedia: { ...state.runMedia, [runId]: [...previous, ...added] } };
+    }
     case "incomplete":
     case "finished": {
       let next = appendMessage(state, threadId, {
@@ -491,6 +506,7 @@ export function applyThreadEvent(
         final: true,
         incomplete: event.kind === "incomplete",
         ...(state.runChanges[runId] ? { changedFiles: state.runChanges[runId] } : {}),
+        ...(state.runMedia[runId] ? { media: state.runMedia[runId] } : {}),
       });
       const startedAt = next.runStartedAt[threadId];
       if (measureDuration && startedAt !== undefined) {
@@ -523,6 +539,7 @@ export function applyThreadEvent(
         text: stopped ? event.error : `Run failed: ${event.error}`,
         runId,
         ...(state.runChanges[runId] ? { changedFiles: state.runChanges[runId] } : {}),
+        ...(state.runMedia[runId] ? { media: state.runMedia[runId] } : {}),
       });
       const startedAt = next.runStartedAt[threadId];
       if (measureDuration && startedAt !== undefined) {

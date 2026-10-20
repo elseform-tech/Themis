@@ -9,6 +9,7 @@
 
 pub mod cdp;
 pub mod launch;
+pub mod media;
 pub mod session;
 pub mod snapshot;
 pub mod tools;

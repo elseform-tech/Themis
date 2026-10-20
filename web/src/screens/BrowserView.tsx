@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmptyState } from "../components";
 import {
-  browserCloseTab, browserControl, browserDevtoolsUrl, browserInput, browserNavigate, browserOpenUrl, browserScreencast,
+  browserCapture, browserCloseTab, browserControl, browserRecordStart, browserRecordStop, browserDevtoolsUrl, browserInput, browserNavigate, browserOpenUrl, browserScreencast,
   browserScreencastStop, browserState, browserStream, browserSwitchTab, keyText, modifierBits, MOUSE_BUTTONS,
-  type BrowserInput, type BrowserState,
+  type BrowserInput, type BrowserState, type SavedMedia,
 } from "../lib/browser";
+import { readSession, writeSession } from "../state/session";
 import { describeError } from "../state/store";
 import "./BrowserView.css";
+
+/** Adds a saved screenshot or recording to the message being written in this chat. */
+function addToComposer(threadId: string, file: SavedMedia) {
+  const pending = readSession<Record<string, SavedMedia[]>>("attachments", {});
+  writeSession("attachments", { ...pending, [threadId]: [...(pending[threadId] ?? []), { path: file.path, name: file.name, size: file.size }] });
+  window.dispatchEvent(new Event("themis-attachments-changed"));
+}
+
+const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
 /** Mouse moves without a pressed button are sent at most this often. */
 const MOVE_INTERVAL_MS = 50;
@@ -23,12 +33,23 @@ export function BrowserView({ threadId }: { threadId: string }) {
   const [editing, setEditing] = useState(false);
   const [devtools, setDevtools] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [recordedAt, setRecordedAt] = useState(0);
+  const [now, setNow] = useState(Date.now());
   const viewport = useRef<HTMLDivElement>(null);
   const lastMove = useRef(0);
 
   const apply = useCallback((next: BrowserState) => {
     setState(previous => ({ ...next, available: next.available ?? previous?.available }));
+    setRecordedAt(Date.now());
   }, []);
+
+  const recording = state?.recording ?? null;
+  // The recording line counts up between updates.
+  useEffect(() => {
+    if (!recording) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [recording]);
 
   useEffect(() => {
     let live = true;
@@ -93,6 +114,18 @@ export function BrowserView({ threadId }: { threadId: string }) {
     try { await work(); } catch (reason) { setError(describeError(reason)); }
   }
 
+  async function capture() {
+    await act(async () => addToComposer(threadId, await browserCapture(threadId)));
+  }
+
+  async function toggleRecording() {
+    await act(async () => {
+      if (!recording) { await browserRecordStart(threadId); return; }
+      const saved = await browserRecordStop(threadId);
+      addToComposer(threadId, saved);
+    });
+  }
+
   async function toggleDevtools() {
     if (devtools) { setDevtools(null); return; }
     await act(async () => setDevtools(await browserDevtoolsUrl(threadId)));
@@ -124,11 +157,20 @@ export function BrowserView({ threadId }: { threadId: string }) {
           <input id={`browser-address-${threadId}`} value={address} placeholder="Enter an address" spellCheck={false} autoComplete="off"
             onFocus={() => setEditing(true)} onBlur={() => setEditing(false)} onChange={event => setAddress(event.target.value)} />
         </form>
+        <button type="button" className="themis-browser-icon" aria-label="Capture screenshot to the message" title="Capture" disabled={!open} onClick={() => void capture()}><Camera /></button>
+        <button type="button" className={`themis-browser-icon${recording ? " is-recording" : ""}`} aria-pressed={recording !== null} aria-label={recording ? "Stop recording" : "Record the browser"} title={recording ? "Stop recording" : "Record"} disabled={!open} onClick={() => void toggleRecording()}><RecordIcon /></button>
         <button type="button" className={`themis-browser-icon${devtools ? " is-on" : ""}`} aria-pressed={devtools !== null} disabled={!open}
           aria-label={state.console_errors > 0 ? `DevTools, ${state.console_errors} console error${state.console_errors === 1 ? "" : "s"}` : "DevTools"} title="DevTools" onClick={() => void toggleDevtools()}>
           <Code />{state.console_errors > 0 && <span className="themis-browser-errors">{state.console_errors}</span>}
         </button>
       </div>
+      {recording && (
+        <div className="themis-browser-status is-recording" role="status">
+          <span className="themis-recording-dot" aria-hidden="true" />
+          <span className="themis-browser-status-text">Recording {clock(Math.min(recording.max_seconds, recording.seconds + Math.max(0, Math.floor((now - recordedAt) / 1000))))} · started by {recording.by === "user" ? "you" : "agent"} · stops at {clock(recording.max_seconds)}</span>
+          <button type="button" className="themis-browser-action is-danger" onClick={() => void toggleRecording()}>Stop</button>
+        </div>
+      )}
       {state.controller === "agent" && state.activity && (
         <div className="themis-browser-status" role="status">
           <span className="themis-browser-spinner" aria-hidden="true" />
@@ -144,7 +186,7 @@ export function BrowserView({ threadId }: { threadId: string }) {
       )}
       {error && <p className="themis-workspace-note" role="alert">{error}</p>}
       {open ? (
-        <div ref={viewport} className={`themis-browser-page${user ? " is-user" : ""}`} tabIndex={0} aria-label={`Page: ${state.title || state.url}`}
+        <div ref={viewport} className={`themis-browser-page${recording ? " is-recording" : user ? " is-user" : ""}`} tabIndex={0} aria-label={`Page: ${state.title || state.url}`}
           onMouseDown={event => { event.preventDefault(); mouse("down", event); }} onMouseUp={event => mouse("up", event)} onMouseMove={event => mouse("move", event)}
           onWheel={event => send({ type: "mouse", kind: "wheel", ...point(event), delta_x: event.deltaX, delta_y: event.deltaY, modifiers: modifierBits(event) })}
           onContextMenu={event => event.preventDefault()}
@@ -166,6 +208,14 @@ function Chevron({ left = false }: { left?: boolean }) {
 
 function Reload() {
   return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>;
+}
+
+function Camera() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" /><circle cx="12" cy="13" r="3.5" /></svg>;
+}
+
+function RecordIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.5" fill="currentColor" /></svg>;
 }
 
 function Code() {

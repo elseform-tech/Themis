@@ -32,6 +32,17 @@ function submitIt() {
 }
 </script></body></html>"#;
 
+/// Saves media into a test folder.
+struct TempMedia(std::path::PathBuf);
+
+impl themis_core::browser::media::MediaSink for TempMedia {
+    fn save(&self, name: &str, bytes: &[u8]) -> Result<String, String> {
+        let path = self.0.join(name);
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
 fn hub(root: &std::path::Path) -> Option<Arc<BrowserHub>> {
     let hub = BrowserHub::new(BrowserConfig {
         root: root.to_path_buf(),
@@ -78,6 +89,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         .mount(&site)
         .await;
     let project = tempfile::tempdir().unwrap();
+    let media_dir = tempfile::tempdir().unwrap();
     let chat = hub.chat("chat-1", project.path());
     let seen = Arc::new(Mutex::new(Vec::<ToolAction>::new()));
     let log = Arc::clone(&seen);
@@ -90,6 +102,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         themis_core::browser::tools::BrowserScope {
             chat: Arc::clone(&chat),
             cancel: None,
+            media: Some(Arc::new(TempMedia(media_dir.path().to_path_buf()))),
         },
     );
     let tool = |name: &str| {
@@ -222,6 +235,44 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     let state = chat.state().await;
     assert_eq!(state.tabs.len(), 1);
     assert!(state.url.ends_with("/signup"), "{state:?}");
+
+    // A screenshot of the page and of one element, and a short recording.
+    let shot = tool("browser_screenshot").execute(json!({})).await.unwrap();
+    let png = std::fs::read(shot["path"].as_str().unwrap()).unwrap();
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    assert!(shot["width"].as_u64().unwrap() > 100, "{shot}");
+    let state = chat.snapshot(None).await.unwrap();
+    let heading_button = ref_of(&state.snapshot, "\"Create account\"");
+    let part = tool("browser_screenshot")
+        .execute(json!({"ref": heading_button}))
+        .await
+        .unwrap();
+    assert!(
+        part["width"].as_u64().unwrap() < shot["width"].as_u64().unwrap(),
+        "{part}"
+    );
+    tool("browser_record")
+        .execute(json!({"action": "start", "max_seconds": 5}))
+        .await
+        .unwrap();
+    let again = tool("browser_record")
+        .execute(json!({"action": "start"}))
+        .await
+        .unwrap_err();
+    assert!(again.to_string().contains("already recording"), "{again}");
+    tool("browser_type")
+        .execute(json!({"ref": email, "text": " typing on camera"}))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    let video = tool("browser_record")
+        .execute(json!({"action": "stop"}))
+        .await
+        .unwrap();
+    let mp4 = std::fs::read(video["path"].as_str().unwrap()).unwrap();
+    assert_eq!(&mp4[4..8], b"ftyp", "an MP4 file");
+    assert!(mp4.windows(4).any(|w| w == b"avc1"), "with an H.264 track");
+    assert!(chat.recorder().is_none());
 
     // A stale ref explains itself.
     let stale = tool("browser_click")

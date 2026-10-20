@@ -19,6 +19,9 @@ vi.mock("../lib/browser", async importOriginal => ({
   browserSwitchTab: vi.fn(async () => undefined),
   browserCloseTab: vi.fn(async () => undefined),
   browserDevtoolsUrl: vi.fn(async () => "http://127.0.0.1:9222/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/T"),
+  browserCapture: vi.fn(async () => ({ path: "/p/.themis/attachments/x/screenshot-1701-12.png", name: "screenshot-1701-12.png", size: 10 })),
+  browserRecordStart: vi.fn(async () => null),
+  browserRecordStop: vi.fn(async () => ({ path: "/p/.themis/attachments/y/recording-1702-00.mp4", name: "recording-1702-00.mp4", size: 20, seconds: 12 })),
 }));
 
 const page: BrowserState = {
@@ -77,6 +80,24 @@ describe("BrowserView", () => {
     expect(bridge.browserSwitchTab).toHaveBeenCalledWith("t1", 2);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: /^DevTools/ })));
     expect(document.querySelector("iframe.themis-browser-devtools")).toHaveAttribute("src", expect.stringContaining("/devtools/inspector.html"));
+  });
+
+  it("captures to the composer, records with a visible line, and stops into the composer", async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) });
+    const changed = vi.fn();
+    window.addEventListener("themis-attachments-changed", changed);
+    await act(async () => { render(<BrowserView threadId="t1" />); });
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Capture screenshot to the message" })));
+    expect(bridge.browserCapture).toHaveBeenCalledWith("t1");
+    expect(changed).toHaveBeenCalled();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record the browser" })));
+    expect(bridge.browserRecordStart).toHaveBeenCalledWith("t1");
+    act(() => push({ kind: "state", state: { ...page, recording: { by: "user", seconds: 12, max_seconds: 120 } } }));
+    expect(screen.getAllByRole("status")[0]).toHaveTextContent("Recording 0:12 · started by you · stops at 2:00");
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Stop" })));
+    expect(bridge.browserRecordStop).toHaveBeenCalledWith("t1");
+    window.removeEventListener("themis-attachments-changed", changed);
   });
 
   it("explains a missing browser and an empty one", async () => {

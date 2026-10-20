@@ -206,6 +206,10 @@ with its own profile per project). Open **Workspace → Browser** to watch it: t
 line above the page says what the agent is doing. Click, type or enter an address to
 take over; the agent waits until you press **Hand back**. **DevTools** opens Chrome's
 DevTools for the page. Browser actions ask per site, like page reads.
+**Capture** adds a screenshot of the page to your message and **Record** a video
+(a red line and a red header pill show while anything records). Agents can take
+screenshots and recordings too and show them, or other images, videos and PDFs from
+the project, under their reply; click one to open the viewer.
 
 ### The sandbox
 

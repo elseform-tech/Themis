@@ -299,6 +299,10 @@ export type ThreadEvent =
   | { kind: 'context_suspended'; progress: string }
   | { kind: 'context_checkpoint'; summary: string }
   | { kind: 'files_changed'; files: ChangedFile[] }
+  /** Images, videos or PDFs the agent attached to this run's reply, in order. */
+  | { kind: 'media_attached'; files: AttachedMedia[] }
+  /** Who drives the chat's built-in browser, and any recording (live only). */
+  | { kind: 'browser_changed'; controller: string; recording?: BrowserRecording }
   | { kind: 'incomplete'; result: string; model?: string }
   | { kind: 'finished'; result: string; model?: string }
   | { kind: 'failed'; error: string }
@@ -375,6 +379,17 @@ export interface ChangedFile {
   status: DiffStatus;
 }
 
+/** A recording of the built-in browser in progress. */
+export interface BrowserRecording { by: 'agent' | 'user'; seconds: number; max_seconds: number }
+
+/** A file shown under a reply; `path` is inside the project's `.themis/attachments`. */
+export interface AttachedMedia {
+  path: string;
+  name: string;
+  caption?: string;
+  kind: 'image' | 'video' | 'pdf';
+}
+
 export interface PersistedMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -392,6 +407,8 @@ export interface PersistedMessage {
   checkpoint?: { before?: number; after?: number };
   /** Files this run changed, shown under its final response. */
   changedFiles?: ChangedFile[];
+  /** Media the agent attached, shown under its final response. */
+  media?: AttachedMedia[];
   /** A message the user steered into a running run. */
   steered?: boolean;
   /** A runtime message that started goal turn N; shown as a divider, not a bubble. */

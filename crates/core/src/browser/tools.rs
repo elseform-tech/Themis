@@ -9,6 +9,7 @@ use autoagents_derive::{tool, ToolInput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use super::media::{media_name, MediaSink, Recorder, RECORD_DEFAULT, RECORD_MAX};
 use super::session::{site_of, ActionReport, ChatBrowser};
 use crate::tools::web::{approve_site, checked_url};
 use crate::tools::{
@@ -26,12 +27,14 @@ pub struct BrowserScope {
     pub chat: Arc<ChatBrowser>,
     /// Set when the person stops the run.
     pub cancel: Option<Arc<AtomicBool>>,
+    /// Where screenshots and recordings go; without it they are not offered.
+    pub media: Option<Arc<dyn MediaSink>>,
 }
 
 /// The browser tools for one run.
 pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> Vec<Box<dyn ToolT>> {
     let base = Base { approvals, scope };
-    vec![
+    let mut tools: Vec<Box<dyn ToolT>> = vec![
         Box::new(BrowserOpen { base: base.clone() }),
         Box::new(BrowserNavigate { base: base.clone() }),
         Box::new(BrowserSnapshot { base: base.clone() }),
@@ -40,8 +43,13 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
         Box::new(BrowserSelect { base: base.clone() }),
         Box::new(BrowserPress { base: base.clone() }),
         Box::new(BrowserScroll { base: base.clone() }),
-        Box::new(BrowserTabs { base }),
-    ]
+        Box::new(BrowserTabs { base: base.clone() }),
+    ];
+    if base.scope.media.is_some() {
+        tools.push(Box::new(BrowserScreenshot { base: base.clone() }));
+        tools.push(Box::new(BrowserRecord { base }));
+    }
+    tools
 }
 
 #[derive(Clone)]
@@ -481,5 +489,140 @@ impl ToolRuntime for BrowserTabs {
         chat.tabs(&action, tab)
             .await
             .map_err(|e| tool_error(format!("browser_tabs: {e}")))
+    }
+}
+
+/// Arguments for `browser_screenshot`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
+pub struct ScreenshotArgs {
+    #[serde(default, rename = "ref")]
+    #[input(description = "Only this element (a ref); omit for the visible page")]
+    pub reference: String,
+    #[serde(default)]
+    #[input(description = "The whole scrollable page instead of the visible part")]
+    pub full_page: bool,
+}
+
+#[tool(
+    name = "browser_screenshot",
+    description = "Save a PNG screenshot of the current page (or one element, or the whole page). Returns its path; to show it to the user, call attach_file with that path. Use snapshots, not screenshots, to read a page.",
+    input = ScreenshotArgs,
+)]
+struct BrowserScreenshot {
+    base: Base,
+}
+
+#[async_trait]
+impl ToolRuntime for BrowserScreenshot {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let args: ScreenshotArgs = parse_tool_args("browser_screenshot", args)?;
+        let chat = Arc::clone(&self.base.scope.chat);
+        let media = self
+            .base
+            .scope
+            .media
+            .clone()
+            .ok_or_else(|| tool_error("browser_screenshot: unavailable".into()))?;
+        let site = chat
+            .current_site()
+            .await
+            .unwrap_or_else(|| BLANK_SITE.to_owned());
+        approve_site(
+            self.base.approvals.as_ref(),
+            "browser_screenshot",
+            &site,
+            format!("browser_screenshot on {site}"),
+            RiskLevel::Read,
+        )?;
+        let reference = Some(args.reference.trim().to_owned()).filter(|r| !r.is_empty());
+        let (png, width, height) = chat
+            .screenshot(reference.as_deref(), args.full_page)
+            .await
+            .map_err(|e| tool_error(format!("browser_screenshot: {e}")))?;
+        let path = media
+            .save(&media_name("screenshot", "png"), &png)
+            .map_err(|e| tool_error(format!("browser_screenshot: {e}")))?;
+        Ok(json!({
+            "path": path,
+            "width": width,
+            "height": height,
+            "note": "Saved. Call attach_file with this path to show it in your reply.",
+        }))
+    }
+}
+
+/// Arguments for `browser_record`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToolInput)]
+pub struct RecordArgs {
+    #[input(description = "start or stop")]
+    pub action: String,
+    #[serde(default)]
+    #[input(description = "For start: longest length in seconds (default 30, max 120)")]
+    pub max_seconds: u64,
+}
+
+#[tool(
+    name = "browser_record",
+    description = "Record the built-in browser as a video: start, act with the other browser tools, then stop to save an MP4 and get its path (it also stops at max_seconds). One recording at a time. To show it to the user, call attach_file with the path.",
+    input = RecordArgs,
+)]
+struct BrowserRecord {
+    base: Base,
+}
+
+#[async_trait]
+impl ToolRuntime for BrowserRecord {
+    async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        let args: RecordArgs = parse_tool_args("browser_record", args)?;
+        let chat = Arc::clone(&self.base.scope.chat);
+        let media = self
+            .base
+            .scope
+            .media
+            .clone()
+            .ok_or_else(|| tool_error("browser_record: unavailable".into()))?;
+        let action = args.action.trim().to_ascii_lowercase();
+        let site = chat
+            .current_site()
+            .await
+            .unwrap_or_else(|| BLANK_SITE.to_owned());
+        approve_site(
+            self.base.approvals.as_ref(),
+            "browser_record",
+            &site,
+            format!("browser_record {action} on {site}"),
+            RiskLevel::Read,
+        )?;
+        match action.as_str() {
+            "start" => {
+                let max = match args.max_seconds {
+                    0 => RECORD_DEFAULT,
+                    seconds => std::time::Duration::from_secs(seconds).min(RECORD_MAX),
+                };
+                chat.start_recording(Recorder::Agent, max)
+                    .await
+                    .map_err(|e| tool_error(format!("browser_record: {e}")))?;
+                Ok(
+                    json!({"recording": true, "max_seconds": max.as_secs(), "note": "Recording. Act on the page, then call browser_record with action stop."}),
+                )
+            }
+            "stop" => {
+                let (video, length) = chat
+                    .stop_recording(Recorder::Agent)
+                    .await
+                    .map_err(|e| tool_error(format!("browser_record: {e}")))?;
+                let path = media
+                    .save(&media_name("recording", "mp4"), &video)
+                    .map_err(|e| tool_error(format!("browser_record: {e}")))?;
+                Ok(json!({
+                    "path": path,
+                    "seconds": length.as_secs_f64().round(),
+                    "note": "Saved. Call attach_file with this path to show it in your reply.",
+                }))
+            }
+            other => Err(tool_error(format!(
+                "browser_record: action must be start or stop, not '{other}'"
+            ))),
+        }
     }
 }

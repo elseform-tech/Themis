@@ -143,6 +143,24 @@ describe("thread lifecycle events", () => {
     s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "next-run", event: { kind: "finished", result: "No edits." } });
     expect(s.messages[THREAD.id]?.slice(-1)[0]?.changedFiles).toBeUndefined();
   });
+  it("attaches media to the turn's final reply in order, once each", () => {
+    let s = withThread();
+    const shot = { path: "/p/.themis/attachments/a/shot.png", name: "shot.png", kind: "image" as const, caption: "Before" };
+    const video = { path: "/p/.themis/attachments/b/flow.mp4", name: "flow.mp4", kind: "video" as const };
+    s = applyThreadEvent(s, envelope({ kind: "started", task: "show", max_turns: 3 }));
+    s = applyThreadEvent(s, envelope({ kind: "media_attached", files: [shot] }));
+    s = applyThreadEvent(s, envelope({ kind: "media_attached", files: [shot, video] }));
+    s = applyThreadEvent(s, envelope({ kind: "finished", result: "Here they are." }));
+    expect(s.messages[THREAD.id]?.slice(-1)[0]?.media).toEqual([shot, video]);
+  });
+  it("tracks who drives each chat's browser and its recording", () => {
+    let s = withThread();
+    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "", event: { kind: "browser_changed", controller: "agent", recording: { by: "agent", seconds: 3, max_seconds: 30 } } });
+    expect(s.browsers[THREAD.id]).toMatchObject({ controller: "agent", recording: { by: "agent", seconds: 3, max_seconds: 30 } });
+    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "", event: { kind: "browser_changed", controller: "user" } });
+    expect(s.browsers[THREAD.id]?.recording).toBeUndefined();
+    expect(s.running[THREAD.id]).toBeFalsy();
+  });
   it("shows an older incomplete handoff as a normal final reply", () => {
     let s = withThread();
     s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 1 }));

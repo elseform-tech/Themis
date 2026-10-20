@@ -21,7 +21,12 @@ export interface BrowserState {
   activity: string | null;
   console_errors: number;
   loading: boolean;
+  /** A recording in progress. */
+  recording?: { by: "agent" | "user"; seconds: number; max_seconds: number } | null;
 }
+
+/** A saved screenshot or recording, as the composer's attachments hold it. */
+export interface SavedMedia { path: string; name: string; size: number; seconds?: number }
 
 export type BrowserUpdate =
   | { kind: "state"; state: BrowserState }
@@ -48,6 +53,9 @@ export const browserNavigate = (threadId: string, action: "back" | "forward" | "
 export const browserSwitchTab = (threadId: string, tab: number) => invoke<void>("browser_tab", { threadId, action: "switch", tab });
 export const browserCloseTab = (threadId: string, tab: number) => invoke<void>("browser_tab", { threadId, action: "close", tab });
 export const browserDevtoolsUrl = (threadId: string) => invoke<string | null>("browser_devtools_url", { threadId });
+export const browserCapture = (threadId: string) => invoke<SavedMedia>("browser_capture", { threadId });
+export const browserRecordStart = (threadId: string) => invoke<null>("browser_record", { threadId, action: "start" });
+export const browserRecordStop = (threadId: string) => invoke<SavedMedia>("browser_record", { threadId, action: "stop" });
 
 /** Streams the chat's browser updates until the returned stop function runs. */
 export function browserStream(threadId: string, onUpdate: (update: BrowserUpdate) => void): () => void {

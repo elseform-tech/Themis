@@ -85,6 +85,12 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
                     tool_call("c2", "browser_click", json!({"ref": reference}))
                 }
                 2 => tool_call("c3", "browser_open", json!({"url": format!("http://localhost:{port}/app")})),
+                3 => tool_call("c4", "browser_screenshot", json!({})),
+                4 => tool_call(
+                    "c5",
+                    "attach_file",
+                    json!({"files": [{"path": results[3]["path"], "caption": "Counter at one"}]}),
+                ),
                 _ => ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "Clicked it."}, "finish_reason": "stop"}]
                 })),
@@ -101,7 +107,8 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             "schema_version": 1,
             "approval": {"rules": [
                 {"tool": "browser_*", "command": ["localhost"], "action": "deny"},
-                {"tool": "browser_*", "command": ["127.0.0.1"], "action": "allow"}
+                {"tool": "browser_*", "command": ["127.0.0.1"], "action": "allow"},
+                {"tool": "*", "risk": "read", "action": "allow"}
             ]}
         })
         .to_string(),
@@ -138,18 +145,27 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         .await
         .unwrap();
     }
-    let deadline = std::time::Instant::now() + Duration::from_secs(90);
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
     loop {
         let done = llm
             .received_requests()
             .await
             .unwrap_or_default()
             .iter()
-            .any(|request| tool_results(&request.body_json().unwrap_or(Value::Null)).len() >= 3);
+            .any(|request| tool_results(&request.body_json().unwrap_or(Value::Null)).len() >= 5);
         if done && !state.get_thread(&thread.id).await.is_ok_and(|t| t.running) {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "run did not finish");
+        if std::time::Instant::now() > deadline {
+            let requests = llm.received_requests().await.unwrap_or_default();
+            let last = requests
+                .last()
+                .map(|request| tool_results(&request.body_json().unwrap_or(Value::Null)));
+            let pending = state.pending_approvals();
+            panic!(
+                "run did not finish; last tool results: {last:?}; pending approvals: {pending:?}"
+            );
+        }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let last: Value = llm
@@ -185,6 +201,16 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
         "{}",
         results[2]
     );
+    let shot = results[3]["path"].as_str().unwrap();
+    assert!(
+        shot.contains("/.themis/attachments/") && shot.ends_with(".png"),
+        "{shot}"
+    );
+    assert_eq!(
+        results[4]["attached"][0]["caption"], "Counter at one",
+        "{}",
+        results[4]
+    );
 
     tokio::task::spawn_blocking(move || {
         let browser = call(&data_dir, "browser_state", json!({"threadId": thread_id}));
@@ -209,6 +235,43 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             "browser_control",
             json!({"threadId": thread_id, "user": false}),
         );
+        // The reply's media is saved with the conversation.
+        let history = call(
+            &data_dir,
+            "get_thread_history",
+            json!({"threadId": thread_id}),
+        )
+        .to_string();
+        assert!(
+            history.contains("media_attached") && history.contains("Counter at one"),
+            "{history}"
+        );
+        // The person's Capture and Record save files the composer can attach.
+        let captured = call(&data_dir, "browser_capture", json!({"threadId": thread_id}));
+        assert!(
+            captured["name"]
+                .as_str()
+                .unwrap()
+                .starts_with("screenshot-"),
+            "{captured}"
+        );
+        assert!(std::path::Path::new(captured["path"].as_str().unwrap()).is_file());
+        call(
+            &data_dir,
+            "browser_record",
+            json!({"threadId": thread_id, "action": "start"}),
+        );
+        assert_eq!(
+            call(&data_dir, "browser_state", json!({"threadId": thread_id}))["recording"]["by"],
+            "user"
+        );
+        std::thread::sleep(Duration::from_millis(700));
+        let video = call(
+            &data_dir,
+            "browser_record",
+            json!({"threadId": thread_id, "action": "stop"}),
+        );
+        assert!(video["name"].as_str().unwrap().ends_with(".mp4"), "{video}");
         let devtools = call(
             &data_dir,
             "browser_devtools_url",

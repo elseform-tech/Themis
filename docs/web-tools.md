@@ -101,6 +101,38 @@ the agent acts you see what it is doing and **Take over**. **DevTools** opens
 Chrome's own DevTools for the current tab below the page; a red count shows console
 errors.
 
+## Screenshots, recordings and media in replies
+
+| Tool | Does |
+| --- | --- |
+| `browser_screenshot` | Saves a PNG of the visible page, the whole page (`full_page`, up to 16,384 px tall) or one element (`ref`) and returns its path |
+| `browser_record` | `start` records the current tab (default 30 s, at most 120 s); `stop` saves an H.264 MP4 and returns its path and length |
+| `attach_file` | Shows images, videos and PDFs from the project under the reply: `files: [{path, caption?}]`, at most 12 per reply, 200 MB each |
+
+Screenshots and recordings are saved like composer attachments, in
+`.themis/attachments/<id>/screenshot-HHMM-SS.png` or `recording-HHMM-SS.mp4` (local
+time), which Git ignores. `attach_file` copies other project files there so a reply
+keeps showing them; files outside the project are refused. Recording samples the
+page's screencast at 10 frames per second and encodes it with the open-source
+OpenH264 encoder built into the app (no ffmpeg). One recording runs per chat at a
+time: starting a second one fails with how long the first has run. The agent can
+stop only its own recording; a recording the agent leaves running is stopped and
+saved when its run ends. `attach_file` is a read; screenshots and recordings ask
+like reads of the current site.
+
+**In replies.** Attached media sit under the reply in order: one item as a large
+preview, two to four as tiles with their captions, five or more as three tiles and a
+**+N** tile. A video tile shows its first frame and a play mark. Clicking a tile opens
+the viewer, which steps through every attached item of the chat with Previous/Next
+or the arrow keys and closes with Escape.
+
+**In the Browser tab.** **Capture** saves the visible page and adds it to the message
+you are writing; **Record** starts a recording and, when you stop it, adds the video
+the same way. While anything records, a red line above the page reads "Recording
+0:12 · started by you · stops at 2:00" with **Stop**, the page has a red frame, and the
+thread header shows a red pill with the time on every Workspace tab and with Workspace
+closed; the pill opens the Browser tab.
+
 ## Approvals
 
 Each browser action asks for the site of the current page (for `browser_open`, the

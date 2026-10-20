@@ -30,3 +30,8 @@
 .themis-browser-devtools { flex: 1 1 0; min-height: 160px; margin-top: -10px; border: 0; border-radius: 0 0 10px 10px; background: #202124; box-shadow: 0 0 0 1px var(--themis-border); }
 .themis-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .themis-browser-spinner { animation: none; } }
+.themis-browser-icon.is-recording { color: var(--themis-danger); }
+.themis-browser-status.is-recording { color: #f3a1aa; }
+.themis-browser-status.is-recording .themis-browser-status-text { font-variant-numeric: tabular-nums; }
+.themis-browser-action.is-danger { color: var(--themis-danger); }
+.themis-browser-page.is-recording { box-shadow: 0 0 0 2px var(--themis-danger); }
