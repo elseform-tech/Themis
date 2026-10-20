@@ -12,6 +12,13 @@
 /* Header: one pill for model and effort; review toggle on the right. */
 .themis-thread-head { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 6px 16px; }
 .themis-thread-head-spacer { flex: 1; }
+/* A narrow chat keeps the model readable: Workspace shrinks to its icon and count first. */
+.themis-thread-head { container: themis-head / inline-size; }
+.themis-model-pill-meta { min-width: 6ch; }
+@container themis-head (max-width: 460px) {
+  .themis-thread-head .themis-head-label { display: none; }
+  .themis-thread-head .themis-model-pill > summary { padding: 0 8px; }
+}
 .themis-model-pill { position: relative; min-width: 0; }
 .themis-model-pill > summary { min-width: 0; overflow: hidden; }
 .themis-model-pill > summary { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: var(--themis-radius-pill); cursor: pointer; list-style: none; color: var(--themis-text); }

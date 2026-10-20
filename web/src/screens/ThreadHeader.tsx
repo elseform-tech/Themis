@@ -84,9 +84,9 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, runni
       <span className="themis-thread-head-spacer" />
       {recording && onOpenBrowser && <RecordingPill recording={recording} onOpen={onOpenBrowser} />}
       {taskCounts && onOpenTasks && <TaskIndicator counts={taskCounts} onOpen={onOpenTasks} />}
-      <button type="button" className={`themis-workspace-toggle${reviewOpen ? " is-open" : ""}`} aria-pressed={reviewOpen} title="Changes, files, branches, pull requests and this chat's tasks" onClick={onToggleReview}>
+      <button type="button" className={`themis-workspace-toggle${reviewOpen ? " is-open" : ""}`} aria-pressed={reviewOpen} aria-label={changedFiles ? `Workspace, ${changedFiles} changed` : "Workspace"} title="Changes, files, branches, pull requests and this chat's tasks" onClick={onToggleReview}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16" /></svg>
-        Workspace{changedFiles ? <span className="themis-review-count">{changedFiles} changed</span> : null}
+        <span className="themis-head-label">Workspace</span>{changedFiles ? <span className="themis-review-count">{changedFiles}<span className="themis-head-label"> changed</span></span> : null}
       </button>
     </header>
   );

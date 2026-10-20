@@ -20,3 +20,9 @@ it("compacts the composer's labels to icons when the chat is narrow", () => {
   expect(styles).toMatch(/\.themis-thread-composer\s*\{\s*container:\s*themis-composer \/ inline-size;\s*\}/);
   expect(styles).toMatch(/@container themis-composer \(max-width: 420px\)\s*\{\s*\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
 });
+
+it("shrinks the header's Workspace button before the model name when the chat is narrow", () => {
+  expect(styles).toMatch(/\.themis-thread-head\s*\{\s*container:\s*themis-head \/ inline-size;\s*\}/);
+  expect(styles).toMatch(/@container themis-head \(max-width: 460px\)\s*\{\s*\.themis-thread-head \.themis-head-label\s*\{\s*display:\s*none;/);
+  expect(styles).toMatch(/\.themis-model-pill-meta\s*\{\s*min-width:\s*6ch;/);
+});
