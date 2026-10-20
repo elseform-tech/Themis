@@ -196,6 +196,8 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
         vec![
             "read_file",
             "set_goal",
+            // Showing project files under the reply comes with `read_file`.
+            "attach_file",
             "list_plugins",
             "save_skill",
             "manage_integrations",
@@ -666,6 +668,53 @@ async fn run_automation_now_works_while_disabled() {
         .find(|item| item.id == automation.id)
         .expect("automation");
     assert_eq!(advanced.run_count, 1);
+}
+
+#[tokio::test]
+async fn browser_use_command_reaches_llm_with_the_browser_tools() {
+    let (_repo_temp, root) = init_repo();
+    let (state, _settings_temp) = test_state();
+    let server = mount_final_text_llm("on it").await;
+    use_mock_llm(&state, &server).await;
+    let thread = state
+        .create_thread(
+            root.to_string_lossy().into_owned(),
+            ProviderKind::Go,
+            Some("fixture".into()),
+        )
+        .await
+        .unwrap();
+    let (sink, mut rx) = ChannelSink::channel();
+    state
+        .send_message(
+            Arc::new(sink),
+            thread.id,
+            "[[skill:browser-use]] Check that the sign-up page works".into(),
+        )
+        .await
+        .unwrap();
+    drive_one_run(&state, &mut rx).await;
+    let requests = server.received_requests().await.unwrap();
+    let request: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let text = request.to_string();
+    assert!(
+        text.contains("# Browser use"),
+        "the skill's instructions are sent"
+    );
+    let names: Vec<_> = request["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str())
+        .collect();
+    for tool in [
+        "browser_open",
+        "browser_click",
+        "browser_screenshot",
+        "attach_file",
+    ] {
+        assert!(names.contains(&tool), "{tool} offered with /browser-use");
+    }
 }
 
 #[tokio::test]

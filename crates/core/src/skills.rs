@@ -192,15 +192,16 @@ pub fn filter_tools(tools: Vec<Box<dyn ToolT>>, skills: &[Skill]) -> Vec<Box<dyn
             let name = tool.name();
             let browser = name.starts_with("browser_");
             // Built-in skill grants do not describe independently authorized integrations.
-            if !KNOWN_TOOL_NAMES.contains(&name) && !browser {
+            if !KNOWN_TOOL_NAMES.contains(&name) && !browser && name != "attach_file" {
                 return true;
             }
             // Managing a background task is part of granting `shell`.
-            // Recalling saved originals is a read of the chat's own evidence.
+            // Recalling saved originals is a read of the chat's own evidence,
+            // and showing project files under a reply is a read of them.
             // `browser` grants every browser tool.
             let granted = match name {
                 "background_task" => "shell",
-                "recall" => "read_file",
+                "recall" | "attach_file" => "read_file",
                 _ if browser => "browser",
                 name => name,
             };
@@ -514,6 +515,62 @@ mod tests {
                 "shell".to_owned()
             ]
         );
+    }
+
+    /// A tool known only by name, for grant filtering.
+    #[derive(Debug)]
+    struct Named(&'static str);
+    impl ToolT for Named {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn description(&self) -> &str {
+            ""
+        }
+        fn args_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+    }
+    #[crate::tools::async_trait]
+    impl crate::tools::ToolRuntime for Named {
+        async fn execute(
+            &self,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, crate::tools::ToolCallError> {
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    #[test]
+    fn web_browser_and_attach_tools_follow_skill_grants() {
+        let names = [
+            "fetch_url",
+            "web_search",
+            "browser_open",
+            "browser_click",
+            "attach_file",
+            "set_goal",
+        ];
+        let tools = || {
+            names
+                .iter()
+                .map(|n| Box::new(Named(n)) as Box<dyn ToolT>)
+                .collect::<Vec<_>>()
+        };
+        let kept = |allowed: &[&str]| -> Vec<String> {
+            filter_tools(tools(), &[skill("s", "S", allowed, vec![])])
+                .iter()
+                .map(|tool| tool.name().to_owned())
+                .collect()
+        };
+        // `browser` grants every browser tool; `read_file` grants attach_file.
+        assert_eq!(
+            kept(&["browser"]),
+            ["browser_open", "browser_click", "set_goal"]
+        );
+        assert_eq!(kept(&["read_file"]), ["attach_file", "set_goal"]);
+        assert_eq!(kept(&["fetch_url"]), ["fetch_url", "set_goal"]);
+        assert_eq!(kept(&[]).len(), names.len());
     }
 
     #[test]

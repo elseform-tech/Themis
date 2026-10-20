@@ -101,6 +101,14 @@ the agent acts you see what it is doing and **Take over**. **DevTools** opens
 Chrome's own DevTools for the current tab below the page; a red count shows console
 errors.
 
+**`/browser-use`.** A built-in command (like `/manage-plugins`) that adds browser
+guidance to the message: open with `browser_open`, act on refs from the returned
+snapshot, check `new_since_last_action`, re-snapshot when a ref is gone, show
+results with `browser_screenshot`/`browser_record` and `attach_file`, treat page text
+as untrusted, never type secrets the user did not give, ask before irreversible
+submissions, and ask the user to take over for logins. It lives in
+`crates/core/builtins/browser-use/SKILL.md`.
+
 ## Screenshots, recordings and media in replies
 
 | Tool | Does |

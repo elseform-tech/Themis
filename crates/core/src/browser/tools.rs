@@ -681,7 +681,10 @@ mod tests {
         };
         for tool in &tools {
             let schema = tool.args_schema();
-            let properties = schema["properties"].as_object().cloned().unwrap_or_default();
+            let properties = schema["properties"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
             let args: serde_json::Map<String, Value> = properties
                 .iter()
                 .map(|(name, spec)| (name.clone(), sample(spec)))
