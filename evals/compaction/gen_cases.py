@@ -576,6 +576,45 @@ VSOP_HEAD = """ VSOP87 VERSION D4    EARTH     VARIABLE 1 (LBR)       *T**0    5
 """
 
 
+def write_project(case_dir):
+    """The files the VSOP87 conversations talk about, copied into the eval's project."""
+    project = {
+        "data/vsop87/VSOP87D.ear": VSOP_HEAD,
+        "data/vsop87/vsop87.txt": "Each term: A*cos(B+C*T). T in thousands of Julian years from J2000.\n",
+        "data/horizons_reference.json": '{"mars": {"ra_deg": 213.47121, "dec_deg": -12.80233}, "jupiter": {"ra_deg": 118.03594, "dec_deg": 21.14520}}\n',
+        "src/astro/vsop87.js": "export function parseVsop87(text) {\n  // header + term lines -> {L,B,R}[k] arrays of [A,B,C]\n}\nexport function evaluate(series, T) {\n  // sum A*cos(B+C*T) * T^k\n}\n",
+        "tests/vsop87.test.js": "import test from 'node:test';\ntest('parses every series', () => {});\n",
+        "package.json": '{"name": "planetarium", "type": "module", "scripts": {"test": "node --test tests/*.test.js"}}\n',
+    }
+    for relative, text in project.items():
+        path = os.path.join(case_dir, "project", relative)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+
+def finish_no_redo(t, name, probes, description):
+    """Three resume messages graded for re-reading the VSOP87 sources (see behavior.py)."""
+    goal = "Build src/astro/ephemeris.js from data/vsop87 and match data/horizons_reference.json within 1 arcminute"
+    resume = r"(?i)ephemeris"
+    # Reading a recorded source's contents again; listing a folder is orientation.
+    redo = (r"(?i)\b(head|tail|sed|cat|awk|nl|less|grep)\b[^;&|\n]*(VSOP87D\.|vsop87\.txt)"
+            r'|"file_path":"[^"]*(VSOP87D\.|vsop87\.txt)|\bcurl\b|\bwget\b|web_?fetch')
+    # The format facts a resumed turn needs; a checkpoint without them justifies a re-read.
+    retained = [r"365250", r"(?i)amplitude|\bA\s*\*\s*cos"]
+    specs = dict(resume=resume, redo=redo, retained=retained)
+    behavior = {"turns": [
+        turn_spec("continue", "continue", "no_redo", False, **specs),
+        turn_spec("goal_turn", f"[Goal — runtime, not from the user] Turn 5. Goal: {goal}\nLast check: not_yet | src/astro/ephemeris.js and its Horizons comparison test are missing.\nContinue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement.",
+                  "no_redo", False, **specs),
+        turn_spec("keep_going", "keep going", "no_redo", False, **specs),
+    ], "markers": r"(?i)$^", "max_chars": 6000}
+    write_project(os.path.join(CASES, name))
+    finish(os.path.join(CASES, name), name, "behavior", t, probes,
+           "Write src/astro/ephemeris.js and tests/ephemeris.test.js.", description,
+           suites=["behavior"], behavior=behavior)
+
+
 def behavior_no_redo():
     """The live Planetarium goal re-read sources its checkpoints already recorded."""
     t = Transcript(75)
@@ -603,41 +642,58 @@ def behavior_no_redo():
         P("millennia", "identifier", "How is T computed for the VSOP87 series?", c_head + 1, regex=r"365250"),
         P("mars_ra", "identifier", "What is the reference RA of Mars?", c_ref, regex=r"213\.47"),
     ]
-    goal = "Build src/astro/ephemeris.js from data/vsop87 and match data/horizons_reference.json within 1 arcminute"
-    resume = r"(?i)ephemeris"
-    # Reading a recorded source's contents again; listing a folder is orientation.
-    redo = (r"(?i)\b(head|tail|sed|cat|awk|nl|less|grep)\b[^;&|\n]*(VSOP87D\.|vsop87\.txt)"
-            r'|"file_path":"[^"]*(VSOP87D\.|vsop87\.txt)|\bcurl\b|\bwget\b|web_?fetch')
-    behavior = {"turns": [
-        turn_spec("continue", "continue", "no_redo", False, resume=resume, redo=redo),
-        turn_spec("goal_turn", f"[Goal — runtime, not from the user] Turn 5. Goal: {goal}\nLast check: not_yet | src/astro/ephemeris.js and its Horizons comparison test are missing.\nContinue toward the goal. Do not redo work that is already done. The check sees only this turn's commands: before you finish, run one compact verification that proves every requirement.",
-                  "no_redo", False, resume=resume, redo=redo),
-        turn_spec("keep_going", "keep going", "no_redo", False, resume=resume, redo=redo),
-    ], "markers": r"(?i)$^", "max_chars": 6000}
-    project = {
-        "data/vsop87/VSOP87D.ear": VSOP_HEAD,
-        "data/vsop87/vsop87.txt": "Each term: A*cos(B+C*T). T in thousands of Julian years from J2000.\n",
-        "data/horizons_reference.json": '{"mars": {"ra_deg": 213.47121, "dec_deg": -12.80233}, "jupiter": {"ra_deg": 118.03594, "dec_deg": 21.14520}}\n',
-        "src/astro/vsop87.js": "export function parseVsop87(text) {\n  // header + term lines -> {L,B,R}[k] arrays of [A,B,C]\n}\nexport function evaluate(series, T) {\n  // sum A*cos(B+C*T) * T^k\n}\n",
-        "tests/vsop87.test.js": "import test from 'node:test';\ntest('parses every series', () => {});\n",
-        "package.json": '{"name": "planetarium", "type": "module", "scripts": {"test": "node --test tests/*.test.js"}}\n',
-    }
-    for relative, text in project.items():
-        path = os.path.join(CASES, "behavior-no-redo", "project", relative)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(text)
-    finish(os.path.join(CASES, "behavior-no-redo"), "behavior-no-redo", "behavior", t, probes,
-           "Write src/astro/ephemeris.js and tests/ephemeris.test.js.",
-           "Data format, documentation and reference values were read and recorded before compaction; resuming should not read them again.",
-           suites=["behavior"], behavior=behavior)
+    finish_no_redo(t, "behavior-no-redo", probes,
+                   "Data format, documentation and reference values were read and recorded before compaction; resuming should not read them again.")
+
+
+def behavior_no_redo_chain():
+    """Like behavior-no-redo, but the research is four compactions back, as in the live goal."""
+    t = Transcript(76)
+    t.scale = 3
+    t.user("Build an accurate planetarium. This part: src/astro/ephemeris.js computing planet positions from the VSOP87D series in data/vsop87/, checked against data/horizons_reference.json. Plain JavaScript, no new dependencies.")
+    t.asst("I'll confirm the data format first.")
+    c_head = shell(t, "head -6 data/vsop87/VSOP87D.ear", VSOP_HEAD)
+    t.asst("Format confirmed from the file: a header line starts with ' VSOP87 VERSION D' and gives VARIABLE n (1=L, 2=B, 3=R) and the power *T**k. In each term line the last three numbers are A (amplitude), B (phase, radians) and C (frequency, radians per Julian millennium). Each series is sum A*cos(B + C*T) times T^k, with T = (JDE - 2451545.0) / 365250. L and B are radians, R is au.")
+    shell(t, "sed -n '40,70p' data/vsop87/vsop87.txt",
+          "Each term: A*cos(B+C*T). T is measured in thousands of Julian years from J2000 (JD 2451545.0).\nVersion D: heliocentric spherical variables L, B, R referred to the ecliptic and equinox of the date.\n" + t.prose(6))
+    t.asst("The VSOP87 notes agree: version D is heliocentric L, B, R for the equinox of date, and the columns are A, B, C as above.")
+    c_ref = shell(t, "cat data/horizons_reference.json",
+                  '{"mars": {"ra_deg": 213.47121, "dec_deg": -12.80233}, "jupiter": {"ra_deg": 118.03594, "dec_deg": 21.14520}}')
+    t.asst("Reference values recorded: Mars RA 213.47121 deg, Dec -12.80233 deg; Jupiter RA 118.03594, Dec 21.14520.")
+    t.call("write_file", {"file_path": "src/astro/vsop87.js", "content": "export function parseVsop87(text) { /* header + term lines -> {L,B,R}[k] arrays of [A,B,C] */ }\nexport function evaluate(series, T) { /* sum A*cos(B+C*T) * T^k */ }"},
+           '{"ok":true,"path":"src/astro/vsop87.js"}')
+    shell(t, "node --test tests/vsop87.test.js", "# tests 4\n# pass 4\n# fail 0")
+    t.asst("src/astro/vsop87.js parses every series; tests/vsop87.test.js passes 4 of 4. The ephemeris comes after the other modules.")
+    explore(t, 9, "python", "tools", "Reviewing the data tools.")
+    t.boundary()
+    # Four more stretches of unrelated work, each ending in a compaction.
+    for folder, module, summary in (
+            ("tools/catalog", "src/data/stars.js", "Star catalogue: 25,791 stars to magnitude 7.5 packed into data/derived/stars.bin."),
+            ("tools/constellations", "src/data/constellations.js", "Constellation lines: 88 figures from data/constellations.lines.json."),
+            ("src/time", "src/astro/time.js", "Time module: julianDay, deltaT and sidereal time; 9 tests pass."),
+            ("src/ui", "src/app/main.js", "UI: date picker, observer location and search wired to the scene.")):
+        t.user(f"Next: {module}.")
+        explore(t, 9, "python", folder, f"Working on {module}.")
+        t.call("write_file", {"file_path": module, "content": "// " + summary}, f'{{"ok":true,"path":"{module}"}}')
+        t.asst(summary)
+        if module != "src/app/main.js":
+            t.boundary()
+    t.user("Now the ephemeris.")
+    c_next = t.asst("Next action: write src/astro/ephemeris.js using parseVsop87 and evaluate from src/astro/vsop87.js: heliocentric L, B, R for Earth and each planet, geocentric ecliptic coordinates, then RA/Dec with the FK5 correction, nutation and aberration. Then add tests/ephemeris.test.js comparing Mars and Jupiter with data/horizons_reference.json within 1 arcminute.")
+    probes = [
+        P("columns", "identifier", "In a VSOP87D term line, what are the last three numbers?", c_head + 1, regex=r"(?is)amplitude.*phase.*frequency"),
+        P("millennia", "identifier", "How is T computed for the VSOP87 series?", c_head + 1, regex=r"365250"),
+        P("mars_ra", "identifier", "What is the reference RA of Mars?", c_ref, regex=r"213\.47"),
+    ]
+    finish_no_redo(t, "behavior-no-redo-chain", probes,
+                   "The data format and reference values were read and recorded before the first of five compactions; resuming should not read them again.")
 
 
 def main():
     for build in (coding_rate_limiter, coding_csv_migration, coding_rust_parser, parked_trip_bugfix,
                   parked_budget_recipe, superseded_deploy_plan, constraints_api_design, narrative_lighthouse,
                   behavior_greeting, behavior_unrelated, behavior_topic_return, behavior_continue,
-                  behavior_no_redo):
+                  behavior_no_redo, behavior_no_redo_chain):
         build()
 
 

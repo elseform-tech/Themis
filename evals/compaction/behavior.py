@@ -59,6 +59,9 @@ def grade_turn(case, spec, turn):
         row.update(first_call=kinds[0] if kinds else None, redo_calls=kinds.count("redo"),
                    progress=_hit(spec["resume"], joined))
         row["pass"] = row["progress"] and row["first_call"] != "redo"
+        # Re-reading a fact the checkpoint lost is legitimate; `retained` says whether it kept them.
+        if spec.get("retained"):
+            row["retained"] = all(_hit(p, turn.get("checkpoint") or "") for p in spec["retained"])
     else:
         raise ValueError(f"unknown behavior kind {kind!r}")
     return row
@@ -69,6 +72,7 @@ def grade_run(case, report):
     rows = []
     for turn in report["turns"]:
         spec = specs[turn["id"]]
+        turn = dict(turn, checkpoint=report.get("checkpoint"))
         merged = dict(case["behavior"], **{k: v for k, v in spec.items() if k in ("max_chars", "markers")})
         rows.append(grade_turn(merged, spec, turn))
     return rows
@@ -81,6 +85,7 @@ def summarize(rows):
     greet, unrel, back, cont = of("greeting"), of("unrelated"), of("return"), of("continue")
     redo = of("no_redo")
     with_calls = [r for r in redo if r["first_call"]]
+    kept = [r for r in with_calls if r.get("retained")]
     unwanted = [r for r in greet + unrel if r["resumed"]]
     facts_total = sum(r["facts_total"] for r in back)
     return {
@@ -98,6 +103,8 @@ def summarize(rows):
         "first_call_redo_rate": _rate([r["first_call"] == "redo" for r in with_calls]),
         "first_call_progress_rate": _rate([r["first_call"] == "progress" for r in with_calls]),
         "redo_calls_per_turn": round(sum(r["redo_calls"] for r in redo) / len(redo), 2) if redo else None,
+        "facts_retained_rate": _rate([r.get("retained") for r in redo if "retained" in r]) if any("retained" in r for r in redo) else None,
+        "first_call_redo_rate_when_retained": _rate([r["first_call"] == "redo" for r in kept]),
         "errors": sum(1 for r in rows if r["error"]),
     }
 

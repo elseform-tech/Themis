@@ -6,7 +6,11 @@
       "kind": "no_redo",
       "social": false,
       "resume": "(?i)ephemeris",
-      "redo": "(?i)\\b(head|tail|sed|cat|awk|nl|less|grep)\\b[^;&|\\n]*(VSOP87D\\.|vsop87\\.txt)|\"file_path\":\"[^\"]*(VSOP87D\\.|vsop87\\.txt)|\\bcurl\\b|\\bwget\\b|web_?fetch"
+      "redo": "(?i)\\b(head|tail|sed|cat|awk|nl|less|grep)\\b[^;&|\\n]*(VSOP87D\\.|vsop87\\.txt)|\"file_path\":\"[^\"]*(VSOP87D\\.|vsop87\\.txt)|\\bcurl\\b|\\bwget\\b|web_?fetch",
+      "retained": [
+        "365250",
+        "(?i)amplitude|\\bA\\s*\\*\\s*cos"
+      ]
     },
     {
       "id": "goal_turn",
@@ -14,7 +18,11 @@
       "kind": "no_redo",
       "social": false,
       "resume": "(?i)ephemeris",
-      "redo": "(?i)\\b(head|tail|sed|cat|awk|nl|less|grep)\\b[^;&|\\n]*(VSOP87D\\.|vsop87\\.txt)|\"file_path\":\"[^\"]*(VSOP87D\\.|vsop87\\.txt)|\\bcurl\\b|\\bwget\\b|web_?fetch"
+      "redo": "(?i)\\b(head|tail|sed|cat|awk|nl|less|grep)\\b[^;&|\\n]*(VSOP87D\\.|vsop87\\.txt)|\"file_path\":\"[^\"]*(VSOP87D\\.|vsop87\\.txt)|\\bcurl\\b|\\bwget\\b|web_?fetch",
+      "retained": [
+        "365250",
+        "(?i)amplitude|\\bA\\s*\\*\\s*cos"
+      ]
     },
     {
       "id": "keep_going",
@@ -22,7 +30,11 @@
       "kind": "no_redo",
       "social": false,
       "resume": "(?i)ephemeris",
-      "redo": "(?i)\\b(head|tail|sed|cat|awk|nl|less|grep)\\b[^;&|\\n]*(VSOP87D\\.|vsop87\\.txt)|\"file_path\":\"[^\"]*(VSOP87D\\.|vsop87\\.txt)|\\bcurl\\b|\\bwget\\b|web_?fetch"
+      "redo": "(?i)\\b(head|tail|sed|cat|awk|nl|less|grep)\\b[^;&|\\n]*(VSOP87D\\.|vsop87\\.txt)|\"file_path\":\"[^\"]*(VSOP87D\\.|vsop87\\.txt)|\\bcurl\\b|\\bwget\\b|web_?fetch",
+      "retained": [
+        "365250",
+        "(?i)amplitude|\\bA\\s*\\*\\s*cos"
+      ]
     }
   ],
   "markers": "(?i)$^",

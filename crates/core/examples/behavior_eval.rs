@@ -105,6 +105,8 @@ async fn main() -> anyhow::Result<()> {
     if let Some(model) = &model {
         config = config.with_model(model);
     }
+    // The live goal that motivated `behavior-no-redo-chain` ran at max effort.
+    config.reasoning_effort = arg("--effort");
     if let Some(url) = arg("--base-url") {
         config = config.with_base_url(url);
     }
@@ -116,6 +118,13 @@ async fn main() -> anyhow::Result<()> {
     };
     let outcome = compact_chunks(&llm, &transcript, &ends, policy, evidence.path()).await?;
     let base = history_from_messages(&outcome.messages);
+    // The grader checks which recorded facts survived, since re-reading a lost one is fine.
+    let checkpoint = outcome
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.content.starts_with("Earlier context checkpoint"))
+        .map(|message| message.content.clone());
     let mut turns = Vec::new();
     for turn in behavior["turns"].as_array().into_iter().flatten() {
         let message = turn["message"].as_str().unwrap_or_default();
@@ -152,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let report = json!({
         "case": meta["name"], "model": model, "budget": budget, "anchors": if old_anchors {"old"} else {"new"},
-        "valid": outcome.valid, "chunks": outcome.chunks, "turns": turns,
+        "valid": outcome.valid, "chunks": outcome.chunks, "turns": turns, "checkpoint": checkpoint,
     });
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())

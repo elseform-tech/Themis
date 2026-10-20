@@ -275,11 +275,25 @@ class BehaviorGradeTests(unittest.TestCase):
                            ('read_file: call `read_file` with {"file_path":"data/horizons_reference.json"}', "other")):
             self.assertEqual(behavior.classify_call(call, spec["resume"], spec["redo"]), kind, call)
 
+    def test_no_redo_reports_whether_the_checkpoint_kept_the_facts(self):
+        case = next(c for c in harness.load_cases("behavior") if c["name"] == "behavior-no-redo-chain")
+        with open(os.path.join(case["directory"], "case.json"), encoding="utf-8") as handle:
+            self.assertGreaterEqual(len(json.load(handle)["chunks"]), 5)
+        call = 'shell: call `shell` with {"command":"sh","args":["-c","head -20 data/vsop87/VSOP87D.ear"]}'
+        kept = {"turns": [{"id": "continue", "reply": "", "tool_calls": [call]}],
+                "checkpoint": "Earlier context checkpoint: A*cos(B+C*T), T = (JDE-2451545)/365250, A amplitude"}
+        lost = dict(kept, checkpoint="Earlier context checkpoint: parser written.")
+        self.assertTrue(behavior.grade_run(case, kept)[0]["retained"])
+        self.assertFalse(behavior.grade_run(case, lost)[0]["retained"])
+        rows = behavior.grade_run(case, kept) + behavior.grade_run(case, lost)
+        summary = behavior.summarize(rows)
+        self.assertEqual((summary["facts_retained_rate"], summary["first_call_redo_rate_when_retained"]), (0.5, 1.0))
+
     def test_every_behavior_case_is_well_formed(self):
         cases = harness.load_cases("behavior")
         self.assertEqual(sorted(c["name"] for c in cases), [
-            "behavior-continue", "behavior-greeting", "behavior-no-redo", "behavior-topic-return",
-            "behavior-unrelated"])
+            "behavior-continue", "behavior-greeting", "behavior-no-redo", "behavior-no-redo-chain",
+            "behavior-topic-return", "behavior-unrelated"])
         for case in cases:
             ids = [t["id"] for t in case["behavior"]["turns"]]
             self.assertEqual(len(ids), len(set(ids)))
