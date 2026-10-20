@@ -21,6 +21,7 @@ inside the normal suites, on every platform, with reproducible shrinking.
 | Social messages | Any UI text never panics greeting detection or recall terms; terms bounded and sorted; social-only input is social (also repeated) with no terms; any non-social ASCII word makes it a task | `crates/core/src/social.rs` |
 | Chat grants | Arbitrary text never panics the grant-file parser; anything it accepts is valid, bounded and never destructive, and never matches a destructive action | `crates/core/src/chat_grants.rs` |
 | Sandbox | Seatbelt profiles never contain path text (paths travel as `-D` parameters); output scanning for denials never panics and yields bounded substrings; project layers never widen the sandbox; deny-rule flag matching only widens exact prefixes | `crates/core/src/sandbox/tests.rs`, `crates/core/src/configuration.rs` |
+| Web pages and search | Any response body and content type never panics page extraction; any SearXNG body never panics, keeps only unique http(s) results within the requested count | `crates/core/src/tools/web.rs` |
 | Web state | Any event stream keeps running state consistent and attaches edited files to the right reply; prompt tokens rebuild exactly | `web/src/state/reducer.property.test.ts` |
 
 ## Fuzz targets (nightly CI)
@@ -41,6 +42,8 @@ internal parsers through the off-by-default `fuzzing` feature of
 | `sandbox_config` | User and project `runtime.jsonc` text plus command output: resolving never panics, a project never disables the sandbox, changes the backend, allows a blocked network or adds writable paths; no path reaches the Seatbelt profile text; denial scanning stays bounded |
 | `social_request` | UI message text for greeting/thanks detection and recall terms: bounded output, a non-social word always makes a task |
 | `patch_apply` | Model-written `apply_patch` hunks against file text: never panics, applied lines come from the file or the patch |
+| `web_page` | Arbitrary bytes as a `fetch_url` response body under several content types and charsets |
+| `searxng_results` | Arbitrary bytes as a SearXNG JSON response: results stay unique http(s) URLs within the requested count |
 | `shell_wrapped` | Shell argv, often behind `sh -c`/`sudo`/`env`/`eval`/`cmd /c`: reading wrapped commands never panics, stays bounded and yields no empty commands |
 
 ```sh

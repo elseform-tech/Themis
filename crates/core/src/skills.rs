@@ -23,8 +23,10 @@ pub const MAX_SCRIPTS_TOTAL_BYTES: usize = 65536;
 /// Verified against the `#[tool(name = ...)]` attributes in `tools.rs`
 /// (`shell`, `background_task`, `apply_patch`, `git`) and the `autoagents-toolkit` filesystem
 /// tool names (`list_dir`, `read_file`, `write_file`, `copy_file`,
-/// `move_file`, `delete_file`, `create_dir`, `search_file`).
-const KNOWN_TOOL_NAMES: [&str; 13] = [
+/// `move_file`, `delete_file`, `create_dir`, `search_file`), then the tools
+/// added per run: `recall`, `fetch_url`, `web_search` and `browser` (which
+/// grants every `browser_*` tool).
+const KNOWN_TOOL_NAMES: [&str; 16] = [
     "list_dir",
     "read_file",
     "write_file",
@@ -38,6 +40,9 @@ const KNOWN_TOOL_NAMES: [&str; 13] = [
     "recall",
     "apply_patch",
     "git",
+    "fetch_url",
+    "web_search",
+    "browser",
 ];
 
 /// A helper script bundled with a skill.
@@ -185,15 +190,18 @@ pub fn filter_tools(tools: Vec<Box<dyn ToolT>>, skills: &[Skill]) -> Vec<Box<dyn
         .into_iter()
         .filter(|tool| {
             let name = tool.name();
+            let browser = name.starts_with("browser_");
             // Built-in skill grants do not describe independently authorized integrations.
-            if !KNOWN_TOOL_NAMES.contains(&name) {
+            if !KNOWN_TOOL_NAMES.contains(&name) && !browser {
                 return true;
             }
             // Managing a background task is part of granting `shell`.
             // Recalling saved originals is a read of the chat's own evidence.
+            // `browser` grants every browser tool.
             let granted = match name {
                 "background_task" => "shell",
                 "recall" => "read_file",
+                _ if browser => "browser",
                 name => name,
             };
             skills.iter().all(|skill| {
@@ -348,10 +356,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
         let built: Vec<String> = tools.iter().map(|tool| tool.name().to_owned()).collect();
-        // `recall` needs a chat's evidence, so it is added per run, not by boxed_tools.
+        // `recall` needs a chat's evidence, and the web and browser tools a run's
+        // configuration, so they are added per run, not by boxed_tools.
         let known: Vec<String> = known_tool_names()
             .into_iter()
-            .filter(|name| name != "recall")
+            .filter(|name| {
+                !matches!(
+                    name.as_str(),
+                    "recall" | "fetch_url" | "web_search" | "browser"
+                )
+            })
             .collect();
         assert_eq!(known, built);
     }

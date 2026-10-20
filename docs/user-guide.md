@@ -174,8 +174,9 @@ When a rule asks, the dialog shows the tool, summary, and risk:
 
 - **Allow once (1)** — allow this call only.
 - **Allow in this chat (2)** — allow the same command family (for example `cargo test`
-  with any further arguments, or every tool of one MCP server) now and in every later
-  run of this chat, including its automations. Other chats still ask.
+  with any further arguments, every tool of one MCP server, or reading pages from one
+  site) now and in every later run of this chat, including its automations. Other chats
+  still ask.
 - **Deny (3)** — refuse; the agent sees the denial and adapts or stops.
 
 Destructive actions (force pushes, discarding changes, deleting files and similar) always
@@ -191,6 +192,14 @@ the filesystem root and Git allowlist, but the sandbox still applies. Mode and
 configuration changes apply to the next run; active runs keep their captured
 policy. See [configuration](configuration.md) for examples and
 [sandbox](sandbox.md) for the enforcement boundary.
+
+### Web search and pages
+
+Agents read web pages with `fetch_url` and search with `web_search`. Search uses a
+SearXNG instance you run and name in the user `runtime.jsonc`
+(`"web": {"search_url": "http://127.0.0.1:8888"}`); without it only page reading is
+offered. Both ask per site in Custom, and **Allow in this chat** covers that site.
+Page text and results are treated as untrusted. See [web tools](web-tools.md).
 
 ### The sandbox
 
@@ -225,7 +234,8 @@ Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. F
 - An empty allowlist means "all tools".
 - Unknown tool names are rejected. The valid names are exactly:
   `list_dir`, `read_file`, `write_file`, `copy_file`, `move_file`,
-  `delete_file`, `create_dir`, `search_file`, `shell`, `apply_patch`, `git`.
+  `delete_file`, `create_dir`, `search_file`, `shell`, `apply_patch`, `git`,
+  `fetch_url`, `web_search` and `browser` (every `browser_*` tool).
 
 The file tools accept an absolute path when it lies inside the project (it is
 used as the matching project-relative path); paths outside the project stay

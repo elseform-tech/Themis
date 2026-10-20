@@ -90,3 +90,17 @@ path = "fuzz_targets/goal_verdict.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "web_page"
+path = "fuzz_targets/web_page.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "searxng_results"
+path = "fuzz_targets/searxng_results.rs"
+test = false
+doc = false
+bench = false

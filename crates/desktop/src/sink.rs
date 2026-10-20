@@ -137,6 +137,7 @@ mod tests {
             summary: "run".to_owned(),
             risk: RiskLevel::Execute,
             grant_scope: None,
+            grant_site: None,
             grantable: true,
             command: None,
         });

@@ -15,6 +15,7 @@
 pub mod background;
 mod patch;
 pub mod recall;
+pub mod web;
 mod wrapped;
 
 use patch::*;
@@ -101,7 +102,26 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
 #[must_use]
 pub fn tool_approves_itself(name: &str) -> bool {
     // `set_goal` only sets the calling chat's goal; its deny rules apply inside.
-    matches!(name, "manage_automations" | "set_goal")
+    // Web and browser tools approve per site, and only they know the site (the
+    // browser's current page).
+    matches!(name, "manage_automations" | "set_goal") || is_site_tool(name)
+}
+
+/// Tools whose approval identity is a site: the action's `command` holds the
+/// host, rules may name one (`"command": ["example.com"]`, subdomains match)
+/// and an "allow in this chat" grant covers that site.
+#[must_use]
+pub fn is_site_tool(name: &str) -> bool {
+    matches!(name, "web_search" | "fetch_url") || name.starts_with("browser_")
+}
+
+/// What one site grant covers: every browser action on the site, or one web tool.
+fn site_grant_group(tool: &str) -> &str {
+    if tool.starts_with("browser_") {
+        "browser"
+    } else {
+        tool
+    }
 }
 
 pub fn integration_approval_identity(name: &str, args: &Value) -> String {
@@ -260,12 +280,31 @@ impl ToolAction {
         if let Some(server) = mcp_server_id(&self.tool) {
             return format!("mcp\0{server}");
         }
+        if let Some(site) = self.site() {
+            return format!("{}\0{site}", site_grant_group(&self.tool));
+        }
         if !is_command_tool(&self.tool) || self.command.is_empty() {
             return self.tool.clone();
         }
         let (prefix, _) = self.shell_grant_prefix();
         // NUL cannot occur in argv, so the join is unambiguous.
         format!("{}\0{}", self.tool, prefix.join("\0"))
+    }
+
+    /// The host a web or browser action acts on, lowercased.
+    pub fn site(&self) -> Option<String> {
+        is_site_tool(&self.tool)
+            .then(|| self.command.first())
+            .flatten()
+            .map(|host| host.to_ascii_lowercase())
+    }
+
+    /// The tool group and host an "allow in this chat" answer covers, for the
+    /// approval dialog: `("browser", "localhost")` covers every browser action
+    /// on that site.
+    pub fn site_grant(&self) -> Option<(String, String)> {
+        self.site()
+            .map(|site| (site_grant_group(&self.tool).to_owned(), site))
     }
 
     /// Whether a chat grant may cover this action. Destructive actions (the
@@ -902,7 +941,7 @@ pub fn check_approval_permitted(
     check_approval(hook, action)
 }
 
-fn tool_error(message: String) -> ToolCallError {
+pub(crate) fn tool_error(message: String) -> ToolCallError {
     ToolCallError::RuntimeError(message.into())
 }
 

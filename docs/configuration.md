@@ -193,6 +193,9 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `sandbox.network` | `allow` (default, also in Custom) or `block`; projects may only set `block` |
 | `sandbox.writable_paths` | At most 32 folders, absolute or `~/...`, 1–1,024 bytes, no `..`; projects may only remove entries |
 | `sandbox.allow_keychain` | macOS: `false` (default) keeps sandboxed commands out of the Keychain; `true` lets them use it (for example git's HTTPS credential helper); projects may only set `false` |
+| `web.search_url` | Optional http(s) URL of your SearXNG instance (JSON output enabled), at most 1,024 bytes, no credentials; user file only. Unset: `web_search` is not offered. See [web tools](web-tools.md) |
+| `browser.enabled` | Boolean, default `true`; projects may only set `false` |
+| `browser.executable` | Optional absolute path to a Chrome, Chromium or Edge binary, at most 1,024 bytes; user file only. Unset: an installed browser is found automatically |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration
@@ -276,6 +279,13 @@ Only allow/ask rules naming `shell_unsandboxed` exactly apply to that request;
 wildcard, prefix and risk-only allow rules and an `allow` default never cover it,
 while every matching deny rule (including `*`) refuses it.
 Example allow rule: `{ "tool": "shell", "command": ["cargo", "test"], "action": "allow" }`.
+
+For web and browser tools (`web_search`, `fetch_url`, `browser_*`) `command` names one
+site instead: a host name or IP address without scheme, port, path or wildcard. It matches
+that host and its subdomains, without case: `{ "tool": "browser_*", "command": ["example.com"], "action": "deny" }`
+denies every browser action on `example.com` and `login.example.com`, not `notexample.com`.
+These tools check approval themselves once they know the site (for browser actions, the
+current page), so a rule or grant always sees the real host. See [web tools](web-tools.md).
 Allow and ask rules match the program token exactly (`/bin/echo` or a project-local
 `./echo` does not match `["echo"]`, so an allow rule never widens). Deny rules also
 match the program by basename, lowercased on macOS/Windows and without
@@ -304,13 +314,15 @@ whose first argument is a non-flag subcommand other than an executing one (`run`
 (`find`, `sudo`, `env`, `ssh`, `bash -c`, ...) is keyed by its full argv. All tools of one
 MCP server share one key (the server id inside the generated `mcp_<server id><tool id>_<tool>`
 name), so one grant on any tool of that server covers its other tools; a different server,
-or the same server after its plugin revision changes, asks again.
+or the same server after its plugin revision changes, asks again. Web and browser grants are
+keyed by site: one grant on a browser action covers every browser action on that host, and a
+`fetch_url` or `web_search` grant covers that tool on that host.
 
 **Chat grants.** The approval dialog offers **Allow once**, **Allow in this chat** and
 **Deny**. *Allow in this chat* runs the action now and saves the grant to the chat's own
 file, `chat_grants/<chat id>.json` in the app data directory (beside `threads.json`). Format:
 `{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<16 hex>","risk":"network"}]}`;
-`command` is the covered argv prefix (`shell`, `git` and `shell_unsandboxed` only), `server` marks a whole-MCP-server
+`command` is the covered argv prefix (`shell`, `git` and `shell_unsandboxed`) or the one covered site (`browser`, `fetch_url`, `web_search`, e.g. `{"tool":"browser","command":["localhost"],"risk":"network"}`), `server` marks a whole-MCP-server
 grant, and `risk` is `read`, `write`, `execute` or `network`. Limits: 256 grants, 256 KiB.
 The file is loaded when a run starts (configuration and approval mode are still captured once
 per run); a grant made during a run applies immediately to that run and is saved for later

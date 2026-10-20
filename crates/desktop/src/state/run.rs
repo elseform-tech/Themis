@@ -351,6 +351,11 @@ impl AppState {
             thread_id: thread_id.to_owned(),
             run: check_approval.clone(),
         }));
+        // fetch_url always; web_search when the user file names a SearXNG instance.
+        tools.extend(themis_core::tools::web::web_tools(
+            approvals.clone(),
+            &run_configuration.web,
+        ));
         tools.extend(self.integration_management_tools_for_run(
             approvals.clone(),
             snapshot.work_root.clone(),

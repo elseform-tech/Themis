@@ -87,6 +87,20 @@ fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
         .map_or(rule.tool == action.tool, |prefix| {
             action.tool.starts_with(prefix)
         });
+    if crate::tools::is_site_tool(&action.tool) {
+        // Web and browser rules name a site: the host or any of its subdomains.
+        return matches
+            && rule.command.as_ref().is_none_or(|sites| {
+                action
+                    .command
+                    .first()
+                    .is_some_and(|host| site_matches(host, &sites[0]))
+            })
+            && rule
+                .risk
+                .as_ref()
+                .is_none_or(|risk| risk == risk_name(action.risk));
+    }
     matches
         && match rule.command.as_ref() {
             // A broad allow without `command` is trust in the tool,
@@ -120,6 +134,28 @@ fn rule_matches(rule: &ApprovalRule, action: &ToolAction) -> bool {
             .risk
             .as_ref()
             .is_none_or(|risk| risk == risk_name(action.risk))
+}
+/// `host` is `site` or one of its subdomains (`docs.example.com` for
+/// `example.com`), compared without case.
+pub fn site_matches(host: &str, site: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let site = site.trim_end_matches('.').to_ascii_lowercase();
+    !site.is_empty()
+        && (host == site
+            || host
+                .strip_suffix(&site)
+                .is_some_and(|rest| rest.ends_with('.')))
+}
+
+/// A site in an approval rule: a host name or IP address, without scheme,
+/// port, path or wildcard.
+fn valid_site(site: &str) -> bool {
+    !site.is_empty()
+        && site.len() <= 253
+        && site
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
+        && !site.starts_with('.')
 }
 /// Exact token-prefix match: `["cargo","test"]` matches `cargo test --lib` but
 /// not `cargo testing`, `/usr/bin/cargo test` or an empty command.
@@ -471,6 +507,78 @@ impl Default for SkillConfig {
     }
 }
 
+/// Web tools. `search_url` is the person's own SearXNG instance; without it
+/// `web_search` is not offered. Only the user file may set it, so a project
+/// cannot send searches elsewhere.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WebConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_url: Option<String>,
+}
+
+/// The built-in browser. A project may only turn it off; `executable` (a
+/// Chrome, Chromium or Edge binary) may only come from the user file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BrowserConfig {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable: Option<String>,
+}
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            executable: None,
+        }
+    }
+}
+
+/// Project and run layers may not point web or browser settings elsewhere;
+/// they may only turn the browser off.
+fn check_web_restriction(layer: &Value, origin: &str) -> Result<()> {
+    ensure!(
+        layer.pointer("/web/search_url").is_none(),
+        "web.search_url may only be set in the user runtime.jsonc, not the {origin} configuration"
+    );
+    ensure!(
+        layer.pointer("/browser/executable").is_none(),
+        "browser.executable may only be set in the user runtime.jsonc, not the {origin} configuration"
+    );
+    if let Some(enabled) = layer.pointer("/browser/enabled") {
+        ensure!(
+            enabled == &Value::Bool(false),
+            "the {origin} configuration may only set browser.enabled to false"
+        );
+    }
+    Ok(())
+}
+
+fn validate_web(config: &RuntimeConfig) -> Result<()> {
+    if let Some(url) = &config.web.search_url {
+        let parsed = reqwest::Url::parse(url)
+            .ok()
+            .filter(|_| url.len() <= 1024)
+            .context("web.search_url must be an http or https URL of at most 1,024 bytes")?;
+        ensure!(
+            matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some(),
+            "web.search_url must be an http or https URL"
+        );
+        ensure!(
+            parsed.username().is_empty() && parsed.password().is_none(),
+            "web.search_url must not contain credentials"
+        );
+    }
+    if let Some(path) = &config.browser.executable {
+        ensure!(
+            path.len() <= 1024 && std::path::Path::new(path).is_absolute(),
+            "browser.executable must be an absolute path of at most 1,024 bytes"
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RuntimeConfig {
@@ -484,6 +592,10 @@ pub struct RuntimeConfig {
     /// OS sandbox for commands the agent runs; see [`crate::sandbox`].
     pub sandbox: crate::sandbox::SandboxConfig,
     pub compaction: CompactionConfig,
+    /// `web_search` backend; see [`WebConfig`].
+    pub web: WebConfig,
+    /// The built-in browser; see [`BrowserConfig`].
+    pub browser: BrowserConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_token_budget: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -502,6 +614,8 @@ impl Default for RuntimeConfig {
             approval: ApprovalPolicy::default(),
             sandbox: crate::sandbox::SandboxConfig::default(),
             compaction: CompactionConfig::default(),
+            web: WebConfig::default(),
+            browser: BrowserConfig::default(),
             context_token_budget: None,
             recent_messages: None,
             total_turns: None,
@@ -727,6 +841,7 @@ pub fn resolve(
                             .context("invalid sandbox configuration")?;
                     crate::sandbox::check_restriction(&current, sandbox, origin)?;
                 }
+                check_web_restriction(&layer, origin)?;
             }
             if origin == "project" {
                 if let Some(policy) = layer.as_object_mut().and_then(|m| m.remove("approval")) {
@@ -821,6 +936,7 @@ pub fn validate_relative_paths(paths: &[String]) -> Result<()> {
 
 pub fn validate(config: &RuntimeConfig) -> Result<()> {
     crate::sandbox::validate(&config.sandbox)?;
+    validate_web(config)?;
     validate_relative_paths(&config.skills.paths)?;
     validate_relative_paths(&config.instructions)?;
     ensure!(
@@ -912,10 +1028,17 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
             "approval rule tool must be an exact name or trailing-star prefix"
         );
         if let Some(command) = &rule.command {
-            ensure!(
-                rule.tool == "shell" || rule.tool == crate::tools::UNSANDBOXED_TOOL,
-                "approval rule command is only valid with tool \"shell\" or \"shell_unsandboxed\""
-            );
+            if crate::tools::is_site_tool(&rule.tool) || rule.tool == "browser_*" {
+                ensure!(
+                    command.len() == 1 && valid_site(&command[0]),
+                    "approval rule command for a web or browser tool must be one site, such as [\"example.com\"]"
+                );
+            } else {
+                ensure!(
+                    rule.tool == "shell" || rule.tool == crate::tools::UNSANDBOXED_TOOL,
+                    "approval rule command is only valid with tool \"shell\" or \"shell_unsandboxed\", or one site with a web or browser tool"
+                );
+            }
             ensure!(
                 !command.is_empty() && command.len() <= 16,
                 "approval rule command must have 1..16 tokens"
@@ -1015,6 +1138,13 @@ pub fn schema() -> Value {
                 "network":{"enum":["allow","block"],"default":"allow"},
                 "writable_paths":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024},"default":[]}
             }},
+            "web":{"type":"object","additionalProperties":false,"properties":{
+                "search_url":{"type":"string","maxLength":1024,"description":"Your SearXNG instance (JSON output enabled); user file only"}
+            }},
+            "browser":{"type":"object","additionalProperties":false,"properties":{
+                "enabled":{"type":"boolean","default":true},
+                "executable":{"type":"string","maxLength":1024,"description":"Chrome, Chromium or Edge binary; user file only"}
+            }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":1800,"default":900},
                 "request_timeout_seconds":{"type":"integer","minimum":1,"maximum":300,"default":300},
@@ -1038,6 +1168,92 @@ pub fn schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_and_browser_settings_come_from_the_user_file_and_projects_may_only_disable() {
+        let user = r#"{"web":{"search_url":"http://127.0.0.1:8888"},"browser":{"executable":"/opt/chrome"}}"#;
+        let resolved = resolve(Some(user), Some(r#"{"browser":{"enabled":false}}"#), None).unwrap();
+        assert_eq!(
+            resolved.config.web.search_url.as_deref(),
+            Some("http://127.0.0.1:8888")
+        );
+        assert!(!resolved.config.browser.enabled);
+        assert_eq!(resolved.provenance["browser.enabled"], "project");
+        assert!(RuntimeConfig::default().browser.enabled);
+        for project in [
+            r#"{"web":{"search_url":"https://evil.example"}}"#,
+            r#"{"browser":{"executable":"/tmp/x"}}"#,
+            r#"{"browser":{"enabled":true}}"#,
+        ] {
+            assert!(
+                resolve(Some(user), Some(project), None).is_err(),
+                "{project}"
+            );
+            assert!(
+                resolve(None, None, Some(project)).is_err(),
+                "run: {project}"
+            );
+        }
+        for bad in [
+            r#"{"web":{"search_url":"ftp://x"}}"#,
+            r#"{"web":{"search_url":"http://u:p@x"}}"#,
+            r#"{"web":{"search_url":"not a url"}}"#,
+            r#"{"browser":{"executable":"chrome"}}"#,
+            r#"{"web":{"other":1}}"#,
+        ] {
+            assert!(resolve(Some(bad), None, None).is_err(), "{bad}");
+        }
+        assert!(schema()["properties"]["web"]["properties"]["search_url"].is_object());
+    }
+
+    #[test]
+    fn site_rules_match_the_host_and_its_subdomains() {
+        let action = |tool: &str, host: &str| ToolAction {
+            display: None,
+            command: vec![host.into()],
+            tool: tool.into(),
+            summary: String::new(),
+            risk: RiskLevel::Network,
+        };
+        let resolved = resolve(
+            Some(r#"{"approval":{"rules":[{"tool":"fetch_url","command":["docs.rs"],"action":"allow"}]}}"#),
+            Some(r#"{"approval":{"rules":[{"tool":"browser_*","command":["Example.com"],"action":"deny"}]}}"#),
+            None,
+        )
+        .unwrap();
+        let policy = &resolved.config.approval;
+        assert_eq!(
+            policy.decision(&action("browser_click", "example.com")),
+            PolicyAction::Deny
+        );
+        assert_eq!(
+            policy.decision(&action("browser_open", "login.example.com")),
+            PolicyAction::Deny
+        );
+        assert_eq!(
+            policy.decision(&action("browser_open", "notexample.com")),
+            PolicyAction::Ask
+        );
+        assert_eq!(
+            policy.decision(&action("fetch_url", "docs.rs")),
+            PolicyAction::Allow
+        );
+        assert_eq!(
+            policy.decision(&action("fetch_url", "evil-docs.rs")),
+            PolicyAction::Ask
+        );
+        assert!(site_matches("A.Example.COM.", "example.com"));
+        assert!(!site_matches("example.com", ""));
+        for bad in [
+            r#"{"tool":"fetch_url","command":["https://docs.rs"],"action":"deny"}"#,
+            r#"{"tool":"fetch_url","command":["a.com","b.com"],"action":"deny"}"#,
+            r#"{"tool":"fetch_url","command":["*.a.com"],"action":"deny"}"#,
+            r#"{"tool":"read_file","command":["a.com"],"action":"deny"}"#,
+        ] {
+            let file = format!(r#"{{"approval":{{"rules":[{bad}]}}}}"#);
+            assert!(resolve(Some(&file), None, None).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn summary_model_override_follows_precedence_and_can_be_cleared() {

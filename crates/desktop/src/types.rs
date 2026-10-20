@@ -377,6 +377,10 @@ pub struct ApprovalRequest {
     /// UI must render them as data); absent for tools granted per tool name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_scope: Option<themis_core::tools::GrantScope>,
+    /// For web and browser tools: the site "allow in this chat" covers, and
+    /// for which tools (`browser` = every browser action on that site).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_site: Option<GrantSite>,
     /// False for destructive actions: they ask every time, so the dialog
     /// offers only "Allow once" and "Deny".
     #[serde(default = "default_grantable")]
@@ -385,6 +389,14 @@ pub struct ApprovalRequest {
     /// of the joined `summary`, which can be spoofed by argument contents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<themis_core::tools::CommandDisplay>,
+}
+
+/// What a site grant covers (`GrantSite` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrantSite {
+    /// `browser`, `fetch_url` or `web_search`.
+    pub tools: String,
+    pub site: String,
 }
 
 const fn default_grantable() -> bool {
@@ -1293,6 +1305,7 @@ mod tests {
                 argv: vec!["cargo".to_owned(), "test".to_owned()],
                 covers_further_args: true,
             }),
+            grant_site: None,
             grantable: true,
             command: None,
         };

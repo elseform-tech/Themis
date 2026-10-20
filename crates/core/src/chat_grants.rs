@@ -77,6 +77,13 @@ impl GrantEntry {
                 server: Some(server.to_owned()),
                 risk: risk_label(action.risk).to_owned(),
             }
+        } else if let Some((group, site)) = action.site_grant() {
+            Self {
+                tool: group,
+                command: vec![site],
+                server: None,
+                risk: risk_label(action.risk).to_owned(),
+            }
         } else if crate::tools::is_command_tool(&action.tool) {
             let scope = action.grant_scope_argv()?;
             Self {
@@ -137,6 +144,18 @@ impl GrantEntry {
                 // A stored command must stay exactly as safe as a live grant.
                 if crate::tools::is_destructive_variant(&self.command) {
                     return Err("destructive command");
+                }
+            }
+            (None, "browser" | "fetch_url" | "web_search") => {
+                // A site grant names exactly one host.
+                let [site] = self.command.as_slice() else {
+                    return Err("site grant needs one site");
+                };
+                if !site
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || ".-:[]".contains(c))
+                {
+                    return Err("invalid site");
                 }
             }
             (None, _) => {
@@ -335,6 +354,39 @@ pub fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    fn site_action(tool: &str, host: &str) -> ToolAction {
+        ToolAction {
+            display: None,
+            command: vec![host.into()],
+            tool: tool.into(),
+            summary: String::new(),
+            risk: RiskLevel::Network,
+        }
+    }
+
+    #[test]
+    fn a_site_grant_covers_that_site_for_its_tool_group_and_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("grants.json");
+        let grants = ChatGrants::load(&path);
+        assert!(grants.remember(&site_action("browser_click", "LocalHost")));
+        let reloaded = ChatGrants::load(&path);
+        for grants in [&grants, &reloaded] {
+            assert!(grants.covers(&site_action("browser_type", "localhost")));
+            assert!(grants.covers(&site_action("browser_open", "localhost")));
+            assert!(!grants.covers(&site_action("browser_open", "example.com")));
+            assert!(!grants.covers(&site_action("fetch_url", "localhost")));
+        }
+        assert!(grants.remember(&site_action("fetch_url", "docs.rs")));
+        assert!(grants.covers(&site_action("fetch_url", "docs.rs")));
+        assert!(!grants.covers(&site_action("web_search", "docs.rs")));
+        let bad = r#"{"version":1,"grants":[{"tool":"browser","command":["a.com","b.com"],"risk":"network"}]}"#;
+        assert!(parse_grants(bad).is_err());
+        let bad =
+            r#"{"version":1,"grants":[{"tool":"browser","command":["A B"],"risk":"network"}]}"#;
+        assert!(parse_grants(bad).is_err());
+    }
 
     fn shell(argv: &[&str]) -> ToolAction {
         ToolAction {
