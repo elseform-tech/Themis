@@ -100,6 +100,13 @@ tool calls and checkpoints. Cases use `"suites": ["behavior"]`:
   share of the planted facts in the reply.
 - `behavior-continue`: "continue" / "ok go on" / "keep going" resume the latest task, not an
   older parked topic.
+- `behavior-no-redo`: the data format, its documentation and the reference values were read and
+  recorded before the compaction; "continue", a goal turn and "keep going" should start the
+  recorded next action, not read those sources again. Each tool call is graded `progress` (a write
+  matching the task), `redo` (re-reading a recorded source) or `other`; the headline is the first
+  call, because every approval is denied and the folder is empty, so later calls react to that.
+  Reported as `first_call_redo_rate`, `first_call_progress_rate`, `redo_calls_per_turn` and
+  `no_redo_pass_rate` (progress, and the first call is not a redo).
 
 `--anchors old` reproduces the previous desktop behavior (latest exchanges injected as
 historical anchors for every message); `new` omits them for turns marked `social` and when the
