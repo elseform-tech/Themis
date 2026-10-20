@@ -366,14 +366,18 @@ class RedoGradeTests(unittest.TestCase):
         write = _call("write_file", {"file_path": "src/astro/vsop87.js", "content": "x"})
         patch = _call("apply_patch", {"patch": "--- a/src/astro/vsop87.js\n+++ b/src/astro/vsop87.js\n@@ -1 +1 @@\n-x\n+y\n"})
         checkpoint = {"kind": "checkpoint"}
+        evidence = {"kind": "call", "tool": "read_file", "ok": True,  # a summary cut short
+                    "summary": 'call `read_file` with {"file_path":"/var/folders/x/T/.tmpZ/.themis/contex'}
+        found = _call("read_file", {"file_path": "docs/vsop87.txt", "find": "col 80"})
         steps = [doc, data, doc, write, mine, checkpoint, doc, data, other_slice, mine, patch,
-                 checkpoint, mine, _call("shell", {"command": "ls"}, ok=False)]
+                 checkpoint, mine, evidence, found, evidence, _call("shell", {"command": "ls"}, ok=False)]
         row = redo.grade_run({"steps": steps, "outputs_written": ["src/astro/vsop87.js"]})
         # doc twice before any checkpoint: a repeat; doc, data and the unchanged parser after one: rereads;
         # the other slice is new; the parser read after the patch is a fresh read.
         self.assertEqual((row["repeated_reads"], row["rereads_after_checkpoint"]), (1, 3))
-        self.assertEqual((row["checkpoints"], row["reads"], row["reads_after_checkpoint"]), (2, 9, 5))
-        self.assertEqual((row["reread_share"], row["failed_calls"], row["outputs_written"]), (0.6, 1, 1))
+        self.assertEqual((row["checkpoints"], row["reads"], row["reads_after_checkpoint"]), (2, 10, 6))
+        self.assertEqual((row["reread_share"], row["failed_calls"], row["outputs_written"]), (0.5, 1, 1))
+        self.assertEqual(row["evidence_reads"], 2)
         summary = redo.summarize([row, dict(row, rereads_after_checkpoint=1)])
         self.assertEqual(summary["rereads_after_checkpoint"]["mean"], 2)
         self.assertEqual(summary["runs"], 2)
