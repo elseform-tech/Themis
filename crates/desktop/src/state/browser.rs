@@ -37,7 +37,13 @@ impl AppState {
                 loop {
                     let update = match updates.recv().await {
                         Ok(update) => update,
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        // Frames crowded out a state change: catch up from the current state.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            match state.browser_state_update(&thread_id).await {
+                                Some(update) => update,
+                                None => continue,
+                            }
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     };
                     let BrowserUpdate::State(browser) = update else {
@@ -65,6 +71,12 @@ impl AppState {
             });
         }
         chat
+    }
+
+    /// The chat's current browser state as an update, if it has a browser.
+    pub async fn browser_state_update(&self, thread_id: &str) -> Option<BrowserUpdate> {
+        let chat = self.inner.browsers.existing(thread_id)?;
+        Some(BrowserUpdate::State(chat.state().await))
     }
 
     /// The app's browser hub (for run tools).

@@ -146,6 +146,9 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
         .execute(json!({"ref": country, "values": ["France"]}))
         .await
         .unwrap();
+    // The Workspace view watches; it is streaming, as when the tab is open.
+    let mut updates = chat.subscribe();
+    chat.start_screencast(800, 600, 1.0).await.unwrap();
     let clicked = tool("browser_click")
         .execute(json!({"ref": submit}))
         .await
@@ -162,6 +165,17 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     );
     // Refs are stable across snapshots of one page.
     assert_eq!(ref_of(after, "\"Create account\""), submit);
+    // Once the click is done the view stops saying "Agent is clicking".
+    let mut last = None;
+    while let Ok(update) = updates.try_recv() {
+        if let themis_core::browser::BrowserUpdate::State(state) = update {
+            last = Some(state);
+        }
+    }
+    let last = last.expect("the view got state updates");
+    assert_eq!(last.activity, None, "{last:?}");
+    assert_ne!(last.controller, "agent");
+    chat.stop_screencast().await;
 
     // A confirm dialog is dismissed, never answered yes.
     let danger = ref_of(after, "\"Danger\"");

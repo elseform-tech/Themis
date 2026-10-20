@@ -432,16 +432,22 @@ async fn serve_connection(
         )
         .await?;
         loop {
-            match rx.recv().await {
-                Ok(update) => {
-                    let payload = crate::state::browser_update_payload(&update);
-                    let bytes = serde_json::to_vec(&payload).map_err(|err| err.to_string())?;
-                    if bytes.len() <= MAX_FRAME {
-                        write_bytes(&mut stream, &bytes).await?;
+            let update = match rx.recv().await {
+                Ok(update) => update,
+                // Missed frames do not matter, but a missed state change
+                // would stick ("Agent is clicking" after the run): resend it.
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    match state.browser_state_update(&thread_id).await {
+                        Some(update) => update,
+                        None => continue,
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => return Ok(()),
+            };
+            let payload = crate::state::browser_update_payload(&update);
+            let bytes = serde_json::to_vec(&payload).map_err(|err| err.to_string())?;
+            if bytes.len() <= MAX_FRAME {
+                write_bytes(&mut stream, &bytes).await?;
             }
         }
     }

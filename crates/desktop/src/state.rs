@@ -1119,6 +1119,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_lagging_browser_view_catches_up_from_the_current_state() {
+        let (state, dir) = test_state();
+        assert!(state.browser_state_update("t1").await.is_none());
+        state.browser_of("t1", dir.path());
+        match state.browser_state_update("t1").await {
+            Some(themis_core::browser::BrowserUpdate::State(browser)) => {
+                assert_eq!(browser.activity, None);
+                assert_eq!(browser.controller, "idle");
+            }
+            other => panic!("expected the current state, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn open_project_rejects_missing_or_file_paths() {
         let (state, dir) = test_state();
         assert!(state.open_project(String::new()).await.is_err());

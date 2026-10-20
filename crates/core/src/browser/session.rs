@@ -744,8 +744,15 @@ impl ChatBrowser {
 
     /// Shows what the agent is doing (or nothing).
     pub async fn set_activity(&self, activity: Option<String>) {
+        let done = activity.is_none();
         *self.activity.lock().unwrap_or_else(|e| e.into_inner()) = activity;
-        self.publish_state().await;
+        if done {
+            // The action is over, so waiting is safe; a dropped update would
+            // leave "Agent is …" showing after the run.
+            self.publish_state_waiting().await;
+        } else {
+            self.publish_state().await;
+        }
     }
 
     /// Waits while the person controls the browser; `Err` when the run stops
@@ -859,6 +866,17 @@ impl ChatBrowser {
         let Ok(inner) = self.inner.try_lock() else {
             return;
         };
+        let state = self.state_of(&inner).await;
+        drop(inner);
+        let _ = self.updates.send(BrowserUpdate::State(state));
+    }
+
+    /// Publishes the state even if that means waiting for the session.
+    async fn publish_state_waiting(&self) {
+        if self.updates.receiver_count() == 0 {
+            return;
+        }
+        let inner = self.inner.lock().await;
         let state = self.state_of(&inner).await;
         drop(inner);
         let _ = self.updates.send(BrowserUpdate::State(state));
