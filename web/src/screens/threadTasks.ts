@@ -9,8 +9,6 @@ import { scheduleLabel, shortTime } from "./Automations";
 import { countBackground } from "./backgroundTasks";
 
 export type TaskKind = "attention" | "running" | "scheduled" | "finished";
-export const TASK_KINDS: TaskKind[] = ["attention", "running", "scheduled", "finished"];
-
 export interface TaskRow {
   key: string;
   kind: TaskKind | "earlier";
@@ -135,16 +133,6 @@ export function countTasks(tasks: ThreadTasks | undefined, schedulerOn = true): 
     scheduled: tasks?.automations.filter(item => isScheduled(item, schedulerOn) && !(item.running && (tasks.run.running || tasks.run.awaiting_approval))).length ?? 0,
     finished: tasks?.recent.filter(item => item.ok && !item.seen).length ?? 0,
   };
-}
-
-/** "1 needs attention, 2 running, 1 scheduled", empty when nothing is active. */
-export function describeCounts(counts: TaskCounts): string {
-  const parts: string[] = [];
-  if (counts.attention) parts.push(`${counts.attention} ${counts.attention === 1 ? "needs" : "need"} attention`);
-  if (counts.running) parts.push(`${counts.running} running`);
-  if (counts.scheduled) parts.push(`${counts.scheduled} scheduled`);
-  if (counts.finished) parts.push(`${counts.finished} finished`);
-  return parts.join(", ");
 }
 
 /** Keeps the current chat's feed fresh from the events the store already receives. */

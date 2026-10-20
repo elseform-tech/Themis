@@ -4,9 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState } from "../state/reducer";
 import type { ThreadTaskAutomation, ThreadTaskRun, ThreadTasks } from "../lib/types";
 import * as bridge from "../lib/tauri";
-import { TaskIndicator } from "./TaskIndicator";
 import { TasksView } from "./TasksView";
-import { countTasks, describeCounts, expiryLabel, groupTasks, useThreadTasksSync } from "./threadTasks";
+import { countTasks, expiryLabel, groupTasks, useThreadTasksSync } from "./threadTasks";
 import { reducer } from "../state/reducer";
 
 const dispatch = vi.fn();
@@ -45,8 +44,6 @@ describe("task grouping", () => {
     });
     const counts = countTasks(feed);
     expect(counts).toEqual({ attention: 2, running: 0, scheduled: 2, finished: 1 });
-    expect(describeCounts(counts)).toBe("2 need attention, 2 scheduled, 1 finished");
-    expect(describeCounts(countTasks(tasks()))).toBe("");
   });
   it("shows a running automation once and keeps it pausable", () => {
     const groups = groupTasks(tasks({ run: { running: true, awaiting_approval: false }, automations: [automation({ running: true, origin: "agent" })] }));
@@ -133,31 +130,6 @@ describe("scheduler switch", () => {
     expect(row?.meta).toBe("Automations are off in Settings");
     expect(row?.meta).not.toMatch(/next/);
     expect(groupTasks(feed, true).scheduled[0]?.meta).toMatch(/next/);
-  });
-});
-
-describe("TaskIndicator", () => {
-  it("is hidden when nothing is active", () => {
-    const { container } = render(<TaskIndicator counts={countTasks(tasks())} onOpen={() => undefined} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-  it("orders icons, shows +N beyond three kinds and names the tasks", () => {
-    const onOpen = vi.fn();
-    const feed = tasks({
-      run: { running: true, awaiting_approval: false },
-      automations: [automation({ id: "a2", name: "Other" })],
-      recent: [finished({ ok: false, summary: "failed: x" }), finished({ review_id: "r2" }), finished({ review_id: "r3" })],
-    });
-    const { container } = render(<TaskIndicator counts={countTasks(feed)} onOpen={onOpen} />);
-    const button = screen.getByRole("button", { name: "Tasks in this chat: 1 needs attention, 1 running, 1 scheduled, 2 finished. Opens Workspace tasks" });
-    expect([...container.querySelectorAll(".themis-task-icon")].map(icon => icon.className.replace(/.*--/, ""))).toEqual(["attention", "running", "scheduled"]);
-    expect(button).toHaveTextContent("+2");
-    fireEvent.click(button);
-    expect(onOpen).toHaveBeenCalled();
-  });
-  it("animates the running arc only through CSS that reduced motion disables", () => {
-    const { container } = render(<TaskIndicator counts={countTasks(tasks({ run: { running: true, awaiting_approval: false } }))} onOpen={() => undefined} />);
-    expect(container.querySelector(".themis-task-arc")).not.toBeNull();
   });
 });
 

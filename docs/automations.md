@@ -168,7 +168,7 @@ records created before this field) or `agent` when the agent created it through
 `manage_automations`. Updates keep the original origin.
 
 `get_thread_tasks {threadId}` (also `themis call get_thread_tasks`) returns the
-feed behind the Workspace **Tasks** tab and the header task indicator for one
+feed behind the Workspace **Tasks** tab and its count for one
 chat: `run` (`running`, `awaiting_approval`), `automations` that target the chat
 (`enabled`, `origin`, `schedule`, `next_run_at`, `last_run_at`, `running`) and
 up to 10 `recent` finished runs (`ok`, `seen` once the review item is no longer
@@ -198,7 +198,7 @@ are covered by `web/src/screens/automationForm.test.ts`.
 against the shared server. `thread_tasks_report_live_automations_and_finished_runs`
 (unit) covers live, finished and per-chat filtering, and the agent-origin
 assertions live in the `manage_automations` management-tool test. UI grouping,
-ordering, the indicator name and Stop/Pause dispatch are covered by
+ordering, the counts and Stop/Pause dispatch are covered by
 `web/src/screens/threadTasks.test.tsx`.
 
 Watch behavior is covered by `agent_watch_e2e` (scripted provider: an unchanged

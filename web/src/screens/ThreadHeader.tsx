@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import type { BrowserRecording, GoModel, ThreadInfo } from "../lib/types";
 import { modelLabel } from "../lib/models";
-import { TaskIndicator } from "./TaskIndicator";
-import type { TaskCounts } from "./threadTasks";
 // Official OpenCode theme assets: https://github.com/anomalyco/opencode/tree/dev/packages/console/app/src/asset
 import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
 import opencodeLogoLight from "../assets/opencode-logo-light.svg";
@@ -21,8 +19,6 @@ interface ThreadHeaderProps {
   changedFiles?: number;
   reviewOpen: boolean;
   onToggleReview: () => void;
-  taskCounts?: TaskCounts;
-  onOpenTasks?: () => void;
   /** The chat's browser is recording; `at` is when this was last reported. */
   recording?: BrowserRecording & { at: number };
   onOpenBrowser?: () => void;
@@ -45,7 +41,7 @@ function RecordingPill({ recording, onOpen }: { recording: BrowserRecording & { 
 }
 
 /** Model and effort live in one header pill; review opens as a side panel. */
-export function ThreadHeader({ thread, models, effortLevels, effort, busy, running = false, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview, taskCounts, onOpenTasks, recording, onOpenBrowser }: ThreadHeaderProps) {
+export function ThreadHeader({ thread, models, effortLevels, effort, busy, running = false, switching, onProviderChange, onEffortChange, changedFiles, reviewOpen, onToggleReview, recording, onOpenBrowser }: ThreadHeaderProps) {
   const choices = ["", ...effortLevels];
   const effortIndex = Math.max(0, choices.indexOf(effort));
   return (
@@ -83,7 +79,6 @@ export function ThreadHeader({ thread, models, effortLevels, effort, busy, runni
       </details>
       <span className="themis-thread-head-spacer" />
       {recording && onOpenBrowser && <RecordingPill recording={recording} onOpen={onOpenBrowser} />}
-      {taskCounts && onOpenTasks && <TaskIndicator counts={taskCounts} onOpen={onOpenTasks} />}
       <button type="button" className={`themis-workspace-toggle${reviewOpen ? " is-open" : ""}`} aria-pressed={reviewOpen} aria-label={changedFiles ? `Workspace, ${changedFiles} changed` : "Workspace"} title="Changes, files, branches, pull requests and this chat's tasks" onClick={onToggleReview}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16" /></svg>
         <span className="themis-head-label">Workspace</span>{changedFiles ? <span className="themis-review-count">{changedFiles}<span className="themis-head-label"> changed</span></span> : null}
