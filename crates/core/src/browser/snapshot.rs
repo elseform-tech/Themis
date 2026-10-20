@@ -464,8 +464,17 @@ mod tests {
             prop_assert!(outline.text.len() <= limit);
             // Every password value is masked whatever the page says (values are
             // digits, names letters, so a value can only appear as a value).
+            // A field without a DOM node is not a password and may show the same digits.
+            let shown: HashSet<&str> = shape
+                .iter()
+                .filter(|(_, _, _, _, backend)| backend.is_none())
+                .filter_map(|(_, _, _, value, _)| value.as_deref())
+                .collect();
             for (_, _, _, value, backend) in &shape {
                 if let (Some(value), Some(_)) = (value, backend) {
+                    if shown.iter().any(|other| other.contains(value.as_str())) {
+                        continue;
+                    }
                     prop_assert!(!outline.text.contains(value.as_str()));
                 }
             }
