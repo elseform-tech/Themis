@@ -1722,6 +1722,14 @@ impl ChatBrowser {
             view["pageY"].as_f64().unwrap_or(0.0),
         );
         let mut params = json!({"format": "png", "fromSurface": true});
+        // The Workspace view emulates its screen's device scale; dividing it
+        // out of the clip gives the model CSS pixels.
+        let scale = 1.0
+            / self
+                .viewport
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .scale;
         let (width, height) = match reference {
             Some(reference) => {
                 let backend = tab.refs.resolve(reference).ok_or_else(|| {
@@ -1768,7 +1776,7 @@ impl ChatBrowser {
                     view["pageX"].as_f64().unwrap_or(page_x),
                     view["pageY"].as_f64().unwrap_or(page_y),
                 );
-                params["clip"] = json!({"x": x + scroll_x, "y": y + scroll_y, "width": w.max(1.0), "height": h.max(1.0), "scale": 1});
+                params["clip"] = json!({"x": x + scroll_x, "y": y + scroll_y, "width": w.max(1.0), "height": h.max(1.0), "scale": scale});
                 params["captureBeyondViewport"] = json!(true);
                 (w, h)
             }
@@ -1776,17 +1784,15 @@ impl ChatBrowser {
                 let content = &metrics["cssContentSize"];
                 let w = content["width"].as_f64().unwrap_or(1280.0);
                 let h = content["height"].as_f64().unwrap_or(800.0).min(16_384.0);
-                params["clip"] = json!({"x": 0, "y": 0, "width": w, "height": h, "scale": 1});
+                params["clip"] = json!({"x": 0, "y": 0, "width": w, "height": h, "scale": scale});
                 params["captureBeyondViewport"] = json!(true);
                 (w, h)
             }
-            // A clip at scale 1 gives CSS pixels even though Chrome renders
-            // at Retina scale for the Workspace view.
             None => {
                 let w = view["clientWidth"].as_f64().unwrap_or(1280.0);
                 let h = view["clientHeight"].as_f64().unwrap_or(800.0);
                 params["clip"] =
-                    json!({"x": page_x, "y": page_y, "width": w, "height": h, "scale": 1});
+                    json!({"x": page_x, "y": page_y, "width": w, "height": h, "scale": scale});
                 (w, h)
             }
         };

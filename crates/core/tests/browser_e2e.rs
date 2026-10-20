@@ -354,6 +354,10 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
     })
     .await
     .expect("a frame at twice the view's width");
+    // The model still gets CSS pixels from a Retina view.
+    let (png, width, _) = chat.screenshot(None, false).await.unwrap();
+    assert_eq!(width, 640);
+    assert_eq!(u32::from_be_bytes(png[16..20].try_into().unwrap()), 640);
     chat.user_input(&themis_core::browser::UserInput::Mouse {
         kind: "move".into(),
         x: 10.0,
