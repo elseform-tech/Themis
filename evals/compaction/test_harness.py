@@ -15,8 +15,7 @@ import threading
 import unittest
 
 from . import __main__ as harness
-from . import behavior
-from . import redo
+from . import behavior, redo
 from .grade import grade, matches, position
 from .report import aggregate, spread, trial_rows, trial_summary
 
