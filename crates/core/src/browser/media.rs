@@ -28,26 +28,11 @@ pub fn media_name(kind: &str, extension: &str) -> String {
     format!("{kind}-{hours:02}{minutes:02}-{seconds:02}.{extension}")
 }
 
-/// Local hours, minutes and seconds (UTC where the zone is unknown).
-fn local_clock() -> (i64, i64, i64) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    #[cfg(unix)]
-    {
-        let time = now as libc::time_t;
-        // SAFETY: localtime_r writes only into the struct we pass.
-        let mut parts: libc::tm = unsafe { std::mem::zeroed() };
-        if !unsafe { libc::localtime_r(&time, &mut parts) }.is_null() {
-            return (
-                i64::from(parts.tm_hour),
-                i64::from(parts.tm_min),
-                i64::from(parts.tm_sec),
-            );
-        }
-    }
-    ((now / 3600) % 24, (now / 60) % 60, now % 60)
+/// Local hours, minutes and seconds.
+fn local_clock() -> (u32, u32, u32) {
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    (now.hour(), now.minute(), now.second())
 }
 
 /// Who started a recording.
@@ -349,6 +334,21 @@ mod tests {
             at: Duration::from_millis(at_ms),
             jpeg: Vec::new(),
         }
+    }
+
+    #[test]
+    fn media_names_carry_the_local_time() {
+        use chrono::Timelike;
+        let before = chrono::Local::now();
+        let name = media_name("screenshot", "png");
+        let hour: u32 = name["screenshot-".len()..][..2].parse().unwrap();
+        assert!(name.len() == "screenshot-HHMM-SS.png".len(), "{name}");
+        assert!(name.ends_with(".png"));
+        // The hour is local (it could roll over between the two readings).
+        assert!(
+            hour == before.hour() || hour == (before.hour() + 1) % 24,
+            "{name}"
+        );
     }
 
     #[test]

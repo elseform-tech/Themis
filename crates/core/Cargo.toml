@@ -6,6 +6,7 @@ rust-version = "1.91"
 
 [dependencies]
 anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 libc = "0.2"
 futures-util = "0.3"
 httpdate = "1"
@@ -26,6 +27,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync", "fs"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects"] }
 
 [features]
 # Exposes internal parsers to the `fuzz/` cargo-fuzz targets; never enabled in releases.

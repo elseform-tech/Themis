@@ -2,8 +2,9 @@
 //!
 //! The browser runs headless with its own profile directory (never the
 //! person's real profile), a debugging port chosen by the OS, and no first-run
-//! UI. Its process group is killed when the handle drops, and by a guard
-//! when Themis itself dies without dropping it (a crash or force quit).
+//! UI. Its process group is killed when the handle drops, and when Themis
+//! itself dies without dropping it (a crash or force quit) by a guard process
+//! on Unix and a kill-on-close job on Windows.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -100,8 +101,24 @@ pub fn launch_args(profile: &Path, headless: bool) -> Vec<String> {
     if headless {
         args.push("--headless=new".to_owned());
     }
+    // Chromium will not start as root with its sandbox (Linux containers and
+    // CI images often run as root); it has no other way to run there.
+    if running_as_root() {
+        args.push("--no-sandbox".to_owned());
+    }
     args.push("about:blank".to_owned());
     args
+}
+
+#[cfg(target_os = "linux")]
+fn running_as_root() -> bool {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn running_as_root() -> bool {
+    false
 }
 
 /// The `ws://` address from a "DevTools listening on ..." line.
@@ -137,6 +154,62 @@ fn spawn_guard(group: u32) -> std::io::Result<tokio::process::Child> {
         .spawn()
 }
 
+/// A job that ends every process in it when its last handle closes, which
+/// Windows does however Themis exits.
+#[cfg(windows)]
+#[derive(Debug)]
+struct KillOnClose(windows_sys::Win32::Foundation::HANDLE);
+
+// SAFETY: a job handle may be used and closed from any thread.
+#[cfg(windows)]
+unsafe impl Send for KillOnClose {}
+#[cfg(windows)]
+unsafe impl Sync for KillOnClose {}
+
+#[cfg(windows)]
+impl KillOnClose {
+    /// Puts `process` (and the helpers it starts) in a new job.
+    fn around(process: std::os::windows::io::RawHandle) -> std::io::Result<Self> {
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+        // SAFETY: plain Win32 calls on a job this function creates and owns;
+        // the limits struct outlives the call that reads it.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let job = Self(job);
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job.0,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) == 0
+                || AssignProcessToJobObject(job.0, process.cast()) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(job)
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for KillOnClose {
+    fn drop(&mut self) {
+        // SAFETY: the handle is ours and closed once; closing it ends the job.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
 /// A running browser and its protocol connection.
 #[derive(Debug)]
 pub struct BrowserProcess {
@@ -144,6 +217,9 @@ pub struct BrowserProcess {
     /// Holds the write end of the guard's pipe for as long as Themis runs.
     #[cfg(unix)]
     _guard: tokio::process::Child,
+    /// Ends the browser and its helpers when Themis exits, however it exits.
+    #[cfg(windows)]
+    _job: KillOnClose,
     pub cdp: Arc<Cdp>,
     /// `127.0.0.1:<port>` of the debugging server (for DevTools).
     pub http_address: String,
@@ -183,6 +259,14 @@ impl BrowserProcess {
                 anyhow::bail!("could not guard the browser process: {failed:?}");
             }
         };
+        #[cfg(windows)]
+        let job = match child.raw_handle().map(KillOnClose::around) {
+            Some(Ok(job)) => job,
+            failed => {
+                let _ = child.start_kill();
+                anyhow::bail!("could not guard the browser process: {failed:?}");
+            }
+        };
         let stderr = child.stderr.take().expect("piped stderr");
         let address = tokio::time::timeout(START_TIMEOUT, async move {
             let mut lines = BufReader::new(stderr).lines();
@@ -217,6 +301,8 @@ impl BrowserProcess {
             child,
             #[cfg(unix)]
             _guard: guard,
+            #[cfg(windows)]
+            _job: job,
             cdp,
             http_address,
             executable: executable.to_path_buf(),

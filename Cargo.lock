@@ -5027,6 +5027,7 @@ dependencies = [
  "autoagents-toolkit",
  "base64 0.23.1",
  "bytes",
+ "chrono",
  "dom_smoothie",
  "encoding_rs",
  "futures-util",
@@ -5043,6 +5044,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "windows-sys 0.61.2",
  "wiremock",
  "zune-jpeg",
 ]

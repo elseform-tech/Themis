@@ -54,14 +54,19 @@ means JSON output is off; an unreachable URL names the setting to fix.
 Agents also drive a real Chromium that you can watch and use in **Workspace →
 Browser**. Themis talks to it directly over the Chrome DevTools Protocol; there is
 no MCP server or Python to install. It uses Chrome, Chromium, Edge or Brave from
-the usual install folders, or `browser.executable` from the user `runtime.jsonc`.
+the usual install folders (macOS `Applications`, Windows `Program Files` and
+`AppData\Local`, the Linux `PATH`), or `browser.executable` from the user
+`runtime.jsonc` (for example a Flatpak Chromium). Browser use, screenshots and
+recordings work the same on macOS, Windows and Linux.
 The browser runs headless with its own profile in app data
 (`browser/profiles/<project>/`): logins persist across a project's chats and never
 touch your own browser profile, Keychain or saved passwords. One browser serves a
 project; each chat has its own tabs (at most 8). Downloads are blocked. Discarding
 a chat closes its tabs; the browser exits when no chat of the project uses it.
-It never outlives Themis: on macOS and Linux a small guard process ends the
-browser and its helpers within seconds if Themis crashes or is force-quit.
+It never outlives Themis: if Themis crashes or is force-quit, a small guard
+process (macOS, Linux) or a kill-on-close job (Windows) ends the browser and its
+helpers within seconds. Run as root (as in many Linux containers), Chromium starts
+without its sandbox, the only way it runs there.
 
 | Tool | Does |
 | --- | --- |

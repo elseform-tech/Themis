@@ -2,7 +2,6 @@
 //! killed outright (a crash or force quit, so no cleanup code runs), its
 //! Chromium and helpers exit too. Skipped (with a message) when no Chromium is
 //! installed.
-#![cfg(unix)]
 
 use std::time::{Duration, Instant};
 
@@ -11,9 +10,21 @@ use themis_core::browser::launch::{find_browser, BrowserProcess};
 const HOST: &str = "THEMIS_TEST_BROWSER_HOST";
 const NAME: &str = "a_browser_exits_when_themis_is_killed";
 
-fn alive(pid: i32) -> bool {
-    // SAFETY: signal 0 only checks that the process exists.
-    unsafe { libc::kill(pid, 0) == 0 }
+/// Whether the browser is still running: on Unix any process of its group
+/// (helpers included), on Windows the browser process itself.
+#[cfg(unix)]
+fn running(pid: i32) -> bool {
+    // SAFETY: signal 0 to the process group only checks that it exists.
+    unsafe { libc::killpg(pid, 0) == 0 }
+}
+
+#[cfg(windows)]
+fn running(pid: i32) -> bool {
+    let list = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&list.stdout).contains(&pid.to_string())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -55,15 +66,15 @@ async fn a_browser_exits_when_themis_is_killed() {
         );
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert!(alive(pid));
-    host.kill().unwrap(); // SIGKILL: no Drop, no shutdown hook.
+    assert!(running(pid));
+    // SIGKILL or TerminateProcess: no Drop, no shutdown hook.
+    host.kill().unwrap();
     let _ = host.wait();
     let deadline = Instant::now() + Duration::from_secs(15);
-    // SAFETY: signal 0 to the browser's process group only checks it exists.
-    while unsafe { libc::killpg(pid, 0) } == 0 {
+    while running(pid) {
         assert!(
             Instant::now() < deadline,
-            "the browser (group {pid}) is still running after Themis was killed"
+            "the browser ({pid}) is still running after Themis was killed"
         );
         std::thread::sleep(Duration::from_millis(200));
     }
