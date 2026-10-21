@@ -26,3 +26,8 @@
 .themis-tooltip:focus-within::after {
   opacity: 1;
 }
+
+.themis-tooltip--below::after {
+  top: calc(100% + 0.375rem);
+  bottom: auto;
+}

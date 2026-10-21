@@ -6,23 +6,23 @@
 .themis-workspace-resize:hover::after, .themis-workspace-resize:focus-visible::after, .is-resizing > .themis-workspace-resize::after { opacity: .7; transition-delay: 80ms; }
 .themis-workspace-resize:focus-visible { outline: none; }
 .themis-workspace-panel { container: themis-workspace / inline-size; }
-.themis-workspace-head { display: flex; align-items: center; gap: 14px; padding: 8px 8px 0 20px; border-bottom: 1px solid var(--themis-border-subtle); }
-.themis-workspace-where { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: .75rem; white-space: nowrap; overflow: hidden; }
-.themis-workspace-where strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-.themis-workspace-close { display: grid; place-items: center; flex: none; width: 30px; height: 30px; margin-bottom: 4px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
+/* A lean header: icon tabs (names in tooltips) and Close, so the page and the diff get the room. */
+.themis-workspace-head { display: flex; align-items: center; gap: 8px; padding: 3px 6px 3px 10px; border-bottom: 1px solid var(--themis-border-subtle); }
+/* Close sits at the window edge: its tooltip opens leftward so it stays on screen. */
+.themis-workspace-head > .themis-tooltip:last-child::after { left: auto; right: 0; transform: none; }
+.themis-workspace-close { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
 .themis-workspace-close:hover { color: var(--themis-text); background: var(--themis-nav-hover-bg); }
-.themis-workspace-close:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
-@container themis-workspace (max-width: 700px) { .themis-workspace-where { display: none; } }
-.themis-workspace-branch { display: inline-flex; align-items: center; gap: 5px; color: var(--themis-text-2); font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; }
 .themis-link-button { padding: 4px 2px; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; cursor: pointer; }
 .themis-link-button:hover:not(:disabled) { color: var(--themis-text); }
 .themis-link-button:disabled { opacity: .5; cursor: not-allowed; }
-.themis-workspace-tabs { flex: 1; min-width: 0; display: flex; gap: 18px; padding: 4px 0 8px; overflow-x: auto; scrollbar-width: none; }
-.themis-workspace-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .8125rem; white-space: nowrap; cursor: pointer; }
+.themis-workspace-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; }
+.themis-workspace-tabs button { position: relative; display: grid; place-items: center; min-width: 32px; height: 30px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-3); cursor: pointer; }
 .themis-workspace-tabs button:hover { color: var(--themis-text); }
-.themis-workspace-tabs button[aria-pressed="true"] { color: var(--themis-text); font-weight: 600; }
-.themis-workspace-count { color: var(--themis-accent); font-weight: 600; }
-.themis-workspace-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 16px 14px 20px; overflow: hidden; }
+.themis-workspace-tabs button:focus-visible, /* The selected view: brighter and bolder, unboxed. */
+.themis-workspace-tabs button[aria-pressed="true"] { color: var(--themis-text); }
+.themis-workspace-tabs button[aria-pressed="true"] svg { stroke-width: 2.3; }
+.themis-workspace-count { position: absolute; top: 1px; right: 0; min-width: 14px; padding: 0 3px; border-radius: 7px; background: var(--themis-sidebar-bg); color: var(--themis-accent); font-size: .625rem; font-weight: 700; line-height: 14px; font-variant-numeric: tabular-nums; }
+.themis-workspace-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px 10px 10px 14px; overflow: hidden; }
 /* The page gets the room: the Browser tab keeps only a thin edge. */
 .themis-workspace-body.is-browser { padding: 6px 8px 8px 12px; }
 .themis-workspace-changes { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
