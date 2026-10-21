@@ -60,6 +60,8 @@ The browser runs headless with its own profile in app data
 touch your own browser profile, Keychain or saved passwords. One browser serves a
 project; each chat has its own tabs (at most 8). Downloads are blocked. Discarding
 a chat closes its tabs; the browser exits when no chat of the project uses it.
+It never outlives Themis: on macOS and Linux a small guard process ends the
+browser and its helpers within seconds if Themis crashes or is force-quit.
 
 | Tool | Does |
 | --- | --- |

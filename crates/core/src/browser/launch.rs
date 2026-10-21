@@ -2,7 +2,8 @@
 //!
 //! The browser runs headless with its own profile directory (never the
 //! person's real profile), a debugging port chosen by the OS, and no first-run
-//! UI. Its process group is killed when the handle drops.
+//! UI. Its process group is killed when the handle drops, and by a guard
+//! when Themis itself dies without dropping it (a crash or force quit).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -116,10 +117,33 @@ pub fn devtools_address(line: &str) -> Option<String> {
     .then(|| address.to_owned())
 }
 
+/// Run by the guard: `read` returns when the pipe from Themis closes, which
+/// the OS does however Themis exits; the guard then ends the browser's group.
+/// It ignores the TERM it sends itself and goes with the KILL.
+#[cfg(unix)]
+const GUARD: &str = r#"read _; trap '' TERM; kill -TERM -- "-$1" 2>/dev/null; sleep 3; kill -KILL -- "-$1" 2>/dev/null"#;
+
+/// Starts the guard inside the browser's process group, so killing the group
+/// on a normal close takes the guard too.
+#[cfg(unix)]
+fn spawn_guard(group: u32) -> std::io::Result<tokio::process::Child> {
+    tokio::process::Command::new("/bin/sh")
+        .args(["-c", GUARD, "guard", &group.to_string()])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(group as i32)
+        .kill_on_drop(true)
+        .spawn()
+}
+
 /// A running browser and its protocol connection.
 #[derive(Debug)]
 pub struct BrowserProcess {
     child: tokio::process::Child,
+    /// Holds the write end of the guard's pipe for as long as Themis runs.
+    #[cfg(unix)]
+    _guard: tokio::process::Child,
     pub cdp: Arc<Cdp>,
     /// `127.0.0.1:<port>` of the debugging server (for DevTools).
     pub http_address: String,
@@ -151,6 +175,14 @@ impl BrowserProcess {
         let mut child = command.spawn().map_err(|error| {
             anyhow::anyhow!("could not start {}: {error}", executable.display())
         })?;
+        #[cfg(unix)]
+        let guard = match child.id().map(spawn_guard) {
+            Some(Ok(guard)) => guard,
+            failed => {
+                let _ = child.start_kill();
+                anyhow::bail!("could not guard the browser process: {failed:?}");
+            }
+        };
         let stderr = child.stderr.take().expect("piped stderr");
         let address = tokio::time::timeout(START_TIMEOUT, async move {
             let mut lines = BufReader::new(stderr).lines();
@@ -183,10 +215,17 @@ impl BrowserProcess {
             .to_owned();
         Ok(Self {
             child,
+            #[cfg(unix)]
+            _guard: guard,
             cdp,
             http_address,
             executable: executable.to_path_buf(),
         })
+    }
+
+    /// The browser's process id (also its process group on Unix).
+    pub fn pid(&self) -> Option<u32> {
+        self.child.id()
     }
 
     /// Whether the browser process is still running.
