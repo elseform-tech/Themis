@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -24,6 +25,18 @@ def themis_binary(root):
 def _cli(binary, data, env, *args, stdin=None, timeout=120):
     return subprocess.run([binary, "--data-dir", data, *args], input=stdin, capture_output=True,
                           text=True, env=env, timeout=timeout, check=False)
+
+
+def keep_evidence(workdir, keep, name):
+    """Copies a finished run's folders under `keep`. Links stay links (the built-in browser's
+    profile holds a dangling `RunningChromeVersion`), and a copy that still fails is reported
+    without replacing the run's result."""
+    try:
+        os.makedirs(keep, exist_ok=True)
+        shutil.copytree(workdir, tempfile.mkdtemp(prefix=f"{name}-", dir=keep), symlinks=True,
+                        dirs_exist_ok=True, ignore=shutil.ignore_patterns("vendor", "__pycache__", ".git"))
+    except (OSError, shutil.Error) as error:
+        print(f"could not keep {name}: {str(error)[:200]}", file=sys.stderr, flush=True)
 
 
 def run_app_task(binary, task, model, timeout=5400, keep=None):
@@ -98,7 +111,5 @@ def run_app_task(binary, task, model, timeout=5400, keep=None):
     finally:
         _cli(binary, data, env, "server", "stop")
         if keep:
-            os.makedirs(keep, exist_ok=True)
-            shutil.copytree(workdir, tempfile.mkdtemp(prefix=f"{task['name']}-", dir=keep), dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns("vendor", "__pycache__", ".git"))
+            keep_evidence(workdir, keep, task["name"])
         shutil.rmtree(workdir, ignore_errors=True)
