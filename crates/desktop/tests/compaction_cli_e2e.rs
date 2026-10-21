@@ -353,6 +353,59 @@ async fn cli_failed_checkpoint_keeps_the_working_context_and_the_next_run_still_
     serving.await.unwrap().unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_checkpoint_uses_the_chat_model_when_go_refuses_the_listed_summarizer() {
+    // Seen live: Go kept listing the routed summarizer while answering it with 402
+    // "Endpoint is unavailable", and every checkpoint failed the run.
+    let data = tempfile::tempdir().unwrap();
+    let project = project();
+    let provider = MockServer::start().await;
+    let summaries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = summaries.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body: Value = request.body_json().unwrap();
+            if is_summary(&body) {
+                let model = body["model"].as_str().unwrap_or_default().to_owned();
+                sink.lock().unwrap().push(model.clone());
+                if model == "longcat-2.5-preview-free" {
+                    return ResponseTemplate::new(402).set_body_json(json!({"error":{
+                        "type":"server_error","message":"Upstream request failed: Endpoint is unavailable."}}));
+                }
+                return text_reply(CHECKPOINT);
+            }
+            text_reply("noted")
+        })
+        .mount(&provider)
+        .await;
+    let (client, mut events, serving) = start(&provider, data.path()).await;
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    let mut checkpointed = false;
+    for index in 0..10 {
+        let (done, kinds) = send(data.path(), &mut events, &id, &filler("Release", index)).await;
+        assert_eq!(done["kind"], "finished", "{done}");
+        if kinds.contains(&"context_checkpoint".to_owned()) {
+            checkpointed = true;
+            break;
+        }
+    }
+    assert!(checkpointed, "the long chat should reach a checkpoint");
+    let seen = summaries.lock().unwrap().clone();
+    assert_eq!(
+        seen[..2],
+        ["longcat-2.5-preview-free", "test-model"],
+        "{seen:?}"
+    );
+
+    client.call("shutdown", json!({})).await.unwrap();
+    serving.await.unwrap().unwrap();
+}
+
 /// Live journey with the free model; run explicitly (never in CI):
 /// `THEMIS_LIVE_COMPACTION=1 OPENCODE_KEY=... HOME=<scratch> cargo test -p themis-desktop
 /// --test compaction_cli_e2e live_ -- --ignored --nocapture`. Uses an isolated data directory

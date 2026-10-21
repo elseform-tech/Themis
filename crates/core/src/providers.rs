@@ -634,7 +634,7 @@ impl CompatibleProvider {
         }
         if COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
             if self.uses_responses() {
-                body["reasoning"] = serde_json::json!({"effort":"none"});
+                body["reasoning"] = serde_json::json!({"effort":summary_effort(&self.model)});
             } else {
                 body["thinking"] = serde_json::json!({"type":"disabled"});
             }
@@ -782,6 +782,118 @@ async fn ensure_success(
     }
 }
 
+impl CompatibleProvider {
+    /// One non-streaming chat request with this provider's model, settings and key.
+    async fn chat_once(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Tool]>,
+        sampling: Option<&SamplingOverrides>,
+    ) -> Result<Box<dyn ChatResponse>, LLMError> {
+        if self.api_key.is_empty() {
+            return Err(LLMError::missing_api_key(format!(
+                "Missing {} API key",
+                self.provider_name
+            )));
+        }
+        let mut trace = crate::context_metrics::RequestTrace::begin(
+            &self.model,
+            messages,
+            tools,
+            COMPACTION_REQUEST.try_with(|_| ()).is_ok(),
+        );
+        trace.output_limit(
+            sampling
+                .and_then(|s| s.max_tokens)
+                .or_else(|| OUTPUT_LIMIT.try_with(|limit| *limit).ok())
+                .map(|limit| bounded_output_limit(&self.model, limit)),
+        );
+        let response = self
+            .chat_request(messages, tools, false, sampling)?
+            .send()
+            .await
+            .map_err(|err| transport_error("chat request failed", err))?;
+        let response = ensure_success(response, self.provider_name).await?;
+        let raw = response
+            .text()
+            .await
+            .map_err(|err| transport_error("failed to read chat response", err))?;
+        if let Ok(raw_usage) = serde_json::from_str::<serde_json::Value>(&raw) {
+            trace.usage(&raw_usage["usage"]);
+            trace.usage(&gemini_usage(&raw_usage["usageMetadata"]));
+        }
+        let parsed: WireChatResponse = if self.protocol() == Protocol::Gemini {
+            gemini_response(serde_json::from_str(&raw)?)?
+        } else if self.uses_responses() {
+            responses_response(serde_json::from_str(&raw)?)?
+        } else if self.uses_messages() {
+            messages_response(serde_json::from_str(&raw)?)?
+        } else {
+            serde_json::from_str(&raw).map_err(|err| LLMError::ResponseFormatError {
+                message: format!(
+                    "Failed to decode {} API response: {err}",
+                    self.provider_name
+                ),
+                raw_response: raw,
+            })?
+        };
+        let choice =
+            parsed
+                .choices
+                .into_iter()
+                .next()
+                .ok_or_else(|| LLMError::ResponseFormatError {
+                    message: format!("{} returned no choices", self.provider_name),
+                    raw_response: String::new(),
+                })?;
+        let truncated = choice.finish_reason.as_deref() == Some("length");
+        if truncated || COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
+            let usage = parsed.usage.as_ref();
+            crate::diagnostics::emit(
+                "provider",
+                if truncated {
+                    "output_truncated"
+                } else {
+                    "summary_usage"
+                },
+                if truncated { "warn" } else { "info" },
+                serde_json::json!({
+                    "model": self.model,
+                    "output_limit_tokens": sampling.and_then(|sampling| sampling.max_tokens),
+                    "completion_tokens": usage.map(|usage| usage.completion_tokens),
+                    "reasoning_tokens": usage.and_then(|usage| usage.completion_tokens_details.as_ref()).and_then(|details| details.reasoning_tokens),
+                    "public_text_chars": choice.message.content.as_ref().map_or(0, |text| text.chars().count()),
+                }),
+            );
+        }
+        if truncated {
+            return Err(LLMError::Generic("Provider response was truncated".into()));
+        }
+        trace.complete();
+        reasoning::remember(
+            choice.message.tool_calls.as_deref().unwrap_or_default(),
+            choice.message.content.as_deref().unwrap_or_default(),
+            reasoning::from_message(&choice.message),
+        );
+        Ok(Box::new(CompatibleChatResponse {
+            text: choice.message.content,
+            tool_calls: choice.message.tool_calls,
+            usage: parsed.usage,
+        }))
+    }
+}
+
+/// The provider refused the model itself (gone, unlisted or unpaid), not this one request.
+fn summary_model_unavailable(error: &LLMError) -> bool {
+    matches!(
+        error,
+        LLMError::HttpStatusError {
+            status_code: 402 | 404 | 410,
+            ..
+        }
+    )
+}
+
 #[autoagents::async_trait]
 impl ChatProvider for CompatibleProvider {
     async fn chat_with_tools(
@@ -808,97 +920,36 @@ impl ChatProvider for CompatibleProvider {
             reasoning_effort: None,
             ..self.clone()
         });
-        let provider = summary_provider.as_ref().unwrap_or(self);
-        if provider.api_key.is_empty() {
-            return Err(LLMError::missing_api_key(format!(
-                "Missing {} API key",
-                provider.provider_name
-            )));
-        }
-        let mut trace = crate::context_metrics::RequestTrace::begin(
-            &provider.model,
-            messages,
-            tools,
-            COMPACTION_REQUEST.try_with(|_| ()).is_ok(),
-        );
-        trace.output_limit(
-            sampling
-                .and_then(|s| s.max_tokens)
-                .or_else(|| OUTPUT_LIMIT.try_with(|limit| *limit).ok())
-                .map(|limit| bounded_output_limit(&provider.model, limit)),
-        );
-        let response = provider
-            .chat_request(messages, tools, false, sampling)?
-            .send()
-            .await
-            .map_err(|err| transport_error("chat request failed", err))?;
-        let response = ensure_success(response, provider.provider_name).await?;
-        let raw = response
-            .text()
-            .await
-            .map_err(|err| transport_error("failed to read chat response", err))?;
-        if let Ok(raw_usage) = serde_json::from_str::<serde_json::Value>(&raw) {
-            trace.usage(&raw_usage["usage"]);
-            trace.usage(&gemini_usage(&raw_usage["usageMetadata"]));
-        }
-        let parsed: WireChatResponse = if provider.protocol() == Protocol::Gemini {
-            gemini_response(serde_json::from_str(&raw)?)?
-        } else if provider.uses_responses() {
-            responses_response(serde_json::from_str(&raw)?)?
-        } else if provider.uses_messages() {
-            messages_response(serde_json::from_str(&raw)?)?
-        } else {
-            serde_json::from_str(&raw).map_err(|err| LLMError::ResponseFormatError {
-                message: format!(
-                    "Failed to decode {} API response: {err}",
-                    provider.provider_name
-                ),
-                raw_response: raw,
-            })?
+        let Some(summary) = summary_provider else {
+            return self.chat_once(messages, tools, sampling).await;
         };
-        let choice =
-            parsed
-                .choices
-                .into_iter()
-                .next()
-                .ok_or_else(|| LLMError::ResponseFormatError {
-                    message: format!("{} returned no choices", provider.provider_name),
-                    raw_response: String::new(),
-                })?;
-        let truncated = choice.finish_reason.as_deref() == Some("length");
-        if truncated || COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
-            let usage = parsed.usage.as_ref();
-            crate::diagnostics::emit(
-                "provider",
-                if truncated {
-                    "output_truncated"
-                } else {
-                    "summary_usage"
-                },
-                if truncated { "warn" } else { "info" },
-                serde_json::json!({
-                    "model": provider.model,
-                    "output_limit_tokens": sampling.and_then(|sampling| sampling.max_tokens),
-                    "completion_tokens": usage.map(|usage| usage.completion_tokens),
-                    "reasoning_tokens": usage.and_then(|usage| usage.completion_tokens_details.as_ref()).and_then(|details| details.reasoning_tokens),
-                    "public_text_chars": choice.message.content.as_ref().map_or(0, |text| text.chars().count()),
-                }),
-            );
+        match summary.chat_once(messages, tools, sampling).await {
+            // Go can keep listing the routed summarizer while its endpoint is gone. Write the
+            // summary with the chat's own model then, as when Go retires the summarizer.
+            Err(error)
+                if summary.model != self.model
+                    && crate::runtime::compaction_config().summary_model.is_none()
+                    && summary_model_unavailable(&error) =>
+            {
+                crate::diagnostics::emit(
+                    "provider",
+                    "summary_model_unavailable",
+                    "warn",
+                    serde_json::json!({
+                        "model": summary.model,
+                        "fallback_model": self.model,
+                        "status": error.http_status_code(),
+                    }),
+                );
+                Self {
+                    model: self.model.clone(),
+                    ..summary
+                }
+                .chat_once(messages, tools, sampling)
+                .await
+            }
+            result => result,
         }
-        if truncated {
-            return Err(LLMError::Generic("Provider response was truncated".into()));
-        }
-        trace.complete();
-        reasoning::remember(
-            choice.message.tool_calls.as_deref().unwrap_or_default(),
-            choice.message.content.as_deref().unwrap_or_default(),
-            reasoning::from_message(&choice.message),
-        );
-        Ok(Box::new(CompatibleChatResponse {
-            text: choice.message.content,
-            tool_calls: choice.message.tool_calls,
-            usage: parsed.usage,
-        }))
     }
 
     async fn chat_stream_with_tools(

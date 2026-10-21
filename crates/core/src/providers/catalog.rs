@@ -183,6 +183,24 @@ pub(crate) fn thinking_default(model: &str) -> ThinkingDefault {
         .unwrap_or_default()
 }
 
+/// The lowest reasoning effort a summary may ask of a Responses model: `none` when the catalog
+/// lists it or does not describe the model, else its lowest of `minimal` and `low` (some
+/// models, such as muse-spark, reject `none`).
+pub(crate) fn summary_effort(model: &str) -> &'static str {
+    MODEL_THINKING
+        .try_with(|models| {
+            let Some((_, efforts)) = models.get(model).filter(|(_, efforts)| !efforts.is_empty())
+            else {
+                return "none";
+            };
+            ["none", "minimal", "low"]
+                .into_iter()
+                .find(|level| efforts.iter().any(|known| known == level))
+                .unwrap_or("none")
+        })
+        .unwrap_or("none")
+}
+
 /// The no-thinking Go model that writes summaries for models whose thinking cannot be
 /// turned off reliably.
 const SUMMARY_FALLBACK_MODEL: &str = "longcat-2.5-preview-free";
