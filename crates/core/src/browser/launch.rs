@@ -85,10 +85,7 @@ pub fn launch_args(profile: &Path, headless: bool) -> Vec<String> {
         // Never touch the person's Keychain or saved passwords.
         "--use-mock-keychain".to_owned(),
         "--password-store=basic".to_owned(),
-        // CalculateNativeWinOcclusion: Windows otherwise counts a headless
-        // window as covered and stops painting its page.
-        "--disable-features=Translate,MediaRouter,OptimizationHints,CalculateNativeWinOcclusion"
-            .to_owned(),
+        "--disable-features=Translate,MediaRouter,OptimizationHints".to_owned(),
         "--disable-background-timer-throttling".to_owned(),
         "--disable-renderer-backgrounding".to_owned(),
         "--disable-backgrounding-occluded-windows".to_owned(),
