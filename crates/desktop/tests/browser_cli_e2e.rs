@@ -207,7 +207,7 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
     );
     let shot = results[3]["path"].as_str().unwrap();
     assert!(
-        shot.contains("/.themis/attachments/") && shot.ends_with(".png"),
+        shot.replace('\\', "/").contains("/.themis/attachments/") && shot.ends_with(".png"),
         "{shot}"
     );
     assert_eq!(

@@ -1171,7 +1171,16 @@ mod tests {
 
     #[test]
     fn web_and_browser_settings_come_from_the_user_file_and_projects_may_only_disable() {
-        let user = r#"{"web":{"search_url":"http://127.0.0.1:8888"},"browser":{"executable":"/opt/chrome"}}"#;
+        // An absolute path on this OS.
+        let chrome = if cfg!(windows) {
+            r"C:\\Chrome\\chrome.exe"
+        } else {
+            "/opt/chrome"
+        };
+        let user = format!(
+            r#"{{"web":{{"search_url":"http://127.0.0.1:8888"}},"browser":{{"executable":"{chrome}"}}}}"#
+        );
+        let user = user.as_str();
         let resolved = resolve(Some(user), Some(r#"{"browser":{"enabled":false}}"#), None).unwrap();
         assert_eq!(
             resolved.config.web.search_url.as_deref(),
