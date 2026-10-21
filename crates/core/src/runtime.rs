@@ -945,6 +945,9 @@ async fn run_task_with_evidence_inner(
                 };
                 if value["arguments_rejected"] != true && unchanged {
                     unchanged_results += 1;
+                    #[cfg(feature = "eval")]
+                    let _ = EVAL_REPEAT_REMINDERS
+                        .try_with(|count| count.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
                     // Every streak of three gets a warning, never a stop: a re-read after a
                     // checkpoint can be needed, and stopping hides why the agent repeats itself.
                     // The run's turn limit bounds a real loop; evals count the warnings.
@@ -1919,6 +1922,12 @@ pub fn steered_message(text: &str) -> String {
 tokio::task_local! {
     /// Eval-only: loop warnings given in the run (each would once have stopped it after the first).
     pub static EVAL_LOOP_WARNINGS: Arc<std::sync::atomic::AtomicUsize>;
+}
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only: results marked as an unchanged repeat (a reference or a reminder note).
+    pub static EVAL_REPEAT_REMINDERS: Arc<std::sync::atomic::AtomicUsize>;
 }
 
 #[cfg(feature = "eval")]

@@ -52,6 +52,10 @@ required-features = ["eval"]
 name = "behavior_eval"
 required-features = ["eval"]
 
+[[example]]
+name = "redo_eval"
+required-features = ["eval"]
+
 [[test]]
 name = "compaction_eval"
 required-features = ["eval"]

@@ -13,7 +13,7 @@
 //! historical anchors for every message); `new` skips them for social turns and when the
 //! text is already verbatim in the working context.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use themis_core::providers::{resolve, ProviderConfig, ProviderKind};
@@ -21,6 +21,22 @@ use themis_core::runtime::eval::{
     behavior_turn, compact_chunks, history_from_messages, parse_transcript, EvalPolicy,
 };
 use themis_core::runtime::{is_short_reply, ConversationRole, ConversationTurn};
+
+/// Copies a case's optional `project/` folder into the turn's project, so the files the
+/// conversation talks about exist when the agent looks.
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            std::fs::create_dir_all(&target)?;
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
 
 fn arg(flag: &str) -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
@@ -89,6 +105,8 @@ async fn main() -> anyhow::Result<()> {
     if let Some(model) = &model {
         config = config.with_model(model);
     }
+    // The live goal that motivated `behavior-no-redo-chain` ran at max effort.
+    config.reasoning_effort = arg("--effort");
     if let Some(url) = arg("--base-url") {
         config = config.with_base_url(url);
     }
@@ -100,6 +118,13 @@ async fn main() -> anyhow::Result<()> {
     };
     let outcome = compact_chunks(&llm, &transcript, &ends, policy, evidence.path()).await?;
     let base = history_from_messages(&outcome.messages);
+    // The grader checks which recorded facts survived, since re-reading a lost one is fine.
+    let checkpoint = outcome
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.content.starts_with("Earlier context checkpoint"))
+        .map(|message| message.content.clone());
     let mut turns = Vec::new();
     for turn in behavior["turns"].as_array().into_iter().flatten() {
         let message = turn["message"].as_str().unwrap_or_default();
@@ -114,6 +139,9 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         let project = tempfile::tempdir()?;
+        if case.join("project").is_dir() {
+            copy_tree(&case.join("project"), project.path())?;
+        }
         let result = behavior_turn(
             &llm,
             history,
@@ -133,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let report = json!({
         "case": meta["name"], "model": model, "budget": budget, "anchors": if old_anchors {"old"} else {"new"},
-        "valid": outcome.valid, "chunks": outcome.chunks, "turns": turns,
+        "valid": outcome.valid, "chunks": outcome.chunks, "turns": turns, "checkpoint": checkpoint,
     });
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())

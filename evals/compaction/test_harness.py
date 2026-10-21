@@ -15,7 +15,7 @@ import threading
 import unittest
 
 from . import __main__ as harness
-from . import behavior
+from . import behavior, redo
 from .grade import grade, matches, position
 from .report import aggregate, spread, trial_rows, trial_summary
 
@@ -250,14 +250,54 @@ class BehaviorGradeTests(unittest.TestCase):
         self.assertFalse(behavior.grade_turn(self.CASE, spec, {"reply": "round_cents and pancake", "tool_calls": []})["pass"])
         self.assertFalse(behavior.grade_turn(self.CASE, spec, {"reply": "What task?", "tool_calls": []})["pass"])
 
+    def test_no_redo_classifies_the_first_call(self):
+        spec = {"id": "n", "kind": "no_redo", "resume": r"(?i)ephemeris", "redo": r"(?i)data/vsop87|curl"}
+        write = 'write_file: call `write_file` with {"file_path":"src/astro/ephemeris.js","content":"load(\'data/vsop87/VSOP87D.ear\')"}'
+        reread = 'shell: call `shell` with {"command":"head","args":["data/vsop87/VSOP87D.ear"]}'
+        look = 'shell: call `shell` with {"command":"ls","args":["src/astro"]}'
+        row = behavior.grade_turn(self.CASE, spec, {"reply": "", "tool_calls": [write, reread]})
+        self.assertEqual((row["first_call"], row["redo_calls"], row["pass"]), ("progress", 1, True))
+        row = behavior.grade_turn(self.CASE, spec, {"reply": "", "tool_calls": [reread, write]})
+        self.assertEqual((row["first_call"], row["pass"]), ("redo", False))
+        row = behavior.grade_turn(self.CASE, spec, {"reply": "", "tool_calls": [look, write]})
+        self.assertEqual((row["first_call"], row["pass"]), ("other", True))
+        row = behavior.grade_turn(self.CASE, spec, {"reply": "Done.", "tool_calls": []})
+        self.assertEqual((row["first_call"], row["pass"]), (None, False))
+
+    def test_no_redo_case_counts_rereads_not_listings(self):
+        case = next(c for c in harness.load_cases("behavior") if c["name"] == "behavior-no-redo")
+        spec = case["behavior"]["turns"][0]
+        self.assertTrue(os.path.isfile(os.path.join(case["directory"], "project", "data", "vsop87", "VSOP87D.ear")))
+        for call, kind in (('list_dir: call `list_dir` with {"directory_path":"data/vsop87"}', "other"),
+                           ('shell: call `shell` with {"command":"sh","args":["-c","ls data/vsop87; cat package.json"]}', "other"),
+                           ('shell: call `shell` with {"command":"sh","args":["-c","head -20 data/vsop87/VSOP87D.ear"]}', "redo"),
+                           ('read_file: call `read_file` with {"file_path":"data/vsop87/vsop87.txt"}', "redo"),
+                           ('read_file: call `read_file` with {"file_path":"data/horizons_reference.json"}', "other")):
+            self.assertEqual(behavior.classify_call(call, spec["resume"], spec["redo"]), kind, call)
+
+    def test_no_redo_reports_whether_the_checkpoint_kept_the_facts(self):
+        case = next(c for c in harness.load_cases("behavior") if c["name"] == "behavior-no-redo-chain")
+        with open(os.path.join(case["directory"], "case.json"), encoding="utf-8") as handle:
+            self.assertGreaterEqual(len(json.load(handle)["chunks"]), 5)
+        call = 'shell: call `shell` with {"command":"sh","args":["-c","head -20 data/vsop87/VSOP87D.ear"]}'
+        kept = {"turns": [{"id": "continue", "reply": "", "tool_calls": [call]}],
+                "checkpoint": "Earlier context checkpoint: A*cos(B+C*T), T = (JDE-2451545)/365250, A amplitude"}
+        lost = dict(kept, checkpoint="Earlier context checkpoint: parser written.")
+        self.assertTrue(behavior.grade_run(case, kept)[0]["retained"])
+        self.assertFalse(behavior.grade_run(case, lost)[0]["retained"])
+        rows = behavior.grade_run(case, kept) + behavior.grade_run(case, lost)
+        summary = behavior.summarize(rows)
+        self.assertEqual((summary["facts_retained_rate"], summary["first_call_redo_rate_when_retained"]), (0.5, 1.0))
+
     def test_every_behavior_case_is_well_formed(self):
         cases = harness.load_cases("behavior")
         self.assertEqual(sorted(c["name"] for c in cases), [
-            "behavior-continue", "behavior-greeting", "behavior-topic-return", "behavior-unrelated"])
+            "behavior-continue", "behavior-greeting", "behavior-no-redo", "behavior-no-redo-chain",
+            "behavior-topic-return", "behavior-unrelated"])
         for case in cases:
             ids = [t["id"] for t in case["behavior"]["turns"]]
             self.assertEqual(len(ids), len(set(ids)))
-            self.assertTrue(all(t["kind"] in ("greeting", "unrelated", "return", "continue")
+            self.assertTrue(all(t["kind"] in ("greeting", "unrelated", "return", "continue", "no_redo")
                                 for t in case["behavior"]["turns"]))
         greeting = next(c for c in cases if c["name"] == "behavior-greeting")
         self.assertTrue(any(not t["message"].isascii() for t in greeting["behavior"]["turns"]))
@@ -310,6 +350,92 @@ class BehaviorEndToEndTests(unittest.TestCase):
         self.assertEqual(len(greeting_requests), 4)
         # No anchor message reaches a social turn; the other cases may still carry one.
         self.assertTrue(BehaviorMock.anchored.count(False) >= 4)
+
+
+def _call(tool, args, ok=True):
+    return {"kind": "call", "tool": tool, "summary": f"call `{tool}` with {json.dumps(args)}", "ok": ok}
+
+
+class RedoGradeTests(unittest.TestCase):
+    def test_rereads_after_a_checkpoint_are_told_apart_from_plain_repeats(self):
+        doc = _call("read_file", {"file_path": "docs/vsop87.txt"})
+        data = _call("read_file", {"file_path": "data/vsop87/VSOP87D.ear", "offset": 0, "limit": 40})
+        other_slice = _call("read_file", {"file_path": "data/vsop87/VSOP87D.ear", "offset": 40, "limit": 40})
+        mine = _call("read_file", {"file_path": "src/astro/vsop87.js"})
+        write = _call("write_file", {"file_path": "src/astro/vsop87.js", "content": "x"})
+        patch = _call("apply_patch", {"patch": "--- a/src/astro/vsop87.js\n+++ b/src/astro/vsop87.js\n@@ -1 +1 @@\n-x\n+y\n"})
+        checkpoint = {"kind": "checkpoint"}
+        evidence = {"kind": "call", "tool": "read_file", "ok": True,  # a summary cut short
+                    "summary": 'call `read_file` with {"file_path":"/var/folders/x/T/.tmpZ/.themis/contex'}
+        found = _call("read_file", {"file_path": "docs/vsop87.txt", "find": "col 80"})
+        steps = [doc, data, doc, write, mine, checkpoint, doc, data, other_slice, mine, patch,
+                 checkpoint, mine, evidence, found, evidence, _call("shell", {"command": "ls"}, ok=False)]
+        row = redo.grade_run({"steps": steps, "outputs_written": ["src/astro/vsop87.js"]})
+        # doc twice before any checkpoint: a repeat; doc, data and the unchanged parser after one: rereads;
+        # the other slice is new; the parser read after the patch is a fresh read.
+        self.assertEqual((row["repeated_reads"], row["rereads_after_checkpoint"]), (1, 3))
+        self.assertEqual((row["checkpoints"], row["reads"], row["reads_after_checkpoint"]), (2, 10, 6))
+        self.assertEqual((row["reread_share"], row["failed_calls"], row["outputs_written"]), (0.5, 1, 1))
+        self.assertEqual(row["evidence_reads"], 2)
+        summary = redo.summarize([row, dict(row, rereads_after_checkpoint=1)])
+        self.assertEqual(summary["rereads_after_checkpoint"]["mean"], 2)
+        self.assertEqual(summary["runs"], 2)
+
+    def test_the_midturn_case_ships_its_project_and_task(self):
+        case = os.path.join(harness.CASES, "midturn-ephemeris")
+        with open(os.path.join(case, "task.json"), encoding="utf-8") as handle:
+            task = json.load(handle)
+        self.assertIn("shell is unavailable", task["task"])
+        for path in ("README.md", "docs/vsop87.txt", "data/vsop87/VSOP87D.ear", "src/astro/time.js"):
+            self.assertTrue(os.path.isfile(os.path.join(case, "project", path)), path)
+        with open(os.path.join(case, "project", "data", "vsop87", "VSOP87D.ear"), encoding="utf-8") as handle:
+            term = handle.read().splitlines()[1]
+        # The documented columns 80-97, 98-111 and 112-131 hold A, B and C.
+        float(term[79:97]), float(term[97:111]), float(term[111:131])
+
+
+@unittest.skipUnless(shutil.which("cargo"), "cargo is required to build the eval example")
+class MidturnEndToEndTests(unittest.TestCase):
+    """Plumbing only: a scripted provider that reads one file, then answers."""
+
+    def test_runner_records_calls_and_writes_a_graded_result(self):
+        subprocess.run(["cargo", "build", "-q", "-p", "themis-core", "--features", "eval",
+                        "--example", "redo_eval"], cwd=harness.ROOT, check=True)
+        runner = os.path.join(harness.target_dir(), "debug", "examples", "redo_eval" + harness.EXE)
+
+        class Scripted(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                done = any(m.get("role") == "tool" for m in body["messages"])
+                message = ({"role": "assistant", "content": "Done."} if done else
+                           {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function",
+                            "function": {"name": "read_file", "arguments": json.dumps({"file_path": "README.md"})}}]})
+                payload = json.dumps({"id": "x", "object": "chat.completion", "choices": [
+                    {"index": 0, "message": message, "finish_reason": "stop" if done else "tool_calls"}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Scripted)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "result.json")
+            code = harness.main(["midturn", "--trials", "1", "--model", "mock-model", "--runner", runner,
+                                 "--base-url", f"http://127.0.0.1:{server.server_address[1]}", "--out", out])
+            self.assertEqual(code, 0)
+            with open(out, encoding="utf-8") as handle:
+                result = json.load(handle)
+        self.assertEqual(result["failed_runs"], [])
+        steps = result["details"][0]["steps"]
+        self.assertEqual([(s["kind"], s["tool"], s["ok"]) for s in steps], [("call", "read_file", True)])
+        self.assertEqual(result["summary"]["reads"]["mean"], 1)
 
 
 KNOWN_WRONG = {

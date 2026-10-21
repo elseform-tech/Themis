@@ -100,6 +100,13 @@ tool calls and checkpoints. Cases use `"suites": ["behavior"]`:
   share of the planted facts in the reply.
 - `behavior-continue`: "continue" / "ok go on" / "keep going" resume the latest task, not an
   older parked topic.
+- `behavior-no-redo`: the data format, its documentation and the reference values were read and
+  recorded before the compaction; "continue", a goal turn and "keep going" should start the
+  recorded next action, not read those sources again. Each tool call is graded `progress` (a write
+  matching the task), `redo` (re-reading a recorded source) or `other`; the headline is the first
+  call, because every approval is denied and the folder is empty, so later calls react to that.
+  Reported as `first_call_redo_rate`, `first_call_progress_rate`, `redo_calls_per_turn` and
+  `no_redo_pass_rate` (progress, and the first call is not a redo).
 
 `--anchors old` reproduces the previous desktop behavior (latest exchanges injected as
 historical anchors for every message); `new` omits them for turns marked `social` and when the
@@ -116,3 +123,45 @@ the harness changes), `...-ablate-single-pass`, `...-ablate-lean-prompt` (ablati
 branch) and parked-case reruns, plus `behavior-main-c34da50` and `behavior-simplify`. These use
 the current grader (probe request errors excluded), so compare them with each other rather than
 with the 2026-10-13/14 files. See `docs/verification/simplify-compaction-2026-10-15.md`.
+
+## Mid-turn re-read evals
+
+`python3 -m evals.compaction midturn --trials 4 --model M --budget 24000 [--turns 40] [--effort max]`
+runs a whole task from an empty conversation (`redo_eval` example, feature `eval`): the case's
+`project/` is copied into a temporary folder, the task in `task.json` runs with every file tool
+allowed and `shell`/`git` denied, and the budget is small enough that the run compacts while it
+works. The live catalog's output limits apply, as in the app. `redo.py` counts a re-read when the
+same slice of a file (path, offset, limit, find) is read again after a checkpoint without the
+file having been written since; reads of the run's own saved outputs (`.themis/`) count apart.
+Reported: checkpoints, calls, reads, `rereads_after_checkpoint`, `reread_share` (re-reads over
+reads after the first checkpoint), `repeated_reads` (no checkpoint in between) and
+`outputs_written` (of the files `task.json` lists).
+
+## Recorded results (2026-10-20)
+
+`results/2026-10-20-behavior-*` test a checkpoint-envelope nudge ("when resuming, start from its
+next action and re-read a source it records only for detail it lacks or when something
+contradicts it"), with minimax-m3.1-flash-free at a 24k budget. `-main` is main at the time; `-nudge`
+adds the clause (branch `codex/checkpoint-nudge`, not merged).
+
+- `behavior-no-redo`, 8 trials × 3 turns per arm: no first call re-read a recorded source in
+  either arm (0/24 each); turns with any re-read: 0/24 main, 1/24 nudge. The case does not
+  reproduce the live re-research (one checkpoint, default effort), so it cannot show a benefit,
+  and the nudge was not shipped.
+- `behavior-no-redo-chain-max-*`: the research four compactions back (five compactions in all),
+  `--effort max`, 6 trials × 3 turns per arm: 0/18 first-call re-reads and 0/18 turns with any
+  re-read in both arms; every final checkpoint kept the format facts (`facts_retained_rate` 1.0).
+  Every turn started by listing the project. Chained compactions and max effort did not
+  reproduce the live re-research either. The live runs differed in compacting mid-turn at a
+  100k budget, with downloaded copies outside the project, so the re-reads there may have been
+  for detail (exact column offsets) that a checkpoint does not keep.
+- `midturn-*` (case `midturn-ephemeris`, 24k budget, 40 model turns, 4 trials per arm; one run
+  per arm timed out and is excluded): main averaged 11 checkpoints, 30 re-reads and a re-read
+  share of 0.75; the nudge 7, 19 and 0.67, with wide spread (n = 3). No run in either arm wrote
+  any of the three files: each read whole data files at 8,000 characters a page, filled the
+  budget, compacted and read them again. The nudge does not break that loop. An earlier round
+  without the catalog's output limits died on truncated replies and is not recorded.
+- `behavior-guard-*`: the four older behavior cases, 2 trials per arm, as a regression check
+  (greeting pass 0.125 main vs 0.25 nudge; unrelated 0.83 vs 1.0; topic return 1.0 vs 1.0;
+  continue 0.83 vs 1.0). Too few trials to read as a difference. Note that this model resumes the
+  task after most greetings in both arms.
