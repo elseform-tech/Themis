@@ -136,9 +136,11 @@ pub fn devtools_address(line: &str) -> Option<String> {
 
 /// Run by the guard: `read` returns when the pipe from Themis closes, which
 /// the OS does however Themis exits; the guard then ends the browser's group.
-/// It ignores the TERM it sends itself and goes with the KILL.
+/// It ignores the TERM it sends itself and goes with the KILL. No `--` before
+/// the group: dash (Debian and Ubuntu's `/bin/sh`) rejects it.
 #[cfg(unix)]
-const GUARD: &str = r#"read _; trap '' TERM; kill -TERM -- "-$1" 2>/dev/null; sleep 3; kill -KILL -- "-$1" 2>/dev/null"#;
+const GUARD: &str =
+    r#"read _; trap '' TERM; kill -TERM "-$1" 2>/dev/null; sleep 3; kill -KILL "-$1" 2>/dev/null"#;
 
 /// Starts the guard inside the browser's process group, so killing the group
 /// on a normal close takes the guard too.
@@ -337,6 +339,36 @@ impl Drop for BrowserProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_guard_ends_the_group_in_every_posix_shell() {
+        use std::os::unix::process::CommandExt;
+        for shell in ["/bin/sh", "/bin/dash", "/bin/bash"] {
+            if !Path::new(shell).exists() {
+                continue;
+            }
+            let mut group = std::process::Command::new("sleep")
+                .arg("30")
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            // Its stdin is closed at once, as when Themis dies.
+            let status = std::process::Command::new(shell)
+                .args(["-c", GUARD, "guard", &group.id().to_string()])
+                .stdin(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while group.try_wait().unwrap().is_none() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{shell} left the group running (guard exit {status})"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
 
     #[test]
     fn devtools_address_accepts_only_local_browser_endpoints() {
