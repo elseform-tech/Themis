@@ -1668,6 +1668,17 @@ impl ChatBrowser {
                 .call(Some(&previous), "Page.stopScreencast", json!({}))
                 .await;
         }
+        // A headless tab can count as hidden (Windows CI painted one frame,
+        // then nothing): make the streamed tab the visible, focused one.
+        for (method, params) in [
+            ("Page.bringToFront", json!({})),
+            (
+                "Emulation.setFocusEmulationEnabled",
+                json!({"enabled": true}),
+            ),
+        ] {
+            let _ = cdp.call(Some(&tab.session_id), method, params).await;
+        }
         STREAM_STARTS.fetch_add(1, Ordering::Relaxed);
         cdp.call(
             Some(&tab.session_id),
