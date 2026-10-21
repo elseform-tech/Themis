@@ -1672,7 +1672,7 @@ impl ChatBrowser {
         cdp.call(
             Some(&tab.session_id),
             "Page.startScreencast",
-            json!({"format": "jpeg", "quality": 75, "maxWidth": (f64::from(viewport.width) * viewport.scale) as u32, "maxHeight": (f64::from(viewport.height) * viewport.scale) as u32, "everyNthFrame": 1}),
+            json!({"format": "jpeg", "quality": 85, "maxWidth": (f64::from(viewport.width) * viewport.scale) as u32, "maxHeight": (f64::from(viewport.height) * viewport.scale) as u32, "everyNthFrame": 1}),
         )
         .await?;
         Ok(())

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { DiffView, EmptyState, FileTree } from "../components";
+import { DiffView, EmptyState, FileTree, Tooltip } from "../components";
 import { CodeBlock } from "../components/CodeBlock";
 import type { DirEntry, FileView, WorkspaceInfo } from "../lib/types";
 import { getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
@@ -71,23 +71,26 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
         onLostPointerCapture={finish}
         onDoubleClick={() => resize(defaultWidth)}
         onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); resize(width + 40); } else if (event.key === "ArrowRight") { event.preventDefault(); resize(width - 40); } }} />
-      {/* One row: the tabs, where the agent works (hidden when narrow) and Close. */}
+      {/* One lean row of icon tabs and Close; the composer already shows the project and branch. */}
       <header className="themis-workspace-head">
         <nav className="themis-workspace-tabs" aria-label="Workspace views">
-          {TABS.map(([value, label]) => (
-            <button key={value} type="button" aria-pressed={tab === value} onClick={() => choose(value)}>
-              {label}{value === "changes" && changed > 0 ? <span className="themis-workspace-count">{changed}</span> : null}
-              {value === "tasks" && taskCount > 0 ? <span className="themis-workspace-count themis-workspace-count--tasks">{taskCount}</span> : null}
-            </button>
-          ))}
+          {TABS.map(([value, label]) => {
+            const count = value === "changes" ? changed : value === "tasks" ? taskCount : 0;
+            return (
+              <Tooltip key={value} content={label} below>
+                <button type="button" aria-label={count > 0 ? `${label} ${count}` : label} aria-pressed={tab === value} onClick={() => choose(value)}>
+                  <TabIcon tab={value} />
+                  {count > 0 && <span className={`themis-workspace-count${value === "tasks" ? " themis-workspace-count--tasks" : ""}`} aria-hidden="true">{count}</span>}
+                </button>
+              </Tooltip>
+            );
+          })}
         </nav>
-        <div className="themis-workspace-where">
-          <strong>{workspace?.name ?? "Workspace"}</strong>
-          {workspace?.branch && <span className="themis-workspace-branch"><BranchIcon />{workspace.branch}</span>}
-        </div>
-        <button type="button" className="themis-workspace-close" aria-label="Close workspace" title="Close workspace" onClick={() => dispatch({ type: "ui/diff-panel", open: false })}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16M16.5 9.5 19 12l-2.5 2.5" /></svg>
-        </button>
+        <Tooltip content="Close workspace" below>
+          <button type="button" className="themis-workspace-close" aria-label="Close workspace" onClick={() => dispatch({ type: "ui/diff-panel", open: false })}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16M16.5 9.5 19 12l-2.5 2.5" /></svg>
+          </button>
+        </Tooltip>
       </header>
       <div className={`themis-workspace-body${tab === "browser" ? " is-browser" : ""}`}>
         {tab === "changes" && <ChangesView threadId={threadId} />}
@@ -101,8 +104,22 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   );
 }
 
-export function BranchIcon() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg>;
+/** One 16px stroke icon per Workspace view; the tab's name is its tooltip and accessible name. */
+function TabIcon({ tab }: { tab: Tab }) {
+  if (tab === "branches") return <BranchIcon size={16} />;
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {tab === "changes" && <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M12 10.5v5M9.5 13h5M9.5 18h5" /></>}
+      {tab === "files" && <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />}
+      {tab === "pulls" && <><circle cx="6" cy="6" r="2" /><circle cx="6" cy="18" r="2" /><circle cx="18" cy="18" r="2" /><path d="M6 8v8M18 16V9a2 2 0 0 0-2-2h-4M14 5l-2 2 2 2" /></>}
+      {tab === "tasks" && <path d="m4 6 1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M12 6h8M12 12h8M12 18h8" />}
+      {tab === "browser" && <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></>}
+    </svg>
+  );
+}
+
+export function BranchIcon({ size = 14 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 5-6 4-11 8" /></svg>;
 }
 
 function ChangesView({ threadId }: { threadId: string }) {

@@ -46,12 +46,21 @@ describe("WorkspacePanel", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Pull requests" })));
     expect(screen.getByText("GitHub CLI (gh) is not installed")).toBeInTheDocument();
   });
-  it("keeps the tabs, where the agent works and Close in one header row", () => {
+  it("keeps a lean header: icon tabs named by tooltips, and Close", () => {
     render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
     const head = document.querySelector(".themis-workspace-head")!;
-    expect(head.querySelector("nav[aria-label='Workspace views']")).not.toBeNull();
-    expect(head).toHaveTextContent("repo");
-    expect(head).toHaveTextContent("main");
+    const nav = head.querySelector("nav[aria-label='Workspace views']")!;
+    // Each tab is an icon whose name is its tooltip; the only text is a change count.
+    for (const name of ["Changes 1", "Files", "Branches", "Pull requests", "Tasks", "Browser"]) {
+      const tab = screen.getByRole("button", { name });
+      expect(nav.contains(tab)).toBe(true);
+      expect(tab.querySelector("svg")).not.toBeNull();
+      expect(tab.parentElement).toHaveAttribute("data-tooltip", name.replace(/ \d+$/, ""));
+    }
+    expect(nav).toHaveTextContent(/^1$/);
+    // The composer already shows the project and branch; the header does not repeat them.
+    expect(head).not.toHaveTextContent("repo");
+    expect(head).not.toHaveTextContent("main");
     const close = screen.getByRole("button", { name: "Close workspace" });
     expect(head.contains(close)).toBe(true);
     expect(close).not.toHaveTextContent("✕");
@@ -98,7 +107,7 @@ describe("WorkspacePanel", () => {
     const feed = { thread_id: "t1", run: { running: true, awaiting_approval: false }, automations: [], recent: [] };
     appState = { ...appState, tasks: { t1: feed }, workspaceTabRequest: { tab: "tasks", at: 1 } };
     render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
-    expect(screen.getByRole("button", { name: /^Tasks1$/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Tasks 1" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("region", { name: "Running" })).toBeInTheDocument();
   });
   it("applies a tab request once so the remembered tab wins when reopened", async () => {
