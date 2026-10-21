@@ -8,6 +8,7 @@ import unittest
 
 from . import codebase, followup, moves, sheet, sheet_long, threejs
 from .__main__ import JOBS, compare, make_task, markdown, summarize
+from .app import keep_evidence
 from .browser import chrome
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -288,3 +289,25 @@ class MovesTests(unittest.TestCase):
     def test_reports_without_checkpoint_places_are_not_measured(self):
         self.assertIsNone(moves.measure({"calls": [], "checkpoints": [{"turn": 0}]}))
         self.assertIsNotNone(moves.measure({"calls": [], "checkpoints": []}))
+
+
+class KeepTest(unittest.TestCase):
+    def test_a_dangling_link_from_the_browser_profile_is_kept_as_a_link(self):
+        workdir, keep = tempfile.mkdtemp(prefix="hard-run-"), tempfile.mkdtemp(prefix="hard-keep-")
+        profile = os.path.join(workdir, "data", "browser", "profiles", "p")
+        os.makedirs(profile)
+        os.symlink("148.0.7000.0", os.path.join(profile, "RunningChromeVersion"))
+        with open(os.path.join(workdir, "data", "evidence.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        keep_evidence(workdir, keep, "threejs-normal")
+        [copy] = os.listdir(keep)
+        self.assertTrue(os.path.isfile(os.path.join(keep, copy, "data", "evidence.jsonl")))
+        self.assertTrue(os.path.islink(os.path.join(keep, copy, "data", "browser", "profiles", "p",
+                                                    "RunningChromeVersion")))
+
+    def test_a_copy_that_fails_does_not_raise(self):
+        workdir = tempfile.mkdtemp(prefix="hard-run-")
+        blocker = os.path.join(tempfile.mkdtemp(prefix="hard-keep-"), "file")
+        with open(blocker, "w", encoding="utf-8"):
+            pass
+        keep_evidence(workdir, blocker, "sheet-normal")  # `keep` is a file: reported, not raised
