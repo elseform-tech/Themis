@@ -516,12 +516,13 @@ async fn an_animated_page_streams_at_about_thirty_frames_a_second() {
     let project = tempfile::tempdir().unwrap();
     let chat = hub.chat("chat-5", project.path());
     chat.open(
-        "data:text/html,<body><script>let n=0;(function f(){n=(n+7)&255;document.body.style.background='rgb('+n+',80,120)';requestAnimationFrame(f)})()</script>",
+        "data:text/html,<body><p id=c>0</p><script>let n=0,c=0;(function f(){n=(n+7)&255;c+=1;document.body.style.background='rgb('+n+',80,120)';document.getElementById('c').textContent='painted '+c;requestAnimationFrame(f)})()</script>",
         false,
     )
     .await
     .unwrap();
     let mut updates = chat.subscribe();
+    let before = themis_core::browser::stream_stats();
     chat.start_screencast(400, 300, 1.0).await.unwrap();
     let start = std::time::Instant::now();
     let mut frames = 0;
@@ -533,8 +534,27 @@ async fn an_animated_page_streams_at_about_thirty_frames_a_second() {
         }
     }
     // Paced to one frame per 33 ms (about 87 in 2 s unpaced) and still
-    // flowing; a CI machine drawing without a GPU may manage only a few.
-    assert!((4..=70).contains(&frames), "{frames} frames in 2 s");
+    // flowing. On failure, say whether the page kept painting and what the
+    // stream saw (counters are shared with tests running alongside).
+    if !(10..=70).contains(&frames) {
+        let after = themis_core::browser::stream_stats();
+        let page = chat
+            .snapshot(None)
+            .await
+            .map(|s| s.snapshot)
+            .unwrap_or_else(|e| e);
+        let painted = page
+            .lines()
+            .find(|line| line.contains("painted"))
+            .unwrap_or("no counter");
+        panic!(
+            "{frames} frames in 2 s; page: {painted}; stream: {} frames from Chrome, {} starts, {} lagged events, {} restarts",
+            after.frames - before.frames,
+            after.starts - before.starts,
+            after.lagged_events - before.lagged_events,
+            after.restarts_after_lag - before.restarts_after_lag,
+        );
+    }
     chat.stop_screencast().await;
     hub.close_chat("chat-5").await;
 }
