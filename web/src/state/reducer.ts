@@ -459,8 +459,16 @@ export function applyThreadEvent(
       next = { ...next, streams: { ...next.streams, [threadId]: "" } };
       return appendMessage(next, threadId, { id: newId("msg"), role: "user", text: event.text, runId, steered: true });
     }
-    case "user_message":
-      return appendMessage(state, threadId, userMessage(event.text, undefined, event.attachments));
+    case "user_message": {
+      // This window's own send is already on screen without a run: adopt it.
+      const rows = state.messages[threadId] ?? [];
+      if (runId && rows.some(row => row.role === "user" && row.runId === runId)) return state;
+      let own = rows.length - 1;
+      while (own >= 0 && !(rows[own].role === "user" && !rows[own].runId && !rows[own].steered && rows[own].text === event.text)) own -= 1;
+      if (own < 0) return appendMessage(state, threadId, userMessage(event.text, runId || undefined, event.attachments));
+      const adopted = rows.map((row, index) => index === own ? { ...row, runId } : row);
+      return { ...state, messages: { ...state.messages, [threadId]: adopted } };
+    }
     case "queue_changed":
       return { ...state, queues: { ...state.queues, [threadId]: event.queue } };
     case "goal_changed":

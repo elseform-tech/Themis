@@ -231,7 +231,7 @@ pub enum ThreadEvent {
     Steered {
         text: String,
     },
-    /// The server started this run with a user message from the queue, or a
+    /// The user message that starts this run, from any client, the queue or a
     /// goal turn. Live only: the history already holds the message.
     UserMessage {
         text: String,

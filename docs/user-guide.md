@@ -464,6 +464,8 @@ MCP shows the full saved command and arguments, with status, toggle and uninstal
 
 Open an MCP connection’s details to see its exposed tool count, names and descriptions. This reads cached discovery metadata; it does not execute a tool. Tools appear after the connection completes.
 
+A message sent to a chat from the CLI (`themis thread send`) or another window appears in an open window right away, once, followed by the run as it happens.
+
 For large shared-server requests, use `themis call METHOD - < arguments.json`. The CLI reads bounded UTF-8 JSON from stdin (8 MiB maximum), avoiding operating-system command-line length limits. The complete request, including its method and envelope, must fit the shared server’s 8 MiB frame limit. Secret entry still requires the existing secure provider setup flow.
 
 Conversation history can grow beyond that transport limit. The app and

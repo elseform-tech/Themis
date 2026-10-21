@@ -23,6 +23,18 @@ describe("queue and goal events", () => {
     expect(state.streams[thread]).toBe("");
   });
 
+  it("shows a message sent from another client once, and adopts this window's own", () => {
+    // From the CLI or another window: nothing on screen yet, so it is added.
+    let state = reducer(initialState, envelope({ kind: "user_message", text: "Fix the clock", attachments: [] }, "r1"));
+    // A repeat of the same run's message changes nothing.
+    state = reducer(state, envelope({ kind: "user_message", text: "Fix the clock", attachments: [] }, "r1"));
+    // This window's send is drawn before the server saves it; the event adopts it.
+    state = reducer(state, { type: "message/append", threadId: thread, message: { id: "mine", role: "user", text: "Now record it" } });
+    state = reducer(state, envelope({ kind: "user_message", text: "Now record it", attachments: [] }, "r2"));
+    expect(state.messages[thread]!.map(row => [row.text, row.runId])).toEqual([["Fix the clock", "r1"], ["Now record it", "r2"]]);
+    expect(state.messages[thread]![1].id).toBe("mine");
+  });
+
   it("shows goal turns as dividers and goal notes as notes, live and from history", () => {
     const turn = "[Goal — runtime, not from the user] Turn 24. Goal: speed up p95\nLast check: still slow";
     expect(goalTurnNumber(turn)).toBe(24);

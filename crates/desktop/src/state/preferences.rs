@@ -253,11 +253,19 @@ mod tests {
         })
         .await
         .unwrap();
-        let crate::sink::TestEvent::Thread(started) =
-            tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
-                .await
-                .unwrap()
-                .unwrap()
+        let wait = std::time::Duration::from_secs(2);
+        let crate::sink::TestEvent::Thread(message) = tokio::time::timeout(wait, events.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("expected the user message first");
+        };
+        assert!(matches!(message.event, ThreadEvent::UserMessage { .. }));
+        let crate::sink::TestEvent::Thread(started) = tokio::time::timeout(wait, events.recv())
+            .await
+            .unwrap()
+            .unwrap()
         else {
             panic!("expected admission before credential setup");
         };

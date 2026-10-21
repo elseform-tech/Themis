@@ -1573,6 +1573,11 @@ mod tests {
             .await
             .expect_err("missing key");
         assert!(err.contains("no API key"), "{err}");
+        let crate::sink::TestEvent::Thread(message) = events.try_recv().expect("the saved message")
+        else {
+            panic!("expected the user message first");
+        };
+        assert!(matches!(message.event, ThreadEvent::UserMessage { .. }));
         let crate::sink::TestEvent::Thread(started) = events.try_recv().expect("run admission")
         else {
             panic!("expected run admission event");

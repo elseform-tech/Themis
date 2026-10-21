@@ -501,26 +501,27 @@ impl AppState {
             self.finish_run(&thread_id).await;
             return Err(error);
         }
-        // A message the server sends itself shows in open windows now, saved
-        // and before any of its run's events.
-        let server_send = self
+        if let Some(state) = self
             .inner
             .server_sends
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get_mut(&run_id)
-            .map(|state| *state = super::queue::ServerSend::Saved)
-            .is_some();
-        if server_send {
-            sink.emit_thread_event(&ThreadEventEnvelope {
-                thread_id: thread_id.clone(),
-                run_id: String::new(),
-                event: ThreadEvent::UserMessage {
-                    text: text.clone(),
-                    attachments: shown_attachments,
-                },
-            });
+        {
+            *state = super::queue::ServerSend::Saved;
         }
+        // Every open window shows the message now, saved and before any of
+        // its run's events: one the server sends itself (queue, goal turn) or
+        // another client's (the CLI, a second window). The window that sent it
+        // already shows it and adopts this event instead of adding a copy.
+        sink.emit_thread_event(&ThreadEventEnvelope {
+            thread_id: thread_id.clone(),
+            run_id: run_id.clone(),
+            event: ThreadEvent::UserMessage {
+                text: text.clone(),
+                attachments: shown_attachments,
+            },
+        });
         self.persist_registry().await;
         let policy = RunPolicy {
             total_turns: runtime_configuration
