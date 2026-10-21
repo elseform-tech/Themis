@@ -463,7 +463,11 @@ Records contain epoch-millisecond timestamp, severity, service, event, and
 metadata. Events cover server lifecycle, configuration saves, integration
 inspection/import/test outcomes, approval decisions, the sandbox state each run
 captured (`sandbox`/`run_plan`: state, backend and network, never paths or
-commands), and compaction stages.
+commands), and compaction stages. A failed server command (`server`/`command_failed`)
+records its method and a fixed `category` (`unknown_method` when a window and the
+server come from different builds, `too_large`, `invalid_request`, `timeout`,
+`not_found`, `conflict`, `denied`, `network`, `credentials` or `other`), never the
+error message, which can name paths or hold user text.
 Request bodies, prompts, tool arguments/results, and provider bodies are excluded.
 Known credential fields and referenced secret environment values are redacted;
 debug subprocess stderr is bounded and filtered. Debug output from third-party

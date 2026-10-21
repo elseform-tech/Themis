@@ -299,6 +299,57 @@ impl std::fmt::Debug for AppState {
     }
 }
 
+/// A fixed category for a failed command's message, so the diagnostics log says why a
+/// command failed without recording the message itself (it can name paths or hold user
+/// text). Unknown methods mean a window and the server come from different builds.
+fn failure_category(message: &str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|word| lower.contains(word));
+    if lower.starts_with("unknown server method") {
+        "unknown_method"
+    } else if has(&["exceeds", "too large", "size limit"]) {
+        "too_large"
+    } else if lower.starts_with("invalid ") || has(&["missing field", "must be"]) {
+        "invalid_request"
+    } else if has(&["timed out", "timeout", "deadline"]) {
+        "timeout"
+    } else if has(&[
+        "not found",
+        "no such",
+        "does not exist",
+        "unknown thread",
+        "unknown skill",
+        "unknown secret",
+    ]) {
+        "not_found"
+    } else if has(&[
+        "revision",
+        "already exists",
+        "already running",
+        "conflict",
+        "is running",
+        "busy",
+    ]) {
+        "conflict"
+    } else if has(&["denied", "not allowed", "permission", "requires approval"]) {
+        "denied"
+    } else if has(&[
+        "http",
+        "connect",
+        "dns",
+        "network",
+        "request failed",
+        "unavailable",
+        "offline",
+    ]) {
+        "network"
+    } else if has(&["api key", "keychain", "credential", "unauthorized"]) {
+        "credentials"
+    } else {
+        "other"
+    }
+}
+
 impl AppState {
     /// Creates state with `settings_path` and `secrets` (production uses the
     /// app data dir plus the OS credential store). The thread registry, the skill /
@@ -533,11 +584,12 @@ impl AppState {
     /// the `record_cmd!` helper in [`crate::commands`], attributing its own
     /// command name.
     pub fn record_error(&self, command: &str, message: String) {
+        // The message can hold paths or user text, so the log keeps only its category.
         let _ = self.inner.diagnostics.append(
             "server",
             "command_failed",
             "error",
-            serde_json::json!({"method": command}),
+            serde_json::json!({"method": command, "category": failure_category(&message)}),
         );
         let entry = DiagnosticsError {
             at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
@@ -2731,6 +2783,62 @@ mod tests {
         assert!(state.list_review_items(None).await.is_empty());
         let report = state.reconcile_report();
         assert_eq!(report.len(), 3, "{report:?}");
+    }
+
+    #[test]
+    fn failed_commands_log_a_category_never_the_message() {
+        let (state, dir) = test_state();
+        for (message, category) in [
+            ("unknown server method 'resource_usage'", "unknown_method"),
+            (
+                "Server response exceeds 8 MiB; use a bounded or paged API",
+                "too_large",
+            ),
+            (
+                "invalid threadId: invalid type: null, expected a string",
+                "invalid_request",
+            ),
+            ("Go model list timed out", "timeout"),
+            ("unknown thread 1234", "not_found"),
+            (
+                "plugin store revision changed; reload and try again",
+                "conflict",
+            ),
+            (
+                "permission denied: /Users/someone/private/notes.txt",
+                "denied",
+            ),
+            (
+                "HTTP Status Error (503): OpenCode Go request failed",
+                "network",
+            ),
+            ("Missing go API key", "credentials"),
+            (
+                "something unexpected about /Users/someone/secret-project",
+                "other",
+            ),
+        ] {
+            assert_eq!(failure_category(message), category, "{message}");
+            state.record_error("cmd", message.to_owned());
+        }
+        let log = std::fs::read_dir(dir.path().join("logs"))
+            .unwrap()
+            .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect::<String>();
+        let failed: Vec<serde_json::Value> = log
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|record| record["event"] == "command_failed")
+            .collect();
+        assert_eq!(failed.len(), 10);
+        assert_eq!(failed[0]["details"]["category"], "unknown_method");
+        assert_eq!(failed[9]["details"]["category"], "other");
+        // The messages (paths, user text) stay out of the log; the ring keeps them.
+        assert!(!log.contains("someone"), "{log}");
+        assert!(state
+            .recent_errors()
+            .iter()
+            .any(|entry| entry.message.contains("secret-project")));
     }
 
     #[test]
