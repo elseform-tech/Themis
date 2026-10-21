@@ -12,3 +12,8 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.zune-jpeg]
 opt-level = 3
+
+# The shipped app carries no symbol tables: about a fifth of the binary (42 MB to 33 MB on
+# macOS arm64). Panic messages keep their text and location; backtraces lose function names.
+[profile.release]
+strip = true
