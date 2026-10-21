@@ -27,7 +27,9 @@ describe("MediaStrip", () => {
   it("shows two to four as tiles with captions, videos with a play mark", async () => {
     await act(async () => { renderStrip([file("a.png", "image", "Before"), file("b.png", "image", "After"), file("flow.mp4", "video", "Sign-up flow")]); });
     expect(screen.getAllByRole("listitem")).toHaveLength(3);
-    expect(screen.getByRole("button", { name: "Play Sign-up flow" }).querySelector("video")).toBeInTheDocument();
+    const tile = screen.getByRole("button", { name: "Play Sign-up flow" }).querySelector("video");
+    // A start time makes WebKit paint the first frame as the tile's preview.
+    expect(tile?.getAttribute("src")).toMatch(/#t=0\.1$/);
     expect(screen.getByText("Before")).toBeInTheDocument();
   });
 

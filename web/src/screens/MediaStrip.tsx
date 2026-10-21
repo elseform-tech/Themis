@@ -24,6 +24,7 @@ function useMediaUrl(threadId: string, path: string) {
 
 const label = (file: AttachedMedia) => file.caption || file.name;
 
+
 /** The media an agent attached under its reply: a row of small thumbnails, or three and "+N". */
 export function MediaStrip({ files }: { files: AttachedMedia[] }) {
   const gallery = useContext(MediaGallery);
@@ -45,6 +46,8 @@ export function MediaStrip({ files }: { files: AttachedMedia[] }) {
   );
 }
 
+// WebKit (the desktop window) paints no frame of a video that only loaded its
+// metadata; a start time in the URL makes it decode and show that frame.
 function MediaTile({ file }: { file: AttachedMedia }) {
   const gallery = useContext(MediaGallery)!;
   const { url, failed } = useMediaUrl(gallery.threadId, file.path);
@@ -53,7 +56,7 @@ function MediaTile({ file }: { file: AttachedMedia }) {
       <span className="themis-media-frame">
         {failed ? <span className="themis-media-missing">Preview unavailable</span>
           : url && file.kind === "image" ? <img src={url} alt="" />
-          : url && file.kind === "video" ? <><video src={url} preload="metadata" muted aria-hidden="true" tabIndex={-1} /><span className="themis-media-play" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg></span></>
+          : url && file.kind === "video" ? <><video src={`${url}#t=0.1`} preload="metadata" muted playsInline aria-hidden="true" tabIndex={-1} /><span className="themis-media-play" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg></span></>
           : file.kind === "pdf" ? <span className="themis-media-missing">PDF</span> : null}
       </span>
       <span className="themis-media-caption">{label(file)}</span>
