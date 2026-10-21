@@ -524,6 +524,91 @@ async fn cli_continues_a_reply_cut_off_after_shown_text() {
     serving.abort();
 }
 
+/// A reply cut off inside one huge tool call, with nothing shown (a whole file in one
+/// write), is not resent unchanged forever: from the second cut-off the request asks once
+/// to write the file in parts, and the agent's smaller writes then go through.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_asks_to_split_a_write_that_keeps_getting_cut_off() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let provider = MockServer::start().await;
+    let notes = Arc::new(Mutex::new(Vec::<usize>::new()));
+    let seen = notes.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let sent: Value = request.body_json().unwrap();
+            let messages = sent["messages"].as_array().unwrap();
+            let asked = messages
+                .iter()
+                .filter(|message| {
+                    message["content"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("write it in parts"))
+                })
+                .count();
+            let wrote = messages.iter().any(|message| message["role"] == "tool");
+            let mut seen = seen.lock().unwrap();
+            seen.push(asked);
+            let body = if wrote {
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    json!({"choices":[{"delta":{"content":"Wrote the engine in parts."},"finish_reason":"stop"}]})
+                )
+            } else if asked == 0 {
+                // The whole engine in one call, cut off before the call is complete.
+                format!(
+                    "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                    json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":format!("big-{}", seen.len()),
+                        "function":{"name":"write_file","arguments":"{\"file_path\":\"engine.py\",\"content\":\"def"}}]}}]}),
+                    json!({"choices":[{"delta":{},"finish_reason":"length"}]})
+                )
+            } else {
+                // Asked to split: a first, small part.
+                format!(
+                    "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                    json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"part-1","function":{"name":"write_file",
+                        "arguments":"{\"file_path\":\"engine.py\",\"content\":\"def evaluate():\\n    pass\\n\"}"}}]}}]}),
+                    json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]})
+                )
+            };
+            ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
+        })
+        .mount(&provider)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(provider.uri()));
+    let server = Server::bind(state, data.path()).await.unwrap();
+    let serving = tokio::spawn(server.run());
+    let client = Client::new(data.path().into());
+    let mut events = client.subscribe().await.unwrap();
+    let thread = cli(
+        data.path(),
+        "create_thread",
+        json!({"projectRoot":project.path(),"provider":"go","model":"test-model"}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    cli(
+        data.path(),
+        "set_thread_approval_mode",
+        json!({"threadId":id,"mode":"yolo"}),
+    );
+    let done = send(data.path(), &mut events, &id, "Build the engine").await;
+    assert_eq!(done["kind"], "finished", "{done}");
+    // Two cut-offs, then the request that asks once to split; the parts then go through.
+    let notes = notes.lock().unwrap().clone();
+    assert_eq!(notes[..3], [0, 0, 1], "{notes:?}");
+    assert!(notes.iter().all(|asked| *asked <= 1), "{notes:?}");
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("engine.py")).unwrap(),
+        "def evaluate():\n    pass\n"
+    );
+    serving.abort();
+}
+
 /// Reasoning that comes as `reasoning` with `reasoning_details` (Kimi, Hunyuan) goes back in
 /// those same fields with the tool call it led to.
 #[tokio::test(flavor = "multi_thread")]

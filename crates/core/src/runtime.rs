@@ -1292,6 +1292,9 @@ async fn request_answer_inner(
     // long reply at the same cap is cut off again.
     let base_limit = crate::providers::OUTPUT_LIMIT.try_with(|limit| *limit).ok();
     let mut cut_offs = 0u32;
+    // A second silent cut-off (nothing shown, so likely one huge tool call such as a whole
+    // file in one write) gets one note to split the work: a larger cap alone repeats it.
+    let mut split_noted = false;
     // After an empty reply the retry says so, instead of resending the same request.
     let mut request = std::borrow::Cow::Borrowed(messages);
     // Text already shown from replies that were cut off; the answer continues after it.
@@ -1424,6 +1427,16 @@ async fn request_answer_inner(
                 .send(RunEvent::AssistantText("\n\n".into()))
                 .await
                 .ok();
+        }
+        if truncated && !published && cut_offs >= 2 && !split_noted {
+            split_noted = true;
+            let mut retry = request.into_owned();
+            retry.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: SILENT_CUT_OFF_NOTE.to_owned(),
+            });
+            request = std::borrow::Cow::Owned(retry);
         }
         if empty_output {
             let mut retry = request.into_owned();
@@ -1666,6 +1679,8 @@ const FILE_CHANGES: [&str; 5] = [
 ];
 
 const CUT_OFF_NOTE: &str = "[Runtime note, not from the user] Your last reply was cut off at the output limit after the text above, which the user has already seen; any tool call in it was lost. Continue without repeating that text. Write a large file in parts: create it with the first part, then add the rest with writes that append to it.";
+
+const SILENT_CUT_OFF_NOTE: &str = "[Runtime note, not from the user] Your last two replies were cut off at the output limit before they finished, so nothing from them was shown or run, including any tool call. Do not send the same reply again. If you were writing a large file, write it in parts: create it with the first part, then add the rest with writes that append to it, each well under the limit.";
 
 /// The answer text after `shown`, the text of earlier cut-off replies, as the user saw it.
 fn with_shown(shown: &str, text: Option<String>) -> Option<String> {
@@ -4588,6 +4603,19 @@ mod tests {
                         assert_eq!(sent[n - 2]["content"], "Partial");
                         assert_eq!(sent[n - 1]["content"], CUT_OFF_NOTE);
                     }
+                    // Silent cut-offs: the first retry only grows the cap; from the second,
+                    // the request says once to split the work instead of repeating it.
+                    let notes = body["messages"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter(|message| message["content"] == SILENT_CUT_OFF_NOTE)
+                        .count();
+                    assert_eq!(
+                        notes,
+                        usize::from(!published && attempt >= 2),
+                        "attempt {attempt}, streaming {streaming}, failures {failures}"
+                    );
                     assert_eq!(body["model"], "test-model");
                 }
             }
