@@ -1797,12 +1797,10 @@ impl ChatBrowser {
         self.publish_state().await;
         let length = recording.elapsed();
         let frames = recording.frames;
-        let shrink = self
-            .viewport
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .scale
-            .round() as usize;
+        let css = {
+            let viewport = self.viewport.lock().unwrap_or_else(|e| e.into_inner());
+            (viewport.width as usize, viewport.height as usize)
+        };
         if frames.is_empty() {
             return Err(
                 "the page did not paint while recording, so there is nothing to save".into(),
@@ -1819,7 +1817,7 @@ impl ChatBrowser {
         let cancel = CancelOnDrop(Arc::new(AtomicBool::new(false)));
         let cancelled = cancel.0.clone();
         let video = tokio::task::spawn_blocking(move || {
-            super::media::encode_mp4(&frames, length, shrink, &cancelled)
+            super::media::encode_mp4(&frames, length, css, &cancelled)
         })
         .await
         .map_err(|e| e.to_string())??;
