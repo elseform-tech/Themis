@@ -1152,12 +1152,14 @@ async fn request_answer(
 }
 
 /// The output cap after `cut_offs` cut-off replies: doubled each time, up to four times the
-/// first cap, but never more than half the run's context budget (a larger reply could not
-/// fit a later checkpoint). The first attempt keeps `base`.
+/// first cap, but never more than a third of the run's context budget, the ordinary cap's
+/// own ceiling. A larger reply does not fit beside a later checkpoint: at 32k memory a
+/// 15,109-token write let through at half the budget left the next checkpoint no room.
+/// The first attempt keeps `base`.
 fn retry_output_cap(base: u32, cut_offs: u32) -> u32 {
     let grown = base.saturating_mul(1 << cut_offs.min(2));
     let ceiling = MODEL_REQUEST_BUDGET
-        .try_with(|budget| u32::try_from(*budget / 2).unwrap_or(u32::MAX))
+        .try_with(|budget| u32::try_from(*budget / 3).unwrap_or(u32::MAX))
         .unwrap_or(u32::MAX);
     grown.min(ceiling.max(base))
 }
@@ -1292,6 +1294,10 @@ async fn request_answer_inner(
     // long reply at the same cap is cut off again.
     let base_limit = crate::providers::OUTPUT_LIMIT.try_with(|limit| *limit).ok();
     let mut cut_offs = 0u32;
+    // A silent cut-off (nothing shown, so likely one huge tool call such as a whole file in
+    // one write) gets one note to split the work once a larger cap cannot help: when the cap
+    // is already at its ceiling, or from the second cut-off.
+    let mut split_noted = false;
     // After an empty reply the retry says so, instead of resending the same request.
     let mut request = std::borrow::Cow::Borrowed(messages);
     // Text already shown from replies that were cut off; the answer continues after it.
@@ -1424,6 +1430,19 @@ async fn request_answer_inner(
                 .send(RunEvent::AssistantText("\n\n".into()))
                 .await
                 .ok();
+        }
+        let cap_cannot_grow = base_limit.is_some_and(|base| {
+            retry_output_cap(base, cut_offs) <= retry_output_cap(base, cut_offs.saturating_sub(1))
+        });
+        if truncated && !published && !split_noted && (cut_offs >= 2 || cap_cannot_grow) {
+            split_noted = true;
+            let mut retry = request.into_owned();
+            retry.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: SILENT_CUT_OFF_NOTE.to_owned(),
+            });
+            request = std::borrow::Cow::Owned(retry);
         }
         if empty_output {
             let mut retry = request.into_owned();
@@ -1666,6 +1685,8 @@ const FILE_CHANGES: [&str; 5] = [
 ];
 
 const CUT_OFF_NOTE: &str = "[Runtime note, not from the user] Your last reply was cut off at the output limit after the text above, which the user has already seen; any tool call in it was lost. Continue without repeating that text. Write a large file in parts: create it with the first part, then add the rest with writes that append to it.";
+
+const SILENT_CUT_OFF_NOTE: &str = "[Runtime note, not from the user] Your reply was cut off at the output limit before it finished, so nothing from it was shown or run, including any tool call. Do not send the same reply again. If you were writing a large file, write it in parts: create it with the first part, then add the rest with writes that append to it, each well under the limit.";
 
 /// The answer text after `shown`, the text of earlier cut-off replies, as the user saw it.
 fn with_shown(shown: &str, text: Option<String>) -> Option<String> {
@@ -4588,10 +4609,71 @@ mod tests {
                         assert_eq!(sent[n - 2]["content"], "Partial");
                         assert_eq!(sent[n - 1]["content"], CUT_OFF_NOTE);
                     }
+                    // Silent cut-offs: the first retry only grows the cap; from the second,
+                    // the request says once to split the work instead of repeating it.
+                    let notes = body["messages"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter(|message| message["content"] == SILENT_CUT_OFF_NOTE)
+                        .count();
+                    assert_eq!(
+                        notes,
+                        usize::from(!published && attempt >= 2),
+                        "attempt {attempt}, streaming {streaming}, failures {failures}"
+                    );
                     assert_eq!(body["model"], "test-model");
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn a_cut_off_at_the_cap_ceiling_asks_to_split_on_the_first_retry() {
+        // Seen live at 32k memory: the cap is already a third of the budget, so a retry
+        // cannot give a whole-file write more room; it must change the request instead.
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        Mock::given(method("POST"))
+            .respond_with(move |_: &wiremock::Request| {
+                let truncated = observed.fetch_add(1, Ordering::SeqCst) == 0;
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{
+                    "content": if truncated { "" } else { "Writing it in parts." },
+                    "tool_calls": if truncated { serde_json::json!([{"id":"big","type":"function","function":{"name":"write_file","arguments":"{}"}}]) } else { serde_json::json!([]) }},
+                    "finish_reason": if truncated { "length" } else { "stop" }}]}))
+            })
+            .mount(&server)
+            .await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let (text, _) = MODEL_REQUEST_BUDGET
+            .scope(
+                32_000,
+                crate::providers::OUTPUT_LIMIT.scope(
+                    10_666,
+                    request_answer(&llm, &[], &[], &tx, &AtomicBool::new(false)),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(text.as_deref(), Some("Writing it in parts."));
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2);
+        let retry: serde_json::Value = requests[1].body_json().unwrap();
+        assert_eq!(
+            retry["max_tokens"], 10_666,
+            "the cap stays within a third of the budget"
+        );
+        let sent = retry["messages"].as_array().unwrap();
+        assert_eq!(sent[sent.len() - 1]["content"], SILENT_CUT_OFF_NOTE);
     }
 
     #[tokio::test]
@@ -4669,8 +4751,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cut_off_retries_grow_the_cap_but_stay_within_half_the_budget() {
-        // 200k memory: 32,768 doubles to 65,536, then 131,072.
+    async fn cut_off_retries_grow_the_cap_but_stay_within_a_third_of_the_budget() {
+        // 200k memory: 32,768 doubles to 65,536, then stops at a third of the budget.
         let wide = MODEL_REQUEST_BUDGET
             .scope(200_000, async {
                 (0..4)
@@ -4678,8 +4760,9 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .await;
-        assert_eq!(wide, [32_768, 65_536, 100_000, 100_000]);
-        // 32k memory: 10,666 grows only to 16,000, so a reply always fits a checkpoint.
+        assert_eq!(wide, [32_768, 65_536, 66_666, 66_666]);
+        // 32k memory: the ordinary cap is already a third, so a retry cannot grow it (a
+        // 15,109-token write let through at 16,000 left the next checkpoint no room).
         let squeezed = MODEL_REQUEST_BUDGET
             .scope(32_000, async {
                 (0..4)
@@ -4687,7 +4770,7 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .await;
-        assert_eq!(squeezed, [10_666, 16_000, 16_000, 16_000]);
+        assert_eq!(squeezed, [10_666, 10_666, 10_666, 10_666]);
         // Outside a run: the old doubling, up to four times.
         assert_eq!(retry_output_cap(8_192, 3), 32_768);
     }
