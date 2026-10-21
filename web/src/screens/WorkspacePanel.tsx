@@ -1,33 +1,48 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { DiffView, EmptyState, FileTree } from "../components";
 import { CodeBlock } from "../components/CodeBlock";
 import type { DirEntry, FileView, WorkspaceInfo } from "../lib/types";
 import { getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
+import { BrowserView } from "./BrowserView";
 import { TasksView } from "./TasksView";
 import { countTasks } from "./threadTasks";
 import "./WorkspacePanel.css";
 
-type Tab = "changes" | "files" | "branches" | "pulls" | "tasks";
-const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"]];
-const MIN_WIDTH = 380;
-const MAX_WIDTH = 1200;
+type Tab = "changes" | "files" | "branches" | "pulls" | "tasks" | "browser";
+const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["browser", "Browser"]];
+const MIN_WIDTH = 300;
+const MAX_WIDTH = 1600;
 const DEFAULT_WIDTH = 560;
+/** The Browser tab needs room for a page; it remembers its own width. */
+const BROWSER_DEFAULT_WIDTH = 760;
+/** The Changes file list beside the diff; the diff keeps at least DIFF_MIN_WIDTH (CSS). */
+const LIST_MIN_WIDTH = 120;
+const LIST_MAX_WIDTH = 640;
+const LIST_DEFAULT_WIDTH = 200;
+
+function clampListWidth(value: number) {
+  return Math.round(Math.max(LIST_MIN_WIDTH, Math.min(LIST_MAX_WIDTH, value)));
+}
 
 function clampWidth(value: number) {
   return Math.round(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, value)));
 }
 
-/** Read-only monitor of what agents change (diffs, files, branches, PRs) plus Stop and Pause for this chat's tasks. */
+/** Read-only monitor of what agents change (diffs, files, branches, PRs), Stop and Pause for this chat's tasks, and the chat's built-in browser. */
 export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRoot: string; threadId: string; workspace: WorkspaceInfo | null }) {
   const { state, dispatch } = useApp();
   const [tab, setTab] = useState<Tab>(() => state.workspaceTabRequest ? state.workspaceTabRequest.tab : readSession<Tab>("workspaceTab", "changes"));
-  const [width, setWidth] = useState(() => clampWidth(Number(readSession("workspacePanelWidth", DEFAULT_WIDTH)) || DEFAULT_WIDTH));
+  const widthKey = tab === "browser" ? "workspaceBrowserWidth" : "workspacePanelWidth";
+  const defaultWidth = tab === "browser" ? BROWSER_DEFAULT_WIDTH : DEFAULT_WIDTH;
+  const [widths, setWidths] = useState<Record<string, number>>({});
+  const width = widths[widthKey] ?? (clampWidth(Number(readSession(widthKey, defaultWidth)) || defaultWidth));
+  const setWidth = (value: number) => setWidths(previous => ({ ...previous, [widthKey]: value }));
   const panel = useRef<HTMLElement>(null);
   const drag = useRef<{ x: number; width: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-  function resize(next: number) { const value = clampWidth(next); setWidth(value); writeSession("workspacePanelWidth", value); }
+  function resize(next: number) { const value = clampWidth(next); setWidth(value); writeSession(widthKey, value); }
   // While dragging only the element width changes; state and storage update on release.
   const lastWidth = useRef<number | null>(null);
   function preview(clientX: number) { if (!drag.current || !panel.current) return; lastWidth.current = clampWidth(drag.current.width + drag.current.x - clientX); panel.current.style.width = `${lastWidth.current}px`; }
@@ -40,7 +55,7 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   // The header's task indicator asks for the Tasks tab.
   const tabRequestAt = state.workspaceTabRequest?.at;
   // The request is applied once, so the remembered tab wins the next time the panel opens.
-  useEffect(() => { if (tabRequestAt) { choose("tasks"); dispatch({ type: "ui/tab-request-consumed" }); } }, [tabRequestAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tabRequestAt && state.workspaceTabRequest) { choose(state.workspaceTabRequest.tab); dispatch({ type: "ui/tab-request-consumed" }); } }, [tabRequestAt]); // eslint-disable-line react-hooks/exhaustive-deps
   const diff = state.diffs[threadId];
   const changed = diff?.available ? diff.files.length : 0;
   const counts = countTasks(state.tasks[threadId], state.settings.automations_enabled);
@@ -48,33 +63,39 @@ export function WorkspacePanel({ projectRoot, threadId, workspace }: { projectRo
   return (
     <aside ref={panel} className={`themis-workspace-panel${dragging ? " is-resizing" : ""}`} aria-label="Workspace (read-only)" style={{ width }}>
       <div className="themis-workspace-resize" role="separator" aria-label="Resize workspace panel" aria-orientation="vertical" aria-valuemin={MIN_WIDTH} aria-valuemax={MAX_WIDTH} aria-valuenow={width} tabIndex={0}
+        // WebKit starts a text selection on mousedown even when pointerdown is cancelled.
+        onMouseDown={event => event.preventDefault()}
         onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); drag.current = { x: event.clientX, width: panel.current?.getBoundingClientRect().width ?? width }; setDragging(true); event.currentTarget.setPointerCapture(event.pointerId); }}
         onPointerMove={event => preview(event.clientX)}
         onPointerUp={finish}
         onLostPointerCapture={finish}
-        onDoubleClick={() => resize(DEFAULT_WIDTH)}
+        onDoubleClick={() => resize(defaultWidth)}
         onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); resize(width + 40); } else if (event.key === "ArrowRight") { event.preventDefault(); resize(width - 40); } }} />
+      {/* One row: the tabs, where the agent works (hidden when narrow) and Close. */}
       <header className="themis-workspace-head">
+        <nav className="themis-workspace-tabs" aria-label="Workspace views">
+          {TABS.map(([value, label]) => (
+            <button key={value} type="button" aria-pressed={tab === value} onClick={() => choose(value)}>
+              {label}{value === "changes" && changed > 0 ? <span className="themis-workspace-count">{changed}</span> : null}
+              {value === "tasks" && taskCount > 0 ? <span className="themis-workspace-count themis-workspace-count--tasks">{taskCount}</span> : null}
+            </button>
+          ))}
+        </nav>
         <div className="themis-workspace-where">
           <strong>{workspace?.name ?? "Workspace"}</strong>
           {workspace?.branch && <span className="themis-workspace-branch"><BranchIcon />{workspace.branch}</span>}
         </div>
-        <button type="button" className="themis-link-button" aria-label="Close workspace" onClick={() => dispatch({ type: "ui/diff-panel", open: false })}>✕</button>
+        <button type="button" className="themis-workspace-close" aria-label="Close workspace" title="Close workspace" onClick={() => dispatch({ type: "ui/diff-panel", open: false })}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16M16.5 9.5 19 12l-2.5 2.5" /></svg>
+        </button>
       </header>
-      <nav className="themis-workspace-tabs" aria-label="Workspace views">
-        {TABS.map(([value, label]) => (
-          <button key={value} type="button" aria-pressed={tab === value} onClick={() => choose(value)}>
-            {label}{value === "changes" && changed > 0 ? <span className="themis-workspace-count">{changed}</span> : null}
-            {value === "tasks" && taskCount > 0 ? <span className="themis-workspace-count themis-workspace-count--tasks">{taskCount}</span> : null}
-          </button>
-        ))}
-      </nav>
-      <div className="themis-workspace-body">
+      <div className={`themis-workspace-body${tab === "browser" ? " is-browser" : ""}`}>
         {tab === "changes" && <ChangesView threadId={threadId} />}
         {tab === "files" && <FilesView projectRoot={projectRoot} />}
         {tab === "branches" && <BranchesView workspace={workspace} />}
         {tab === "pulls" && <PullRequestsView projectRoot={projectRoot} />}
         {tab === "tasks" && <TasksView threadId={threadId} />}
+        {tab === "browser" && <BrowserView threadId={threadId} />}
       </div>
     </aside>
   );
@@ -113,11 +134,37 @@ function ChangesView({ threadId }: { threadId: string }) {
     <div className="themis-workspace-changes">
       {diff.reason && <p className="themis-workspace-note">{diff.reason}</p>}
       {file === null ? <EmptyState title="No changes" hint="The checkout matches its last commit." /> : (
-        <div className="themis-workspace-split">
+        <DiffSplit>
           <FileTree files={files} selectedPath={file.path} onSelect={setSelected} />
           <DiffView file={file} />
-        </div>
+        </DiffSplit>
       )}
+    </div>
+  );
+}
+
+/** File list | diff, with a draggable divider whose position is remembered. */
+export function DiffSplit({ children }: { children: [ReactNode, ReactNode] }) {
+  const [width, setWidth] = useState(() => clampListWidth(Number(readSession("workspaceDiffListWidth", LIST_DEFAULT_WIDTH)) || LIST_DEFAULT_WIDTH));
+  const split = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; width: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  function resize(next: number) { const value = clampListWidth(next); setWidth(value); writeSession("workspaceDiffListWidth", value); }
+  // Store what is visible: CSS keeps room for the diff, so a wide value may render narrower.
+  function rendered() { return split.current?.firstElementChild?.getBoundingClientRect().width || width; }
+  return (
+    <div ref={split} className={`themis-workspace-split${dragging ? " is-resizing" : ""}`} style={{ "--themis-diff-list": `${width}px` } as CSSProperties}>
+      {children[0]}
+      <div className="themis-split-resize" role="separator" aria-label="Resize file list" aria-orientation="vertical" aria-valuemin={LIST_MIN_WIDTH} aria-valuemax={LIST_MAX_WIDTH} aria-valuenow={width} tabIndex={0}
+        // WebKit starts a text selection on mousedown even when pointerdown is cancelled.
+        onMouseDown={event => event.preventDefault()}
+        onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); drag.current = { x: event.clientX, width: rendered() }; setDragging(true); event.currentTarget.setPointerCapture(event.pointerId); }}
+        onPointerMove={event => { if (drag.current) setWidth(clampListWidth(drag.current.width + event.clientX - drag.current.x)); }}
+        onPointerUp={() => { if (drag.current) resize(Math.min(width, rendered())); drag.current = null; setDragging(false); }}
+        onLostPointerCapture={() => { drag.current = null; setDragging(false); }}
+        onDoubleClick={() => resize(LIST_DEFAULT_WIDTH)}
+        onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); resize(width - 40); } else if (event.key === "ArrowRight") { event.preventDefault(); resize(width + 40); } }} />
+      {children[1]}
     </div>
   );
 }
@@ -159,7 +206,7 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
   }
   const language = file?.path.split(".").pop();
   return (
-    <div className="themis-workspace-split">
+    <DiffSplit>
       <ul className="themis-files-tree" aria-label="Project files">{renderDir("", 0)}</ul>
       <div className="themis-files-view">
         {error && <p className="themis-workspace-note">{error}</p>}
@@ -170,7 +217,7 @@ function FilesView({ projectRoot }: { projectRoot: string }) {
               <CodeBlock code={file.content ?? ""} language={language} showLineNumbers />
             </>}
       </div>
-    </div>
+    </DiffSplit>
   );
 }
 

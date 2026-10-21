@@ -351,6 +351,40 @@ impl AppState {
             thread_id: thread_id.to_owned(),
             run: check_approval.clone(),
         }));
+        tools.push(Box::new(super::media_tool::AttachFileTool {
+            state: self.clone(),
+            sink: Arc::clone(sink),
+            thread_id: thread_id.to_owned(),
+            run_id: run_id.to_owned(),
+            root: snapshot.work_root.clone(),
+            attached: std::sync::atomic::AtomicUsize::new(0),
+        }));
+        // fetch_url always; web_search when the user file names a SearXNG instance.
+        tools.extend(themis_core::tools::web::web_tools(
+            approvals.clone(),
+            &run_configuration.web,
+        ));
+        // The chat's built-in browser, shared with the Workspace Browser tab.
+        if run_configuration.browser.enabled {
+            let hub = self.browser_hub();
+            hub.set_executable(
+                run_configuration
+                    .browser
+                    .executable
+                    .as_ref()
+                    .map(std::path::PathBuf::from),
+            );
+            tools.extend(themis_core::browser::tools::browser_tools(
+                approvals.clone(),
+                themis_core::browser::tools::BrowserScope {
+                    chat: self.browser_of(thread_id, &snapshot.work_root),
+                    cancel: Some(Arc::clone(&stopped)),
+                    media: Some(Arc::new(super::browser::ProjectMedia {
+                        root: snapshot.work_root.clone(),
+                    })),
+                },
+            ));
+        }
         tools.extend(self.integration_management_tools_for_run(
             approvals.clone(),
             snapshot.work_root.clone(),
@@ -662,6 +696,8 @@ impl AppState {
     /// Marks a run idle, releases its concurrency permit, and persists.
     pub(super) async fn finish_run(&self, thread_id: &str) {
         self.close_steer_inbox(thread_id);
+        // A recording the agent left running ends with its run.
+        self.stop_agent_recording(thread_id).await;
         self.inner
             .stop_flags
             .lock()

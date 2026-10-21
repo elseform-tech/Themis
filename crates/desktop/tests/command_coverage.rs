@@ -4,7 +4,10 @@ use std::collections::BTreeSet;
 
 #[test]
 fn server_exposes_all_frontend_backend_commands() {
-    let frontend = include_str!("../../../web/src/lib/tauri.ts");
+    let frontend = concat!(
+        include_str!("../../../web/src/lib/tauri.ts"),
+        include_str!("../../../web/src/lib/browser.ts")
+    );
     let server = include_str!("../src/server.rs");
     let native = include_str!("../src/lib.rs");
     let called: BTreeSet<_> = frontend

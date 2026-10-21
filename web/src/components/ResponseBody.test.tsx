@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ResponseBody } from "./ResponseBody";
+import { ResponseBody, ResponseLinks } from "./ResponseBody";
 const diagram = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn(async () => ({ svg: '<svg viewBox="0 0 120 80"><text>Start</text></svg>' })) }));
 vi.mock("mermaid", () => ({ default: diagram }));
 it("formats markdown, tables and code, and copies the source", async () => {
@@ -60,4 +60,16 @@ it("preserves expanded source across unrelated parent renders", async () => {
   rerender(<ResponseBody text={text} />);
   expect(container.querySelector("details")).toBe(details);
   expect(details.open).toBe(true);
+});
+it("opens web links in the chat's browser, and in the system browser with Cmd", () => {
+  const open = vi.fn();
+  render(<ResponseLinks.Provider value={open}><ResponseBody text={"See [the page](http://127.0.0.1:8766/signup/) or [mail](mailto:a@b.test)."} /></ResponseLinks.Provider>);
+  const link = screen.getByRole("link", { name: "the page" });
+  expect(fireEvent.click(link)).toBe(false);
+  expect(open).toHaveBeenCalledWith("http://127.0.0.1:8766/signup/");
+  open.mockClear();
+  link.addEventListener("click", event => event.preventDefault());
+  fireEvent.click(link, { metaKey: true });
+  fireEvent.click(screen.getByRole("link", { name: "mail" }));
+  expect(open).not.toHaveBeenCalled();
 });

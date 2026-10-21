@@ -10,6 +10,7 @@ pub mod cli;
 pub mod commands;
 pub mod diff;
 pub mod doctor;
+pub mod resources;
 pub mod secrets;
 pub mod server;
 pub mod settings;
@@ -35,6 +36,53 @@ async fn backend_command(
     args: Value,
 ) -> Result<Value, String> {
     backend.call(&command, args).await
+}
+
+/// The Browser tab's open streams, one per chat.
+#[derive(Default)]
+struct BrowserStreams(
+    std::sync::Mutex<std::collections::HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
+);
+
+/// Streams one chat's browser updates to the Browser tab until it stops or
+/// opens another stream for the chat.
+#[tauri::command]
+async fn browser_stream(
+    backend: State<'_, server::Client>,
+    streams: State<'_, BrowserStreams>,
+    thread_id: String,
+    on_event: tauri::ipc::Channel<Value>,
+) -> Result<(), String> {
+    let (mut stream, state) = backend.subscribe_browser(&thread_id).await?;
+    let _ = on_event.send(serde_json::json!({"kind": "state", "state": state}));
+    let task = tauri::async_runtime::spawn(async move {
+        while let Ok(update) = server::Client::next_event(&mut stream).await {
+            if on_event.send(update).is_err() {
+                break;
+            }
+        }
+    });
+    if let Some(previous) = streams
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(thread_id, task)
+    {
+        previous.abort();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn browser_stream_stop(streams: State<'_, BrowserStreams>, thread_id: String) {
+    if let Some(task) = streams
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&thread_id)
+    {
+        task.abort();
+    }
 }
 
 #[tauri::command]
@@ -303,10 +351,13 @@ pub fn run() {
             ensure_server(&client, &data_dir)?;
             forward_remote_events(app.handle().clone(), client.clone());
             app.manage(client);
+            app.manage(BrowserStreams::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             backend_command,
+            browser_stream,
+            browser_stream_stop,
             attachment_file,
             completion_haptic,
             commands::check_for_updates,

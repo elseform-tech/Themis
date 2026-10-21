@@ -110,6 +110,8 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             }
             ThreadEvent::Incomplete { .. } => "incomplete",
             ThreadEvent::FilesChanged { .. } => "files_changed",
+            ThreadEvent::MediaAttached { .. } => "media_attached",
+            ThreadEvent::BrowserChanged { .. } => "browser_changed",
             ThreadEvent::BackgroundTasksChanged => "background_tasks_changed",
             ThreadEvent::Steered { .. } => "steered",
             ThreadEvent::UserMessage { .. } => "user_message",
@@ -180,11 +182,13 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
         })
         .collect::<Vec<_>>();
     let kinds = event_kinds(&run.events);
-    // The first answer is shown, then (the run changed a file) a paragraph break and the
-    // answer after the spec check, then `finished`.
+    // The sent message is shown in every window, then the first answer, then (the run
+    // changed a file) a paragraph break and the answer after the spec check, then
+    // `finished`.
     assert_eq!(
         kinds,
         vec![
+            "user_message",
             "started",
             "tool_started",
             "approval_decided",
@@ -198,8 +202,8 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
         "{kinds:?}"
     );
     // The turn reports the file it wrote, just before it finishes.
-    let ThreadEvent::FilesChanged { files } = events[7] else {
-        panic!("expected files_changed, got {:?}", events[7]);
+    let ThreadEvent::FilesChanged { files } = events[8] else {
+        panic!("expected files_changed, got {:?}", events[8]);
     };
     assert_eq!(
         files
@@ -208,17 +212,17 @@ async fn scripted_write_file_run_finishes_and_shows_in_diff() {
             .collect::<Vec<_>>(),
         vec![("hello.txt", DiffStatus::Added)]
     );
-    let ThreadEvent::ToolStarted { tool, .. } = events[1] else {
-        panic!("expected tool_started, got {:?}", events[1]);
+    let ThreadEvent::ToolStarted { tool, .. } = events[2] else {
+        panic!("expected tool_started, got {:?}", events[2]);
     };
     assert_eq!(tool, "write_file");
-    let ThreadEvent::ApprovalDecided { tool, decision } = events[2] else {
-        panic!("expected approval_decided, got {:?}", events[2]);
+    let ThreadEvent::ApprovalDecided { tool, decision } = events[3] else {
+        panic!("expected approval_decided, got {:?}", events[3]);
     };
     assert_eq!(tool, "write_file");
     assert_eq!(*decision, ApprovalDecision::Once);
-    let ThreadEvent::ToolFinished { tool, ok, output } = events[3] else {
-        panic!("expected tool_finished, got {:?}", events[3]);
+    let ThreadEvent::ToolFinished { tool, ok, output } = events[4] else {
+        panic!("expected tool_finished, got {:?}", events[4]);
     };
     assert_eq!(tool, "write_file");
     assert!(ok, "tool call succeeded");

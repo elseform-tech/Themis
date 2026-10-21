@@ -33,6 +33,11 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   if (request.tool.startsWith("mcp_")) {
     return <>Allow in this chat covers every tool of this MCP server in later runs of this chat.</>;
   }
+  const site = request.grant_site;
+  if (site) {
+    const what = site.tools === "browser" ? "every browser action on" : site.tools === "web_search" ? "searches through" : "reading pages from";
+    return <>Allow in this chat covers {what} <TokenList argv={[site.site]} /> in later runs of this chat. Other sites still ask.</>;
+  }
   const outside = request.tool === UNSANDBOXED_TOOL;
   if ((request.tool !== "shell" && !outside) || !scope || scope.argv.length === 0) {
     return <>Allow in this chat covers this tool in later runs of this chat.</>;

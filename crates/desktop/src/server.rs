@@ -141,6 +141,29 @@ impl Client {
         }
     }
 
+    /// One chat's browser updates (state and screencast frames); the first
+    /// value is the current state.
+    pub async fn subscribe_browser(&self, thread_id: &str) -> Result<(TcpStream, Value), String> {
+        let (mut stream, discovery) = self.connect().await?;
+        write_frame(
+            &mut stream,
+            &Request {
+                token: discovery.token,
+                method: "subscribe_browser".to_owned(),
+                args: json!({"threadId": thread_id}),
+            },
+        )
+        .await?;
+        let reply: Response = read_frame(&mut stream).await?;
+        if reply.ok {
+            Ok((stream, reply.value))
+        } else {
+            Err(reply
+                .error
+                .unwrap_or_else(|| "browser subscription failed".to_owned()))
+        }
+    }
+
     pub async fn next_event(stream: &mut TcpStream) -> Result<Value, String> {
         read_frame(stream).await
     }
@@ -245,6 +268,21 @@ impl Server {
 
     pub async fn run(self) -> Result<(), String> {
         self.state.log_server_event("started");
+        // Samples Themis's own CPU and memory use for the title bar and the log.
+        let sampler = self.state.clone();
+        let mut sampler_stop = self.shutdown.subscribe();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(crate::resources::SAMPLE_EVERY);
+            loop {
+                tokio::select! {
+                    _ = every.tick() => {
+                        let state = sampler.clone();
+                        let _ = tokio::task::spawn_blocking(move || state.sample_resources()).await;
+                    }
+                    _ = sampler_stop.recv() => break,
+                }
+            }
+        });
         let mut stopped = self.shutdown.subscribe();
         let mut termination = Termination::install();
         loop {
@@ -377,6 +415,54 @@ async fn serve_connection(
                     write_frame(&mut stream, &json!({"name": "lagged", "payload": null})).await?;
                 }
                 Err(broadcast::error::RecvError::Closed) => return Ok(()),
+            }
+        }
+    }
+    if request.method == "subscribe_browser" {
+        // One chat's browser updates on their own connection, so screencast
+        // frames never crowd the app's event stream. Frames a slow reader
+        // misses are skipped; the next one replaces them.
+        let thread_id = arg::<String>(&request.args, "threadId")?;
+        let mut rx = match state.browser_updates(&thread_id).await {
+            Ok(rx) => rx,
+            Err(error) => {
+                return write_frame(
+                    &mut stream,
+                    &Response {
+                        ok: false,
+                        value: Value::Null,
+                        error: Some(error),
+                    },
+                )
+                .await;
+            }
+        };
+        write_frame(
+            &mut stream,
+            &Response {
+                ok: true,
+                value: state.browser_state(&thread_id).await.unwrap_or(Value::Null),
+                error: None,
+            },
+        )
+        .await?;
+        loop {
+            let update = match rx.recv().await {
+                Ok(update) => update,
+                // Missed frames do not matter, but a missed state change
+                // would stick ("Agent is clicking" after the run): resend it.
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    match state.browser_state_update(&thread_id).await {
+                        Some(update) => update,
+                        None => continue,
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => return Ok(()),
+            };
+            let payload = crate::state::browser_update_payload(&update);
+            let bytes = serde_json::to_vec(&payload).map_err(|err| err.to_string())?;
+            if bytes.len() <= MAX_FRAME {
+                write_bytes(&mut stream, &bytes).await?;
             }
         }
     }
@@ -816,6 +902,83 @@ async fn dispatch_command(
                 .await?
         ),
         "list_automations" => output!(state.list_automations().await),
+        "browser_state" => {
+            state
+                .browser_state(&arg::<String>(&args, "threadId")?)
+                .await
+        }
+        "browser_screencast" => done!(
+            state
+                .browser_screencast(
+                    &arg::<String>(&args, "threadId")?,
+                    arg(&args, "width")?,
+                    arg(&args, "height")?,
+                    arg(&args, "scale")?,
+                )
+                .await
+        ),
+        "browser_screencast_stop" => {
+            done!(
+                state
+                    .browser_screencast_stop(&arg::<String>(&args, "threadId")?)
+                    .await
+            )
+        }
+        "browser_input" => done!(
+            state
+                .browser_input(&arg::<String>(&args, "threadId")?, args["input"].clone())
+                .await
+        ),
+        "browser_set_muted" => done!(
+            state
+                .browser_set_muted(&arg::<String>(&args, "threadId")?, arg(&args, "muted")?)
+                .await
+        ),
+        "browser_open_url" => done!(
+            state
+                .browser_open_url(
+                    &arg::<String>(&args, "threadId")?,
+                    &arg::<String>(&args, "address")?,
+                )
+                .await
+        ),
+        "browser_navigate" => done!(
+            state
+                .browser_navigate(
+                    &arg::<String>(&args, "threadId")?,
+                    &arg::<String>(&args, "action")?,
+                )
+                .await
+        ),
+        "browser_tab" => done!(
+            state
+                .browser_tab(
+                    &arg::<String>(&args, "threadId")?,
+                    &arg::<String>(&args, "action")?,
+                    arg(&args, "tab")?,
+                )
+                .await
+        ),
+        "browser_capture" => {
+            state
+                .browser_capture(&arg::<String>(&args, "threadId")?)
+                .await
+        }
+        "browser_record" => {
+            state
+                .browser_record(
+                    &arg::<String>(&args, "threadId")?,
+                    &arg::<String>(&args, "action")?,
+                )
+                .await
+        }
+        "browser_devtools_url" => {
+            output!(
+                state
+                    .browser_devtools_url(&arg::<String>(&args, "threadId")?)
+                    .await?
+            )
+        }
         "get_thread_tasks" => output!(
             state
                 .get_thread_tasks(&arg::<String>(&args, "threadId")?)
@@ -869,6 +1032,7 @@ async fn dispatch_command(
         "continue_review_item" => {
             output!(state.continue_review_item(arg(&args, "reviewId")?).await?)
         }
+        "resource_usage" => output!(state.resource_usage()),
         "get_diagnostics" => output!(
             state
                 .get_diagnostics_with_depth(

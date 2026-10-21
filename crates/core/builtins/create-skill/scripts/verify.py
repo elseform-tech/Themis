@@ -5,7 +5,7 @@ import re
 import sys
 from pathlib import Path
 
-TOOLS = {"list_dir", "read_file", "write_file", "copy_file", "move_file", "delete_file", "create_dir", "search_file", "shell", "apply_patch", "git"}
+TOOLS = {"list_dir", "read_file", "write_file", "copy_file", "move_file", "delete_file", "create_dir", "search_file", "shell", "apply_patch", "git", "fetch_url", "web_search", "browser"}
 
 def verify(path):
     path = Path(path)

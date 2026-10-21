@@ -162,6 +162,16 @@ describe("grant hint", () => {
     setup({ ...REQUEST, tool: "mcp_00112233445566aa01020304_lookup" });
     expect(screen.getByText("Allow in this chat covers every tool of this MCP server in later runs of this chat.")).toBeInTheDocument();
   });
+
+  it("names the site a web or browser grant covers", () => {
+    setup({ ...REQUEST, tool: "browser_click", risk: "network", grant_site: { tools: "browser", site: "localhost" } });
+    expect(screen.getByText(/every browser action on/)).toHaveTextContent("Allow in this chat covers every browser action on localhost in later runs of this chat. Other sites still ask.");
+  });
+
+  it("names the site for a page read", () => {
+    setup({ ...REQUEST, tool: "fetch_url", risk: "network", grant_site: { tools: "fetch_url", site: "docs.rs" } });
+    expect(screen.getByText(/reading pages from/)).toHaveTextContent("docs.rs");
+  });
 });
 
 describe("single-key shortcuts", () => {

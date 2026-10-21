@@ -310,7 +310,8 @@ fn risk_for(tool: &str) -> RiskLevel {
         return RiskLevel::Network;
     }
     match tool {
-        "read_file" | "list_dir" | "search_file" | "recall" => RiskLevel::Read,
+        // attach_file only shows project files under the reply.
+        "read_file" | "list_dir" | "search_file" | "recall" | "attach_file" => RiskLevel::Read,
         "shell" => RiskLevel::Execute,
         "delete_file" => RiskLevel::Destructive,
         _ => RiskLevel::Write,

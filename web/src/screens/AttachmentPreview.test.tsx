@@ -15,5 +15,6 @@ it("previews files with filenames and no open actions", async () => {
   expect(screen.getByTitle("Preview document.pdf")).toHaveAttribute("src", expect.stringContaining("document.pdf"));
   expect(screen.getByLabelText("Play music.mp3")).toHaveAttribute("controls");
   expect(screen.getByLabelText("Play video.mp4")).toHaveAttribute("controls");
+  expect(screen.getByLabelText("Play video.mp4").getAttribute("src")).toMatch(/#t=0\.1$/);
   expect(attachmentFile).toHaveBeenCalledWith("t1", expect.stringContaining("document.pdf"));
 });

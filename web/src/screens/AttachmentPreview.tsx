@@ -25,7 +25,7 @@ export function AttachmentPreview({ threadId, path }: { threadId: string; path: 
       <div className="themis-attachment-media">
         {url && (IMAGE.test(extension) || pdfImage ? <img src={url} alt={pdfImage ? `Preview ${name}` : name} onError={() => setFailed(true)} />
           : extension === "pdf" ? <iframe src={url} title={`Preview ${name}`} sandbox="" />
-          : <video src={url} controls preload="metadata" aria-label={`Play ${name}`} onError={() => setFailed(true)} />)}
+          : <video src={`${url}#t=0.1`} controls preload="metadata" playsInline aria-label={`Play ${name}`} onError={() => setFailed(true)} />)}
       </div>
       <figcaption>{name}</figcaption>
     </figure>;

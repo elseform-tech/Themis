@@ -142,6 +142,9 @@ impl ApprovalHook for DesktopApprovalHook {
             summary: action.summary.clone(),
             risk: RiskLevel::from(action.risk),
             grant_scope: action.grant_scope(),
+            grant_site: action
+                .site_grant()
+                .map(|(tools, site)| crate::types::GrantSite { tools, site }),
             grantable,
             command: action.display.clone(),
         };

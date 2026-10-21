@@ -29,6 +29,17 @@ fn read_project(path: &Path, root: &Path) -> Result<Option<String>, String> {
 }
 
 impl AppState {
+    /// The latest sample of Themis's own CPU and memory use, by group.
+    pub fn resource_usage(&self) -> Option<crate::resources::Snapshot> {
+        self.inner.resources.snapshot()
+    }
+
+    /// Takes one resource sample (blocking) and logs what changed.
+    pub(crate) fn sample_resources(&self) {
+        self.inner.resources.sample();
+        self.inner.resources.log(&self.inner.diagnostics);
+    }
+
     pub(crate) fn log_server_event(&self, event: &str) {
         let _ = self.inner.diagnostics.append(
             "server",

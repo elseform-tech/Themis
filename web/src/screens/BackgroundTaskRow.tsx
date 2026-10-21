@@ -2,7 +2,7 @@ import { useState } from "react";
 import { getBackgroundTaskLog } from "../lib/tauri";
 import type { BackgroundTaskLog, ThreadTaskBackground } from "../lib/types";
 import { describeError } from "../state/store";
-import { TaskIcon } from "./TaskIndicator";
+import { TaskIcon } from "./TaskIcon";
 import { backgroundMeta, needsAttention } from "./backgroundTasks";
 
 /** Whole bounded log: at most the server's 64 KiB window, read in 16 KiB pages. */

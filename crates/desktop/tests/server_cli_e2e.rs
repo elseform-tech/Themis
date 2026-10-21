@@ -347,6 +347,14 @@ async fn streamed_cli_followup_uses_persisted_context_and_skills() {
             assert!(events
                 .iter()
                 .any(|event| event["payload"]["event"]["kind"] == "finished"));
+            // Every connected client (an open window too) is shown the sent
+            // message with its run, not just the client that sent it.
+            let shown = events
+                .iter()
+                .find(|event| event["payload"]["event"]["kind"] == "user_message")
+                .expect("the sent message is broadcast");
+            assert_eq!(shown["payload"]["event"]["text"], prompt);
+            assert!(!shown["payload"]["run_id"].as_str().unwrap().is_empty());
         }
         let requests = provider.received_requests().await.unwrap();
         let body: Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();

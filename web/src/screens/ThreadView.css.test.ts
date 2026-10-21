@@ -15,3 +15,20 @@ it("does not shimmer streamed replies when no tool is pending", () => {
 it("keeps inline code readable inside shimmering progress notes", () => {
   expect(styles).toMatch(/\.themis-thread-msg--action-waiting \.themis-response :not\(pre\) > code[^{]*\{[^}]*color:\s*var\(--themis-text\)/s);
 });
+
+it("compacts the composer's labels to icons when the chat is narrow", () => {
+  expect(styles).toMatch(/\.themis-thread-composer\s*\{\s*container:\s*themis-composer \/ inline-size;\s*\}/);
+  expect(styles).toMatch(/@container themis-composer \(max-width: 420px\)\s*\{\s*\.themis-thread-composer \.themis-composer-label\s*\{\s*display:\s*none;/);
+});
+
+it("shrinks the header's Workspace button before the model name when the chat is narrow", () => {
+  expect(styles).toMatch(/\.themis-thread-head\s*\{\s*container:\s*themis-head \/ inline-size;\s*\}/);
+  expect(styles).toMatch(/@container themis-head \(max-width: 460px\)\s*\{\s*\.themis-thread-head \.themis-head-label\s*\{\s*display:\s*none;/);
+  expect(styles).toMatch(/\.themis-model-pill-meta\s*\{\s*min-width:\s*6ch;/);
+});
+
+it("puts the goal sentence on its own line when the chat is too narrow to show it beside the controls", () => {
+  const goal = readFileSync(new URL("./GoalBar.css", import.meta.url), "utf8");
+  expect(goal).toMatch(/@container themis-composer \(max-width: 420px\)\s*\{\s*\.themis-goal-bar:not\(\.is-editing\)\s*\{[^}]*flex-wrap:\s*wrap/);
+  expect(goal).toMatch(/\.themis-goal-bar:not\(\.is-editing\) \.themis-goal-text\s*\{[^}]*flex-basis:\s*100%/);
+});

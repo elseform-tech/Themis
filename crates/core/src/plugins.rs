@@ -732,6 +732,11 @@ impl PluginStore {
                 "Manage automations",
                 include_str!("../builtins/manage-automations/SKILL.md"),
             ),
+            (
+                "browser-use",
+                "Browser use",
+                include_str!("../builtins/browser-use/SKILL.md"),
+            ),
         ] {
             skills.push(Skill {
                 id: id.into(),

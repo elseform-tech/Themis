@@ -26,6 +26,7 @@ QA builds with a different app identifier have separate data directories.
 | App-data `logs/diagnostics-0.jsonl` | Active structured diagnostic records | User/server |
 | App-data `logs/diagnostics-1.jsonl`, `diagnostics-2.jsonl` | Rotated records | User/server |
 | App-data `sessions.sqlite3` | Conversation history, run events, compaction checkpoints | User/server |
+| App-data `browser/profiles/<project key>/` | The built-in browser's profile (cookies, logins, cache) for one project's chats; never your own browser profile | Project, in app data |
 
 JSONC is configuration; JSONL is the diagnostic event stream. There is no
 separate approval-policy JSONL file. Approval decisions are diagnostic records;
@@ -193,6 +194,9 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `sandbox.network` | `allow` (default, also in Custom) or `block`; projects may only set `block` |
 | `sandbox.writable_paths` | At most 32 folders, absolute or `~/...`, 1–1,024 bytes, no `..`; projects may only remove entries |
 | `sandbox.allow_keychain` | macOS: `false` (default) keeps sandboxed commands out of the Keychain; `true` lets them use it (for example git's HTTPS credential helper); projects may only set `false` |
+| `web.search_url` | Optional http(s) URL of your SearXNG instance (JSON output enabled), at most 1,024 bytes, no credentials; user file only. Unset: `web_search` is not offered. See [web tools](web-tools.md) |
+| `browser.enabled` | Boolean, default `true`; projects may only set `false` |
+| `browser.executable` | Optional absolute path to a Chrome, Chromium or Edge binary, at most 1,024 bytes; user file only. Unset: an installed browser is found automatically |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration
@@ -276,6 +280,13 @@ Only allow/ask rules naming `shell_unsandboxed` exactly apply to that request;
 wildcard, prefix and risk-only allow rules and an `allow` default never cover it,
 while every matching deny rule (including `*`) refuses it.
 Example allow rule: `{ "tool": "shell", "command": ["cargo", "test"], "action": "allow" }`.
+
+For web and browser tools (`web_search`, `fetch_url`, `browser_*`) `command` names one
+site instead: a host name or IP address without scheme, port, path or wildcard. It matches
+that host and its subdomains, without case: `{ "tool": "browser_*", "command": ["example.com"], "action": "deny" }`
+denies every browser action on `example.com` and `login.example.com`, not `notexample.com`.
+These tools check approval themselves once they know the site (for browser actions, the
+current page), so a rule or grant always sees the real host. See [web tools](web-tools.md).
 Allow and ask rules match the program token exactly (`/bin/echo` or a project-local
 `./echo` does not match `["echo"]`, so an allow rule never widens). Deny rules also
 match the program by basename, lowercased on macOS/Windows and without
@@ -304,13 +315,15 @@ whose first argument is a non-flag subcommand other than an executing one (`run`
 (`find`, `sudo`, `env`, `ssh`, `bash -c`, ...) is keyed by its full argv. All tools of one
 MCP server share one key (the server id inside the generated `mcp_<server id><tool id>_<tool>`
 name), so one grant on any tool of that server covers its other tools; a different server,
-or the same server after its plugin revision changes, asks again.
+or the same server after its plugin revision changes, asks again. Web and browser grants are
+keyed by site: one grant on a browser action covers every browser action on that host, and a
+`fetch_url` or `web_search` grant covers that tool on that host.
 
 **Chat grants.** The approval dialog offers **Allow once**, **Allow in this chat** and
 **Deny**. *Allow in this chat* runs the action now and saves the grant to the chat's own
 file, `chat_grants/<chat id>.json` in the app data directory (beside `threads.json`). Format:
 `{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<16 hex>","risk":"network"}]}`;
-`command` is the covered argv prefix (`shell`, `git` and `shell_unsandboxed` only), `server` marks a whole-MCP-server
+`command` is the covered argv prefix (`shell`, `git` and `shell_unsandboxed`) or the one covered site (`browser`, `fetch_url`, `web_search`, e.g. `{"tool":"browser","command":["localhost"],"risk":"network"}`), `server` marks a whole-MCP-server
 grant, and `risk` is `read`, `write`, `execute` or `network`. Limits: 256 grants, 256 KiB.
 The file is loaded when a run starts (configuration and approval mode are still captured once
 per run); a grant made during a run applies immediately to that run and is saved for later
@@ -463,12 +476,38 @@ lower-severity records, including info-level approval events. CLI/API queries
 return the filtered records. An explicit MCP test checks only that invocation; it does not establish
 continuous health or guarantee future connections.
 
+### Resource use
+
+The server samples Themis's own process tree every 5 seconds: the app (the
+window process and the server), the built-in browser (Chrome and its helpers)
+and tools (dev servers, MCP servers, background commands and anything they
+start). CPU is CPU time spent between samples over the wall time (percent of
+one core, summed); memory is each process's physical footprint on macOS (as in
+Activity Monitor) and resident size elsewhere. The WebKit process that draws the
+window is started by macOS, not by Themis, and is not counted. One hour of
+samples stays in memory.
+
+- `resources`/`sample` (info, once a minute): CPU and memory per group, core
+  count, and the Workspace browser stream's counts for that minute (`starts`,
+  `stops`, `frames`, `lagged_events`, `restarts_after_lag`).
+- `resources`/`memory_growth` (warn, at most every 30 minutes per group): a
+  group whose memory rose steadily over the last 30 minutes — every sample of
+  the last 10 minutes above every sample of the first 10, and the averages at
+  least 64 MiB apart. A sawtooth (memory freed now and then) or a single spike
+  does not count.
+- `themis call resource_usage '{}'` returns the latest sample: `cpu_percent`,
+  `memory_bytes`, `cores` and `groups` (`app`, `browser`, `tools`, each with
+  `cpu_percent`, `memory_bytes`, `processes` and, when growing, `growing_bytes`),
+  or `null` before the first sample.
+
 The resolver and read/query APIs are available through the actual CLI:
 
 ```sh
 themis call get_runtime_configuration '{"projectRoot":"/path/to/project"}'
 themis call query_diagnostic_logs '{"service":"integration","limit":200}'
 themis call query_diagnostic_logs '{"operationId":"OPERATION_UUID"}'
+themis call query_diagnostic_logs '{"service":"resources","limit":60}'
+themis call resource_usage '{}'
 ```
 
 `save_runtime_configuration` accepts `scope` (`user`/`project`), optional

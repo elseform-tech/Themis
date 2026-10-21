@@ -23,8 +23,10 @@ pub const MAX_SCRIPTS_TOTAL_BYTES: usize = 65536;
 /// Verified against the `#[tool(name = ...)]` attributes in `tools.rs`
 /// (`shell`, `background_task`, `apply_patch`, `git`) and the `autoagents-toolkit` filesystem
 /// tool names (`list_dir`, `read_file`, `write_file`, `copy_file`,
-/// `move_file`, `delete_file`, `create_dir`, `search_file`).
-const KNOWN_TOOL_NAMES: [&str; 13] = [
+/// `move_file`, `delete_file`, `create_dir`, `search_file`), then the tools
+/// added per run: `recall`, `fetch_url`, `web_search` and `browser` (which
+/// grants every `browser_*` tool).
+const KNOWN_TOOL_NAMES: [&str; 16] = [
     "list_dir",
     "read_file",
     "write_file",
@@ -38,6 +40,9 @@ const KNOWN_TOOL_NAMES: [&str; 13] = [
     "recall",
     "apply_patch",
     "git",
+    "fetch_url",
+    "web_search",
+    "browser",
 ];
 
 /// A helper script bundled with a skill.
@@ -185,15 +190,19 @@ pub fn filter_tools(tools: Vec<Box<dyn ToolT>>, skills: &[Skill]) -> Vec<Box<dyn
         .into_iter()
         .filter(|tool| {
             let name = tool.name();
+            let browser = name.starts_with("browser_");
             // Built-in skill grants do not describe independently authorized integrations.
-            if !KNOWN_TOOL_NAMES.contains(&name) {
+            if !KNOWN_TOOL_NAMES.contains(&name) && !browser && name != "attach_file" {
                 return true;
             }
             // Managing a background task is part of granting `shell`.
-            // Recalling saved originals is a read of the chat's own evidence.
+            // Recalling saved originals is a read of the chat's own evidence,
+            // and showing project files under a reply is a read of them.
+            // `browser` grants every browser tool.
             let granted = match name {
                 "background_task" => "shell",
-                "recall" => "read_file",
+                "recall" | "attach_file" => "read_file",
+                _ if browser => "browser",
                 name => name,
             };
             skills.iter().all(|skill| {
@@ -243,6 +252,7 @@ pub fn materialize_scripts(skills: &[Skill], work_root: &Path) -> anyhow::Result
                 work_root.display()
             )
         })?;
+        ensure_git_excluded(dir.parent().expect("skill dir has a parent"))?;
         let definition = dir.join("SKILL.md");
         if definition
             .symlink_metadata()
@@ -348,10 +358,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let tools = boxed_tools(tmp.path(), Arc::new(AllowAllHook)).unwrap();
         let built: Vec<String> = tools.iter().map(|tool| tool.name().to_owned()).collect();
-        // `recall` needs a chat's evidence, so it is added per run, not by boxed_tools.
+        // `recall` needs a chat's evidence, and the web and browser tools a run's
+        // configuration, so they are added per run, not by boxed_tools.
         let known: Vec<String> = known_tool_names()
             .into_iter()
-            .filter(|name| name != "recall")
+            .filter(|name| {
+                !matches!(
+                    name.as_str(),
+                    "recall" | "fetch_url" | "web_search" | "browser"
+                )
+            })
             .collect();
         assert_eq!(known, built);
     }
@@ -502,6 +518,62 @@ mod tests {
         );
     }
 
+    /// A tool known only by name, for grant filtering.
+    #[derive(Debug)]
+    struct Named(&'static str);
+    impl ToolT for Named {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn description(&self) -> &str {
+            ""
+        }
+        fn args_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+    }
+    #[crate::tools::async_trait]
+    impl crate::tools::ToolRuntime for Named {
+        async fn execute(
+            &self,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, crate::tools::ToolCallError> {
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    #[test]
+    fn web_browser_and_attach_tools_follow_skill_grants() {
+        let names = [
+            "fetch_url",
+            "web_search",
+            "browser_open",
+            "browser_click",
+            "attach_file",
+            "set_goal",
+        ];
+        let tools = || {
+            names
+                .iter()
+                .map(|n| Box::new(Named(n)) as Box<dyn ToolT>)
+                .collect::<Vec<_>>()
+        };
+        let kept = |allowed: &[&str]| -> Vec<String> {
+            filter_tools(tools(), &[skill("s", "S", allowed, vec![])])
+                .iter()
+                .map(|tool| tool.name().to_owned())
+                .collect()
+        };
+        // `browser` grants every browser tool; `read_file` grants attach_file.
+        assert_eq!(
+            kept(&["browser"]),
+            ["browser_open", "browser_click", "set_goal"]
+        );
+        assert_eq!(kept(&["read_file"]), ["attach_file", "set_goal"]);
+        assert_eq!(kept(&["fetch_url"]), ["fetch_url", "set_goal"]);
+        assert_eq!(kept(&[]).len(), names.len());
+    }
+
     #[test]
     fn filter_tools_empty_grants_restrict_nothing() {
         let tmp = tempfile::tempdir().unwrap();
@@ -560,6 +632,26 @@ mod tests {
         assert!(
             String::from_utf8_lossy(&status.stdout).trim().is_empty(),
             "managed skill catalogs must not show as project changes"
+        );
+    }
+
+    #[test]
+    fn slash_selected_skills_stay_out_of_the_project_diff() {
+        let root = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        materialize_scripts(&[skill("review", "Review", &[], vec![])], root.path()).unwrap();
+        let status = git(&["status", "--porcelain", "--untracked-files=all"]);
+        assert!(
+            String::from_utf8_lossy(&status.stdout).trim().is_empty(),
+            "materialized skill definitions must not show as project changes"
         );
     }
 

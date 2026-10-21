@@ -35,12 +35,48 @@ describe("WorkspacePanel", () => {
     fireEvent.keyDown(separator, { key: "ArrowLeft" });
     expect(separator).toHaveAttribute("aria-valuenow", "600");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Files" })));
+    // The file view sits beside the tree in the content column, not in the divider's.
+    const tree = screen.getByRole("list", { name: "Project files" });
+    expect(tree.nextElementSibling).toHaveAttribute("role", "separator");
+    expect(tree.nextElementSibling?.nextElementSibling).toHaveTextContent("Pick a file");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "README.md" })));
     expect(screen.getByText("hello")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Branches" }));
     expect(screen.getByRole("list", { name: "Branches" })).toHaveTextContent("maincurrent");
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Pull requests" })));
     expect(screen.getByText("GitHub CLI (gh) is not installed")).toBeInTheDocument();
+  });
+  it("keeps the tabs, where the agent works and Close in one header row", () => {
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    const head = document.querySelector(".themis-workspace-head")!;
+    expect(head.querySelector("nav[aria-label='Workspace views']")).not.toBeNull();
+    expect(head).toHaveTextContent("repo");
+    expect(head).toHaveTextContent("main");
+    const close = screen.getByRole("button", { name: "Close workspace" });
+    expect(head.contains(close)).toBe(true);
+    expect(close).not.toHaveTextContent("✕");
+    fireEvent.click(close);
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui/diff-panel", open: false });
+  });
+  it("resizes from a narrow 300px panel up to a wide one, and remembers the diff split", () => {
+    render(<WorkspacePanel projectRoot="/repo" threadId="t1" workspace={workspace} />);
+    const panel = screen.getByRole("separator", { name: "Resize workspace panel" });
+    expect(panel).toHaveAttribute("aria-valuemin", "300");
+    expect(panel).toHaveAttribute("aria-valuemax", "1600");
+    for (let step = 0; step < 10; step += 1) fireEvent.keyDown(panel, { key: "ArrowRight" });
+    expect(panel).toHaveAttribute("aria-valuenow", "300");
+    const split = screen.getByRole("separator", { name: "Resize file list" });
+    expect(split).toHaveAttribute("aria-valuenow", "200");
+    fireEvent.keyDown(split, { key: "ArrowRight" });
+    expect(split).toHaveAttribute("aria-valuenow", "240");
+    expect(localStorage.getItem("themis:workspaceDiffListWidth")).toBe("240");
+    for (let step = 0; step < 10; step += 1) fireEvent.keyDown(split, { key: "ArrowLeft" });
+    expect(split).toHaveAttribute("aria-valuenow", "120");
+    fireEvent.doubleClick(split);
+    expect(split).toHaveAttribute("aria-valuenow", "200");
+    // Dragging a divider never starts a text selection (WebKit selects on mousedown).
+    expect(fireEvent.mouseDown(panel)).toBe(false);
+    expect(fireEvent.mouseDown(split)).toBe(false);
   });
   it("refreshes the diff live: after each completed tool call and every few seconds during a run", async () => {
     vi.useFakeTimers();

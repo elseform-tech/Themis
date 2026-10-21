@@ -1,0 +1,10 @@
+/* Task status glyphs in the Workspace Tasks rows. */
+.themis-task-row-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.themis-task-row-icon--attention { color: var(--themis-danger); }
+.themis-task-row-icon--running { color: var(--themis-info); }
+.themis-task-row-icon--scheduled { color: var(--themis-warning); }
+.themis-task-row-icon--finished { color: var(--themis-success); }
+.themis-task-fill { fill: color-mix(in srgb, var(--themis-danger) 20%, transparent); stroke: none; }
+.themis-task-track { stroke: var(--themis-border); }
+.themis-task-arc { stroke-dasharray: 10 28; transform-origin: 8px 8px; animation: themis-thread-spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .themis-task-arc { animation: none; } }

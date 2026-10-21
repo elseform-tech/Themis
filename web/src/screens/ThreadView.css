@@ -12,6 +12,13 @@
 /* Header: one pill for model and effort; review toggle on the right. */
 .themis-thread-head { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 6px 16px; }
 .themis-thread-head-spacer { flex: 1; }
+/* A narrow chat keeps the model readable: Workspace shrinks to its icon and count first. */
+.themis-thread-head { container: themis-head / inline-size; }
+.themis-model-pill-meta { min-width: 6ch; }
+@container themis-head (max-width: 460px) {
+  .themis-thread-head .themis-head-label { display: none; }
+  .themis-thread-head .themis-model-pill > summary { padding: 0 8px; }
+}
 .themis-model-pill { position: relative; min-width: 0; }
 .themis-model-pill > summary { min-width: 0; overflow: hidden; }
 .themis-model-pill > summary { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: var(--themis-radius-pill); cursor: pointer; list-style: none; color: var(--themis-text); }
@@ -102,6 +109,12 @@
 .themis-thread-senderror { width: min(calc(100% - 40px), 740px); margin: 0 auto 6px; color: var(--themis-danger); font-size: .8125rem; }
 /* z-index 2: the composer's pop-ups (context, menus) open over the sticky run-progress row (z-index 1). */
 .themis-thread-composer { position: relative; display: flex; flex-direction: column; gap: 6px; width: min(calc(100% - 40px), 740px); margin: 4px auto 20px; padding: 12px 12px 10px 20px; border-radius: var(--themis-radius-composer); background: var(--themis-composer-bg); isolation: isolate; z-index: 2; }
+/* A narrow chat keeps the composer's controls as icons; names stay in tooltips and accessible labels. */
+.themis-thread-composer { container: themis-composer / inline-size; }
+@container themis-composer (max-width: 420px) {
+  .themis-thread-composer .themis-composer-label { display: none; }
+  .themis-composer-location > svg:not(:first-child) { margin-left: 2px; }
+}
 .themis-thread-composer:focus-within { box-shadow: 0 0 0 1px var(--themis-border); }
 .themis-thread-composer--hero { margin: 0; width: min(100%, 760px); padding: 16px 14px 12px 22px; }
 .themis-composer-ring { position: absolute; inset: -1.5px; z-index: -1; border-radius: inherit; overflow: hidden; pointer-events: none; }
@@ -212,3 +225,8 @@
 .themis-edited-path > span { color: var(--themis-text-3); }
 .themis-edited-more { margin: 4px 6px 0; padding: 4px 0; border: 0; background: transparent; color: var(--themis-text-2); font: inherit; font-size: .75rem; cursor: pointer; }
 .themis-edited-more:hover { color: var(--themis-text); }
+/* Recording pill: the chat's built-in browser is being recorded. */
+.themis-recording-pill { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border: 0; border-radius: var(--themis-radius-pill); background: #48252c; color: #f3a1aa; font: inherit; font-size: .75rem; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
+.themis-recording-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--themis-danger); animation: themis-recording-pulse 1.6s ease-in-out infinite; }
+@keyframes themis-recording-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .themis-recording-dot { animation: none; } }

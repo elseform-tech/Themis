@@ -5,10 +5,9 @@ import { initialState } from "../state/reducer";
 import { applyThreadEvent } from "../state/reducer";
 import type { ThreadTaskBackground, ThreadTasks } from "../lib/types";
 import * as bridge from "../lib/tauri";
-import { TaskIndicator } from "./TaskIndicator";
 import { TasksView } from "./TasksView";
 import { backgroundMeta, countBackground, detectPort, groupBackground, needsAttention } from "./backgroundTasks";
-import { countTasks, describeCounts } from "./threadTasks";
+import { countTasks } from "./threadTasks";
 
 const dispatch = vi.fn();
 let appState: typeof initialState;
@@ -52,18 +51,13 @@ describe("background task grouping", () => {
     expect(groupBackground(undefined)).toEqual({ attention: [], running: [], earlier: [] });
     expect(needsAttention(task({ state: "stopped" }))).toBe(false);
   });
-  it("counts into the indicator as running and attention", () => {
+  it("counts into the Tasks tab as running and attention", () => {
     const tasks = feed([task(), task({ id: "bg_2", state: "lost" }), task({ id: "bg_3", state: "exited", exit_code: 0 })]);
     expect(countBackground(tasks)).toEqual({ attention: 0, running: 1 });
     const failing = feed([task(), task({ id: "bg_4", state: "exited", exit_code: 1 })]);
     expect(countTasks(failing)).toEqual({ attention: 1, running: 1, scheduled: 0, finished: 0 });
-    expect(describeCounts(countTasks(failing))).toBe("1 needs attention, 1 running");
-    const { container } = render(<TaskIndicator counts={countTasks(failing)} onOpen={() => undefined} />);
-    expect(container.querySelectorAll(".themis-task-icon")).toHaveLength(2);
-    cleanup();
-    // A lost task alone never lights the indicator.
-    const lostOnly = render(<TaskIndicator counts={countTasks(feed([task({ id: "bg_5", state: "lost" })]))} onOpen={() => undefined} />);
-    expect(lostOnly.container).toBeEmptyDOMElement();
+    // A lost task alone is not counted.
+    expect(countTasks(feed([task({ id: "bg_5", state: "lost" })]))).toEqual({ attention: 0, running: 0, scheduled: 0, finished: 0 });
   });
   it("finds the local port and words the meta line", () => {
     expect(detectPort(["boot", "Listening on http://127.0.0.1:8765/"])).toBe("8765");

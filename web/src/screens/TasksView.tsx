@@ -5,7 +5,7 @@ import type { ThreadTaskBackground } from "../lib/types";
 import { describeError, useApp } from "../state/store";
 import { BackgroundTaskRow } from "./BackgroundTaskRow";
 import { groupBackground } from "./backgroundTasks";
-import { TaskIcon } from "./TaskIndicator";
+import { TaskIcon } from "./TaskIcon";
 import { groupTasks, type TaskKind, type TaskRow } from "./threadTasks";
 
 const SECTIONS: Array<["attention" | "running" | "scheduled" | "earlier", string]> = [

@@ -143,6 +143,24 @@ describe("thread lifecycle events", () => {
     s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "next-run", event: { kind: "finished", result: "No edits." } });
     expect(s.messages[THREAD.id]?.slice(-1)[0]?.changedFiles).toBeUndefined();
   });
+  it("attaches media to the turn's final reply in order, once each", () => {
+    let s = withThread();
+    const shot = { path: "/p/.themis/attachments/a/shot.png", name: "shot.png", kind: "image" as const, caption: "Before" };
+    const video = { path: "/p/.themis/attachments/b/flow.mp4", name: "flow.mp4", kind: "video" as const };
+    s = applyThreadEvent(s, envelope({ kind: "started", task: "show", max_turns: 3 }));
+    s = applyThreadEvent(s, envelope({ kind: "media_attached", files: [shot] }));
+    s = applyThreadEvent(s, envelope({ kind: "media_attached", files: [shot, video] }));
+    s = applyThreadEvent(s, envelope({ kind: "finished", result: "Here they are." }));
+    expect(s.messages[THREAD.id]?.slice(-1)[0]?.media).toEqual([shot, video]);
+  });
+  it("tracks who drives each chat's browser and its recording", () => {
+    let s = withThread();
+    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "", event: { kind: "browser_changed", controller: "agent", recording: { by: "agent", seconds: 3, max_seconds: 30 } } });
+    expect(s.browsers[THREAD.id]).toMatchObject({ controller: "agent", recording: { by: "agent", seconds: 3, max_seconds: 30 } });
+    s = applyThreadEvent(s, { thread_id: THREAD.id, run_id: "", event: { kind: "browser_changed", controller: "idle" } });
+    expect(s.browsers[THREAD.id]?.recording).toBeUndefined();
+    expect(s.running[THREAD.id]).toBeFalsy();
+  });
   it("shows an older incomplete handoff as a normal final reply", () => {
     let s = withThread();
     s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 1 }));
@@ -209,6 +227,30 @@ describe("thread lifecycle events", () => {
       tool: "write_file",
       ok: true,
     });
+  });
+
+  it("shows the Browser tab once when the agent starts using the browser", () => {
+    const live = (s: AppState, event: ThreadEventEnvelope["event"], threadId = THREAD.id) =>
+      reducer(s, { type: "thread/event", envelope: envelope(event, threadId) });
+    let s = live(withThread(), { kind: "started", task: "check the page", max_turns: 20 });
+    s = live(s, { kind: "tool_started", tool: "read_file", summary: "a.ts" });
+    expect(s.diffPanelOpen).toBe(false);
+    s = live(s, { kind: "tool_started", tool: "browser_open", summary: "open" });
+    expect(s.diffPanelOpen).toBe(true);
+    expect(s.workspaceTabRequest?.tab).toBe("browser");
+    // The person closes it; later browser steps in the same run leave it closed.
+    s = reducer(s, { type: "ui/diff-panel", open: false });
+    s = live(s, { kind: "tool_started", tool: "browser_click", summary: "click" });
+    expect(s.diffPanelOpen).toBe(false);
+    // Another chat's browser, an MCP browser tool and history replay never open it.
+    s = live(s, { kind: "started", task: "again", max_turns: 20 });
+    s = live(s, { kind: "tool_started", tool: "browser_open", summary: "open" }, "other");
+    s = live(s, { kind: "tool_started", tool: "mcp_1_browser_navigate", summary: "{}" });
+    expect(s.diffPanelOpen).toBe(false);
+    s = reducer(s, { type: "thread/history-loaded", threadId: THREAD.id, running: false, history: [
+      { kind: "event", envelope: envelope({ kind: "tool_started", tool: "browser_open", summary: "open" }) },
+    ] });
+    expect(s.diffPanelOpen).toBe(false);
   });
 
   it("keeps an MCP tool's readable label on its message and trace", () => {

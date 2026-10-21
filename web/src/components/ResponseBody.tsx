@@ -1,4 +1,4 @@
-import { Children, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Children, createContext, isValidElement, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
@@ -58,7 +58,11 @@ function Diagram({ code }: { code: string }) {
   </div>;
 }
 
+/** Opens a reply's web link in the chat's built-in browser; without it links open in the system browser. */
+export const ResponseLinks = createContext<((url: string) => void) | null>(null);
+
 export function ResponseBody({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  const openLink = useContext(ResponseLinks);
   const components = useMemo<Components>(() => ({
     pre({ children }) {
       const child = Children.toArray(children)[0];
@@ -66,9 +70,13 @@ export function ResponseBody({ text, streaming = false }: { text: string; stream
       const language = /language-([^\s]+)/.exec(child.props.className ?? "")?.[1] ?? "";
       return <CodePanel code={String(child.props.children ?? "").replace(/\n$/, "")} language={language.toLowerCase()} streaming={streaming} />;
     },
-    a({ children, href }) { return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>; },
+    a({ children, href }) {
+      // Cmd/Ctrl-click keeps the system browser.
+      const inApp = openLink && href && /^https?:\/\//i.test(href);
+      return <a href={href} target="_blank" rel="noreferrer noopener" onClick={inApp ? event => { if (event.metaKey || event.ctrlKey) return; event.preventDefault(); openLink(href); } : undefined}>{children}</a>;
+    },
     img({ alt, src }) { return <a href={typeof src === "string" ? src : undefined} target="_blank" rel="noreferrer noopener">{alt || "Image"}</a>; },
     table({ children }) { return <div className="themis-response-table"><table>{children}</table></div>; },
-  }), [streaming]);
+  }), [streaming, openLink]);
   return <div className="themis-response"><Markdown remarkPlugins={[remarkGfm]} skipHtml components={components}>{text}</Markdown></div>;
 }

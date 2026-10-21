@@ -97,7 +97,8 @@ is reached; for example `/goal optimize this app to speed up p95`.
   not count). Its icons are
   **Edit** (applies from the next turn; the current turn keeps running),
   **Pause** (after this turn) or **Resume**, **Remove** (the current turn finishes;
-  no further turns or checks), and **Show/Hide** for the full sentence.
+  no further turns or checks), and **Show/Hide** for the full sentence. In a narrow
+  chat the sentence sits on its own line below the icons.
 - **After each turn** a separate check, with a fresh context, reads the goal, the
   turn's answer and the commands it ran, and decides: reached, not yet (the next
   turn starts by itself, told why), or not reachable as written. With a number in
@@ -174,8 +175,9 @@ When a rule asks, the dialog shows the tool, summary, and risk:
 
 - **Allow once (1)** — allow this call only.
 - **Allow in this chat (2)** — allow the same command family (for example `cargo test`
-  with any further arguments, or every tool of one MCP server) now and in every later
-  run of this chat, including its automations. Other chats still ask.
+  with any further arguments, every tool of one MCP server, or reading pages from one
+  site) now and in every later run of this chat, including its automations. Other chats
+  still ask.
 - **Deny (3)** — refuse; the agent sees the denial and adapts or stops.
 
 Destructive actions (force pushes, discarding changes, deleting files and similar) always
@@ -191,6 +193,30 @@ the filesystem root and Git allowlist, but the sandbox still applies. Mode and
 configuration changes apply to the next run; active runs keep their captured
 policy. See [configuration](configuration.md) for examples and
 [sandbox](sandbox.md) for the enforcement boundary.
+
+### Web search and pages
+
+Agents read web pages with `fetch_url` and search with `web_search`. Search uses a
+SearXNG instance you run and name in the user `runtime.jsonc`
+(`"web": {"search_url": "http://127.0.0.1:8888"}`); without it only page reading is
+offered. Both ask per site in Custom, and **Allow in this chat** covers that site.
+Page text and results are treated as untrusted. See [web tools](web-tools.md).
+
+Agents can also drive a built-in browser (an installed Chrome, Chromium or Edge,
+with its own profile per project). **Workspace → Browser** opens by itself when the
+agent starts using it in a run, so you can watch it: the
+line above the page says what the agent is doing. You can click, type or enter an
+address at the same time; the agent keeps working. The speaker button turns the
+page's sound on (it starts off). **DevTools** opens Chrome's
+DevTools for the page. Browser actions ask per site, like page reads. Start a
+message with **/browser-use** to have the agent do a task in the browser (it
+follows built-in guidance: act on snapshot refs, check console errors, never enter
+secrets you did not give it, ask before anything irreversible, and attach a
+screenshot or recording when useful).
+**Capture** adds a screenshot of the page to your message and **Record** a video
+(a red line and a red header pill show while anything records). Agents can take
+screenshots and recordings too and show them, or other images, videos and PDFs from
+the project, under their reply; click one to open the viewer.
 
 ### The sandbox
 
@@ -225,7 +251,8 @@ Skill instructions can contain up to 256 KiB of UTF-8 text without truncation. F
 - An empty allowlist means "all tools".
 - Unknown tool names are rejected. The valid names are exactly:
   `list_dir`, `read_file`, `write_file`, `copy_file`, `move_file`,
-  `delete_file`, `create_dir`, `search_file`, `shell`, `apply_patch`, `git`.
+  `delete_file`, `create_dir`, `search_file`, `shell`, `apply_patch`, `git`,
+  `fetch_url`, `web_search` and `browser` (every `browser_*` tool).
 
 The file tools accept an absolute path when it lies inside the project (it is
 used as the matching project-relative path); paths outside the project stay
@@ -326,6 +353,12 @@ of:
 - **check failed** — the message carries the error (e.g. no network).
 
 ## Diagnostics
+
+The top right of the window shows Themis's own resource use: CPU (its share
+of all cores), memory and the window's frame rate. A value turns amber when CPU
+passes half the machine, when memory has kept growing for half an hour, or when
+the window draws under 30 frames a second. Click it for the split between the
+app, the built-in browser and tools such as dev servers.
 
 The desktop keeps configuration files and logs out of normal user flows.
 Advanced users can inspect local rotating JSONL logs and configure User or
@@ -430,6 +463,8 @@ Integrations keeps separate search and filter selections for Installed and Disco
 MCP shows the full saved command and arguments, with status, toggle and uninstall aligned together. Integration errors and installation confirmations appear in the timed notification box at the side. Enabled MCP connections start automatically in the background on app entry and project selection. One failure does not block the app or other connections. Status updates to Connected or Failed; use Refresh to retry a failed connection.
 
 Open an MCP connection’s details to see its exposed tool count, names and descriptions. This reads cached discovery metadata; it does not execute a tool. Tools appear after the connection completes.
+
+A message sent to a chat from the CLI (`themis thread send`) or another window appears in an open window right away, once, followed by the run as it happens.
 
 For large shared-server requests, use `themis call METHOD - < arguments.json`. The CLI reads bounded UTF-8 JSON from stdin (8 MiB maximum), avoiding operating-system command-line length limits. The complete request, including its method and envelope, must fit the shared server’s 8 MiB frame limit. Secret entry still requires the existing secure provider setup flow.
 

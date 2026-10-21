@@ -16,7 +16,7 @@ import { QueueStack } from "./QueueStack";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { useProjectWorkspace } from "./useProjectWorkspace";
-import { countTasks, useThreadTasksSync } from "./threadTasks";
+import { useThreadTasksSync } from "./threadTasks";
 import { skillToken } from "../lib/prompt";
 import "./ThreadView.css";
 
@@ -323,8 +323,8 @@ export function ThreadView() {
         changedFiles={changedFiles}
         reviewOpen={state.diffPanelOpen}
         onToggleReview={() => dispatch({ type: "ui/diff-panel", open: !state.diffPanelOpen })}
-        taskCounts={countTasks(state.tasks[thread.id], state.settings.automations_enabled)}
-        onOpenTasks={() => dispatch({ type: "ui/diff-panel", open: true, tab: "tasks" })}
+        recording={state.browsers[thread.id]?.recording ? { ...state.browsers[thread.id].recording!, at: state.browsers[thread.id].at } : undefined}
+        onOpenBrowser={() => dispatch({ type: "ui/diff-panel", open: true, tab: "browser" })}
       />
       {empty ? (
         <section className="themis-greeting" aria-label="New chat">

@@ -208,6 +208,19 @@ pub enum ThreadEvent {
     FilesChanged {
         files: Vec<ChangedFile>,
     },
+    /// Images, videos or PDFs the agent attached to this run's reply
+    /// (`attach_file`), in order.
+    MediaAttached {
+        files: Vec<AttachedMedia>,
+    },
+    /// Who controls the chat's built-in browser and whether it is recording
+    /// changed. Live only; `run_id` is empty.
+    BrowserChanged {
+        /// `agent`, `user` or `idle`.
+        controller: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recording: Option<themis_core::browser::session::RecordingInfo>,
+    },
     Failed {
         error: String,
     },
@@ -218,7 +231,7 @@ pub enum ThreadEvent {
     Steered {
         text: String,
     },
-    /// The server started this run with a user message from the queue, or a
+    /// The user message that starts this run, from any client, the queue or a
     /// goal turn. Live only: the history already holds the message.
     UserMessage {
         text: String,
@@ -377,6 +390,10 @@ pub struct ApprovalRequest {
     /// UI must render them as data); absent for tools granted per tool name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_scope: Option<themis_core::tools::GrantScope>,
+    /// For web and browser tools: the site "allow in this chat" covers, and
+    /// for which tools (`browser` = every browser action on that site).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_site: Option<GrantSite>,
     /// False for destructive actions: they ask every time, so the dialog
     /// offers only "Allow once" and "Deny".
     #[serde(default = "default_grantable")]
@@ -385,6 +402,14 @@ pub struct ApprovalRequest {
     /// of the joined `summary`, which can be spoofed by argument contents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<themis_core::tools::CommandDisplay>,
+}
+
+/// What a site grant covers (`GrantSite` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrantSite {
+    /// `browser`, `fetch_url` or `web_search`.
+    pub tools: String,
+    pub site: String,
 }
 
 const fn default_grantable() -> bool {
@@ -430,6 +455,18 @@ pub struct DiffHunk {
 pub struct ChangedFile {
     pub path: String,
     pub status: DiffStatus,
+}
+
+/// One file shown under a reply (`AttachedMedia` in types.ts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachedMedia {
+    /// Absolute path inside the project's `.themis/attachments`.
+    pub path: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    /// `image`, `video` or `pdf`.
+    pub kind: String,
 }
 
 /// File change status (`DiffStatus` in types.ts).
@@ -1293,6 +1330,7 @@ mod tests {
                 argv: vec!["cargo".to_owned(), "test".to_owned()],
                 covers_further_args: true,
             }),
+            grant_site: None,
             grantable: true,
             command: None,
         };

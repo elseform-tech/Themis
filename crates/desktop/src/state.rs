@@ -8,6 +8,7 @@
 mod attachments;
 mod automation;
 mod background;
+mod browser;
 mod changes;
 mod chat_grants;
 pub(crate) mod configuration;
@@ -16,6 +17,7 @@ mod goal_tool;
 mod integration_tools;
 mod mcp;
 mod mcp_consent;
+mod media_tool;
 mod permissions;
 mod plugins;
 mod preferences;
@@ -26,6 +28,7 @@ mod run;
 mod skills;
 mod threads;
 mod workspace;
+pub use browser::update_payload as browser_update_payload;
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
@@ -252,6 +255,10 @@ struct AppStateInner {
     scheduler_sink: std::sync::Mutex<Option<Arc<dyn EventSink>>>,
     /// Background shell tasks of every chat (`background/` in the app data dir).
     background: Arc<themis_core::tools::background::BackgroundRegistry>,
+    /// Built-in browsers (`browser/` in the app data dir: profiles, a downloaded Chromium).
+    browsers: Arc<themis_core::browser::BrowserHub>,
+    /// The server's own CPU and memory use (see `resources`).
+    resources: Arc<crate::resources::Monitor>,
     /// Recent command failures, oldest-first, capped at [`MAX_RECENT_ERRORS`].
     recent_errors: std::sync::Mutex<VecDeque<DiagnosticsError>>,
     /// Per-chat prompt queues (`queues/<chat id>.json`), loaded on first use.
@@ -431,6 +438,14 @@ impl AppState {
                 background: themis_core::tools::background::BackgroundRegistry::open(Some(
                     themis_core::tools::background::storage_dir(&app_dir),
                 )),
+                browsers: themis_core::browser::BrowserHub::new(
+                    themis_core::browser::BrowserConfig {
+                        root: app_dir.join("browser"),
+                        executable: None,
+                        headless: true,
+                    },
+                ),
+                resources: Arc::default(),
                 recent_errors: std::sync::Mutex::new(VecDeque::new()),
                 queues: std::sync::Mutex::new(HashMap::new()),
                 queues_dir: app_dir.join(queue::QUEUES_DIR),
@@ -1000,11 +1015,50 @@ fn title_from_message(text: &str) -> String {
     // A chat started with `/goal` is named after the goal, not the command.
     let goal = themis_core::goal::parse_goal_command(text);
     let text = goal.as_deref().unwrap_or(text);
-    let first = text.lines().next().unwrap_or_default().trim();
-    if first.is_empty() {
+    let first = text.lines().next().unwrap_or_default();
+    // Composer chips (`[[skill:id]]`, `[[plugin:id]]`) are not words.
+    let (words, ids) = without_tokens(first);
+    let title = if words.is_empty() {
+        ids.join(" ")
+    } else {
+        words
+    };
+    if title.is_empty() {
         return UNTITLED_THREAD.to_owned();
     }
-    first.chars().take(MAX_TITLE_CHARS).collect()
+    let title: String = title.chars().take(MAX_TITLE_CHARS).collect();
+    title.trim_end().to_owned()
+}
+
+/// `text` without skill/plugin tokens (whitespace collapsed), and their ids.
+fn without_tokens(text: &str) -> (String, Vec<&str>) {
+    let mut kept = String::new();
+    let mut ids = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[") {
+        let after = &rest[start + 2..];
+        let id = after.split_once("]]").and_then(|(inner, _)| {
+            let (kind, id) = inner.split_once(':')?;
+            let valid = matches!(kind, "skill" | "plugin")
+                && !id.is_empty()
+                && !id.contains(char::is_whitespace);
+            valid.then_some((inner.len(), id))
+        });
+        match id {
+            Some((len, id)) => {
+                kept.push_str(&rest[..start]);
+                kept.push(' ');
+                ids.push(id);
+                rest = &after[len + 2..];
+            }
+            None => {
+                kept.push_str(&rest[..start + 2]);
+                rest = after;
+            }
+        }
+    }
+    kept.push_str(rest);
+    (kept.split_whitespace().collect::<Vec<_>>().join(" "), ids)
 }
 
 /// Only the OpenCode Go credential is accepted.
@@ -1104,6 +1158,20 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let state = AppState::new_for_test(dir.path().join("settings.json"));
         (state, dir)
+    }
+
+    #[tokio::test]
+    async fn a_lagging_browser_view_catches_up_from_the_current_state() {
+        let (state, dir) = test_state();
+        assert!(state.browser_state_update("t1").await.is_none());
+        state.browser_of("t1", dir.path());
+        match state.browser_state_update("t1").await {
+            Some(themis_core::browser::BrowserUpdate::State(browser)) => {
+                assert_eq!(browser.activity, None);
+                assert_eq!(browser.controller, "idle");
+            }
+            other => panic!("expected the current state, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -1505,6 +1573,11 @@ mod tests {
             .await
             .expect_err("missing key");
         assert!(err.contains("no API key"), "{err}");
+        let crate::sink::TestEvent::Thread(message) = events.try_recv().expect("the saved message")
+        else {
+            panic!("expected the user message first");
+        };
+        assert!(matches!(message.event, ThreadEvent::UserMessage { .. }));
         let crate::sink::TestEvent::Thread(started) = events.try_recv().expect("run admission")
         else {
             panic!("expected run admission event");
@@ -1545,6 +1618,33 @@ mod tests {
     fn a_goal_chat_is_named_after_the_goal() {
         assert_eq!(title_from_message("/goal speed up p95"), "speed up p95");
         assert_eq!(title_from_message("/goals list"), "/goals list");
+    }
+
+    #[test]
+    fn skill_and_plugin_tokens_stay_out_of_titles() {
+        assert_eq!(
+            title_from_message("[[skill:browser-use]] Open http://127.0.0.1/ and check it"),
+            "Open http://127.0.0.1/ and check it"
+        );
+        assert_eq!(
+            title_from_message("Review [[plugin:github]] the  PR"),
+            "Review the PR"
+        );
+        assert_eq!(title_from_message("[[skill:browser-use]]"), "browser-use");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn any_first_message_makes_a_bounded_title_without_tokens(
+            text in "(\\[\\[|\\]\\]|skill:|plugin:|[a-z-]{0,6}| |\n|é){0,40}",
+        ) {
+            let title = title_from_message(&text);
+            proptest::prop_assert!(!title.is_empty());
+            proptest::prop_assert!(title.chars().count() <= MAX_TITLE_CHARS);
+            proptest::prop_assert!(!title.contains('\n'));
+            let (words, _) = without_tokens(&title);
+            proptest::prop_assert_eq!(&words, &title, "a token survived");
+        }
     }
 
     #[tokio::test]
