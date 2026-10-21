@@ -123,15 +123,16 @@ pub fn frame_schedule(frames: &[Frame], fps: u32, until: Duration) -> Vec<usize>
     schedule
 }
 
-/// Encodes frames to an H.264 MP4 at [`RECORD_FPS`]. Frames are first shrunk
-/// by `shrink` (the view's device scale, so a Retina recording is encoded at
-/// CSS size: a quarter of the pixels). The size is that of the first frame
-/// (rounded down to even numbers); other sizes are cropped or padded. It gives
-/// up between frames once `cancelled` is set, as when the run is stopped.
+/// Encodes frames to an H.264 MP4 at [`RECORD_FPS`], at the view's CSS size
+/// `css` (rounded down to even numbers), so a Retina recording has a quarter of
+/// the pixels. Each frame is shrunk by its own ratio to that size (a frame
+/// Chrome sent at CSS size around a navigation is kept as it is), then cropped
+/// or padded. It gives up between frames once `cancelled` is set, as when the
+/// run is stopped.
 pub fn encode_mp4(
     frames: &[Frame],
     length: Duration,
-    shrink: usize,
+    css: (usize, usize),
     cancelled: &AtomicBool,
 ) -> Result<Vec<u8>, String> {
     use openh264::encoder::{
@@ -148,10 +149,10 @@ pub fn encode_mp4(
     if let Some(error) = stopped() {
         return error;
     }
-    let first = frames.first().ok_or("the recording has no frames")?;
-    let shrink = shrink.max(1);
-    let (_, width, height) = decode_jpeg(&first.jpeg)?;
-    let (width, height) = ((width / shrink) & !1, (height / shrink) & !1);
+    if frames.is_empty() {
+        return Err("the recording has no frames".into());
+    }
+    let (width, height) = (css.0 & !1, css.1 & !1);
     if width < 16 || height < 16 {
         return Err("the recorded page is too small".into());
     }
@@ -179,7 +180,7 @@ pub fn encode_mp4(
         }
         if decoded.as_ref().is_none_or(|(at, _)| *at != index) {
             let (rgb, w, h) = decode_jpeg(&frames[index].jpeg)?;
-            let (rgb, w, h) = reduce(&rgb, w, h, shrink);
+            let (rgb, w, h) = reduce(&rgb, w, h, scale_of(w, width));
             decoded = Some((index, fit(&rgb, w, h, width, height)));
         }
         let rgb = &decoded.as_ref().expect("decoded above").1;
@@ -286,6 +287,12 @@ pub fn decode_jpeg(jpeg: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
 }
 
 /// `rgb` (`w`×`h`) shrunk by a whole `factor`, each pixel the average of its block.
+/// How many device pixels a frame `frame_width` wide has per CSS pixel of a
+/// view `css_width` wide: its whole-number ratio, at least 1.
+fn scale_of(frame_width: usize, css_width: usize) -> usize {
+    ((frame_width + css_width / 2) / css_width.max(1)).max(1)
+}
+
 fn reduce(rgb: &[u8], w: usize, h: usize, factor: usize) -> (Vec<u8>, usize, usize) {
     if factor <= 1 {
         return (rgb.to_vec(), w, h);
@@ -355,7 +362,12 @@ mod tests {
     fn a_cancelled_encode_stops_without_a_video() {
         let frames = [frame(0), frame(100)];
         assert_eq!(
-            encode_mp4(&frames, Duration::from_secs(1), 1, &AtomicBool::new(true)),
+            encode_mp4(
+                &frames,
+                Duration::from_secs(1),
+                (640, 480),
+                &AtomicBool::new(true)
+            ),
             Err("the recording was cancelled".to_owned())
         );
     }
@@ -394,6 +406,17 @@ mod tests {
         assert_eq!(&padded[..6], &rgb[..6]);
         assert_eq!(&padded[6..9], &[255, 255, 255]);
         assert_eq!(fit(&rgb, 2, 2, 1, 1), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn each_frame_shrinks_by_its_own_ratio_to_the_css_size() {
+        // A Retina frame halves; one Chrome sent at CSS size around a navigation stays.
+        assert_eq!(scale_of(1280, 640), 2);
+        assert_eq!(scale_of(640, 640), 1);
+        assert_eq!(scale_of(1920, 640), 3);
+        assert_eq!(scale_of(1278, 640), 2);
+        assert_eq!(scale_of(300, 640), 1);
+        assert_eq!(scale_of(640, 0), 640);
     }
 
     #[test]
