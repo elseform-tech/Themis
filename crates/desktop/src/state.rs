@@ -316,6 +316,7 @@ fn failure_category(message: &str) -> &'static str {
     } else if has(&[
         "not found",
         "no such",
+        "cannot find",
         "does not exist",
         "unknown thread",
         "unknown skill",
@@ -2801,6 +2802,10 @@ mod tests {
             ("Go model list timed out", "timeout"),
             ("unknown thread 1234", "not_found"),
             (
+                "The system cannot find the path specified. (os error 3)",
+                "not_found",
+            ),
+            (
                 "plugin store revision changed; reload and try again",
                 "conflict",
             ),
@@ -2830,9 +2835,9 @@ mod tests {
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
             .filter(|record| record["event"] == "command_failed")
             .collect();
-        assert_eq!(failed.len(), 10);
+        assert_eq!(failed.len(), 11);
         assert_eq!(failed[0]["details"]["category"], "unknown_method");
-        assert_eq!(failed[9]["details"]["category"], "other");
+        assert_eq!(failed[10]["details"]["category"], "other");
         // The messages (paths, user text) stay out of the log; the ring keeps them.
         assert!(!log.contains("someone"), "{log}");
         assert!(state
