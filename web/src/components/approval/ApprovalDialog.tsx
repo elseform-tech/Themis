@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ApprovalDecision, ApprovalRequest, RiskLevel } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
 import { singleKeyShortcutAllowed } from "../../lib/keyboard";
@@ -59,6 +59,12 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
   const grantable = request.grantable !== false;
   const outside = request.tool === UNSANDBOXED_TOOL;
   const blocked = request.command?.sandbox_blocked;
+  // The caller passes a new onDecide on every render; the shortcut uses the latest one
+  // without re-registering, so the pause below counts from when this request appeared,
+  // not from the last re-render (during a run the app re-renders more often than that).
+  const decide = useRef(onDecide);
+  useEffect(() => { decide.current = onDecide; }, [onDecide]);
+  const approvalId = request.approval_id;
   useEffect(() => {
     if (!open) return;
     // Keys typed just before the dialog appeared (for example digits in the composer) must not decide it.
@@ -69,15 +75,18 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
       if (!singleKeyShortcutAllowed(event)) return;
       // Numbering is stable: 1 Allow once, 2 Allow in this chat, 3 Deny. Requests that
       // cannot be allowed for the chat offer only 1 and 3, so a held 2 never denies.
-      if (event.key === "1") onDecide("once");
-      else if (event.key === "2" && grantable) onDecide("chat");
-      else if (event.key === "3") onDecide("deny");
+      const decision = event.key === "1" ? "once" : event.key === "2" && grantable ? "chat" : event.key === "3" ? "deny" : null;
+      if (decision === null) return;
+      // The dialog closes on this keydown and focus returns to the composer before the
+      // character is inserted, so the digit would land in the next message.
+      event.preventDefault();
+      decide.current(decision);
     }
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, onDecide, grantable]);
+  }, [open, grantable, approvalId]);
 
   return (
     <Dialog

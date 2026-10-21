@@ -81,6 +81,41 @@ describe("ApprovalDialog", () => {
     expect(onDecide).toHaveBeenCalledWith("deny");
   });
 
+  it("keeps a deciding digit out of the composer the focus returns to", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { onDecide } = setup();
+    vi.advanceTimersByTime(600);
+    // fireEvent returns false when the handler cancelled the key's default (typing it).
+    expect(fireEvent.keyDown(document, { key: "3" })).toBe(false);
+    expect(onDecide).toHaveBeenCalledWith("deny");
+    // Other keys keep their default.
+    expect(fireEvent.keyDown(document, { key: "7" })).toBe(true);
+  });
+
+  it("decides by digit while its own button has focus, as it does on opening", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { onDecide } = setup();
+    vi.advanceTimersByTime(600);
+    const allow = screen.getByRole("button", { name: "Allow once (1)" });
+    allow.focus();
+    fireEvent.keyDown(allow, { key: "1" });
+    expect(onDecide).toHaveBeenCalledWith("once");
+  });
+
+  it("still decides by digit while the app keeps re-rendering it with a new callback", () => {
+    // Seen live: during a run the app re-rendered the dialog every few hundred ms with a
+    // fresh onDecide, which restarted the 500 ms pause, so 1/2/3 never decided.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const decided = vi.fn();
+    const { rerender } = render(<ApprovalDialog request={REQUEST} open onDecide={decision => decided(decision)} />);
+    for (let tick = 0; tick < 6; tick += 1) {
+      vi.advanceTimersByTime(200);
+      rerender(<ApprovalDialog request={REQUEST} open onDecide={decision => decided(decision)} />);
+    }
+    fireEvent.keyDown(document, { key: "3" });
+    expect(decided).toHaveBeenCalledWith("deny");
+  });
+
   it("maps Escape to deny", () => {
     const { onDecide } = setup();
     fireEvent.keyDown(document, { key: "Escape" });
