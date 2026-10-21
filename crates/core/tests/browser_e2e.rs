@@ -378,7 +378,12 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
         .rposition(|w| w == b"avc1")
         .expect("an H.264 track");
     let width = u16::from_be_bytes([video[avc1 + 28], video[avc1 + 29]]);
-    assert_eq!(width, 640, "recording width; avc1 at {avc1} of {}", video.len());
+    assert_eq!(
+        width,
+        640,
+        "recording width; avc1 at {avc1} of {}",
+        video.len()
+    );
     chat.user_input(&themis_core::browser::UserInput::Mouse {
         kind: "move".into(),
         x: 10.0,
