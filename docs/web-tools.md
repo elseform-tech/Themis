@@ -57,7 +57,9 @@ no MCP server or Python to install. It uses Chrome, Chromium, Edge or Brave from
 the usual install folders (macOS `Applications`, Windows `Program Files` and
 `AppData\Local`, the Linux `PATH`), or `browser.executable` from the user
 `runtime.jsonc` (for example a Flatpak Chromium). Browser use, screenshots and
-recordings work the same on macOS, Windows and Linux.
+recordings work the same on macOS, Windows and Linux. One gap: on Windows,
+continuously animated pages (canvas games, video) streaming into Workspace are
+unverified, since GitHub's GPU-less Windows test machines paint them only once.
 The browser runs headless with its own profile in app data
 (`browser/profiles/<project>/`): logins persist across a project's chats and never
 touch your own browser profile, Keychain or saved passwords. One browser serves a

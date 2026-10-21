@@ -510,6 +510,12 @@ async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+// GitHub's Windows runners (no GPU) paint an animated headless page once and
+// then stop; unverified on Windows desktops. Static pages stream there.
+#[cfg_attr(
+    windows,
+    ignore = "a GPU-less Windows runner paints an animated headless page only once"
+)]
 async fn an_animated_page_streams_at_about_thirty_frames_a_second() {
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
