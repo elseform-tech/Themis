@@ -129,7 +129,8 @@ Screenshots and recordings are saved like composer attachments, in
 time), which Git ignores. `attach_file` copies other project files there so a reply
 keeps showing them; files outside the project are refused. Recording samples the
 page's screencast at 10 frames per second and encodes it with the open-source
-OpenH264 encoder built into the app (no ffmpeg). One recording runs per chat at a
+OpenH264 encoder built into the app (no ffmpeg). Stopping the run ends any browser
+step at once, including an encode in progress, whose video is then not saved. One recording runs per chat at a
 time: starting a second one fails with how long the first has run. The agent can
 stop only its own recording; a recording the agent leaves running is stopped and
 saved when its run ends. `attach_file` is a read; screenshots and recordings ask

@@ -4,6 +4,7 @@
 //! [`RECORD_FPS`]) and encodes them to H.264 in an MP4 when it stops, with the
 //! open-source OpenH264 encoder built into the app, so no ffmpeg is needed.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Frames kept per second of a recording.
@@ -140,14 +141,28 @@ pub fn frame_schedule(frames: &[Frame], fps: u32, until: Duration) -> Vec<usize>
 /// Encodes frames to an H.264 MP4 at [`RECORD_FPS`]. Frames are first shrunk
 /// by `shrink` (the view's device scale, so a Retina recording is encoded at
 /// CSS size: a quarter of the pixels). The size is that of the first frame
-/// (rounded down to even numbers); other sizes are cropped or padded.
-pub fn encode_mp4(frames: &[Frame], length: Duration, shrink: usize) -> Result<Vec<u8>, String> {
+/// (rounded down to even numbers); other sizes are cropped or padded. It gives
+/// up between frames once `cancelled` is set, as when the run is stopped.
+pub fn encode_mp4(
+    frames: &[Frame],
+    length: Duration,
+    shrink: usize,
+    cancelled: &AtomicBool,
+) -> Result<Vec<u8>, String> {
     use openh264::encoder::{
         BitRate, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, QpRange, RateControlMode,
         UsageType,
     };
     use openh264::formats::{RgbSliceU8, YUVBuffer};
 
+    let stopped = || {
+        cancelled
+            .load(Ordering::Relaxed)
+            .then_some(Err("the recording was cancelled".to_owned()))
+    };
+    if let Some(error) = stopped() {
+        return error;
+    }
     let first = frames.first().ok_or("the recording has no frames")?;
     let shrink = shrink.max(1);
     let (_, width, height) = decode_jpeg(&first.jpeg)?;
@@ -174,6 +189,9 @@ pub fn encode_mp4(frames: &[Frame], length: Duration, shrink: usize) -> Result<V
     let (mut sps, mut pps) = (None, None);
     let mut decoded: Option<(usize, Vec<u8>)> = None;
     for index in schedule {
+        if let Some(error) = stopped() {
+            return error;
+        }
         if decoded.as_ref().is_none_or(|(at, _)| *at != index) {
             let (rgb, w, h) = decode_jpeg(&frames[index].jpeg)?;
             let (rgb, w, h) = reduce(&rgb, w, h, shrink);
@@ -331,6 +349,15 @@ mod tests {
             at: Duration::from_millis(at_ms),
             jpeg: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_cancelled_encode_stops_without_a_video() {
+        let frames = [frame(0), frame(100)];
+        assert_eq!(
+            encode_mp4(&frames, Duration::from_secs(1), 1, &AtomicBool::new(true)),
+            Err("the recording was cancelled".to_owned())
+        );
     }
 
     #[test]

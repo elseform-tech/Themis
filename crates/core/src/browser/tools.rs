@@ -2,7 +2,7 @@
 //! site (the current page's host, or the target of `browser_open`), waits
 //! while the person controls the browser, and answers with a fresh snapshot.
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use autoagents_derive::{tool, ToolInput};
@@ -67,6 +67,28 @@ fn quote(text: &str) -> String {
     format!("“{short}”")
 }
 
+/// Runs `step` until it ends or the person stops the run; a stopped step is
+/// dropped (so an encode in progress is cancelled) and reported as stopped.
+async fn until_stopped<T>(
+    cancel: Option<&AtomicBool>,
+    step: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    let Some(cancel) = cancel else {
+        return step.await;
+    };
+    let stopped = async {
+        while !cancel.load(Ordering::SeqCst) {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    };
+    tokio::select! {
+        // Finished work wins over a stop that came at the same moment.
+        biased;
+        result = step => result,
+        () = stopped => Err("stopped by you".into()),
+    }
+}
+
 impl Base {
     /// Waits for control, approves `tool` on the site, shows `activity` while
     /// `action` runs, and turns its report into the tool result.
@@ -99,7 +121,7 @@ impl Base {
             risk,
         )?;
         chat.set_activity(Some(activity)).await;
-        let result = action(Arc::clone(&chat)).await;
+        let result = until_stopped(self.scope.cancel.as_deref(), action(Arc::clone(&chat))).await;
         chat.set_activity(None).await;
         let report = result.map_err(|e| tool_error(format!("{tool}: {e}")))?;
         let mut value = serde_json::to_value(&report).unwrap_or_default();
@@ -644,10 +666,12 @@ impl ToolRuntime for BrowserRecord {
                 )
             }
             "stop" => {
-                let (video, length) = chat
-                    .stop_recording(Recorder::Agent)
-                    .await
-                    .map_err(|e| tool_error(format!("browser_record: {e}")))?;
+                let (video, length) = until_stopped(
+                    self.base.scope.cancel.as_deref(),
+                    chat.stop_recording(Recorder::Agent),
+                )
+                .await
+                .map_err(|e| tool_error(format!("browser_record: {e}")))?;
                 let path = media
                     .save(&media_name("recording", "mp4"), &video)
                     .map_err(|e| tool_error(format!("browser_record: {e}")))?;
@@ -667,6 +691,44 @@ impl ToolRuntime for BrowserRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_stopped_run_drops_the_browser_step_in_progress() {
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let guard = Dropped(Arc::clone(&dropped));
+        let step = async move {
+            let _guard = guard;
+            std::future::pending::<Result<(), String>>().await
+        };
+        let flag = Arc::clone(&cancel);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            flag.store(true, Ordering::SeqCst);
+        });
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            until_stopped(Some(&cancel), step),
+        )
+        .await
+        .expect("a stopped step returns promptly");
+        assert_eq!(result, Err("stopped by you".to_owned()));
+        assert!(dropped.load(Ordering::SeqCst));
+        assert_eq!(
+            until_stopped(Some(&cancel), async { Ok(1) }).await.ok(),
+            Some(1)
+        );
+        assert_eq!(
+            until_stopped(None, async { Ok::<_, String>(2) }).await,
+            Ok(2)
+        );
+    }
 
     struct NoMedia;
     impl MediaSink for NoMedia {

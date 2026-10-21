@@ -1808,10 +1808,22 @@ impl ChatBrowser {
                 "the page did not paint while recording, so there is nothing to save".into(),
             );
         }
-        let video =
-            tokio::task::spawn_blocking(move || super::media::encode_mp4(&frames, length, shrink))
-                .await
-                .map_err(|e| e.to_string())??;
+        // Dropping this future (the run was stopped) cancels the encode, which
+        // otherwise keeps a core busy to the end.
+        struct CancelOnDrop(Arc<AtomicBool>);
+        impl Drop for CancelOnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+        let cancel = CancelOnDrop(Arc::new(AtomicBool::new(false)));
+        let cancelled = cancel.0.clone();
+        let video = tokio::task::spawn_blocking(move || {
+            super::media::encode_mp4(&frames, length, shrink, &cancelled)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        drop(cancel);
         Ok((video, length))
     }
 
