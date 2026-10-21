@@ -634,7 +634,7 @@ impl CompatibleProvider {
         }
         if COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
             if self.uses_responses() {
-                body["reasoning"] = serde_json::json!({"effort":"none"});
+                body["reasoning"] = serde_json::json!({"effort":summary_effort(&self.model)});
             } else {
                 body["thinking"] = serde_json::json!({"type":"disabled"});
             }
