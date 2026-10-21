@@ -2355,6 +2355,111 @@ async fn summaries_use_the_model_itself_once_go_retires_the_fallback_summarizer(
     );
 }
 
+#[tokio::test]
+async fn a_summary_falls_back_to_the_chat_model_when_go_refuses_the_listed_summarizer() {
+    // Seen live: Go listed longcat-2.5-preview-free while answering every request with
+    // 402 "Endpoint is unavailable", so every context checkpoint failed.
+    for (status, falls_back) in [
+        (402, true),
+        (404, true),
+        (410, true),
+        (500, false),
+        (429, false),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(move |request: &wiremock::Request| {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                if body["model"] == "longcat-2.5-preview-free" {
+                    ResponseTemplate::new(status).set_body_json(json!({"error":{"message":"Upstream request failed: Endpoint is unavailable."}}))
+                } else {
+                    ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"content":"checkpoint"},"finish_reason":"stop"}]}))
+                }
+            })
+            .mount(&server)
+            .await;
+        let mut provider = CompatibleProvider::go(
+            "synthetic".into(),
+            "glm-5.3".into(),
+            Some(server.uri()),
+            Some("thread-session".into()),
+        );
+        provider.reasoning_effort = Some("high".into());
+        let dir = tempfile::tempdir().unwrap();
+        let log = Arc::new(crate::diagnostics::DiagnosticLog::new(dir.path().into()));
+        let summary = crate::diagnostics::ACTIVE
+            .scope(
+                crate::diagnostics::DiagnosticContext {
+                    log: Arc::clone(&log),
+                    thread_id: "thread".into(),
+                    run_id: "run".into(),
+                    level: "info".into(),
+                },
+                COMPACTION_REQUEST.scope(
+                    (),
+                    provider.chat_and_sampling(&[user_message("summarize")], None, None),
+                ),
+            )
+            .await;
+        let requests = server.received_requests().await.unwrap();
+        let models: Vec<Value> = requests
+            .iter()
+            .map(|request| serde_json::from_slice::<Value>(&request.body).unwrap()["model"].clone())
+            .collect();
+        let events: Vec<String> = log
+            .query(&crate::diagnostics::DiagnosticFilter::default())
+            .unwrap()
+            .into_iter()
+            .map(|record| record.event)
+            .collect();
+        if falls_back {
+            assert_eq!(
+                summary.unwrap().text().as_deref(),
+                Some("checkpoint"),
+                "{status}"
+            );
+            assert_eq!(
+                models,
+                [json!("longcat-2.5-preview-free"), json!("glm-5.3")],
+                "{status}"
+            );
+            let retry: Value = serde_json::from_slice(&requests[1].body).unwrap();
+            assert!(
+                retry.get("reasoning_effort").is_none(),
+                "summaries never think"
+            );
+            assert_eq!(requests[1].headers[GO_SESSION_HEADER], "thread-session");
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event == "summary_model_unavailable"),
+                "{events:?}"
+            );
+        } else {
+            // Transient errors stay with the summary retry loop, on the routed model.
+            assert!(summary.is_err(), "{status}");
+            assert_eq!(models, [json!("longcat-2.5-preview-free")], "{status}");
+        }
+    }
+    // An ordinary chat request is never redirected.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(402))
+        .mount(&server)
+        .await;
+    let provider = CompatibleProvider::go(
+        "synthetic".into(),
+        "glm-5.3".into(),
+        Some(server.uri()),
+        None,
+    );
+    assert!(provider
+        .chat_and_sampling(&[user_message("hi")], None, None)
+        .await
+        .is_err());
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
 proptest::proptest! {
     #[test]
     fn catalog_endpoints_off_opencode_are_never_trusted(url in "\\PC{0,80}") {
