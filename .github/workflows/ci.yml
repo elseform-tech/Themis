@@ -136,7 +136,12 @@ jobs:
           sudo apt update
           sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: astral-sh/setup-uv@v5
       - run: npm ci
         working-directory: web
+      # Packs the built-in SearXNG (standalone Python) into crates/desktop/searxng-runtime.
+      - run: node scripts/bundle-searxng.mjs
       - run: npx -y @tauri-apps/cli@2 build
         working-directory: crates/desktop
+      # The packaged app's search server starts and answers (uses the built runtime).
+      - run: cargo test -p themis-desktop --test browser_permissions_cli_e2e cli_the_built_in_search_server_answers -- --nocapture

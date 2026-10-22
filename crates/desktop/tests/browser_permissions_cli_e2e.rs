@@ -558,7 +558,7 @@ async fn cli_sets_and_checks_the_search_server() {
         );
         // The saved server answers, with one engine failing.
         let status = call(&dir, "check_search_server", json!({}));
-        assert_eq!(status["state"], "degraded", "{status}");
+        assert_eq!(status["state"], "working", "{status}");
         assert_eq!(status["results"], 1);
         assert_eq!(status["failed_engines"][0]["engine"], "google");
         // A URL typed but not saved yet can be checked too.
@@ -744,4 +744,42 @@ async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
     });
     watcher.await.unwrap();
     task.abort();
+}
+
+/// The SearXNG built into Themis answers searches when no server of your own is set. Needs
+/// the runtime from `node scripts/bundle-searxng.mjs`; skipped where it was not built.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_the_built_in_search_server_answers() {
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("searxng-runtime");
+    if !runtime.join("VERSION").exists() {
+        eprintln!("skipping: run node scripts/bundle-searxng.mjs to build the search runtime");
+        return;
+    }
+    std::env::set_var("THEMIS_SEARXNG_DIR", &runtime);
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    tokio::task::spawn_blocking(move || {
+        let web = call(&dir, "get_web_settings", json!({}));
+        assert_eq!(web["search_url"], Value::Null);
+        assert_eq!(web["built_in"]["available"], true, "{web}");
+        // No server of your own: the check starts and asks the built-in one.
+        let status = call(&dir, "check_search_server", json!({}));
+        assert!(
+            matches!(status["state"].as_str(), Some("working" | "degraded")),
+            "{status}"
+        );
+        let web = call(&dir, "get_web_settings", json!({}));
+        let url = web["built_in"]["url"].as_str().unwrap().to_owned();
+        assert!(url.starts_with("http://127.0.0.1:"), "{web}");
+        // Its settings live in app data: JSON on, bound to this computer only.
+        let settings = std::fs::read_to_string(dir.join("searxng/settings.yml")).unwrap();
+        assert!(settings.contains("formats: [html, json]") && settings.contains("127.0.0.1"));
+    })
+    .await
+    .unwrap();
+    task.abort();
+    themis_desktop::state::searxng_stop_for_test();
 }

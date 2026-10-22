@@ -24,23 +24,31 @@ carries `"untrusted": true`: page text is data, never instructions or permission
 
 ## `web_search`
 
-Asks your own [SearXNG](https://docs.searxng.org/) instance, a metasearch engine
-that queries Google, Bing, Brave, DuckDuckGo and others. Set it in **Settings › Web**,
-which also runs a test search and shows whether it answers (Working, Some engines failing
-with each engine's reason, JSON output off, Not reachable, Rate limited), or in the user
+Asks [SearXNG](https://docs.searxng.org/), a metasearch engine that queries Google, Bing,
+Brave, DuckDuckGo and others. **Themis ships its own SearXNG**: a standalone Python with a
+pinned SearXNG (`scripts/bundle-searxng.mjs`, about 155 MB installed, 50 MB of the download),
+started in the background with the app server on a private `127.0.0.1` port and stopped with
+it (a watchdog stops it too if the app is killed). Its settings, secret and log are in the
+app-data `searxng/` folder; nothing is installed system-wide. Settings › Web shows it as
+**Built-in** with its live status.
+
+To use your own instance instead, enter its address in Settings › Web, or set it in the user
 `runtime.jsonc` (a project cannot):
 
 ```jsonc
 { "web": { "search_url": "http://127.0.0.1:8888" } }
 ```
 
-SearXNG must allow JSON output: add `json` to `search.formats` in its
+Your SearXNG must allow JSON output: add `json` to `search.formats` in its
 `settings.yml`. A local instance, for example:
 
 ```sh
 mkdir -p searxng && printf 'use_default_settings: true\nserver:\n  secret_key: "%s"\n  limiter: false\nsearch:\n  formats: [html, json]\n' "$(openssl rand -hex 32)" > searxng/settings.yml
 docker run -d --name searxng -p 127.0.0.1:8888:8080 -v "$PWD/searxng:/etc/searxng" searxng/searxng
 ```
+
+Development builds use the built-in one only with `THEMIS_SEARXNG_DIR` pointing at
+`crates/desktop/searxng-runtime` (built by `node scripts/bundle-searxng.mjs`).
 
 Results are titles, URLs, snippets and, when known, publication dates, plus
 `failed_engines`: the engines that did not answer and why (`CAPTCHA`, `Suspended:
