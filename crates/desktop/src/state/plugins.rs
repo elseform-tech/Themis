@@ -90,6 +90,10 @@ impl AppState {
                 ),
             );
         }
+        if action == "mcp_sign_in_cancel" {
+            let url = args["url"].as_str().ok_or("Missing MCP server address")?;
+            return self.mcp_sign_in_cancel(url);
+        }
         if action == "mcp_sign_in" || action == "mcp_sign_out" {
             let root = project
                 .as_deref()

@@ -90,6 +90,27 @@ describe("Integration browsing and lifecycle", () => {
     expect(pluginAction).toHaveBeenCalledWith({ action: "mcp_sign_out", projectRoot: "/project", url: "https://mcp.linear.app/mcp" });
   });
 
+  it("lets a sign-in left in the browser be cancelled, without an error", async () => {
+    installed[0].spec.mcp = { linear: { url: "https://mcp.linear.app/mcp", args: [], env: {}, enabled: true } } as never;
+    mcpConnections = { "global:docs:mcp:linear": { status: "needs_sign_in", url: "https://mcp.linear.app/mcp", signed_in: false } };
+    let reject!: (error: Error) => void;
+    const fallback = vi.mocked(pluginAction).getMockImplementation()!;
+    vi.mocked(pluginAction).mockImplementation(async args => {
+      if (args.action === "mcp_sign_in") return new Promise((_, no) => { reject = no; }) as never;
+      if (args.action === "mcp_sign_in_cancel") { reject(new Error("Sign-in cancelled")); return null as never; }
+      return fallback(args);
+    });
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Waiting for browser…");
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
+    expect(pluginAction).toHaveBeenCalledWith({ action: "mcp_sign_in_cancel", url: "https://mcp.linear.app/mcp" });
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
   it("keeps Installed and Discover search and filters independent", async () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });

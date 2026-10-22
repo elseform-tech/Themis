@@ -171,11 +171,13 @@ export function Plugins() {
       const connections = await pluginAction<McpConnections>({ action: out ? "mcp_sign_out" : "mcp_sign_in", projectRoot: root, url });
       dispatch({ type: "mcp/status", connections });
     } catch (error) {
-      toast(dispatch, integrationError(error), "danger");
+      // A sign-in you cancelled is not an error.
+      if (!integrationError(error).includes("Sign-in cancelled")) toast(dispatch, integrationError(error), "danger");
     } finally {
       setSigning("");
     }
   }
+  const cancelSignIn = (url: string) => void pluginAction({ action: "mcp_sign_in_cancel", url }).catch(() => {});
 
   async function toggle(item: Item) {
     const args = { scope: item.plugin.scope, name: item.plugin.spec.name };
@@ -308,8 +310,10 @@ export function Plugins() {
         {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.reason && state.mcpConnections[row.key]?.status !== "needs_sign_in" && <CompatibilityWarning label="Connection details" reasons={[state.mcpConnections[row.key].reason!]} />}
         <span className={`themis-integration-status themis-compatibility-badge ${row.kind === "mcp" && row.enabled ? state.mcpConnections[row.key]?.status === "connected" ? "supported" : state.mcpConnections[row.key]?.status === "failed" ? "failed" : state.mcpConnections[row.key]?.status === "needs_sign_in" ? "partial" : "unchecked" : row.enabled ? "supported" : "unchecked"}`}>{row.unavailable ? "Unavailable" : row.kind === "mcp" && row.enabled ? connectionLabels[state.mcpConnections[row.key]?.status ?? "connecting"] : row.enabled ? "Enabled" : "Disabled"}</span>
         {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.url && (state.mcpConnections[row.key]?.status === "needs_sign_in"
-          ? <Button size="small" disabled={signing !== ""} onClick={() => void signIn(row.key, state.mcpConnections[row.key].url!)}>{signing === row.key ? "Waiting for browser…" : "Sign in"}</Button>
-          : state.mcpConnections[row.key]?.signed_in && <button className="themis-text-action" disabled={signing !== ""} onClick={() => void signIn(row.key, state.mcpConnections[row.key].url!, true)}>Sign out</button>)}
+          ? signing === row.key
+            ? <span className="themis-integration-signin themis-integration-waiting" role="status">Waiting for browser…<button type="button" className="themis-text-action" onClick={() => cancelSignIn(state.mcpConnections[row.key].url!)}>Cancel</button></span>
+            : <Button className="themis-integration-signin" size="small" disabled={signing !== ""} onClick={() => void signIn(row.key, state.mcpConnections[row.key].url!)}>Sign in</Button>
+          : state.mcpConnections[row.key]?.signed_in && <button className="themis-text-action themis-integration-signin" disabled={signing !== ""} onClick={() => void signIn(row.key, state.mcpConnections[row.key].url!, true)}>Sign out</button>)}
         {!row.unavailable && <button className="themis-integration-toggle" role="switch" aria-label={`${row.name} enabled`} aria-checked={row.enabled} title={!row.plugin.enabled && row.kind !== "plugin" && isPluginPackage(row.plugin) ? "Enable the parent plugin first" : `Turn ${row.enabled ? "off" : "on"} ${row.name}`} disabled={busy || mutating || row.kind !== "plugin" && !row.plugin.enabled && isPluginPackage(row.plugin)} onClick={() => void toggle(row).catch(() => {})}><span className="themis-toggle-track"><span /></span></button>}
         {row.plugin.source !== "discovered" && row.plugin.spec.origin?.kind !== "discovered" && <button aria-label={`Uninstall ${row.name}`} title={`Uninstall ${row.name}`} disabled={busy || mutating} onClick={() => { setRemoving(row); }}><Icon name="trash" /></button>}
       </li>)}</ul>

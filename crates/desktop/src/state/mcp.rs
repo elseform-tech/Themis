@@ -25,6 +25,17 @@ impl themis_core::plugins::oauth::TokenStore for SecretTokens {
     }
 }
 
+/// Sign-ins waiting for the browser, by server address.
+fn pending_sign_ins() -> &'static std::sync::Mutex<HashMap<String, Arc<tokio::sync::Notify>>> {
+    static PENDING: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+    > = std::sync::OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+/// The answer to a sign-in the person cancelled (the UI shows no error for it).
+const SIGN_IN_CANCELLED: &str = "Sign-in cancelled";
+
 /// The connection failure that means "sign in", kept apart from other failures.
 const NEEDS_SIGN_IN: &str = "Sign in to use this server.";
 
@@ -35,6 +46,8 @@ pub(super) type Connections = HashMap<PathBuf, HashMap<String, Arc<McpEntry>>>;
 type SessionResult = Result<Arc<Session>, String>;
 pub(super) struct McpEntry {
     fingerprint: String,
+    /// A remote server's address when it may use a sign-in (no token variable of its own).
+    remote: Option<String>,
     result: tokio::sync::watch::Receiver<Option<SessionResult>>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -57,6 +70,14 @@ impl McpEntry {
         }
     }
     fn status(&self) -> Value {
+        let mut status = self.connection_status();
+        if let Some(url) = &self.remote {
+            status["signed_in"] = json!(themis_core::plugins::oauth::signed_in(url));
+            status["url"] = json!(url);
+        }
+        status
+    }
+    fn connection_status(&self) -> Value {
         match self.result.borrow().as_ref() {
             None => json!({"status":"connecting"}),
             Some(Ok(session)) if session.is_connected() => json!({"status":"connected"}),
@@ -82,6 +103,7 @@ impl AppState {
         retry: bool,
     ) -> Arc<McpEntry> {
         let key = format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name);
+        let remote_url = server.url.clone().filter(|_| server.bearer_env.is_none());
         let fingerprint = format!(
             "{}:{blocked:?}:{}",
             plugin.revision,
@@ -90,8 +112,12 @@ impl AppState {
         let mut projects = self.inner.mcp.lock().unwrap_or_else(|e| e.into_inner());
         let entries = projects.entry(root.to_owned()).or_default();
         if let Some(entry) = entries.get(&key) {
-            if entry.fingerprint == fingerprint && !(retry && entry.status()["status"] == "failed")
-            {
+            // A retry reconnects anything not up (also after signing in).
+            let up = matches!(
+                entry.connection_status()["status"].as_str(),
+                Some("connected" | "connecting")
+            );
+            if entry.fingerprint == fingerprint && !(retry && !up) {
                 return entry.clone();
             }
         }
@@ -149,6 +175,7 @@ impl AppState {
         });
         let entry = Arc::new(McpEntry {
             fingerprint,
+            remote: remote_url,
             result,
             task,
         });
@@ -206,16 +233,10 @@ impl AppState {
                     } else {
                         None
                     };
-                let remote = server.url.clone().filter(|_| server.bearer_env.is_none());
                 let entry = self.mcp_entry(root, plugin, name, server, blocked, retry);
-                let mut status = entry.status();
-                if let Some(url) = remote {
-                    status["signed_in"] = json!(themis_core::plugins::oauth::signed_in(&url));
-                    status["url"] = json!(url);
-                }
                 statuses.insert(
                     format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name),
-                    status,
+                    entry.status(),
                 );
             }
         }
@@ -287,14 +308,39 @@ impl AppState {
     /// installed are accepted.
     pub(super) async fn mcp_sign_in(&self, root: &Path, url: &str) -> Result<Value, String> {
         self.installed_mcp_url(root, url)?;
-        themis_core::plugins::oauth::sign_in(
-            url,
-            crate::state::spawn_opener_url,
-            std::time::Duration::from_secs(300),
-        )
-        .await
-        .map_err(|e| format!("{e:#}"))?;
+        // The person may close the browser tab instead of finishing: Cancel (in Integrations)
+        // stops the wait at once instead of leaving it until the time limit.
+        let cancel = Arc::new(tokio::sync::Notify::new());
+        pending_sign_ins()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(url.to_owned(), Arc::clone(&cancel));
+        let outcome = tokio::select! {
+            outcome = themis_core::plugins::oauth::sign_in(
+                url,
+                crate::state::spawn_opener_url,
+                std::time::Duration::from_secs(300),
+            ) => outcome.map_err(|e| format!("{e:#}")),
+            () = cancel.notified() => Err(SIGN_IN_CANCELLED.to_owned()),
+        };
+        pending_sign_ins()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(url);
+        outcome?;
         self.mcp_status(root, true)
+    }
+
+    /// Stops a sign-in still waiting for the browser.
+    pub(super) fn mcp_sign_in_cancel(&self, url: &str) -> Result<Value, String> {
+        if let Some(cancel) = pending_sign_ins()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(url)
+        {
+            cancel.notify_one();
+        }
+        Ok(Value::Null)
     }
 
     /// Forgets the sign-in of an installed remote MCP server.
