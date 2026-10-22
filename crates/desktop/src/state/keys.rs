@@ -74,7 +74,10 @@ impl AppState {
         }
         crate::secrets::validate_provider_key(value)
             .map_err(|_| "A key is 1–4096 printable characters without spaces".to_owned())?;
-        self.inner.secrets.set(&keys::store_key(name), value)?;
+        self.inner
+            .secrets
+            .set(&keys::store_key(name), value)
+            .map_err(|e| format!("Could not save {name}: {}", store_reason(&e)))?;
         let mut names = self.saved_key_names();
         names.push(name.to_owned());
         self.write_key_names(names)
@@ -85,7 +88,10 @@ impl AppState {
         if !keys::valid_name(name) {
             return Err("Unknown key".into());
         }
-        self.inner.secrets.clear(&keys::store_key(name))?;
+        self.inner
+            .secrets
+            .clear(&keys::store_key(name))
+            .map_err(|e| format!("Could not remove {name}: {}", store_reason(&e)))?;
         let names = self
             .saved_key_names()
             .into_iter()
@@ -93,4 +99,9 @@ impl AppState {
             .collect();
         self.write_key_names(names)
     }
+}
+
+/// The credential store's own reason, without its internal entry name.
+fn store_reason(error: &str) -> &str {
+    error.rsplit(": ").next().unwrap_or(error)
 }

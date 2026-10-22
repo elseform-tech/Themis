@@ -61,7 +61,7 @@ export function KeysSettings({ focusKey }: { focusKey?: string }) {
   };
   const done = () => { setEditing(null); void load(); };
   return <>
-    <SettingsGroup title="Keys" hint="Servers in Integrations › MCP read a key as ${NAME}. Keys stay in this computer's credential store and are never shown again.">
+    <SettingsGroup title="Server keys" hint="Servers in Integrations › MCP read a key as ${NAME}. Keys stay in this computer's credential store and are never shown again.">
       {shown.length === 0 && <p className="themis-settings-hint">No keys yet.</p>}
       {shown.map(entry => <KeyRow key={entry.name} entry={entry} editing={editing === entry.name} onEdit={open => setEditing(open ? entry.name : null)} onSaved={done} onRemoved={done} />)}
       <form className="themis-settings-control" onSubmit={event => { event.preventDefault(); if (draftName) addNamed(); }}>
