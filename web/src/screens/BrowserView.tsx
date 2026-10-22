@@ -88,7 +88,20 @@ export function BrowserView({ threadId }: { threadId: string }) {
     void browserInput(threadId, input).catch(reason => setError(describeError(reason)));
   }, [threadId]);
 
-  function point(event: React.MouseEvent | React.WheelEvent) {
+  // Scrolling goes to the page only: a non-passive listener (React's onWheel is passive)
+  // cancels the gesture here, so the app does not scroll or bounce with it.
+  useEffect(() => {
+    const element = viewport.current;
+    if (!element) return;
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault();
+      send({ type: "mouse", kind: "wheel", ...point(event), delta_x: event.deltaX, delta_y: event.deltaY, modifiers: modifierBits(event) });
+    };
+    element.addEventListener("wheel", wheel, { passive: false });
+    return () => element.removeEventListener("wheel", wheel);
+  }, [open, send]);
+
+  function point(event: { clientX: number; clientY: number }) {
     const rect = viewport.current?.getBoundingClientRect();
     return { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) };
   }
@@ -181,7 +194,6 @@ export function BrowserView({ threadId }: { threadId: string }) {
       {open ? (
         <div ref={viewport} className={`themis-browser-page${recording ? " is-recording" : ""}`} tabIndex={0} aria-label={`Page: ${state.title || state.url}`}
           onMouseDown={event => { event.preventDefault(); mouse("down", event); }} onMouseUp={event => mouse("up", event)} onMouseMove={event => mouse("move", event)}
-          onWheel={event => send({ type: "mouse", kind: "wheel", ...point(event), delta_x: event.deltaX, delta_y: event.deltaY, modifiers: modifierBits(event) })}
           onContextMenu={event => event.preventDefault()}
           onKeyDown={event => key("down", event)} onKeyUp={event => key("up", event)}
           onPaste={event => { event.preventDefault(); const text = event.clipboardData.getData("text"); if (text) send({ type: "text", text }); }}>
