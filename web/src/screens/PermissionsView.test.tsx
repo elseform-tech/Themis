@@ -5,12 +5,14 @@ import type { EffectivePermissions } from "../lib/types";
 
 const getEffectivePermissions = vi.fn();
 const openRuntimeConfig = vi.fn();
+const listEditors = vi.fn();
 vi.mock("../lib/tauri", () => ({
   getEffectivePermissions: (...args: unknown[]) => getEffectivePermissions(...args),
-  openRuntimeConfig: () => openRuntimeConfig(),
+  openRuntimeConfig: (...args: unknown[]) => openRuntimeConfig(...args),
+  listEditors: () => listEditors(),
 }));
 
-import { PermissionsSettings, permissionProblems } from "./PermissionsView";
+import { PermissionsSettings, fileState, permissionProblems } from "./PermissionsView";
 
 const SANDBOX = {
   enabled: true, state: "on" as const, backend: "Seatbelt", summary: "Seatbelt, chosen automatically for macOS", reason: "chosen automatically for macOS",
@@ -26,7 +28,7 @@ const VIEW: EffectivePermissions = {
   chat: null,
 };
 
-afterEach(() => { cleanup(); getEffectivePermissions.mockReset(); openRuntimeConfig.mockReset(); });
+afterEach(() => { cleanup(); getEffectivePermissions.mockReset(); openRuntimeConfig.mockReset(); listEditors.mockReset(); });
 
 async function show(view: EffectivePermissions) {
   getEffectivePermissions.mockResolvedValue(view);
@@ -43,6 +45,29 @@ describe("PermissionsSettings", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     // No rules, sandbox details, project or chat sections.
     expect(screen.queryByText(/Seatbelt|Rules|this chat|this project/)).toBeNull();
+  });
+
+  it("says whether the file was read", async () => {
+    await show(VIEW);
+    expect(screen.getByText("Loaded")).toBeInTheDocument();
+    expect(fileState({ ...VIEW, files: [{ ...VIEW.files[0], status: "missing" }] })).toEqual({ tone: "off", label: "Not created · defaults" });
+    expect(fileState({ ...VIEW, files: [{ ...VIEW.files[0], status: "invalid", error: { message: "bad", line: 4, column: 1 } }] })).toEqual({ tone: "bad", label: "Invalid · line 4" });
+    expect(fileState({ ...VIEW, validation_error: "runtime configuration: bad" })).toEqual({ tone: "bad", label: "Invalid" });
+  });
+
+  it("offers the installed editors and opens the file with the chosen one", async () => {
+    listEditors.mockResolvedValue({ editors: [{ id: "", name: "Text editor" }, { id: "zed", name: "Zed" }] });
+    openRuntimeConfig.mockResolvedValue(undefined);
+    const onEditor = vi.fn();
+    getEffectivePermissions.mockResolvedValue(VIEW);
+    render(<PermissionsSettings editor="zed" onEditor={onEditor} />);
+    await act(async () => {});
+    const select = screen.getByRole("combobox", { name: "Open with" });
+    expect(select).toHaveValue("zed");
+    fireEvent.change(select, { target: { value: "" } });
+    expect(onEditor).toHaveBeenCalledWith("");
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(openRuntimeConfig).toHaveBeenCalledWith("zed");
   });
 
   it("opens the global file", async () => {

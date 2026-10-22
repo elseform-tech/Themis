@@ -590,6 +590,8 @@ export interface Settings {
   automations_enabled: boolean;
   completion_sound: boolean;
   completion_haptic: boolean;
+  /** Editor that opens runtime.jsonc ("" = system text editor). */
+  config_editor?: string;
   onboarded: boolean;
 }
 

@@ -5,6 +5,7 @@ import type { BrowserHistoryEntry, BrowserSettings, BrowserSettingsView, SiteAcc
 import { browserHistory, clearBrowsingData, getBrowserSettings, removeBrowserHistory, updateBrowserSettings } from "../lib/tauri";
 import { browserOpenUrl } from "../lib/browser";
 import { describeError, toast, useApp } from "../state/store";
+import { ResetIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 import "./BrowserSettings.css";
 
 const PERMISSIONS = [
@@ -26,7 +27,7 @@ export function BrowserSettingsSection() {
     getBrowserSettings().then(setView).catch(reason => setError(describeError(reason)));
   }, []);
   if (error && !view) return <p role="alert" className="themis-form-error">{error}</p>;
-  if (!view) return <p className="themis-settings-hint">Loading browser settings…</p>;
+  if (!view) return null;
   const settings = view.settings;
 
   async function save(next: BrowserSettings) {
@@ -68,25 +69,21 @@ export function BrowserSettingsSection() {
 
   return <>
     {error && <p role="alert" className="themis-form-error">{error}</p>}
-    <section className="themis-settings-section" aria-label="Built-in browser">
-      <h3 className="themis-settings-subtitle">Built-in browser</h3>
+    <SettingsGroup title="Built-in browser">
       <label className="themis-settings-check">Use the built-in browser<Switch checked={settings.enabled} onChange={event => patch({ enabled: event.target.checked })} /></label>
-      <label className="themis-settings-control">Browser
+      {settings.enabled && <label className="themis-settings-control">Browser
         <span className="themis-browser-pick">
           <select aria-label="Browser" value={settings.executable ?? ""} onChange={event => patch({ executable: event.target.value || undefined })}>
-            <option value="">Automatic{view.browsers[0] ? ` (${programName(view.browsers[0])})` : ""}</option>
+            <option value="">{view.browsers[0] ? `Automatic (${programName(view.browsers[0])})` : "None found"}</option>
             {view.browsers.map(path => <option key={path} value={path}>{programName(path)}</option>)}
             {settings.executable && !view.browsers.includes(settings.executable) && <option value={settings.executable}>{programName(settings.executable)}</option>}
           </select>
           <button type="button" className="themis-text-action" onClick={() => void chooseBrowser()}>Choose…</button>
         </span>
-      </label>
-      {view.browsers.length === 0 && !settings.executable && <p className="themis-settings-hint">No Chromium browser found. Install Chrome, Chromium, Edge or Brave, or choose one.</p>}
-    </section>
+      </label>}
+    </SettingsGroup>
 
-    <section className="themis-settings-section" aria-label="Agent permissions">
-      <h3 className="themis-settings-subtitle">Agent permissions</h3>
-      <p className="themis-settings-hint">Allow runs without asking, Ask shows a prompt (YOLO allows it), Block is refused in every mode. Local apps are always allowed.</p>
+    <SettingsGroup title="Agent permissions" hint="Allow runs without asking, Ask shows a prompt (YOLO allows it), Block is refused in every mode. Local apps are always allowed.">
       {PERMISSIONS.map(permission => {
         const disabled = permission.key === "debugging" && !settings.developer_mode;
         return <label key={permission.key} className="themis-settings-control" title={permission.hint}>{permission.label}
@@ -95,46 +92,45 @@ export function BrowserSettingsSection() {
           </select>
         </label>;
       })}
-      <table className="themis-site-exceptions" aria-label="Site exceptions">
+    </SettingsGroup>
+
+    <SettingsGroup title="Site exceptions" hint="A site covers its subdomains. The starter list blocks a few sign-in and payment sites; it is not complete." action={<SettingsIconButton label="Restore defaults" onClick={() => patch({ site_exceptions: [...starter, ...settings.site_exceptions.filter(entry => !view.starter_sites.includes(entry.site))] })}><ResetIcon /></SettingsIconButton>}>
+      {settings.site_exceptions.length > 0 && <table className="themis-site-exceptions" aria-label="Site exceptions">
         <thead><tr><th scope="col">Site</th>{PERMISSIONS.map(p => <th key={p.key} scope="col">{p.label}</th>)}<th scope="col"><span className="themis-visually-hidden">Remove</span></th></tr></thead>
         <tbody>
           {settings.site_exceptions.map(entry => <tr key={entry.site}>
             <th scope="row">{entry.site}</th>
             {PERMISSIONS.map(permission => <td key={permission.key}>
-              <select aria-label={`${permission.label} on ${entry.site}`} value={entry[permission.key] ?? ""} onChange={event => setException(entry.site, permission.key, event.target.value as SiteAccess | "")}>
+              <select aria-label={`${permission.label} on ${entry.site}`} className={entry[permission.key] ? undefined : "is-default"} value={entry[permission.key] ?? ""} onChange={event => setException(entry.site, permission.key, event.target.value as SiteAccess | "")}>
                 <option value="">Default</option>
                 {ACCESS.map(access => <option key={access} value={access}>{label(access)}</option>)}
               </select>
             </td>)}
-            <td><button type="button" className="themis-text-action" aria-label={`Remove ${entry.site}`} onClick={() => patch({ site_exceptions: settings.site_exceptions.filter(other => other.site !== entry.site) })}>Remove</button></td>
+            <td><button type="button" className="themis-site-remove" aria-label={`Remove ${entry.site}`} title="Remove" onClick={() => patch({ site_exceptions: settings.site_exceptions.filter(other => other.site !== entry.site) })}>×</button></td>
           </tr>)}
         </tbody>
-      </table>
+      </table>}
       <div className="themis-site-add">
-        <input aria-label="Add a site" placeholder="example.com" value={newSite} onChange={event => setNewSite(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); addSite(); } }} />
+        <input aria-label="Add a site" placeholder="Add a site, e.g. example.com" value={newSite} onChange={event => setNewSite(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); addSite(); } }} />
         <button type="button" className="themis-text-action" disabled={!newSite.trim()} onClick={addSite}>Add site</button>
-        <button type="button" className="themis-text-action" onClick={() => patch({ site_exceptions: [...starter, ...settings.site_exceptions.filter(entry => !view.starter_sites.includes(entry.site))] })}>Restore defaults</button>
       </div>
-      <p className="themis-settings-hint">A site covers its subdomains. The starter list blocks a few sign-in and payment sites; it is not complete.</p>
-    </section>
+    </SettingsGroup>
 
-    <section className="themis-settings-section" aria-label="Developer mode">
-      <h3 className="themis-settings-subtitle">Developer mode</h3>
+    <SettingsGroup title="Developer mode">
       <label className="themis-settings-check" title="The agent's console, elements, network, debugger, storage and profiling tools">Enable full CDP access<Switch checked={settings.developer_mode} onChange={event => patch({ developer_mode: event.target.checked })} /></label>
       <label className="themis-settings-check" title="Cookie values, auth headers and token-like values; httpOnly cookies are never shown">Show secrets to the agent<Switch checked={settings.show_secrets} onChange={event => patch({ show_secrets: event.target.checked })} /></label>
-    </section>
+    </SettingsGroup>
 
-    <section className="themis-settings-section" aria-label="Downloads">
-      <h3 className="themis-settings-subtitle">Downloads</h3>
+    <SettingsGroup title="Downloads">
       <div className="themis-settings-control"><span className="themis-browser-label">Save to</span>
         <span className="themis-browser-pick">
           <span className="themis-settings-root" title={settings.downloads_directory ?? view.default_downloads_directory}>{settings.downloads_directory ?? view.default_downloads_directory}</span>
           <button type="button" className="themis-text-action" onClick={() => void chooseFolder()}>Change…</button>
-          {settings.downloads_directory && <button type="button" className="themis-text-action" onClick={() => patch({ downloads_directory: undefined })}>Reset</button>}
+          {settings.downloads_directory && <SettingsIconButton label="Reset" onClick={() => patch({ downloads_directory: undefined })}><ResetIcon /></SettingsIconButton>}
         </span>
       </div>
       <label className="themis-settings-check">Open Workspace when the agent starts browsing<Switch checked={settings.open_workspace} onChange={event => patch({ open_workspace: event.target.checked })} /></label>
-    </section>
+    </SettingsGroup>
 
     <BrowserData projects={state.projects.map(project => ({ root: project.root, name: project.name }))} threadId={state.activeThreadId} onError={message => toast(dispatch, message, "danger")} />
   </>;
@@ -155,6 +151,7 @@ function BrowserData({ projects, threadId, onError }: { projects: Array<{ root: 
   const [types, setTypes] = useState<Record<"history" | "cookies" | "cache", boolean>>({ history: true, cookies: false, cache: true });
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [managing, setManaging] = useState(false);
   const nameOf = (root: string) => projects.find(p => p.root === root)?.name ?? root.split(/[\\/]/).pop();
   const search = async () => {
     try { setEntries((await browserHistory(project || null, query)).entries); } catch (reason) { onError(describeError(reason)); }
@@ -170,8 +167,9 @@ function BrowserData({ projects, threadId, onError }: { projects: Array<{ root: 
       if (entries) await search();
     } catch (reason) { onError(describeError(reason)); } finally { setBusy(false); }
   };
-  return <section className="themis-settings-section" aria-label="History and data">
-    <h3 className="themis-settings-subtitle">History and data</h3>
+  return <SettingsGroup title="History and data">
+    <div className="themis-settings-control"><span>Browsing history, cookies and cache</span><button type="button" className="themis-text-action" aria-expanded={managing} onClick={() => setManaging(value => !value)}>{managing ? "Done" : "Manage…"}</button></div>
+    {managing && <>
     <label className="themis-settings-control">Project
       <select aria-label="Project" value={project} onChange={event => { setProject(event.target.value); setEntries(null); }}>
         <option value="">All projects</option>
@@ -198,5 +196,6 @@ function BrowserData({ projects, threadId, onError }: { projects: Array<{ root: 
         ? <span className="themis-browser-pick">This closes {project ? nameOf(project) : "every project"}'s browser{types.cookies ? " and signs the agent out" : ""}.<Button variant="danger" size="small" disabled={busy} onClick={() => void clear()}>Clear</Button><button type="button" className="themis-text-action" onClick={() => setConfirming(false)}>Cancel</button></span>
         : <button type="button" className="themis-text-action" disabled={!Object.values(types).some(Boolean)} onClick={() => setConfirming(true)}>Clear browsing data…</button>}
     </div>
-  </section>;
+    </>}
+  </SettingsGroup>;
 }

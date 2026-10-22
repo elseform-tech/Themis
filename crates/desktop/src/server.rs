@@ -897,7 +897,8 @@ async fn dispatch_command(
                 .await?
         ),
         "ensure_runtime_config" => output!(state.ensure_runtime_config()?),
-        "open_runtime_config" => done!(state.open_runtime_config()),
+        "open_runtime_config" => done!(state.open_runtime_config(arg(&args, "editor")?).await),
+        "list_editors" => output!(json!({"editors": crate::state::editors::installed_editors()})),
         "open_in_editor" => done!(
             state
                 .open_in_editor(arg(&args, "path")?, arg(&args, "line")?)

@@ -109,10 +109,15 @@ impl AppState {
         Ok(path)
     }
 
-    /// Opens the global `runtime.jsonc` (creating the starter if needed) as
-    /// plain text in the system's text editor. It opens nothing else.
-    pub fn open_runtime_config(&self) -> Result<(), String> {
-        spawn_text_editor(&self.ensure_runtime_config()?)
+    /// Opens the global `runtime.jsonc` (creating the starter if needed) as plain text in
+    /// `editor`, or the one chosen in Settings (the system text editor by default). It opens
+    /// nothing else.
+    pub async fn open_runtime_config(&self, editor: Option<String>) -> Result<(), String> {
+        let editor = match editor {
+            Some(editor) => editor,
+            None => self.get_settings().await.config_editor,
+        };
+        super::editors::open_with(&editor, &self.ensure_runtime_config()?)
     }
 
     pub fn get_runtime_configuration(&self, project_root: Option<String>) -> Result<Value, String> {

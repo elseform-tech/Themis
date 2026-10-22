@@ -440,6 +440,43 @@ async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
             json!({"projectRoot": null, "range": "all", "types": ["history", "cookies", "cache"]}),
         );
         assert_eq!(cleared["cleared"], json!([]));
+        // Settings › Permissions: the editors offered start with the system text editor, and
+        // only a known editor can be remembered.
+        let editors = call(&dir, "list_editors", json!({}));
+        assert_eq!(
+            editors["editors"][0],
+            json!({"id": "", "name": "Text editor"})
+        );
+        let chosen = call(
+            &dir,
+            "update_settings",
+            json!({"patch": {"config_editor": "zed"}}),
+        );
+        assert_eq!(chosen["config_editor"], "zed");
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_settings",
+                &json!({"patch": {"config_editor": "sh -c x"}}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("Unknown editor"));
+        let opened = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "open_runtime_config",
+                &json!({"editor": "not-an-editor"}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!opened.status.success());
+        assert!(String::from_utf8_lossy(&opened.stderr).contains("unknown editor"));
     })
     .await
     .unwrap();

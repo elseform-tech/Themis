@@ -13,3 +13,4 @@
 .themis-browser-clear-type { display: inline-flex; align-items: center; gap: 6px; font-size: .8125rem; }
 .themis-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .themis-browser-label { white-space: nowrap; }
+.themis-site-exceptions select.is-default { color: var(--themis-text-3); }

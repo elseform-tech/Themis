@@ -234,8 +234,11 @@ sandbox?** with **Allow once (1)**, **Allow in this chat (2)** and **Deny (3)**;
 allowing runs the same command again without the sandbox. In **YOLO** nothing is
 asked and the agent is told the sandbox blocked it. The sandbox is configured
 only in the `sandbox` block of your `runtime.jsonc` (projects can only tighten
-it). **Settings → Permissions** opens that file (creating a commented-out
-starter the first time) and shows any problem with it; `themis permissions`
+it). **Settings → Permissions** shows whether that file was read (Loaded, Not
+created, or Invalid with its line) and opens it with the editor you pick under
+**Open with** (the system text editor, or VS Code, Cursor, Windsurf, Antigravity,
+Zed, Sublime Text, BBEdit or Xcode when installed), creating a commented-out
+starter the first time; `themis permissions`
 prints the full effective view. See [sandbox](sandbox.md) for details and limits.
 
 ## Skills
@@ -314,7 +317,9 @@ usable model when that one is gone too.
 
 ## Settings reference
 
-Settings has General, Appearance, Models, Permissions, Browser, and Advanced sections.
+Settings has General, Appearance, Models, Permissions, Browser, and Advanced sections,
+listed in place of the chats sidebar while Settings is open; **Back to app** at the top,
+or **Home** at the top of the rail, returns to the chat.
 **Browser** sets what the agent may do in its built-in browser (Allow, Ask or Block for
 browsing, downloads and debugging, with per-site exceptions), Developer mode, the downloads
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
@@ -341,6 +346,7 @@ Preferences persisted to `settings.json`:
 | `projects_directory` | Fixed parent folder for new projects | `~/ThemisOS/Projects` |
 | `text_size` | Conversation text size (12–18 px) | `13` |
 | `sidebar_hover` | Reveal collapsed navigation on edge hover | `true` |
+| `config_editor` | Editor Settings → Permissions opens `runtime.jsonc` with (`""` = system text editor; or `vscode`, `cursor`, `windsurf`, `antigravity`, `zed`, `sublime`, `bbedit`, `xcode`) | `""` |
 
 Appearance and model defaults each have their own reset action.
 

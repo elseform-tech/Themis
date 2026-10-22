@@ -917,6 +917,9 @@ pub struct Settings {
     pub completion_sound: bool,
     #[serde(default)]
     pub completion_haptic: bool,
+    /// Editor Settings › Permissions opens `runtime.jsonc` with (`""` = system text editor).
+    #[serde(default)]
+    pub config_editor: String,
     /// True once the user completed onboarding (defaults to false so settings
     /// files written before the field existed load as not onboarded).
     #[serde(default)]
@@ -985,6 +988,7 @@ impl Default for Settings {
             automations_enabled: default_automations_enabled(),
             completion_sound: default_completion_sound(),
             completion_haptic: false,
+            config_editor: String::new(),
             onboarded: false,
         }
     }
@@ -1027,6 +1031,8 @@ pub struct SettingsPatch {
     pub completion_sound: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_haptic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_editor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub onboarded: Option<bool>,
 }
@@ -1548,6 +1554,7 @@ mod tests {
                 "automations_enabled": true,
                 "completion_sound": true,
                 "completion_haptic": false,
+                "config_editor": "",
                 "onboarded": false,
             })
         );

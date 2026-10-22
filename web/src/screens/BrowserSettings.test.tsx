@@ -89,6 +89,7 @@ describe("Settings › Browser", () => {
 
   it("searches history, removes an entry and clears data after confirming", async () => {
     await renderSection();
+    fireEvent.click(screen.getByRole("button", { name: "Manage…" }));
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Show history" })); });
     const list = screen.getByRole("list", { name: "Browser history" });
     expect(within(list).getByText("Chess")).toBeInTheDocument();

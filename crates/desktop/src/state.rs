@@ -13,6 +13,7 @@ mod browser_data;
 mod changes;
 mod chat_grants;
 pub(crate) mod configuration;
+pub(crate) mod editors;
 mod goal;
 mod goal_tool;
 mod integration_tools;
