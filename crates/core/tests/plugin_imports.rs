@@ -197,10 +197,15 @@ fn imports_mcp_shapes_without_credentials_or_silent_options() {
     let opencode = store.import_mcp_json("global", "files", &json!({"mcp":{"local":{"type":"local","command":["node","server.js"],"environment":{"TOKEN":"{env:MCP_TOKEN}"}}}}).to_string()).unwrap();
     assert_eq!(opencode.spec.mcp["local"].args, ["server.js"]);
     assert_eq!(opencode.spec.mcp["local"].env["TOKEN"], "MCP_TOKEN");
+    // A server that signs in with OAuth imports; the sign-in happens in Integrations.
+    let oauth = store.import_mcp_json("global", "linear", &json!({"mcp":{"linear":{"type":"remote","url":"https://mcp.linear.app/mcp","oauth":{}}}}).to_string()).unwrap();
+    assert_eq!(
+        oauth.spec.mcp["linear"].url.as_deref(),
+        Some("https://mcp.linear.app/mcp")
+    );
     for invalid in [
         json!({"mcpServers":{"x":{"type":"sse","url":"https://example.com"}}}),
         json!({"mcpServers":{"x":{"url":"https://example.com","headers":{"Authorization":"Bearer literal-secret"}}}}),
-        json!({"mcp":{"x":{"type":"remote","url":"https://example.com","oauth":true}}}),
         json!({"mcpServers":{"x":{"command":"node","env":{"TOKEN":"literal-secret"}}}}),
         json!({"mcpServers":{"x":{"command":"node","timeout":9000}}}),
     ] {

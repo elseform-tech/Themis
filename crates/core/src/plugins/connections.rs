@@ -171,21 +171,23 @@ impl Connection {
                 output,
             }
         } else {
+            let url = server.url.clone().context("Missing URL")?;
+            let bearer = match &server.bearer_env {
+                Some(name) => Some(
+                    std::env::var(name)
+                        .map_err(|_| anyhow::anyhow!("MCP authentication variable is unset"))?,
+                ),
+                // A sign-in made in Integrations (OAuth), refreshed when it expires.
+                None => super::oauth::access_token(&url).await,
+            };
             Transport::Http {
                 client: reqwest::Client::builder()
                     .timeout(Duration::from_secs(30))
                     .redirect(reqwest::redirect::Policy::none())
                     .build()?,
-                url: server.url.clone().context("Missing URL")?,
+                url,
                 session: None,
-                bearer: server
-                    .bearer_env
-                    .as_ref()
-                    .map(|name| {
-                        std::env::var(name)
-                            .map_err(|_| anyhow::anyhow!("MCP authentication variable is unset"))
-                    })
-                    .transpose()?,
+                bearer,
             }
         };
         let mut result = Self {
@@ -252,6 +254,15 @@ impl Connection {
                         "warn",
                         json!({"http_status":response.status().as_u16(),"error_category":if matches!(response.status().as_u16(),401|403){"authentication"}else{"remote_http"}}),
                     );
+                    // A Bearer challenge on 401 is MCP's way to ask for an OAuth sign-in.
+                    let challenge = response
+                        .headers()
+                        .get("www-authenticate")
+                        .and_then(|value| value.to_str().ok())
+                        .is_some_and(|value| value.to_ascii_lowercase().starts_with("bearer"));
+                    if response.status() == reqwest::StatusCode::UNAUTHORIZED && challenge {
+                        bail!("MCP server needs sign-in");
+                    }
                     bail!("MCP server returned HTTP {}", response.status());
                 }
                 if let Some(id) = response.headers().get("mcp-session-id") {
@@ -640,6 +651,7 @@ fn connection_error_category(error: &anyhow::Error) -> &'static str {
     let message = error.to_string();
     if message.starts_with("MCP server returned HTTP 401")
         || message.starts_with("MCP server returned HTTP 403")
+        || message == "MCP server needs sign-in"
     {
         return "authentication";
     }

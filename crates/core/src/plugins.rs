@@ -3,6 +3,7 @@ pub mod connections;
 mod discovery;
 pub mod hooks;
 mod marketplace;
+pub mod oauth;
 mod scans;
 pub use scans::MarketplaceScan;
 

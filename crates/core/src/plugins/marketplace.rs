@@ -1157,11 +1157,8 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
                     .context("OAuth secret must be an environment reference")?,
             )?;
         }
-        compatibility_error = Some(unsupported_mcp(
-            format!("{name}.oauth"),
-            "Browser OAuth is not supported",
-            "Use an environment bearer reference when supported by the server",
-        ));
+        // Sign-in happens in Integrations after installing (MCP OAuth with dynamic client
+        // registration); preset OAuth client settings are not used.
     }
     let mut server = McpServer::default();
     if let Some(command) = raw.get("command") {

@@ -90,6 +90,17 @@ impl AppState {
                 ),
             );
         }
+        if action == "mcp_sign_in" || action == "mcp_sign_out" {
+            let root = project
+                .as_deref()
+                .ok_or("Choose a project for MCP connections")?;
+            let url = args["url"].as_str().ok_or("Missing MCP server address")?;
+            return if action == "mcp_sign_in" {
+                self.mcp_sign_in(root, url).await
+            } else {
+                self.mcp_sign_out(root, url)
+            };
+        }
         if action == "mcp_status" {
             let root = project
                 .as_deref()

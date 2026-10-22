@@ -444,6 +444,8 @@ impl AppState {
         trash_dir: PathBuf,
     ) -> Self {
         let app_dir = settings_app_dir(&settings_path);
+        // MCP sign-ins (OAuth tokens) live beside the other secrets: the Keychain in the app.
+        themis_core::plugins::oauth::set_store(Arc::new(mcp::SecretTokens(Arc::clone(&secrets))));
         let transcript = TranscriptStore::open(&app_dir.join("sessions.sqlite3"))
             .expect("unable to open durable session store");
         let (threads, mut report) = load_and_reconcile(&worktrees_root, &registry_path);
@@ -1173,6 +1175,29 @@ pub(crate) fn spawn_text_editor(target: &Path) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|err| format!("failed to open '{}': {err}", target.display()))
+}
+
+/// Opens an http(s) URL in the person's default browser (no shell parses it).
+pub(crate) fn spawn_opener_url(url: &str) -> Result<(), String> {
+    let web = url.starts_with("https://") || url.starts_with("http://");
+    if !web || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("Only web addresses can be opened".into());
+    }
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "linux")]
+    let mut command = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("rundll32");
+        command.arg("url.dll,FileProtocolHandler");
+        command
+    };
+    command
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to open the browser: {e}"))
 }
 
 #[cfg(target_os = "macos")]

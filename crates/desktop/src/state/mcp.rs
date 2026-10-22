@@ -10,6 +10,24 @@ use themis_core::{
 };
 
 /// Status shown when a definition has not been enabled by a person since it last changed.
+/// MCP sign-in tokens kept in the app's secret store (the Keychain in the desktop app).
+pub(super) struct SecretTokens(pub(super) Arc<dyn SecretStore>);
+
+impl themis_core::plugins::oauth::TokenStore for SecretTokens {
+    fn load(&self, key: &str) -> Option<String> {
+        self.0.get(key)
+    }
+    fn save(&self, key: &str, value: &str) -> Result<(), String> {
+        self.0.set(key, value)
+    }
+    fn delete(&self, key: &str) -> Result<(), String> {
+        self.0.clear(key)
+    }
+}
+
+/// The connection failure that means "sign in", kept apart from other failures.
+const NEEDS_SIGN_IN: &str = "Sign in to use this server.";
+
 pub(super) const NEEDS_CONSENT: &str =
     "Needs your approval: enable this connection yourself in Integrations or the CLI";
 
@@ -44,6 +62,9 @@ impl McpEntry {
             Some(Ok(session)) if session.is_connected() => json!({"status":"connected"}),
             Some(Ok(_)) => {
                 json!({"status":"failed","reason":"Connection closed. Refresh to reconnect."})
+            }
+            Some(Err(reason)) if reason == NEEDS_SIGN_IN => {
+                json!({"status":"needs_sign_in","reason":reason})
             }
             Some(Err(reason)) => json!({"status":"failed","reason":reason}),
         }
@@ -101,6 +122,9 @@ impl AppState {
                         .await
                         .map(Arc::new)
                         .map_err(|error| {
+                            if error.chain().any(|e| e.to_string() == "MCP server needs sign-in") {
+                                return NEEDS_SIGN_IN.to_owned();
+                            }
                             let text = error.to_string();
                             if let Some(program) = text.strip_prefix("MCP program not found: ") {
                                 return format!("'{program}' was not found on this computer. Install it, or save the command with its full path.");
@@ -182,10 +206,16 @@ impl AppState {
                     } else {
                         None
                     };
+                let remote = server.url.clone().filter(|_| server.bearer_env.is_none());
                 let entry = self.mcp_entry(root, plugin, name, server, blocked, retry);
+                let mut status = entry.status();
+                if let Some(url) = remote {
+                    status["signed_in"] = json!(themis_core::plugins::oauth::signed_in(&url));
+                    status["url"] = json!(url);
+                }
                 statuses.insert(
                     format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name),
-                    entry.status(),
+                    status,
                 );
             }
         }
@@ -249,4 +279,41 @@ fn resolved_server(plugin: &Plugin, name: &str, root: &Path) -> McpServer {
         *arg = arg.replace("${CLAUDE_PLUGIN_ROOT}", &resources.to_string_lossy());
     }
     server
+}
+
+impl AppState {
+    /// Signs in to an installed remote MCP server: its sign-in page opens in the person's
+    /// browser; once they finish, its connection is tried again. Only URLs of servers you have
+    /// installed are accepted.
+    pub(super) async fn mcp_sign_in(&self, root: &Path, url: &str) -> Result<Value, String> {
+        self.installed_mcp_url(root, url)?;
+        themis_core::plugins::oauth::sign_in(
+            url,
+            crate::state::spawn_opener_url,
+            std::time::Duration::from_secs(300),
+        )
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+        self.mcp_status(root, true)
+    }
+
+    /// Forgets the sign-in of an installed remote MCP server.
+    pub(super) fn mcp_sign_out(&self, root: &Path, url: &str) -> Result<Value, String> {
+        self.installed_mcp_url(root, url)?;
+        themis_core::plugins::oauth::sign_out(url)?;
+        self.mcp_status(root, true)
+    }
+
+    fn installed_mcp_url(&self, root: &Path, url: &str) -> Result<(), String> {
+        let plugins = self
+            .plugin_store(Some(root.to_owned()))
+            .list()
+            .map_err(|e| e.to_string())?;
+        plugins
+            .iter()
+            .flat_map(|plugin| plugin.spec.mcp.values())
+            .any(|server| server.url.as_deref() == Some(url))
+            .then_some(())
+            .ok_or_else(|| "No installed MCP server has that address".to_owned())
+    }
 }
