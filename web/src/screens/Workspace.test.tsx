@@ -677,7 +677,7 @@ describe("Workspace journey", () => {
     expect(screen.getByLabelText("Context tokens")).toHaveValue(settings.context_token_budget);
     expect(screen.getByLabelText("Turn limit")).toHaveValue(settings.max_total_turns);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reset limits" })));
-    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3, approval_timeout_seconds: 300 });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3 });
   });
   it("keeps utilities separate from the expanded project dock and pins Themis", async () => {
     await mount();

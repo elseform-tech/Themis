@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getEffectivePermissions, listEditors, openRuntimeConfig } from "../lib/tauri";
-import type { EffectivePermissions } from "../lib/types";
+import type { EffectivePermissions, EffectiveRule } from "../lib/types";
 import { describeError } from "../state/store";
 import { SettingsGroup } from "./SettingsGroup";
 
@@ -38,8 +38,24 @@ export function fileState(view: EffectivePermissions): { tone: "ok" | "off" | "b
   return { tone: "ok", label: "Loaded" };
 }
 
-/** Settings → Permissions: the global file, whether it was read, and which editor opens it. */
-export function PermissionsSettings({ editor = "", onEditor }: { editor?: string; onEditor?: (editor: string) => void }) {
+const ACTION_LABEL = { allow: "Allow", ask: "Ask", deny: "Deny" } as const;
+const SOURCE_LABEL: Record<string, string> = { default: "Built-in", user: "", project: "Project" };
+
+/** One Custom rule: what it matches, read-only (rules are edited in runtime.jsonc). */
+function RuleRow({ rule }: { rule: EffectiveRule }) {
+  const when = rule.command?.length ? rule.command.join(" ") : rule.risk ? `${rule.risk} actions` : "";
+  return <div className="themis-settings-control themis-permission-rule">
+    <span className="themis-permission-rule-match"><code>{rule.tool}</code>{when && <small>{when}</small>}</span>
+    <span className="themis-permission-rule-action">{SOURCE_LABEL[rule.source] && <small>{SOURCE_LABEL[rule.source]}</small>}<span className={`is-${rule.action}`}>{ACTION_LABEL[rule.action]}</span></span>
+  </div>;
+}
+
+type ApprovalPrefs = { default_approval_mode?: "custom" | "yolo"; approval_timeout_seconds: number };
+
+/** Settings → Permissions: new-chat mode and timeout, the Custom rules, and the global file. */
+export function PermissionsSettings({ editor = "", onEditor, prefs, onPrefs }: { editor?: string; onEditor?: (editor: string) => void; prefs?: ApprovalPrefs; onPrefs?: (patch: Partial<ApprovalPrefs>) => void }) {
+  const [timeout, setTimeoutDraft] = useState(prefs?.approval_timeout_seconds ?? 300);
+  useEffect(() => { if (prefs) setTimeoutDraft(prefs.approval_timeout_seconds); }, [prefs]);
   const [view, setView] = useState<EffectivePermissions | null>(null);
   const [editors, setEditors] = useState<Array<{ id: string; name: string }>>([{ id: "", name: "Text editor" }]);
   const [error, setError] = useState("");
@@ -57,7 +73,22 @@ export function PermissionsSettings({ editor = "", onEditor }: { editor?: string
   const open = () => { setError(""); void openRuntimeConfig(chosen || undefined).catch((failure: unknown) => setError(describeError(failure))); };
   const path = view?.files.find(entry => entry.scope === "user")?.path;
   const status = view && fileState(view);
-  return (
+  const approval = view?.approval;
+  return (<>
+    {prefs && <SettingsGroup title="Approvals">
+      <label className="themis-settings-control" title="Each chat can switch in its composer. YOLO asks nothing; the sandbox and Browser blocks still apply.">New chats start in
+        <select aria-label="New chats start in" value={prefs.default_approval_mode ?? "custom"} onChange={event => onPrefs?.({ default_approval_mode: event.target.value as "custom" | "yolo" })}>
+          <option value="custom">Custom</option><option value="yolo">YOLO</option>
+        </select>
+      </label>
+      <label className="themis-settings-control" title="An unanswered approval is denied after this long">Approval timeout
+        <span className="themis-browser-pick"><input className="themis-settings-number" aria-label="Approval timeout (seconds)" type="number" min={30} max={600} value={timeout} onChange={event => setTimeoutDraft(Number(event.target.value))} onBlur={() => { if (timeout !== prefs.approval_timeout_seconds) onPrefs?.({ approval_timeout_seconds: timeout }); }} /><small className="themis-settings-hint">seconds</small></span>
+      </label>
+    </SettingsGroup>}
+    {approval && <SettingsGroup title="Custom rules" hint="The first rule that matches decides; edit them in runtime.jsonc with Open below.">
+      {approval.rules.map((rule, index) => <RuleRow key={index} rule={rule} />)}
+      <div className="themis-settings-control themis-permission-rule"><span className="themis-permission-rule-match"><span>Anything else</span></span><span className="themis-permission-rule-action"><span className={`is-${approval.default}`}>{ACTION_LABEL[approval.default]}</span></span></div>
+    </SettingsGroup>}
     <SettingsGroup title="Configuration file">
       <div className="themis-settings-control">
         <span title={path}>runtime.jsonc</span>
@@ -78,5 +109,5 @@ export function PermissionsSettings({ editor = "", onEditor }: { editor?: string
       {view && permissionProblems(view).map(problem => <p key={problem} role="alert" className="themis-permissions-error">{problem.replace(/^(Invalid|Unreadable)( · line \d+)?: /, "")}</p>)}
       {error && <p role="alert" className="themis-form-error">{error}</p>}
     </SettingsGroup>
-  );
+  </>);
 }

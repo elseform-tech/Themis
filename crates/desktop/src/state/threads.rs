@@ -22,7 +22,8 @@ impl AppState {
             return Err("Only OpenCode Go is supported".to_owned());
         }
         let root = canonical_project_dir(&project_root)?;
-        let saved_default = self.inner.settings.get().await.default_model;
+        let settings = self.inner.settings.get().await;
+        let saved_default = settings.default_model;
         let model = match model.filter(|name| !name.trim().is_empty()) {
             // A model chosen for this thread stands; a run on it reports if it is gone.
             Some(chosen) if chosen != saved_default && chosen != GO_DEFAULT_MODEL => chosen,
@@ -44,7 +45,7 @@ impl AppState {
             provider,
             model,
             reasoning_effort: None,
-            approval_mode: Default::default(),
+            approval_mode: settings.default_approval_mode,
             running: false,
             titled: false,
             preexisting,

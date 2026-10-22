@@ -326,8 +326,10 @@ folder, and the browser's history and data; see [web tools](web-tools.md#permiss
 It saves to the `browser` block of your `runtime.jsonc`.
 Ordinary preferences save on change; text inputs save when focus leaves the field.
 Errors appear inline, and rejected changes leave the previous preferences intact.
-Permissions lets you require approval for read tools and set the approval
-timeout. Writes and commands still require approval.
+Permissions sets the mode new chats start in (Custom or YOLO; each chat can still switch in
+its composer) and the approval timeout, lists your Custom rules from `runtime.jsonc`
+read-only (first match wins, then the default for anything else), and shows whether that
+file was read, with **Open with** to edit it.
 
 Preferences persisted to `settings.json`:
 
@@ -338,7 +340,8 @@ Preferences persisted to `settings.json`:
 | `default_model` | Model for new threads (`""` = provider default) | `""` |
 | `max_turns` | Max agent turns per run (backend validates 1–200) | `20` |
 | `context_messages` | Prior user/final assistant messages sent to the model (1–100) | `20` |
-| `approval_timeout_seconds` | Seconds before an unanswered approval is denied (30–600) | `300` |
+| `approval_timeout_seconds` | Seconds before an unanswered approval is denied (30–600; Settings → Permissions) | `300` |
+| `default_approval_mode` | Mode a new chat starts in: `custom` or `yolo` | `custom` |
 | `confirm_reads` | Require approval for read tools | `false` |
 | `recent_roots` | Recently opened projects, most recent first (max 10, managed automatically) | `[]` |
 | `concurrency_limit` | Max parallel runs across all threads (1–16); sends past the limit are rejected | `3` |

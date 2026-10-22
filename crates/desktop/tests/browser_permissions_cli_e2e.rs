@@ -505,6 +505,17 @@ async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
             .unwrap();
         assert!(!opened.status.success());
         assert!(String::from_utf8_lossy(&opened.stderr).contains("unknown editor"));
+        // Settings › Permissions: new chats start in the chosen mode.
+        let saved = call(&dir, "update_settings", json!({"patch": {"default_approval_mode": "yolo"}}));
+        assert_eq!(saved["default_approval_mode"], "yolo");
+        let project = dir.join("mode-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let thread = call(
+            &dir,
+            "create_thread",
+            json!({"projectRoot": project, "provider": "go", "model": null}),
+        );
+        assert_eq!(thread["approval_mode"], "yolo", "{thread}");
     })
     .await
     .unwrap();

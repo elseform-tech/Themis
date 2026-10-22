@@ -592,6 +592,8 @@ export interface Settings {
   completion_haptic: boolean;
   /** Editor that opens runtime.jsonc ("" = system text editor). */
   config_editor?: string;
+  /** The approval mode a new chat starts in. */
+  default_approval_mode?: "custom" | "yolo";
   onboarded: boolean;
 }
 

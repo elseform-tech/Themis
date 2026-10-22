@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { EffectivePermissions } from "../lib/types";
 
 const getEffectivePermissions = vi.fn();
@@ -68,6 +68,29 @@ describe("PermissionsSettings", () => {
     expect(onEditor).toHaveBeenCalledWith("");
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(openRuntimeConfig).toHaveBeenCalledWith("zed");
+  });
+
+  it("lists the Custom rules read-only, ending with the default", async () => {
+    const rules = [{ tool: "run_command", action: "deny" as const, command: ["git", "push"], source: "user" as const }, ...VIEW.approval!.rules];
+    await show({ ...VIEW, approval: { ...VIEW.approval!, rules } });
+    const group = screen.getByRole("region", { name: "Custom rules" });
+    expect(group).toHaveTextContent("run_commandgit pushDeny");
+    expect(group).toHaveTextContent("*read actionsBuilt-inAllow");
+    expect(group).toHaveTextContent("Anything elseAsk");
+    expect(within(group).queryByRole("button")).toBeNull();
+  });
+
+  it("sets the mode new chats start in and the approval timeout", async () => {
+    const onPrefs = vi.fn();
+    getEffectivePermissions.mockResolvedValue(VIEW);
+    render(<PermissionsSettings prefs={{ default_approval_mode: "custom", approval_timeout_seconds: 300 }} onPrefs={onPrefs} />);
+    await act(async () => {});
+    fireEvent.change(screen.getByRole("combobox", { name: "New chats start in" }), { target: { value: "yolo" } });
+    expect(onPrefs).toHaveBeenCalledWith({ default_approval_mode: "yolo" });
+    const timeout = screen.getByRole("spinbutton", { name: "Approval timeout (seconds)" });
+    fireEvent.change(timeout, { target: { value: "120" } });
+    fireEvent.blur(timeout);
+    expect(onPrefs).toHaveBeenCalledWith({ approval_timeout_seconds: 120 });
   });
 
   it("opens the global file", async () => {
