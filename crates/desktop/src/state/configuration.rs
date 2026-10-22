@@ -431,6 +431,10 @@ pub const RUNTIME_CONFIG_PRESETS: [(&str, &str); 5] = [
 /// explanation, allowed values and default, then [`RUNTIME_CONFIG_PRESETS`]. Every setting
 /// is commented out, so the file changes nothing until someone uncomments a line.
 pub fn runtime_config_starter() -> String {
+    starter_from(configuration::REFERENCE)
+}
+
+fn starter_from(reference: &str) -> String {
     let mut text = String::from(
         "// Themis settings for every project (JSON with // comments and trailing commas).\n\
          //\n\
@@ -442,11 +446,18 @@ pub fn runtime_config_starter() -> String {
          // only make things stricter. Settings › Permissions shows whether this file is valid.\n\
          {\n",
     );
-    let body = configuration::REFERENCE
-        .split_once("\n{\n")
-        .and_then(|(_, rest)| rest.trim_end().strip_suffix('}'))
-        .expect("the reference is one object");
-    for line in body.lines() {
+    // Between the reference's opening `{` and closing `}` lines (either line ending: a
+    // Windows checkout may embed the file with CRLF).
+    let lines: Vec<&str> = reference.lines().collect();
+    let open = lines
+        .iter()
+        .position(|line| line.trim() == "{")
+        .unwrap_or(0);
+    let close = lines
+        .iter()
+        .rposition(|line| line.trim() == "}")
+        .unwrap_or(lines.len());
+    for line in lines.get(open + 1..close).unwrap_or_default() {
         let setting = line.trim_start();
         let indent = &line[..line.len() - setting.len()];
         if setting.is_empty() || setting.starts_with("//") {
@@ -507,6 +518,11 @@ mod tests {
             configuration::resolve(Some(&file), None, None)
                 .unwrap_or_else(|e| panic!("preset '{title}' is invalid: {e:#}"));
         }
+        // A Windows checkout embeds the reference with CRLF: the same starter comes out.
+        assert_eq!(
+            starter_from(&configuration::REFERENCE.replace('\n', "\r\n")),
+            runtime_config_starter()
+        );
         // Every setting of the reference is in the file, commented out.
         let text = runtime_config_starter();
         for line in configuration::REFERENCE.lines().map(str::trim) {
