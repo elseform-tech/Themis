@@ -941,6 +941,12 @@ async fn dispatch_command(
         ),
         "apply_mcp_config" => output!(state.apply_mcp_config().await?),
         "mcp_config_status" => output!(state.mcp_config_status()),
+        "list_keys" => output!(state.list_keys(arg(&args, "projectRoot")?)?),
+        "set_key" => done!(state.set_key(
+            &arg::<String>(&args, "name")?,
+            &arg::<String>(&args, "value")?
+        )),
+        "remove_key" => done!(state.remove_key(&arg::<String>(&args, "name")?)),
         "list_editors" => output!(json!({"editors": crate::state::editors::installed_editors()})),
         "open_in_editor" => done!(
             state

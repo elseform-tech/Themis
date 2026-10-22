@@ -68,6 +68,17 @@ describe("Integration browsing and lifecycle", () => {
     expect(screen.getByRole("region", { name: "MCP tools" })).toHaveTextContent("Find a document");
     expect(pluginAction).toHaveBeenCalledWith({ action: "mcp_tools", projectRoot: "/project", scope: "global", name: "docs", id: "filesystem" });
   });
+  it("sends a server missing a key to Settings › Keys with its name", async () => {
+    installed[0].spec.mcp = { notes: { url: "https://notes.example/mcp", headers: { "X-Api-Key": "${NOTES_KEY}" }, args: [], env: {}, enabled: true } } as never;
+    mcpConnections = { "global:docs:mcp:notes": { status: "needs_key", keys: ["NOTES_KEY"], reason: "Add NOTES_KEY in Settings › Keys." } };
+    render(<Plugins />);
+    await screen.findByRole("button", { name: "View docs" });
+    fireEvent.click(screen.getByRole("button", { name: "MCP" }));
+    expect(screen.getByText("Key needed")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add key" }));
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui/view", view: "settings", settings: { section: "Keys", key: "NOTES_KEY" } });
+  });
   it("signs in to a remote MCP server that asks for it, and signs out", async () => {
     installed[0].spec.mcp = { linear: { url: "https://mcp.linear.app/mcp", args: [], env: {}, enabled: true } } as never;
     mcpConnections = { "global:docs:mcp:linear": { status: "needs_sign_in", reason: "Sign in to use this server.", url: "https://mcp.linear.app/mcp", signed_in: false } };

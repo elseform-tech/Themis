@@ -16,6 +16,7 @@ export function reduceUiActions(
       return {
         ...state,
         mainView: action.view,
+        settingsFocus: action.settings ?? null,
         diffPanelOpen: action.view === "thread" && state.diffPanelOpen,
       };
     case "ui/diff-panel":

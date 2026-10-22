@@ -617,8 +617,10 @@ export interface ThreadChange {
 }
 
 export type McpConnections = Record<string, {
-  status: "connecting" | "connected" | "failed" | "needs_sign_in";
+  status: "connecting" | "connected" | "failed" | "needs_sign_in" | "needs_key";
   reason?: string;
+  /** needs_key: the missing key names, to add in Settings › Keys. */
+  keys?: string[];
   /** Remote servers: whether this computer has a sign-in (OAuth) for it, and its address. */
   signed_in?: boolean;
   url?: string;

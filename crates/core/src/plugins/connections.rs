@@ -31,6 +31,9 @@ pub struct McpServer {
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub bearer_env: Option<String>,
+    /// Extra HTTP headers, each `prefix${NAME}` (such as `Token ${API_KEY}`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
     #[serde(default)]
     pub enabled: bool,
 }
@@ -64,7 +67,56 @@ impl McpServer {
         {
             bail!("MCP environment values must name environment variables");
         }
+        if !self.headers.is_empty() && self.url.is_none() {
+            bail!("Only remote MCP servers take headers");
+        }
+        for (name, template) in &self.headers {
+            const RESERVED: [&str; 7] = [
+                "accept",
+                "content-type",
+                "content-length",
+                "host",
+                "mcp-session-id",
+                "mcp-protocol-version",
+                "authorization",
+            ];
+            let lower = name.to_ascii_lowercase();
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                || (RESERVED.contains(&lower.as_str())
+                    && !(lower == "authorization" && self.bearer_env.is_none()))
+            {
+                bail!("Unsupported MCP header '{name}'");
+            }
+            super::keys::header_template(template)?;
+        }
         Ok(())
+    }
+    /// The key names this server reads, in order, without duplicates.
+    pub fn key_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        let headers = self
+            .headers
+            .values()
+            .filter_map(|t| super::keys::header_template(t).ok().map(|(_, n)| n));
+        for name in self
+            .env
+            .values()
+            .map(String::as_str)
+            .chain(self.bearer_env.as_deref())
+            .chain(headers)
+        {
+            if !names.iter().any(|known| known == name) {
+                names.push(name.to_owned());
+            }
+        }
+        names
+    }
+    /// Whether the server brings its own credentials (else a remote one may sign in).
+    pub fn has_credentials(&self) -> bool {
+        self.bearer_env.is_some() || !self.headers.is_empty()
     }
 }
 enum Transport {
@@ -79,6 +131,7 @@ enum Transport {
         url: String,
         session: Option<String>,
         bearer: Option<String>,
+        headers: Vec<(String, String)>,
     },
 }
 pub struct Connection {
@@ -116,6 +169,20 @@ impl Connection {
             "info",
             json!({"transport":if server.command.is_some(){"stdio"}else{"http"}}),
         );
+        // Every key the server reads, resolved up front so all missing ones are named at once.
+        let mut keys = BTreeMap::new();
+        let mut missing = Vec::new();
+        for name in server.key_names() {
+            match super::keys::value(&name) {
+                Some(value) => {
+                    keys.insert(name, value);
+                }
+                None => missing.push(name),
+            }
+        }
+        if !missing.is_empty() {
+            return Err(super::keys::missing_error(&missing));
+        }
         let transport = if let Some(command) = &server.command {
             let mut c = tokio::process::Command::new(command);
             c.args(&server.args)
@@ -131,11 +198,7 @@ impl Connection {
                 }
             }
             for (name, source) in &server.env {
-                c.env(
-                    name,
-                    std::env::var_os(source)
-                        .context("Required MCP environment variable is unset")?,
-                );
+                c.env(name, &keys[source]);
             }
             #[cfg(unix)]
             c.process_group(0);
@@ -151,16 +214,7 @@ impl Connection {
                 Err(error) => return Err(error).context("Could not start MCP server"),
             };
             if let Some(stderr) = child.stderr.take() {
-                crate::diagnostics::capture_stderr(
-                    stderr,
-                    "mcp",
-                    server
-                        .env
-                        .values()
-                        .chain(server.bearer_env.iter())
-                        .filter_map(|name| std::env::var(name).ok())
-                        .collect(),
-                );
+                crate::diagnostics::capture_stderr(stderr, "mcp", keys.values().cloned().collect());
             }
             let input = child.stdin.take().context("Missing stdin")?;
             let output = BufReader::new(child.stdout.take().context("Missing stdout")?);
@@ -173,13 +227,19 @@ impl Connection {
         } else {
             let url = server.url.clone().context("Missing URL")?;
             let bearer = match &server.bearer_env {
-                Some(name) => Some(
-                    std::env::var(name)
-                        .map_err(|_| anyhow::anyhow!("MCP authentication variable is unset"))?,
-                ),
+                Some(name) => Some(keys[name].clone()),
                 // A sign-in made in Integrations (OAuth), refreshed when it expires.
-                None => super::oauth::access_token(&url).await,
+                None if !server.has_credentials() => super::oauth::access_token(&url).await,
+                None => None,
             };
+            let headers = server
+                .headers
+                .iter()
+                .map(|(header, template)| {
+                    let (prefix, name) = super::keys::header_template(template)?;
+                    Ok((header.clone(), format!("{prefix}{}", keys[name])))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
             Transport::Http {
                 client: reqwest::Client::builder()
                     .timeout(Duration::from_secs(30))
@@ -188,6 +248,7 @@ impl Connection {
                 url,
                 session: None,
                 bearer,
+                headers,
             }
         };
         let mut result = Self {
@@ -232,6 +293,7 @@ impl Connection {
                 url,
                 session,
                 bearer,
+                headers,
             } => {
                 let mut request = client
                     .post(url.as_str())
@@ -245,6 +307,9 @@ impl Connection {
                 }
                 if let Some(token) = bearer {
                     request = request.bearer_auth(token.as_str());
+                }
+                for (name, value) in headers.iter() {
+                    request = request.header(name.as_str(), value.as_str());
                 }
                 let mut response = request.send().await.context("MCP connection failed")?;
                 if !response.status().is_success() {
@@ -652,6 +717,7 @@ fn connection_error_category(error: &anyhow::Error) -> &'static str {
     if message.starts_with("MCP server returned HTTP 401")
         || message.starts_with("MCP server returned HTTP 403")
         || message == "MCP server needs sign-in"
+        || message.starts_with(super::keys::NEEDS_KEY)
     {
         return "authentication";
     }

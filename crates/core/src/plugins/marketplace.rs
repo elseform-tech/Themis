@@ -1224,24 +1224,25 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
             .as_object()
             .context("MCP headers must be an object")?
         {
-            if !key.eq_ignore_ascii_case("authorization") || server.bearer_env.is_some() {
-                environment_reference(
-                    value
-                        .as_str()
-                        .context("MCP header must be an environment reference")?,
-                )?;
-                compatibility_error = Some(unsupported_mcp(
-                    format!("{name}.headers"),
-                    "Unsupported or duplicate authentication headers",
-                    "Use one Authorization Bearer environment reference",
-                ));
-                continue;
-            }
-            let token = value
+            // `{env:NAME}` (OpenCode) reads the same as `${NAME}`.
+            let template = value
                 .as_str()
-                .and_then(|s| s.strip_prefix("Bearer "))
-                .context("Only Bearer environment reference headers are supported")?;
-            server.bearer_env = Some(environment_reference(token)?);
+                .context("MCP header must reference a key as ${NAME}")?
+                .replace("{env:", "${");
+            let bearer = template
+                .strip_prefix("Bearer ")
+                .filter(|token| token.starts_with("${"));
+            match bearer {
+                Some(token)
+                    if key.eq_ignore_ascii_case("authorization") && server.bearer_env.is_none() =>
+                {
+                    server.bearer_env = Some(environment_reference(token)?);
+                }
+                _ => {
+                    crate::plugins::keys::header_template(&template)?;
+                    server.headers.insert(key.clone(), template);
+                }
+            }
         }
     }
     if let Some(kind) = raw.get("type").and_then(Value::as_str) {
@@ -1282,11 +1283,19 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
     if let Some(url) = &server.url {
         entry.insert("type".into(), json!("http"));
         entry.insert("url".into(), json!(url));
+        let mut headers: serde_json::Map<String, Value> = server
+            .headers
+            .iter()
+            .map(|(name, template)| (name.clone(), json!(template)))
+            .collect();
         if let Some(bearer) = &server.bearer_env {
-            entry.insert(
-                "headers".into(),
-                json!({"Authorization": format!("Bearer ${{{bearer}}}")}),
+            headers.insert(
+                "Authorization".into(),
+                json!(format!("Bearer ${{{bearer}}}")),
             );
+        }
+        if !headers.is_empty() {
+            entry.insert("headers".into(), Value::Object(headers));
         }
     }
     if !server.env.is_empty() {

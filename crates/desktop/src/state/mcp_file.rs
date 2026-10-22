@@ -17,6 +17,51 @@ use super::{settings_app_dir, AppState};
 const WATCH_FOR: Duration = Duration::from_secs(2 * 60 * 60);
 const HEADER: &str = "// Your personal MCP servers, named integration/server. Save to apply.\n// Marketplace integrations are not listed: make a personal copy to edit one.\n";
 
+/// Ready-to-use servers at the top of the list, commented out: one per way to authenticate.
+const EXAMPLES: &str = r#"    // Remove the // in front of an example to add it, then edit it. New servers start
+    // turned off; turn them on in Integrations › MCP.
+    //
+    // ${NAME} is the key called NAME in Settings › Keys (or an environment variable of
+    // that name). Keys never go in this file.
+    //
+    // A local server that reads a key:
+    // "personal/github": {
+    //   "command": "npx",
+    //   "args": ["-y", "@modelcontextprotocol/server-github"],
+    //   "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}" },
+    // },
+    //
+    // A remote server that takes a key in a header (any header name and prefix work, such
+    // as Authorization with "Bearer ${API_KEY}"):
+    // "personal/context7": {
+    //   "type": "http",
+    //   "url": "https://mcp.context7.com/mcp",
+    //   "headers": { "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}" },
+    // },
+    //
+    // A remote server that signs in (OAuth): no key here; press Sign in on its card.
+    // "personal/linear": {
+    //   "type": "http",
+    //   "url": "https://mcp.linear.app/mcp",
+    // },
+"#;
+
+/// The copy's text: the header, then the servers with [`EXAMPLES`] first in the list.
+fn mcp_file_text(servers: &Map<String, Value>) -> Result<String, String> {
+    let mut text = format!("{HEADER}{{\n  \"mcpServers\": {{\n{EXAMPLES}");
+    let count = servers.len();
+    for (index, (name, server)) in servers.iter().enumerate() {
+        let body = serde_json::to_string_pretty(server)
+            .map_err(|e| e.to_string())?
+            .replace('\n', "\n    ");
+        let name = serde_json::to_string(name).map_err(|e| e.to_string())?;
+        let comma = if index + 1 < count { "," } else { "" };
+        text.push_str(&format!("\n    {name}: {body}{comma}\n"));
+    }
+    text.push_str("  }\n}\n");
+    Ok(text)
+}
+
 /// One open copy: the revisions it was made from, and the last outcome.
 struct Draft {
     path: PathBuf,
@@ -79,12 +124,11 @@ impl AppState {
                 servers.insert(format!("{name}/{server}"), standard);
             }
         }
-        let body = serde_json::to_string_pretty(&json!({"mcpServers": servers}))
-            .map_err(|e| e.to_string())?;
+        let text = mcp_file_text(&servers)?;
         let directory = self.mcp_draft_key().join("mcp-edit");
         std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
         let path = directory.join("mcp.json");
-        std::fs::write(&path, format!("{HEADER}{body}\n")).map_err(|e| e.to_string())?;
+        std::fs::write(&path, text).map_err(|e| e.to_string())?;
         let status = json!({"state": "open", "servers": servers.len(), "path": path});
         let start_watch = {
             let mut drafts = drafts().lock().unwrap_or_else(|e| e.into_inner());
@@ -185,16 +229,31 @@ impl AppState {
             .keys()
             .map(|name| (name.clone(), Map::new()))
             .collect();
+        // Every global integration name, to tell a new personal one from a marketplace one.
+        let global = self
+            .plugin_action(json!({"action": "list", "scope": "global"}))
+            .await
+            .map_err(|message| json!({"state": "error", "message": message}))?;
+        let taken = |name: &str| {
+            global.as_array().into_iter().flatten().any(|p| {
+                p["scope"] == "global" && p["spec"]["name"] == name && !p["source"].is_null()
+            })
+        };
         for (key, definition) in servers {
             let (integration, server) = key
                 .split_once('/')
                 .filter(|(i, s)| !i.is_empty() && !s.is_empty())
                 .ok_or_else(|| invalid(format!("\"{key}\" must be named integration/server")))?;
-            let servers = wanted.get_mut(integration).ok_or_else(|| {
-                invalid(format!(
-                    "\"{integration}\" is not one of your personal integrations"
-                ))
-            })?;
+            // A new name makes a new personal integration; a marketplace one stays read-only.
+            if !wanted.contains_key(integration) {
+                if taken(integration) {
+                    return Err(invalid(format!(
+                        "\"{integration}\" is a marketplace integration; make a personal copy to edit it"
+                    )));
+                }
+                wanted.insert(integration.to_owned(), Map::new());
+            }
+            let servers = wanted.get_mut(integration).expect("added above");
             let mut parsed = themis_core::plugins::mcp_server_from_standard(server, definition)
                 .map_err(|e| invalid(format!("{key}: {e:#}")))?;
             // Whether it runs stays as switched in Integrations unless the file says so.
@@ -212,6 +271,19 @@ impl AppState {
         let mut changed = Vec::new();
         let mut updated = revisions.clone();
         for (name, servers) in wanted {
+            if !revisions.contains_key(&name) {
+                if current.contains_key(&name) {
+                    return Err(
+                        json!({"state": "conflict", "message": format!("\"{name}\" was added elsewhere since the copy was opened; open it again")}),
+                    );
+                }
+                self.plugin_action(json!({"action": "save", "scope": "global", "spec": {"name": name, "mcp": servers}}))
+                    .await
+                    .map_err(|message| json!({"state": "invalid", "message": message}))?;
+                updated.insert(name.clone(), String::new());
+                changed.push(name);
+                continue;
+            }
             let Some((revision, mcp)) = current.get(&name) else {
                 return Err(
                     json!({"state": "conflict", "message": format!("\"{name}\" was removed since the copy was opened; open it again")}),
@@ -263,5 +335,41 @@ impl AppState {
             .get(&self.mcp_draft_key())
             .map(|draft| draft.status.clone())
             .unwrap_or_else(|| json!({"state": "closed"}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn every_example_applies_once_uncommented() {
+        let servers = Map::from_iter([(
+            "personal/files".to_owned(),
+            json!({"command": "npx", "args": ["-y", "x"]}),
+        )]);
+        let text = mcp_file_text(&servers).unwrap();
+        let parsed = themis_core::configuration::parse_jsonc(&text).unwrap();
+        assert_eq!(parsed["mcpServers"].as_object().unwrap().len(), 1);
+        // Uncommenting every example line gives a file with each example as a valid server.
+        let uncommented: String = text
+            .lines()
+            .map(|line| match line.strip_prefix("    // ") {
+                Some(rest)
+                    if rest.starts_with('"') || rest.starts_with(' ') || rest.starts_with('}') =>
+                {
+                    format!("    {rest}\n")
+                }
+                _ => format!("{line}\n"),
+            })
+            .collect();
+        let parsed = themis_core::configuration::parse_jsonc(&uncommented).unwrap();
+        let all = parsed["mcpServers"].as_object().unwrap();
+        assert_eq!(all.len(), 4);
+        for (name, raw) in all {
+            let server = name.split_once('/').unwrap().1;
+            let parsed = themis_core::plugins::mcp_server_from_standard(server, raw)
+                .unwrap_or_else(|e| panic!("{name}: {e:#}"));
+            parsed.validate().unwrap();
+        }
     }
 }

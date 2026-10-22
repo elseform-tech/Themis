@@ -17,6 +17,7 @@ pub(crate) mod editors;
 mod goal;
 mod goal_tool;
 mod integration_tools;
+mod keys;
 mod mcp;
 mod mcp_consent;
 mod mcp_file;

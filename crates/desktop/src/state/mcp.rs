@@ -87,6 +87,14 @@ impl McpEntry {
             Some(Err(reason)) if reason == NEEDS_SIGN_IN => {
                 json!({"status":"needs_sign_in","reason":reason})
             }
+            Some(Err(reason)) if reason.starts_with(themis_core::plugins::keys::NEEDS_KEY) => {
+                let names = &reason[themis_core::plugins::keys::NEEDS_KEY.len()..];
+                json!({
+                    "status": "needs_key",
+                    "keys": names.split(", ").collect::<Vec<_>>(),
+                    "reason": format!("Add {names} in Settings › Keys."),
+                })
+            }
             Some(Err(reason)) => json!({"status":"failed","reason":reason}),
         }
     }
@@ -103,7 +111,7 @@ impl AppState {
         retry: bool,
     ) -> Arc<McpEntry> {
         let key = format!("{}:{}:mcp:{name}", plugin.scope, plugin.spec.name);
-        let remote_url = server.url.clone().filter(|_| server.bearer_env.is_none());
+        let remote_url = server.url.clone().filter(|_| !server.has_credentials());
         let fingerprint = format!(
             "{}:{blocked:?}:{}",
             plugin.revision,
@@ -152,6 +160,9 @@ impl AppState {
                                 return NEEDS_SIGN_IN.to_owned();
                             }
                             let text = error.to_string();
+                            if text.starts_with(themis_core::plugins::keys::NEEDS_KEY) {
+                                return text;
+                            }
                             if let Some(program) = text.strip_prefix("MCP program not found: ") {
                                 return format!("MCP process could not start: '{program}' was not found on this computer. Install it, or save the command with its full path.");
                             }

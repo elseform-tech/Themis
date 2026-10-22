@@ -684,16 +684,28 @@ async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
         let broken = call(&dir, "apply_mcp_config", json!({}));
         assert_eq!(broken["state"], "invalid", "{broken}");
         assert_eq!(broken["line"], 3);
-        // A name outside your personal integrations is refused.
+        // A new integration name makes a new personal integration (as the examples do).
+        call(&dir, "open_mcp_config", json!({"open": false}));
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        assert!(fresh.contains("// \"personal/github\": {"), "{fresh}");
         std::fs::write(
             &path,
-            "{\"mcpServers\": {\"someone/else\": {\"url\": \"http://127.0.0.1:12/mcp\"}}}",
+            fresh.replacen(
+                "\"mcpServers\": {",
+                "\"mcpServers\": {\n    \"mine/extra\": { \"url\": \"http://127.0.0.1:12/mcp\" },",
+                1,
+            ),
         )
         .unwrap();
-        assert!(call(&dir, "apply_mcp_config", json!({}))["message"]
-            .as_str()
+        let added = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(added["changed"], json!(["mine"]), "{added}");
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        assert!(list
+            .as_array()
             .unwrap()
-            .contains("not one of your personal integrations"));
+            .iter()
+            .any(|p| p["spec"]["name"] == "mine"
+                && p["spec"]["mcp"]["extra"]["url"] == "http://127.0.0.1:12/mcp"));
         // A change made elsewhere since the copy was taken is a conflict, not overwritten.
         let reopened = call(&dir, "open_mcp_config", json!({"open": false}));
         let fresh = std::fs::read_to_string(&path).unwrap();

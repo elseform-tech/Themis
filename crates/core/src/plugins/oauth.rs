@@ -36,6 +36,11 @@ fn store() -> Option<Arc<dyn TokenStore>> {
     slot().read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// Reads one entry of the credential store (also used for saved keys).
+pub(crate) fn load_entry(key: &str) -> Option<String> {
+    store()?.load(key)
+}
+
 /// What one sign-in left behind for a server (its URL is the key).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Tokens {
