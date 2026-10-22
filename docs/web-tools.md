@@ -26,7 +26,8 @@ carries `"untrusted": true`: page text is data, never instructions or permission
 
 Asks [SearXNG](https://docs.searxng.org/), a metasearch engine that queries Google, Bing,
 Brave, DuckDuckGo and others. **Themis ships its own SearXNG**: a standalone Python with a
-pinned SearXNG (`scripts/bundle-searxng.mjs`, about 155 MB installed, 50 MB of the download),
+pinned SearXNG (`scripts/bundle-searxng.mjs`, about 155 MB installed, 50 MB of the download;
+release builds add it with `tauri build --config tauri.searxng.conf.json`),
 started in the background with the app server on a private `127.0.0.1` port and stopped with
 it (a watchdog stops it too if the app is killed). Its settings, secret and log are in the
 app-data `searxng/` folder; nothing is installed system-wide. Settings › Web shows it as

@@ -139,9 +139,11 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: npm ci
         working-directory: web
-      # Packs the built-in SearXNG (standalone Python) into crates/desktop/searxng-runtime.
+      # Packs the built-in SearXNG (standalone Python) into crates/desktop/searxng-runtime and
+      # ships it: only release builds add it (tauri.searxng.conf.json), so ordinary cargo
+      # builds and tests do not need it.
       - run: node scripts/bundle-searxng.mjs
-      - run: npx -y @tauri-apps/cli@2 build
+      - run: npx -y @tauri-apps/cli@2 build --config tauri.searxng.conf.json
         working-directory: crates/desktop
       # The packaged app's search server starts and answers (uses the built runtime).
       - run: cargo test -p themis-desktop --test browser_permissions_cli_e2e cli_the_built_in_search_server_answers -- --nocapture
