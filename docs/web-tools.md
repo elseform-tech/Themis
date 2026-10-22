@@ -162,6 +162,12 @@ closed; the pill opens the Browser tab.
 
 ## Permissions (Settings › Browser)
 
+These settings live in the `browser` block of your `runtime.jsonc`, which you may also edit
+by hand. Settings › Browser saves only the field you change and refuses a save when the file
+changed since the page loaded (showing the latest instead), so it never overwrites a hand
+edit; the page also re-reads the file when you return to the window. Changes apply from each
+chat's next message, existing chats included; a reply already running keeps its settings.
+
 What the agent may do in its browser is set in **Settings › Browser**, modelled on OpenAI
 Codex's built-in browser. Three permissions each have a default and per-site exceptions,
 and each value is **Allow** (no prompt), **Ask** (an approval prompt) or **Block**:

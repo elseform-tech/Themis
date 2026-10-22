@@ -23,24 +23,31 @@ export function BrowserSettingsSection() {
   const [view, setView] = useState<BrowserSettingsView | null>(null);
   const [error, setError] = useState("");
   const [newSite, setNewSite] = useState("");
+  // Re-read when the window comes back, so edits made in runtime.jsonc meanwhile show.
   useEffect(() => {
-    getBrowserSettings().then(setView).catch(reason => setError(describeError(reason)));
+    const load = () => { void getBrowserSettings().then(setView).catch(reason => setError(describeError(reason))); };
+    load();
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
   }, []);
   if (error && !view) return <p role="alert" className="themis-form-error">{error}</p>;
   if (!view) return null;
   const settings = view.settings;
 
-  async function save(next: BrowserSettings) {
+  async function save(changes: Partial<BrowserSettings>) {
+    if (!view) return;
     setError("");
     try {
-      const saved = await updateBrowserSettings(next);
-      setView(current => current && { ...current, settings: saved });
-      dispatch({ type: "browser/opens-workspace", value: saved.open_workspace });
+      const saved = await updateBrowserSettings(changes, view.revision);
+      setView(current => current && { ...current, ...saved });
+      dispatch({ type: "browser/opens-workspace", value: saved.settings.open_workspace });
     } catch (reason) {
       setError(describeError(reason));
+      // Changed in the file meanwhile (or refused): show what is saved now.
+      void getBrowserSettings().then(setView).catch(() => {});
     }
   }
-  const patch = (changes: Partial<BrowserSettings>) => void save({ ...settings, ...changes });
+  const patch = (changes: Partial<BrowserSettings>) => void save(changes);
   const setException = (site: string, key: PermissionKey, value: SiteAccess | "") => {
     const exceptions = settings.site_exceptions.map(entry => {
       if (entry.site !== site) return entry;

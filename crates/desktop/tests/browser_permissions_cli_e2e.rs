@@ -392,31 +392,59 @@ async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
             .unwrap()
             .iter()
             .any(|s| s == "paypal.com"));
-        let mut settings = view["settings"].clone();
-        settings["permissions"]["debugging"] = json!("ask");
-        settings["show_secrets"] = json!(true);
+        // Only the changed fields are sent, with the revision the page loaded.
+        let mut permissions = view["settings"]["permissions"].clone();
+        permissions["debugging"] = json!("ask");
         let saved = call(
             &dir,
             "update_browser_settings",
-            json!({"settings": settings}),
+            json!({"changes": {"permissions": permissions, "show_secrets": true}, "revision": view["revision"]}),
         );
-        assert_eq!(saved["permissions"]["debugging"], "ask");
+        assert_eq!(saved["settings"]["permissions"]["debugging"], "ask");
+        assert_ne!(saved["revision"], view["revision"]);
         let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
         assert!(file.contains("// my notes"), "{file}");
         assert_eq!(
             call(&dir, "get_browser_settings", json!({}))["settings"]["show_secrets"],
             true
         );
+        // A hand edit to the file while the page is open: the stale page's save is refused
+        // and the hand edit stays.
+        let edited = file.replace("\"developer_mode\": true", "\"developer_mode\": false");
+        assert_ne!(edited, file, "{file}");
+        std::fs::write(dir.join("runtime.jsonc"), &edited).unwrap();
+        let stale = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_browser_settings",
+                &json!({"changes": {"open_workspace": false}, "revision": saved["revision"]}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!stale.status.success());
+        assert!(String::from_utf8_lossy(&stale.stderr).contains("changed in runtime.jsonc"));
+        assert_eq!(std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap(), edited);
+        let fresh = call(&dir, "get_browser_settings", json!({}));
+        assert_eq!(fresh["settings"]["developer_mode"], false);
+        let saved = call(
+            &dir,
+            "update_browser_settings",
+            json!({"changes": {"open_workspace": false}, "revision": fresh["revision"]}),
+        );
+        assert_eq!(saved["settings"]["developer_mode"], false, "the hand edit is kept");
+        assert_eq!(saved["settings"]["open_workspace"], false);
+        let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
         // An invalid site is refused and the file is left as it was.
-        let mut bad = saved.clone();
-        bad["site_exceptions"] = json!([{"site": "https://x.com/path", "browsing": "block"}]);
+        let bad = json!({"site_exceptions": [{"site": "https://x.com/path", "browsing": "block"}]});
         let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
             .arg("--data-dir")
             .arg(&dir)
             .args([
                 "call",
                 "update_browser_settings",
-                &json!({"settings": bad}).to_string(),
+                &json!({"changes": bad}).to_string(),
             ])
             .output()
             .unwrap();

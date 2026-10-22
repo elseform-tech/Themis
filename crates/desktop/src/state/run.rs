@@ -371,6 +371,7 @@ impl AppState {
                 state
                     .update_user_browser_config(|browser| {
                         super::browser::allow_site(browser, &site, permission);
+                        Ok(())
                     })
                     .map(|_| ())
             })

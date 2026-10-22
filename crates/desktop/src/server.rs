@@ -657,15 +657,22 @@ async fn dispatch_command(
         "plugin_action" => output!(state.plugin_action(args).await?),
         "list_prompt_skills" => output!(state.prompt_skills(arg(&args, "projectRoot")?).await?),
         "ping" => output!(state.ping().await),
-        "get_browser_settings" => output!(json!({
-            "settings": state.user_browser_config()?,
+        "get_browser_settings" => output!({
+            let (settings, revision) = state.user_browser_view()?;
+            json!({
+            "settings": settings,
+            "revision": revision,
             "browsers": themis_core::browser::launch::installed_browsers(),
             "default_downloads_directory": themis_core::browser::session::default_downloads_directory(),
             "starter_sites": themis_core::configuration::STARTER_BLOCKED_SITES,
-        })),
+            })
+        }),
         "update_browser_settings" => {
-            let settings: themis_core::configuration::BrowserConfig = arg(&args, "settings")?;
-            output!(state.update_user_browser_config(|browser| *browser = settings)?)
+            let changes: serde_json::Map<String, Value> = arg(&args, "changes")?;
+            let revision: Option<String> = arg(&args, "revision")?;
+            let (settings, revision) =
+                state.patch_user_browser_config(changes, revision.as_deref())?;
+            output!(json!({"settings": settings, "revision": revision}))
         }
         "browser_history" => output!(
             state

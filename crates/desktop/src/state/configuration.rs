@@ -237,12 +237,46 @@ impl AppState {
             .map_err(|e| format!("runtime configuration: {e:#}"))
     }
 
+    /// The browser settings with the revision a later edit must name (Settings › Browser).
+    pub fn user_browser_view(&self) -> Result<(configuration::BrowserConfig, String), String> {
+        let browser = self.user_browser_config()?;
+        let revision = browser_revision(&browser);
+        Ok((browser, revision))
+    }
+
+    /// Saves only the `changes` (top-level browser fields) on top of what the file holds now.
+    /// With `revision`, refuses when the file's browser settings changed since that revision
+    /// (an edit in the file or another window), so a stale page never overwrites them.
+    pub fn patch_user_browser_config(
+        &self,
+        changes: serde_json::Map<String, Value>,
+        revision: Option<&str>,
+    ) -> Result<(configuration::BrowserConfig, String), String> {
+        let saved = self.update_user_browser_config(|browser| {
+            if revision.is_some_and(|expected| expected != browser_revision(browser)) {
+                return Err(STALE_BROWSER_SETTINGS.to_owned());
+            }
+            let mut value = serde_json::to_value(&*browser).map_err(|e| e.to_string())?;
+            let object = value
+                .as_object_mut()
+                .ok_or("browser settings are not an object")?;
+            for (key, field) in changes {
+                object.insert(key, field);
+            }
+            *browser = serde_json::from_value(value)
+                .map_err(|e| format!("runtime configuration: browser: {e}"))?;
+            Ok(())
+        })?;
+        let revision = browser_revision(&saved);
+        Ok((saved, revision))
+    }
+
     /// Applies `change` to the `browser` settings in the user `runtime.jsonc` and saves
     /// them, leaving the rest of the file, comments included, as written. Later runs pick
     /// them up; a run in progress keeps its own copy.
     pub fn update_user_browser_config(
         &self,
-        change: impl FnOnce(&mut configuration::BrowserConfig),
+        change: impl FnOnce(&mut configuration::BrowserConfig) -> Result<(), String>,
     ) -> Result<configuration::BrowserConfig, String> {
         static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
@@ -255,7 +289,7 @@ impl AppState {
             .map_err(|e| format!("runtime configuration: {e:#}"))?
             .config
             .browser;
-        change(&mut browser);
+        change(&mut browser)?;
         browser.site_restrictions.clear();
         let value = serde_json::to_value(&browser).map_err(|e| e.to_string())?;
         let updated = configuration::set_top_level(&content, "browser", &value)
@@ -373,6 +407,20 @@ pub const RUNTIME_CONFIG_STARTER: &str = r#"// Themis settings for every project
   // }
 }
 "#;
+
+/// Refusal when the file's browser settings changed under an open Settings page.
+pub(crate) const STALE_BROWSER_SETTINGS: &str =
+    "Browser settings changed in runtime.jsonc since this page loaded; showing the latest";
+
+/// A short, stable fingerprint of browser settings as resolved from the file.
+fn browser_revision(browser: &configuration::BrowserConfig) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(browser)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
 
 #[cfg(test)]
 mod tests {

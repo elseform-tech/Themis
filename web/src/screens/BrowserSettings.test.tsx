@@ -24,7 +24,7 @@ const SETTINGS: BrowserSettings = {
 };
 vi.mock("../lib/tauri", () => ({
   getBrowserSettings: vi.fn(),
-  updateBrowserSettings: vi.fn(async (settings: BrowserSettings) => settings),
+  updateBrowserSettings: vi.fn(async (changes: Partial<BrowserSettings>) => ({ settings: { ...SETTINGS, ...changes }, revision: "r2" })),
   browserHistory: vi.fn(async () => ({ entries: [{ url: "http://localhost:5173/", title: "Chess", last_visit: 1_800_000_000, visits: 2, project: "/p/chess" }] })),
   removeBrowserHistory: vi.fn(async () => undefined),
   clearBrowsingData: vi.fn(async () => ({})),
@@ -33,6 +33,7 @@ vi.mock("../lib/tauri", () => ({
 beforeEach(() => {
   vi.mocked(bridge.getBrowserSettings).mockResolvedValue({
     settings: structuredClone(SETTINGS),
+    revision: "r1",
     browsers: ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
     default_downloads_directory: "/Users/me/Downloads",
     starter_sites: ["paypal.com", "stripe.com"],
@@ -45,7 +46,7 @@ afterEach(cleanup);
 async function renderSection() {
   await act(async () => { render(<BrowserSettingsSection />); });
 }
-const saved = () => vi.mocked(bridge.updateBrowserSettings).mock.lastCall?.[0];
+const saved = () => vi.mocked(bridge.updateBrowserSettings).mock.lastCall![0];
 
 describe("Settings › Browser", () => {
   it("shows the defaults Codex-style and saves a permission change", async () => {
@@ -55,14 +56,27 @@ describe("Settings › Browser", () => {
     expect(screen.getByRole("combobox", { name: "Browser" })).toHaveTextContent("Automatic (Google Chrome)");
     expect(screen.getByText("/Users/me/Downloads")).toBeInTheDocument();
     await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Debugging" }), { target: { value: "ask" } }); });
-    expect(saved()?.permissions.debugging).toBe("ask");
+    expect(saved().permissions!.debugging).toBe("ask");
+    // Only the changed field is sent, with the revision the page loaded.
+    expect(Object.keys(saved())).toEqual(["permissions"]);
+    expect(vi.mocked(bridge.updateBrowserSettings).mock.lastCall![1]).toBe("r1");
     expect(dispatch).toHaveBeenCalledWith({ type: "browser/opens-workspace", value: true });
+  });
+
+  it("reloads instead of overwriting when runtime.jsonc changed meanwhile", async () => {
+    await renderSection();
+    vi.mocked(bridge.updateBrowserSettings).mockRejectedValueOnce(new Error("Browser settings changed in runtime.jsonc since this page loaded; showing the latest"));
+    vi.mocked(bridge.getBrowserSettings).mockResolvedValueOnce({ settings: { ...structuredClone(SETTINGS), developer_mode: false }, revision: "r9", browsers: [], default_downloads_directory: "/Users/me/Downloads", starter_sites: [] });
+    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Browsing" }), { target: { value: "ask" } }); });
+    expect(screen.getByRole("alert")).toHaveTextContent("changed in runtime.jsonc");
+    expect(screen.getByRole("checkbox", { name: "Enable full CDP access" })).not.toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Browsing" })).toHaveValue("allow");
   });
 
   it("greys out Debugging when Developer mode is off", async () => {
     await renderSection();
     await act(async () => { fireEvent.click(screen.getByRole("checkbox", { name: "Enable full CDP access" })); });
-    expect(saved()?.developer_mode).toBe(false);
+    expect(saved().developer_mode).toBe(false);
     expect(screen.getByRole("combobox", { name: "Debugging" })).toBeDisabled();
   });
 
@@ -70,21 +84,21 @@ describe("Settings › Browser", () => {
     await renderSection();
     fireEvent.change(screen.getByRole("textbox", { name: "Add a site" }), { target: { value: "https://Bank.example/login" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Add site" })); });
-    expect(saved()?.site_exceptions).toContainEqual({ site: "bank.example", browsing: "block" });
+    expect(saved().site_exceptions!).toContainEqual({ site: "bank.example", browsing: "block" });
     await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Debugging on bank.example" }), { target: { value: "allow" } }); });
-    expect(saved()?.site_exceptions.find(e => e.site === "bank.example")?.debugging).toBe("allow");
+    expect(saved().site_exceptions!.find(e => e.site === "bank.example")?.debugging).toBe("allow");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Remove paypal.com" })); });
-    expect(saved()?.site_exceptions.map(e => e.site)).toEqual(["bank.example"]);
+    expect(saved().site_exceptions!.map(e => e.site)).toEqual(["bank.example"]);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Restore defaults" })); });
-    expect(saved()?.site_exceptions.map(e => e.site)).toEqual(["paypal.com", "stripe.com", "bank.example"]);
+    expect(saved().site_exceptions!.map(e => e.site)).toEqual(["paypal.com", "stripe.com", "bank.example"]);
   });
 
   it("changes and resets the downloads folder", async () => {
     await renderSection();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Change…" })); });
-    expect(saved()?.downloads_directory).toBe("/Users/me/Desktop");
+    expect(saved().downloads_directory).toBe("/Users/me/Desktop");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Reset" })); });
-    expect(saved()?.downloads_directory).toBeUndefined();
+    expect(saved()).toHaveProperty("downloads_directory", undefined);
   });
 
   it("searches history, removes an entry and clears data after confirming", async () => {

@@ -334,8 +334,10 @@ export function getBrowserSettings(): Promise<BrowserSettingsView> {
   return invoke('get_browser_settings');
 }
 
-export function updateBrowserSettings(settings: BrowserSettings): Promise<BrowserSettings> {
-  return invoke('update_browser_settings', { settings });
+/** Saves only `changes` (a cleared field as null), refused when the file changed since `revision`. */
+export function updateBrowserSettings(changes: Partial<BrowserSettings>, revision: string): Promise<{ settings: BrowserSettings; revision: string }> {
+  const sent = Object.fromEntries(Object.entries(changes).map(([key, value]) => [key, value === undefined ? null : value]));
+  return invoke('update_browser_settings', { changes: sent, revision });
 }
 
 export function browserHistory(projectRoot: string | null, query: string): Promise<{ entries: BrowserHistoryEntry[] }> {
