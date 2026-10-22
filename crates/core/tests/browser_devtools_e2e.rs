@@ -65,8 +65,13 @@ async fn run(tools: &[Box<dyn ToolT>], name: &str, args: Value) -> Value {
         .unwrap_or_else(|error| panic!("{name}: {error}"))
 }
 
+/// One browser at a time: three Chromes starting together on a loaded CI machine can miss
+/// the 20-second startup limit.
+static ONE_BROWSER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
+    let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let hub = BrowserHub::new(BrowserConfig {
         root: data.path().to_path_buf(),
@@ -392,6 +397,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_download_the_agent_starts_lands_in_the_settings_folder() {
+    let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let hub = BrowserHub::new(BrowserConfig {
         root: data.path().to_path_buf(),
@@ -466,6 +472,7 @@ async fn a_download_the_agent_starts_lands_in_the_settings_folder() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_download_nobody_allowed_is_cancelled() {
+    let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let hub = BrowserHub::new(BrowserConfig {
         root: data.path().to_path_buf(),
