@@ -19,6 +19,7 @@ mod goal_tool;
 mod integration_tools;
 mod mcp;
 mod mcp_consent;
+mod mcp_file;
 mod media_tool;
 mod permissions;
 mod plugins;

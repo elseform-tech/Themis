@@ -43,6 +43,22 @@ Connections support stdio and Streamable HTTP JSON-RPC, initialization, paginate
 
 Canonical hook events are `RunStart`, `BeforeTool`, `AfterTool`, `BeforeCompaction`, and `RunEnd`; legacy event aliases remain supported. Hook matchers select tools; ignore/abort failure policy is explicit. Commands receive a JSON payload through stdin and may return JSON. Before-event hooks can block on failure. Hooks cannot grant tool permissions. MCP server processes and hooks are not run inside the OS sandbox that confines agent commands (see [sandbox](sandbox.md#what-it-covers)); they run with your permissions once you enable them. Commands have bounded output/time; Unix process groups terminate descendants on timeout/cancellation. Imported resource roots are passed to hooks as `CLAUDE_PLUGIN_ROOT`, never substituted into shell source. Explicit chat/CLI tests run the saved configuration; normal runs request approvals.
 
+## Edit as mcp.json (Integrations › MCP)
+
+**Open** writes your personal (non-marketplace) global MCP servers to one copy,
+`mcp-edit/mcp.json` in the app data folder, as `{"mcpServers": {"integration/server": {...}}}`,
+and opens it in the editor chosen under **Open with** (the same choice as Settings ›
+Permissions). While it is open Themis watches it: each save is parsed as JSONC and every
+integration whose servers changed is saved through the integrations store with the revision
+the copy was made from, exactly as an edit in the CLI. The row then shows **Applied** with the
+integrations changed, **Invalid · line N** (nothing is applied), or a **conflict** when that
+integration changed elsewhere since the copy was opened (open it again). Adding a server under
+an existing personal integration name adds it; removing one removes it; a name outside your
+personal integrations is refused. As with any edit, a changed command, arguments or URL does
+not start until you enable it again. Marketplace integrations are not listed: make a personal
+copy to edit one. The CLI uses the same methods: `open_mcp_config` (with `"open": false` to
+only write and watch the copy), `apply_mcp_config` and `mcp_config_status`.
+
 ## CLI
 
 ```sh

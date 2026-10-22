@@ -960,6 +960,21 @@ fn bail_unbalanced() -> Result<String> {
     anyhow::bail!("configuration must be an object")
 }
 
+/// Parses JSONC (comments, trailing commas) of at most 1 MiB; an error carries the 1-based
+/// line it was found on (0 when the input is too large).
+pub fn parse_jsonc(content: &str) -> std::result::Result<Value, (String, usize)> {
+    let bytes = strip_jsonc(content).map_err(|e| (e.to_string(), 0))?;
+    serde_json::from_slice(&bytes).map_err(|e| {
+        let message = e.to_string();
+        let message = message
+            .split(" at line ")
+            .next()
+            .unwrap_or(&message)
+            .to_owned();
+        (message, e.line())
+    })
+}
+
 /// JSONC text as plain JSON bytes: comments and trailing commas become spaces,
 /// so byte offsets, lines and columns stay those of the original file.
 fn strip_jsonc(content: &str) -> Result<Vec<u8>> {

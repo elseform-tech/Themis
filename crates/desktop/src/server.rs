@@ -927,6 +927,16 @@ async fn dispatch_command(
         ),
         "ensure_runtime_config" => output!(state.ensure_runtime_config()?),
         "open_runtime_config" => done!(state.open_runtime_config(arg(&args, "editor")?).await),
+        "open_mcp_config" => output!(
+            state
+                .open_mcp_config(
+                    arg(&args, "editor")?,
+                    arg::<Option<bool>>(&args, "open")?.unwrap_or(true)
+                )
+                .await?
+        ),
+        "apply_mcp_config" => output!(state.apply_mcp_config().await?),
+        "mcp_config_status" => output!(state.mcp_config_status()),
         "list_editors" => output!(json!({"editors": crate::state::editors::installed_editors()})),
         "open_in_editor" => done!(
             state

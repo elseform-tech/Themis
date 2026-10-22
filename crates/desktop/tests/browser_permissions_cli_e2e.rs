@@ -592,3 +592,120 @@ async fn cli_sets_and_checks_the_search_server() {
     .unwrap();
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    let watcher = tokio::task::spawn_blocking(move || {
+        call(
+            &dir,
+            "plugin_action",
+            json!({"action": "save", "scope": "global", "spec": {"name": "personal", "mcp": {"docs": {"url": "http://127.0.0.1:9/mcp"}}}}),
+        );
+        let opened = call(&dir, "open_mcp_config", json!({"open": false}));
+        assert_eq!(opened["state"], "open", "{opened}");
+        assert_eq!(opened["servers"], 1);
+        let path = std::path::PathBuf::from(opened["path"].as_str().unwrap());
+        let copy = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            copy.contains("\"personal/docs\"") && copy.starts_with("// "),
+            "{copy}"
+        );
+        // Saving the copy applies it: one server changed, one added (with a comment kept).
+        let edited = copy.replace("http://127.0.0.1:9/mcp", "http://127.0.0.1:10/mcp").replace(
+            "\"personal/docs\": {",
+            "\"personal/notes\": { \"url\": \"http://127.0.0.1:11/mcp\" }, // new\n    \"personal/docs\": {",
+        );
+        std::fs::write(&path, &edited).unwrap();
+        let status = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(status["state"], "applied", "{status}");
+        assert_eq!(status["changed"], json!(["personal"]));
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        let personal = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["spec"]["name"] == "personal")
+            .unwrap();
+        assert_eq!(
+            personal["spec"]["mcp"]["docs"]["url"],
+            "http://127.0.0.1:10/mcp"
+        );
+        assert_eq!(
+            personal["spec"]["mcp"]["notes"]["url"],
+            "http://127.0.0.1:11/mcp"
+        );
+        // A broken file names its line and changes nothing.
+        std::fs::write(
+            &path,
+            "{\n  \"mcpServers\": {\n    \"personal/docs\": { \"url\": }\n  }\n}\n",
+        )
+        .unwrap();
+        let broken = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(broken["state"], "invalid", "{broken}");
+        assert_eq!(broken["line"], 3);
+        // A name outside your personal integrations is refused.
+        std::fs::write(
+            &path,
+            "{\"mcpServers\": {\"someone/else\": {\"url\": \"http://127.0.0.1:12/mcp\"}}}",
+        )
+        .unwrap();
+        assert!(call(&dir, "apply_mcp_config", json!({}))["message"]
+            .as_str()
+            .unwrap()
+            .contains("not one of your personal integrations"));
+        // A change made elsewhere since the copy was taken is a conflict, not overwritten.
+        let reopened = call(&dir, "open_mcp_config", json!({"open": false}));
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        let revision = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["spec"]["name"] == "personal")
+            .unwrap()["revision"]
+            .clone();
+        call(
+            &dir,
+            "plugin_action",
+            json!({"action": "save", "scope": "global", "expectedRevision": revision, "spec": {"name": "personal", "mcp": {"docs": {"url": "http://127.0.0.1:13/mcp"}}}}),
+        );
+        std::fs::write(&path, fresh.replace("127.0.0.1:10", "127.0.0.1:14")).unwrap();
+        let conflict = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(conflict["state"], "conflict", "{conflict} {reopened}");
+        // The watcher applies a save by itself.
+        let watched = call(&dir, "open_mcp_config", json!({"open": false}));
+        let copy = std::fs::read_to_string(&path).unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+        std::fs::write(&path, copy.replace("127.0.0.1:13", "127.0.0.1:15")).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let status = call(&dir, "mcp_config_status", json!({}));
+            if status["state"] == "applied" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "not applied: {status} {watched}"
+            );
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        let personal = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["spec"]["name"] == "personal")
+            .unwrap();
+        assert_eq!(
+            personal["spec"]["mcp"]["docs"]["url"],
+            "http://127.0.0.1:15/mcp"
+        );
+    });
+    watcher.await.unwrap();
+    task.abort();
+}
