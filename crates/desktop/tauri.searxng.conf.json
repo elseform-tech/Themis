@@ -1,6 +1,6 @@
 {
   "build": {
-    "beforeBuildCommand": "npm --prefix ../web run build && node ../../scripts/bundle-searxng.mjs --if-missing"
+    "beforeBuildCommand": "npm --prefix ../web run build && node ../scripts/bundle-searxng.mjs --if-missing"
   },
   "bundle": {
     "resources": {
