@@ -65,7 +65,8 @@ export function WebSettingsSection() {
         </span>
       </div>
       {status?.failed_engines && status.failed_engines.length > 0 && <p className="themis-settings-hint">{status.failed_engines.map(engine => engine.reason ? `${engine.engine}: ${engine.reason}` : engine.engine).join(" · ")}</p>}
-      {status && !["working", "degraded"].includes(status.state) && status.message && <p className="themis-permissions-error">{status.message}</p>}
+      {/* Only a failure whose message says how to fix it; "Not reachable" needs no repeat. */}
+      {status && ["json_off", "error", "invalid"].includes(status.state) && status.message && <p className="themis-permissions-error">{status.message}</p>}
     </SettingsGroup>
   </>;
 }

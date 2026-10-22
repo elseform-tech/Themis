@@ -43,6 +43,8 @@ export function BrowserSettingsSection() {
       dispatch({ type: "browser/opens-workspace", value: saved.settings.open_workspace });
     } catch (reason) {
       setError(describeError(reason));
+      // The message sits at the top of a long page; say it where the person is looking too.
+      toast(dispatch, describeError(reason), "warning");
       // Changed in the file meanwhile (or refused): show what is saved now.
       void getBrowserSettings().then(setView).catch(() => {});
     }
