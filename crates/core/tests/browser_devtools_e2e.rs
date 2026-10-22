@@ -66,7 +66,7 @@ async fn run(tools: &[Box<dyn ToolT>], name: &str, args: Value) -> Value {
 }
 
 /// One browser at a time: three Chromes starting together on a loaded CI machine can miss
-/// the 20-second startup limit.
+/// the startup limit.
 static ONE_BROWSER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test(flavor = "multi_thread")]
