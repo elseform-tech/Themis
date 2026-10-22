@@ -144,6 +144,60 @@ pub fn devtools_address(line: &str) -> Option<String> {
     .then(|| address.to_owned())
 }
 
+/// The debugging server's `ws://` address, from whichever comes first: Chrome's
+/// "DevTools listening on" line on stderr, or the `DevToolsActivePort` file it writes in
+/// the profile (port, then the browser path). Newer Chrome on Windows does not always print
+/// the line (GitHub's 20261021 Windows image never did). The last few stderr lines are
+/// kept in `said` for the error when neither arrives.
+async fn wait_for_devtools(
+    stderr: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+    port_file: PathBuf,
+    said: Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+) -> Option<String> {
+    let mut lines = BufReader::new(stderr).lines();
+    let mut open = true;
+    let mut poll = tokio::time::interval(Duration::from_millis(100));
+    let address = loop {
+        tokio::select! {
+            line = lines.next_line(), if open => match line {
+                Ok(Some(line)) => {
+                    if let Some(address) = devtools_address(&line) {
+                        break address;
+                    }
+                    let mut said = said.lock().unwrap_or_else(|e| e.into_inner());
+                    said.push_back(line.chars().take(200).collect());
+                    if said.len() > 3 {
+                        said.pop_front();
+                    }
+                }
+                _ => open = false,
+            },
+            _ = poll.tick() => {
+                if let Some(address) = std::fs::read_to_string(&port_file)
+                    .ok()
+                    .and_then(|text| active_port_address(&text))
+                {
+                    break address;
+                }
+            }
+        }
+    };
+    // Keep draining so the browser never blocks on a full pipe.
+    if open {
+        tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+    }
+    Some(address)
+}
+
+/// The address in a `DevToolsActivePort` file: the port, then `/devtools/browser/<id>`.
+/// A file still being written (one line) is not an address yet.
+fn active_port_address(text: &str) -> Option<String> {
+    let mut lines = text.lines();
+    let port = lines.next()?.trim().parse::<u16>().ok()?;
+    let path = lines.next()?.trim();
+    devtools_address(&format!("ws://127.0.0.1:{port}{path}"))
+}
+
 /// Run by the guard: `read` returns when the pipe from Themis closes, which
 /// the OS does however Themis exits; the guard then ends the browser's group.
 /// It ignores the TERM it sends itself and goes with the KILL. No `--` before
@@ -280,26 +334,30 @@ impl BrowserProcess {
             }
         };
         let stderr = child.stderr.take().expect("piped stderr");
-        let address = tokio::time::timeout(START_TIMEOUT, async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if let Some(address) = devtools_address(&line) {
-                    // Keep draining so the browser never blocks on a full pipe.
-                    tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
-                    return Some(address);
-                }
-            }
-            None
-        })
+        let said = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let address = tokio::time::timeout(
+            START_TIMEOUT,
+            wait_for_devtools(
+                stderr,
+                profile.join("DevToolsActivePort"),
+                Arc::clone(&said),
+            ),
+        )
         .await
         .ok()
         .flatten();
         let Some(address) = address else {
             let _ = child.start_kill();
+            let said = said.lock().unwrap_or_else(|e| e.into_inner());
             anyhow::bail!(
-                "{} did not start its debugging server within {} s",
+                "{} did not start its debugging server within {} s{}",
                 executable.display(),
-                START_TIMEOUT.as_secs()
+                START_TIMEOUT.as_secs(),
+                if said.is_empty() {
+                    String::new()
+                } else {
+                    format!("; it said: {}", Vec::from(said.clone()).join(" | "))
+                }
             );
         };
         let cdp = Cdp::connect(&address).await?;
@@ -394,6 +452,89 @@ mod tests {
         ] {
             assert_eq!(devtools_address(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn the_active_port_file_gives_a_local_browser_address_once_complete() {
+        assert_eq!(
+            active_port_address("53211\n/devtools/browser/0b6c-11\n"),
+            Some("ws://127.0.0.1:53211/devtools/browser/0b6c-11".into())
+        );
+        // Still being written, not a port, or not the browser endpoint.
+        for bad in [
+            "53211\n",
+            "",
+            "x\n/devtools/browser/1",
+            "53211\n/devtools/page/1",
+        ] {
+            assert_eq!(active_port_address(bad), None, "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_browser_is_ready_by_its_stderr_line_or_its_port_file() {
+        type Said = Arc<std::sync::Mutex<std::collections::VecDeque<String>>>;
+        let said = || -> Said { Arc::default() };
+        // Seen on GitHub's 20261021 Windows image: no "DevTools listening" line, only the
+        // file, written a little after start.
+        let profile = tempfile::tempdir().unwrap();
+        let port_file = profile.path().join("DevToolsActivePort");
+        let writer = {
+            let port_file = port_file.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                std::fs::write(&port_file, "9333\n/devtools/browser/abc\n").unwrap();
+            })
+        };
+        let silent = said();
+        let (mut quiet, stderr) = tokio::io::duplex(64);
+        use tokio::io::AsyncWriteExt;
+        quiet
+            .write_all(b"[1022/131900.123:ERROR] something unrelated\n")
+            .await
+            .unwrap();
+        let address = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_devtools(stderr, port_file.clone(), Arc::clone(&silent)),
+        )
+        .await
+        .unwrap();
+        writer.await.unwrap();
+        assert_eq!(
+            address.as_deref(),
+            Some("ws://127.0.0.1:9333/devtools/browser/abc")
+        );
+        assert_eq!(
+            silent.lock().unwrap().len(),
+            1,
+            "other lines are kept for the error"
+        );
+        // The stderr line still works when there is no file.
+        let empty = tempfile::tempdir().unwrap();
+        let (mut chrome, stderr) = tokio::io::duplex(256);
+        chrome
+            .write_all(b"\nDevTools listening on ws://127.0.0.1:53211/devtools/browser/x\n")
+            .await
+            .unwrap();
+        let address = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_devtools(stderr, empty.path().join("DevToolsActivePort"), said()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            address.as_deref(),
+            Some("ws://127.0.0.1:53211/devtools/browser/x")
+        );
+        // Neither: it keeps waiting (the caller's timeout ends it).
+        let (_closed, stderr) = tokio::io::duplex(8);
+        drop(_closed);
+        assert!(tokio::time::timeout(
+            Duration::from_millis(400),
+            wait_for_devtools(stderr, empty.path().join("DevToolsActivePort"), said()),
+        )
+        .await
+        .is_err());
     }
 
     #[test]

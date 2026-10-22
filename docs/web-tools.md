@@ -60,6 +60,10 @@ the usual install folders (macOS `Applications`, Windows `Program Files` and
 recordings work the same on macOS, Windows and Linux. One gap: on Windows,
 continuously animated pages (canvas games, video) streaming into Workspace are
 unverified, since GitHub's GPU-less Windows test machines paint them only once.
+Themis knows the browser is ready from its "DevTools listening" line or from the
+`DevToolsActivePort` file it writes in the profile, whichever comes first (some
+Windows Chrome builds write only the file); if neither arrives within 20 seconds,
+the error quotes the browser's last few output lines.
 The browser runs headless with its own profile in app data
 (`browser/profiles/<project>/`): logins persist across a project's chats and never
 touch your own browser profile, Keychain or saved passwords. One browser serves a
