@@ -304,6 +304,14 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     .await;
     assert_eq!(resumed["paused"], false, "{resumed}");
 
+    // The panel repeated as the action is the panel's default.
+    let repeated = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "console", "action": "console", "expression": "1 + 1"}),
+    )
+    .await;
+    assert_eq!(repeated["value"], 2, "{repeated}");
     // A promise is awaited, as in the DevTools console.
     let awaited = run(
         &tools,

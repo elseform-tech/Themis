@@ -126,7 +126,7 @@ export function BrowserSettingsSection() {
 
     <section className="themis-settings-section" aria-label="Downloads">
       <h3 className="themis-settings-subtitle">Downloads</h3>
-      <div className="themis-settings-control"><span>Save to</span>
+      <div className="themis-settings-control"><span className="themis-browser-label">Save to</span>
         <span className="themis-browser-pick">
           <span className="themis-settings-root" title={settings.downloads_directory ?? view.default_downloads_directory}>{settings.downloads_directory ?? view.default_downloads_directory}</span>
           <button type="button" className="themis-text-action" onClick={() => void chooseFolder()}>Change…</button>

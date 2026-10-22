@@ -123,7 +123,9 @@ impl ToolRuntime for BrowserDevtools {
             "memory" => "summary",
             _ => "",
         };
+        // Models often repeat the panel as the action ("console", "console").
         let action = text(&args.action)
+            .filter(|action| !action.eq_ignore_ascii_case(&panel))
             .unwrap_or(default_action)
             .to_ascii_lowercase();
         let chat = Arc::clone(&self.base.scope.chat);
