@@ -6,7 +6,8 @@
 // 127.0.0.1 port (crates/desktop/src/state/searxng.rs).
 //
 // Usage: node scripts/bundle-searxng.mjs [--if-missing]
-// Needs uv and git on PATH. Runs on macOS, Linux and Windows (CI runs it before tauri build).
+// Needs uv and git on PATH. macOS and Linux only: SearXNG needs the Unix `pwd` module, so
+// Windows builds ship without it (CI skips this step there).
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
