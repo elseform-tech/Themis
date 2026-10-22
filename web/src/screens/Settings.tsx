@@ -21,6 +21,7 @@ import { DEFAULT_MODEL, modelLabel } from "../lib/models";
 import "./Settings.css";
 import { AppearanceSettings } from "./Appearance";
 import { PermissionsSettings } from "./PermissionsView";
+import { BrowserSettingsSection } from "./BrowserSettings";
 
 const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
 
@@ -190,7 +191,7 @@ export function SettingsScreen() {
   return (
     <div className="themis-settings">
       <div className="themis-settings-heading"><h2 className="themis-settings-title">Settings</h2><span role="status" className="themis-settings-hint">{saving ? "Saving…" : saved}</span></div>
-      <nav className="themis-settings-tabs" aria-label="Settings sections">{["General", "Appearance", "Models", "Permissions", "Advanced"].map(label => <button key={label} aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setSaved(""); }}>{label}</button>)}</nav>
+      <nav className="themis-settings-tabs" aria-label="Settings sections">{["General", "Appearance", "Models", "Permissions", "Browser", "Advanced"].map(label => <button key={label} aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setSaved(""); }}>{label}</button>)}</nav>
       {error && <p role="alert" className="themis-form-error">{error}</p>}
       <fieldset disabled={saving} className="themis-settings-fields">
       {section === "General" && <>
@@ -220,6 +221,7 @@ export function SettingsScreen() {
         </section>
       </>}
       {section === "Permissions" && <PermissionsSettings />}
+      {section === "Browser" && <BrowserSettingsSection />}
       {section === "Advanced" && <section className="themis-settings-section" aria-label="Advanced settings">
         <h3 className="themis-settings-subtitle">Run limits</h3>
         <Input id="themis-total-turns" label="Turn limit" type="number" min={1} max={2000} value={form.max_total_turns} onChange={event => setForm(f => ({ ...f, max_total_turns: Number(event.target.value) }))} onBlur={() => { if (form.max_total_turns !== state.settings.max_total_turns) void save({ max_total_turns: form.max_total_turns }); }} />

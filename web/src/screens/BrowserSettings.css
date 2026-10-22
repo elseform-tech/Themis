@@ -1,0 +1,14 @@
+/* Settings › Browser: lists and small inline controls; follows the Settings layout. */
+.themis-browser-pick { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.themis-site-exceptions { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+.themis-site-exceptions th, .themis-site-exceptions td { padding: 4px 6px; text-align: left; border-bottom: 1px solid var(--themis-border-subtle); }
+.themis-site-exceptions thead th { color: var(--themis-text-3); font-weight: 500; font-size: .75rem; }
+.themis-site-exceptions tbody th { font-weight: 500; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .75rem; overflow-wrap: anywhere; }
+.themis-site-add, .themis-browser-clear { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.themis-site-add input { flex: 1; min-width: 160px; }
+.themis-browser-history { margin: 0; padding: 0; list-style: none; max-height: 280px; overflow: auto; }
+.themis-browser-history li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--themis-border-subtle); }
+.themis-browser-history-text { flex: 1; min-width: 0; display: grid; gap: 2px; font-size: .8125rem; }
+.themis-browser-history-text small { color: var(--themis-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-browser-clear-type { display: inline-flex; align-items: center; gap: 6px; font-size: .8125rem; }
+.themis-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

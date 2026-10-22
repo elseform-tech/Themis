@@ -16,6 +16,7 @@ const backend = vi.hoisted(() => ({
 vi.mock("../lib/tauri", () => ({
   getSecretStatus: backend.status,
   getSettings: async () => ({ recent_roots: [], completion_sound: false }),
+  getBrowserSettings: async () => ({ settings: { open_workspace: true } }),
   getDefaultProject: async () => null,
   listThreads: async () => [],
   getThreadHistory: async () => [],

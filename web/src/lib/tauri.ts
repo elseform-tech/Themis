@@ -1,6 +1,7 @@
 // Typed Tauri bridge client. All frontend code reaches the backend through
 // these functions — never raw invoke() with stringly-typed payloads elsewhere.
 import { convertFileSrc, invoke as tauriInvoke } from '@tauri-apps/api/core';
+import type { BrowserHistoryEntry, BrowserSettings, BrowserSettingsView } from "./types";
 import type { PromptSkill } from './prompt';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
@@ -325,6 +326,27 @@ export function getSettings(): Promise<Settings> {
 
 export function updateSettings(patch: Partial<Settings>): Promise<Settings> {
   return invoke('update_settings', { patch });
+}
+
+/** Settings › Browser, read from and saved to the user runtime.jsonc (`browser`). */
+export function getBrowserSettings(): Promise<BrowserSettingsView> {
+  return invoke('get_browser_settings');
+}
+
+export function updateBrowserSettings(settings: BrowserSettings): Promise<BrowserSettings> {
+  return invoke('update_browser_settings', { settings });
+}
+
+export function browserHistory(projectRoot: string | null, query: string): Promise<{ entries: BrowserHistoryEntry[] }> {
+  return invoke('browser_history', { projectRoot, query });
+}
+
+export function removeBrowserHistory(projectRoot: string, url: string): Promise<void> {
+  return invoke('remove_browser_history', { projectRoot, url });
+}
+
+export function clearBrowsingData(projectRoot: string | null, range: "hour" | "day" | "week" | "all", types: Array<"history" | "cookies" | "cache">): Promise<unknown> {
+  return invoke('clear_browsing_data', { projectRoot, range, types });
 }
 
 export function getSecretStatus(): Promise<SecretStatus> {
