@@ -282,7 +282,7 @@ fn ensure_server(client: &server::Client, data_dir: &Path) -> Result<(), String>
         })
         .is_ok_and(|result| result.is_ok())
     };
-    if ping() {
+    if tauri::async_runtime::block_on(client.answers(server::SERVER_PATIENCE)) {
         return Ok(());
     }
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
