@@ -74,9 +74,10 @@ try {
   run("git", ["init", "-q", source]);
   run("git", ["-C", source, "fetch", "-q", "--depth", "1", "https://github.com/searxng/searxng", SEARXNG_COMMIT]);
   // utils/ holds server config templates with ':' in their names, which Windows cannot check
-  // out; SearXNG does not need them to run.
+  // out; SearXNG does not need them to run. The sparse checkout never writes them, but Git on
+  // Windows refuses any tree that lists such a path unless its NTFS check is off for this step.
   run("git", ["-C", source, "sparse-checkout", "set", "--no-cone", "/*", "!/utils/"]);
-  run("git", ["-C", source, "checkout", "-q", "FETCH_HEAD"]);
+  run("git", ["-C", source, "-c", "core.protectNTFS=false", "checkout", "-q", "FETCH_HEAD"]);
   const pip = ["pip", "install", "--python", python, "--break-system-packages", "--no-cache"];
   run("uv", [...pip, "-r", join(source, "requirements.txt"), "msgspec", "setuptools", "wheel", "pyyaml", "typing_extensions"]);
   run("uv", [...pip, "--no-build-isolation", source]);
