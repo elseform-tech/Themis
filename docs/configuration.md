@@ -15,8 +15,7 @@ QA builds with a different app identifier have separate data directories.
 
 | Location | Purpose | Scope |
 | --- | --- | --- |
-| App-data `runtime.jsonc` | Runtime defaults, Custom approval rules, OS sandbox, logging, discovery. A new file holds commented-out presets (approval variants, no-network sandbox, ask-before-browsing) | User, across projects |
-| App-data `runtime.example.jsonc` | Every setting with its allowed values and default, commented (`crates/core/src/configuration_reference.jsonc`); rewritten by Settings › Permissions › Example (`open_runtime_example`), never read. A test keeps it complete and equal to the defaults | Reference only |
+| App-data `runtime.jsonc` | Runtime defaults, Custom approval rules, OS sandbox, logging, discovery. A new file lists every setting commented out, with its explanation, allowed values and default (from `crates/core/src/configuration_reference.jsonc`; a test keeps it complete and equal to the defaults), then commented-out presets (approval variants, no-network sandbox, ask-before-browsing). Uncomment to use; Settings › Browser and Web add their blocks without removing the comments. An existing file is never rewritten | User, across projects |
 | Project `.themis/config.jsonc` | Project runtime overrides and additional approval and sandbox restrictions | Selected project/run root |
 | App-data `settings.json` | Existing desktop preferences and legacy run defaults | User |
 | App-data `compatibility-cache/` | Derived marketplace scan progress and validated package snapshots | User; refreshed explicitly |

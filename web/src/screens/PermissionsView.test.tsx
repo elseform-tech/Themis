@@ -6,12 +6,10 @@ import type { EffectivePermissions } from "../lib/types";
 const getEffectivePermissions = vi.fn();
 const openRuntimeConfig = vi.fn();
 const listEditors = vi.fn();
-const openRuntimeExample = vi.fn();
 vi.mock("../lib/tauri", () => ({
   getEffectivePermissions: (...args: unknown[]) => getEffectivePermissions(...args),
   openRuntimeConfig: (...args: unknown[]) => openRuntimeConfig(...args),
   listEditors: () => listEditors(),
-  openRuntimeExample: (...args: unknown[]) => openRuntimeExample(...args),
 }));
 
 import { PermissionsSettings, fileState, permissionProblems } from "./PermissionsView";
@@ -43,7 +41,7 @@ describe("PermissionsSettings", () => {
     await show(VIEW);
     expect(getEffectivePermissions).toHaveBeenCalledWith(null, null);
     expect(screen.getByText("runtime.jsonc")).toHaveAttribute("title", "/data/runtime.jsonc");
-    expect(screen.getAllByRole("button").map(button => button.textContent)).toEqual(["Open", "Example"]);
+    expect(screen.getAllByRole("button").map(button => button.textContent)).toEqual(["Open"]);
     expect(screen.queryByRole("alert")).toBeNull();
     // No rules, sandbox details, project or chat sections.
     expect(screen.queryByText(/Seatbelt|Rules|this chat|this project/)).toBeNull();
@@ -93,13 +91,6 @@ describe("PermissionsSettings", () => {
     fireEvent.change(timeout, { target: { value: "120" } });
     fireEvent.blur(timeout);
     expect(onPrefs).toHaveBeenCalledWith({ approval_timeout_seconds: 120 });
-  });
-
-  it("opens the example with the chosen editor", async () => {
-    openRuntimeExample.mockResolvedValue("/data/runtime.example.jsonc");
-    await show(VIEW);
-    fireEvent.click(screen.getByRole("button", { name: "Example" }));
-    expect(openRuntimeExample).toHaveBeenCalledWith(undefined);
   });
 
   it("opens the global file", async () => {
