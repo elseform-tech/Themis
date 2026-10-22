@@ -242,3 +242,133 @@ async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved()
         .any(|exception| exception.site == "paypal.com"));
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off() {
+    if themis_core::browser::launch::find_browser(None, None).is_none() {
+        eprintln!("skipping: no Chromium browser installed");
+        return;
+    }
+    let site = MockServer::start().await;
+    Mock::given(wiremock::matchers::path("/app"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<!doctype html><title>Local app</title><script>console.warn('slow start')</script><h1>Hi</h1>",
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let page = format!("http://127.0.0.1:{}/app", site.address().port());
+    let llm = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body: Value = request.body_json().unwrap_or(Value::Null);
+            match tool_results(&body).len() {
+                0 => tool_call("c1", "browser_open", json!({"url": page})),
+                1 if body["tools"].to_string().contains("browser_console") => {
+                    tool_call("c2", "browser_console", json!({"expression": "document.title + '!'"}))
+                }
+                2 => tool_call("c3", "browser_console", json!({})),
+                _ => ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{"message": {"role": "assistant", "content": "Done."}, "finish_reason": "stop"}]
+                })),
+            }
+        })
+        .mount(&llm)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(llm.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().to_string(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap();
+    {
+        let (data, id) = (data.path().to_owned(), thread.id.clone());
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": id, "mode": "yolo"}),
+            );
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": id, "text": "Debug the app."}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let results = results_after(&llm, &state, &thread.id, 3).await;
+    assert!(results[1].contains("Local app!"), "{}", results[1]);
+    assert!(results[2].contains("slow start"), "{}", results[2]);
+
+    // A project that turns Developer mode off: no debugging tool is offered.
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"browser":{"developer_mode":false}}"#,
+    )
+    .unwrap();
+    let before = llm.received_requests().await.unwrap_or_default().len();
+    let quiet = state
+        .create_thread(
+            project.path().to_string_lossy().to_string(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap();
+    {
+        let (data, id) = (data.path().to_owned(), quiet.id.clone());
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": id, "mode": "yolo"}),
+            );
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": id, "text": "Open it."}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let requests = llm.received_requests().await.unwrap_or_default();
+        if requests.len() > before && !state.get_thread(&quiet.id).await.is_ok_and(|t| t.running) {
+            let offered = requests[before].body_json::<Value>().unwrap()["tools"].to_string();
+            assert!(offered.contains("\"browser_open\""), "{offered}");
+            assert!(
+                !offered.contains("\"browser_console\"")
+                    && !offered.contains("\"browser_network\"")
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "second run did not finish"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    task.abort();
+}

@@ -718,8 +718,12 @@ impl AppState {
     /// Marks a run idle, releases its concurrency permit, and persists.
     pub(super) async fn finish_run(&self, thread_id: &str) {
         self.close_steer_inbox(thread_id);
-        // A recording the agent left running ends with its run.
+        // A recording the agent left running ends with its run, and so do its breakpoints,
+        // request blocks and throttling.
         self.stop_agent_recording(thread_id).await;
+        if let Some(chat) = self.inner.browsers.existing(thread_id) {
+            chat.end_debugging().await;
+        }
         self.inner
             .stop_flags
             .lock()

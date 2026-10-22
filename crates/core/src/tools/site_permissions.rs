@@ -144,7 +144,15 @@ impl SitePermissions {
                 action.summary
             ))
         };
-        match self.decide(permission, site) {
+        let access = self.decide(permission, site);
+        // Every decision is audited (metadata only; never the site), prompted or not.
+        crate::diagnostics::emit(
+            "browser",
+            "permission_decided",
+            "info",
+            serde_json::json!({"tool": tool, "permission": permission.label(), "access": format!("{access:?}").to_ascii_lowercase()}),
+        );
+        match access {
             SiteAccess::Block => Err(tool_error(format!(
                 "{} is blocked for {site} in Settings › Browser. {REFUSAL_NOTE}",
                 permission.label()

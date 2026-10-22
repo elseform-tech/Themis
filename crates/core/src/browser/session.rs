@@ -6,7 +6,7 @@
 //! keeps what changed since the agent last looked (console errors, failed
 //! requests, dialogs) and whether the page is still loading.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -97,6 +97,16 @@ struct TabState {
     console_errors: usize,
     /// Bumped when the main frame commits a new document (refs reset).
     document: u64,
+    /// Console messages at every level and uncaught exceptions, newest last (debugging tools).
+    console: VecDeque<devtools::ConsoleEntry>,
+    /// Requests the page made, newest last (debugging tools).
+    requests: VecDeque<devtools::RequestEntry>,
+    /// Numbers console messages and requests, so a tool can read only newer ones.
+    log_seq: u64,
+    /// The debugger's pause (`Debugger.paused` params) while the page is stopped.
+    paused: Option<Value>,
+    /// Counts pauses, so a stale auto-resume does not resume a later one.
+    pauses: u64,
 }
 
 struct Tab {
@@ -640,6 +650,9 @@ fn spawn_watcher(
                 continue;
             }
             handle_tab_event(&cdp, &target_id, &session_id, &state, &event);
+            if event.method == "Debugger.paused" {
+                devtools::resume_later(Arc::clone(&cdp), session_id.clone(), Arc::clone(&state));
+            }
             if event.method == "Page.screencastFrame" {
                 // Chrome sends the next frame only after this acknowledgement;
                 // spacing them caps the stream without skipping a still page's
@@ -707,6 +720,7 @@ fn handle_tab_event(
 ) {
     let params = &event.params;
     let main_frame = |frame: &Value| frame.as_str() == Some(target_id);
+    devtools::record(state, event);
     match event.method.as_str() {
         "Page.frameStartedLoading" if main_frame(&params["frameId"]) => {
             state.lock().unwrap_or_else(|e| e.into_inner()).loading = true;
@@ -1070,6 +1084,7 @@ impl ChatBrowser {
             "Runtime.enable",
             "DOM.enable",
             "Accessibility.enable",
+            "Log.enable",
         ] {
             cdp.call(Some(&session_id), method, json!({})).await?;
         }
@@ -2353,3 +2368,6 @@ mod tests {
         });
     }
 }
+
+mod devtools;
+pub use devtools::{ConsoleEntry, RequestEntry};

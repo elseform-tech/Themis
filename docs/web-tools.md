@@ -206,3 +206,35 @@ rules for `browser_*` (for example `{ "tool": "browser_*", "command": ["example.
 YOLO fetches without asking; the OS sandbox does not apply to these in-process
 requests, exactly as for MCP HTTP connections. Diagnostics never record page text
 or search results.
+
+## Debugging tools (Developer mode)
+
+With **Settings › Browser › Developer mode › Enable full CDP access** on (the default), the
+agent gets the DevTools toolset for the chat's current tab, gated by the Debugging permission
+(always allowed on local apps, Block on other sites by default):
+
+| Tool | Does |
+| --- | --- |
+| `browser_console` | Runs a JavaScript expression in the page, or in the paused call frame, and returns its value or exception; without one, returns console messages at every level (log, info, warning, error, exceptions with stacks) newer than `since` |
+| `browser_elements` | Inspects one element (by CSS selector or snapshot ref): attributes, box, computed styles, HTML; or sets an attribute, style or text, or removes it, live (nothing is saved) |
+| `browser_network` | Lists the tab's requests (method, URL, status, type, size, time, failure); with an id, headers and response body; blocks URL patterns or throttles (offline, slow3g, fast3g) |
+| `browser_debugger` | Sets and removes breakpoints by script URL and line (optionally conditional), pauses on exceptions, pauses, resumes and steps; while paused, returns the call stack and the top frame's variables |
+| `browser_storage` | Reads, sets, removes or clears the page's cookies, localStorage or sessionStorage |
+| `browser_performance` | `metrics`: load timing, largest contentful paint, layout shift, resource sizes and page metrics; `trace`: records the main thread for 1–15 s, returns long tasks and scripting, rendering and painting time, and saves the trace as a file |
+| `browser_memory` | `summary`: heap, DOM nodes, listeners and documents, with growth since the last summary (to find leaks); `snapshot`: a heap snapshot with the largest object kinds, saved as a file |
+
+Limits and safety:
+
+- **Secrets hidden (best-effort):** cookie values, credential headers (`Authorization`,
+  `Cookie`, `Set-Cookie`, `X-…-Token`) and token-like values (JWTs, long base64/hex strings,
+  values under keys such as `password` or `token`) become `[hidden: N chars]` in results and
+  chat history unless **Show secrets to the agent** is on. httpOnly cookie values are never
+  returned. This guards against accidental exposure, not a page that talked the agent into
+  encoding a secret; keep Debugging blocked on sites with accounts you care about.
+- **Bounds:** the last 500 console messages and 300 requests per tab, at most 50 per call,
+  16 KiB per value or body; traces and heap snapshots run one at a time.
+- **Pauses:** a pause the agent leaves alone resumes after 30 seconds; when a run ends or is
+  stopped, breakpoints, request blocks and throttling are cleared.
+- Diagnostics record which tool ran and the permission decision, never expressions, values,
+  bodies or sites.
+

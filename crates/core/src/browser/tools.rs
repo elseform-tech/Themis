@@ -48,12 +48,15 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
         Box::new(BrowserScroll { base: base.clone() }),
         Box::new(BrowserTabs { base: base.clone() }),
     ];
+    tools.extend(devtools::devtools(&base));
     if base.scope.media.is_some() {
         tools.push(Box::new(BrowserScreenshot { base: base.clone() }));
         tools.push(Box::new(BrowserRecord { base }));
     }
     tools
 }
+
+mod devtools;
 
 #[derive(Clone)]
 struct Base {
