@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getEffectivePermissions, listEditors, openRuntimeConfig, openRuntimeExample } from "../lib/tauri";
+import { getEffectivePermissions, listEditors, openRuntimeConfig } from "../lib/tauri";
 import type { EffectivePermissions, EffectiveRule } from "../lib/types";
 import { describeError } from "../state/store";
 import { SettingsGroup } from "./SettingsGroup";
@@ -71,7 +71,6 @@ export function PermissionsSettings({ editor = "", onEditor, prefs, onPrefs }: {
   }, []);
   const chosen = editors.some(entry => entry.id === editor) ? editor : "";
   const open = () => { setError(""); void openRuntimeConfig(chosen || undefined).catch((failure: unknown) => setError(describeError(failure))); };
-  const openExample = () => { setError(""); void openRuntimeExample(chosen || undefined).catch((failure: unknown) => setError(describeError(failure))); };
   const path = view?.files.find(entry => entry.scope === "user")?.path;
   const status = view && fileState(view);
   const approval = view?.approval;
@@ -104,7 +103,6 @@ export function PermissionsSettings({ editor = "", onEditor, prefs, onPrefs }: {
             </select>
             : <span className="themis-settings-hint">{editors[0].name}</span>}
           <button type="button" className="themis-text-action" onClick={open}>Open</button>
-          <button type="button" className="themis-text-action" title="Every setting with its allowed values and default, as a file to copy from" onClick={openExample}>Example</button>
         </span>
       </div>
       {/* The status already names the file problem and its line. */}

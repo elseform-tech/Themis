@@ -935,10 +935,11 @@ pub fn set_top_level(content: &str, key: &str, value: &Value) -> Result<String> 
             .rposition(|c| !c.is_ascii_whitespace());
         let entry = format!("{}: {rendered}", serde_json::to_string(key)?);
         match before {
+            // An object with no settings yet: the entry goes first, comments stay after it.
             Some(position) if bytes[position] == b'{' => format!(
-                "{}\n  {entry}\n{}",
+                "{}\n  {entry},{}",
                 &content[..=position],
-                &content[close..]
+                &content[position + 1..]
             ),
             Some(position) => format!(
                 "{},\n  {entry}{}",
@@ -960,8 +961,8 @@ fn bail_unbalanced() -> Result<String> {
     anyhow::bail!("configuration must be an object")
 }
 
-/// Every runtime setting with its allowed values and default, as commented JSONC. Written
-/// beside the user file as `runtime.example.jsonc` (never read back) and printed by the CLI.
+/// Every runtime setting with its allowed values and default, as commented JSONC. A new
+/// user `runtime.jsonc` carries it with every setting commented out.
 pub const REFERENCE: &str = include_str!("configuration_reference.jsonc");
 
 /// Parses JSONC (comments, trailing commas) of at most 1 MiB; an error carries the 1-based
@@ -1529,6 +1530,19 @@ mod tests {
 
     /// The reference is valid, changes nothing (its values are the defaults) and names every
     /// field, so a new setting cannot be added without documenting it there.
+    #[test]
+    fn set_top_level_keeps_comments_of_a_file_without_settings() {
+        let content = "// header\n{\n  // \"sandbox\": { \"network\": \"block\" },\n}\n";
+        let updated =
+            set_top_level(content, "browser", &serde_json::json!({ "enabled": false })).unwrap();
+        assert!(updated.contains("// \"sandbox\": { \"network\": \"block\" },"));
+        assert_eq!(
+            parse(&updated).unwrap()["browser"]["enabled"],
+            serde_json::json!(false)
+        );
+        let bare = set_top_level("{}", "web", &serde_json::json!({})).unwrap();
+        assert_eq!(parse(&bare).unwrap()["web"], serde_json::json!({}));
+    }
     #[test]
     fn the_reference_is_valid_and_lists_every_setting() {
         let resolved = resolve(Some(REFERENCE), None, None).expect("reference resolves");
