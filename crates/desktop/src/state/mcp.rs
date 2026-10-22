@@ -127,7 +127,7 @@ impl AppState {
                             }
                             let text = error.to_string();
                             if let Some(program) = text.strip_prefix("MCP program not found: ") {
-                                return format!("'{program}' was not found on this computer. Install it, or save the command with its full path.");
+                                return format!("MCP process could not start: '{program}' was not found on this computer. Install it, or save the command with its full path.");
                             }
                             match text.as_str() {
                                 "Could not start MCP server" => {

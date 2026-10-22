@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Builds the SearXNG that ships inside Themis: a standalone CPython (python-build-standalone,
 // through uv) with a pinned SearXNG and its requirements, trimmed, in
-// crates/desktop/searxng-runtime/. Tauri bundles that folder as the `searxng` resource; the
-// app starts it on a private 127.0.0.1 port (crates/desktop/src/state/searxng.rs).
+// crates/desktop/searxng-runtime/. Release builds ship that folder as the `searxng` resource
+// (`tauri build --config tauri.searxng.conf.json`); the app starts it on a private
+// 127.0.0.1 port (crates/desktop/src/state/searxng.rs).
 //
 // Usage: node scripts/bundle-searxng.mjs [--if-missing]
 // Needs uv and git on PATH. Runs on macOS, Linux and Windows (CI runs it before tauri build).
@@ -72,6 +73,9 @@ try {
   const source = join(work, "searxng");
   run("git", ["init", "-q", source]);
   run("git", ["-C", source, "fetch", "-q", "--depth", "1", "https://github.com/searxng/searxng", SEARXNG_COMMIT]);
+  // utils/ holds server config templates with ':' in their names, which Windows cannot check
+  // out; SearXNG does not need them to run.
+  run("git", ["-C", source, "sparse-checkout", "set", "--no-cone", "/*", "!/utils/"]);
   run("git", ["-C", source, "checkout", "-q", "FETCH_HEAD"]);
   const pip = ["pip", "install", "--python", python, "--break-system-packages", "--no-cache"];
   run("uv", [...pip, "-r", join(source, "requirements.txt"), "msgspec", "setuptools", "wheel", "pyyaml", "typing_extensions"]);
