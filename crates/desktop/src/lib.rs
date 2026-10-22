@@ -484,13 +484,15 @@ mod runtime_tests {
 mod login_path_tests {
     #[test]
     fn the_login_path_comes_first_and_nothing_is_lost() {
+        // The platform's own separator (`:` on Unix, `;` on Windows).
+        let join = |dirs: &[&str]| std::env::join_paths(dirs).unwrap();
         let merged = super::merged_path(
-            "/opt/homebrew/bin:/usr/bin".as_ref(),
-            "/usr/bin:/bin:/sbin".as_ref(),
+            &join(&["/opt/homebrew/bin", "/usr/bin"]),
+            &join(&["/usr/bin", "/bin", "/sbin"]),
         );
         assert_eq!(
             merged,
-            std::ffi::OsString::from("/opt/homebrew/bin:/usr/bin:/bin:/sbin")
+            join(&["/opt/homebrew/bin", "/usr/bin", "/bin", "/sbin"])
         );
     }
 

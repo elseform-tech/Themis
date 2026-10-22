@@ -109,36 +109,6 @@ impl AppState {
         Ok(path)
     }
 
-    /// Writes `runtime.example.jsonc` (every setting with its allowed values and default)
-    /// beside the user file, replacing an older copy; Themis never reads it.
-    pub fn write_runtime_example(&self) -> Result<PathBuf, String> {
-        let path = settings_app_dir(self.inner.settings.path()).join("runtime.example.jsonc");
-        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err("the example file cannot be a symlink".into());
-        }
-        std::fs::write(&path, configuration::REFERENCE)
-            .map_err(|e| format!("write '{}': {e}", path.display()))?;
-        Ok(path)
-    }
-
-    /// Writes the example file and opens it with `editor` (or the one chosen in Settings),
-    /// unless `open` is false. Returns its path.
-    pub async fn open_runtime_example(
-        &self,
-        editor: Option<String>,
-        open: bool,
-    ) -> Result<PathBuf, String> {
-        let path = self.write_runtime_example()?;
-        if open {
-            let editor = match editor {
-                Some(editor) => editor,
-                None => self.get_settings().await.config_editor,
-            };
-            super::editors::open_with(&editor, &path)?;
-        }
-        Ok(path)
-    }
-
     /// Opens the global `runtime.jsonc` (creating the starter if needed) as plain text in
     /// `editor`, or the one chosen in Settings (the system text editor by default). It opens
     /// nothing else.
@@ -457,21 +427,36 @@ pub const RUNTIME_CONFIG_PRESETS: [(&str, &str); 5] = [
     ),
 ];
 
-/// A new `runtime.jsonc`: what the file is, then [`RUNTIME_CONFIG_PRESETS`], all commented
-/// out so it changes nothing until edited. Every field with its allowed values is in
-/// `runtime.example.jsonc` beside it ([`configuration::REFERENCE`]).
+/// A new `runtime.jsonc`: every setting from [`configuration::REFERENCE`] with its
+/// explanation, allowed values and default, then [`RUNTIME_CONFIG_PRESETS`]. Every setting
+/// is commented out, so the file changes nothing until someone uncomments a line.
 pub fn runtime_config_starter() -> String {
     let mut text = String::from(
-        "// Themis settings for every project (JSON with // comments).\n\
+        "// Themis settings for every project (JSON with // comments and trailing commas).\n\
          //\n\
-         // Nothing here is active yet: without settings Themis allows reads, asks before\n\
-         // anything else, and runs commands in the sandbox with network allowed.\n\
-         // To use a preset, remove the // in front of its lines (only one approval preset).\n\
-         // Every setting, its allowed values and default: runtime.example.jsonc beside this\n\
-         // file (Settings > Permissions > Example). Changes apply from each chat's next message;\n\
-         // a project's .themis/config.jsonc can only make things stricter.\n\
+         // Every setting is below, commented out and showing its default. To change one, remove\n\
+         // the // in front of it (and in front of the block it sits in, such as \"approval\": {\n\
+         // and its closing }), then edit the value. Ready-made presets are at the end; use only\n\
+         // one approval preset. Lists replace the default list instead of adding to it.\n\
+         // Changes apply from each chat's next message; a project's .themis/config.jsonc can\n\
+         // only make things stricter. Settings › Permissions shows whether this file is valid.\n\
          {\n",
     );
+    let body = configuration::REFERENCE
+        .split_once("\n{\n")
+        .and_then(|(_, rest)| rest.trim_end().strip_suffix('}'))
+        .expect("the reference is one object");
+    for line in body.lines() {
+        let setting = line.trim_start();
+        let indent = &line[..line.len() - setting.len()];
+        if setting.is_empty() || setting.starts_with("//") {
+            text.push_str(line);
+        } else {
+            text.push_str(&format!("{indent}// {setting}"));
+        }
+        text.push('\n');
+    }
+    text.push_str("\n  // ─── PRESETS ─────────────────────────────────────────────────────────────────────\n");
     for (title, setting) in RUNTIME_CONFIG_PRESETS {
         text.push_str(&format!("\n  // {title}\n"));
         for line in setting.lines() {
@@ -522,14 +507,34 @@ mod tests {
             configuration::resolve(Some(&file), None, None)
                 .unwrap_or_else(|e| panic!("preset '{title}' is invalid: {e:#}"));
         }
-        // The example file is the reference, rewritten each time.
-        let example = state.write_runtime_example().unwrap();
-        std::fs::write(&example, "old").unwrap();
-        state.write_runtime_example().unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&example).unwrap(),
-            configuration::REFERENCE
+        // Every setting of the reference is in the file, commented out.
+        let text = runtime_config_starter();
+        for line in configuration::REFERENCE.lines().map(str::trim) {
+            if let Some(field) = line.strip_prefix('"').and_then(|l| l.split('"').next()) {
+                assert!(
+                    text.contains(&format!("// \"{field}\"")),
+                    "'{field}' is missing from the starter"
+                );
+            }
+        }
+        // Settings › Browser and Web still write their blocks into it, comments kept.
+        state
+            .update_user_browser_config(|browser| {
+                browser.enabled = false;
+                Ok(())
+            })
+            .unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("// ─── PRESETS"));
+        assert!(
+            !state
+                .runtime_configuration(None, None)
+                .unwrap()
+                .config
+                .browser
+                .enabled
         );
+        std::fs::write(&path, runtime_config_starter()).unwrap();
         // An existing file, even an invalid one, is left exactly as it is.
         std::fs::write(&path, "{ my edits").unwrap();
         state.ensure_runtime_config().unwrap();
