@@ -313,6 +313,25 @@ fn shown(value: Value, show_secrets: bool) -> Value {
     }
 }
 
+/// `value` with every string shortened to `limit` characters (after redaction).
+fn capped_strings(value: Value, limit: usize) -> Value {
+    match value {
+        Value::String(text) => Value::String(cap(&text, limit)),
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|v| capped_strings(v, limit))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, capped_strings(v, limit)))
+                .collect(),
+        ),
+        other => bounded(&other),
+    }
+}
+
 fn shown_text(text: &str, show_secrets: bool) -> String {
     let text = cap(text, VALUE_BYTES);
     if show_secrets {
@@ -458,14 +477,40 @@ impl ChatBrowser {
                     .await?
             }
             None => {
-                target
+                // REPL mode (top-level await, re-declared `let`) returns a promise as the
+                // Promise itself, so it is awaited here, and objects are read by value.
+                let evaluated = target
                     .cdp
                     .call(
                         Some(&target.session),
                         "Runtime.evaluate",
-                        json!({"expression": expression, "returnByValue": true, "awaitPromise": true, "userGesture": true, "replMode": true, "timeout": 5000}),
+                        json!({"expression": expression, "awaitPromise": true, "userGesture": true, "replMode": true, "timeout": 5000}),
                     )
-                    .await?
+                    .await?;
+                let remote = &evaluated["result"];
+                match remote["objectId"].as_str() {
+                    Some(object) if evaluated.get("exceptionDetails").is_none() => {
+                        let (method, params) = if remote["subtype"] == "promise" {
+                            ("Runtime.awaitPromise", json!({"promiseObjectId": object, "returnByValue": true}))
+                        } else {
+                            (
+                                "Runtime.callFunctionOn",
+                                json!({"objectId": object, "functionDeclaration": "function(){return this}", "returnByValue": true}),
+                            )
+                        };
+                        match tokio::time::timeout(
+                            Duration::from_secs(10),
+                            target.cdp.call(Some(&target.session), method, params),
+                        )
+                        .await
+                        {
+                            Ok(Ok(value)) => value,
+                            // Not serializable (a DOM node, a cycle): its description.
+                            _ => evaluated,
+                        }
+                    }
+                    _ => evaluated,
+                }
             }
         };
         Ok(match evaluation(&result) {
@@ -812,22 +857,21 @@ impl ChatBrowser {
                     continue;
                 };
                 let value = &property["value"];
-                let text = value
+                // Keep strings as strings, so redaction sees the real value.
+                let raw = value
                     .get("value")
                     .filter(|v| !v.is_null())
-                    .map(Value::to_string)
-                    .or_else(|| value["description"].as_str().map(str::to_owned))
-                    .unwrap_or_else(|| value["type"].as_str().unwrap_or("undefined").to_owned());
-                variables
-                    .entry(name.to_owned())
-                    .or_insert(json!(cap(&text, 200)));
+                    .cloned()
+                    .or_else(|| value["description"].as_str().map(|d| json!(d)))
+                    .unwrap_or_else(|| json!(value["type"].as_str().unwrap_or("undefined")));
+                variables.entry(name.to_owned()).or_insert(raw);
             }
         }
         Ok(json!({
             "paused": true,
             "reason": paused["reason"],
             "call_stack": frames,
-            "variables": shown(Value::Object(variables), show_secrets),
+            "variables": capped_strings(shown(Value::Object(variables), show_secrets), 200),
             "note": "The page stays paused until you resume or step; it resumes by itself after 30 s."
         }))
     }
@@ -1423,6 +1467,24 @@ mod tests {
         assert_eq!(summary["largest"][0]["name"], "Array");
         assert_eq!(summary["largest"][0]["self_bytes"], 150);
         assert_eq!(regex_escape("app.js?v=1"), "app\\.js\\?v=1");
+    }
+
+    #[test]
+    fn frame_variables_are_redacted_as_values_before_they_are_shortened() {
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlLXZhbHVl";
+        let variables =
+            json!({"session": "abc", "header": jwt, "count": 3, "label": "x".repeat(300)});
+        let shown = capped_strings(shown(variables, false), 200);
+        assert!(
+            shown["header"].as_str().unwrap().starts_with("[hidden"),
+            "{shown}"
+        );
+        assert!(
+            shown["session"].as_str().unwrap().starts_with("[hidden"),
+            "{shown}"
+        );
+        assert_eq!(shown["count"], 3);
+        assert!(shown["label"].as_str().unwrap().chars().count() <= 201);
     }
 
     #[test]

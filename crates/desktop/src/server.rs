@@ -657,6 +657,38 @@ async fn dispatch_command(
         "plugin_action" => output!(state.plugin_action(args).await?),
         "list_prompt_skills" => output!(state.prompt_skills(arg(&args, "projectRoot")?).await?),
         "ping" => output!(state.ping().await),
+        "get_browser_settings" => output!(json!({
+            "settings": state.user_browser_config()?,
+            "browsers": themis_core::browser::launch::installed_browsers(),
+            "default_downloads_directory": themis_core::browser::session::default_downloads_directory(),
+            "starter_sites": themis_core::configuration::STARTER_BLOCKED_SITES,
+        })),
+        "update_browser_settings" => {
+            let settings: themis_core::configuration::BrowserConfig = arg(&args, "settings")?;
+            output!(state.update_user_browser_config(|browser| *browser = settings)?)
+        }
+        "browser_history" => output!(
+            state
+                .browser_history(
+                    arg::<Option<String>>(&args, "projectRoot")?,
+                    arg::<Option<String>>(&args, "query")?.unwrap_or_default()
+                )
+                .await?
+        ),
+        "remove_browser_history" => done!(
+            state
+                .remove_browser_history(arg(&args, "projectRoot")?, arg(&args, "url")?)
+                .await
+        ),
+        "clear_browsing_data" => output!(
+            state
+                .clear_browsing_data(
+                    arg::<Option<String>>(&args, "projectRoot")?,
+                    arg(&args, "range")?,
+                    arg(&args, "types")?
+                )
+                .await?
+        ),
         "open_project" => output!(state.open_project(arg(&args, "path")?).await?),
         "rename_project" => output!(
             state

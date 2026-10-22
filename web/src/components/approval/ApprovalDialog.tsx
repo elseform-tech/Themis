@@ -26,8 +26,9 @@ const RISK_TONE: Record<RiskLevel, BadgeTone> = {
 export { displayToken } from "./CommandTokens";
 
 /** The Settings › Browser permission a browser tool falls under. */
-const DEBUGGING_TOOLS = new Set(["browser_console", "browser_elements", "browser_network", "browser_debugger", "browser_storage", "browser_performance", "browser_memory"]);
-export function browserPermission(tool: string): "Browsing" | "Debugging" {
+const DEBUGGING_TOOLS = new Set(["browser_devtools"]);
+export function browserPermission(tool: string): "Browsing" | "Downloads" | "Debugging" {
+  if (tool === "browser_download") return "Downloads";
   return DEBUGGING_TOOLS.has(tool) ? "Debugging" : "Browsing";
 }
 

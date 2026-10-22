@@ -36,6 +36,30 @@ pub struct BrowserScope {
 
 /// The browser tools for one run.
 pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> Vec<Box<dyn ToolT>> {
+    // Downloads the agent starts go to the Settings folder, by its Downloads permission.
+    let config = scope.permissions.config();
+    let directory = config
+        .downloads_directory
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(super::session::default_downloads_directory);
+    let gate: super::session::DownloadGate = {
+        let (permissions, approvals) = (Arc::clone(&scope.permissions), Arc::clone(&approvals));
+        Arc::new(move |site: &str| {
+            permissions
+                .gate(
+                    approvals.as_ref(),
+                    "browser_download",
+                    Permission::Downloads,
+                    site,
+                    format!("download a file from {site}"),
+                    RiskLevel::Network,
+                )
+                .map_err(|error| error.to_string())
+        })
+    };
+    scope
+        .chat
+        .set_download_policy(Some(super::session::DownloadPolicy { directory, gate }));
     let base = Base { approvals, scope };
     let mut tools: Vec<Box<dyn ToolT>> = vec![
         Box::new(BrowserOpen { base: base.clone() }),
@@ -140,9 +164,11 @@ impl Base {
         };
         self.gate(tool, &site, format!("{summary} on {site}"), risk)?;
         chat.set_activity(Some(activity)).await;
+        let started = std::time::Instant::now();
         let result = until_stopped(self.scope.cancel.as_deref(), action(Arc::clone(&chat))).await;
         chat.set_activity(None).await;
         let report = result.map_err(|e| tool_error(format!("{tool}: {e}")))?;
+        let downloads = chat.agent_downloads_since(started).await;
         // A click, redirect or script can land on a site the agent may not browse.
         if let Some(landed) = chat.current_site().await {
             if self.scope.permissions.decide(Permission::Browsing, &landed)
@@ -156,6 +182,9 @@ impl Base {
             }
         }
         let mut value = serde_json::to_value(&report).unwrap_or_default();
+        if !downloads.is_empty() {
+            value["downloads"] = json!(downloads);
+        }
         value["untrusted"] = json!(true);
         value["note"] = json!(UNTRUSTED_NOTE);
         Ok(value)
@@ -778,15 +807,7 @@ mod tests {
             "browser_tabs" => parse_tool_args::<TabsArgs>(tool, args).map(|_| ()),
             "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
             "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),
-            "browser_console" => parse_tool_args::<devtools::ConsoleArgs>(tool, args).map(|_| ()),
-            "browser_elements" => parse_tool_args::<devtools::ElementsArgs>(tool, args).map(|_| ()),
-            "browser_network" => parse_tool_args::<devtools::NetworkArgs>(tool, args).map(|_| ()),
-            "browser_debugger" => parse_tool_args::<devtools::DebuggerArgs>(tool, args).map(|_| ()),
-            "browser_storage" => parse_tool_args::<devtools::StorageArgs>(tool, args).map(|_| ()),
-            "browser_performance" => {
-                parse_tool_args::<devtools::PerformanceArgs>(tool, args).map(|_| ())
-            }
-            "browser_memory" => parse_tool_args::<devtools::MemoryArgs>(tool, args).map(|_| ()),
+            "browser_devtools" => parse_tool_args::<devtools::DevtoolsArgs>(tool, args).map(|_| ()),
             other => panic!("untested tool {other}"),
         }
     }
@@ -832,7 +853,7 @@ mod tests {
             let parsed = parses(tool.name(), Value::Object(args));
             assert!(parsed.is_ok(), "{}: {parsed:?} from {schema}", tool.name());
         }
-        assert_eq!(tools.len(), 18);
+        assert_eq!(tools.len(), 12);
         let click: ClickArgs = parse_tool_args("browser_click", json!({"ref": "e4"})).unwrap();
         assert_eq!(click.reference, "e4");
         let click: ClickArgs =

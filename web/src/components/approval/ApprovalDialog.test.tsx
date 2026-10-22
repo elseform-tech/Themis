@@ -117,10 +117,13 @@ describe("ApprovalDialog", () => {
   });
 
   it("offers browser actions Always allow on this site, saved in Settings", () => {
-    setup({ ...REQUEST, tool: "browser_console", grant_site: { tools: "browser", site: "example.com" } });
+    setup({ ...REQUEST, tool: "browser_devtools", grant_site: { tools: "browser", site: "example.com" } });
     expect(screen.getByRole("button", { name: "Always allow on this site (2)" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
     expect(document.body).toHaveTextContent("saves Debugging for example.com in Settings › Browser");
+    cleanup();
+    setup({ ...REQUEST, tool: "browser_download", grant_site: { tools: "browser", site: "files.example.com" } });
+    expect(document.body).toHaveTextContent("saves Downloads for files.example.com");
   });
 
   it("maps Escape to deny", () => {

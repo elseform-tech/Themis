@@ -228,6 +228,10 @@ impl BrowserHub {
                 recording: Mutex::new(None),
                 viewport: Mutex::new(Viewport::default()),
                 muted: AtomicBool::new(true),
+                downloads: Mutex::new(Vec::new()),
+                person_until: Mutex::new(None),
+                download_policy: Mutex::new(None),
+                targets: Mutex::new(HashSet::new()),
             })
         }))
     }
@@ -255,6 +259,43 @@ impl BrowserHub {
         self.release_unused().await;
     }
 
+    /// The folder of `project`'s browser profile (history, cookies, site data, cache).
+    pub fn profile_dir(&self, project: &Path) -> PathBuf {
+        self.root().join("profiles").join(profile_key(project))
+    }
+
+    /// Closes `project`'s browser (every chat's tabs on it) and waits for Chrome to let go of
+    /// its profile, so its files can be changed. Chats reopen it when they next browse.
+    pub async fn close_project(&self, project: &Path) {
+        let key = profile_key(project);
+        let chats: Vec<Arc<ChatBrowser>> = self
+            .chats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .filter(|chat| chat.profile_key == key)
+            .cloned()
+            .collect();
+        for chat in chats {
+            chat.close_all().await;
+        }
+        let browser = self.shared.lock().await.remove(&key);
+        if let Some(browser) = browser {
+            let _ = browser.cdp.call(None, "Browser.close", json!({})).await;
+        }
+        let lock = self
+            .root()
+            .join("profiles")
+            .join(&key)
+            .join("SingletonLock");
+        for _ in 0..50 {
+            if std::fs::symlink_metadata(&lock).is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     async fn release_unused(&self) {
         let used: HashSet<String> = {
             let chats = self.chats.lock().unwrap_or_else(|e| e.into_inner());
@@ -266,7 +307,7 @@ impl BrowserHub {
         self.shared.lock().await.retain(|key, _| used.contains(key));
     }
 
-    async fn shared_for(&self, key: &str) -> Result<Arc<SharedBrowser>, String> {
+    async fn shared_for(self: &Arc<Self>, key: &str) -> Result<Arc<SharedBrowser>, String> {
         let mut shared = self.shared.lock().await;
         if let Some(existing) = shared.get(key) {
             if !existing.cdp.is_closed() && existing.process.lock().await.is_running() {
@@ -293,13 +334,18 @@ impl BrowserHub {
             .map_err(|error| format!("{error:#}"))?;
         // The page that starts with the browser is not any chat's tab.
         let cdp = Arc::clone(&process.cdp);
-        let _ = cdp
-            .call(
-                None,
-                "Browser.setDownloadBehavior",
-                json!({"behavior": "deny"}),
-            )
+        self.watch_downloads(&cdp, config.root.join("downloads-staging").join(key))
             .await;
+        // Pages never get the camera, microphone, location or notifications.
+        for name in ["camera", "microphone", "geolocation", "notifications"] {
+            let _ = cdp
+                .call(
+                    None,
+                    "Browser.setPermission",
+                    json!({"permission": {"name": name}, "setting": "denied"}),
+                )
+                .await;
+        }
         if let Ok(targets) = cdp.call(None, "Target.getTargets", json!({})).await {
             for target in targets["targetInfos"].as_array().into_iter().flatten() {
                 if target["type"] == "page" {
@@ -374,6 +420,14 @@ pub struct ChatBrowser {
     viewport: Mutex<Viewport>,
     /// The Workspace speaker is off (the default): pages play no sound.
     muted: AtomicBool,
+    /// Downloads of this chat's tabs, newest last.
+    downloads: Mutex<Vec<downloads::Download>>,
+    /// Until when a download that starts follows the person's own input (theirs).
+    person_until: Mutex<Option<Instant>>,
+    /// The current run's download folder and permission.
+    download_policy: Mutex<Option<downloads::DownloadPolicy>>,
+    /// Target ids of this chat's tabs, readable while an action holds `inner`.
+    targets: Mutex<HashSet<String>>,
 }
 
 impl std::fmt::Debug for ChatBrowser {
@@ -1033,6 +1087,10 @@ impl ChatBrowser {
             }
             // The browser exited: its tabs are gone too.
             inner.tabs.clear();
+            self.targets
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
             inner.current = 0;
         }
         let hub = self.hub.upgrade().ok_or("the app is closing")?;
@@ -1099,6 +1157,10 @@ impl ChatBrowser {
         // A tab that cannot take the sound setting is not opened.
         let audio_script =
             Some(install_audio(cdp, &session_id, self.muted.load(Ordering::SeqCst)).await?);
+        self.targets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(target_id.clone());
         inner.tabs.push(Tab {
             target_id,
             session_id,
@@ -1158,6 +1220,7 @@ impl ChatBrowser {
 
     /// The person typed an address in the Workspace view.
     pub async fn open_for_user(self: &Arc<Self>, url: &str) -> Result<(), String> {
+        self.person_acted();
         let mut inner = self.inner.lock().await;
         let (cdp, session) = self.current(&mut inner).await?;
         cdp.call(Some(&session), "Page.navigate", json!({"url": url}))
@@ -1185,6 +1248,7 @@ impl ChatBrowser {
 
     /// Back/forward/reload for the person's toolbar.
     pub async fn navigate_for_user(&self, action: &str) -> Result<(), String> {
+        self.person_acted();
         let inner = self.inner.lock().await;
         let (Some(browser), Some(tab)) = (&inner.browser, inner.tabs.get(inner.current)) else {
             return Ok(());
@@ -1463,6 +1527,10 @@ impl ChatBrowser {
             "close" => {
                 let index = pick(inner.tabs.len())?;
                 let tab = inner.tabs.remove(index);
+                self.targets
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&tab.target_id);
                 if let Some(browser) = &inner.browser {
                     let _ = browser
                         .cdp
@@ -1511,6 +1579,10 @@ impl ChatBrowser {
             }
         }
         inner.tabs.clear();
+        self.targets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         inner.browser = None;
     }
 
@@ -1959,6 +2031,7 @@ impl ChatBrowser {
     /// The person's mouse, wheel or key input on the Workspace view. The
     /// person and the agent use the browser at the same time; neither waits.
     pub async fn user_input(&self, input: &UserInput) -> Result<(), String> {
+        self.person_acted();
         let inner = self.inner.lock().await;
         let (Some(browser), Some(tab)) = (&inner.browser, inner.tabs.get(inner.current)) else {
             return Ok(());
@@ -2370,4 +2443,6 @@ mod tests {
 }
 
 mod devtools;
+mod downloads;
 pub use devtools::{ConsoleEntry, RequestEntry};
+pub use downloads::{default_downloads_directory, DownloadGate, DownloadPolicy};

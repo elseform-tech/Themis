@@ -264,10 +264,12 @@ async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off(
             let body: Value = request.body_json().unwrap_or(Value::Null);
             match tool_results(&body).len() {
                 0 => tool_call("c1", "browser_open", json!({"url": page})),
-                1 if body["tools"].to_string().contains("browser_console") => {
-                    tool_call("c2", "browser_console", json!({"expression": "document.title + '!'"}))
-                }
-                2 => tool_call("c3", "browser_console", json!({})),
+                1 if body["tools"].to_string().contains("browser_devtools") => tool_call(
+                    "c2",
+                    "browser_devtools",
+                    json!({"panel": "console", "expression": "document.title + '!'"}),
+                ),
+                2 => tool_call("c3", "browser_devtools", json!({"panel": "console"})),
                 _ => ResponseTemplate::new(200).set_body_json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "Done."}, "finish_reason": "stop"}]
                 })),
@@ -358,10 +360,7 @@ async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off(
         if requests.len() > before && !state.get_thread(&quiet.id).await.is_ok_and(|t| t.running) {
             let offered = requests[before].body_json::<Value>().unwrap()["tools"].to_string();
             assert!(offered.contains("\"browser_open\""), "{offered}");
-            assert!(
-                !offered.contains("\"browser_console\"")
-                    && !offered.contains("\"browser_network\"")
-            );
+            assert!(!offered.contains("\"browser_devtools\""));
             break;
         }
         assert!(
@@ -370,5 +369,79 @@ async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off(
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        "{\n  // my notes\n  \"schema_version\": 1\n}\n",
+    )
+    .unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    tokio::task::spawn_blocking(move || {
+        let view = call(&dir, "get_browser_settings", json!({}));
+        assert_eq!(view["settings"]["permissions"]["debugging"], "block");
+        assert!(view["starter_sites"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s == "paypal.com"));
+        let mut settings = view["settings"].clone();
+        settings["permissions"]["debugging"] = json!("ask");
+        settings["show_secrets"] = json!(true);
+        let saved = call(
+            &dir,
+            "update_browser_settings",
+            json!({"settings": settings}),
+        );
+        assert_eq!(saved["permissions"]["debugging"], "ask");
+        let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
+        assert!(file.contains("// my notes"), "{file}");
+        assert_eq!(
+            call(&dir, "get_browser_settings", json!({}))["settings"]["show_secrets"],
+            true
+        );
+        // An invalid site is refused and the file is left as it was.
+        let mut bad = saved.clone();
+        bad["site_exceptions"] = json!([{"site": "https://x.com/path", "browsing": "block"}]);
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_browser_settings",
+                &json!({"settings": bad}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap(),
+            file
+        );
+        // No browsing yet: empty history; clearing works and reports nothing.
+        assert_eq!(
+            call(
+                &dir,
+                "browser_history",
+                json!({"projectRoot": null, "query": ""})
+            )["entries"],
+            json!([])
+        );
+        let cleared = call(
+            &dir,
+            "clear_browsing_data",
+            json!({"projectRoot": null, "range": "all", "types": ["history", "cookies", "cache"]}),
+        );
+        assert_eq!(cleared["cleared"], json!([]));
+    })
+    .await
+    .unwrap();
     task.abort();
 }

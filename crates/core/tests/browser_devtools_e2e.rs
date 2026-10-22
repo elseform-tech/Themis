@@ -107,7 +107,7 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Console: every level, then expressions and exceptions.
-    let messages = run(&tools, "browser_console", json!({})).await;
+    let messages = run(&tools, "browser_devtools", json!({"panel": "console"})).await;
     let text = messages["messages"].to_string();
     assert!(
         text.contains("booted 42") && text.contains("\"level\":\"warning\"")
@@ -117,8 +117,8 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     assert_eq!(
         run(
             &tools,
-            "browser_console",
-            json!({"expression": "document.title"})
+            "browser_devtools",
+            json!({"panel": "console", "expression": "document.title"})
         )
         .await["value"],
         "Debug me"
@@ -126,16 +126,16 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     assert_eq!(
         run(
             &tools,
-            "browser_console",
-            json!({"expression": "total([1, 2, 3])"})
+            "browser_devtools",
+            json!({"panel": "console", "expression": "total([1, 2, 3])"})
         )
         .await["value"],
         6
     );
     let thrown = run(
         &tools,
-        "browser_console",
-        json!({"expression": "notDefined()"}),
+        "browser_devtools",
+        json!({"panel": "console", "expression": "notDefined()"}),
     )
     .await;
     assert!(
@@ -148,11 +148,16 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     let next = messages["next_since"].as_u64().unwrap();
     run(
         &tools,
-        "browser_console",
-        json!({"expression": "console.info('later')"}),
+        "browser_devtools",
+        json!({"panel": "console", "expression": "console.info('later')"}),
     )
     .await;
-    let newer = run(&tools, "browser_console", json!({"since": next})).await;
+    let newer = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "console", "since": next}),
+    )
+    .await;
     assert!(
         newer["messages"].to_string().contains("later")
             && !newer["messages"].to_string().contains("booted"),
@@ -160,19 +165,24 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     );
 
     // Elements: inspect, then change a style live.
-    let inspected = run(&tools, "browser_elements", json!({"selector": "#t"})).await;
+    let inspected = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "elements", "selector": "#t"}),
+    )
+    .await;
     assert_eq!(inspected["result"]["tag"], "h1");
     assert_eq!(inspected["result"]["styles"]["color"], "rgb(255, 0, 0)");
     let restyled = run(
         &tools,
-        "browser_elements",
-        json!({"selector": "#t", "action": "set_style", "name": "color", "value": "blue"}),
+        "browser_devtools",
+        json!({"panel": "elements", "selector": "#t", "action": "set_style", "name": "color", "value": "blue"}),
     )
     .await;
     assert_eq!(restyled["result"], "rgb(0, 0, 255)");
 
     // Network: the request is listed; its credential header is hidden, its body shown.
-    let listed = run(&tools, "browser_network", json!({})).await;
+    let listed = run(&tools, "browser_devtools", json!({"panel": "network"})).await;
     let api = listed["requests"]
         .as_array()
         .unwrap()
@@ -181,7 +191,12 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
         .expect("api request listed")
         .clone();
     assert_eq!(api["status"], 200);
-    let detail = run(&tools, "browser_network", json!({"id": api["id"]})).await;
+    let detail = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "network", "id": api["id"]}),
+    )
+    .await;
     assert!(
         detail["body"].as_str().unwrap().contains("items"),
         "{detail}"
@@ -200,7 +215,12 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     );
 
     // Storage: ordinary values shown, tokens and cookie values hidden, httpOnly never read.
-    let local = run(&tools, "browser_storage", json!({"area": "local"})).await;
+    let local = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "storage", "area": "local"}),
+    )
+    .await;
     assert_eq!(local["result"]["theme"], "dark");
     assert!(
         local["result"]["authToken"]
@@ -209,7 +229,12 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
             .starts_with("[hidden"),
         "{local}"
     );
-    let cookies = run(&tools, "browser_storage", json!({"area": "cookies"})).await;
+    let cookies = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "storage", "area": "cookies"}),
+    )
+    .await;
     let rows = cookies["cookies"].as_array().unwrap();
     let prefs = rows
         .iter()
@@ -226,20 +251,25 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     // Debugger: a breakpoint inside `total` pauses; the frame's variables and console work.
     let set = run(
         &tools,
-        "browser_debugger",
-        json!({"action": "set", "url": "app.js", "line": 4}),
+        "browser_devtools",
+        json!({"panel": "debugger", "action": "set", "url": "app.js", "line": 4}),
     )
     .await;
     assert!(set["breakpoint"].is_string(), "{set}");
     run(
         &tools,
-        "browser_console",
-        json!({"expression": "setTimeout(() => total([5, 6]), 0); 'scheduled'"}),
+        "browser_devtools",
+        json!({"panel": "console", "expression": "setTimeout(() => total([5, 6]), 0); 'scheduled'"}),
     )
     .await;
     let mut state = Value::Null;
     for _ in 0..30 {
-        state = run(&tools, "browser_debugger", json!({"action": "state"})).await;
+        state = run(
+            &tools,
+            "browser_devtools",
+            json!({"panel": "debugger", "action": "state"}),
+        )
+        .await;
         if state["paused"] == true {
             break;
         }
@@ -254,58 +284,89 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
     assert_eq!(
         run(
             &tools,
-            "browser_console",
-            json!({"expression": "items.length"})
+            "browser_devtools",
+            json!({"panel": "console", "expression": "items.length"})
         )
         .await["value"],
         2
     );
     run(
         &tools,
-        "browser_debugger",
-        json!({"action": "remove", "id": set["breakpoint"]}),
+        "browser_devtools",
+        json!({"panel": "debugger", "action": "remove", "id": set["breakpoint"]}),
     )
     .await;
-    let resumed = run(&tools, "browser_debugger", json!({"action": "resume"})).await;
+    let resumed = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "debugger", "action": "resume"}),
+    )
+    .await;
     assert_eq!(resumed["paused"], false, "{resumed}");
 
+    // A promise is awaited, as in the DevTools console.
+    let awaited = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "console", "expression": "Promise.resolve(5)"}),
+    )
+    .await;
+    assert_eq!(awaited["value"], 5, "{awaited}");
+    // Pages never get the camera, microphone, location or notifications.
+    let denied = run(&tools, "browser_devtools", json!({"panel": "console", "expression": "Promise.all(['geolocation','notifications','camera','microphone'].map(n => navigator.permissions.query({name: n}).then(p => p.state, () => 'denied')))"})).await;
+    assert_eq!(
+        denied["value"],
+        json!(["denied", "denied", "denied", "denied"]),
+        "{denied}"
+    );
+
     // Performance and memory, with their files saved.
-    let metrics = run(&tools, "browser_performance", json!({})).await;
+    let metrics = run(&tools, "browser_devtools", json!({"panel": "performance"})).await;
     assert!(
         metrics["page"]["resources"].as_u64().unwrap() >= 2,
         "{metrics}"
     );
     let trace = run(
         &tools,
-        "browser_performance",
-        json!({"action": "trace", "seconds": 1}),
+        "browser_devtools",
+        json!({"panel": "performance", "action": "trace", "seconds": 1}),
     )
     .await;
     assert!(trace["events"].as_u64().unwrap() > 0, "{trace}");
     assert!(std::path::Path::new(trace["file"].as_str().unwrap()).exists());
-    run(&tools, "browser_memory", json!({})).await;
-    let again = run(&tools, "browser_memory", json!({})).await;
+    run(&tools, "browser_devtools", json!({"panel": "memory"})).await;
+    let again = run(&tools, "browser_devtools", json!({"panel": "memory"})).await;
     assert!(again["growth_since_last_summary"].is_object(), "{again}");
-    let snapshot = run(&tools, "browser_memory", json!({"action": "snapshot"})).await;
+    let snapshot = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "memory", "action": "snapshot"}),
+    )
+    .await;
     assert!(snapshot["objects"].as_u64().unwrap() > 0, "{snapshot}");
     assert!(std::path::Path::new(snapshot["file"].as_str().unwrap()).exists());
 
     // The run's end clears breakpoints: a breakpoint set now no longer pauses afterwards.
     let set = run(
         &tools,
-        "browser_debugger",
-        json!({"action": "set", "url": "app.js", "line": 4}),
+        "browser_devtools",
+        json!({"panel": "debugger", "action": "set", "url": "app.js", "line": 4}),
     )
     .await;
     assert!(set["breakpoint"].is_string());
     chat.end_debugging().await;
     run(
         &tools,
-        "browser_console",
-        json!({"expression": "total([1])"}),
+        "browser_devtools",
+        json!({"panel": "console", "expression": "total([1])"}),
     )
     .await;
-    let after = run(&tools, "browser_debugger", json!({"action": "state"})).await;
+    let after = run(
+        &tools,
+        "browser_devtools",
+        json!({"panel": "debugger", "action": "state"}),
+    )
+    .await;
     assert_eq!(after["paused"], false, "{after}");
 
     // With Developer mode off, no debugging tool is offered at all.
@@ -317,8 +378,149 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
             ..BrowserSettings::default()
         },
     );
-    assert!(off
-        .iter()
-        .all(|tool| !tool.name().starts_with("browser_console")));
+    assert!(off.iter().all(|tool| tool.name() != "browser_devtools"));
     assert!(off.iter().any(|tool| tool.name() == "browser_open"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_download_the_agent_starts_lands_in_the_settings_folder() {
+    let data = tempfile::tempdir().unwrap();
+    let hub = BrowserHub::new(BrowserConfig {
+        root: data.path().to_path_buf(),
+        executable: None,
+        headless: true,
+    });
+    if hub.executable().is_none() {
+        eprintln!("skipping: no Chromium browser installed");
+        return;
+    }
+    let site = MockServer::start().await;
+    Mock::given(path("/files"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Files</title><a href="/report.csv" download>Get the report</a>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(path("/report.csv"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Disposition", "attachment; filename=\"report.csv\"")
+                .set_body_raw("a,b\n1,2\n", "text/csv"),
+        )
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let media = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let chat = hub.chat("download-chat", project.path());
+    let settings = BrowserSettings {
+        downloads_directory: Some(downloads.path().to_string_lossy().into_owned()),
+        ..BrowserSettings::default()
+    };
+    let tools = tools_for(&chat, media.path(), settings);
+    let opened = run(
+        &tools,
+        "browser_open",
+        json!({"url": format!("{}/files", site.uri())}),
+    )
+    .await;
+    let snapshot = opened["snapshot"].as_str().unwrap();
+    let line = snapshot
+        .lines()
+        .find(|l| l.contains("Get the report"))
+        .unwrap();
+    let reference = line.split('[').nth(1).unwrap().split(']').next().unwrap();
+    let clicked = run(&tools, "browser_click", json!({"ref": reference})).await;
+    // The download may still be starting when the click returns; it is saved either way.
+    let saved = downloads.path().join("report.csv");
+    for _ in 0..50 {
+        if saved.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        std::fs::read_to_string(&saved).unwrap(),
+        "a,b\n1,2\n",
+        "click result: {clicked}"
+    );
+    if let Some(reported) = clicked["downloads"].as_array() {
+        assert!(
+            reported[0]["saved_to"]
+                .as_str()
+                .unwrap()
+                .ends_with("report.csv"),
+            "{clicked}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_download_nobody_allowed_is_cancelled() {
+    let data = tempfile::tempdir().unwrap();
+    let hub = BrowserHub::new(BrowserConfig {
+        root: data.path().to_path_buf(),
+        executable: None,
+        headless: true,
+    });
+    if hub.executable().is_none() {
+        eprintln!("skipping: no Chromium browser installed");
+        return;
+    }
+    let site = MockServer::start().await;
+    Mock::given(path("/files"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            r#"<!doctype html><title>Files</title><a id="get" href="/report.csv" download>Get</a>"#,
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(path("/report.csv"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Disposition", "attachment; filename=\"report.csv\"")
+                .set_body_raw("a\n", "text/csv"),
+        )
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let chat = hub.chat("refusing-chat", project.path());
+    // A run whose Downloads permission refuses (as Block or a denied Ask would).
+    chat.set_download_policy(Some(themis_core::browser::session::DownloadPolicy {
+        directory: downloads.path().to_path_buf(),
+        gate: Arc::new(|_site: &str| Err("Downloads is blocked".to_owned())),
+    }));
+    let started = std::time::Instant::now();
+    chat.open(&format!("{}/files", site.uri()), false)
+        .await
+        .unwrap();
+    let clicked = chat
+        .evaluate_for_test("document.getElementById('get').click()")
+        .await;
+    assert!(clicked.is_ok(), "{clicked:?}");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let reported = chat.agent_downloads_for_test(started).await;
+    assert!(
+        reported
+            .iter()
+            .any(|d| d["refused"].as_str().is_some_and(|r| r.contains("blocked"))),
+        "{reported:?}"
+    );
+    assert!(!downloads.path().join("report.csv").exists());
+    // With no run's policy at all, a page's own download is cancelled too.
+    chat.set_download_policy(None);
+    let started = std::time::Instant::now();
+    chat.evaluate_for_test("document.getElementById('get').click()")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let reported = chat.agent_downloads_for_test(started).await;
+    assert!(
+        reported
+            .iter()
+            .any(|d| d["refused"].as_str().is_some_and(|r| r.contains("no run"))),
+        "{reported:?}"
+    );
 }

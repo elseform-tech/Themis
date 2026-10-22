@@ -65,6 +65,16 @@ fn candidates() -> Vec<PathBuf> {
 
 /// The browser to use: the configured one when given (it must exist), a
 /// downloaded private copy, else the first installed Chromium browser.
+/// The Chromium browsers installed in the usual places, for Settings › Browser.
+pub fn installed_browsers() -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = candidates()
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect();
+    found.dedup();
+    found
+}
+
 pub fn find_browser(configured: Option<&Path>, downloaded: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = configured {
         return path.is_file().then(|| path.to_path_buf());

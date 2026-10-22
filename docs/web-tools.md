@@ -63,7 +63,7 @@ unverified, since GitHub's GPU-less Windows test machines paint them only once.
 The browser runs headless with its own profile in app data
 (`browser/profiles/<project>/`): logins persist across a project's chats and never
 touch your own browser profile, Keychain or saved passwords. One browser serves a
-project; each chat has its own tabs (at most 8). Downloads are blocked. Discarding
+project; each chat has its own tabs (at most 8). Downloads are saved to the downloads folder (below). Discarding
 a chat closes its tabs; the browser exits when no chat of the project uses it.
 It never outlives Themis: if Themis crashes or is force-quit, a small guard
 process (macOS, Linux) or a kill-on-close job (Windows) ends the browser and its
@@ -207,21 +207,42 @@ YOLO fetches without asking; the OS sandbox does not apply to these in-process
 requests, exactly as for MCP HTTP connections. Diagnostics never record page text
 or search results.
 
+## Downloads, history and browsing data
+
+- **Downloads** are allowed by default and saved to the system Downloads folder (on Linux
+  `XDG_DOWNLOAD_DIR` when set), or the folder chosen in Settings › Browser. Only a download
+  that starts within 3 seconds of your own input in the Browser tab (a click, a key, the
+  address bar) is yours and always saved. Every other download, the agent's or one a page
+  starts on its own, needs the Downloads permission for the page's site (Block cancels it, Ask
+  asks), and is cancelled when no run is there to decide it; the agent's step reports the
+  saved path, or why it was refused. A name already in the folder gets a numbered suffix;
+  nothing is opened or attached to the chat. The agent cannot upload files.
+- **History:** the browser keeps its own history per project in its profile. Settings ›
+  Browser › History and data searches it, reopens a page in the open chat's browser, and
+  removes entries. The agent has no history tool.
+- **Clear browsing data:** a time range (last hour, day, week, all time) and types: history;
+  cookies and site data (signs the agent out; site storage such as localStorage and IndexedDB
+  goes only with "all time"); cached files (always all). For one project or all. It closes
+  that project's browser first (chats reopen it when they next browse) and is refused while a
+  run is using it.
+- Camera, microphone, location and notifications are always denied to pages.
+
 ## Debugging tools (Developer mode)
 
 With **Settings › Browser › Developer mode › Enable full CDP access** on (the default), the
-agent gets the DevTools toolset for the chat's current tab, gated by the Debugging permission
-(always allowed on local apps, Block on other sites by default):
+agent gets one `browser_devtools` tool for the chat's current tab, gated by the Debugging
+permission (always allowed on local apps, Block on other sites by default). One tool with a
+`panel` argument keeps the schema every request carries small:
 
-| Tool | Does |
+| Panel | Does |
 | --- | --- |
-| `browser_console` | Runs a JavaScript expression in the page, or in the paused call frame, and returns its value or exception; without one, returns console messages at every level (log, info, warning, error, exceptions with stacks) newer than `since` |
-| `browser_elements` | Inspects one element (by CSS selector or snapshot ref): attributes, box, computed styles, HTML; or sets an attribute, style or text, or removes it, live (nothing is saved) |
-| `browser_network` | Lists the tab's requests (method, URL, status, type, size, time, failure); with an id, headers and response body; blocks URL patterns or throttles (offline, slow3g, fast3g) |
-| `browser_debugger` | Sets and removes breakpoints by script URL and line (optionally conditional), pauses on exceptions, pauses, resumes and steps; while paused, returns the call stack and the top frame's variables |
-| `browser_storage` | Reads, sets, removes or clears the page's cookies, localStorage or sessionStorage |
-| `browser_performance` | `metrics`: load timing, largest contentful paint, layout shift, resource sizes and page metrics; `trace`: records the main thread for 1–15 s, returns long tasks and scripting, rendering and painting time, and saves the trace as a file |
-| `browser_memory` | `summary`: heap, DOM nodes, listeners and documents, with growth since the last summary (to find leaks); `snapshot`: a heap snapshot with the largest object kinds, saved as a file |
+| `console` | Runs a JavaScript expression (awaited, top-level `await` allowed) in the page, or in the paused call frame, and returns its value or exception; without one, returns console messages at every level (log, info, warning, error, exceptions with stacks) newer than `since` |
+| `elements` | Inspects one element (by CSS selector or snapshot ref): attributes, box, computed styles, HTML; or sets an attribute, style or text, or removes it, live (nothing is saved) |
+| `network` | Lists the tab's requests (method, URL, status, type, size, time, failure); with an id, headers and response body; blocks URL patterns or throttles (offline, slow3g, fast3g) |
+| `debugger` | Sets and removes breakpoints by script URL and line (optionally conditional), pauses on exceptions, pauses, resumes and steps; while paused, returns the call stack and the top frame's variables |
+| `storage` | Reads, sets, removes or clears the page's cookies, localStorage or sessionStorage |
+| `performance` | `metrics`: load timing, largest contentful paint, layout shift, resource sizes and page metrics; `trace`: records the main thread for 1–15 s, returns long tasks and scripting, rendering and painting time, and saves the trace as a file |
+| `memory` | `summary`: heap, DOM nodes, listeners and documents, with growth since the last summary (to find leaks); `snapshot`: a heap snapshot with the largest object kinds, saved as a file |
 
 Limits and safety:
 
