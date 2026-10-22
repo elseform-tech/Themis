@@ -1,0 +1,244 @@
+//! Settings › Browser permissions through the real shared server and the `themis` CLI: a
+//! Browsing-Blocked site is refused even in YOLO, an Ask site is allowed by YOLO without a
+//! prompt, and in Custom "Always allow on this site" answers the prompt and is saved in the
+//! user `runtime.jsonc` with the rest of the file kept. Skipped without a Chromium.
+
+use std::path::Path;
+use std::time::Duration;
+
+use serde_json::{json, Value};
+use themis_desktop::{server::Server, state::AppState, types::ProviderKind};
+use wiremock::matchers::method;
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+fn call(data: &Path, command: &str, args: Value) -> Value {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(data)
+        .args(["call", command, &args.to_string()])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .expect("CLI");
+    assert!(
+        output.status.success(),
+        "{command}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap_or(Value::Null)
+}
+
+fn tool_call(id: &str, name: &str, arguments: Value) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({
+        "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [{
+            "id": id, "type": "function",
+            "function": {"name": name, "arguments": arguments.to_string()}
+        }]}}]
+    }))
+}
+
+fn tool_results(body: &Value) -> Vec<String> {
+    body["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|message| message["role"] == "tool")
+        .map(|message| message["content"].to_string())
+        .collect()
+}
+
+/// Waits until the model has seen `count` tool results and the run ended; returns them.
+async fn results_after(
+    llm: &MockServer,
+    state: &AppState,
+    thread: &str,
+    count: usize,
+) -> Vec<String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    loop {
+        let requests = llm.received_requests().await.unwrap_or_default();
+        let latest = requests
+            .iter()
+            .map(|request| tool_results(&request.body_json().unwrap_or(Value::Null)))
+            .rfind(|results| results.len() >= count);
+        if let Some(results) = latest {
+            if !state.get_thread(thread).await.is_ok_and(|t| t.running) {
+                return results;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "run did not finish; pending approvals: {:?}",
+            state.pending_approvals()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved() {
+    if themis_core::browser::launch::find_browser(None, None).is_none() {
+        eprintln!("skipping: no Chromium browser installed");
+        return;
+    }
+    // `.invalid` never resolves, so no test reaches the network.
+    let llm = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap_or(Value::Null);
+            let task = body.to_string();
+            let results = tool_results(&body);
+            let first = if task.contains("Open the pay site") {
+                "https://www.paypal.com/"
+            } else {
+                "http://shop.example.invalid/"
+            };
+            match results.len() {
+                0 => tool_call("c1", "browser_open", json!({"url": first})),
+                1 if task.contains("Open the pay site") => {
+                    tool_call("c2", "browser_open", json!({"url": "http://shop.example.invalid/"}))
+                }
+                _ => ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{"message": {"role": "assistant", "content": "Done."}, "finish_reason": "stop"}]
+                })),
+            }
+        })
+        .mount(&llm)
+        .await;
+
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    // Outside a Git repository the app refuses changes without asking.
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap();
+    let file = "{\n  // kept as written\n  \"schema_version\": 1,\n  \"browser\": {\"site_exceptions\": [\n    {\"site\": \"paypal.com\", \"browsing\": \"block\"},\n    {\"site\": \"example.invalid\", \"browsing\": \"ask\"}\n  ]}\n}\n";
+    std::fs::write(data.path().join("runtime.jsonc"), file).unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(llm.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let root = project.path().to_string_lossy().to_string();
+
+    // YOLO: the blocked site is still refused; the Ask site runs without a prompt.
+    let yolo = state
+        .create_thread(root.clone(), ProviderKind::Go, Some("test-model".into()))
+        .await
+        .unwrap();
+    {
+        let (data, id) = (data.path().to_owned(), yolo.id.clone());
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": id, "mode": "yolo"}),
+            );
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": id, "text": "Open the pay site, then the shop."}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let results = results_after(&llm, &state, &yolo.id, 2).await;
+    assert!(
+        results[0].contains("Browsing is blocked for www.paypal.com in Settings › Browser"),
+        "{}",
+        results[0]
+    );
+    assert!(
+        !results[1].contains("blocked in Settings") && !results[1].contains("approval denied"),
+        "{}",
+        results[1]
+    );
+
+    // Custom: the Ask site prompts a connected window; "Always allow on this site" saves an
+    // exception.
+    let window = themis_desktop::server::Client::new(data.path().into());
+    let _events = window.subscribe().await.unwrap();
+    let custom = state
+        .create_thread(root, ProviderKind::Go, Some("test-model".into()))
+        .await
+        .unwrap();
+    {
+        let (data, id) = (data.path().to_owned(), custom.id.clone());
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": id, "text": "Open the shop."}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let approval = loop {
+        if let Some(request) = state
+            .pending_approvals()
+            .into_iter()
+            .find(|r| r.thread_id == custom.id)
+        {
+            break request;
+        }
+        if std::time::Instant::now() > deadline {
+            let requests = llm.received_requests().await.unwrap_or_default();
+            let seen: Vec<_> = requests
+                .iter()
+                .map(|r| tool_results(&r.body_json().unwrap_or(Value::Null)))
+                .collect();
+            let thread = state.get_thread(&custom.id).await;
+            panic!("no approval prompt for the Ask site; requests: {seen:?}; thread: {thread:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(
+        approval.grant_site.as_ref().map(|site| site.tools.as_str()),
+        Some("browser")
+    );
+    {
+        let (data, id, approval_id) = (
+            data.path().to_owned(),
+            custom.id.clone(),
+            approval.approval_id.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "approve_action",
+                json!({"threadId": id, "approvalId": approval_id, "decision": "chat"}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let results = results_after(&llm, &state, &custom.id, 1).await;
+    assert!(!results[0].contains("approval denied"), "{}", results[0]);
+    let saved = std::fs::read_to_string(data.path().join("runtime.jsonc")).unwrap();
+    assert!(saved.contains("// kept as written"), "{saved}");
+    let browser = themis_core::configuration::resolve(Some(&saved), None, None)
+        .unwrap()
+        .config
+        .browser;
+    let shop = browser
+        .site_exceptions
+        .iter()
+        .find(|exception| exception.site == "shop.example.invalid")
+        .expect("the site exception was saved");
+    assert_eq!(
+        shop.browsing,
+        Some(themis_core::configuration::SiteAccess::Allow)
+    );
+    assert!(browser
+        .site_exceptions
+        .iter()
+        .any(|exception| exception.site == "paypal.com"));
+    task.abort();
+}

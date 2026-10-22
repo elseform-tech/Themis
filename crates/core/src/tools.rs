@@ -15,6 +15,7 @@
 pub mod background;
 mod patch;
 pub mod recall;
+pub mod site_permissions;
 pub mod web;
 mod wrapped;
 
@@ -828,6 +829,12 @@ pub const READ_PAGE_CHARS: usize = 8000;
 pub trait ApprovalHook: Send + Sync {
     /// Return the approval decision for `action`.
     fn approve(&self, action: &ToolAction) -> Approval;
+
+    /// A deny rule the person configured refuses `action` without asking (Custom mode
+    /// only). Used where Settings already allow an action, so that no prompt is shown.
+    fn denied_by_rule(&self, _action: &ToolAction) -> bool {
+        false
+    }
 }
 
 /// Decision returned by an [`ApprovalHook`].

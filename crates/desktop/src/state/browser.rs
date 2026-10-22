@@ -300,3 +300,29 @@ pub fn update_payload(update: &BrowserUpdate) -> Value {
         } => json!({"kind": "frame", "data": data, "width": width, "height": height}),
     }
 }
+
+/// Sets `permission` to Allow for `site` in `browser` ("Always allow on this site").
+pub(super) fn allow_site(
+    browser: &mut themis_core::configuration::BrowserConfig,
+    site: &str,
+    permission: themis_core::tools::site_permissions::Permission,
+) {
+    use themis_core::configuration::{SiteAccess, SiteException};
+    use themis_core::tools::site_permissions::Permission;
+    let index = match browser.site_exceptions.iter().position(|e| e.site == site) {
+        Some(index) => index,
+        None => {
+            browser.site_exceptions.push(SiteException {
+                site: site.to_owned(),
+                ..SiteException::default()
+            });
+            browser.site_exceptions.len() - 1
+        }
+    };
+    let exception = &mut browser.site_exceptions[index];
+    match permission {
+        Permission::Browsing => exception.browsing = Some(SiteAccess::Allow),
+        Permission::Downloads => exception.downloads = Some(SiteAccess::Allow),
+        Permission::Debugging => exception.debugging = Some(SiteAccess::Allow),
+    }
+}

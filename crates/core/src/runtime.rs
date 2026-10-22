@@ -288,6 +288,10 @@ impl CachingApprovals {
 }
 
 impl ApprovalHook for CachingApprovals {
+    fn denied_by_rule(&self, action: &ToolAction) -> bool {
+        self.inner.denied_by_rule(action)
+    }
+
     fn approve(&self, action: &ToolAction) -> Approval {
         let key = action.grant_key();
         if self.is_cached(&key) {

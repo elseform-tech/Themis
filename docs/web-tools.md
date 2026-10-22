@@ -156,15 +156,45 @@ the same way. While anything records, a red line above the page reads "Recording
 thread header shows a red pill with the time on every Workspace tab and with Workspace
 closed; the pill opens the Browser tab.
 
-## Approvals
+## Permissions (Settings › Browser)
 
-Each browser action asks for the site of the current page (for `browser_open`, the
-site it opens); snapshots, scrolling and listing tabs are reads. **Allow in this
-chat** on one browser action covers every browser action on that site, and a rule
-like `{ "tool": "browser_*", "command": ["example.com"], "action": "deny" }` keeps
-the agent off a site. The web tools ask per site, after they know it (the URL's host, or your SearXNG host
-for searches). In Custom, rules may name a site and **Allow in this chat** covers
-that tool on that site; see [composer permissions](configuration.md#composer-permissions).
+What the agent may do in its browser is set in **Settings › Browser**, modelled on OpenAI
+Codex's built-in browser. Three permissions each have a default and per-site exceptions,
+and each value is **Allow** (no prompt), **Ask** (an approval prompt) or **Block**:
+
+| Permission | Covers | Default |
+| --- | --- | --- |
+| Browsing | open, navigate, click, type, press, select, scroll, snapshot, screenshot, record, tabs | Allow |
+| Downloads | saving a file a page or an agent action downloads | Allow |
+| Debugging | the debugging tools (console, elements, network, debugger, storage, profiling) | Block |
+
+- **Local apps** (`localhost`, `*.localhost`, loopback addresses, `about:blank`) are always
+  Allow: they are the apps the agent builds.
+- **Site exceptions** name a host such as `example.com`; it covers its subdomains, and the
+  most specific matching exception wins. A starter set blocks Browsing on sign-in, payment
+  and identity sites (`paypal.com`, `stripe.com`, `wise.com`, `revolut.com`,
+  `accounts.google.com`, `login.microsoftonline.com`, `appleid.apple.com`, `id.me`,
+  `login.gov`); it is a starter, not complete, and you can edit or remove it. Lockdown is
+  Browsing default Block plus Allow exceptions for the sites you trust.
+- **Block** is refused in every approval mode, **YOLO included**, and the agent is told to
+  tell you instead of working around it. A click, redirect or script that lands on a
+  Browsing-Blocked site clears the tab and reports it. The lists bind the agent, not you:
+  you can visit any site in the Browser tab, but the agent will not read or act on a
+  blocked page you opened. They govern the pages the agent opens and acts on, not the
+  scripts, images or requests an allowed page loads.
+- **Ask** shows a prompt with **Allow once**, **Always allow on this site** (saves an Allow
+  exception for that permission in Settings › Browser, used for the rest of the run and
+  later runs) and **Deny**. YOLO turns Ask into Allow.
+- **Allow** runs without a prompt; a deny rule in `runtime.jsonc` (below) still refuses in
+  Custom.
+- `fetch_url` to a Browsing-Blocked site is refused too; otherwise the web tools keep their
+  own per-site approvals. `web_search` results are not filtered.
+
+The web tools ask per site, after they know it (the URL's host, or your SearXNG host for
+searches). In Custom, rules may name a site and **Allow in this chat** covers that web tool
+on that site; see [composer permissions](configuration.md#composer-permissions). Approval
+rules for `browser_*` (for example `{ "tool": "browser_*", "command": ["example.com"],
+"action": "deny" }`) keep working in Custom as an extra deny layer.
 
 ```jsonc
 { "approval": { "rules": [

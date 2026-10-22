@@ -222,6 +222,59 @@ impl AppState {
         self.get_runtime_configuration(project_root)
     }
 
+    /// The person's own browser settings: the user `runtime.jsonc` over the defaults, without
+    /// any project's restrictions (what Settings › Browser shows and edits).
+    pub fn user_browser_config(&self) -> Result<configuration::BrowserConfig, String> {
+        let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
+        let user = read_optional(&user_path)?;
+        configuration::resolve(user.as_deref(), None, None)
+            .map(|resolved| resolved.config.browser)
+            .map_err(|e| format!("runtime configuration: {e:#}"))
+    }
+
+    /// Applies `change` to the `browser` settings in the user `runtime.jsonc` and saves
+    /// them, leaving the rest of the file, comments included, as written. Later runs pick
+    /// them up; a run in progress keeps its own copy.
+    pub fn update_user_browser_config(
+        &self,
+        change: impl FnOnce(&mut configuration::BrowserConfig),
+    ) -> Result<configuration::BrowserConfig, String> {
+        static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        let path = self.ensure_runtime_config()?;
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err("configuration file cannot be a symlink".into());
+        }
+        let content = read_optional(&path)?.unwrap_or_default();
+        let mut browser = configuration::resolve(Some(&content), None, None)
+            .map_err(|e| format!("runtime configuration: {e:#}"))?
+            .config
+            .browser;
+        change(&mut browser);
+        browser.site_restrictions.clear();
+        let value = serde_json::to_value(&browser).map_err(|e| e.to_string())?;
+        let updated = configuration::set_top_level(&content, "browser", &value)
+            .map_err(|e| format!("runtime configuration: {e:#}"))?;
+        let saved = configuration::resolve(Some(&updated), None, None)
+            .map_err(|e| format!("runtime configuration: {e:#}"))?
+            .config
+            .browser;
+        let parent = path.parent().ok_or("Invalid configuration path")?;
+        let temporary = parent.join(format!(".runtime-{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&temporary, &updated).map_err(|e| e.to_string())?;
+        if let Err(error) = std::fs::rename(&temporary, &path) {
+            let _ = std::fs::remove_file(temporary);
+            return Err(error.to_string());
+        }
+        let _ = self.inner.diagnostics.append(
+            "configuration",
+            "saved",
+            "info",
+            json!({"scope":"user","section":"browser"}),
+        );
+        Ok(saved)
+    }
+
     pub fn query_diagnostic_logs(
         &self,
         filter: themis_core::diagnostics::DiagnosticFilter,
