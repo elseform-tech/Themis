@@ -278,6 +278,36 @@ impl AppState {
         &self,
         change: impl FnOnce(&mut configuration::BrowserConfig) -> Result<(), String>,
     ) -> Result<configuration::BrowserConfig, String> {
+        self.update_user_block("browser", |config| {
+            let mut browser = config.browser.clone();
+            change(&mut browser)?;
+            browser.site_restrictions.clear();
+            serde_json::to_value(&browser).map_err(|e| e.to_string())
+        })
+        .map(|config| config.browser)
+    }
+
+    /// Applies `change` to the `web` settings in the user `runtime.jsonc`, in place.
+    pub fn update_user_web_config(
+        &self,
+        change: impl FnOnce(&mut configuration::WebConfig) -> Result<(), String>,
+    ) -> Result<configuration::WebConfig, String> {
+        self.update_user_block("web", |config| {
+            let mut web = config.web.clone();
+            change(&mut web)?;
+            serde_json::to_value(&web).map_err(|e| e.to_string())
+        })
+        .map(|config| config.web)
+    }
+
+    /// Replaces the top-level `key` of the user `runtime.jsonc` with what `block` builds from
+    /// the file's current settings, keeping the rest of the file and its comments. The result
+    /// must validate, and the file is replaced atomically; writes are serialized.
+    fn update_user_block(
+        &self,
+        key: &str,
+        block: impl FnOnce(&configuration::RuntimeConfig) -> Result<Value, String>,
+    ) -> Result<configuration::RuntimeConfig, String> {
         static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
         let path = self.ensure_runtime_config()?;
@@ -285,19 +315,15 @@ impl AppState {
             return Err("configuration file cannot be a symlink".into());
         }
         let content = read_optional(&path)?.unwrap_or_default();
-        let mut browser = configuration::resolve(Some(&content), None, None)
+        let current = configuration::resolve(Some(&content), None, None)
             .map_err(|e| format!("runtime configuration: {e:#}"))?
-            .config
-            .browser;
-        change(&mut browser)?;
-        browser.site_restrictions.clear();
-        let value = serde_json::to_value(&browser).map_err(|e| e.to_string())?;
-        let updated = configuration::set_top_level(&content, "browser", &value)
+            .config;
+        let value = block(&current)?;
+        let updated = configuration::set_top_level(&content, key, &value)
             .map_err(|e| format!("runtime configuration: {e:#}"))?;
         let saved = configuration::resolve(Some(&updated), None, None)
             .map_err(|e| format!("runtime configuration: {e:#}"))?
-            .config
-            .browser;
+            .config;
         let parent = path.parent().ok_or("Invalid configuration path")?;
         let temporary = parent.join(format!(".runtime-{}.tmp", uuid::Uuid::new_v4()));
         std::fs::write(&temporary, &updated).map_err(|e| e.to_string())?;
@@ -309,9 +335,18 @@ impl AppState {
             "configuration",
             "saved",
             "info",
-            json!({"scope":"user","section":"browser"}),
+            json!({"scope":"user","section":key}),
         );
         Ok(saved)
+    }
+
+    /// The `web` settings from the user `runtime.jsonc` (Settings › Web).
+    pub fn user_web_config(&self) -> Result<configuration::WebConfig, String> {
+        let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
+        let user = read_optional(&user_path)?;
+        configuration::resolve(user.as_deref(), None, None)
+            .map(|resolved| resolved.config.web)
+            .map_err(|e| format!("runtime configuration: {e:#}"))
     }
 
     pub fn query_diagnostic_logs(

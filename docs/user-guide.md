@@ -317,7 +317,7 @@ usable model when that one is gone too.
 
 ## Settings reference
 
-Settings has General, Appearance, Models, Permissions, Browser, and Advanced sections,
+Settings has General, Appearance, Models, Permissions, Browser, Web, and Advanced sections,
 listed in place of the chats sidebar while Settings is open; **Back to app** at the top,
 or **Home** at the top of the rail, returns to the chat.
 **Browser** sets what the agent may do in its built-in browser (Allow, Ask or Block for

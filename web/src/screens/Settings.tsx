@@ -22,11 +22,12 @@ import "./Settings.css";
 import { AppearanceSettings } from "./Appearance";
 import { PermissionsSettings } from "./PermissionsView";
 import { BrowserSettingsSection } from "./BrowserSettings";
+import { WebSettingsSection } from "./WebSettings";
 import { SidebarIcon } from "./Sidebar";
 import { RefreshIcon, ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 
 const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
-const SECTIONS = ["General", "Appearance", "Models", "Permissions", "Browser", "Advanced"];
+const SECTIONS = ["General", "Appearance", "Models", "Permissions", "Browser", "Web", "Advanced"];
 /** Backend field names in validation messages, as the labels the person sees. */
 const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_budget", "Context tokens"], ["context_messages", "Recent messages"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
 type NumberSetting = "max_total_turns" | "context_token_budget" | "context_messages" | "concurrency_limit" | "approval_timeout_seconds";
@@ -235,6 +236,7 @@ export function SettingsScreen() {
       </>}
       {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}
       {section === "Browser" && <BrowserSettingsSection />}
+      {section === "Web" && <WebSettingsSection />}
       {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
         {number("max_total_turns", "Turn limit", 1, 2000)}
         {number("context_token_budget", "Context tokens", 2000, 256000)}

@@ -217,3 +217,7 @@
 .themis-permission-rule-action .is-allow { color: var(--themis-success); }
 .themis-permission-rule-action .is-deny { color: var(--themis-danger); }
 .themis-settings-card .themis-permission-rule > .themis-permission-rule-match { flex: 1; white-space: normal; }
+.themis-settings-url { width: min(320px, 60%); min-height: 34px; padding: 0 12px; border: 1px solid var(--themis-border-subtle); border-radius: 8px; background: var(--themis-canvas); color: var(--themis-text); font: inherit; font-size: .8125rem; }
+.themis-settings-url:focus { border-color: var(--themis-border); outline: none; }
+.themis-settings-state.is-warn { color: var(--themis-warning); }
+.themis-settings-state.is-warn::before { background: var(--themis-warning); }

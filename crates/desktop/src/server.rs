@@ -674,6 +674,28 @@ async fn dispatch_command(
                 state.patch_user_browser_config(changes, revision.as_deref())?;
             output!(json!({"settings": settings, "revision": revision}))
         }
+        "get_web_settings" => output!(json!({"search_url": state.user_web_config()?.search_url})),
+        "update_web_settings" => {
+            let search_url: Option<String> = arg(&args, "searchUrl")?;
+            let search_url = search_url
+                .map(|url| url.trim().to_owned())
+                .filter(|url| !url.is_empty());
+            let web = state.update_user_web_config(|web| {
+                web.search_url = search_url;
+                Ok(())
+            })?;
+            output!(json!({"search_url": web.search_url}))
+        }
+        "check_search_server" => {
+            let url = match arg::<Option<String>>(&args, "url")? {
+                Some(url) => url,
+                None => state
+                    .user_web_config()?
+                    .search_url
+                    .ok_or("No search server is set")?,
+            };
+            output!(themis_core::tools::web::check_search_server(&url).await)
+        }
         "browser_history" => output!(
             state
                 .browser_history(

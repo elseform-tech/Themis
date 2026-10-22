@@ -418,3 +418,15 @@ export function onBackendResync(handler: () => void): Promise<UnlistenFn> {
 export function getPendingApprovals(): Promise<ApprovalRequest[]> {
   return invoke('get_pending_approvals');
 }
+
+/** Settings › Web: the SearXNG instance web_search uses (user runtime.jsonc). */
+export function getWebSettings(): Promise<{ search_url: string | null }> { return invoke("get_web_settings"); }
+export function updateWebSettings(searchUrl: string): Promise<{ search_url: string | null }> { return invoke("update_web_settings", { searchUrl }); }
+export interface SearchServerStatus {
+  state: "working" | "degraded" | "json_off" | "rate_limited" | "unreachable" | "invalid" | "error";
+  results?: number;
+  failed_engines?: Array<{ engine: string; reason: string }>;
+  message?: string;
+}
+/** One test search against `url`, or the saved server when omitted. */
+export function checkSearchServer(url?: string): Promise<SearchServerStatus> { return invoke("check_search_server", url ? { url } : {}); }

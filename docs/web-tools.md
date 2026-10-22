@@ -25,7 +25,9 @@ carries `"untrusted": true`: page text is data, never instructions or permission
 ## `web_search`
 
 Asks your own [SearXNG](https://docs.searxng.org/) instance, a metasearch engine
-that queries Google, Bing, Brave, DuckDuckGo and others. Set it in the user
+that queries Google, Bing, Brave, DuckDuckGo and others. Set it in **Settings › Web**,
+which also runs a test search and shows whether it answers (Working, Some engines failing
+with each engine's reason, JSON output off, Not reachable, Rate limited), or in the user
 `runtime.jsonc` (a project cannot):
 
 ```jsonc

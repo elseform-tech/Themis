@@ -521,3 +521,74 @@ async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
     .unwrap();
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_sets_and_checks_the_search_server() {
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        "{\n  // my notes\n  \"schema_version\": 1\n}\n",
+    )
+    .unwrap();
+    let searxng = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{"title": "Weather", "url": "https://example.com/w", "content": "Sunny"}],
+            "unresponsive_engines": [["google", "CAPTCHA"]]
+        })))
+        .mount(&searxng)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    let url = searxng.uri();
+    tokio::task::spawn_blocking(move || {
+        assert_eq!(
+            call(&dir, "get_web_settings", json!({}))["search_url"],
+            Value::Null
+        );
+        let saved = call(&dir, "update_web_settings", json!({"searchUrl": url}));
+        assert_eq!(saved["search_url"], url.as_str());
+        let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
+        assert!(
+            file.contains("// my notes") && file.contains(url.as_str()),
+            "{file}"
+        );
+        // The saved server answers, with one engine failing.
+        let status = call(&dir, "check_search_server", json!({}));
+        assert_eq!(status["state"], "degraded", "{status}");
+        assert_eq!(status["results"], 1);
+        assert_eq!(status["failed_engines"][0]["engine"], "google");
+        // A URL typed but not saved yet can be checked too.
+        let unsaved = call(
+            &dir,
+            "check_search_server",
+            json!({"url": "http://127.0.0.1:9"}),
+        );
+        assert_eq!(unsaved["state"], "unreachable");
+        // An invalid URL is refused and the file is left as it was.
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_web_settings",
+                &json!({"searchUrl": "ftp://x"}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap(),
+            file
+        );
+        // Clearing turns web_search off.
+        let cleared = call(&dir, "update_web_settings", json!({"searchUrl": ""}));
+        assert_eq!(cleared["search_url"], Value::Null);
+    })
+    .await
+    .unwrap();
+    task.abort();
+}
