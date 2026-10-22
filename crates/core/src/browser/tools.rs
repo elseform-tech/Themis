@@ -778,6 +778,15 @@ mod tests {
             "browser_tabs" => parse_tool_args::<TabsArgs>(tool, args).map(|_| ()),
             "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
             "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),
+            "browser_console" => parse_tool_args::<devtools::ConsoleArgs>(tool, args).map(|_| ()),
+            "browser_elements" => parse_tool_args::<devtools::ElementsArgs>(tool, args).map(|_| ()),
+            "browser_network" => parse_tool_args::<devtools::NetworkArgs>(tool, args).map(|_| ()),
+            "browser_debugger" => parse_tool_args::<devtools::DebuggerArgs>(tool, args).map(|_| ()),
+            "browser_storage" => parse_tool_args::<devtools::StorageArgs>(tool, args).map(|_| ()),
+            "browser_performance" => {
+                parse_tool_args::<devtools::PerformanceArgs>(tool, args).map(|_| ())
+            }
+            "browser_memory" => parse_tool_args::<devtools::MemoryArgs>(tool, args).map(|_| ()),
             other => panic!("untested tool {other}"),
         }
     }
@@ -823,7 +832,7 @@ mod tests {
             let parsed = parses(tool.name(), Value::Object(args));
             assert!(parsed.is_ok(), "{}: {parsed:?} from {schema}", tool.name());
         }
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 18);
         let click: ClickArgs = parse_tool_args("browser_click", json!({"ref": "e4"})).unwrap();
         assert_eq!(click.reference, "e4");
         let click: ClickArgs =
