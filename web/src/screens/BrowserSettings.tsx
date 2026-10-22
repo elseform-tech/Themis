@@ -156,8 +156,11 @@ function BrowserData({ projects, threadId, onError }: { projects: Array<{ root: 
   const search = async () => {
     try { setEntries((await browserHistory(project || null, query)).entries); } catch (reason) { onError(describeError(reason)); }
   };
+  const [removing, setRemoving] = useState<string | null>(null);
+  // Removing closes that project's browser first, which takes a few seconds.
   const remove = async (entry: BrowserHistoryEntry) => {
-    try { await removeBrowserHistory(entry.project, entry.url); setEntries(current => current?.filter(other => other !== entry) ?? null); } catch (reason) { onError(describeError(reason)); }
+    setRemoving(`${entry.project}:${entry.url}`);
+    try { await removeBrowserHistory(entry.project, entry.url); setEntries(current => current?.filter(other => other !== entry) ?? null); } catch (reason) { onError(describeError(reason)); } finally { setRemoving(null); }
   };
   const clear = async () => {
     setBusy(true);
@@ -184,7 +187,7 @@ function BrowserData({ projects, threadId, onError }: { projects: Array<{ root: 
       {entries.map(entry => <li key={`${entry.project}:${entry.url}`}>
         <span className="themis-browser-history-text"><span>{entry.title || entry.url}</span><small title={entry.url}>{entry.url} · {new Date(entry.last_visit * 1000).toLocaleString()}{projects.length > 1 && !project ? ` · ${nameOf(entry.project)}` : ""}</small></span>
         {threadId && <button type="button" className="themis-text-action" onClick={() => void browserOpenUrl(threadId, entry.url).catch(reason => onError(describeError(reason)))}>Reopen</button>}
-        <button type="button" className="themis-text-action" aria-label={`Remove ${entry.url}`} onClick={() => void remove(entry)}>Remove</button>
+        <button type="button" className="themis-text-action" aria-label={`Remove ${entry.url}`} disabled={removing !== null} onClick={() => void remove(entry)}>{removing === `${entry.project}:${entry.url}` ? "Removing…" : "Remove"}</button>
       </li>)}
     </ul>)}
     <div className="themis-browser-clear">
@@ -193,7 +196,7 @@ function BrowserData({ projects, threadId, onError }: { projects: Array<{ root: 
       </select>
       {(["history", "cookies", "cache"] as const).map(type => <label key={type} className="themis-browser-clear-type"><input type="checkbox" checked={types[type]} onChange={event => setTypes(current => ({ ...current, [type]: event.target.checked }))} />{type === "history" ? "History" : type === "cookies" ? "Cookies and site data" : "Cached files"}</label>)}
       {confirming
-        ? <span className="themis-browser-pick">This closes {project ? nameOf(project) : "every project"}'s browser{types.cookies ? " and signs the agent out" : ""}.<Button variant="danger" size="small" disabled={busy} onClick={() => void clear()}>Clear</Button><button type="button" className="themis-text-action" onClick={() => setConfirming(false)}>Cancel</button></span>
+        ? <span className="themis-browser-pick">{busy ? "Clearing…" : <>This closes {project ? nameOf(project) : "every project"}'s browser{types.cookies ? " and signs the agent out" : ""}.</>}<Button variant="danger" size="small" disabled={busy} onClick={() => void clear()}>Clear</Button><button type="button" className="themis-text-action" onClick={() => setConfirming(false)}>Cancel</button></span>
         : <button type="button" className="themis-text-action" disabled={!Object.values(types).some(Boolean)} onClick={() => setConfirming(true)}>Clear browsing data…</button>}
     </div>
     </>}

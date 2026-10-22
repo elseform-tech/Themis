@@ -206,3 +206,7 @@
 @media (pointer: coarse) { .themis-theme-preset { min-height: 44px; } }
 
 .themis-appearance-actions { justify-content: flex-end; }
+/* Text fields sit recessed inside the containers so they read as fields. */
+.themis-settings-card .themis-input, .themis-settings-card .themis-site-add input { min-height: 34px; padding: 0 12px; border: 1px solid var(--themis-border-subtle); border-radius: 8px; background: var(--themis-canvas); color: var(--themis-text); font: inherit; font-size: .8125rem; }
+.themis-settings-card .themis-input:focus, .themis-settings-card .themis-site-add input:focus { border-color: var(--themis-border); outline: none; }
+.themis-settings-card select:disabled { opacity: .4; cursor: default; }

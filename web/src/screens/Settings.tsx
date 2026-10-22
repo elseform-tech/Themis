@@ -27,6 +27,8 @@ import { RefreshIcon, ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton 
 
 const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
 const SECTIONS = ["General", "Appearance", "Models", "Permissions", "Browser", "Advanced"];
+/** Backend field names in validation messages, as the labels the person sees. */
+const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_budget", "Context tokens"], ["context_messages", "Recent messages"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
 type NumberSetting = "max_total_turns" | "context_token_budget" | "context_messages" | "concurrency_limit" | "approval_timeout_seconds";
 
 /** Pure rendering of one update status (null = never checked). */
@@ -125,7 +127,7 @@ export function SettingsScreen() {
       dispatch({ type: "settings/patched", settings });
       return true;
     } catch (error: unknown) {
-      setError(describeError(error));
+      setError(FIELD_LABELS.reduce((text, [field, label]) => text.replace(field, label), describeError(error)));
       setForm(state.settings);
       return false;
     } finally { setSaving(false); }
@@ -227,7 +229,7 @@ export function SettingsScreen() {
         <SettingsGroup title="Connections">
           {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key">
             <div className="themis-settings-control"><span className="themis-settings-key-head">{logo}</span><span className={`themis-settings-state is-${state.secretStatus[provider] ? "ok" : "off"}`} title="Saved in macOS Keychain. An OPENCODE_KEY in your environment also works.">{state.secretStatus[provider] ? "Connected" : "Not connected"}</span></div>
-            <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div></details>
+            <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label="API key" type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div></details>
           </div>)}
         </SettingsGroup>
       </>}
