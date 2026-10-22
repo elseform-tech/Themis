@@ -31,7 +31,10 @@ release builds add it with `tauri build --config tauri.searxng.conf.json`),
 started in the background with the app server on a private `127.0.0.1` port and stopped with
 it (a watchdog stops it too if the app is killed). Its settings, secret and log are in the
 app-data `searxng/` folder; nothing is installed system-wide. Settings › Web shows it as
-**Built-in** with its live status.
+**Built-in** with its live status. This is macOS and Linux only: SearXNG does not run on Windows
+(it needs the Unix `pwd` module), so Windows builds ship without it and Settings › Web shows
+"Not set · web_search is off" until you enter a server's address (such as the Docker one below).
+`fetch_url` works everywhere.
 
 To use your own instance instead, enter its address in Settings › Web, or set it in the user
 `runtime.jsonc` (a project cannot):
@@ -73,7 +76,7 @@ continuously animated pages (canvas games, video) streaming into Workspace are
 unverified, since GitHub's GPU-less Windows test machines paint them only once.
 Themis knows the browser is ready from its "DevTools listening" line or from the
 `DevToolsActivePort` file it writes in the profile, whichever comes first (some
-Windows Chrome builds write only the file); if neither arrives within 20 seconds,
+Windows Chrome builds write only the file); if neither arrives within 45 seconds,
 the error quotes the browser's last few output lines.
 The browser runs headless with its own profile in app data
 (`browser/profiles/<project>/`): logins persist across a project's chats and never

@@ -520,7 +520,11 @@ mod tests {
         }
         // A Windows checkout embeds the reference with CRLF: the same starter comes out.
         assert_eq!(
-            starter_from(&configuration::REFERENCE.replace('\n', "\r\n")),
+            starter_from(
+                &configuration::REFERENCE
+                    .replace("\r\n", "\n")
+                    .replace('\n', "\r\n")
+            ),
             runtime_config_starter()
         );
         // Every setting of the reference is in the file, commented out.

@@ -15,7 +15,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use super::cdp::Cdp;
 
 /// How long a starting browser may take to report its debugging address.
-const START_TIMEOUT: Duration = Duration::from_secs(20);
+/// A first start (fresh profile) on a slow machine can take well over 20 s.
+const START_TIMEOUT: Duration = Duration::from_secs(45);
 /// Initial window size; the Workspace view resizes the page to fit itself.
 pub const DEFAULT_VIEWPORT: (u32, u32) = (1280, 800);
 
