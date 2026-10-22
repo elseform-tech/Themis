@@ -926,6 +926,14 @@ async fn dispatch_command(
                 .await?
         ),
         "ensure_runtime_config" => output!(state.ensure_runtime_config()?),
+        "open_runtime_example" => output!(
+            state
+                .open_runtime_example(
+                    arg(&args, "editor")?,
+                    arg::<Option<bool>>(&args, "open")?.unwrap_or(true)
+                )
+                .await?
+        ),
         "open_runtime_config" => done!(state.open_runtime_config(arg(&args, "editor")?).await),
         "open_mcp_config" => output!(
             state

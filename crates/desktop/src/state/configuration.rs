@@ -85,7 +85,7 @@ impl AppState {
         Ok(resolved)
     }
 
-    /// The global `runtime.jsonc`, created with [`RUNTIME_CONFIG_STARTER`]
+    /// The global `runtime.jsonc`, created with [`runtime_config_starter`]
     /// when it does not exist yet. An existing file is never touched.
     pub fn ensure_runtime_config(&self) -> Result<PathBuf, String> {
         let path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
@@ -100,11 +100,41 @@ impl AppState {
         {
             Ok(mut file) => {
                 use std::io::Write;
-                file.write_all(RUNTIME_CONFIG_STARTER.as_bytes())
+                file.write_all(runtime_config_starter().as_bytes())
                     .map_err(|e| format!("write '{}': {e}", path.display()))?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(format!("create '{}': {error}", path.display())),
+        }
+        Ok(path)
+    }
+
+    /// Writes `runtime.example.jsonc` (every setting with its allowed values and default)
+    /// beside the user file, replacing an older copy; Themis never reads it.
+    pub fn write_runtime_example(&self) -> Result<PathBuf, String> {
+        let path = settings_app_dir(self.inner.settings.path()).join("runtime.example.jsonc");
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err("the example file cannot be a symlink".into());
+        }
+        std::fs::write(&path, configuration::REFERENCE)
+            .map_err(|e| format!("write '{}': {e}", path.display()))?;
+        Ok(path)
+    }
+
+    /// Writes the example file and opens it with `editor` (or the one chosen in Settings),
+    /// unless `open` is false. Returns its path.
+    pub async fn open_runtime_example(
+        &self,
+        editor: Option<String>,
+        open: bool,
+    ) -> Result<PathBuf, String> {
+        let path = self.write_runtime_example()?;
+        if open {
+            let editor = match editor {
+                Some(editor) => editor,
+                None => self.get_settings().await.config_editor,
+            };
+            super::editors::open_with(&editor, &path)?;
         }
         Ok(path)
     }
@@ -383,65 +413,74 @@ impl AppState {
     }
 }
 
-/// Written once when Settings opens a `runtime.jsonc` that does not exist:
-/// every setting is commented out, so it changes nothing until edited.
-pub const RUNTIME_CONFIG_STARTER: &str = r#"// Themis settings for every project (JSON with // comments).
-//
-// Nothing below is active yet. Without settings Themis uses built-in defaults:
-//   - Custom mode allows reads and asks you before anything else.
-//   - The sandbox is on, chosen for your system, with network allowed.
-// To change something, remove the // in front of its lines and edit the value.
-// Changes apply from the next run. A project's .themis/config.jsonc can only
-// add restrictions on top of this file. Full reference: docs/configuration.md
-// and docs/sandbox.md.
-{
-  // APPROVAL (used in Custom mode; YOLO skips approval prompts)
-  // Rules are checked in order and the first match decides. Each rule has:
-  //   "tool":    a tool name such as "shell", "git", "read_file", "write_file",
-  //              "apply_patch", "mcp_<server>_<tool>"; a trailing * matches a
-  //              prefix ("mcp_*"), and "*" matches every tool.
-  //   "action":  "allow" (run without asking), "ask" (show the pop-up) or
-  //              "deny" (refuse).
-  //   "risk":    optional; only match this kind of action: "read", "write",
-  //              "execute", "network" or "destructive".
-  //   "command": optional, shell and git only; the command must start with
-  //              these words, e.g. ["cargo", "test"]. An allow rule never covers
-  //              destructive forms such as `git push --force` or `rm -rf`
-  //              unless it names them or sets "risk": "destructive".
-  // "default" applies when no rule matches: "allow", "ask" or "deny".
-  // Writing "rules" replaces the built-in list, so keep the read rule if you
-  // still want reads to run without asking.
-  //
-  // "approval": {
-  //   "default": "ask",
-  //   "rules": [
-  //     { "tool": "*", "risk": "read", "action": "allow" },
-  //     { "tool": "shell", "command": ["cargo", "test"], "action": "allow" },
-  //     { "tool": "shell", "command": ["git", "push"], "action": "deny" }
-  //   ]
-  // },
+/// Ready-made settings in a new `runtime.jsonc`, commented out: `(what it does, the setting)`.
+/// Uncomment one approval preset at a time (a later "approval" replaces an earlier one).
+pub const RUNTIME_CONFIG_PRESETS: [(&str, &str); 5] = [
+    (
+        "Approval: reads run, everything else asks (what Themis does without a file)",
+        r#""approval": {
+  "default": "ask",
+  "rules": [
+    { "tool": "*", "risk": "read", "action": "allow" }
+  ]
+},"#,
+    ),
+    (
+        "Approval: also run tests and builds without asking, and never push",
+        r#""approval": {
+  "default": "ask",
+  "rules": [
+    { "tool": "*", "risk": "read", "action": "allow" },
+    { "tool": "shell", "command": ["cargo", "test"], "action": "allow" },
+    { "tool": "shell", "command": ["npm", "test"], "action": "allow" },
+    { "tool": "shell", "command": ["git", "push"], "action": "deny" },
+    { "tool": "*", "risk": "destructive", "action": "deny" }
+  ]
+},"#,
+    ),
+    (
+        "Approval: read-only, refuse anything that writes, runs or browses",
+        r#""approval": {
+  "default": "deny",
+  "rules": [
+    { "tool": "*", "risk": "read", "action": "allow" }
+  ]
+},"#,
+    ),
+    (
+        "Sandbox: commands get no network",
+        r#""sandbox": { "network": "block" },"#,
+    ),
+    (
+        "Browser: ask before the agent opens any site (local apps stay allowed)",
+        r#""browser": { "permissions": { "browsing": "ask", "downloads": "ask", "debugging": "block" } },"#,
+    ),
+];
 
-  // SANDBOX (applies in Custom and YOLO)
-  //   "enabled":        true or false.
-  //   "backend":        "auto" (best for this system), "seatbelt" (macOS),
-  //                     "bubblewrap" or "landlock" (Linux). A named backend
-  //                     that is missing blocks commands; "auto" never does.
-  //   "network":        "allow" or "block".
-  //   "writable_paths": extra folders commands may write to, absolute or
-  //                     starting with ~/. The project and temporary folders
-  //                     are always writable.
-  // Always protected, whatever this file says: secret folders such as ~/.ssh
-  // and ~/.aws are never readable, and Themis' own settings and a project's
-  // .themis folder are never writable.
-  //
-  // "sandbox": {
-  //   "enabled": true,
-  //   "backend": "auto",
-  //   "network": "allow",
-  //   "writable_paths": []
-  // }
+/// A new `runtime.jsonc`: what the file is, then [`RUNTIME_CONFIG_PRESETS`], all commented
+/// out so it changes nothing until edited. Every field with its allowed values is in
+/// `runtime.example.jsonc` beside it ([`configuration::REFERENCE`]).
+pub fn runtime_config_starter() -> String {
+    let mut text = String::from(
+        "// Themis settings for every project (JSON with // comments).\n\
+         //\n\
+         // Nothing here is active yet: without settings Themis allows reads, asks before\n\
+         // anything else, and runs commands in the sandbox with network allowed.\n\
+         // To use a preset, remove the // in front of its lines (only one approval preset).\n\
+         // Every setting, its allowed values and default: runtime.example.jsonc beside this\n\
+         // file (Settings > Permissions > Example). Changes apply from each chat's next message;\n\
+         // a project's .themis/config.jsonc can only make things stricter.\n\
+         {\n",
+    );
+    for (title, setting) in RUNTIME_CONFIG_PRESETS {
+        text.push_str(&format!("\n  // {title}\n"));
+        for line in setting.lines() {
+            text.push_str(&format!("  // {line}\n"));
+        }
+    }
+    text.push_str("}\n");
+    text
 }
-"#;
 
 /// Refusal when the file's browser settings changed under an open Settings page.
 pub(crate) const STALE_BROWSER_SETTINGS: &str =
@@ -468,7 +507,7 @@ mod tests {
         assert_eq!(path, temporary.path().join("runtime.jsonc"));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            RUNTIME_CONFIG_STARTER
+            runtime_config_starter()
         );
         // The starter is valid and every setting in it is commented out.
         let starter = state.runtime_configuration(None, None).unwrap();
@@ -476,6 +515,20 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&starter.config).unwrap(),
             serde_json::to_value(&defaults.config).unwrap()
+        );
+        // Each preset, uncommented on its own, is a valid setting.
+        for (title, setting) in RUNTIME_CONFIG_PRESETS {
+            let file = format!("{{{}}}", setting.trim_end_matches(','));
+            configuration::resolve(Some(&file), None, None)
+                .unwrap_or_else(|e| panic!("preset '{title}' is invalid: {e:#}"));
+        }
+        // The example file is the reference, rewritten each time.
+        let example = state.write_runtime_example().unwrap();
+        std::fs::write(&example, "old").unwrap();
+        state.write_runtime_example().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&example).unwrap(),
+            configuration::REFERENCE
         );
         // An existing file, even an invalid one, is left exactly as it is.
         std::fs::write(&path, "{ my edits").unwrap();

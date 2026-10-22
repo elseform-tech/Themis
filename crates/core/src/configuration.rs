@@ -960,6 +960,10 @@ fn bail_unbalanced() -> Result<String> {
     anyhow::bail!("configuration must be an object")
 }
 
+/// Every runtime setting with its allowed values and default, as commented JSONC. Written
+/// beside the user file as `runtime.example.jsonc` (never read back) and printed by the CLI.
+pub const REFERENCE: &str = include_str!("configuration_reference.jsonc");
+
 /// Parses JSONC (comments, trailing commas) of at most 1 MiB; an error carries the 1-based
 /// line it was found on (0 when the input is too large).
 pub fn parse_jsonc(content: &str) -> std::result::Result<Value, (String, usize)> {
@@ -1475,7 +1479,8 @@ pub fn schema() -> Value {
                 "enabled":{"type":"boolean","default":true},
                 "backend":{"enum":["auto","seatbelt","bubblewrap","landlock"],"default":"auto"},
                 "network":{"enum":["allow","block"],"default":"allow"},
-                "writable_paths":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024},"default":[]}
+                "writable_paths":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024},"default":[]},
+                "allow_keychain":{"type":"boolean","default":false,"description":"macOS: let sandboxed commands use the Keychain; projects may only set false"}
             }},
             "web":{"type":"object","additionalProperties":false,"properties":{
                 "search_url":{"type":"string","maxLength":1024,"description":"Your SearXNG instance (JSON output enabled); user file only"}
@@ -1521,6 +1526,67 @@ pub fn schema() -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    /// The reference is valid, changes nothing (its values are the defaults) and names every
+    /// field, so a new setting cannot be added without documenting it there.
+    #[test]
+    fn the_reference_is_valid_and_lists_every_setting() {
+        let resolved = resolve(Some(REFERENCE), None, None).expect("reference resolves");
+        let reference = serde_json::to_value(&resolved.config).unwrap();
+        let defaults = serde_json::to_value(RuntimeConfig::default()).unwrap();
+        assert_eq!(reference, defaults, "the reference must show the defaults");
+        // Optional fields shown commented out are named in the text.
+        let text = REFERENCE;
+        // Every field the configuration has (from its defaults), plus the optional ones that
+        // have no default value, must be named in the reference.
+        fn fields(value: &Value, out: &mut Vec<String>) {
+            match value {
+                Value::Object(object) => {
+                    for (name, inner) in object {
+                        out.push(name.clone());
+                        fields(inner, out);
+                    }
+                }
+                Value::Array(items) => items.iter().for_each(|item| fields(item, out)),
+                _ => {}
+            }
+        }
+        let mut names = vec![
+            "executable",
+            "downloads_directory",
+            "search_url",
+            "context_token_budget",
+            "recent_messages",
+            "total_turns",
+            "summary_model",
+            "prompt_file",
+            "command",
+            "downloads",
+            "debugging",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        fields(&defaults, &mut names);
+        for name in names
+            .iter()
+            .filter(|name| name.as_str() != "site_restrictions")
+        {
+            assert!(
+                text.contains(&format!("\"{name}\"")),
+                "the reference does not mention \"{name}\""
+            );
+        }
+        // The schema editors use knows the same fields.
+        let schema = schema().to_string();
+        for name in &names {
+            assert!(
+                schema.contains(&format!("\"{name}\"")),
+                "the schema does not know \"{name}\""
+            );
+        }
+    }
+
     use super::*;
 
     #[test]

@@ -58,6 +58,8 @@ export function pluginAction<T>(args: Record<string, unknown>): Promise<T> { ret
 
 /** Read-only effective permissions (rules, sandbox, config files, chat grants), re-read on every call. */
 export function openRuntimeConfig(editor?: string): Promise<void> { return invoke("open_runtime_config", editor === undefined ? {} : { editor }); }
+/** Writes runtime.example.jsonc (every setting, its values and default) and opens it. */
+export function openRuntimeExample(editor?: string): Promise<string> { return invoke("open_runtime_example", editor === undefined ? {} : { editor }); }
 export function listEditors(): Promise<{ editors: Array<{ id: string; name: string }> }> { return invoke("list_editors"); }
 export function getEffectivePermissions(projectRoot: string | null, threadId: string | null): Promise<EffectivePermissions> { return invoke("get_effective_permissions", { projectRoot, threadId }); }
 
