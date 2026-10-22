@@ -5,6 +5,7 @@
   padding: 1rem;
   max-width: 36rem;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .themis-settings-title {

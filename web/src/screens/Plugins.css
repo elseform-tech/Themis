@@ -12,7 +12,7 @@
 .themis-integrations-toolbar > div { display: flex; align-items: center; gap: .5rem; }
 .themis-integrations-search { width: 200px; height: 34px; padding: 0 14px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-raised); color: var(--themis-text); font: inherit; font-size: .8125rem; }
 .themis-integrations-search:focus-visible { outline: 1px solid var(--themis-border); }
-.themis-integrations-list { padding: 0; margin: 0; list-style: none; flex: 1; min-height: 0; overflow-y: auto; }
+.themis-integrations-list { padding: 0; margin: 0; list-style: none; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .themis-integrations-list > li { display: flex; align-items: center; gap: .5rem; min-height: 3.5rem; border-bottom: 1px solid var(--themis-border-subtle); }
 .themis-integration-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .themis-integrations button.themis-integration-open { text-align: left; padding: .5rem 0; }

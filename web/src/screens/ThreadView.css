@@ -56,7 +56,7 @@
 .themis-starter:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Conversation stream. */
-.themis-thread-stream { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; padding: 16px max(20px, calc((100% - 740px) / 2)) 24px; }
+.themis-thread-stream { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 20px; padding: 16px max(20px, calc((100% - 740px) / 2)) 24px; }
 .themis-thread-start { margin: auto; color: var(--themis-text-2); font-size: .875rem; }
 .themis-thread-msg { max-width: 100%; }
 .themis-thread-msg--user { align-self: flex-end; max-width: 80%; padding: 12px 18px; border-radius: 22px 22px 6px 22px; background: var(--themis-user-message-bg); }
@@ -213,7 +213,7 @@
 .themis-edited-files h3 { margin: 0; color: var(--themis-text); font-size: .8125rem; font-weight: 600; }
 .themis-edited-counts { display: flex; gap: 10px; font-size: .6875rem; }
 .themis-edited-files ul { display: grid; margin: 0; padding: 0; list-style: none; }
-.themis-edited-files ul.is-expanded { max-height: 288px; overflow-y: auto; }
+.themis-edited-files ul.is-expanded { max-height: 288px; overflow-y: auto; overflow-x: hidden; }
 .themis-edited-files li button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 30px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; }
 .themis-edited-files li button:hover { background: var(--themis-raised); }
 .themis-edited-status { flex: none; width: 12px; font-size: .6875rem; font-weight: 700; text-align: center; }
