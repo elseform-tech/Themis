@@ -615,6 +615,16 @@ async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
             copy.contains("\"personal/docs\"") && copy.starts_with("// "),
             "{copy}"
         );
+        // The standard mcpServers shape (Claude Desktop, Claude Code, Cursor), no internals.
+        let parsed = themis_core::configuration::parse_jsonc(&copy).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["personal/docs"],
+            json!({"type": "http", "url": "http://127.0.0.1:9/mcp"})
+        );
+        assert!(
+            !copy.contains("bearer_env") && !copy.contains("\"enabled\""),
+            "{copy}"
+        );
         // Saving the copy applies it: one server changed, one added (with a comment kept).
         let edited = copy.replace("http://127.0.0.1:9/mcp", "http://127.0.0.1:10/mcp").replace(
             "\"personal/docs\": {",
@@ -639,6 +649,32 @@ async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
             personal["spec"]["mcp"]["notes"]["url"],
             "http://127.0.0.1:11/mcp"
         );
+        // A local server in the standard shape: its env reference round-trips.
+        let copy = std::fs::read_to_string(&path).unwrap();
+        let with_local = copy.replacen(
+            "\"mcpServers\": {",
+            "\"mcpServers\": {\n    \"personal/files\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"/tmp\"], \"env\": { \"API_KEY\": \"${FILES_KEY}\" } },",
+            1,
+        );
+        std::fs::write(&path, &with_local).unwrap();
+        let local = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(local["state"], "applied", "{local}");
+        let reopened = call(&dir, "open_mcp_config", json!({"open": false}));
+        assert_eq!(reopened["servers"], 3);
+        let copy =
+            themis_core::configuration::parse_jsonc(&std::fs::read_to_string(&path).unwrap())
+                .unwrap();
+        assert_eq!(
+            copy["mcpServers"]["personal/files"],
+            json!({"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"], "env": {"API_KEY": "${FILES_KEY}"}})
+        );
+        // A literal credential is refused, as for any import.
+        let literal = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("${FILES_KEY}", "sk-literal");
+        std::fs::write(&path, literal).unwrap();
+        let refused = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(refused["state"], "invalid", "{refused}");
         // A broken file names its line and changes nothing.
         std::fs::write(
             &path,

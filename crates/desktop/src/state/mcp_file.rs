@@ -71,7 +71,12 @@ impl AppState {
         let mut servers = Map::new();
         for (name, (_, mcp)) in &personal {
             for (server, definition) in mcp {
-                servers.insert(format!("{name}/{server}"), definition.clone());
+                // Shown in the standard mcpServers shape; a definition the store cannot
+                // read is shown as stored rather than hidden.
+                let standard = serde_json::from_value(definition.clone())
+                    .map(|server| themis_core::plugins::mcp_server_to_standard(&server))
+                    .unwrap_or_else(|_| definition.clone());
+                servers.insert(format!("{name}/{server}"), standard);
             }
         }
         let body = serde_json::to_string_pretty(&json!({"mcpServers": servers}))
@@ -172,6 +177,10 @@ impl AppState {
         let servers = document["mcpServers"]
             .as_object()
             .ok_or_else(|| invalid("The file needs an \"mcpServers\" object".into()))?;
+        let current = self
+            .personal_mcp()
+            .await
+            .map_err(|message| json!({"state": "error", "message": message}))?;
         let mut wanted: BTreeMap<String, Map<String, Value>> = revisions
             .keys()
             .map(|name| (name.clone(), Map::new()))
@@ -181,19 +190,25 @@ impl AppState {
                 .split_once('/')
                 .filter(|(i, s)| !i.is_empty() && !s.is_empty())
                 .ok_or_else(|| invalid(format!("\"{key}\" must be named integration/server")))?;
-            wanted
-                .get_mut(integration)
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "\"{integration}\" is not one of your personal integrations"
-                    ))
-                })?
-                .insert(server.to_owned(), definition.clone());
+            let servers = wanted.get_mut(integration).ok_or_else(|| {
+                invalid(format!(
+                    "\"{integration}\" is not one of your personal integrations"
+                ))
+            })?;
+            let mut parsed = themis_core::plugins::mcp_server_from_standard(server, definition)
+                .map_err(|e| invalid(format!("{key}: {e:#}")))?;
+            // Whether it runs stays as switched in Integrations unless the file says so.
+            if definition.get("enabled").is_none() {
+                parsed.enabled = current
+                    .get(integration)
+                    .and_then(|(_, mcp)| mcp.get(server))
+                    .and_then(|old| old["enabled"].as_bool())
+                    .unwrap_or(false);
+            }
+            let value = serde_json::to_value(&parsed)
+                .map_err(|e| json!({"state": "error", "message": e.to_string()}))?;
+            servers.insert(server.to_owned(), value);
         }
-        let current = self
-            .personal_mcp()
-            .await
-            .map_err(|message| json!({"state": "error", "message": message}))?;
         let mut changed = Vec::new();
         let mut updated = revisions.clone();
         for (name, servers) in wanted {

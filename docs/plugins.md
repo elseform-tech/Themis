@@ -46,7 +46,11 @@ Canonical hook events are `RunStart`, `BeforeTool`, `AfterTool`, `BeforeCompacti
 ## Edit as mcp.json (Integrations › MCP)
 
 **Open** writes your personal (non-marketplace) global MCP servers to one copy,
-`mcp-edit/mcp.json` in the app data folder, as `{"mcpServers": {"integration/server": {...}}}`,
+`mcp-edit/mcp.json` in the app data folder, in the standard `mcpServers` shape that Claude
+Desktop, Claude Code and Cursor use, keyed `integration/server`: local servers as
+`{"command": "npx", "args": [...], "env": {"KEY": "${VARIABLE}"}}`, remote ones as
+`{"type": "http", "url": "...", "headers": {"Authorization": "Bearer ${VARIABLE}"}}`. Whether a
+server runs is not in the file (switch it in Integrations; an `"enabled"` you add is used),
 and opens it in the editor chosen under **Open with** (the same choice as Settings ›
 Permissions). While it is open Themis watches it: each save is parsed as JSONC and every
 integration whose servers changed is saved through the integrations store with the revision

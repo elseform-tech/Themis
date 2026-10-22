@@ -10,7 +10,10 @@ use crate::skills::Skill;
 use anyhow::{bail, Context};
 pub use connections::McpServer;
 pub use hooks::Hook;
-pub use marketplace::{ImportComponent, ImportPreview, ImportReport, Marketplace};
+pub use marketplace::{
+    mcp_server_from_standard, mcp_server_to_standard, ImportComponent, ImportPreview, ImportReport,
+    Marketplace,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
