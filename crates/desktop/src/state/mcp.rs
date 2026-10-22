@@ -101,7 +101,11 @@ impl AppState {
                         .await
                         .map(Arc::new)
                         .map_err(|error| {
-                            match error.to_string().as_str() {
+                            let text = error.to_string();
+                            if let Some(program) = text.strip_prefix("MCP program not found: ") {
+                                return format!("'{program}' was not found on this computer. Install it, or save the command with its full path.");
+                            }
+                            match text.as_str() {
                                 "Could not start MCP server" => {
                                     "MCP process could not start. Check the saved command."
                                 }

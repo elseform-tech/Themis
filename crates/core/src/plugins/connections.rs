@@ -139,7 +139,17 @@ impl Connection {
             }
             #[cfg(unix)]
             c.process_group(0);
-            let mut child = c.spawn().context("Could not start MCP server")?;
+            let mut child = match c.spawn() {
+                Ok(child) => child,
+                // Name the program: "npx" missing reads very differently from a crash.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    anyhow::bail!(
+                        "MCP program not found: {}",
+                        server.command.as_deref().unwrap_or_default()
+                    )
+                }
+                Err(error) => return Err(error).context("Could not start MCP server"),
+            };
             if let Some(stderr) = child.stderr.take() {
                 crate::diagnostics::capture_stderr(
                     stderr,

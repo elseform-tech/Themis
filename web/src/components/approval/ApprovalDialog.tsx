@@ -1,3 +1,4 @@
+import { toolDisplayName } from "../../lib/toolNames";
 import { useEffect, useRef } from "react";
 import type { ApprovalDecision, ApprovalRequest, RiskLevel } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
@@ -10,6 +11,8 @@ import "./ApprovalDialog.css";
 
 export interface ApprovalDialogProps {
   request: ApprovalRequest;
+  /** A readable name for an MCP tool, shown instead of its opaque wire id. */
+  label?: string;
   open: boolean;
   onDecide: (decision: ApprovalDecision) => void;
 }
@@ -65,7 +68,7 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
 
 const SHORTCUT_DELAY_MS = 500;
 
-export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps) {
+export function ApprovalDialog({ request, label, open, onDecide }: ApprovalDialogProps) {
   const grantable = request.grantable !== false;
   const outside = request.tool === UNSANDBOXED_TOOL;
   const blocked = request.command?.sandbox_blocked;
@@ -109,7 +112,7 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
     >
       <div className="themis-approval">
         <div className="themis-approval-row">
-          <span className="themis-approval-tool">{outside ? "shell (outside the sandbox)" : request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : request.tool}</span>
+          <span className="themis-approval-tool">{outside ? "shell (outside the sandbox)" : request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : toolDisplayName(request.tool, label)}</span>
           <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
         </div>
         {request.command
@@ -118,7 +121,7 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
               {request.command.cwd !== undefined ? <> in <TokenChip token={request.command.cwd} /></> : " in the project root"}
               {request.command.background && " in the background"}
             </p>
-          : <p className="themis-approval-summary">{request.summary}</p>}
+          : <p className="themis-approval-summary">{request.tool.startsWith("mcp_") ? request.summary.split(request.tool).join(toolDisplayName(request.tool, label)) : request.summary}</p>}
         {outside && <p className="themis-approval-summary">The sandbox blocked it{blocked ? <>: <SafeText text={blocked} />.</> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</p>}
         <p className="themis-thread-hint"><GrantHint request={request} /></p>
         <div className="themis-approval-actions">

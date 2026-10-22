@@ -43,6 +43,14 @@ Connections support stdio and Streamable HTTP JSON-RPC, initialization, paginate
 
 Canonical hook events are `RunStart`, `BeforeTool`, `AfterTool`, `BeforeCompaction`, and `RunEnd`; legacy event aliases remain supported. Hook matchers select tools; ignore/abort failure policy is explicit. Commands receive a JSON payload through stdin and may return JSON. Before-event hooks can block on failure. Hooks cannot grant tool permissions. MCP server processes and hooks are not run inside the OS sandbox that confines agent commands (see [sandbox](sandbox.md#what-it-covers)); they run with your permissions once you enable them. Commands have bounded output/time; Unix process groups terminate descendants on timeout/cancellation. Imported resource roots are passed to hooks as `CLAUDE_PLUGIN_ROOT`, never substituted into shell source. Explicit chat/CLI tests run the saved configuration; normal runs request approvals.
 
+## Programs MCP servers start with
+
+An app opened from Finder, the Dock or a desktop launcher gets the system's minimal `PATH`.
+At startup Themis adds your login shell's `PATH` (three-second limit), so a server whose
+command is `npx`, `uvx`, `docker` or a program in `~/.local/bin` starts as it does in your
+terminal. A program that still cannot be found is named in the connection details ("'npx'
+was not found on this computer"); install it or save the command with its full path.
+
 ## Edit as mcp.json (Integrations › MCP)
 
 **Open** writes your personal (non-marketplace) global MCP servers to one copy,

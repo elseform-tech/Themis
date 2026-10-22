@@ -118,6 +118,8 @@ function Shell() {
       {headApproval !== undefined && (
         <ApprovalDialog
           request={headApproval}
+          // An MCP tool's readable name ("files · read text file"), as the step list shows it.
+          label={[...(state.traces[headApproval.thread_id] ?? [])].reverse().find(entry => entry.tool === headApproval.tool && entry.label)?.label}
           open
           onDecide={(decision) => void decideApproval(decision)}
         />

@@ -18,6 +18,13 @@ function setup(request: ApprovalRequest = REQUEST) {
 }
 
 describe("ApprovalDialog", () => {
+  it("names an MCP tool by server and tool, not its wire id", () => {
+    const tool = "mcp_fb67fe144f6fc34f56444b8d_list_allowed_directories";
+    render(<ApprovalDialog request={{ ...REQUEST, tool, summary: `call \`${tool}\` with {}` }} label="files · list_allowed_directories" open onDecide={() => {}} />);
+    expect(screen.getAllByText(/files · list allowed directories/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/fb67fe/)).toBeNull();
+  });
+
   afterEach(() => { vi.useRealTimers(); });
   it("shows tool, summary, and risk badge", () => {
     setup();
