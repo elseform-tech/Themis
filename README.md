@@ -50,9 +50,11 @@ python3 -m quality_dashboard.dashboard # local quality dashboard
 `AGENTS.md` lists the full check sequence, including Rust coverage and the dashboard tests.
 
 The desktop starts a separate local app server process and connects to it. The
-server owns thread state and keeps scheduled automations available after the
-window closes. The optional `themis` CLI connects to that same server and starts it when a
-conversation needs one:
+server owns thread state and stops when the app quits, crashes or is force-quit, taking
+its background programs, MCP servers and built-in search with it. If a server is already
+running (started by the CLI), the app uses it and leaves it running. The optional `themis`
+CLI connects to that same server and starts one that keeps running (until `themis server
+stop`) when a conversation needs one:
 
 ```sh
 cargo run -p themis-desktop --bin themis -- serve

@@ -238,13 +238,38 @@ pub fn install_runtime() {
     std::mem::forget(runtime);
 }
 
-/// The same executable can host the backend without starting a window.
-pub fn run_headless_server(data_dir: PathBuf) -> Result<(), String> {
-    tauri::async_runtime::block_on(run_headless_server_async(data_dir))
+/// The same executable can host the backend without starting a window. With `with_app`
+/// (the server the desktop app starts), it stops when the app's end of stdin closes, so
+/// it ends with the app however the app ends (quit, crash or force quit).
+pub fn run_headless_server(data_dir: PathBuf, with_app: bool) -> Result<(), String> {
+    tauri::async_runtime::block_on(async move {
+        if with_app {
+            serve(data_dir, stdin_closed()).await
+        } else {
+            serve(data_dir, std::future::pending()).await
+        }
+    })
 }
 
 /// Hosts the backend on an existing async runtime (used by `themis serve`).
 pub async fn run_headless_server_async(data_dir: PathBuf) -> Result<(), String> {
+    serve(data_dir, std::future::pending()).await
+}
+
+/// Completes when stdin reaches end of file: the writer, the desktop app, closed it or ended.
+async fn stdin_closed() {
+    let (closed, wait) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        let _ = closed.send(());
+    });
+    let _ = wait.await;
+}
+
+async fn serve(
+    data_dir: PathBuf,
+    stop: impl std::future::Future<Output = ()>,
+) -> Result<(), String> {
     std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
     let lock = std::fs::OpenOptions::new()
         .read(true)
@@ -266,12 +291,24 @@ pub async fn run_headless_server_async(data_dir: PathBuf) -> Result<(), String> 
     {
         crate::state::searxng::start_in_background(&data_dir);
     }
-    let served = server::Server::bind(state, &data_dir).await?.run().await;
+    let served = server::Server::bind(state, &data_dir)
+        .await?
+        .run_until(stop)
+        .await;
     crate::state::searxng::stop();
     served
 }
 
-fn ensure_server(client: &server::Client, data_dir: &Path) -> Result<(), String> {
+/// Our end of the pipe to a server this app started: the server stops when it closes,
+/// which the OS does when the app exits for any reason.
+struct ServerLifeline(#[allow(dead_code)] Option<std::process::ChildStdin>);
+
+/// Connects to the running server, or starts one that ends with this app. A server that
+/// was already running (started by the CLI) is left running.
+fn ensure_server(
+    client: &server::Client,
+    data_dir: &Path,
+) -> Result<Option<std::process::ChildStdin>, String> {
     let ping = || {
         tauri::async_runtime::block_on(async {
             tokio::time::timeout(
@@ -283,20 +320,22 @@ fn ensure_server(client: &server::Client, data_dir: &Path) -> Result<(), String>
         .is_ok_and(|result| result.is_ok())
     };
     if tauri::async_runtime::block_on(client.answers(server::SERVER_PATIENCE)) {
-        return Ok(());
+        return Ok(None);
     }
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let mut child = std::process::Command::new(executable)
         .arg("--themis-server")
         .arg(data_dir)
-        .stdin(std::process::Stdio::null())
+        .arg("--with-app")
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|error| format!("could not start local server: {error}"))?;
+    let lifeline = child.stdin.take();
     for _ in 0..50 {
         if ping() {
-            return Ok(());
+            return Ok(lifeline);
         }
         if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
             return Err(format!("local server exited during startup: {status}"));
@@ -423,7 +462,7 @@ pub fn run() {
             set_dock_icon()?;
             let data_dir = app.path().app_data_dir()?;
             let client = server::Client::new(data_dir.clone());
-            ensure_server(&client, &data_dir)?;
+            app.manage(ServerLifeline(ensure_server(&client, &data_dir)?));
             forward_remote_events(app.handle().clone(), client.clone());
             app.manage(client);
             app.manage(BrowserStreams::default());
