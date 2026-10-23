@@ -15,6 +15,7 @@ import {
   setSecret,
   updateSettings,
   listGoModels,
+  listKeys,
 } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
 import { DEFAULT_MODEL, modelLabel } from "../lib/models";
@@ -24,11 +25,11 @@ import { PermissionsSettings } from "./PermissionsView";
 import { BrowserSettingsSection } from "./BrowserSettings";
 import { WebSettingsSection } from "./WebSettings";
 import { SidebarIcon } from "./Sidebar";
-import { KeysSettings } from "./KeysSettings";
+import { SecretsSettings } from "./SecretsSettings";
 import { RefreshIcon, ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 
 const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
-const SECTIONS = ["General", "Appearance", "Models", "Keys", "Permissions", "Browser", "Web", "Advanced"];
+const SECTIONS = ["General", "Appearance", "Models", "Secrets", "Permissions", "Browser", "Web", "Advanced"];
 /** Backend field names in validation messages, as the labels the person sees. */
 const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_budget", "Context tokens"], ["context_messages", "Recent messages"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
 type NumberSetting = "max_total_turns" | "context_token_budget" | "context_messages" | "concurrency_limit" | "approval_timeout_seconds";
@@ -98,6 +99,7 @@ export function SettingsScreen() {
   const [saving, setSaving] = useState(false);
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [keyBusy, setKeyBusy] = useState<string | null>(null);
+  const [secretNames, setSecretNames] = useState<string[]>([]);
   const [section, setSection] = useState(state.settingsFocus?.section ?? "General");
   const [error, setError] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -120,6 +122,14 @@ export function SettingsScreen() {
     });
     return () => { active = false; };
   }, [section, state.secretStatus.go, modelRefresh]);
+
+  // The secrets Models › Connections can choose from (Settings › Secrets).
+  useEffect(() => {
+    if (section !== "Models") return;
+    let active = true;
+    void listKeys(state.activeProjectRoot).then(entries => { if (active) setSecretNames(entries.map(entry => entry.name)); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [section, state.activeProjectRoot]);
 
   async function save(patch: Partial<Settings>) {
     if (saving) return false;
@@ -151,9 +161,9 @@ export function SettingsScreen() {
       await setSecret(provider, value);
       setKeys((prev) => ({ ...prev, [provider]: "" }));
       await refreshSecrets();
-      toast(dispatch, `Saved ${provider} key in Keychain`, "success");
+      toast(dispatch, `Saved ${goSecret}`, "success");
     } catch (error: unknown) {
-      toast(dispatch, `Save ${provider} key failed: ${describeError(error)}`, "danger");
+      toast(dispatch, `Save ${goSecret} failed: ${describeError(error)}`, "danger");
     } finally {
       setKeyBusy(null);
     }
@@ -177,9 +187,9 @@ export function SettingsScreen() {
     try {
       await clearSecret(provider);
       await refreshSecrets();
-      toast(dispatch, `Cleared ${provider} key`, "success");
+      toast(dispatch, `Removed ${goSecret}`, "success");
     } catch (error: unknown) {
-      toast(dispatch, `Clear ${provider} key failed: ${describeError(error)}`, "danger");
+      toast(dispatch, `Remove ${goSecret} failed: ${describeError(error)}`, "danger");
     } finally {
       setKeyBusy(null);
     }
@@ -196,6 +206,11 @@ export function SettingsScreen() {
   const number = (key: NumberSetting, label: string, min: number, max: number) => <label className="themis-settings-control">{label}
     <input className="themis-settings-number" aria-label={label} type="number" min={min} max={max} value={form[key]} onChange={event => setForm(f => ({ ...f, [key]: Number(event.target.value) }))} onBlur={() => { if (form[key] !== state.settings[key]) void save({ [key]: form[key] }); }} />
   </label>;
+  const goSecret = state.settings.go_secret ?? "OPENCODE_KEY";
+  const secretChoices = [...new Set([goSecret, "OPENCODE_KEY", ...secretNames])].sort();
+  async function chooseSecret(name: string) {
+    if (await save({ go_secret: name })) await refreshSecrets();
+  }
   const logo = <span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span>;
 
   return (
@@ -230,13 +245,14 @@ export function SettingsScreen() {
         </SettingsGroup>
         <SettingsGroup title="Connections">
           {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key">
-            <div className="themis-settings-control"><span className="themis-settings-key-head">{logo}</span><span className={`themis-settings-state is-${state.secretStatus[provider] ? "ok" : "off"}`} title="Saved in macOS Keychain. An OPENCODE_KEY in your environment also works.">{state.secretStatus[provider] ? "Connected" : "Not connected"}</span></div>
-            <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label="API key" type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div></details>
+            <div className="themis-settings-control"><span className="themis-settings-key-head">{logo}</span><span className={`themis-settings-state is-${state.secretStatus[provider] ? "ok" : "off"}`} title={`Reads the secret ${goSecret} (Settings › Secrets), or an environment variable of that name.`}>{state.secretStatus[provider] ? "Connected" : "Not connected"}</span></div>
+            <label className="themis-settings-control">Secret<select aria-label="OpenCode Go secret" value={goSecret} disabled={saving} onChange={event => void chooseSecret(event.target.value)}>{secretChoices.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
+            <details><summary>Set {goSecret}</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`Value of ${goSecret}`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Remove</Button></div></details>
           </div>)}
         </SettingsGroup>
       </>}
       {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}
-      {section === "Keys" && <KeysSettings focusKey={state.settingsFocus?.key} />}
+      {section === "Secrets" && <SecretsSettings focusKey={state.settingsFocus?.key} />}
       {section === "Browser" && <BrowserSettingsSection />}
       {section === "Web" && <WebSettingsSection />}
       {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>

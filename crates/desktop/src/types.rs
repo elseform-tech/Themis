@@ -923,6 +923,9 @@ pub struct Settings {
     /// The approval mode a new chat starts in (Settings › Permissions); each chat can change it.
     #[serde(default)]
     pub default_approval_mode: themis_core::configuration::ApprovalMode,
+    /// The Settings › Secrets secret OpenCode Go uses (Settings › Models › Connections).
+    #[serde(default = "default_go_secret")]
+    pub go_secret: String,
     /// True once the user completed onboarding (defaults to false so settings
     /// files written before the field existed load as not onboarded).
     #[serde(default)]
@@ -993,9 +996,14 @@ impl Default for Settings {
             completion_haptic: false,
             config_editor: String::new(),
             default_approval_mode: Default::default(),
+            go_secret: default_go_secret(),
             onboarded: false,
         }
     }
+}
+
+fn default_go_secret() -> String {
+    crate::secrets::GO_KEY_NAME.to_owned()
 }
 
 /// Partial settings update (`Partial<Settings>` in types.ts).
@@ -1039,6 +1047,8 @@ pub struct SettingsPatch {
     pub config_editor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_approval_mode: Option<themis_core::configuration::ApprovalMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub go_secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub onboarded: Option<bool>,
 }
@@ -1562,6 +1572,7 @@ mod tests {
                 "completion_haptic": false,
                 "config_editor": "",
                 "default_approval_mode": "custom",
+                "go_secret": "OPENCODE_KEY",
                 "onboarded": false,
             })
         );

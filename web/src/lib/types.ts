@@ -594,6 +594,8 @@ export interface Settings {
   config_editor?: string;
   /** The approval mode a new chat starts in. */
   default_approval_mode?: "custom" | "yolo";
+  /** The Settings › Secrets secret OpenCode Go uses. */
+  go_secret?: string;
   onboarded: boolean;
 }
 

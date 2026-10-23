@@ -89,14 +89,17 @@ impl SecretStore for NativeStore {
     }
 
     fn try_get(&self, provider: &str) -> Result<Option<String>, String> {
-        let stored = Self::entry(provider)
+        credential_with_fallback(self.stored(provider), go_environment_key(provider))
+    }
+
+    fn stored(&self, provider: &str) -> Result<Option<String>, String> {
+        Self::entry(provider)
             .map_err(|_| "Could not open the OS credential store".to_owned())
             .and_then(|entry| match entry.get_password() {
                 Ok(value) => Ok(Some(value).filter(|value| !value.trim().is_empty())),
                 Err(keyring::Error::NoEntry) => Ok(None),
                 Err(_) => Err("OS credential lookup failed; unlock the credential store and allow ThemisCode access".to_owned()),
-            });
-        credential_with_fallback(stored, go_environment_key(provider))
+            })
     }
 
     fn set(&self, provider: &str, value: &str) -> Result<(), String> {
@@ -163,6 +166,10 @@ impl SecretStore for KeychainStore {
         credential_with_fallback(Self::keychain_get(provider), go_environment_key(provider))
     }
 
+    fn stored(&self, provider: &str) -> Result<Option<String>, String> {
+        Self::keychain_get(provider)
+    }
+
     fn set(&self, provider: &str, value: &str) -> Result<(), String> {
         security_framework::passwords::set_generic_password(
             KEYCHAIN_SERVICE,
@@ -194,6 +201,10 @@ pub trait SecretStore: Send + Sync {
     /// Fallible application lookup; OS stores distinguish unavailable from absent.
     fn try_get(&self, provider: &str) -> Result<Option<String>, String> {
         Ok(self.get(provider))
+    }
+    /// The saved value only, without the OpenCode Go environment fallback.
+    fn stored(&self, provider: &str) -> Result<Option<String>, String> {
+        self.try_get(provider)
     }
     /// Stores `value` for `provider`, overwriting any previous secret.
     fn set(&self, provider: &str, value: &str) -> Result<(), String>;
@@ -227,6 +238,9 @@ impl SecretStore for SessionStore {
                     .flatten()
             })
             .filter(|key| !key.trim().is_empty())
+    }
+    fn stored(&self, provider: &str) -> Result<Option<String>, String> {
+        Ok(self.keys.get(provider))
     }
     fn set(&self, provider: &str, value: &str) -> Result<(), String> {
         self.keys.set(provider, value)

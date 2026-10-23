@@ -40,45 +40,49 @@ impl AppState {
     /// Reports whether the Go key is available (the value never leaves the store).
     pub async fn get_secret_status(&self) -> Result<SecretStatus, String> {
         Ok(SecretStatus {
-            go: self
-                .read_secret("go")
-                .await?
-                .is_some_and(|key| !key.trim().is_empty()),
+            go: self.read_secret("go").await?.is_some(),
         })
     }
 
-    /// Stores the API key for `provider`.
+    /// The Settings › Secrets secret OpenCode Go uses (`OPENCODE_KEY` unless chosen).
+    pub(super) async fn go_secret_name(&self) -> String {
+        self.inner.settings.get().await.go_secret
+    }
+
+    /// Stores the API key for `provider` in the secret it uses.
     pub async fn set_secret(&self, provider: String, value: String) -> Result<(), String> {
         let value = zeroize::Zeroizing::new(value);
-        let key = secret_key(&provider)?;
+        known_provider(&provider)?;
         crate::secrets::validate_provider_key(&value)?;
-        self.inner.secrets.set(key, &value)
+        let name = self.go_secret_name().await;
+        self.inner
+            .secrets
+            .set(&themis_core::plugins::keys::store_key(&name), &value)?;
+        self.record_key_name(&name)
     }
 
     /// Deletes the API key for `provider` (missing keys are a no-op success).
     pub async fn clear_secret(&self, provider: String) -> Result<(), String> {
-        let key = secret_key(&provider)?;
-        self.inner.secrets.clear(key)
+        known_provider(&provider)?;
+        clear_secret_named(self.inner.secrets.as_ref(), &self.go_secret_name().await)
     }
 
     /// Looks up the Go API key.
     pub(super) async fn api_key_for(&self, provider: ProviderKind) -> Result<String, String> {
         let name = provider.as_str();
-        self.read_secret(name)
-            .await?
-            .filter(|key| !key.trim().is_empty())
-            .ok_or_else(|| {
-                format!("no API key stored for provider '{name}': run themis providers or add one in Settings, then retry")
-            })
+        self.read_secret(name).await?.ok_or_else(|| {
+            format!("no API key stored for provider '{name}': run themis providers or add one in Settings, then retry")
+        })
     }
 
     async fn read_secret(&self, provider: &'static str) -> Result<Option<String>, String> {
-        let entry = secret_key(provider)?;
+        known_provider(provider)?;
+        let name = self.go_secret_name().await;
         let secrets = self.inner.secrets.clone();
         // ponytail: native calls cannot be interrupted; a timed-out worker may finish later.
         tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            tokio::task::spawn_blocking(move || read_or_move(secrets.as_ref(), entry)),
+            tokio::task::spawn_blocking(move || read_secret_named(secrets.as_ref(), &name)),
         )
         .await
         .map_err(|_| {
@@ -88,30 +92,42 @@ impl AppState {
     }
 }
 
-/// Reads the key at `entry`, first moving an OpenCode Go key saved before keys joined
-/// Settings › Keys. The old entry is removed only once the new one reads back the same.
-fn read_or_move(
+/// The secret `name`: its saved value, else (for `OPENCODE_KEY`) a key saved before keys
+/// joined Settings › Secrets, else the environment variable of that name, as MCP servers
+/// read it. The old entry is copied once, the first time nothing is saved under the new one,
+/// and is then never read again (each read of an entry another build made can ask for
+/// Keychain access); it is cleared with the secret (see [`clear_secret_named`]).
+fn read_secret_named(
     secrets: &dyn crate::secrets::SecretStore,
-    entry: &str,
+    name: &str,
 ) -> Result<Option<String>, String> {
-    use crate::secrets::{GO_ENTRY, LEGACY_GO_ENTRY};
-    if entry != GO_ENTRY {
-        return secrets.try_get(entry);
+    let nonblank = |value: &String| !value.trim().is_empty();
+    let entry = themis_core::plugins::keys::store_key(name);
+    if let Some(saved) = secrets.stored(&entry)?.filter(nonblank) {
+        return Ok(Some(saved));
     }
-    // Checked first: the new entry also answers with OPENCODE_KEY from the environment,
-    // and a saved key takes precedence over it.
-    let Some(legacy) = secrets
-        .try_get(LEGACY_GO_ENTRY)?
-        .filter(|key| !key.trim().is_empty())
-    else {
-        return secrets.try_get(entry);
-    };
-    if secrets.set(GO_ENTRY, &legacy).is_ok()
-        && secrets.try_get(GO_ENTRY).ok().flatten().as_deref() == Some(legacy.as_str())
-    {
-        let _ = secrets.clear(LEGACY_GO_ENTRY);
+    if name == crate::secrets::GO_KEY_NAME {
+        if let Some(legacy) = secrets
+            .stored(crate::secrets::LEGACY_GO_ENTRY)?
+            .filter(nonblank)
+        {
+            let _ = secrets.set(&entry, &legacy);
+            return Ok(Some(legacy));
+        }
     }
-    Ok(Some(legacy))
+    Ok(std::env::var(name).ok().filter(nonblank))
+}
+
+/// Forgets the secret `name` (for `OPENCODE_KEY`, also a copy under its old entry).
+pub(super) fn clear_secret_named(
+    secrets: &dyn crate::secrets::SecretStore,
+    name: &str,
+) -> Result<(), String> {
+    secrets.clear(&themis_core::plugins::keys::store_key(name))?;
+    if name == crate::secrets::GO_KEY_NAME {
+        secrets.clear(crate::secrets::LEGACY_GO_ENTRY)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

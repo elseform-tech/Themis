@@ -25,14 +25,16 @@ name, and start chatting in the new thread. All new projects live under the fixe
 New projects get a Git repository and initial empty commit so each thread can
 work in isolation. Open an existing folder through the project actions menu.
 
-## Keys
+## Secrets
 
-Use `OPENCODE_KEY` in the environment when launching Themis, or enter a key in
-Settings → Models → Manage key → **Save key**. The OpenCode Go key is the key
-`OPENCODE_KEY` in **Settings › Keys** (listed there as used by OpenCode Go), so it can be
-replaced or removed there too, and MCP servers can read it as `${OPENCODE_KEY}`. A key
-saved by an earlier version moves there the first time it is read.
-Entered keys remain in macOS Keychain across app restarts. They are not saved
+API keys and tokens are **secrets**, kept in **Settings › Secrets** by name. OpenCode Go
+reads the secret chosen under Settings → Models → Connections → **Secret** (`OPENCODE_KEY`
+unless you pick another); the choice is saved and applies every time Themis opens. Set
+its value there (**Set OPENCODE_KEY**) or in Settings › Secrets, or launch Themis with an
+environment variable of that name. MCP servers read secrets as `${NAME}`, so
+`${OPENCODE_KEY}` works there too. A key saved by an earlier version is copied to
+`OPENCODE_KEY` the first time it is read.
+Entered secrets remain in macOS Keychain across app restarts. They are not saved
 in the conversation database, settings files, or browser storage.
 Forgetting a saved key does not unset an environment key. A Finder launch
 may not inherit environment variables exported by your shell.
@@ -476,7 +478,7 @@ To delete a project, open the project switcher and click the trash icon on that 
 
 Integrations keeps separate search and filter selections for Installed and Discover. Reset filters affects only the current view. Marketplace checks show the companion and real completed-check percentage, then reveal the checked catalog. Collapsed warnings expand to show compatibility limitations; unavailable local skills remain visible with their validation error.
 
-MCP shows the full saved command and arguments, with status, toggle and uninstall aligned together. Integration errors and installation confirmations appear in the timed notification box at the side. Enabled MCP connections start automatically in the background on app entry and project selection. One failure does not block the app or other connections. Status updates to Connected or Failed; use Refresh to retry a failed connection. A server that needs a key shows **Key needed**: press **Add key**, paste the key in Settings › Keys and save, and it connects. Servers read keys as `${NAME}` (the placeholder their documentation shows), so a configuration copied from a server's README works as is once a key of that name is saved; an environment variable of that name also works. A remote server that signs in shows **Sign in needed** with **Sign in**. **Edit as mcp.json** starts with commented-out examples of each kind; remove the `//` in front of one to add it.
+MCP shows the full saved command and arguments, with status, toggle and uninstall aligned together. Integration errors and installation confirmations appear in the timed notification box at the side. Enabled MCP connections start automatically in the background on app entry and project selection. One failure does not block the app or other connections. Status updates to Connected or Failed; use Refresh to retry a failed connection. A server that needs a secret shows **Secret needed**: press **Add secret**, paste it in Settings › Secrets and save, and it connects. Servers read keys as `${NAME}` (the placeholder their documentation shows), so a configuration copied from a server's README works as is once a secret of that name is saved; an environment variable of that name also works. A remote server that signs in shows **Sign in needed** with **Sign in**. **Edit as mcp.json** starts with commented-out examples of each kind; remove the `//` in front of one to add it.
 
 Open an MCP connection’s details to see its exposed tool count, names and descriptions. This reads cached discovery metadata; it does not execute a tool. Tools appear after the connection completes.
 

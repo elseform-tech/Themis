@@ -967,7 +967,7 @@ async fn dispatch_command(
         ),
         "apply_mcp_config" => output!(state.apply_mcp_config().await?),
         "mcp_config_status" => output!(state.mcp_config_status()),
-        "list_keys" => output!(state.list_keys(arg(&args, "projectRoot")?)?),
+        "list_keys" => output!(state.list_keys(arg(&args, "projectRoot")?).await?),
         "set_key" => done!(state.set_key(
             &arg::<String>(&args, "name")?,
             &arg::<String>(&args, "value")?
