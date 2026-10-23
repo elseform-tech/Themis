@@ -224,6 +224,12 @@ describe("grant hint", () => {
     setup({ ...REQUEST, tool: "fetch_url", risk: "network", grant_site: { tools: "fetch_url", site: "docs.rs" } });
     expect(screen.getByText(/reading pages from/)).toHaveTextContent("docs.rs");
   });
+
+  it("does not name the search server for a web search", () => {
+    setup({ ...REQUEST, tool: "web_search", risk: "network", grant_site: { tools: "web_search", site: "127.0.0.1" } });
+    expect(screen.getByText(/covers web searches/)).toHaveTextContent("Allow in this chat covers web searches in later runs of this chat.");
+    expect(document.body).not.toHaveTextContent("127.0.0.1");
+  });
 });
 
 describe("single-key shortcuts", () => {
