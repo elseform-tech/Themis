@@ -19,6 +19,7 @@ import type { McpConnections, PersistedMessage, ProjectInfo, ThreadInfo } from "
 import { getBrowserSettings,
   pluginAction,
   getSecretStatus,
+  checkGoKey,
   getPendingApprovals,
   onBackendResync,
   getSettings,
@@ -290,7 +291,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Restore recent projects and refresh credential presence after external changes.
   useEffect(() => {
     let cancelled = false;
-    let secretLoading = false, secretAgain = false, secretWarning = false;
+    let secretLoading = false, secretAgain = false, secretWarning = false, keyCheckedAt = 0;
     async function refreshSecrets() {
       if (cancelled) return;
       if (secretLoading) { secretAgain = true; return; }
@@ -300,6 +301,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         try {
           const status = await getSecretStatus();
           if (!cancelled) dispatch({ type: "secrets/loaded", status });
+          // Whether OpenCode accepts the key: at startup, then at most every ten minutes
+          // (Settings › Models checks on demand).
+          if (status.go && Date.now() - keyCheckedAt > 10 * 60_000) {
+            keyCheckedAt = Date.now();
+            void checkGoKey().then(check => { if (!cancelled) dispatch({ type: "provider/checked", state: check.state }); }).catch(() => undefined);
+          }
           secretWarning = false;
         } catch (error) {
           if (!cancelled && !secretWarning) toast(dispatch, `Failed to load secret status: ${describeError(error)}`, "warning");

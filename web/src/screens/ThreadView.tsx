@@ -278,13 +278,14 @@ export function ThreadView() {
       stopping={stopping}
       sendError={sendError ?? (skillsError ? `Skills unavailable: ${skillsError}` : undefined)}
       secretConfigured={state.secretStatus.go}
+      keyRejected={state.goKeyCheck === "rejected" ? (state.settings.go_secret ?? "OPENCODE_KEY") : undefined}
       onDraftChange={setDraft}
       onSend={() => void send()}
       onStop={() => void stop()}
       onNewThread={() => void newThread()}
       permissionSaving={permissionSaving}
       onApprovalModeChange={mode => void changeApprovalMode(mode)}
-      onOpenSettings={() => dispatch({ type: "ui/view", view: "settings" })}
+      onOpenSettings={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Models" } })}
       budget={budget}
       compacting={compacting}
       location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null }}

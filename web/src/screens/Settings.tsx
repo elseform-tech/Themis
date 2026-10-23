@@ -1,26 +1,8 @@
 import { useEffect, useState } from "react";
-import { Badge, Button, EmptyState, Input, Switch } from "../components";
-import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
-import opencodeLogoLight from "../assets/opencode-logo-light.svg";
-import type {
-  GoModel,
-  SecretStatus,
-  Settings,
-  UpdateStatus,
-} from "../lib/types";
-import {
-  checkForUpdates,
-  clearSecret,
-  getSecretStatus,
-  setSecret,
-  updateSettings,
-  listGoModels,
-  listKeys,
-  checkGoKey,
-  type GoKeyCheck,
-} from "../lib/tauri";
-import { describeError, toast, useApp } from "../state/store";
-import { DEFAULT_MODEL, modelLabel } from "../lib/models";
+import { Badge, EmptyState, Switch } from "../components";
+import type { Settings, UpdateStatus } from "../lib/types";
+import { checkForUpdates, updateSettings } from "../lib/tauri";
+import { describeError, useApp } from "../state/store";
 import "./Settings.css";
 import { AppearanceSettings } from "./Appearance";
 import { PermissionsSettings } from "./PermissionsView";
@@ -28,9 +10,9 @@ import { BrowserSettingsSection } from "./BrowserSettings";
 import { WebSettingsSection } from "./WebSettings";
 import { SidebarIcon } from "./Sidebar";
 import { SecretsSettings } from "./SecretsSettings";
-import { RefreshIcon, ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
+import { ModelsSettings } from "./ModelsSettings";
+import { ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 
-const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
 const SECTIONS = ["General", "Appearance", "Models", "Secrets", "Permissions", "Browser", "Web", "Advanced"];
 /** Backend field names in validation messages, as the labels the person sees. */
 const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_budget", "Context tokens"], ["context_messages", "Recent messages"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
@@ -95,15 +77,7 @@ export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
 export function SettingsScreen() {
   const { state, dispatch } = useApp();
   const [form, setForm] = useState<Settings>(state.settings);
-  const [models, setModels] = useState<GoModel[]>([]);
-  const [connecting, setConnecting] = useState(false);
-  const [modelRefresh, setModelRefresh] = useState(0);
   const [saving, setSaving] = useState(false);
-  const [keys, setKeys] = useState<Record<string, string>>({});
-  const [keyBusy, setKeyBusy] = useState<string | null>(null);
-  const [secretNames, setSecretNames] = useState<string[]>([]);
-  const [keyCheck, setKeyCheck] = useState<GoKeyCheck["state"] | "checking" | null>(null);
-  const [keyNote, setKeyNote] = useState("");
   const [section, setSection] = useState(state.settingsFocus?.section ?? "General");
   const [error, setError] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -112,37 +86,6 @@ export function SettingsScreen() {
   useEffect(() => {
     setForm(state.settings);
   }, [state.settings]);
-
-  useEffect(() => {
-    if (section !== "Models" || !state.secretStatus.go) return;
-    let active = true;
-    setConnecting(true); setError(""); setModels([]);
-    void listGoModels().then(models => {
-      if (active) setModels(models);
-    }).catch((error: unknown) => {
-      if (active) setError(describeError(error));
-    }).finally(() => {
-      if (active) setConnecting(false);
-    });
-    return () => { active = false; };
-  }, [section, state.secretStatus.go, modelRefresh]);
-
-  // Asks Go whether the chosen secret's key works (the model list does not check keys).
-  async function runKeyCheck() {
-    setKeyCheck("checking");
-    try { setKeyCheck((await checkGoKey()).state); } catch { setKeyCheck("unavailable"); }
-  }
-  useEffect(() => {
-    if (section === "Models" && state.settingsLoaded) void runKeyCheck();
-  }, [section, state.settingsLoaded, state.settings.go_secret]);
-
-  // The secrets Models › Connections can choose from (Settings › Secrets).
-  useEffect(() => {
-    if (section !== "Models") return;
-    let active = true;
-    void listKeys(state.activeProjectRoot).then(entries => { if (active) setSecretNames(entries.map(entry => entry.name)); }).catch(() => undefined);
-    return () => { active = false; };
-  }, [section, state.activeProjectRoot]);
 
   async function save(patch: Partial<Settings>) {
     if (saving) return false;
@@ -156,32 +99,6 @@ export function SettingsScreen() {
       setForm(state.settings);
       return false;
     } finally { setSaving(false); }
-  }
-  async function refreshSecrets() {
-    try {
-      const status = await getSecretStatus();
-      dispatch({ type: "secrets/loaded", status });
-    } catch (error: unknown) {
-      toast(dispatch, `Secret status failed: ${describeError(error)}`, "warning");
-    }
-  }
-
-  async function saveKey(provider: (typeof SECRET_PROVIDERS)[number]) {
-    const value = (keys[provider] ?? "").trim();
-    if (value === "") return;
-    setKeyBusy(provider);
-    try {
-      await setSecret(provider, value);
-      setKeys((prev) => ({ ...prev, [provider]: "" }));
-      setKeyNote(`Saved ${goSecret}`);
-      await refreshSecrets();
-      await runKeyCheck();
-      toast(dispatch, `Saved ${goSecret}`, "success");
-    } catch (error: unknown) {
-      toast(dispatch, `Save ${goSecret} failed: ${describeError(error)}`, "danger");
-    } finally {
-      setKeyBusy(null);
-    }
   }
 
   // Manual-only: Themis never checks for updates on boot.
@@ -197,21 +114,6 @@ export function SettingsScreen() {
     }
   }
 
-  async function clearKey(provider: (typeof SECRET_PROVIDERS)[number]) {
-    setKeyBusy(provider);
-    try {
-      await clearSecret(provider);
-      setKeyNote(`Removed ${goSecret}`);
-      await refreshSecrets();
-      await runKeyCheck();
-      toast(dispatch, `Removed ${goSecret}`, "success");
-    } catch (error: unknown) {
-      toast(dispatch, `Remove ${goSecret} failed: ${describeError(error)}`, "danger");
-    } finally {
-      setKeyBusy(null);
-    }
-  }
-
   if (!state.settingsLoaded) {
     return (
       <div className="themis-settings">
@@ -223,15 +125,6 @@ export function SettingsScreen() {
   const number = (key: NumberSetting, label: string, min: number, max: number) => <label className="themis-settings-control">{label}
     <input className="themis-settings-number" aria-label={label} type="number" min={min} max={max} value={form[key]} onChange={event => setForm(f => ({ ...f, [key]: Number(event.target.value) }))} onBlur={() => { if (form[key] !== state.settings[key]) void save({ [key]: form[key] }); }} />
   </label>;
-  const goSecret = state.settings.go_secret ?? "OPENCODE_KEY";
-  const secretChoices = [...new Set([goSecret, "OPENCODE_KEY", ...secretNames])].sort();
-  async function chooseSecret(name: string) {
-    setKeyNote("");
-    if (await save({ go_secret: name })) await refreshSecrets();
-  }
-  const KEY_STATES = { checking: ["off", "Checking…"], works: ["ok", "Connected"], rejected: ["bad", "Key rejected"], unavailable: ["off", "Couldn't reach OpenCode"], missing: ["off", "Not set"] } as const;
-  const [keyTone, keyLabel] = keyCheck ? KEY_STATES[keyCheck] : ["off", "Checking…"];
-  const logo = <span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span>;
 
   return (
     <div className="themis-settings">
@@ -256,21 +149,7 @@ export function SettingsScreen() {
           {navigator.platform.startsWith("Mac") && <label className="themis-settings-check" title="Use trackpad feedback when available">Haptics<Switch checked={form.completion_haptic} onChange={event => void save({ completion_haptic: event.target.checked })} /></label>}
         </SettingsGroup>
       </>}
-      {section === "Models" && <>
-        <SettingsGroup title="Default model" action={<span className="themis-settings-group-actions">
-          <SettingsIconButton label="Refresh models" disabled={connecting || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}><RefreshIcon /></SettingsIconButton>
-          <SettingsIconButton label="Reset model" onClick={() => void save({ default_provider: "go", default_model: DEFAULT_MODEL })}><ResetIcon /></SettingsIconButton>
-        </span>}>
-          <label className="themis-settings-control">New chats use<span className="themis-settings-model-picker"><select aria-label="Model" value={models.some(model => model.id === form.default_model) ? form.default_model : ""} disabled={connecting || !state.secretStatus.go || models.length === 0} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>{connecting ? "Loading models…" : !state.secretStatus.go ? "Connect Go" : models.length === 0 ? "No models available" : models.some(model => model.id === form.default_model) ? "Choose a model" : `Unavailable: ${form.default_model}`}</option>{models.map(model => <option key={model.id} value={model.id} disabled={!!model.unavailable_reason} title={model.unavailable_reason ?? undefined}>{modelLabel(model)}</option>)}</select></span></label>
-        </SettingsGroup>
-        <SettingsGroup title="Connections">
-          {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key">
-            <div className="themis-settings-control"><span className="themis-settings-key-head">{logo}</span><span className="themis-browser-pick"><span role="status" className={`themis-settings-state is-${keyTone}`} title={`Reads the secret ${goSecret} (Settings › Secrets), or an environment variable of that name. Checked with OpenCode, without using any credits.`}>{keyLabel}</span><button type="button" className="themis-text-action" disabled={keyCheck === "checking"} onClick={() => void runKeyCheck()}>Check</button></span></div>
-            <label className="themis-settings-control">Secret<select aria-label="OpenCode Go secret" value={goSecret} disabled={saving} onChange={event => void chooseSecret(event.target.value)}>{secretChoices.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
-            <details><summary>Set {goSecret}</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`Value of ${goSecret}`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Remove</Button>{keyNote && <span role="status" className="themis-settings-hint">{keyNote}</span>}</div></details>
-          </div>)}
-        </SettingsGroup>
-      </>}
+      {section === "Models" && <ModelsSettings save={save} saving={saving} />}
       {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}
       {section === "Secrets" && <SecretsSettings focusKey={state.settingsFocus?.key} />}
       {section === "Browser" && <BrowserSettingsSection />}
