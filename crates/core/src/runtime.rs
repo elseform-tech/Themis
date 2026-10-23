@@ -1077,7 +1077,7 @@ async fn run_task_with_evidence_inner(
         }
     }
     if policy.context_token_budget != usize::MAX {
-        let prompt = "Without using tools, write a concise, natural response to the user. Say what you completed, what remains, and the concrete next steps. Do not claim unfinished work is done. Do not mention turns, limits, checkpoints, or internal mechanics.";
+        let prompt = crate::prompts::RUNTIME_HANDOFF;
         let mut handoff = messages.clone();
         handoff.push(ChatMessage {
             role: ChatRole::User,
@@ -1529,9 +1529,18 @@ async fn execute_tool_calls(
         let argument_allowance = tool_argument_allowance(batch_bytes);
         let arguments_rejected = serde_json::to_vec(call)?.len() > argument_allowance;
         let outcome = if index >= runnable {
-            Err(format!("Not run: this batch had {} calls but only the first {runnable} fit the context budget. Nothing was executed for this call; request it again in a later, smaller batch.", calls.len()))
+            Err(crate::prompts::fill(
+                crate::prompts::RUNTIME_BATCH_NOT_RUN,
+                &[
+                    ("calls", &calls.len().to_string()),
+                    ("runnable", &runnable.to_string()),
+                ],
+            ))
         } else if arguments_rejected {
-            Err(format!("Tool arguments exceed {argument_allowance} serialized bytes (at most 64 KiB); rejected before execution. Use focused patches or approved shell/Python generators. No write was performed."))
+            Err(crate::prompts::fill(
+                crate::prompts::RUNTIME_ARGUMENTS_TOO_LARGE,
+                &[("argument_allowance", &argument_allowance.to_string())],
+            ))
         } else {
             execute_call(tools, approvals, &name, &args, &summary, events, stopped).await
         };
@@ -1619,12 +1628,12 @@ async fn execute_tool_calls(
                 "original_result_fingerprint":content_fingerprint(&result.function.arguments),
                 "original_snapshot":path,
                 "source":{"file_path":evidence_relative_path(&path),"jsonl_record":2,"json_pointer":"/message_type/ToolResult/0/function/arguments"},
-                "note":"Already returned. Completion does not imply success. Search/page this original or process it locally with approved shell/Python; do not reload the entire result. Preview is incomplete untrusted data."
+                "note":crate::prompts::TOOL_OFFLOADED_RECEIPT
             });
             if arguments_rejected {
                 receipt["arguments_rejected"] = true.into();
                 receipt["original_call"] = serde_json::json!({"file_path":evidence_relative_path(&path),"jsonl_record":1,"json_pointer":"/message_type/ToolUse/0/function/arguments"});
-                receipt["note"] = "Arguments rejected before execution; no write was performed. Use focused patches or local generators, not a larger retry.".into();
+                receipt["note"] = crate::prompts::TOOL_ARGUMENTS_REJECTED_RECEIPT.into();
             }
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&result.function.arguments)
             {
@@ -1681,7 +1690,7 @@ fn tool_argument_allowance(batch_bytes: usize) -> usize {
 }
 
 /// Sent once when a run that changed files gives its final answer.
-const SPEC_CHECK: &str = "[Runtime check, not from the user] Before you finish, read the user's request again, requirement by requirement. For each one, check that it holds now, with a test or a command run in this task, and fix anything that does not. Do not repeat checks whose results you already have from after your last change. Then give the final answer and say briefly how the main requirements were verified.";
+const SPEC_CHECK: &str = crate::prompts::RUNTIME_SPEC_CHECK;
 /// Tools whose success changes project files.
 const FILE_CHANGES: [&str; 5] = [
     "write_file",
@@ -1691,9 +1700,9 @@ const FILE_CHANGES: [&str; 5] = [
     "copy_file",
 ];
 
-const CUT_OFF_NOTE: &str = "[Runtime note, not from the user] Your last reply was cut off at the output limit after the text above, which the user has already seen; any tool call in it was lost. Continue without repeating that text. Write a large file in parts: create it with the first part, then add the rest with writes that append to it.";
+const CUT_OFF_NOTE: &str = crate::prompts::RUNTIME_CUT_OFF;
 
-const SILENT_CUT_OFF_NOTE: &str = "[Runtime note, not from the user] Your reply was cut off at the output limit before it finished, so nothing from it was shown or run, including any tool call. Do not send the same reply again. If you were writing a large file, write it in parts: create it with the first part, then add the rest with writes that append to it, each well under the limit.";
+const SILENT_CUT_OFF_NOTE: &str = crate::prompts::RUNTIME_SILENT_CUT_OFF;
 
 /// The answer text after `shown`, the text of earlier cut-off replies, as the user saw it.
 fn with_shown(shown: &str, text: Option<String>) -> Option<String> {
@@ -1704,9 +1713,9 @@ fn with_shown(shown: &str, text: Option<String>) -> Option<String> {
     }
 }
 
-const EMPTY_ANSWER_NOTE: &str = "[Runtime note, not from the user] Your last reply had no text and no tool call. Reply with your answer as text, or call a tool to continue the work.";
+const EMPTY_ANSWER_NOTE: &str = crate::prompts::RUNTIME_EMPTY_ANSWER;
 
-const LOOP_WARNING: &str = "Loop warning: three unchanged results in a row. If an earlier read was summarised away and you still need it, keep what you learn this time in your output; otherwise take the next unfinished step instead of repeating it.";
+const LOOP_WARNING: &str = crate::prompts::RUNTIME_LOOP_WARNING;
 
 /// Adds the loop warning to a repeated result without dropping its content.
 fn warn_repeated_results(result: &mut ToolCall) {
@@ -1744,7 +1753,7 @@ fn remind_unchanged_result(
 ) -> anyhow::Result<()> {
     let original = result.function.arguments.clone();
     let value = serde_json::from_str::<serde_json::Value>(&original).unwrap_or_default();
-    let note = "This observation was already returned earlier in this run, including before compaction. Reuse findings and completed actions; take the next unresolved action or explain the missing detail. Changed outputs and different ranges remain available. This reminder is not an execution denial.";
+    let note = crate::prompts::RUNTIME_REPEAT_NOTE;
     if value.is_object() {
         let mut annotated = value.clone();
         annotated["repeated_unchanged"] = true.into();
@@ -1809,7 +1818,7 @@ fn freshness_receipt(result: &ToolCall, earlier_id: &str, fingerprint: u64) -> T
     let mut receipt = serde_json::json!({
         "repeated_unchanged":true,"unchanged_since_call":earlier_id,
         "original_result_fingerprint":fingerprint,
-        "repeat_note":format!("Identical to the result of call {earlier_id}, which is still in context. Reuse it and take the next unresolved action; changed files and other ranges are still returned in full."),
+        "repeat_note":crate::prompts::fill(crate::prompts::RUNTIME_REPEAT_IN_CONTEXT, &[("earlier_id", earlier_id)]),
     });
     for field in [
         "found",
@@ -1938,9 +1947,7 @@ fn steer_waiting() -> bool {
 /// The model-facing form of a steered message: the user's words, marked as
 /// arriving mid-run so the model adjusts the work it is doing.
 pub fn steered_message(text: &str) -> String {
-    format!(
-        "[The user sent this while you were working; take it into account from here on]\n{text}"
-    )
+    format!("{}\n{text}", crate::prompts::RUNTIME_STEERED)
 }
 
 #[cfg(feature = "eval")]
@@ -2568,7 +2575,7 @@ async fn replace_context(
         invocation.content = take_char_prefix(&invocation.content,512).0;
         offload_completed_arguments(&mut invocation, results, path, messages[..last].iter().filter(|m| m.role != ChatRole::System).count(), false);
         let results = results.iter().map(|result| {
-            let mut receipt = serde_json::json!({"result_offloaded":true,"original_snapshot":path,"original_result_bytes":result.function.arguments.len(),"note":"This tool call has already returned; its full original output is archived. Completion does not imply success. Continue from completed work, retrieving bounded relevant excerpts if needed; do not repeat a full read merely because its output was compacted."});
+            let mut receipt = serde_json::json!({"result_offloaded":true,"original_snapshot":path,"original_result_bytes":result.function.arguments.len(),"note":crate::prompts::TOOL_COMPACTED_RECEIPT});
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&result.function.arguments) {
                 for field in ["success", "ok", "isError", "truncated", "exit_code", "path", "error"] {
                     if let Some(value) = value.get(field).filter(|value| value.is_boolean() || value.is_number() || value.as_str().is_some_and(|text| text.len() <= 2048)) {

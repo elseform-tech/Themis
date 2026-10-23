@@ -1,0 +1,1 @@
+Arguments rejected before execution; no write was performed. Use focused patches or local generators, not a larger retry.

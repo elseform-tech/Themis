@@ -1,0 +1,1 @@
+Without using tools, write a concise, natural response to the user. Say what you completed, what remains, and the concrete next steps. Do not claim unfinished work is done. Do not mention turns, limits, checkpoints, or internal mechanics.

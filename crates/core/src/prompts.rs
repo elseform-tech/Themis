@@ -108,6 +108,47 @@ pub const SUMMARY_DOCUMENT_CAPSULE: &str =
 pub const DESKTOP_EXCHANGE_ANCHORS: &str =
     include_str!("../builtins/prompts/desktop-exchange-anchors.md");
 
+// Runtime notes and nudges.
+/// Requirement check sent once when a run that changed files gives its final answer.
+pub const RUNTIME_SPEC_CHECK: &str = include_str!("../builtins/prompts/runtime-spec-check.md");
+/// Note after a reply was cut off at the output limit once some text was shown.
+pub const RUNTIME_CUT_OFF: &str = include_str!("../builtins/prompts/runtime-cut-off.md");
+/// Note after a reply was cut off at the output limit before anything was shown.
+pub const RUNTIME_SILENT_CUT_OFF: &str =
+    include_str!("../builtins/prompts/runtime-silent-cut-off.md");
+/// Note after a reply with no text and no tool call.
+pub const RUNTIME_EMPTY_ANSWER: &str = include_str!("../builtins/prompts/runtime-empty-answer.md");
+/// Warning added after three unchanged tool results in a row.
+pub const RUNTIME_LOOP_WARNING: &str = include_str!("../builtins/prompts/runtime-loop-warning.md");
+/// Note on a result already returned earlier in the run.
+pub const RUNTIME_REPEAT_NOTE: &str = include_str!("../builtins/prompts/runtime-repeat-note.md");
+/// Note on a result identical to one still in context; `{{earlier_id}}`.
+pub const RUNTIME_REPEAT_IN_CONTEXT: &str =
+    include_str!("../builtins/prompts/runtime-repeat-in-context.md");
+/// Request for a closing answer when a run reaches its turn limit.
+pub const RUNTIME_HANDOFF: &str = include_str!("../builtins/prompts/runtime-handoff.md");
+/// Header before a message the user sent while the agent was working.
+pub const RUNTIME_STEERED: &str = include_str!("../builtins/prompts/runtime-steered.md");
+/// Error for a call left out of a batch too large for the context; `{{calls}}`, `{{runnable}}`.
+pub const RUNTIME_BATCH_NOT_RUN: &str =
+    include_str!("../builtins/prompts/runtime-batch-not-run.md");
+/// Error for tool arguments over the size limit; `{{argument_allowance}}`.
+pub const RUNTIME_ARGUMENTS_TOO_LARGE: &str =
+    include_str!("../builtins/prompts/runtime-arguments-too-large.md");
+
+// Tool-result notes.
+/// Note on a receipt for a result offloaded to saved originals.
+pub const TOOL_OFFLOADED_RECEIPT: &str =
+    include_str!("../builtins/prompts/tool-offloaded-receipt.md");
+/// Note on a receipt for a call whose arguments were rejected as too large.
+pub const TOOL_ARGUMENTS_REJECTED_RECEIPT: &str =
+    include_str!("../builtins/prompts/tool-arguments-rejected-receipt.md");
+/// Note on a receipt for a result compacted away at a checkpoint.
+pub const TOOL_COMPACTED_RECEIPT: &str =
+    include_str!("../builtins/prompts/tool-compacted-receipt.md");
+/// Warning on a bounded excerpt re-read from saved originals.
+pub const TOOL_EXCERPT_WARNING: &str = include_str!("../builtins/prompts/tool-excerpt-warning.md");
+
 /// Replace each `{{name}}` placeholder in `template` with its value.
 ///
 /// Substitution is a single pass over the template, so values may contain

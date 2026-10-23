@@ -1,0 +1,1 @@
+This observation was already returned earlier in this run, including before compaction. Reuse findings and completed actions; take the next unresolved action or explain the missing detail. Changed outputs and different ranges remain available. This reminder is not an execution denial.

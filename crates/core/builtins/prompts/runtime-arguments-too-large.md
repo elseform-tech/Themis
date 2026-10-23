@@ -1,0 +1,1 @@
+Tool arguments exceed {{argument_allowance}} serialized bytes (at most 64 KiB); rejected before execution. Use focused patches or approved shell/Python generators. No write was performed.

@@ -1,0 +1,1 @@
+[Runtime note, not from the user] Your last reply was cut off at the output limit after the text above, which the user has already seen; any tool call in it was lost. Continue without repeating that text. Write a large file in parts: create it with the first part, then add the rest with writes that append to it.

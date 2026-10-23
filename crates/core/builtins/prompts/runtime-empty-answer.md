@@ -1,0 +1,1 @@
+[Runtime note, not from the user] Your last reply had no text and no tool call. Reply with your answer as text, or call a tool to continue the work.
