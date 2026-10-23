@@ -24,6 +24,9 @@ const DISCOVERY_FILE: &str = "server.json";
 #[cfg(test)]
 mod history_transport_tests;
 
+/// How long a server that still accepts connections gets to answer before it counts as gone.
+pub const SERVER_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[derive(Serialize, Deserialize)]
 struct Discovery {
     port: u16,
@@ -168,6 +171,35 @@ impl Client {
         read_frame(stream).await
     }
 
+    /// Whether a server owns this data directory. One whose port still accepts connections
+    /// gets up to `patience` to answer a ping: a busy server is not a missing one, and
+    /// starting a second would take its place.
+    pub async fn answers(&self, patience: std::time::Duration) -> bool {
+        let ping = || {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                self.call("ping", Value::Null),
+            )
+        };
+        let deadline = tokio::time::Instant::now() + patience;
+        loop {
+            if ping().await.is_ok_and(|result| result.is_ok()) {
+                return true;
+            }
+            let listening = match self.discovery() {
+                Ok(discovery) => {
+                    TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, discovery.port))
+                        .await
+                        .is_ok()
+                }
+                Err(_) => false,
+            };
+            if !listening || tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+        }
+    }
+
     fn discovery(&self) -> Result<Discovery, String> {
         let text = std::fs::read_to_string(self.data_dir.join(DISCOVERY_FILE))
             .map_err(|err| format!("local server is unavailable: {err}"))?;
@@ -233,13 +265,7 @@ impl Server {
     pub async fn bind(state: AppState, data_dir: &Path) -> Result<Self, String> {
         std::fs::create_dir_all(data_dir).map_err(|err| err.to_string())?;
         let client = Client::new(data_dir.to_path_buf());
-        if tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            client.call("ping", Value::Null),
-        )
-        .await
-        .is_ok_and(|result| result.is_ok())
-        {
+        if client.answers(SERVER_PATIENCE).await {
             return Err("a local Themis server already owns this data directory".to_owned());
         }
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -941,6 +967,12 @@ async fn dispatch_command(
         ),
         "apply_mcp_config" => output!(state.apply_mcp_config().await?),
         "mcp_config_status" => output!(state.mcp_config_status()),
+        "list_keys" => output!(state.list_keys(arg(&args, "projectRoot")?)?),
+        "set_key" => done!(state.set_key(
+            &arg::<String>(&args, "name")?,
+            &arg::<String>(&args, "value")?
+        )),
+        "remove_key" => done!(state.remove_key(&arg::<String>(&args, "name")?)),
         "list_editors" => output!(json!({"editors": crate::state::editors::installed_editors()})),
         "open_in_editor" => done!(
             state
@@ -1117,5 +1149,43 @@ async fn dispatch_command(
                 .await
         ),
         _ => Err(format!("unknown server method '{method}'")),
+    }
+}
+
+#[cfg(test)]
+mod patience_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[tokio::test]
+    async fn a_listening_server_gets_time_to_answer_and_a_missing_one_does_not() {
+        let data = tempfile::tempdir().unwrap();
+        let client = Client::new(data.path().to_path_buf());
+        // No discovery file: no server, decided at once.
+        let started = Instant::now();
+        assert!(!client.answers(Duration::from_secs(5)).await);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        // A busy server: it accepts connections but is slow to reply. Not replaced early.
+        let busy = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = busy.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = busy.accept().await {
+                held.push(stream);
+            }
+        });
+        write_discovery(
+            data.path(),
+            &Discovery {
+                port,
+                token: "t".into(),
+            },
+        )
+        .unwrap();
+        let started = Instant::now();
+        assert!(!client.answers(Duration::from_millis(1500)).await);
+        assert!(started.elapsed() >= Duration::from_millis(1500));
     }
 }

@@ -222,3 +222,5 @@
 .themis-settings-url:focus { border-color: var(--themis-border); outline: none; }
 .themis-settings-state.is-warn { color: var(--themis-warning); }
 .themis-settings-state.is-warn::before { background: var(--themis-warning); }
+.themis-key-name { display: grid; gap: 2px; min-width: 0; }
+.themis-key-name code { font-size: .85rem; }

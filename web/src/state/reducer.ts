@@ -95,6 +95,8 @@ export interface AppState {
   /** Settings › Browser: the agent's first browser step opens Workspace on the Browser tab. */
   browserOpensWorkspace: boolean;
   mainView: MainView;
+  /** Where Settings opens when another screen sends the person there (such as a missing key). */
+  settingsFocus: { section: string; key?: string } | null;
   messages: Record<string, ChatMessage[]>;
   /** Live streamed assistant text per thread (cleared on finished/failed). */
   streams: Record<string, string>;
@@ -191,7 +193,7 @@ export type AppAction =
   | { type: "secrets/loaded"; status: SecretStatus }
   | { type: "toast/push"; toast: ToastItem }
   | { type: "toast/dismiss"; id: string }
-  | { type: "ui/view"; view: MainView }
+  | { type: "ui/view"; view: MainView; settings?: { section: string; key?: string } }
   | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: "tasks" | "browser" }
   | { type: "browser/opens-workspace"; value: boolean }
   | { type: "ui/tab-request-consumed" }
@@ -234,6 +236,7 @@ export const initialState: AppState = {
   activeThreadId: null,
   browserOpensWorkspace: true,
   mainView: "thread",
+  settingsFocus: null,
   messages: {},
   streams: {},
   traces: {},
