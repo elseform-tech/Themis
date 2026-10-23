@@ -3293,7 +3293,6 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     #[test]
     fn tool_failures_read_as_the_tool_wrote_them() {
         let error = crate::tools::tool_error(
