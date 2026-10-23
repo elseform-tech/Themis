@@ -64,6 +64,11 @@ describe("BrowserView", () => {
     expect(bridge.browserInput).toHaveBeenCalledWith("t1", expect.objectContaining({ key: "x", text: "x" }));
     expect(screen.getByRole("status")).toHaveTextContent("Agent is clicking");
     expect(screen.queryByRole("button", { name: "Hand back" })).toBeNull();
+    // A sideways swipe scrolls the page only: the app does not scroll or bounce with it.
+    const swipe = new WheelEvent("wheel", { clientX: 300, clientY: 250, deltaX: 40, deltaY: 0, bubbles: true, cancelable: true });
+    view.dispatchEvent(swipe);
+    expect(swipe.defaultPrevented).toBe(true);
+    expect(bridge.browserInput).toHaveBeenCalledWith("t1", expect.objectContaining({ type: "mouse", kind: "wheel", x: 200, y: 200, delta_x: 40, delta_y: 0 }));
   });
 
   it("opens typed addresses, switches tabs and splits off DevTools", async () => {
