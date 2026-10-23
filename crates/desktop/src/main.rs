@@ -21,7 +21,8 @@ fn main() {
             eprintln!("themis: missing server data directory");
             std::process::exit(2);
         };
-        if let Err(error) = themis_desktop::run_headless_server(data_dir.into()) {
+        let with_app = args.next().as_deref() == Some(std::ffi::OsStr::new("--with-app"));
+        if let Err(error) = themis_desktop::run_headless_server(data_dir.into(), with_app) {
             eprintln!("themis: {error}");
             std::process::exit(1);
         }

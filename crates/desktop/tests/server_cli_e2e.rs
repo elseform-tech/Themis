@@ -155,6 +155,54 @@ fn headless_desktop_process_persists_cli_created_threads() {
     second.wait().expect("reap second server");
 }
 
+#[test]
+fn app_started_server_stops_when_the_app_closes_its_end_of_stdin() {
+    let data_dir = tempfile::tempdir().expect("data dir");
+    let mut server = std::process::Command::new(env!("CARGO_BIN_EXE_themis-desktop"))
+        .env_remove("OPENCODE_KEY")
+        .arg("--themis-server")
+        .arg(data_dir.path())
+        .arg("--with-app")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("start app server");
+    let answers = || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(data_dir.path())
+            .arg("status")
+            .output()
+            .is_ok_and(|output| output.status.success())
+    };
+    // Allow cold instrumented startup while other suites run.
+    assert!(
+        (0..300).any(|_| answers() || {
+            std::thread::sleep(Duration::from_millis(100));
+            false
+        }),
+        "app server did not become ready"
+    );
+    // Still serving while the app holds its end open.
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(server.try_wait().unwrap().is_none());
+
+    // The app quits (or crashes): the OS closes its end of the pipe.
+    drop(server.stdin.take());
+    let status = (0..100)
+        .find_map(|_| {
+            let status = server.try_wait().unwrap();
+            if status.is_none() {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            status
+        })
+        .expect("app server kept running after the app closed");
+    assert!(status.success());
+    assert!(!data_dir.path().join("server.json").exists());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn server_cli_drives_thread_approval_and_persistence() {
     if !common::git_available() {

@@ -146,7 +146,8 @@ is reached; for example `/goal optimize this app to speed up p95`.
   background (dev servers, watchers), with **Stop** (the current run, or one
   background program, with its latest output and a read-only **Full log**) and
   **Pause** (turn an automation off); stopping never undoes work already done.
-  Background programs end when you delete the chat or quit the Themis server;
+  Background programs end when you delete the chat or quit Themis (the app server
+  it started quits with it);
   stopping a run does not end them, but it does end a command the run was waiting for. A small
   stack of icons beside the Workspace button shows the same tasks at a glance and
   opens that tab. Drag its edge to resize. It never changes files or
