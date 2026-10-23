@@ -421,9 +421,11 @@ pub async fn sign_in(
 async fn receive_code(listener: &tokio::net::TcpListener, state: &str) -> anyhow::Result<String> {
     loop {
         let (mut stream, _) = listener.accept().await?;
-        let mut request = vec![0u8; 8192];
-        let read = stream.read(&mut request).await.unwrap_or(0);
-        let head = String::from_utf8_lossy(&request[..read]).into_owned();
+        let Ok(head) = tokio::time::timeout(Duration::from_secs(5), read_head(&mut stream)).await
+        else {
+            // A connection opened ahead of time that never sends a request.
+            continue;
+        };
         let target = head
             .split_whitespace()
             .nth(1)
@@ -474,9 +476,80 @@ async fn receive_code(listener: &tokio::net::TcpListener, state: &str) -> anyhow
     }
 }
 
+/// Reads a request's head (up to 8 KiB): a browser may send it in more than one piece.
+async fn read_head(stream: &mut tokio::net::TcpStream) -> String {
+    let mut request = Vec::new();
+    let mut chunk = [0u8; 2048];
+    while request.len() < 8192 && !request.windows(4).any(|w| w == b"\r\n\r\n") {
+        match stream.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) => request.extend_from_slice(&chunk[..read]),
+        }
+    }
+    String::from_utf8_lossy(&request).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_callback_waits_for_a_request_that_arrives_in_pieces() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let browser = tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            for piece in [
+                "GET ",
+                "/callback?code=code-1&state=s-1",
+                " HTTP/1.1\r\nHost: 127.0.0.1\r\n",
+                "\r\n",
+            ] {
+                stream.write_all(piece.as_bytes()).await.unwrap();
+                stream.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            let mut answer = String::new();
+            stream.read_to_string(&mut answer).await.unwrap();
+            answer
+        });
+        let code = tokio::time::timeout(Duration::from_secs(5), receive_code(&listener, "s-1"))
+            .await
+            .expect("the code once the whole request arrived")
+            .unwrap();
+        assert_eq!(code, "code-1");
+        assert!(browser.await.unwrap().contains("Signed in"));
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_never_sends_a_request_does_not_hold_up_the_callback() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // Browsers open connections ahead of time; this one stays silent.
+        let _idle = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let browser = tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            stream
+                .write_all(b"GET /callback?code=code-2&state=s-2 HTTP/1.1\r\n\r\n")
+                .await
+                .unwrap();
+            let mut answer = String::new();
+            stream.read_to_string(&mut answer).await.unwrap();
+            answer
+        });
+        let code = tokio::time::timeout(Duration::from_secs(10), receive_code(&listener, "s-2"))
+            .await
+            .expect("the code from the second connection")
+            .unwrap();
+        assert_eq!(code, "code-2");
+        assert!(browser.await.unwrap().contains("Signed in"));
+    }
 
     #[test]
     fn well_known_urls_keep_the_port_and_path() {
