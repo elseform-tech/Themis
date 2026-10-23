@@ -110,6 +110,8 @@ struct TabState {
     paused: Option<Value>,
     /// Counts pauses, so a stale auto-resume does not resume a later one.
     pauses: u64,
+    /// Counts screencast frames, so a restarted stream can tell whether it is drawing.
+    frames: u64,
 }
 
 struct Tab {
@@ -803,6 +805,10 @@ fn spawn_watcher(
                     let (cdp, session_id, state) =
                         (Arc::clone(&cdp), session_id.clone(), Arc::clone(&state));
                     tokio::spawn(async move {
+                        let (document, frames) = {
+                            let tab = state.lock().unwrap_or_else(|e| e.into_inner());
+                            (tab.document, tab.frames)
+                        };
                         if restart {
                             chat.restart_screencast().await;
                         }
@@ -810,6 +816,9 @@ fn spawn_watcher(
                         // After the restart, so the page (and the end of loading) reaches
                         // the view with its stream.
                         chat.publish_state().await;
+                        if committed {
+                            settle_view(&chat, &cdp, &session_id, &state, document, frames).await;
+                        }
                     });
                 }
             }
@@ -821,6 +830,7 @@ fn spawn_watcher(
                 // spacing them caps the stream without skipping a still page's
                 // only frame.
                 FRAMES.fetch_add(1, Ordering::Relaxed);
+                state.lock().unwrap_or_else(|e| e.into_inner()).frames += 1;
                 let ack = json!({"sessionId": event.params["sessionId"]});
                 let now = std::time::Instant::now();
                 let wait = next_ack.saturating_duration_since(now);
@@ -872,6 +882,48 @@ fn spawn_watcher(
             }
         }
     })
+}
+
+/// After a commit, makes sure the view catches up with the new page. A page restored by
+/// Back/Forward fires no load, and Chrome may report its title before the commit (which
+/// clears it), so the read at commit can be the only one and may find no title yet; a
+/// restarted stream may also not draw. Until the next navigation, the title is read again
+/// while it is missing and the stream is restarted when no frame has come for a second.
+async fn settle_view(
+    chat: &ChatBrowser,
+    cdp: &Cdp,
+    session_id: &str,
+    state: &Mutex<TabState>,
+    document: u64,
+    frames_before: u64,
+) {
+    for attempt in 1..=12 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let (moved_on, titled, drawn) = {
+            let tab = state.lock().unwrap_or_else(|e| e.into_inner());
+            (
+                tab.document != document,
+                !tab.title.is_empty(),
+                tab.frames > frames_before,
+            )
+        };
+        let streaming = chat
+            .screencast
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_deref()
+            == Some(session_id);
+        if moved_on || (titled && (drawn || !streaming)) {
+            return;
+        }
+        if streaming && !drawn && attempt % 4 == 0 {
+            chat.restart_screencast().await;
+        }
+        if !titled {
+            refresh_title(cdp, session_id, state).await;
+        }
+        chat.publish_state().await;
+    }
 }
 
 /// Reads the page's own title into the tab's state (kept when the page has none yet).
