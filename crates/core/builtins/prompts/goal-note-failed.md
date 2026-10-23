@@ -1,0 +1,1 @@
+The previous turn failed ({{error}}); check what it finished, then continue.

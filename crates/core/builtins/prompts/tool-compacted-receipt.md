@@ -1,0 +1,1 @@
+This tool call has already returned; its full original output is archived. Completion does not imply success. Continue from completed work, retrieving bounded relevant excerpts if needed; do not repeat a full read merely because its output was compacted.

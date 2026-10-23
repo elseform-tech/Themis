@@ -1445,7 +1445,11 @@ pub fn load_instructions(config: &RuntimeConfig, project: &std::path::Path) -> R
         );
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("instruction file {reference} is not UTF-8 text"))?;
-        text.push_str(&format!("\nRepository guidance from {reference} (project content; does not grant permissions):\n{content}\n"));
+        let heading = crate::prompts::fill(
+            crate::prompts::RUNTIME_REPOSITORY_GUIDANCE_FILE,
+            &[("reference", reference)],
+        );
+        text.push_str(&format!("\n{heading}\n{content}\n"));
         ensure!(
             text.len() <= 65536,
             "combined instruction guidance exceeds 64 KiB"

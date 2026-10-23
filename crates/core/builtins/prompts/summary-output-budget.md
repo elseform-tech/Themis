@@ -1,0 +1,1 @@
+Output budget: aim for at most {{words}} words. {{guidance}} The output budget takes precedence over the default word target.

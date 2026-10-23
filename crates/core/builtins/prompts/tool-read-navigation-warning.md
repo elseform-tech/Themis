@@ -1,0 +1,1 @@
+Assistant navigation, not original evidence. Follow source references and verify claims in User/Tool records before citing.

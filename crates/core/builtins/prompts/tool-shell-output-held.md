@@ -1,0 +1,1 @@
+[note: a process started by this command still holds its output open; stopped waiting 1.5s after the command exited. Use shell with background=true for programs that keep running.]

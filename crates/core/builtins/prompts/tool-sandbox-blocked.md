@@ -1,0 +1,1 @@
+[Themis sandbox blocked this command: {{reason}}. The sandbox still applies without approval prompts; work inside the project or a temporary folder, or ask the user to run it.]

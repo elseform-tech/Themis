@@ -1,0 +1,1 @@
+When the stop condition is met, call manage_automations with action "complete" and this id; that ends the watch. Do not delete it or create another.

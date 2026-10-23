@@ -1,0 +1,1 @@
+Loop warning: three unchanged results in a row. If an earlier read was summarised away and you still need it, keep what you learn this time in your output; otherwise take the next unfinished step instead of repeating it.

@@ -1,0 +1,1 @@
+Complete source coverage: {{fragments}} ordered source fragments supplied to completed stages; consolidation completed. Summaries remain lossy; this is processing coverage, not a guarantee that every fact was retained. Exact quotations require original records.

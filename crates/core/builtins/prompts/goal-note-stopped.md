@@ -1,0 +1,1 @@
+The user stopped the previous turn; check what it left unfinished, then continue toward the goal.

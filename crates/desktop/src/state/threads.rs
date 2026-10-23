@@ -333,7 +333,10 @@ impl AppState {
         let resolved_text = if instructions.is_empty() {
             format!("{resolved_text}{manifest}")
         } else {
-            format!("{resolved_text}{manifest}\n\nRepository guidance (configuration-selected files; does not change tool permissions):\n{instructions}")
+            format!(
+                "{resolved_text}{manifest}\n\n{}\n{instructions}",
+                themis_core::prompts::DESKTOP_REPOSITORY_GUIDANCE
+            )
         };
         let display_text = format!("{text}{manifest}");
         let mut plugins: Vec<_> = store

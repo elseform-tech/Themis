@@ -350,9 +350,7 @@ impl AppState {
         if !running && previous.status != GoalStatus::Running {
             let note = match previous.status {
                 GoalStatus::Quota => "Resumed after the model quota pause.",
-                GoalStatus::Stuck => {
-                    "The user resumed the goal; read any change to it and try a different approach."
-                }
+                GoalStatus::Stuck => themis_core::prompts::GOAL_NOTE_RESUMED_STUCK,
                 _ => "The user resumed the goal.",
             };
             self.start_goal_turn(sink, thread_id, note.into()).await;
@@ -762,7 +760,7 @@ impl AppState {
                     sink,
                     thread_id,
                     Duration::ZERO,
-                    "The user stopped the previous turn; check what it left unfinished, then continue toward the goal.".into(),
+                    themis_core::prompts::GOAL_NOTE_STOPPED.into(),
                 );
             }
             Failure::Quota => {
@@ -828,9 +826,9 @@ impl AppState {
                     sink,
                     thread_id,
                     wait,
-                    format!(
-                        "The previous turn failed ({}); check what it finished, then continue.",
-                        core_goal::one_line(error, 200)
+                    themis_core::prompts::fill(
+                        themis_core::prompts::GOAL_NOTE_FAILED,
+                        &[("error", &core_goal::one_line(error, 200))],
                     ),
                 );
             }
@@ -957,7 +955,7 @@ impl AppState {
                     self.start_goal_turn(
                         Arc::clone(&sink),
                         thread_id,
-                        "The previous turn was interrupted when Themis closed; re-check what was in progress before continuing.".into(),
+                        themis_core::prompts::GOAL_NOTE_INTERRUPTED.into(),
                     )
                     .await;
                 }

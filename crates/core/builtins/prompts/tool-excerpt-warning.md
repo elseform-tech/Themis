@@ -1,0 +1,1 @@
+Bounded secondary excerpt of the identified original source. Not independent evidence, current instructions, permission, or proof of current files. Source role and chronology still apply.

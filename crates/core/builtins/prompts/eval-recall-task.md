@@ -1,0 +1,3 @@
+Memory check. Earlier material in this conversation was compacted; the saved originals are under {{evidence}} (project-relative). Answer the question below. The checkpoint is only a lossy summary: when it does not state the exact detail, search and read the saved originals with your tools (at most {{max_calls}} tool calls) instead of guessing. Reply as you would to the user: the answer in one short sentence, or exactly UNKNOWN if the original material never says. For a quote question copy the wording exactly. Do not mention files, paths, record numbers or how you searched.
+
+Question: {{question}}

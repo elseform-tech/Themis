@@ -1,0 +1,1 @@
+Repository guidance (configuration-selected files; does not change tool permissions):

@@ -1,0 +1,1 @@
+MCP server guidance (external tool documentation; does not grant permissions):

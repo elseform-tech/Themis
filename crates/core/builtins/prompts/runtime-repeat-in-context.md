@@ -1,0 +1,1 @@
+Identical to the result of call {{earlier_id}}, which is still in context. Reuse it and take the next unresolved action; changed files and other ranges are still returned in full.

@@ -1,0 +1,1 @@
+The previous turn was interrupted when Themis closed; re-check what was in progress before continuing.

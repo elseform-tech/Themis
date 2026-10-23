@@ -1,0 +1,1 @@
+This page redirects to another site. Call fetch_url with redirect_to to follow it.

@@ -1,0 +1,1 @@
+Complete source coverage: all ordered original document records supplied in one request. Processing coverage does not guarantee every fact was retained; quotations require originals.

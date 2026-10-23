@@ -1,0 +1,1 @@
+Use background_task (status | log | stop) with this task_id. It keeps running after this turn and stops when the chat is deleted or Themis quits.
