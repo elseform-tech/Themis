@@ -70,7 +70,7 @@ impl ToolRuntime for GoalTool {
         Ok(json!({
             "goal": goal.text,
             "status": "running",
-            "note": "The goal is set. When this turn ends, the runtime checks it and keeps starting turns until it is reached. Finish this turn normally."
+            "note": themis_core::prompts::GOAL_SET_NOTE
         }))
     }
 }

@@ -1,0 +1,1 @@
+The user resumed the goal; read any change to it and try a different approach.

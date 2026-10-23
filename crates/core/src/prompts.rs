@@ -35,6 +35,28 @@ pub const DESKTOP_MCP_GUIDANCE: &str = include_str!("../builtins/prompts/desktop
 pub const DESKTOP_MCP_UNAVAILABLE: &str =
     include_str!("../builtins/prompts/desktop-mcp-unavailable.md");
 
+// Goal mode.
+/// System message of the goal check that judges each goal turn.
+pub const GOAL_CHECK_SYSTEM: &str = include_str!("../builtins/prompts/goal-check-system.md");
+/// User message of the goal check; `{{goal}}`, `{{answer}}`, `{{evidence}}` are fenced data.
+pub const GOAL_CHECK_USER: &str = include_str!("../builtins/prompts/goal-check-user.md");
+/// Active-goal context appended to every run in a chat with a running goal; `{{goal}}`.
+pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md");
+/// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.
+pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
+/// Goal-turn note after the user resumes a stuck goal.
+pub const GOAL_NOTE_RESUMED_STUCK: &str =
+    include_str!("../builtins/prompts/goal-note-resumed-stuck.md");
+/// Goal-turn note after the user stopped the previous turn.
+pub const GOAL_NOTE_STOPPED: &str = include_str!("../builtins/prompts/goal-note-stopped.md");
+/// Goal-turn note after the previous turn failed; `{{error}}`.
+pub const GOAL_NOTE_FAILED: &str = include_str!("../builtins/prompts/goal-note-failed.md");
+/// Goal-turn note after Themis closed during a turn.
+pub const GOAL_NOTE_INTERRUPTED: &str =
+    include_str!("../builtins/prompts/goal-note-interrupted.md");
+/// `note` field of the set_goal tool result.
+pub const GOAL_SET_NOTE: &str = include_str!("../builtins/prompts/goal-set-note.md");
+
 // Summaries and compaction.
 /// System prompt of every context checkpoint request.
 pub const COMPACTION_CHECKPOINT: &str =
