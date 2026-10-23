@@ -2060,24 +2060,35 @@ async fn compact_context_with_evidence(
         serde_json::json!({"estimated_input_tokens":estimated_tokens(messages),"context_token_budget":policy.context_token_budget,"deadline_ms":timeout.as_millis()}),
     );
     // The saved snapshot is the job's exact input: originals, not a separate pending copy.
+    // It is saved before the summary deadline starts: the deadline bounds the summary, and a
+    // slow disk flush (seconds on a busy Windows machine) must not turn a checkpoint into a
+    // failure that reports the originals unsaved while the save finishes in the background.
     let mut archived = None;
-    let result = until_stopped(
-        SUMMARY_DEADLINE.scope(
-            tokio::time::Instant::now() + timeout,
-            tokio::time::timeout(timeout, async {
-                if let Some(directory) = evidence_directory {
-                    archived = Some(save_evidence(&directory, messages).await?);
-                }
-                Box::pin(compact_context_inner(
-                    llm, messages, policy, events, &archived,
-                ))
-                .await
-            }),
-        ),
-        stopped,
-        events,
-    )
-    .await?;
+    let saved = match evidence_directory {
+        Some(directory) => until_stopped(save_evidence(&directory, messages), stopped, events)
+            .await?
+            .map(|snapshot| archived = Some(snapshot)),
+        None => Ok(()),
+    };
+    let result = match saved {
+        Ok(()) => {
+            until_stopped(
+                SUMMARY_DEADLINE.scope(
+                    tokio::time::Instant::now() + timeout,
+                    tokio::time::timeout(
+                        timeout,
+                        Box::pin(compact_context_inner(
+                            llm, messages, policy, events, &archived,
+                        )),
+                    ),
+                ),
+                stopped,
+                events,
+            )
+            .await?
+        }
+        Err(error) => Ok(Err(error)),
+    };
     match result {
         Ok(Ok(installed)) => {
             crate::context_metrics::activity("compaction_completed");
@@ -6244,6 +6255,69 @@ mod tests {
         assert!(
             obsolete.is_dir(),
             "obsolete artifacts must not be rewritten"
+        );
+    }
+
+    #[tokio::test]
+    async fn originals_are_saved_before_the_summary_deadline_starts() {
+        // Windows CI flaked here: the originals were saved inside the summary deadline, a
+        // slow disk flush outlasted it, and the run said "Originals were not saved on disk"
+        // while the save finished in the background. A zero deadline reproduces that order.
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_secs(30))
+                    .set_body_json(serde_json::json!({"choices":[{"message":{"role":"assistant","content":"Late summary"},"finish_reason":"stop"}]})),
+            )
+            .mount(&server)
+            .await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "test-key")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let evidence = tempfile::tempdir().unwrap();
+        let mut messages = initial_messages(
+            vec![ConversationTurn {
+                role: ConversationRole::User,
+                text: "Original decision: preserve red-753".repeat(500),
+            }],
+            "Continue the task".into(),
+        );
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        let error = compact_context_with_evidence(
+            &llm,
+            &mut messages,
+            &RunPolicy {
+                total_turns: 200,
+                context_token_budget: 200_000,
+                recent_messages: 4,
+            },
+            &tx,
+            &AtomicBool::new(false),
+            std::time::Duration::ZERO,
+            Some(evidence.path().to_owned()),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(error.contains("Originals saved on disk."), "{error}");
+        let saved = std::fs::read_dir(evidence.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "jsonl")
+            })
+            .any(|path| std::fs::read_to_string(path).unwrap().contains("red-753"));
+        assert!(
+            saved,
+            "the originals are on disk when the run reports them saved"
         );
     }
 
