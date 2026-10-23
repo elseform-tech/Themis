@@ -100,6 +100,10 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     let tools = themis_core::browser::tools::browser_tools(
         approvals,
         themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
             chat: Arc::clone(&chat),
             cancel: None,
             media: Some(Arc::new(TempMedia(media_dir.path().to_path_buf()))),
@@ -466,6 +470,10 @@ async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
     let tools = themis_core::browser::tools::browser_tools(
         Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
         themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,

@@ -197,6 +197,12 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `web.search_url` | Optional http(s) URL of your SearXNG instance (JSON output enabled), at most 1,024 bytes, no credentials; user file only. Unset: `web_search` is not offered. See [web tools](web-tools.md) |
 | `browser.enabled` | Boolean, default `true`; projects may only set `false` |
 | `browser.executable` | Optional absolute path to a Chrome, Chromium or Edge binary, at most 1,024 bytes; user file only. Unset: an installed browser is found automatically |
+| `browser.developer_mode` | Boolean, default `true` ("Enable full CDP access"): off offers no debugging tools on any page; projects may only set `false` |
+| `browser.permissions` | `browsing`, `downloads`, `debugging`: each `"allow"`, `"ask"` or `"block"`; defaults allow, allow, block. Projects may only make a value stricter. See [web tools](web-tools.md#permissions-settings--browser) |
+| `browser.site_exceptions` | Up to 500 `{ "site": "example.com", "browsing"?, "downloads"?, "debugging"? }`: a lowercase host covering its subdomains, most specific wins. Default: the starter blocks. A project's exceptions may only block, and they add to yours instead of replacing them (an exception to "arrays replace") |
+| `browser.show_secrets` | Boolean, default `false`: show cookie values, auth headers and token-like values to the agent; projects may only set `false` |
+| `browser.downloads_directory` | Optional absolute folder for downloads; user file only. Unset: the system Downloads folder |
+| `browser.open_workspace` | Boolean, default `true`: open Workspace on the Browser tab when the agent starts browsing; user file only |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration

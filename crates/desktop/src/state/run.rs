@@ -24,6 +24,10 @@ struct AuditedApprovals {
     context: themis_core::diagnostics::DiagnosticContext,
 }
 impl ApprovalHook for AuditedApprovals {
+    fn denied_by_rule(&self, action: &themis_core::tools::ToolAction) -> bool {
+        self.inner.denied_by_rule(action)
+    }
+
     fn approve(&self, action: &themis_core::tools::ToolAction) -> themis_core::tools::Approval {
         let started = std::time::Instant::now();
         let decision = self.inner.approve(action);
@@ -359,10 +363,27 @@ impl AppState {
             root: snapshot.work_root.clone(),
             attached: std::sync::atomic::AtomicUsize::new(0),
         }));
+        // Settings › Browser for this run; "Always allow on this site" is saved for later runs.
+        let remember: themis_core::tools::site_permissions::RememberSite = {
+            let state = self.clone();
+            Arc::new(move |site: &str, permission| {
+                let site = site.to_owned();
+                state
+                    .update_user_browser_config(|browser| {
+                        super::browser::allow_site(browser, &site, permission);
+                    })
+                    .map(|_| ())
+            })
+        };
+        let site_permissions = themis_core::tools::site_permissions::SitePermissions::new(
+            run_configuration.browser.clone(),
+            Some(remember),
+        );
         // fetch_url always; web_search when the user file names a SearXNG instance.
         tools.extend(themis_core::tools::web::web_tools(
             approvals.clone(),
             &run_configuration.web,
+            Some(Arc::clone(&site_permissions)),
         ));
         // The chat's built-in browser, shared with the Workspace Browser tab.
         if run_configuration.browser.enabled {
@@ -382,6 +403,7 @@ impl AppState {
                     media: Some(Arc::new(super::browser::ProjectMedia {
                         root: snapshot.work_root.clone(),
                     })),
+                    permissions: Arc::clone(&site_permissions),
                 },
             ));
         }
@@ -696,8 +718,12 @@ impl AppState {
     /// Marks a run idle, releases its concurrency permit, and persists.
     pub(super) async fn finish_run(&self, thread_id: &str) {
         self.close_steer_inbox(thread_id);
-        // A recording the agent left running ends with its run.
+        // A recording the agent left running ends with its run, and so do its breakpoints,
+        // request blocks and throttling.
         self.stop_agent_recording(thread_id).await;
+        if let Some(chat) = self.inner.browsers.existing(thread_id) {
+            chat.end_debugging().await;
+        }
         self.inner
             .stop_flags
             .lock()

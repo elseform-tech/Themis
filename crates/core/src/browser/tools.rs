@@ -11,7 +11,8 @@ use serde_json::{json, Value};
 
 use super::media::{media_name, MediaSink, Recorder, RECORD_DEFAULT, RECORD_MAX};
 use super::session::{site_of, ActionReport, ChatBrowser};
-use crate::tools::web::{approve_site, checked_url};
+use crate::tools::site_permissions::{Permission, SitePermissions};
+use crate::tools::web::checked_url;
 use crate::tools::{
     async_trait, parse_tool_args, tool_error, ApprovalHook, RiskLevel, ToolCallError, ToolRuntime,
     ToolT,
@@ -29,10 +30,36 @@ pub struct BrowserScope {
     pub cancel: Option<Arc<AtomicBool>>,
     /// Where screenshots and recordings go; without it they are not offered.
     pub media: Option<Arc<dyn MediaSink>>,
+    /// Settings › Browser: what the agent may do on each site.
+    pub permissions: Arc<SitePermissions>,
 }
 
 /// The browser tools for one run.
 pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> Vec<Box<dyn ToolT>> {
+    // Downloads the agent starts go to the Settings folder, by its Downloads permission.
+    let config = scope.permissions.config();
+    let directory = config
+        .downloads_directory
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(super::session::default_downloads_directory);
+    let gate: super::session::DownloadGate = {
+        let (permissions, approvals) = (Arc::clone(&scope.permissions), Arc::clone(&approvals));
+        Arc::new(move |site: &str| {
+            permissions
+                .gate(
+                    approvals.as_ref(),
+                    "browser_download",
+                    Permission::Downloads,
+                    site,
+                    format!("download a file from {site}"),
+                    RiskLevel::Network,
+                )
+                .map_err(|error| error.to_string())
+        })
+    };
+    scope
+        .chat
+        .set_download_policy(Some(super::session::DownloadPolicy { directory, gate }));
     let base = Base { approvals, scope };
     let mut tools: Vec<Box<dyn ToolT>> = vec![
         Box::new(BrowserOpen { base: base.clone() }),
@@ -45,12 +72,15 @@ pub fn browser_tools(approvals: Arc<dyn ApprovalHook>, scope: BrowserScope) -> V
         Box::new(BrowserScroll { base: base.clone() }),
         Box::new(BrowserTabs { base: base.clone() }),
     ];
+    tools.extend(devtools::devtools(&base));
     if base.scope.media.is_some() {
         tools.push(Box::new(BrowserScreenshot { base: base.clone() }));
         tools.push(Box::new(BrowserRecord { base }));
     }
     tools
 }
+
+mod devtools;
 
 #[derive(Clone)]
 struct Base {
@@ -90,6 +120,25 @@ async fn until_stopped<T>(
 }
 
 impl Base {
+    /// Settings › Browser for one browsing action on `site`: Block refuses in every mode,
+    /// Allow runs without a prompt, Ask asks.
+    fn gate(
+        &self,
+        tool: &str,
+        site: &str,
+        summary: String,
+        risk: RiskLevel,
+    ) -> Result<(), ToolCallError> {
+        self.scope.permissions.gate(
+            self.approvals.as_ref(),
+            tool,
+            Permission::Browsing,
+            site,
+            summary,
+            risk,
+        )
+    }
+
     /// Waits for control, approves `tool` on the site, shows `activity` while
     /// `action` runs, and turns its report into the tool result.
     async fn act<F, Fut>(
@@ -113,18 +162,29 @@ impl Base {
                 .await
                 .unwrap_or_else(|| BLANK_SITE.to_owned()),
         };
-        approve_site(
-            self.approvals.as_ref(),
-            tool,
-            &site,
-            format!("{summary} on {site}"),
-            risk,
-        )?;
+        self.gate(tool, &site, format!("{summary} on {site}"), risk)?;
         chat.set_activity(Some(activity)).await;
+        let started = std::time::Instant::now();
         let result = until_stopped(self.scope.cancel.as_deref(), action(Arc::clone(&chat))).await;
         chat.set_activity(None).await;
         let report = result.map_err(|e| tool_error(format!("{tool}: {e}")))?;
+        let downloads = chat.agent_downloads_since(started).await;
+        // A click, redirect or script can land on a site the agent may not browse.
+        if let Some(landed) = chat.current_site().await {
+            if self.scope.permissions.decide(Permission::Browsing, &landed)
+                == crate::configuration::SiteAccess::Block
+            {
+                let _ = chat.open("about:blank", false).await;
+                return Err(tool_error(format!(
+                    "{tool}: the page went to {landed}, which is blocked in Settings › Browser, so the tab was cleared. {}",
+                    crate::tools::REFUSAL_NOTE
+                )));
+            }
+        }
         let mut value = serde_json::to_value(&report).unwrap_or_default();
+        if !downloads.is_empty() {
+            value["downloads"] = json!(downloads);
+        }
         value["untrusted"] = json!(true);
         value["note"] = json!(UNTRUSTED_NOTE);
         Ok(value)
@@ -537,8 +597,7 @@ impl ToolRuntime for BrowserTabs {
             .current_site()
             .await
             .unwrap_or_else(|| BLANK_SITE.to_owned());
-        approve_site(
-            self.base.approvals.as_ref(),
+        self.base.gate(
             "browser_tabs",
             &site,
             format!("browser_tabs {action} on {site}"),
@@ -586,8 +645,7 @@ impl ToolRuntime for BrowserScreenshot {
             .current_site()
             .await
             .unwrap_or_else(|| BLANK_SITE.to_owned());
-        approve_site(
-            self.base.approvals.as_ref(),
+        self.base.gate(
             "browser_screenshot",
             &site,
             format!("browser_screenshot on {site}"),
@@ -645,8 +703,7 @@ impl ToolRuntime for BrowserRecord {
             .current_site()
             .await
             .unwrap_or_else(|| BLANK_SITE.to_owned());
-        approve_site(
-            self.base.approvals.as_ref(),
+        self.base.gate(
             "browser_record",
             &site,
             format!("browser_record {action} on {site}"),
@@ -750,6 +807,7 @@ mod tests {
             "browser_tabs" => parse_tool_args::<TabsArgs>(tool, args).map(|_| ()),
             "browser_screenshot" => parse_tool_args::<ScreenshotArgs>(tool, args).map(|_| ()),
             "browser_record" => parse_tool_args::<RecordArgs>(tool, args).map(|_| ()),
+            "browser_devtools" => parse_tool_args::<devtools::DevtoolsArgs>(tool, args).map(|_| ()),
             other => panic!("untested tool {other}"),
         }
     }
@@ -767,6 +825,10 @@ mod tests {
         let tools = browser_tools(
             Arc::new(crate::tools::AllowAllHook),
             BrowserScope {
+                permissions: crate::tools::site_permissions::SitePermissions::new(
+                    Default::default(),
+                    None,
+                ),
                 chat: hub.chat("schema-test", &std::env::temp_dir()),
                 cancel: None,
                 media: Some(Arc::new(NoMedia)),
@@ -791,7 +853,7 @@ mod tests {
             let parsed = parses(tool.name(), Value::Object(args));
             assert!(parsed.is_ok(), "{}: {parsed:?} from {schema}", tool.name());
         }
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 12);
         let click: ClickArgs = parse_tool_args("browser_click", json!({"ref": "e4"})).unwrap();
         assert_eq!(click.reference, "e4");
         let click: ClickArgs =

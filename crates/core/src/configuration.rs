@@ -298,6 +298,10 @@ struct ConfiguredHook {
     grants: Arc<ChatGrants>,
 }
 impl ApprovalHook for ConfiguredHook {
+    fn denied_by_rule(&self, action: &ToolAction) -> bool {
+        self.rule_denies(action)
+    }
+
     fn approve(&self, action: &ToolAction) -> Approval {
         if action.tool == crate::tools::UNSANDBOXED_TOOL {
             return self.approve_escape(action);
@@ -305,15 +309,19 @@ impl ApprovalHook for ConfiguredHook {
         if self.mode == ApprovalMode::Yolo {
             return Approval::AllowOnce;
         }
+        // Browser permissions are kept in Settings › Browser, not chat grants: an "always"
+        // answer goes back to the browser tool, which saves it as a site exception.
+        let browser = action.tool.starts_with("browser_");
         // Rules decide first, so a deny rule always beats a chat grant.
         match self.policy.decision(action) {
             PolicyAction::Allow => Approval::AllowOnce,
             PolicyAction::Deny => Approval::Deny,
             PolicyAction::Ask => {
-                if self.grants.covers(action) {
+                if !browser && self.grants.covers(action) {
                     return Approval::AllowOnce;
                 }
                 match self.interactive.approve(action) {
+                    Approval::AllowAlways if browser => Approval::AllowAlways,
                     Approval::AllowAlways => {
                         // Destructive actions are allowed this once only.
                         self.grants.remember(action);
@@ -326,6 +334,10 @@ impl ApprovalHook for ConfiguredHook {
     }
 }
 impl ConfiguredHook {
+    fn rule_denies(&self, action: &ToolAction) -> bool {
+        self.mode == ApprovalMode::Custom && self.policy.decision(action) == PolicyAction::Deny
+    }
+
     /// Running a sandbox-blocked command outside the sandbox needs a person:
     /// a dialog answer, a chat grant they made for `shell_unsandboxed`, or a
     /// rule naming `shell_unsandboxed` exactly. Wildcard, prefix and risk-only
@@ -517,22 +529,116 @@ pub struct WebConfig {
     pub search_url: Option<String>,
 }
 
-/// The built-in browser. A project may only turn it off; `executable` (a
-/// Chrome, Chromium or Edge binary) may only come from the user file.
+/// The built-in browser and what the agent may do in it (Settings › Browser). A project may
+/// only tighten it; `executable`, `downloads_directory` and `open_workspace` may only come
+/// from the user file. See `docs/web-tools.md`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BrowserConfig {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executable: Option<String>,
+    /// Developer mode, "Enable full CDP access": off means no debugging tools at all.
+    pub developer_mode: bool,
+    /// The defaults for each permission; site exceptions override them.
+    pub permissions: BrowserPermissions,
+    /// Per-site values, the most specific site first wins. Arrays replace earlier arrays,
+    /// so a person can remove the starter entries.
+    pub site_exceptions: Vec<SiteException>,
+    /// Block-only exceptions a project added; any match blocks, whatever the user allows.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub site_restrictions: Vec<SiteException>,
+    /// Show cookie values, auth headers and token-like values to the agent.
+    pub show_secrets: bool,
+    /// Where downloads are saved; the system Downloads folder when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub downloads_directory: Option<String>,
+    /// Open Workspace on the Browser tab when the agent starts browsing.
+    pub open_workspace: bool,
 }
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
             enabled: true,
             executable: None,
+            developer_mode: true,
+            permissions: BrowserPermissions::default(),
+            site_exceptions: starter_site_exceptions(),
+            site_restrictions: Vec::new(),
+            show_secrets: false,
+            downloads_directory: None,
+            open_workspace: true,
         }
     }
+}
+
+/// Allow (no prompt), Ask (an approval prompt; YOLO allows) or Block (refused in every mode).
+/// Ordered from most to least permissive, so a project may only move a value up.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum SiteAccess {
+    Allow,
+    Ask,
+    Block,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct BrowserPermissions {
+    /// Open, navigate, click, type, screenshots, recording and tabs.
+    pub browsing: SiteAccess,
+    /// Saving a file the page or an agent action downloads.
+    pub downloads: SiteAccess,
+    /// The debugging tools (console, elements, network, debugger, storage, profiling).
+    pub debugging: SiteAccess,
+}
+impl Default for BrowserPermissions {
+    fn default() -> Self {
+        Self {
+            browsing: SiteAccess::Allow,
+            downloads: SiteAccess::Allow,
+            debugging: SiteAccess::Block,
+        }
+    }
+}
+
+/// One site's own values; an unset permission falls back to the defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct SiteException {
+    /// A host such as `example.com`; it covers its subdomains.
+    pub site: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browsing: Option<SiteAccess>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub downloads: Option<SiteAccess>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debugging: Option<SiteAccess>,
+}
+
+/// The starter exceptions: sign-in, payment and identity sites the agent does not browse.
+/// A short starter set, not complete; the person edits it in Settings › Browser.
+pub const STARTER_BLOCKED_SITES: [&str; 9] = [
+    "paypal.com",
+    "stripe.com",
+    "wise.com",
+    "revolut.com",
+    "accounts.google.com",
+    "login.microsoftonline.com",
+    "appleid.apple.com",
+    "id.me",
+    "login.gov",
+];
+
+pub fn starter_site_exceptions() -> Vec<SiteException> {
+    STARTER_BLOCKED_SITES
+        .iter()
+        .map(|site| SiteException {
+            site: (*site).to_owned(),
+            browsing: Some(SiteAccess::Block),
+            ..SiteException::default()
+        })
+        .collect()
 }
 
 /// Project and run layers may not point web or browser settings elsewhere;
@@ -542,14 +648,89 @@ fn check_web_restriction(layer: &Value, origin: &str) -> Result<()> {
         layer.pointer("/web/search_url").is_none(),
         "web.search_url may only be set in the user runtime.jsonc, not the {origin} configuration"
     );
-    ensure!(
-        layer.pointer("/browser/executable").is_none(),
-        "browser.executable may only be set in the user runtime.jsonc, not the {origin} configuration"
-    );
-    if let Some(enabled) = layer.pointer("/browser/enabled") {
+    for field in [
+        "executable",
+        "downloads_directory",
+        "open_workspace",
+        "site_restrictions",
+    ] {
         ensure!(
-            enabled == &Value::Bool(false),
-            "the {origin} configuration may only set browser.enabled to false"
+            layer.pointer(&format!("/browser/{field}")).is_none(),
+            "browser.{field} may only be set in the user runtime.jsonc, not the {origin} configuration"
+        );
+    }
+    for field in ["enabled", "developer_mode", "show_secrets"] {
+        if let Some(value) = layer.pointer(&format!("/browser/{field}")) {
+            ensure!(
+                value == &Value::Bool(false),
+                "the {origin} configuration may only set browser.{field} to false"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A project's browser layer may only tighten: each permission default may only move toward
+/// Block, and its site exceptions may only block. They become `site_restrictions`, which
+/// block whatever the user's own exceptions allow, instead of replacing the user's list.
+fn tighten_browser_layer(current: &BrowserConfig, layer: &mut Value, origin: &str) -> Result<()> {
+    let Some(browser) = layer.get_mut("browser").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    if let Some(permissions) = browser.get("permissions") {
+        let permissions: BrowserPermissions = serde_json::from_value(
+            serde_json::json!(current.permissions)
+                .as_object()
+                .cloned()
+                .map(|mut base| {
+                    if let Some(over) = permissions.as_object() {
+                        base.extend(over.clone());
+                    }
+                    Value::Object(base)
+                })
+                .unwrap_or_default(),
+        )
+        .context("invalid browser.permissions")?;
+        for (name, before, after) in [
+            (
+                "browsing",
+                current.permissions.browsing,
+                permissions.browsing,
+            ),
+            (
+                "downloads",
+                current.permissions.downloads,
+                permissions.downloads,
+            ),
+            (
+                "debugging",
+                current.permissions.debugging,
+                permissions.debugging,
+            ),
+        ] {
+            ensure!(
+                after >= before,
+                "the {origin} configuration may only make browser.permissions.{name} stricter"
+            );
+        }
+    }
+    if let Some(exceptions) = browser.remove("site_exceptions") {
+        let exceptions: Vec<SiteException> =
+            serde_json::from_value(exceptions).context("invalid browser.site_exceptions")?;
+        for exception in &exceptions {
+            ensure!(
+                [exception.browsing, exception.downloads, exception.debugging]
+                    .iter()
+                    .all(|value| matches!(value, None | Some(SiteAccess::Block))),
+                "the {origin} configuration may only add site exceptions that block (site '{}')",
+                exception.site
+            );
+        }
+        let mut restrictions = exceptions;
+        restrictions.extend(current.site_restrictions.iter().cloned());
+        browser.insert(
+            "site_restrictions".into(),
+            serde_json::to_value(restrictions)?,
         );
     }
     Ok(())
@@ -574,6 +755,24 @@ fn validate_web(config: &RuntimeConfig) -> Result<()> {
         ensure!(
             path.len() <= 1024 && std::path::Path::new(path).is_absolute(),
             "browser.executable must be an absolute path of at most 1,024 bytes"
+        );
+    }
+    if let Some(path) = &config.browser.downloads_directory {
+        ensure!(
+            path.len() <= 1024 && std::path::Path::new(path).is_absolute(),
+            "browser.downloads_directory must be an absolute path of at most 1,024 bytes"
+        );
+    }
+    let exceptions = &config.browser.site_exceptions;
+    ensure!(
+        exceptions.len() + config.browser.site_restrictions.len() <= 500,
+        "browser.site_exceptions holds at most 500 sites"
+    );
+    for exception in exceptions.iter().chain(&config.browser.site_restrictions) {
+        ensure!(
+            valid_site(&exception.site) && exception.site == exception.site.to_ascii_lowercase(),
+            "browser.site_exceptions: '{}' is not a site such as example.com (lowercase host, no scheme, port or path)",
+            exception.site
         );
     }
     Ok(())
@@ -637,6 +836,128 @@ pub fn parse(content: &str) -> Result<Value> {
     let value: Value = serde_json::from_slice(&bytes).context("invalid configuration JSONC")?;
     ensure!(value.is_object(), "configuration must be an object");
     Ok(value)
+}
+
+/// `content` (a JSONC configuration) with its top-level `key` set to `value`. Everything
+/// else, comments included, is left as written; only the old value of `key` (with any
+/// comments inside it) is replaced. Settings use this for field-level writes.
+pub fn set_top_level(content: &str, key: &str, value: &Value) -> Result<String> {
+    let rendered = serde_json::to_string_pretty(value)?.replace('\n', "\n  ");
+    if content.trim().is_empty() {
+        return Ok(format!(
+            "{{\n  {}: {rendered}\n}}\n",
+            serde_json::to_string(key)?
+        ));
+    }
+    parse(content)?;
+    let bytes = strip_jsonc(content)?;
+    let (mut depth, mut i) = (0usize, 0usize);
+    let mut found: Option<(usize, usize)> = None;
+    let mut last_close = None;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                let end = i;
+                i += 1;
+                if depth != 1 {
+                    continue;
+                }
+                let mut after = i;
+                while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+                    after += 1;
+                }
+                if bytes.get(after) != Some(&b':') {
+                    continue;
+                }
+                let name: String = serde_json::from_slice(&bytes[start..=end])?;
+                let mut value_start = after + 1;
+                while bytes[value_start].is_ascii_whitespace() {
+                    value_start += 1;
+                }
+                // The value ends at the next ',' or '}' back at this depth.
+                let (mut inner, mut j, mut in_string) = (0usize, value_start, false);
+                while j < bytes.len() {
+                    let c = bytes[j];
+                    if in_string {
+                        if c == b'\\' {
+                            j += 1;
+                        } else if c == b'"' {
+                            in_string = false;
+                        }
+                    } else if c == b'"' {
+                        in_string = true;
+                    } else if c == b'{' || c == b'[' {
+                        inner += 1;
+                    } else if c == b'}' || c == b']' {
+                        if inner == 0 {
+                            break;
+                        }
+                        inner -= 1;
+                    } else if c == b',' && inner == 0 {
+                        break;
+                    }
+                    j += 1;
+                }
+                let mut value_end = j;
+                while value_end > value_start && bytes[value_end - 1].is_ascii_whitespace() {
+                    value_end -= 1;
+                }
+                if name == key {
+                    found = Some((value_start, value_end));
+                }
+                i = j;
+            }
+            b'{' | b'[' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    last_close = Some(i);
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    let updated = if let Some((start, end)) = found {
+        format!("{}{rendered}{}", &content[..start], &content[end..])
+    } else {
+        let close = last_close.context("configuration must be an object")?;
+        let before = bytes[..close]
+            .iter()
+            .rposition(|c| !c.is_ascii_whitespace());
+        let entry = format!("{}: {rendered}", serde_json::to_string(key)?);
+        match before {
+            Some(position) if bytes[position] == b'{' => format!(
+                "{}\n  {entry}\n{}",
+                &content[..=position],
+                &content[close..]
+            ),
+            Some(position) => format!(
+                "{},\n  {entry}{}",
+                &content[..=position],
+                &content[position + 1..]
+            ),
+            None => bail_unbalanced()?,
+        }
+    };
+    let check = parse(&updated).context("updated configuration is not valid JSONC")?;
+    ensure!(
+        check.get(key) == Some(value),
+        "updated configuration lost the new value"
+    );
+    Ok(updated)
+}
+
+fn bail_unbalanced() -> Result<String> {
+    anyhow::bail!("configuration must be an object")
 }
 
 /// JSONC text as plain JSON bytes: comments and trailing commas become spaces,
@@ -842,6 +1163,9 @@ pub fn resolve(
                     crate::sandbox::check_restriction(&current, sandbox, origin)?;
                 }
                 check_web_restriction(&layer, origin)?;
+                let current: BrowserConfig = serde_json::from_value(value["browser"].clone())
+                    .context("invalid browser configuration")?;
+                tighten_browser_layer(&current, &mut layer, origin)?;
             }
             if origin == "project" {
                 if let Some(policy) = layer.as_object_mut().and_then(|m| m.remove("approval")) {
@@ -1143,7 +1467,22 @@ pub fn schema() -> Value {
             }},
             "browser":{"type":"object","additionalProperties":false,"properties":{
                 "enabled":{"type":"boolean","default":true},
-                "executable":{"type":"string","maxLength":1024,"description":"Chrome, Chromium or Edge binary; user file only"}
+                "executable":{"type":"string","maxLength":1024,"description":"Chrome, Chromium or Edge binary; user file only"},
+                "developer_mode":{"type":"boolean","default":true,"description":"Enable full CDP access: the agent's debugging tools"},
+                "permissions":{"type":"object","additionalProperties":false,"properties":{
+                    "browsing":{"enum":["allow","ask","block"],"default":"allow"},
+                    "downloads":{"enum":["allow","ask","block"],"default":"allow"},
+                    "debugging":{"enum":["allow","ask","block"],"default":"block"}
+                }},
+                "site_exceptions":{"type":"array","maxItems":500,"items":{"type":"object","additionalProperties":false,"required":["site"],"properties":{
+                    "site":{"type":"string","minLength":1,"maxLength":253},
+                    "browsing":{"enum":["allow","ask","block"]},
+                    "downloads":{"enum":["allow","ask","block"]},
+                    "debugging":{"enum":["allow","ask","block"]}
+                }}},
+                "show_secrets":{"type":"boolean","default":false},
+                "downloads_directory":{"type":"string","maxLength":1024,"description":"Absolute folder for downloads; user file only"},
+                "open_workspace":{"type":"boolean","default":true}
             }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":1800,"default":900},
@@ -1262,6 +1601,92 @@ mod tests {
             let file = format!(r#"{{"approval":{{"rules":[{bad}]}}}}"#);
             assert!(resolve(Some(&file), None, None).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn set_top_level_replaces_one_value_and_keeps_every_comment() {
+        let file = "{\n  // my model\n  \"schema_version\": 1, /* keep */\n  \"browser\": { \"enabled\": true } // old\n}\n";
+        let browser = serde_json::json!({"enabled": false, "show_secrets": true});
+        let updated = set_top_level(file, "browser", &browser).unwrap();
+        assert!(
+            updated.contains("// my model")
+                && updated.contains("/* keep */")
+                && updated.contains("// old"),
+            "{updated}"
+        );
+        assert_eq!(parse(&updated).unwrap()["browser"], browser);
+        assert_eq!(parse(&updated).unwrap()["schema_version"], 1);
+        // Absent key: appended, with or without other keys, and to an empty file.
+        let added = set_top_level("{ \"schema_version\": 1, }", "browser", &browser).unwrap();
+        assert_eq!(parse(&added).unwrap()["browser"], browser);
+        assert_eq!(parse(&added).unwrap()["schema_version"], 1);
+        assert_eq!(
+            parse(&set_top_level("{}", "browser", &browser).unwrap()).unwrap()["browser"],
+            browser
+        );
+        assert_eq!(
+            parse(&set_top_level("", "browser", &browser).unwrap()).unwrap()["browser"],
+            browser
+        );
+        // A nested key with the same name is not the top-level one.
+        let nested = "{\"web\": {\"browser\": 1}}";
+        let updated = set_top_level(nested, "browser", &browser).unwrap();
+        assert_eq!(parse(&updated).unwrap()["web"]["browser"], 1);
+        assert_eq!(parse(&updated).unwrap()["browser"], browser);
+        assert!(set_top_level("[1]", "browser", &browser).is_err());
+    }
+
+    #[test]
+    fn browser_permissions_default_and_projects_may_only_tighten() {
+        let resolved = resolve(None, None, None).unwrap().config.browser;
+        assert!(resolved.developer_mode && resolved.open_workspace && !resolved.show_secrets);
+        assert_eq!(resolved.permissions.debugging, SiteAccess::Block);
+        assert_eq!(resolved.site_exceptions.len(), STARTER_BLOCKED_SITES.len());
+        // The user's list replaces the starter list, so entries can be removed.
+        let user = r#"{"browser":{"site_exceptions":[{"site":"example.com","debugging":"allow"}],"permissions":{"debugging":"ask"}}}"#;
+        let resolved = resolve(Some(user), None, None).unwrap().config.browser;
+        assert_eq!(resolved.site_exceptions.len(), 1);
+        assert_eq!(resolved.permissions.debugging, SiteAccess::Ask);
+        assert_eq!(
+            resolved.permissions.browsing,
+            SiteAccess::Allow,
+            "unset fields keep their default"
+        );
+        // A project may block more; its exceptions are kept apart and do not replace the user's.
+        let project = r#"{"browser":{"site_exceptions":[{"site":"admin.example.com","browsing":"block"}],"permissions":{"downloads":"block"},"developer_mode":false}}"#;
+        let resolved = resolve(Some(user), Some(project), None)
+            .unwrap()
+            .config
+            .browser;
+        assert_eq!(resolved.site_exceptions.len(), 1);
+        assert_eq!(resolved.site_restrictions[0].site, "admin.example.com");
+        assert_eq!(resolved.permissions.downloads, SiteAccess::Block);
+        assert!(!resolved.developer_mode);
+        // It may not loosen anything.
+        for loosen in [
+            r#"{"browser":{"permissions":{"debugging":"allow"}}}"#,
+            r#"{"browser":{"site_exceptions":[{"site":"paypal.com","browsing":"allow"}]}}"#,
+            r#"{"browser":{"developer_mode":true}}"#,
+            r#"{"browser":{"show_secrets":true}}"#,
+            r#"{"browser":{"downloads_directory":"/tmp"}}"#,
+            r#"{"browser":{"open_workspace":false}}"#,
+            r#"{"browser":{"site_restrictions":[]}}"#,
+        ] {
+            assert!(resolve(Some(user), Some(loosen), None).is_err(), "{loosen}");
+        }
+        // Sites are lowercase hosts.
+        for bad in ["https://example.com", "Example.com", "example.com/path", ""] {
+            let file = format!(
+                r#"{{"browser":{{"site_exceptions":[{{"site":"{bad}","browsing":"block"}}]}}}}"#
+            );
+            assert!(resolve(Some(&file), None, None).is_err(), "{bad}");
+        }
+        assert!(resolve(
+            Some(r#"{"browser":{"downloads_directory":"relative"}}"#),
+            None,
+            None
+        )
+        .is_err());
     }
 
     #[test]

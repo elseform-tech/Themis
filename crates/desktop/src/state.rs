@@ -9,6 +9,7 @@ mod attachments;
 mod automation;
 mod background;
 mod browser;
+mod browser_data;
 mod changes;
 mod chat_grants;
 pub(crate) mod configuration;

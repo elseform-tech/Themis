@@ -314,7 +314,11 @@ usable model when that one is gone too.
 
 ## Settings reference
 
-Settings has General, Appearance, Models, Permissions, and Advanced sections.
+Settings has General, Appearance, Models, Permissions, Browser, and Advanced sections.
+**Browser** sets what the agent may do in its built-in browser (Allow, Ask or Block for
+browsing, downloads and debugging, with per-site exceptions), Developer mode, the downloads
+folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
+It saves to the `browser` block of your `runtime.jsonc`.
 Ordinary preferences save on change; text inputs save when focus leaves the field.
 Errors appear inline, and rejected changes leave the previous preferences intact.
 Permissions lets you require approval for read tools and set the approval

@@ -51,8 +51,11 @@ const USER_AGENT: &str = concat!(
 pub fn web_tools(
     approvals: Arc<dyn ApprovalHook>,
     config: &crate::configuration::WebConfig,
+    permissions: Option<Arc<super::site_permissions::SitePermissions>>,
 ) -> Vec<Box<dyn ToolT>> {
-    let mut tools: Vec<Box<dyn ToolT>> = vec![Box::new(FetchUrlTool::new(Arc::clone(&approvals)))];
+    let mut fetch = FetchUrlTool::new(Arc::clone(&approvals));
+    fetch.permissions = permissions;
+    let mut tools: Vec<Box<dyn ToolT>> = vec![Box::new(fetch)];
     if let Some(base) = config
         .search_url
         .as_deref()
@@ -281,6 +284,8 @@ pub struct FetchUrlTool {
     approvals: Arc<dyn ApprovalHook>,
     client: reqwest::Client,
     cache: Arc<Mutex<PageCache>>,
+    /// Settings › Browser: a site blocked for Browsing is not fetched either.
+    pub permissions: Option<Arc<super::site_permissions::SitePermissions>>,
 }
 
 impl FetchUrlTool {
@@ -306,6 +311,7 @@ impl FetchUrlTool {
             approvals,
             client,
             cache: Arc::default(),
+            permissions: None,
         }
     }
 
@@ -469,6 +475,16 @@ impl ToolRuntime for FetchUrlTool {
             // Paging through a page already read (and approved) this run.
             Some(page) => page,
             None => {
+                let site = site_of(&url);
+                if self.permissions.as_ref().is_some_and(|permissions| {
+                    permissions.decide(super::site_permissions::Permission::Browsing, &site)
+                        == crate::configuration::SiteAccess::Block
+                }) {
+                    return Err(tool_error(format!(
+                        "fetch_url: {site} is blocked in Settings › Browser. {}",
+                        super::REFUSAL_NOTE
+                    )));
+                }
                 approve_site(
                     self.approvals.as_ref(),
                     "fetch_url",

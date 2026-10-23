@@ -25,6 +25,13 @@ const RISK_TONE: Record<RiskLevel, BadgeTone> = {
 /** Says exactly what "Allow in this chat" grants, or why it is not offered. Sentence text is fixed; argv tokens render only as separate escaped chips. Keep in sync with `ToolAction::grant_key`. */
 export { displayToken } from "./CommandTokens";
 
+/** The Settings › Browser permission a browser tool falls under. */
+const DEBUGGING_TOOLS = new Set(["browser_devtools"]);
+export function browserPermission(tool: string): "Browsing" | "Downloads" | "Debugging" {
+  if (tool === "browser_download") return "Downloads";
+  return DEBUGGING_TOOLS.has(tool) ? "Debugging" : "Browsing";
+}
+
 export function GrantHint({ request }: { request: ApprovalRequest }) {
   if (request.grantable === false) {
     return <>This kind of action always asks, so it cannot be allowed for the chat.</>;
@@ -34,6 +41,9 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
     return <>Allow in this chat covers every tool of this MCP server in later runs of this chat.</>;
   }
   const site = request.grant_site;
+  if (site?.tools === "browser") {
+    return <>Always allow on this site saves {browserPermission(request.tool)} for <TokenList argv={[site.site]} /> in Settings › Browser, where you can change it.</>;
+  }
   if (site) {
     const what = site.tools === "browser" ? "every browser action on" : site.tools === "web_search" ? "searches through" : "reading pages from";
     return <>Allow in this chat covers {what} <TokenList argv={[site.site]} /> in later runs of this chat. Other sites still ask.</>;
@@ -117,7 +127,7 @@ export function ApprovalDialog({ request, open, onDecide }: ApprovalDialogProps)
           </Button>
           {grantable && (
             <Button variant="ghost" onClick={() => onDecide("chat")}>
-              Allow in this chat (2)
+              {request.grant_site?.tools === "browser" ? "Always allow on this site (2)" : "Allow in this chat (2)"}
             </Button>
           )}
           <Button variant="danger" onClick={() => onDecide("deny")}>

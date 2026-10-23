@@ -92,6 +92,8 @@ export interface AppState {
   threadsByProject: Record<string, ThreadInfo[]>;
   activeProjectRoot: string | null;
   activeThreadId: string | null;
+  /** Settings › Browser: the agent's first browser step opens Workspace on the Browser tab. */
+  browserOpensWorkspace: boolean;
   mainView: MainView;
   messages: Record<string, ChatMessage[]>;
   /** Live streamed assistant text per thread (cleared on finished/failed). */
@@ -191,6 +193,7 @@ export type AppAction =
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView }
   | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: "tasks" | "browser" }
+  | { type: "browser/opens-workspace"; value: boolean }
   | { type: "ui/tab-request-consumed" }
   | { type: "tasks/loaded"; threadId: string; tasks: ThreadTasks }
   | { type: "ui/palette"; open: boolean }
@@ -229,6 +232,7 @@ export const initialState: AppState = {
   threadsByProject: {},
   activeProjectRoot: null,
   activeThreadId: null,
+  browserOpensWorkspace: true,
   mainView: "thread",
   messages: {},
   streams: {},
@@ -789,12 +793,14 @@ export function reducer(state: AppState, action: AppAction): AppState {
         mainView: "thread",
       };
     }
+    case "browser/opens-workspace":
+      return { ...state, browserOpensWorkspace: action.value };
     case "thread/event": {
       const { thread_id: threadId, event } = action.envelope;
       const next = applyThreadEvent(state, action.envelope);
       // The agent's first browser step in a run shows the Browser tab of the
       // chat on screen; later steps leave whatever the person chose.
-      const firstBrowserStep = event.kind === "tool_started" && event.tool.startsWith("browser_")
+      const firstBrowserStep = state.browserOpensWorkspace && event.kind === "tool_started" && event.tool.startsWith("browser_")
         && threadId === state.activeThreadId && state.mainView === "thread"
         && !(state.traces[threadId] ?? []).some((entry) => entry.tool.startsWith("browser_"));
       return firstBrowserStep
