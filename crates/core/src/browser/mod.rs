@@ -10,6 +10,7 @@
 
 pub mod cdp;
 pub mod engine;
+mod engine_pin;
 pub mod launch;
 pub mod media;
 pub mod redact;

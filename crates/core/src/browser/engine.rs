@@ -8,13 +8,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use serde_json::Value;
+use sha2::{Digest, Sha256};
 
-/// Google's list of current Chrome for Testing builds and their downloads.
-const VERSIONS_URL: &str =
-    "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json";
+use super::engine_pin::{ARCHIVES, VERSION};
+
 /// Downloads are only taken from Google's Chrome for Testing bucket.
-const DOWNLOAD_PREFIX: &str = "https://storage.googleapis.com/chrome-for-testing-public/";
+const DOWNLOAD_HOST: &str = "storage.googleapis.com";
+const DOWNLOAD_PATH: &str = "/chrome-for-testing-public/";
 /// The archives are about 100–120 MB; anything far larger is not the engine.
 const MAX_DOWNLOAD: u64 = 400 * 1024 * 1024;
 /// The unpacked engine is about 200–300 MB.
@@ -24,7 +24,7 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// Chrome for Testing's name for this platform, or `None` where it publishes no build.
 pub fn platform() -> Option<&'static str> {
-    Some(match (std::env::consts::OS, std::env::consts::ARCH) {
+    let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => "mac-arm64",
         ("macos", "x86_64") => "mac-x64",
         ("linux", "x86_64") => "linux64",
@@ -32,15 +32,24 @@ pub fn platform() -> Option<&'static str> {
         ("windows", "x86_64") => "win64",
         ("windows", "x86") => "win32",
         _ => return None,
-    })
+    };
+    expected_sha256(platform).map(|_| platform)
 }
 
-/// Where the engine is installed under the browser's app-data folder.
+/// The pinned archive hash for `platform`.
+fn expected_sha256(platform: &str) -> Option<&'static str> {
+    ARCHIVES
+        .iter()
+        .find(|(name, _)| *name == platform)
+        .map(|(_, sha256)| *sha256)
+}
+
+/// Where engines are installed under the browser's app-data folder.
 pub fn engine_dir(root: &Path) -> PathBuf {
     root.join("engine")
 }
 
-/// The installed engine's program, if it is there.
+/// The installed engine's program for the pinned version, if it is there.
 pub fn installed(root: &Path) -> Option<PathBuf> {
     let platform = platform()?;
     let program = if cfg!(windows) {
@@ -49,78 +58,90 @@ pub fn installed(root: &Path) -> Option<PathBuf> {
         "chrome-headless-shell"
     };
     let path = engine_dir(root)
+        .join(VERSION)
         .join(format!("chrome-headless-shell-{platform}"))
         .join(program);
     path.is_file().then_some(path)
 }
 
-/// The stable engine's version and archive URL for `platform` from the versions list.
-pub fn download_url(versions: &Value, platform: &str) -> anyhow::Result<(String, String)> {
-    let stable = &versions["channels"]["Stable"];
-    let version = stable["version"]
-        .as_str()
-        .context("the versions list names no stable version")?;
-    let url = stable["downloads"]["chrome-headless-shell"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|download| download["platform"] == platform)
-        .and_then(|download| download["url"].as_str())
-        .with_context(|| format!("no browser engine is published for {platform}"))?;
-    if !url.starts_with(DOWNLOAD_PREFIX) || url.contains("..") || !url.ends_with(".zip") {
-        bail!("unexpected browser engine address {url}");
-    }
-    Ok((version.to_owned(), url.to_owned()))
+/// The pinned engine archive for `platform`.
+pub fn archive_url(platform: &str) -> reqwest::Url {
+    reqwest::Url::parse(&format!(
+        "https://{DOWNLOAD_HOST}{DOWNLOAD_PATH}{VERSION}/{platform}/chrome-headless-shell-{platform}.zip"
+    ))
+    .expect("the pinned engine address is a valid URL")
 }
 
-/// Downloads and unpacks the engine into `root`, replacing an older one, and returns
-/// its program. Callers run one install at a time.
+/// Whether `url` is an https address in the Chrome for Testing bucket (checked on the
+/// address the bytes actually came from, so a redirect cannot swap the source).
+fn trusted(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some(DOWNLOAD_HOST)
+        && url.port().is_none()
+        && url.path().starts_with(DOWNLOAD_PATH)
+}
+
+/// Downloads the pinned engine, checks its SHA-256, unpacks it into `root` (replacing
+/// older versions) and returns its program. Nothing is unpacked or run unless the hash
+/// matches. Callers run one install at a time.
 pub async fn install(root: &Path) -> anyhow::Result<PathBuf> {
     let platform = platform().context("no browser engine is published for this platform")?;
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(30))
-        .timeout(DOWNLOAD_TIMEOUT)
-        .build()?;
-    let versions: Value = client
-        .get(VERSIONS_URL)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let (_version, url) = download_url(&versions, platform)?;
-
     let staging = root.join("engine.partial");
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging)?;
-    let archive = staging.join("engine.zip");
-    let mut response = client.get(&url).send().await?.error_for_status()?;
+    let installed = download_and_unpack(root, platform, &staging).await;
+    let _ = std::fs::remove_dir_all(&staging);
+    installed
+}
+
+async fn download_and_unpack(
+    root: &Path,
+    platform: &str,
+    staging: &Path,
+) -> anyhow::Result<PathBuf> {
+    let expected = expected_sha256(platform).context("no pinned engine for this platform")?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(DOWNLOAD_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let url = archive_url(platform);
+    let mut response = client.get(url).send().await?.error_for_status()?;
+    if !response.status().is_success() || !trusted(response.url()) {
+        bail!("the browser engine download did not come from Chrome for Testing");
+    }
     if response
         .content_length()
         .is_some_and(|size| size > MAX_DOWNLOAD)
     {
         bail!("the browser engine download is unexpectedly large");
     }
+    let archive = staging.join("engine.zip");
     let mut file = tokio::fs::File::create(&archive).await?;
+    let mut hash = Sha256::new();
     let mut received: u64 = 0;
     while let Some(chunk) = response.chunk().await? {
         received += chunk.len() as u64;
         if received > MAX_DOWNLOAD {
             bail!("the browser engine download is unexpectedly large");
         }
+        hash.update(&chunk);
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await?;
     }
     tokio::io::AsyncWriteExt::flush(&mut file).await?;
     drop(file);
+    let actual = format!("{:x}", hash.finalize());
+    if actual != expected {
+        bail!("the browser engine download does not match its pinned SHA-256");
+    }
 
-    let unpacked = staging.join("engine");
-    let (from, into) = (archive.clone(), unpacked.clone());
+    let unpacked = staging.join(VERSION);
+    let (from, into) = (archive, unpacked.clone());
     tokio::task::spawn_blocking(move || extract(&from, &into)).await??;
-    let _ = std::fs::remove_file(&archive);
     let target = engine_dir(root);
     let _ = std::fs::remove_dir_all(&target);
-    std::fs::rename(&unpacked, &target)?;
-    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&target)?;
+    std::fs::rename(&unpacked, target.join(VERSION))?;
     installed(root).context("the browser engine archive has no chrome-headless-shell program")
 }
 
@@ -161,34 +182,27 @@ fn extract(archive: &Path, into: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use std::io::Write;
 
-    fn versions(url: &str) -> Value {
-        json!({"channels": {"Stable": {"version": "156.0.8078.47", "downloads": {
-            "chrome-headless-shell": [{"platform": "mac-arm64", "url": url}]
-        }}}})
-    }
-
     #[test]
-    fn picks_the_stable_engine_for_the_platform() {
-        let url =
-            format!("{DOWNLOAD_PREFIX}156.0.8078.47/mac-arm64/chrome-headless-shell-mac-arm64.zip");
-        let (version, picked) = download_url(&versions(&url), "mac-arm64").unwrap();
-        assert_eq!(version, "156.0.8078.47");
-        assert_eq!(picked, url);
-        assert!(download_url(&versions(&url), "win64").is_err());
-    }
-
-    #[test]
-    fn refuses_downloads_from_anywhere_else() {
-        for url in [
-            "https://example.com/chrome-headless-shell-mac-arm64.zip",
+    fn downloads_only_the_pinned_archive_from_chrome_for_testing() {
+        let url = archive_url("mac-arm64");
+        assert!(trusted(&url));
+        assert!(url.as_str().ends_with(&format!(
+            "{VERSION}/mac-arm64/chrome-headless-shell-mac-arm64.zip"
+        )));
+        for other in [
+            "https://example.com/chrome-for-testing-public/x.zip",
             "http://storage.googleapis.com/chrome-for-testing-public/x.zip",
-            "https://storage.googleapis.com/chrome-for-testing-public/../evil/x.zip",
-            "https://storage.googleapis.com/chrome-for-testing-public/x.exe",
+            "https://storage.googleapis.com:8443/chrome-for-testing-public/x.zip",
+            "https://storage.googleapis.com/other-bucket/x.zip",
+            "https://storage.googleapis.com.evil.test/chrome-for-testing-public/x.zip",
         ] {
-            assert!(download_url(&versions(url), "mac-arm64").is_err(), "{url}");
+            assert!(!trusted(&reqwest::Url::parse(other).unwrap()), "{other}");
+        }
+        // Every pinned hash is a full SHA-256.
+        for (_, sha256) in ARCHIVES {
+            assert!(sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()));
         }
     }
 
@@ -235,6 +249,7 @@ mod tests {
         assert!(installed(root.path()).is_none());
         let Some(platform) = platform() else { return };
         let program = engine_dir(root.path())
+            .join(VERSION)
             .join(format!("chrome-headless-shell-{platform}"))
             .join(if cfg!(windows) {
                 "chrome-headless-shell.exe"
