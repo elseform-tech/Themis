@@ -1,0 +1,1 @@
+MCP {{plugin}}/{{name}} is unavailable: {{reason}}. No tools from this connection are available for this run. Use manage_integrations list to inspect its configuration, test_mcp to troubleshoot, or set_component_enabled with kind=mcp to disable it. Management tools remain available; configuration changes apply on the next run.

@@ -1,0 +1,2 @@
+Current run workspace: {{workspace}}
+This is the captured current project root for this run and its relative tool paths. Paths in skill descriptions, examples, attachments, or historical context do not change the current workspace. Follow the user's task scope when choosing paths.

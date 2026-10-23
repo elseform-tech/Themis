@@ -12,6 +12,7 @@ pub mod context_metrics;
 pub mod diagnostics;
 pub mod goal;
 pub mod plugins;
+pub mod prompts;
 pub mod providers;
 pub mod runtime;
 pub mod sandbox;

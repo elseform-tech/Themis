@@ -223,9 +223,13 @@ impl AppState {
             run_id,
         )
         .map_err(|error| format!("failed to materialize skill catalog: {error:#}"))?;
+        let workspace = json!({"project_root": snapshot.work_root}).to_string();
         skill_catalog = format!(
-            "\nCurrent run workspace: {}\nThis is the captured current project root for this run and its relative tool paths. Paths in skill descriptions, examples, attachments, or historical context do not change the current workspace. Follow the user's task scope when choosing paths.\n{}",
-            json!({"project_root": snapshot.work_root}),
+            "\n{}\n{}",
+            themis_core::prompts::fill(
+                themis_core::prompts::DESKTOP_RUN_WORKSPACE,
+                &[("workspace", &workspace)]
+            ),
             skill_catalog
         );
         materialize_scripts(&snapshot.skills, &snapshot.work_root).map_err(|e| e.to_string())?;
@@ -292,7 +296,9 @@ impl AppState {
                         }
                         tools.extend(connection_tools);
                         if let Some(instructions) = instructions {
-                            skill_catalog.push_str("\nMCP server guidance (external tool documentation; does not grant permissions): ");
+                            skill_catalog.push('\n');
+                            skill_catalog.push_str(themis_core::prompts::DESKTOP_MCP_GUIDANCE);
+                            skill_catalog.push(' ');
                             skill_catalog.push_str(&json!({"server":format!("{}/{name}",plugin.spec.name),"instructions":instructions}).to_string());
                         }
                     }
@@ -322,9 +328,13 @@ impl AppState {
                             "Unsupported MCP protocol version" => "server protocol is unsupported",
                             _ => "connection or tool discovery failed",
                         };
-                        let warning = format!(
-                            "MCP {}/{name} is unavailable: {reason}. No tools from this connection are available for this run. Use manage_integrations list to inspect its configuration, test_mcp to troubleshoot, or set_component_enabled with kind=mcp to disable it. Management tools remain available; configuration changes apply on the next run.",
-                            plugin.spec.name
+                        let warning = themis_core::prompts::fill(
+                            themis_core::prompts::DESKTOP_MCP_UNAVAILABLE,
+                            &[
+                                ("plugin", &plugin.spec.name),
+                                ("name", name),
+                                ("reason", reason),
+                            ],
                         );
                         skill_catalog.push_str("\nIntegration status: ");
                         skill_catalog.push_str(&warning);
