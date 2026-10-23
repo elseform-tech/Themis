@@ -33,6 +33,7 @@ export function BrowserView({ threadId }: { threadId: string }) {
   const [editing, setEditing] = useState(false);
   const [devtools, setDevtools] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [navigating, setNavigating] = useState(false);
   const [recordedAt, setRecordedAt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const viewport = useRef<HTMLDivElement>(null);
@@ -127,6 +128,12 @@ export function BrowserView({ threadId }: { threadId: string }) {
     try { await work(); } catch (reason) { setError(describeError(reason)); }
   }
 
+  /** Runs a navigation the person started, showing the loading bar until it answers. */
+  async function navigate(work: () => Promise<unknown>) {
+    setNavigating(true);
+    try { await act(work); } finally { setNavigating(false); }
+  }
+
   async function capture() {
     await act(async () => addToComposer(threadId, await browserCapture(threadId)));
   }
@@ -144,10 +151,17 @@ export function BrowserView({ threadId }: { threadId: string }) {
     await act(async () => setDevtools(await browserDevtoolsUrl(threadId)));
   }
 
-  if (state === null) return error ? <EmptyState title="Browser unavailable" hint={error} /> : <EmptyState title="Loading browser…" />;
+  if (state === null) {
+    if (error) return <EmptyState title="Browser unavailable" hint={error} />;
+    // Starting can take a while the first time, while the browser engine downloads.
+    return <div className="themis-browser-starting"><EmptyState title="Loading browser…" /><span className="themis-browser-progress" role="progressbar" aria-label="Loading browser" /></div>;
+  }
   if (state.available === false && !open) {
     return <EmptyState title="No Chromium browser found" hint="Install Chrome, Chromium or Edge, or set browser.executable in runtime.jsonc." />;
   }
+  // The page is loading, a navigation the person started has not answered yet, or the
+  // agent is starting the browser (the first start can include downloading its engine).
+  const loading = state.loading || navigating || (state.controller === "agent" && !open);
   return (
     <div className={`themis-browser${devtools ? " has-devtools" : ""}`}>
       {state.tabs.length > 1 && (
@@ -161,13 +175,14 @@ export function BrowserView({ threadId }: { threadId: string }) {
         </div>
       )}
       <div className="themis-browser-bar">
-        <button type="button" className="themis-browser-icon" aria-label="Back" disabled={!state.can_go_back} onClick={() => void act(() => browserNavigate(threadId, "back"))}><Chevron left /></button>
-        <button type="button" className="themis-browser-icon" aria-label="Forward" disabled={!state.can_go_forward} onClick={() => void act(() => browserNavigate(threadId, "forward"))}><Chevron /></button>
-        <button type="button" className="themis-browser-icon" aria-label="Reload" disabled={!open} onClick={() => void act(() => browserNavigate(threadId, "reload"))}><Reload /></button>
-        <form className="themis-browser-address" onSubmit={event => { event.preventDefault(); if (address.trim()) void act(() => browserOpenUrl(threadId, address)); (document.activeElement as HTMLElement | null)?.blur(); }}>
+        <button type="button" className="themis-browser-icon" aria-label="Back" disabled={!state.can_go_back} onClick={() => void navigate(() => browserNavigate(threadId, "back"))}><Chevron left /></button>
+        <button type="button" className="themis-browser-icon" aria-label="Forward" disabled={!state.can_go_forward} onClick={() => void navigate(() => browserNavigate(threadId, "forward"))}><Chevron /></button>
+        <button type="button" className="themis-browser-icon" aria-label="Reload" disabled={!open} onClick={() => void navigate(() => browserNavigate(threadId, "reload"))}><Reload /></button>
+        <form className="themis-browser-address" onSubmit={event => { event.preventDefault(); if (address.trim()) void navigate(() => browserOpenUrl(threadId, address)); (document.activeElement as HTMLElement | null)?.blur(); }}>
           <label className="themis-visually-hidden" htmlFor={`browser-address-${threadId}`}>Address</label>
           <input id={`browser-address-${threadId}`} value={address} placeholder="Enter an address" spellCheck={false} autoComplete="off"
             onFocus={() => setEditing(true)} onBlur={() => setEditing(false)} onChange={event => setAddress(event.target.value)} />
+          {loading && <span className="themis-browser-progress" role="progressbar" aria-label="Loading page" />}
         </form>
         <button type="button" className="themis-browser-icon" aria-label={state.muted ? "Turn sound on" : "Turn sound off"} title={state.muted ? "Sound off" : "Sound on"} disabled={!open} onClick={() => void act(() => browserSetMuted(threadId, !state.muted))}><Speaker muted={state.muted} /></button>
         <button type="button" className="themis-browser-icon" aria-label="Capture screenshot to the message" title="Capture" disabled={!open} onClick={() => void capture()}><Camera /></button>

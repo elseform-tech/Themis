@@ -594,6 +594,8 @@ export interface Settings {
   config_editor?: string;
   /** The approval mode a new chat starts in. */
   default_approval_mode?: "custom" | "yolo";
+  /** The Settings › Secrets secret OpenCode Go uses. */
+  go_secret?: string;
   onboarded: boolean;
 }
 
@@ -653,6 +655,8 @@ export interface BrowserSettingsView {
   /** What a save must name; a save is refused when runtime.jsonc changed since. */
   revision: string;
   browsers: string[];
+  /** The automatic choice is the built-in engine (downloaded on first use). */
+  built_in?: boolean;
   default_downloads_directory: string;
   starter_sites: string[];
 }

@@ -37,7 +37,7 @@ impl AppState {
 
     /// Every saved key and every key an installed server reads: its name, whether it is
     /// saved or found in the environment, and which servers use it. Never values.
-    pub fn list_keys(&self, project: Option<PathBuf>) -> Result<Value, String> {
+    pub async fn list_keys(&self, project: Option<PathBuf>) -> Result<Value, String> {
         let mut used: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for plugin in self
             .plugin_store(project)
@@ -54,13 +54,32 @@ impl AppState {
                 }
             }
         }
+        // OpenCode Go's secret (Settings › Models), listed even before it is saved.
+        used.entry(self.go_secret_name().await)
+            .or_default()
+            .insert(0, "OpenCode Go".to_owned());
         for name in self.saved_key_names() {
             used.entry(name).or_default();
+        }
+        // Saved without its name recorded (copied from the old entry, or by the CLI with
+        // no server running): still listed, so it can be seen and removed.
+        let go = crate::secrets::GO_KEY_NAME;
+        if self
+            .inner
+            .secrets
+            .stored(&keys::store_key(go))
+            .is_ok_and(|value| value.is_some())
+        {
+            used.entry(go.to_owned()).or_default();
         }
         Ok(json!(used
             .into_iter()
             .map(|(name, used_by)| {
-                let saved = self.inner.secrets.has(&keys::store_key(&name));
+                let saved = self
+                    .inner
+                    .secrets
+                    .stored(&keys::store_key(&name))
+                    .is_ok_and(|value| value.is_some());
                 let environment = !saved && std::env::var_os(&name).is_some_and(|v| !v.is_empty());
                 json!({"name": name, "saved": saved, "environment": environment, "used_by": used_by})
             })
@@ -78,6 +97,11 @@ impl AppState {
             .secrets
             .set(&keys::store_key(name), value)
             .map_err(|e| format!("Could not save {name}: {}", store_reason(&e)))?;
+        self.record_key_name(name)
+    }
+
+    /// Remembers that a secret named `name` is saved (credential stores cannot list).
+    pub(super) fn record_key_name(&self, name: &str) -> Result<(), String> {
         let mut names = self.saved_key_names();
         names.push(name.to_owned());
         self.write_key_names(names)
@@ -88,9 +112,7 @@ impl AppState {
         if !keys::valid_name(name) {
             return Err("Unknown key".into());
         }
-        self.inner
-            .secrets
-            .clear(&keys::store_key(name))
+        super::preferences::clear_secret_named(self.inner.secrets.as_ref(), name)
             .map_err(|e| format!("Could not remove {name}: {}", store_reason(&e)))?;
         let names = self
             .saved_key_names()

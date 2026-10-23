@@ -20,9 +20,17 @@ fn credential_with_fallback(
     }
 }
 
+/// The OpenCode Go key's name in Settings › Keys (and its environment variable).
+pub const GO_KEY_NAME: &str = "OPENCODE_KEY";
+/// Where the OpenCode Go key is kept: the Settings › Keys entry `OPENCODE_KEY`, so MCP
+/// servers can reference it as `${OPENCODE_KEY}` too.
+pub const GO_ENTRY: &str = "key:OPENCODE_KEY";
+/// Where the key was kept before it joined Settings › Keys (moved on first read).
+pub const LEGACY_GO_ENTRY: &str = "go";
+
 fn go_environment_key(provider: &str) -> Option<String> {
-    (provider == "go")
-        .then(|| std::env::var("OPENCODE_KEY").ok())
+    (provider == GO_ENTRY)
+        .then(|| std::env::var(GO_KEY_NAME).ok())
         .flatten()
 }
 
@@ -81,14 +89,17 @@ impl SecretStore for NativeStore {
     }
 
     fn try_get(&self, provider: &str) -> Result<Option<String>, String> {
-        let stored = Self::entry(provider)
+        credential_with_fallback(self.stored(provider), go_environment_key(provider))
+    }
+
+    fn stored(&self, provider: &str) -> Result<Option<String>, String> {
+        Self::entry(provider)
             .map_err(|_| "Could not open the OS credential store".to_owned())
             .and_then(|entry| match entry.get_password() {
                 Ok(value) => Ok(Some(value).filter(|value| !value.trim().is_empty())),
                 Err(keyring::Error::NoEntry) => Ok(None),
                 Err(_) => Err("OS credential lookup failed; unlock the credential store and allow ThemisCode access".to_owned()),
-            });
-        credential_with_fallback(stored, go_environment_key(provider))
+            })
     }
 
     fn set(&self, provider: &str, value: &str) -> Result<(), String> {
@@ -155,6 +166,10 @@ impl SecretStore for KeychainStore {
         credential_with_fallback(Self::keychain_get(provider), go_environment_key(provider))
     }
 
+    fn stored(&self, provider: &str) -> Result<Option<String>, String> {
+        Self::keychain_get(provider)
+    }
+
     fn set(&self, provider: &str, value: &str) -> Result<(), String> {
         security_framework::passwords::set_generic_password(
             KEYCHAIN_SERVICE,
@@ -187,6 +202,10 @@ pub trait SecretStore: Send + Sync {
     fn try_get(&self, provider: &str) -> Result<Option<String>, String> {
         Ok(self.get(provider))
     }
+    /// The saved value only, without the OpenCode Go environment fallback.
+    fn stored(&self, provider: &str) -> Result<Option<String>, String> {
+        self.try_get(provider)
+    }
     /// Stores `value` for `provider`, overwriting any previous secret.
     fn set(&self, provider: &str, value: &str) -> Result<(), String>;
     /// Deletes the secret for `provider`; missing secrets are a no-op success.
@@ -214,11 +233,14 @@ impl SecretStore for SessionStore {
         self.keys
             .get(provider)
             .or_else(|| {
-                (provider == "go")
-                    .then(|| std::env::var("OPENCODE_KEY").ok())
+                (provider == GO_ENTRY)
+                    .then(|| std::env::var(GO_KEY_NAME).ok())
                     .flatten()
             })
             .filter(|key| !key.trim().is_empty())
+    }
+    fn stored(&self, provider: &str) -> Result<Option<String>, String> {
+        Ok(self.keys.get(provider))
     }
     fn set(&self, provider: &str, value: &str) -> Result<(), String> {
         self.keys.set(provider, value)

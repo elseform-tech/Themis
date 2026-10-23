@@ -303,7 +303,7 @@ async fn cli_run_drives_the_browser_and_the_workspace_commands_see_it() {
             devtools
                 .as_str()
                 .unwrap()
-                .contains("/devtools/inspector.html?ws="),
+                .contains("/devtools/devtools_app.html?ws="),
             "{devtools}"
         );
         // Discarding the chat closes its browser.

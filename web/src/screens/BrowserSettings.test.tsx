@@ -63,6 +63,13 @@ describe("Settings › Browser", () => {
     expect(dispatch).toHaveBeenCalledWith({ type: "browser/opens-workspace", value: true });
   });
 
+  it("names the built-in engine as the automatic browser", async () => {
+    vi.mocked(bridge.getBrowserSettings).mockResolvedValueOnce({ settings: structuredClone(SETTINGS), revision: "r1", browsers: ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"], built_in: true, default_downloads_directory: "/Users/me/Downloads", starter_sites: [] });
+    await renderSection();
+    const browser = screen.getByRole("combobox", { name: "Browser" });
+    expect(within(browser).getAllByRole("option").map(option => option.textContent)).toEqual(["Built-in", "Google Chrome"]);
+  });
+
   it("reloads instead of overwriting when runtime.jsonc changed meanwhile", async () => {
     await renderSection();
     vi.mocked(bridge.updateBrowserSettings).mockRejectedValueOnce(new Error("Browser settings changed in runtime.jsonc since this page loaded; showing the latest"));

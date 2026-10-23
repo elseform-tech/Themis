@@ -84,7 +84,9 @@ async fn cli_a_server_key_is_saved_used_and_removed() {
         assert_eq!(status["keys"], json!(["NOTES_KEY"]));
         assert!(status.get("url").is_none(), "a server with its own key does not sign in");
         let keys = call(&dir, "list_keys", json!({"projectRoot": project}));
-        assert_eq!(keys, json!([{"name": "NOTES_KEY", "saved": false, "environment": false, "used_by": ["remote/notes"]}]));
+        assert_eq!(keys[0], json!({"name": "NOTES_KEY", "saved": false, "environment": false, "used_by": ["remote/notes"]}));
+        // The OpenCode Go key is always listed (its own test covers it).
+        assert_eq!(keys[1]["name"], "OPENCODE_KEY");
         // Saved: listed as saved (never its value), and the server connects with it.
         call(&dir, "set_key", json!({"name": "NOTES_KEY", "value": "secret-123"}));
         let keys = call(&dir, "list_keys", json!({}));

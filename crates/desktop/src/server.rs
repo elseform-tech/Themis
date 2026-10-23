@@ -293,6 +293,14 @@ impl Server {
     }
 
     pub async fn run(self) -> Result<(), String> {
+        self.run_until(std::future::pending()).await
+    }
+
+    /// Serves until a `shutdown` request, SIGTERM/SIGINT, or `stop` completes.
+    pub async fn run_until(
+        self,
+        stop: impl std::future::Future<Output = ()>,
+    ) -> Result<(), String> {
         self.state.log_server_event("started");
         // Samples Themis's own CPU and memory use for the title bar and the log.
         let sampler = self.state.clone();
@@ -311,11 +319,13 @@ impl Server {
         });
         let mut stopped = self.shutdown.subscribe();
         let mut termination = Termination::install();
+        tokio::pin!(stop);
         loop {
             let (stream, _) = tokio::select! {
                 result = self.listener.accept() => result.map_err(|err| err.to_string())?,
                 _ = stopped.recv() => break,
                 _ = termination.requested() => break,
+                _ = &mut stop => break,
             };
             let state = self.state.clone();
             let token = self.token.clone();
@@ -689,6 +699,7 @@ async fn dispatch_command(
             "settings": settings,
             "revision": revision,
             "browsers": themis_core::browser::launch::installed_browsers(),
+            "built_in": state.browser_built_in(),
             "default_downloads_directory": themis_core::browser::session::default_downloads_directory(),
             "starter_sites": themis_core::configuration::STARTER_BLOCKED_SITES,
             })
@@ -967,7 +978,7 @@ async fn dispatch_command(
         ),
         "apply_mcp_config" => output!(state.apply_mcp_config().await?),
         "mcp_config_status" => output!(state.mcp_config_status()),
-        "list_keys" => output!(state.list_keys(arg(&args, "projectRoot")?)?),
+        "list_keys" => output!(state.list_keys(arg(&args, "projectRoot")?).await?),
         "set_key" => done!(state.set_key(
             &arg::<String>(&args, "name")?,
             &arg::<String>(&args, "value")?
@@ -986,6 +997,7 @@ async fn dispatch_command(
                 .await?
         ),
         "get_secret_status" => output!(state.get_secret_status().await?),
+        "check_go_key" => output!(state.check_go_key().await?),
         "set_secret" => done!(
             state
                 .set_secret(arg(&args, "provider")?, arg(&args, "value")?)

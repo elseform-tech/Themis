@@ -605,7 +605,7 @@ async fn configure_provider(client: &Client) -> Result<(), String> {
             .map_err(|_| "Could not save the API key; check credential-store access in Settings")?;
     } else {
         ProductionSecretStore::new()
-            .set("go", &key)
+            .set(crate::secrets::GO_ENTRY, &key)
             .map_err(|_| "Could not save the API key; check OS credential-store access")?;
     }
     println!("OpenCode Go key saved to the OS credential store shared with desktop Settings.");

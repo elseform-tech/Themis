@@ -35,6 +35,18 @@ describe("ThreadComposer", () => {
     view.rerender(<ThreadComposer {...view.props} running={false} secretConfigured={false} />);
     expect(screen.getByText(/Connect OpenCode Go/)).toBeInTheDocument();
   });
+  it("explains a rejected key and does not send until it is fixed", () => {
+    const view = composer(false, "Build the chess app");
+    view.rerender(<ThreadComposer {...view.props} keyRejected="OPENCODE_KEY" />);
+    expect(screen.getByRole("alert")).toHaveTextContent("OpenCode Go rejected the key in OPENCODE_KEY.");
+    expect(screen.getByRole("button", {name: "Send"})).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", {name: "Model settings"}));
+    expect(view.props.onOpenSettings).toHaveBeenCalledOnce();
+    expect(view.onSend).not.toHaveBeenCalled();
+    view.rerender(<ThreadComposer {...view.props} keyRejected={undefined} />);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", {name: "Send"})).toBeEnabled();
+  });
   it("shows only YOLO and Custom and permits next-run changes while running",()=>{
     const view=composer(true),onApprovalModeChange=vi.fn();
     view.rerender(<ThreadComposer {...view.props} onApprovalModeChange={onApprovalModeChange} />);

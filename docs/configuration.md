@@ -73,8 +73,12 @@ OS lookup errors are preserved through the shared server and CLI rather than
 reported as a missing credential. Only a missing-entry result means absence.
 macOS errors expose a numeric Keychain status and fixed guidance; other platforms
 use fixed error text, without credential bytes or raw credential-store errors.
-The existing nonblank `OPENCODE_KEY` fallback remains available when the OS store
-has no accessible key. A valid stored key keeps precedence. No authentication is
+The OpenCode Go key is the Settings › Secrets secret named by the app setting
+`go_secret` (default `OPENCODE_KEY`; letters, digits and `_`, up to 128; set in Settings ›
+Models › Connections), stored as the credential entry `key:<name>`. Its value is the saved
+secret, else the environment variable of that name. For `OPENCODE_KEY`, an entry saved
+under the old name `go` is copied once when nothing is saved yet, never read again
+after, and cleared when the secret is removed. A valid stored key keeps precedence. No authentication is
 bypassed and no credential value is returned to the UI or CLI status command.
 
 Integrations → Discover installs into **User (Global)** scope without a destination
@@ -196,7 +200,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `sandbox.allow_keychain` | macOS: `false` (default) keeps sandboxed commands out of the Keychain; `true` lets them use it (for example git's HTTPS credential helper); projects may only set `false` |
 | `web.search_url` | Optional http(s) URL of your SearXNG instance (JSON output enabled), at most 1,024 bytes, no credentials; user file only. Unset: the SearXNG built into Themis is used (when the build has it; otherwise `web_search` is not offered). See [web tools](web-tools.md) |
 | `browser.enabled` | Boolean, default `true`; projects may only set `false` |
-| `browser.executable` | Optional absolute path to a Chrome, Chromium or Edge binary, at most 1,024 bytes; user file only. Unset: an installed browser is found automatically |
+| `browser.executable` | Optional absolute path to a Chrome, Chromium or Edge binary, at most 1,024 bytes; user file only. Unset: the built-in engine (downloaded on first use), else an installed browser |
 | `browser.developer_mode` | Boolean, default `true` ("Enable full CDP access"): off offers no debugging tools on any page; projects may only set `false` |
 | `browser.permissions` | `browsing`, `downloads`, `debugging`: each `"allow"`, `"ask"` or `"block"`; defaults allow, allow, block. Projects may only make a value stricter. See [web tools](web-tools.md#permissions-settings--browser) |
 | `browser.site_exceptions` | Up to 500 `{ "site": "example.com", "browsing"?, "downloads"?, "debugging"? }`: a lowercase host covering its subdomains, most specific wins. Default: the starter blocks. A project's exceptions may only block, and they add to yours instead of replacing them (an exception to "arrays replace") |

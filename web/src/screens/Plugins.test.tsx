@@ -74,10 +74,10 @@ describe("Integration browsing and lifecycle", () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     fireEvent.click(screen.getByRole("button", { name: "MCP" }));
-    expect(screen.getByText("Key needed")).toBeVisible();
+    expect(screen.getByText("Secret needed")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Add key" }));
-    expect(dispatch).toHaveBeenCalledWith({ type: "ui/view", view: "settings", settings: { section: "Keys", key: "NOTES_KEY" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add secret" }));
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui/view", view: "settings", settings: { section: "Secrets", key: "NOTES_KEY" } });
   });
   it("signs in to a remote MCP server that asks for it, and signs out", async () => {
     installed[0].spec.mcp = { linear: { url: "https://mcp.linear.app/mcp", args: [], env: {}, enabled: true } } as never;

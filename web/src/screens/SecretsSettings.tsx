@@ -28,7 +28,7 @@ function KeyRow({ entry, editing, onEdit, onSaved, onRemoved }: { entry: KeyEntr
       </span>
     </div>
     {editing && <form className="themis-settings-control themis-settings-key-form" onSubmit={event => { event.preventDefault(); if (value.trim()) void save(); }}>
-      <input className="themis-settings-url" type="password" autoComplete="off" aria-label={`Value of ${entry.name}`} placeholder="Paste the key" value={value} disabled={busy} autoFocus onChange={event => setValue(event.target.value)} />
+      <input className="themis-settings-url" type="password" autoComplete="off" aria-label={`Value of ${entry.name}`} placeholder="Paste the secret" value={value} disabled={busy} autoFocus onChange={event => setValue(event.target.value)} />
       <span className="themis-browser-pick">
         <button type="submit" className="themis-text-action" disabled={busy || !value.trim()}>{busy ? "Saving…" : "Save"}</button>
         <button type="button" className="themis-text-action" disabled={busy} onClick={() => { setValue(""); onEdit(false); }}>Cancel</button>
@@ -38,8 +38,9 @@ function KeyRow({ entry, editing, onEdit, onSaved, onRemoved }: { entry: KeyEntr
   </div>;
 }
 
-/** Settings › Keys: keys MCP servers read as ${NAME}, kept in the system's credential store. */
-export function KeysSettings({ focusKey }: { focusKey?: string }) {
+/** Settings › Secrets: secrets providers and MCP servers read by name (${NAME} in MCP),
+ * kept in the system's credential store. */
+export function SecretsSettings({ focusKey }: { focusKey?: string }) {
   const { state } = useApp();
   const [entries, setEntries] = useState<KeyEntry[] | null>(null);
   const [editing, setEditing] = useState<string | null>(focusKey ?? null);
@@ -54,18 +55,18 @@ export function KeysSettings({ focusKey }: { focusKey?: string }) {
     : entries;
   const draftName = newName.trim();
   const addNamed = () => {
-    if (!NAME.test(draftName)) { setError("Key names use letters, digits and _"); return; }
+    if (!NAME.test(draftName)) { setError("Secret names use letters, digits and _"); return; }
     setError("");
     if (!shown.some(entry => entry.name === draftName)) setEntries([...entries, { name: draftName, saved: false, environment: false, used_by: [] }]);
     setEditing(draftName); setNewName("");
   };
   const done = () => { setEditing(null); void load(); };
   return <>
-    <SettingsGroup title="Server keys" hint="Servers in Integrations › MCP read a key as ${NAME}. Keys stay in this computer's credential store and are never shown again.">
-      {shown.length === 0 && <p className="themis-settings-hint">No keys yet.</p>}
+    <SettingsGroup hint="Models › Connections and MCP servers (as ${NAME}) read a secret by its name. Secrets stay in this computer's credential store and are never shown again.">
+      {shown.length === 0 && <p className="themis-settings-hint">No secrets yet.</p>}
       {shown.map(entry => <KeyRow key={entry.name} entry={entry} editing={editing === entry.name} onEdit={open => setEditing(open ? entry.name : null)} onSaved={done} onRemoved={done} />)}
       <form className="themis-settings-control" onSubmit={event => { event.preventDefault(); if (draftName) addNamed(); }}>
-        <input className="themis-settings-url" aria-label="New key name" placeholder="New key name, such as GITHUB_TOKEN" value={newName} onChange={event => setNewName(event.target.value)} />
+        <input className="themis-settings-url" aria-label="New secret name" placeholder="New secret name, such as GITHUB_TOKEN" value={newName} onChange={event => setNewName(event.target.value)} />
         <button type="submit" className="themis-text-action" disabled={!draftName}>Add</button>
       </form>
     </SettingsGroup>
