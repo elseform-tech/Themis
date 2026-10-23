@@ -84,6 +84,11 @@ impl AppState {
         Arc::clone(&self.inner.browsers)
     }
 
+    /// Whether the automatic browser is the built-in engine (Settings › Browser).
+    pub fn browser_built_in(&self) -> bool {
+        self.inner.browsers.built_in()
+    }
+
     /// What the Browser tab shows, plus whether a browser is available at all.
     pub async fn browser_state(&self, thread_id: &str) -> Result<Value, String> {
         let state = match self.inner.browsers.existing(thread_id) {
@@ -95,7 +100,7 @@ impl AppState {
             }
         };
         let mut value = serde_json::to_value(state).map_err(|e| e.to_string())?;
-        value["available"] = json!(self.inner.browsers.executable().is_some());
+        value["available"] = json!(self.inner.browsers.available());
         Ok(value)
     }
 

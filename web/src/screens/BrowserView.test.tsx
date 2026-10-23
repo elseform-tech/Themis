@@ -17,7 +17,7 @@ vi.mock("../lib/browser", async importOriginal => ({
   browserNavigate: vi.fn(async () => undefined),
   browserSwitchTab: vi.fn(async () => undefined),
   browserCloseTab: vi.fn(async () => undefined),
-  browserDevtoolsUrl: vi.fn(async () => "http://127.0.0.1:9222/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/T"),
+  browserDevtoolsUrl: vi.fn(async () => "http://127.0.0.1:9222/devtools/devtools_app.html?ws=127.0.0.1:9222/devtools/page/T"),
   browserSetMuted: vi.fn(async () => undefined),
   browserCapture: vi.fn(async () => ({ path: "/p/.themis/attachments/x/screenshot-1701-12.png", name: "screenshot-1701-12.png", size: 10 })),
   browserRecordStart: vi.fn(async () => null),
@@ -82,7 +82,35 @@ describe("BrowserView", () => {
     await act(async () => fireEvent.click(screen.getByRole("tab", { name: "Docs" })));
     expect(bridge.browserSwitchTab).toHaveBeenCalledWith("t1", 2);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: /^DevTools/ })));
-    expect(document.querySelector("iframe.themis-browser-devtools")).toHaveAttribute("src", expect.stringContaining("/devtools/inspector.html"));
+    expect(document.querySelector("iframe.themis-browser-devtools")).toHaveAttribute("src", expect.stringContaining("/devtools/devtools_app.html"));
+  });
+
+  it("shows a loading bar while a page loads or a typed address is opening", async () => {
+    const idle: BrowserState = { ...page, controller: "idle", activity: null };
+    vi.mocked(bridge.browserState).mockResolvedValue(idle);
+    await act(async () => { render(<BrowserView threadId="t1" />); });
+    expect(screen.queryByRole("progressbar", { name: "Loading page" })).toBeNull();
+    act(() => push({ kind: "state", state: { ...idle, loading: true } }));
+    expect(screen.getByRole("progressbar", { name: "Loading page" })).toBeInTheDocument();
+    act(() => push({ kind: "state", state: { ...idle, loading: false } }));
+    expect(screen.queryByRole("progressbar")).toBeNull();
+
+    // A typed address shows the bar at once, before the page reports loading.
+    let answer: () => void = () => undefined;
+    vi.mocked(bridge.browserOpenUrl).mockImplementationOnce(() => new Promise<void>(resolve => { answer = resolve; }));
+    const address = screen.getByLabelText("Address");
+    fireEvent.change(address, { target: { value: "docs.rs" } });
+    act(() => { fireEvent.submit(address); });
+    expect(screen.getByRole("progressbar", { name: "Loading page" })).toBeInTheDocument();
+    await act(async () => answer());
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("shows the loading bar while the browser starts", async () => {
+    vi.mocked(bridge.browserState).mockReturnValue(new Promise(() => undefined));
+    await act(async () => { render(<BrowserView threadId="t1" />); });
+    expect(screen.getByText("Loading browser…")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Loading browser" })).toBeInTheDocument();
   });
 
   it("captures to the composer, records with a visible line, and stops into the composer", async () => {

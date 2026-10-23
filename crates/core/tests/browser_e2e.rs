@@ -641,3 +641,149 @@ async fn the_view_shows_the_page_after_a_first_open_was_refused() {
     chat.stop_screencast().await;
     hub.close_chat("chat-6").await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_stream_and_title_follow_the_person_to_another_site() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::start().await;
+    for (page, title) in [("/a", "First site"), ("/b", "Second site")] {
+        Mock::given(path(page))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!("<!doctype html><title>{title}</title><h1>{title}</h1>"),
+                "text/html",
+            ))
+            .mount(&site)
+            .await;
+    }
+    let port = site.address().port();
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-sites", project.path());
+    chat.open(&format!("http://127.0.0.1:{port}/a"), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        chat.state().await.title,
+        "First site",
+        "the page's own title"
+    );
+    chat.start_screencast(800, 600, 1.0).await.unwrap();
+    let mut updates = chat.subscribe();
+    // `localhost` is another site than `127.0.0.1`: Chrome moves the page to a new
+    // renderer, which ends the old screencast.
+    chat.open_for_user(&format!("http://localhost:{port}/b"))
+        .await
+        .unwrap();
+    follows(&mut updates, "Second site", "the person's address").await;
+
+    // Back by the person, forward by the agent: the view follows both across sites.
+    chat.navigate_for_user("back").await.unwrap();
+    follows(&mut updates, "First site", "the person's Back").await;
+    chat.navigate("forward").await.unwrap();
+    follows(&mut updates, "Second site", "the agent's Forward").await;
+    hub.close_chat("chat-sites").await;
+}
+
+/// Waits for a frame and the page `title` after a navigation, as the Workspace view sees them.
+async fn follows(
+    updates: &mut tokio::sync::broadcast::Receiver<themis_core::browser::BrowserUpdate>,
+    title: &str,
+    after: &str,
+) {
+    let (mut frame, mut titled) = (false, false);
+    let followed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        while !(frame && titled) {
+            match updates.recv().await {
+                Ok(themis_core::browser::BrowserUpdate::Frame { .. }) => frame = true,
+                Ok(themis_core::browser::BrowserUpdate::State(state)) => {
+                    titled |= state.title == title;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await;
+    assert!(
+        followed.is_ok(),
+        "after {after}: frame {frame}, title {title:?} {titled}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_is_never_held_up_by_an_agent_action_in_progress() {
+    let _browser = ONE_BROWSER.lock().await;
+    let data = tempfile::tempdir().unwrap();
+    let Some(hub) = hub(data.path()) else { return };
+    let site = MockServer::start().await;
+    // A busy page: it polls for six seconds, so its network never goes quiet while the
+    // agent's open settles.
+    Mock::given(path("/busy"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<!doctype html><title>Busy</title><input id=q aria-label=Query autofocus>
+             <script>const until = Date.now() + 6000;
+             (function poll() { if (Date.now() < until) fetch('/ping').finally(() => setTimeout(poll, 150)); })();</script>",
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    Mock::given(path("/ping"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&site)
+        .await;
+    Mock::given(path("/other"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw("<!doctype html><title>Other</title>", "text/html"),
+        )
+        .mount(&site)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let chat = hub.chat("chat-busy", project.path());
+    chat.open("about:blank", false).await.unwrap();
+    chat.start_screencast(800, 600, 1.0).await.unwrap();
+    let agent = {
+        let chat = Arc::clone(&chat);
+        let url = format!("{}/busy", site.uri());
+        tokio::spawn(async move { chat.open(&url, false).await })
+    };
+    let opened = std::time::Instant::now();
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    assert!(!agent.is_finished(), "the agent's open is still settling");
+
+    // Everything the person does answers at once while the agent's action runs.
+    let quick = std::time::Duration::from_millis(500);
+    let started = std::time::Instant::now();
+    let state = chat.state().await;
+    assert!(state.url.ends_with("/busy"), "{}", state.url);
+    chat.user_input(&themis_core::browser::UserInput::Text {
+        text: "hello".into(),
+    })
+    .await
+    .unwrap();
+    assert!(chat.devtools_url().await.is_some());
+    assert!(started.elapsed() < quick, "took {:?}", started.elapsed());
+    assert!(!agent.is_finished());
+
+    agent.await.unwrap().unwrap();
+    // The agent is not held up either: a loaded page's endless polling stops counting
+    // after a moment, long before it ends.
+    assert!(
+        opened.elapsed() < std::time::Duration::from_secs(4),
+        "took {:?}",
+        opened.elapsed()
+    );
+    let typed = chat.snapshot(None).await.unwrap().snapshot;
+    assert!(
+        typed.contains("hello"),
+        "the person's typing reached the page:\n{typed}"
+    );
+
+    // A typed address goes at once, too.
+    let started = std::time::Instant::now();
+    chat.open_for_user(&format!("{}/other", site.uri()))
+        .await
+        .unwrap();
+    assert!(started.elapsed() < quick, "took {:?}", started.elapsed());
+    hub.close_chat("chat-busy").await;
+}

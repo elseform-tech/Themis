@@ -83,7 +83,7 @@ export function BrowserSettingsSection() {
       {settings.enabled && <label className="themis-settings-control">Browser
         <span className="themis-browser-pick">
           <select aria-label="Browser" value={settings.executable ?? ""} onChange={event => patch({ executable: event.target.value || undefined })}>
-            <option value="">{view.browsers[0] ? `Automatic (${programName(view.browsers[0])})` : "None found"}</option>
+            <option value="">{view.built_in ? "Built-in" : view.browsers[0] ? `Automatic (${programName(view.browsers[0])})` : "None found"}</option>
             {view.browsers.map(path => <option key={path} value={path}>{programName(path)}</option>)}
             {settings.executable && !view.browsers.includes(settings.executable) && <option value={settings.executable}>{programName(settings.executable)}</option>}
           </select>

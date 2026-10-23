@@ -11,7 +11,12 @@
 .themis-browser-icon:hover:not(:disabled), .themis-browser-icon.is-on { color: var(--themis-text); }
 .themis-browser-icon:disabled { opacity: .45; cursor: default; }
 .themis-browser-errors { color: var(--themis-danger); font-size: .75rem; font-weight: 600; }
-.themis-browser-address { flex: 1; min-width: 0; margin: 0 6px; }
+.themis-browser-address { position: relative; flex: 1; min-width: 0; margin: 0 6px; }
+.themis-browser-progress { position: absolute; left: 14px; right: 14px; bottom: 0; height: 2px; overflow: hidden; border-radius: 1px; pointer-events: none; }
+.themis-browser-progress::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 35%; border-radius: inherit; background: var(--themis-accent); animation: themis-browser-progress 1.2s ease-in-out infinite; }
+.themis-browser-starting { display: flex; flex-direction: column; align-items: center; }
+.themis-browser-starting .themis-browser-progress { position: relative; left: auto; right: auto; width: 160px; margin-top: 4px; background: var(--themis-surface); }
+@keyframes themis-browser-progress { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
 .themis-browser-address input { width: 100%; height: 32px; box-sizing: border-box; padding: 0 14px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-surface); color: var(--themis-text); font-family: ui-monospace, SFMono-Regular, monospace; font-size: .78rem; }
 .themis-browser-address input::placeholder { color: var(--themis-text-3); }
 .themis-browser-address input:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
@@ -27,7 +32,7 @@
 .has-devtools .themis-browser-page { border-radius: 8px 8px 0 0; }
 .themis-browser-devtools { flex: 1 1 0; min-height: 160px; margin-top: -6px; border: 0; border-radius: 0 0 8px 8px; background: #202124; box-shadow: 0 0 0 1px var(--themis-border); }
 .themis-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-@media (prefers-reduced-motion: reduce) { .themis-browser-spinner { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .themis-browser-spinner, .themis-browser-progress::after { animation: none; } .themis-browser-progress::after { width: 100%; opacity: .6; } }
 .themis-browser-icon.is-recording { color: var(--themis-danger); }
 .themis-browser-status.is-recording { color: #f3a1aa; }
 .themis-browser-status.is-recording .themis-browser-status-text { font-variant-numeric: tabular-nums; }

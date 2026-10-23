@@ -699,6 +699,7 @@ async fn dispatch_command(
             "settings": settings,
             "revision": revision,
             "browsers": themis_core::browser::launch::installed_browsers(),
+            "built_in": state.browser_built_in(),
             "default_downloads_directory": themis_core::browser::session::default_downloads_directory(),
             "starter_sites": themis_core::configuration::STARTER_BLOCKED_SITES,
             })
