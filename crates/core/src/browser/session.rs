@@ -1210,12 +1210,14 @@ impl ChatBrowser {
         site_of(&url)
     }
 
-    /// DevTools for the current tab, served by the browser itself.
+    /// DevTools for the current tab, served by the browser itself: the plain DevTools front
+    /// end (`inspector.html` adds a second, smaller live copy of the page, which the
+    /// Browser tab already shows above it).
     pub async fn devtools_url(&self) -> Option<String> {
         let view = self.view();
         let tab = view.tabs.get(view.current)?;
         Some(format!(
-            "http://{0}/devtools/inspector.html?ws={0}/devtools/page/{1}",
+            "http://{0}/devtools/devtools_app.html?ws={0}/devtools/page/{1}",
             view.http_address.as_deref()?,
             tab.target_id
         ))

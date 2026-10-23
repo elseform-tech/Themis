@@ -17,7 +17,7 @@ vi.mock("../lib/browser", async importOriginal => ({
   browserNavigate: vi.fn(async () => undefined),
   browserSwitchTab: vi.fn(async () => undefined),
   browserCloseTab: vi.fn(async () => undefined),
-  browserDevtoolsUrl: vi.fn(async () => "http://127.0.0.1:9222/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/T"),
+  browserDevtoolsUrl: vi.fn(async () => "http://127.0.0.1:9222/devtools/devtools_app.html?ws=127.0.0.1:9222/devtools/page/T"),
   browserSetMuted: vi.fn(async () => undefined),
   browserCapture: vi.fn(async () => ({ path: "/p/.themis/attachments/x/screenshot-1701-12.png", name: "screenshot-1701-12.png", size: 10 })),
   browserRecordStart: vi.fn(async () => null),
@@ -82,7 +82,7 @@ describe("BrowserView", () => {
     await act(async () => fireEvent.click(screen.getByRole("tab", { name: "Docs" })));
     expect(bridge.browserSwitchTab).toHaveBeenCalledWith("t1", 2);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: /^DevTools/ })));
-    expect(document.querySelector("iframe.themis-browser-devtools")).toHaveAttribute("src", expect.stringContaining("/devtools/inspector.html"));
+    expect(document.querySelector("iframe.themis-browser-devtools")).toHaveAttribute("src", expect.stringContaining("/devtools/devtools_app.html"));
   });
 
   it("shows a loading bar while a page loads or a typed address is opening", async () => {
