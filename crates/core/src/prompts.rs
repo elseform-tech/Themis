@@ -61,6 +61,52 @@ pub const GOAL_SET_NOTE: &str = include_str!("../builtins/prompts/goal-set-note.
 /// System prompt of every context checkpoint request.
 pub const COMPACTION_CHECKPOINT: &str =
     include_str!("../builtins/prompts/compaction-checkpoint.md");
+/// User message of a checkpoint request; `{{previous}}`, `{{label}}`, `{{notes}}`, `{{current_request}}`.
+pub const SUMMARY_CHECKPOINT_REQUEST: &str =
+    include_str!("../builtins/prompts/summary-checkpoint-request.md");
+/// Heading before the user-configured `compaction.prompt` guidance.
+pub const SUMMARY_CONFIGURED_GUIDANCE: &str =
+    include_str!("../builtins/prompts/summary-configured-guidance.md");
+/// Output budget appended to every summary request; `{{words}}`, `{{guidance}}`.
+pub const SUMMARY_OUTPUT_BUDGET: &str =
+    include_str!("../builtins/prompts/summary-output-budget.md");
+/// Output format guidance for context checkpoints.
+pub const SUMMARY_CONTEXT_OUTPUT: &str =
+    include_str!("../builtins/prompts/summary-context-output.md");
+/// Output format guidance for document summaries.
+pub const SUMMARY_DOCUMENT_OUTPUT: &str =
+    include_str!("../builtins/prompts/summary-document-output.md");
+/// System prompt of an attached-document summary request.
+pub const SUMMARY_DOCUMENT_SYSTEM: &str =
+    include_str!("../builtins/prompts/summary-document-system.md");
+/// User message of a document summary request; `{{current}}`, `{{label}}`, `{{notes}}`.
+pub const SUMMARY_DOCUMENT_REQUEST: &str =
+    include_str!("../builtins/prompts/summary-document-request.md");
+/// Header of one staged summary's notes; `{{stage}}`, `{{stages}}`, `{{notes}}`.
+pub const SUMMARY_SOURCE_STAGE: &str = include_str!("../builtins/prompts/summary-source-stage.md");
+/// Coverage footer of a summary made in one request.
+pub const SUMMARY_COVERAGE_SINGLE: &str =
+    include_str!("../builtins/prompts/summary-coverage-single.md");
+/// Coverage footer of a staged summary; `{{fragments}}`.
+pub const SUMMARY_COVERAGE_STAGED: &str =
+    include_str!("../builtins/prompts/summary-coverage-staged.md");
+/// Prepared-input coverage line of a checkpoint request; `{{selected}}`, `{{omitted}}`, `{{skipped}}`, `{{completeness}}`.
+pub const SUMMARY_COVERAGE: &str = include_str!("../builtins/prompts/summary-coverage.md");
+/// Pointer to saved originals kept with a checkpoint; `{{directory}}`, `{{count}}`, `{{latest_snapshot}}`.
+pub const SUMMARY_ARCHIVE_CONTEXT: &str =
+    include_str!("../builtins/prompts/summary-archive-context.md");
+/// Marker for the middle cut from a long relevance hint; `{{omitted_bytes}}`.
+pub const SUMMARY_RELEVANCE_HINT_OMITTED: &str =
+    include_str!("../builtins/prompts/summary-relevance-hint-omitted.md");
+/// Record of a run suspended when its checkpoint failed; `{{source}}`, `{{task_excerpt}}`.
+pub const SUMMARY_SUSPENDED_PROGRESS: &str =
+    include_str!("../builtins/prompts/summary-suspended-progress.md");
+/// Semantic capsule of an attached document; `{{identity}}`, `{{summary}}`.
+pub const SUMMARY_DOCUMENT_CAPSULE: &str =
+    include_str!("../builtins/prompts/summary-document-capsule.md");
+/// Header of the original exchange anchors restored from the transcript.
+pub const DESKTOP_EXCHANGE_ANCHORS: &str =
+    include_str!("../builtins/prompts/desktop-exchange-anchors.md");
 
 /// Replace each `{{name}}` placeholder in `template` with its value.
 ///

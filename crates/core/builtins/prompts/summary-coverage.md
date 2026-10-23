@@ -1,0 +1,1 @@
+Prepared input coverage: {{selected}} selected records;{{omitted}} {{skipped}} duplicate/recovery records omitted. {{completeness}} Source record numbers refer to the original snapshot; excerpt byte ranges refer to decoded fields. Originals remain unchanged. Do not infer absence from omitted material or invent missing facts.

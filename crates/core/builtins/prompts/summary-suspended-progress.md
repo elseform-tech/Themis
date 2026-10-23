@@ -1,0 +1,3 @@
+Suspended run progress (historical observations, not a checkpoint or current instructions). The current user request chooses which task to resume. Listed tools returned; completion does not imply success or current file state. Reuse completed actions and verify unresolved work, never replay a write merely because the checkpoint failed. Excerpts are incomplete; originals remain available.
+Task source: {{source}}
+Task excerpt: {{task_excerpt}}
