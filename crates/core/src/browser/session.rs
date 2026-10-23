@@ -150,6 +150,10 @@ pub struct BrowserHub {
     config: Mutex<BrowserConfig>,
     shared: tokio::sync::Mutex<HashMap<String, Arc<SharedBrowser>>>,
     chats: Mutex<HashMap<String, Arc<ChatBrowser>>>,
+    /// Whether the built-in engine may be downloaded (the app; never tests).
+    download_engine: AtomicBool,
+    /// One engine install at a time.
+    engine_install: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for BrowserHub {
@@ -158,19 +162,9 @@ impl std::fmt::Debug for BrowserHub {
     }
 }
 
-/// The browser executable downloaded into app-data, if any.
+/// The built-in engine downloaded into app-data, if any.
 pub fn downloaded_browser(root: &Path) -> Option<PathBuf> {
-    let base = root.join("chromium");
-    let candidates = [
-        "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-linux64/chrome",
-        "chrome-win64/chrome.exe",
-    ];
-    candidates
-        .iter()
-        .map(|path| base.join(path))
-        .find(|path| path.is_file())
+    super::engine::installed(root)
 }
 
 impl BrowserHub {
@@ -179,7 +173,63 @@ impl BrowserHub {
             config: Mutex::new(config),
             shared: tokio::sync::Mutex::default(),
             chats: Mutex::default(),
+            download_engine: AtomicBool::new(false),
+            engine_install: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Lets the browser download its built-in engine on first use (the app does; tests
+    /// keep using an installed browser).
+    pub fn allow_engine_download(&self) {
+        self.download_engine.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a browser can be started: one is found, or the engine can be downloaded.
+    pub fn available(&self) -> bool {
+        self.executable().is_some() || self.built_in()
+    }
+
+    /// Whether the automatic choice is the built-in engine (installed or downloadable).
+    pub fn built_in(&self) -> bool {
+        downloaded_browser(&self.root()).is_some()
+            || (self.download_engine.load(Ordering::Relaxed) && super::engine::platform().is_some())
+    }
+
+    /// Installs the built-in engine unless it is there, one install at a time.
+    async fn install_engine(&self, root: &Path) -> Result<PathBuf, String> {
+        let _one = self.engine_install.lock().await;
+        if let Some(installed) = downloaded_browser(root) {
+            return Ok(installed);
+        }
+        super::engine::install(root)
+            .await
+            .map_err(|error| format!("could not download the browser engine: {error:#}"))
+    }
+
+    /// The engine to use, when the automatic choice applies: the downloaded one; else,
+    /// with downloads allowed, an installed browser is used now while the engine
+    /// downloads in the background, or with none installed the engine is downloaded now.
+    async fn engine_for(
+        self: &Arc<Self>,
+        config: &BrowserConfig,
+    ) -> Result<Option<PathBuf>, String> {
+        if let Some(installed) = downloaded_browser(&config.root) {
+            return Ok(Some(installed));
+        }
+        if config.executable.is_some() || !self.download_engine.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        if find_browser(None, None).is_some() {
+            if self.engine_install.try_lock().is_ok() {
+                let hub = Arc::clone(self);
+                let root = config.root.clone();
+                tokio::spawn(async move {
+                    let _ = hub.install_engine(&root).await;
+                });
+            }
+            return Ok(None);
+        }
+        self.install_engine(&config.root).await.map(Some)
     }
 
     /// Applies a run's captured `browser.executable` for browsers started later.
@@ -320,14 +370,14 @@ impl BrowserHub {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let executable = find_browser(
-            config.executable.as_deref(),
-            downloaded_browser(&config.root).as_deref(),
-        )
-        .ok_or_else(|| match &config.executable {
-            Some(path) => format!("browser.executable {} does not exist", path.display()),
-            None => NO_BROWSER.to_owned(),
-        })?;
+        let engine = self.engine_for(&config).await?;
+        let executable =
+            find_browser(config.executable.as_deref(), engine.as_deref()).ok_or_else(|| {
+                match &config.executable {
+                    Some(path) => format!("browser.executable {} does not exist", path.display()),
+                    None => NO_BROWSER.to_owned(),
+                }
+            })?;
         let profile = config.root.join("profiles").join(key);
         let process = BrowserProcess::launch(&executable, &profile, config.headless)
             .await
@@ -370,7 +420,7 @@ impl BrowserHub {
 }
 
 /// Error text when no Chromium browser is installed.
-pub const NO_BROWSER: &str = "No Chromium browser found. Install Chrome, Chromium or Edge, set browser.executable in runtime.jsonc, or download one from the Workspace Browser tab.";
+pub const NO_BROWSER: &str = "No Chromium browser found. Install Chrome, Chromium or Edge, or set browser.executable in runtime.jsonc.";
 
 fn profile_key(project: &Path) -> String {
     use sha2::{Digest, Sha256};

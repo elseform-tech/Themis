@@ -67,10 +67,17 @@ means JSON output is off; an unreachable URL names the setting to fix.
 
 Agents also drive a real Chromium that you can watch and use in **Workspace →
 Browser**. Themis talks to it directly over the Chrome DevTools Protocol; there is
-no MCP server or Python to install. It uses Chrome, Chromium, Edge or Brave from
-the usual install folders (macOS `Applications`, Windows `Program Files` and
-`AppData\Local`, the Linux `PATH`), or `browser.executable` from the user
-`runtime.jsonc` (for example a Flatpak Chromium). Browser use, screenshots and
+no MCP server or Python to install. By default it uses its own engine, Google's
+`chrome-headless-shell` (Chrome for Testing, stable channel), which the app downloads
+from `storage.googleapis.com/chrome-for-testing-public` into app-data `browser/engine/`
+the first time the browser is used (about 100 MB to download, 200 MB unpacked). It is a
+plain program rather than an app, so it never appears in the macOS Dock (a headless
+Google Chrome shows up under recent apps), and it needs no Chrome installed. Until it
+has downloaded, an installed Chrome, Chromium, Edge or Brave from the usual folders
+(macOS `Applications`, Windows `Program Files` and `AppData\Local`, the Linux `PATH`)
+is used; with none installed, the first browser step waits for the download. A browser
+chosen in Settings › Browser or `browser.executable` in the user `runtime.jsonc` (for
+example a Flatpak Chromium) is always used instead. Tests never download the engine. Browser use, screenshots and
 recordings work the same on macOS, Windows and Linux. One gap: on Windows,
 continuously animated pages (canvas games, video) streaming into Workspace are
 unverified, since GitHub's GPU-less Windows test machines paint them only once.

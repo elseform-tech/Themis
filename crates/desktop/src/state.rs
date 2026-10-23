@@ -387,6 +387,7 @@ impl AppState {
             ),
         );
         Self::spawn_automation_scheduler(state.clone());
+        state.inner.browsers.allow_engine_download();
         state
     }
 
