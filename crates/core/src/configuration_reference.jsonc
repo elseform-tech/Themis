@@ -89,8 +89,8 @@
 
   // ─── WEB SEARCH (also in Settings › Web) ──────────────────────────────────────────────
   "web": {
-    // Your SearXNG server with JSON output on; leave out and web_search is not offered.
-    // fetch_url (reading pages) needs no server.
+    // Your own SearXNG server with JSON output on; leave out to use the SearXNG built into
+    // Themis (it starts with the app on a private 127.0.0.1 port). fetch_url needs neither.
     // "search_url": "http://127.0.0.1:8888",
   },
 

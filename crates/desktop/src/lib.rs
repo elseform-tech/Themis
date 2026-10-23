@@ -259,7 +259,16 @@ pub async fn run_headless_server_async(data_dir: PathBuf) -> Result<(), String> 
         data_dir.join("settings.json"),
         Arc::new(ProductionSecretStore::new()),
     );
-    server::Server::bind(state, &data_dir).await?.run().await
+    // The built-in search server starts with the app server unless you use your own.
+    if state
+        .user_web_config()
+        .is_ok_and(|web| web.search_url.is_none())
+    {
+        crate::state::searxng::start_in_background(&data_dir);
+    }
+    let served = server::Server::bind(state, &data_dir).await?.run().await;
+    crate::state::searxng::stop();
+    served
 }
 
 fn ensure_server(client: &server::Client, data_dir: &Path) -> Result<(), String> {

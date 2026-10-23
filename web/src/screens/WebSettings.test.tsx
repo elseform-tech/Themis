@@ -17,11 +17,19 @@ async function show(searchUrl: string | null) {
 }
 
 describe("Settings › Web", () => {
+  it("uses and checks the built-in server when none of your own is set", async () => {
+    vi.mocked(bridge.checkSearchServer).mockResolvedValue({ state: "working", results: 30, failed_engines: [] });
+    vi.mocked(bridge.getWebSettings).mockResolvedValue({ search_url: null, built_in: { available: true } });
+    await act(async () => { render(<WebSettingsSection />); });
+    expect(bridge.checkSearchServer).toHaveBeenCalledWith(undefined);
+    expect(screen.getByText("Built-in · Working · 30 results")).toBeInTheDocument();
+  });
+
   it("checks the saved server on open and names failing engines", async () => {
-    vi.mocked(bridge.checkSearchServer).mockResolvedValue({ state: "degraded", results: 4, failed_engines: [{ engine: "google", reason: "CAPTCHA" }] });
+    vi.mocked(bridge.checkSearchServer).mockResolvedValue({ state: "working", results: 4, failed_engines: [{ engine: "google", reason: "CAPTCHA" }] });
     await show("http://127.0.0.1:8888");
     expect(bridge.checkSearchServer).toHaveBeenCalledWith(undefined);
-    expect(screen.getByText("Some engines failing · 4 results")).toBeInTheDocument();
+    expect(screen.getByText("Working · 4 results")).toBeInTheDocument();
     expect(screen.getByText("google: CAPTCHA")).toBeInTheDocument();
   });
 

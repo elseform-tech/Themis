@@ -386,10 +386,24 @@ impl AppState {
             run_configuration.browser.clone(),
             Some(remember),
         );
-        // fetch_url always; web_search when the user file names a SearXNG instance.
+        // fetch_url always; web_search through your SearXNG, or the one built into Themis.
+        let mut web = run_configuration.web.clone();
+        if web.search_url.is_none() && super::searxng::runtime_dir().is_some() {
+            match super::searxng::url(&self.app_data_dir()).await {
+                Ok(url) => web.search_url = Some(url),
+                Err(error) => {
+                    let _ = self.inner.diagnostics.append(
+                        "web",
+                        "built_in_search_unavailable",
+                        "warn",
+                        json!({"reason": error}),
+                    );
+                }
+            }
+        }
         tools.extend(themis_core::tools::web::web_tools(
             approvals.clone(),
-            &run_configuration.web,
+            &web,
             Some(Arc::clone(&site_permissions)),
         ));
         // The chat's built-in browser, shared with the Workspace Browser tab.

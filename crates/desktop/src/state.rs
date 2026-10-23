@@ -28,6 +28,13 @@ mod projects;
 mod queue;
 mod reviews;
 mod run;
+pub(crate) mod searxng;
+
+/// Test support: stops the built-in search server.
+#[doc(hidden)]
+pub fn searxng_stop_for_test() {
+    searxng::stop();
+}
 mod skills;
 mod threads;
 mod workspace;

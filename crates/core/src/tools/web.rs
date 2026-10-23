@@ -826,7 +826,8 @@ impl ToolRuntime for WebSearchTool {
 }
 
 /// Settings › Web: asks the SearXNG instance at `base` one test search and says how it
-/// answered: `working`, `degraded` (some engines failed), `json_off` (HTTP 403),
+/// answered: `working` (results, perhaps with some engines failing), `degraded` (no
+/// results), `json_off` (HTTP 403),
 /// `rate_limited`, `unreachable`, `invalid` (not an http(s) URL) or `error`.
 pub async fn check_search_server(base: &str) -> Value {
     let base_url = match checked_url(base.trim()) {
@@ -870,10 +871,11 @@ pub async fn check_search_server(base: &str) -> Value {
             return json!({"state": "error", "message": format!("Not a SearXNG answer: {error}")})
         }
     };
-    let state = if parsed.failed_engines.is_empty() && !parsed.results.is_empty() {
-        "working"
-    } else {
+    // Some engine is nearly always busy or asking for a CAPTCHA; results still mean it works.
+    let state = if parsed.results.is_empty() {
         "degraded"
+    } else {
+        "working"
     };
     json!({"state": state, "results": parsed.results.len(), "failed_engines": parsed.failed_engines})
 }

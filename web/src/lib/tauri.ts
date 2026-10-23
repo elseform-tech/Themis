@@ -420,7 +420,12 @@ export function getPendingApprovals(): Promise<ApprovalRequest[]> {
 }
 
 /** Settings › Web: the SearXNG instance web_search uses (user runtime.jsonc). */
-export function getWebSettings(): Promise<{ search_url: string | null }> { return invoke("get_web_settings"); }
+export interface WebSettingsView {
+  search_url: string | null;
+  /** The SearXNG built into Themis: whether this build has it, and its address or error. */
+  built_in?: { available: boolean; url?: string | null; error?: string | null };
+}
+export function getWebSettings(): Promise<WebSettingsView> { return invoke("get_web_settings"); }
 export function updateWebSettings(searchUrl: string): Promise<{ search_url: string | null }> { return invoke("update_web_settings", { searchUrl }); }
 export interface SearchServerStatus {
   state: "working" | "degraded" | "json_off" | "rate_limited" | "unreachable" | "invalid" | "error";

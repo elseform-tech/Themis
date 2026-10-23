@@ -674,7 +674,10 @@ async fn dispatch_command(
                 state.patch_user_browser_config(changes, revision.as_deref())?;
             output!(json!({"settings": settings, "revision": revision}))
         }
-        "get_web_settings" => output!(json!({"search_url": state.user_web_config()?.search_url})),
+        "get_web_settings" => output!(json!({
+            "search_url": state.user_web_config()?.search_url,
+            "built_in": crate::state::searxng::status(),
+        })),
         "update_web_settings" => {
             let search_url: Option<String> = arg(&args, "searchUrl")?;
             let search_url = search_url
@@ -689,10 +692,11 @@ async fn dispatch_command(
         "check_search_server" => {
             let url = match arg::<Option<String>>(&args, "url")? {
                 Some(url) => url,
-                None => state
-                    .user_web_config()?
-                    .search_url
-                    .ok_or("No search server is set")?,
+                None => match state.user_web_config()?.search_url {
+                    Some(url) => url,
+                    // Yours unset: the one built into Themis (started if needed).
+                    None => crate::state::searxng::url(&state.app_data_dir()).await?,
+                },
             };
             output!(themis_core::tools::web::check_search_server(&url).await)
         }
