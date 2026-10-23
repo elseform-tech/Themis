@@ -3207,10 +3207,19 @@ async fn execute_call(
     };
     let outcome = match result {
         Ok(value) => Ok(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())),
-        Err(err) => Err(format!("tool '{name}' failed: {err}")),
+        Err(err) => Err(format!("tool '{name}' failed: {}", tool_failure(&err))),
     };
     crate::plugins::hooks::emit_current("AfterTool", serde_json::json!({"event":"AfterTool","tool":name,"arguments":parsed,"ok":outcome.is_ok(),"output":outcome.as_ref().ok(),"error":outcome.as_ref().err()}), events).await.map_err(|e|e.to_string())?;
     outcome
+}
+
+/// A tool's own error message: the tool library prints every error as "Runtime Error
+/// <message>", which reached the model and the person as noise ("failed: Runtime Error ...").
+fn tool_failure(error: &autoagents::core::tool::ToolCallError) -> String {
+    match error {
+        autoagents::core::tool::ToolCallError::RuntimeError(message) => message.to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Entry points for the `fuzz/` cargo-fuzz targets; not a stable API.
@@ -3284,6 +3293,17 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tool_failures_read_as_the_tool_wrote_them() {
+        let error = crate::tools::tool_error(
+            "browser_devtools: Debugging is blocked for example.com in Settings › Browser.".into(),
+        );
+        assert_eq!(
+            tool_failure(&error),
+            "browser_devtools: Debugging is blocked for example.com in Settings › Browser."
+        );
+    }
+
     #[test]
     fn evidence_pointer_is_short_and_keeps_the_retained_guidance() {
         let directory = std::path::Path::new(

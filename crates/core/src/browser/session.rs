@@ -31,6 +31,9 @@ pub const SETTLE_WAIT: Duration = Duration::from_secs(10);
 const QUIET: Duration = Duration::from_millis(500);
 /// Requests running longer than this (long polls, streams) do not block settling.
 const LONG_REQUEST: Duration = Duration::from_secs(3);
+/// A loaded page whose network never goes quiet (analytics, polling, live updates)
+/// counts as settled this long after loading, so the agent is not held up on busy sites.
+const BUSY_AFTER_LOAD: Duration = Duration::from_secs(2);
 /// Notes kept per tab between agent looks.
 const MAX_NOTES: usize = 20;
 const NOTE_CHARS: usize = 300;
@@ -150,6 +153,10 @@ pub struct BrowserHub {
     config: Mutex<BrowserConfig>,
     shared: tokio::sync::Mutex<HashMap<String, Arc<SharedBrowser>>>,
     chats: Mutex<HashMap<String, Arc<ChatBrowser>>>,
+    /// Whether the built-in engine may be downloaded (the app; never tests).
+    download_engine: AtomicBool,
+    /// One engine install at a time.
+    engine_install: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for BrowserHub {
@@ -158,19 +165,9 @@ impl std::fmt::Debug for BrowserHub {
     }
 }
 
-/// The browser executable downloaded into app-data, if any.
+/// The built-in engine downloaded into app-data, if any.
 pub fn downloaded_browser(root: &Path) -> Option<PathBuf> {
-    let base = root.join("chromium");
-    let candidates = [
-        "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chrome-linux64/chrome",
-        "chrome-win64/chrome.exe",
-    ];
-    candidates
-        .iter()
-        .map(|path| base.join(path))
-        .find(|path| path.is_file())
+    super::engine::installed(root)
 }
 
 impl BrowserHub {
@@ -179,7 +176,55 @@ impl BrowserHub {
             config: Mutex::new(config),
             shared: tokio::sync::Mutex::default(),
             chats: Mutex::default(),
+            download_engine: AtomicBool::new(false),
+            engine_install: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Lets the browser download its built-in engine on first use (the app does; tests
+    /// keep using an installed browser).
+    pub fn allow_engine_download(&self) {
+        self.download_engine.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a browser can be started: one is found, or the engine can be downloaded.
+    pub fn available(&self) -> bool {
+        self.executable().is_some() || self.built_in()
+    }
+
+    /// Whether the automatic choice is the built-in engine (installed or downloadable).
+    pub fn built_in(&self) -> bool {
+        downloaded_browser(&self.root()).is_some()
+            || (self.download_engine.load(Ordering::Relaxed) && super::engine::platform().is_some())
+    }
+
+    /// Installs the built-in engine unless it is there, one install at a time.
+    async fn install_engine(&self, root: &Path) -> Result<PathBuf, String> {
+        let _one = self.engine_install.lock().await;
+        if let Some(installed) = downloaded_browser(root) {
+            return Ok(installed);
+        }
+        super::engine::install(root)
+            .await
+            .map_err(|error| format!("could not download the browser engine: {error:#}"))
+    }
+
+    /// The engine to use when the automatic choice applies: the downloaded one, else
+    /// (with downloads allowed) it is downloaded now, so the person's own Chrome is never
+    /// started and never shows in the Dock. If the download fails, an installed browser is
+    /// used instead; with none, the download error is reported.
+    async fn engine_for(&self, config: &BrowserConfig) -> Result<Option<PathBuf>, String> {
+        if let Some(installed) = downloaded_browser(&config.root) {
+            return Ok(Some(installed));
+        }
+        if config.executable.is_some() || !self.download_engine.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        match self.install_engine(&config.root).await {
+            Ok(engine) => Ok(Some(engine)),
+            Err(_) if find_browser(None, None).is_some() => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Applies a run's captured `browser.executable` for browsers started later.
@@ -232,6 +277,8 @@ impl BrowserHub {
                 person_until: Mutex::new(None),
                 download_policy: Mutex::new(None),
                 targets: Mutex::new(HashSet::new()),
+                view: Mutex::default(),
+                stream_start: tokio::sync::Mutex::new(()),
             })
         }))
     }
@@ -320,14 +367,14 @@ impl BrowserHub {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let executable = find_browser(
-            config.executable.as_deref(),
-            downloaded_browser(&config.root).as_deref(),
-        )
-        .ok_or_else(|| match &config.executable {
-            Some(path) => format!("browser.executable {} does not exist", path.display()),
-            None => NO_BROWSER.to_owned(),
-        })?;
+        let engine = self.engine_for(&config).await?;
+        let executable =
+            find_browser(config.executable.as_deref(), engine.as_deref()).ok_or_else(|| {
+                match &config.executable {
+                    Some(path) => format!("browser.executable {} does not exist", path.display()),
+                    None => NO_BROWSER.to_owned(),
+                }
+            })?;
         let profile = config.root.join("profiles").join(key);
         let process = BrowserProcess::launch(&executable, &profile, config.headless)
             .await
@@ -370,7 +417,7 @@ impl BrowserHub {
 }
 
 /// Error text when no Chromium browser is installed.
-pub const NO_BROWSER: &str = "No Chromium browser found. Install Chrome, Chromium or Edge, set browser.executable in runtime.jsonc, or download one from the Workspace Browser tab.";
+pub const NO_BROWSER: &str = "No Chromium browser found. Install Chrome, Chromium or Edge, or set browser.executable in runtime.jsonc.";
 
 fn profile_key(project: &Path) -> String {
     use sha2::{Digest, Sha256};
@@ -386,6 +433,33 @@ struct ChatInner {
     browser: Option<Arc<SharedBrowser>>,
     tabs: Vec<Tab>,
     current: usize,
+}
+
+/// The chat's browser connection and tabs as of their last change. The person's input
+/// and the Workspace view read this, never `inner`: an agent action holds `inner` while
+/// its page settles (seconds on busy sites), and neither side waits for the other.
+#[derive(Clone, Default)]
+struct View {
+    cdp: Option<Arc<Cdp>>,
+    /// `127.0.0.1:<port>` of the browser's debugging server (for DevTools).
+    http_address: Option<String>,
+    tabs: Vec<ViewTab>,
+    current: usize,
+}
+
+#[derive(Clone)]
+struct ViewTab {
+    target_id: String,
+    session_id: String,
+    state: Arc<Mutex<TabState>>,
+}
+
+impl View {
+    /// The connection and session of the current tab, if a page is open.
+    fn current(&self) -> Option<(Arc<Cdp>, String)> {
+        let tab = self.tabs.get(self.current)?;
+        Some((Arc::clone(self.cdp.as_ref()?), tab.session_id.clone()))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -428,6 +502,10 @@ pub struct ChatBrowser {
     download_policy: Mutex<Option<downloads::DownloadPolicy>>,
     /// Target ids of this chat's tabs, readable while an action holds `inner`.
     targets: Mutex<HashSet<String>>,
+    /// See [`View`].
+    view: Mutex<View>,
+    /// One screencast start at a time (Chrome refuses a second start on a tab).
+    stream_start: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for ChatBrowser {
@@ -687,15 +765,17 @@ fn spawn_watcher(
                 {
                     {
                         let mut tab = state.lock().unwrap_or_else(|e| e.into_inner());
-                        tab.title = cap(
-                            event.params["targetInfo"]["title"]
-                                .as_str()
-                                .unwrap_or_default(),
-                            200,
-                        );
-                        if let Some(url) = event.params["targetInfo"]["url"].as_str() {
-                            tab.url = url.to_owned();
+                        let info = &event.params["targetInfo"];
+                        let url = info["url"].as_str().unwrap_or(&tab.url).to_owned();
+                        let title = info["title"].as_str().unwrap_or_default();
+                        // Until a page has a title, Chrome reports its address without the
+                        // scheme; that never replaces the page's real title (read on load).
+                        let placeholder =
+                            url.split_once("://").map(|(_, rest)| rest) == Some(title);
+                        if url != tab.url || !placeholder {
+                            tab.title = cap(title, 200);
                         }
+                        tab.url = url;
                     }
                     if let Some(chat) = chat.upgrade() {
                         chat.publish_state().await;
@@ -704,6 +784,35 @@ fn spawn_watcher(
                 continue;
             }
             handle_tab_event(&cdp, &target_id, &session_id, &state, &event);
+            let committed = event.method == "Page.frameNavigated"
+                && event.params["frame"]["parentId"].is_null();
+            if committed || event.method == "Page.loadEventFired" {
+                // A navigation to another site moves the page to a new renderer, which ends
+                // its screencast: start it again once the new page is committed. Chrome
+                // reports the title only when the address commits (the address itself
+                // then), so read the page's own title at commit (a page restored by
+                // Back/Forward has it already and fires no load) and again on load.
+                if let Some(chat) = chat.upgrade() {
+                    let restart = committed
+                        && chat
+                            .screencast
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .as_deref()
+                            == Some(session_id.as_str());
+                    let (cdp, session_id, state) =
+                        (Arc::clone(&cdp), session_id.clone(), Arc::clone(&state));
+                    tokio::spawn(async move {
+                        if restart {
+                            chat.restart_screencast().await;
+                        }
+                        refresh_title(&cdp, &session_id, &state).await;
+                        // After the restart, so the page (and the end of loading) reaches
+                        // the view with its stream.
+                        chat.publish_state().await;
+                    });
+                }
+            }
             if event.method == "Debugger.paused" {
                 devtools::resume_later(Arc::clone(&cdp), session_id.clone(), Arc::clone(&state));
             }
@@ -754,6 +863,7 @@ fn spawn_watcher(
                     | "Page.loadEventFired"
                     | "Page.navigatedWithinDocument"
                     | "Runtime.exceptionThrown"
+                    | "Page.frameStartedLoading"
                     | "Page.frameStoppedLoading"
             ) {
                 if let Some(chat) = chat.upgrade() {
@@ -762,6 +872,23 @@ fn spawn_watcher(
             }
         }
     })
+}
+
+/// Reads the page's own title into the tab's state (kept when the page has none yet).
+async fn refresh_title(cdp: &Cdp, session_id: &str, state: &Mutex<TabState>) {
+    let Ok(read) = cdp
+        .call(
+            Some(session_id),
+            "Runtime.evaluate",
+            json!({"expression": "document.title", "returnByValue": true}),
+        )
+        .await
+    else {
+        return;
+    };
+    if let Some(title) = read["result"]["value"].as_str().filter(|t| !t.is_empty()) {
+        state.lock().unwrap_or_else(|e| e.into_inner()).title = cap(title, 200);
+    }
 }
 
 /// Applies one event of a tab to its state (and answers dialogs).
@@ -790,6 +917,8 @@ fn handle_tab_event(
             if let Some(url) = params["frame"]["url"].as_str() {
                 tab.url = url.to_owned();
             }
+            // A new document: the old page's title no longer applies (read again on load).
+            tab.title.clear();
             tab.document += 1;
             tab.console_errors = 0;
         }
@@ -907,7 +1036,7 @@ impl ChatBrowser {
         if done {
             // The action is over, so waiting is safe; a dropped update would
             // leave "Agent is …" showing after the run.
-            self.publish_state_waiting().await;
+            self.publish_state().await;
         } else {
             self.publish_state().await;
         }
@@ -923,7 +1052,7 @@ impl ChatBrowser {
             self.muted.store(previous, Ordering::SeqCst);
             let _ = self.apply_muted(previous).await;
         }
-        self.publish_state_waiting().await;
+        self.publish_state().await;
         result
     }
 
@@ -951,12 +1080,40 @@ impl ChatBrowser {
 
     /// The current state, for the Workspace view.
     pub async fn state(&self) -> BrowserState {
-        let inner = self.inner.lock().await;
-        self.state_of(&inner).await
+        self.state_of().await
     }
 
-    async fn state_of(&self, inner: &ChatInner) -> BrowserState {
-        let tabs: Vec<TabInfo> = inner
+    /// Records the browser and tabs for [`View`] readers; called after every change.
+    fn remember(&self, inner: &ChatInner) {
+        *self.view.lock().unwrap_or_else(|e| e.into_inner()) = View {
+            cdp: inner
+                .browser
+                .as_ref()
+                .map(|browser| Arc::clone(&browser.cdp)),
+            http_address: inner
+                .browser
+                .as_ref()
+                .map(|browser| browser.http_address.clone()),
+            tabs: inner
+                .tabs
+                .iter()
+                .map(|tab| ViewTab {
+                    target_id: tab.target_id.clone(),
+                    session_id: tab.session_id.clone(),
+                    state: Arc::clone(&tab.state),
+                })
+                .collect(),
+            current: inner.current,
+        };
+    }
+
+    fn view(&self) -> View {
+        self.view.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    async fn state_of(&self) -> BrowserState {
+        let view = self.view();
+        let tabs: Vec<TabInfo> = view
             .tabs
             .iter()
             .map(|tab| {
@@ -967,7 +1124,7 @@ impl ChatBrowser {
                 }
             })
             .collect();
-        let current = inner.tabs.get(inner.current);
+        let current = view.tabs.get(view.current);
         let (url, title, errors, loading) = current
             .map(|tab| {
                 let state = tab.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -979,9 +1136,8 @@ impl ChatBrowser {
                 )
             })
             .unwrap_or_default();
-        let (back, forward) = match (current, &inner.browser) {
-            (Some(tab), Some(browser)) => browser
-                .cdp
+        let (back, forward) = match (current, &view.cdp) {
+            (Some(tab), Some(cdp)) => cdp
                 .call_with_timeout(
                     Some(&tab.session_id),
                     "Page.getNavigationHistory",
@@ -1003,8 +1159,8 @@ impl ChatBrowser {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         BrowserState {
-            open: !inner.tabs.is_empty(),
-            current: inner.current,
+            open: !view.tabs.is_empty(),
+            current: view.current,
             tabs,
             url,
             title,
@@ -1032,27 +1188,12 @@ impl ChatBrowser {
         }
     }
 
+    /// Sends the current state to the Workspace view (never waits on an action).
     async fn publish_state(&self) {
         if self.updates.receiver_count() == 0 {
             return;
         }
-        // Never wait on an action in progress just to publish.
-        let Ok(inner) = self.inner.try_lock() else {
-            return;
-        };
-        let state = self.state_of(&inner).await;
-        drop(inner);
-        let _ = self.updates.send(BrowserUpdate::State(state));
-    }
-
-    /// Publishes the state even if that means waiting for the session.
-    async fn publish_state_waiting(&self) {
-        if self.updates.receiver_count() == 0 {
-            return;
-        }
-        let inner = self.inner.lock().await;
-        let state = self.state_of(&inner).await;
-        drop(inner);
+        let state = self.state_of().await;
         let _ = self.updates.send(BrowserUpdate::State(state));
     }
 
@@ -1069,14 +1210,16 @@ impl ChatBrowser {
         site_of(&url)
     }
 
-    /// DevTools for the current tab, served by the browser itself.
+    /// DevTools for the current tab, served by the browser itself: the plain DevTools front
+    /// end (`inspector.html` adds a second, smaller live copy of the page, which the
+    /// Browser tab already shows above it).
     pub async fn devtools_url(&self) -> Option<String> {
-        let inner = self.inner.lock().await;
-        let browser = inner.browser.as_ref()?;
-        let tab = inner.tabs.get(inner.current)?;
+        let view = self.view();
+        let tab = view.tabs.get(view.current)?;
         Some(format!(
-            "http://{0}/devtools/inspector.html?ws={0}/devtools/page/{1}",
-            browser.http_address, tab.target_id
+            "http://{0}/devtools/devtools_app.html?ws={0}/devtools/page/{1}",
+            view.http_address.as_deref()?,
+            tab.target_id
         ))
     }
 
@@ -1096,6 +1239,7 @@ impl ChatBrowser {
         let hub = self.hub.upgrade().ok_or("the app is closing")?;
         let browser = hub.shared_for(&self.profile_key).await?;
         inner.browser = Some(Arc::clone(&browser));
+        self.remember(inner);
         Ok(browser)
     }
 
@@ -1172,6 +1316,7 @@ impl ChatBrowser {
             audio_script,
         });
         inner.current = inner.tabs.len() - 1;
+        self.remember(inner);
         Ok(())
     }
 
@@ -1221,6 +1366,14 @@ impl ChatBrowser {
     /// The person typed an address in the Workspace view.
     pub async fn open_for_user(self: &Arc<Self>, url: &str) -> Result<(), String> {
         self.person_acted();
+        // With a page open, go there at once, even while an agent action runs; the
+        // stream follows when the new page commits.
+        if let Some((cdp, session)) = self.view().current() {
+            cdp.call(Some(&session), "Page.navigate", json!({"url": url}))
+                .await?;
+            self.publish_state().await;
+            return Ok(());
+        }
         let mut inner = self.inner.lock().await;
         let (cdp, session) = self.current(&mut inner).await?;
         cdp.call(Some(&session), "Page.navigate", json!({"url": url}))
@@ -1249,11 +1402,10 @@ impl ChatBrowser {
     /// Back/forward/reload for the person's toolbar.
     pub async fn navigate_for_user(&self, action: &str) -> Result<(), String> {
         self.person_acted();
-        let inner = self.inner.lock().await;
-        let (Some(browser), Some(tab)) = (&inner.browser, inner.tabs.get(inner.current)) else {
+        let Some((cdp, session)) = self.view().current() else {
             return Ok(());
         };
-        history_step(&browser.cdp, &tab.session_id, action).await
+        history_step(&cdp, &session, action).await
     }
 
     /// A fresh snapshot (of one element's subtree with `reference`).
@@ -1552,7 +1704,8 @@ impl ChatBrowser {
                 ))
             }
         }
-        let state = self.state_of(&inner).await;
+        self.remember(&inner);
+        let state = self.state_of().await;
         drop(inner);
         self.publish_state().await;
         self.restart_screencast().await;
@@ -1584,6 +1737,7 @@ impl ChatBrowser {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         inner.browser = None;
+        self.remember(&inner);
     }
 
     /// Waits until the page has settled: loaded (after a navigation) and the
@@ -1599,6 +1753,7 @@ impl ChatBrowser {
             SETTLE_WAIT
         };
         tokio::time::sleep(Duration::from_millis(150)).await;
+        let mut loaded_at: Option<Instant> = None;
         loop {
             let (loading, busy) = {
                 let state = tab.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -1614,7 +1769,9 @@ impl ChatBrowser {
             if (!loading && !busy) || started.elapsed() > limit {
                 break;
             }
-            if !navigation && !loading && started.elapsed() > SETTLE_WAIT {
+            if loading {
+                loaded_at = None;
+            } else if loaded_at.get_or_insert_with(Instant::now).elapsed() > BUSY_AFTER_LOAD {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1729,16 +1886,15 @@ impl ChatBrowser {
                 },
             };
         }
-        let inner = self.inner.lock().await;
-        let (Some(browser), Some(tab)) = (&inner.browser, inner.tabs.get(inner.current)) else {
+        let _one = self.stream_start.lock().await;
+        let Some((cdp, session_id)) = self.view().current() else {
             *self.screencast.lock().unwrap_or_else(|e| e.into_inner()) = Some(String::new());
             return Ok(());
         };
         let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
-        let cdp = &browser.cdp;
         let _ = cdp
             .call(
-                Some(&tab.session_id),
+                Some(&session_id),
                 "Emulation.setDeviceMetricsOverride",
                 json!({"width": viewport.width, "height": viewport.height, "deviceScaleFactor": viewport.scale, "mobile": false}),
             )
@@ -1747,7 +1903,7 @@ impl ChatBrowser {
             .screencast
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .replace(tab.session_id.clone());
+            .replace(session_id.clone());
         // Chrome refuses a second start on a streaming tab, and a restart is
         // what applies a new size, so stop whichever tab is streaming first.
         if let Some(previous) = previous.filter(|p| !p.is_empty()) {
@@ -1757,7 +1913,7 @@ impl ChatBrowser {
         }
         STREAM_STARTS.fetch_add(1, Ordering::Relaxed);
         cdp.call(
-            Some(&tab.session_id),
+            Some(&session_id),
             "Page.startScreencast",
             json!({"format": "jpeg", "quality": 85, "maxWidth": (f64::from(viewport.width) * viewport.scale) as u32, "maxHeight": (f64::from(viewport.height) * viewport.scale) as u32, "everyNthFrame": 1}),
         )
@@ -2032,12 +2188,11 @@ impl ChatBrowser {
     /// person and the agent use the browser at the same time; neither waits.
     pub async fn user_input(&self, input: &UserInput) -> Result<(), String> {
         self.person_acted();
-        let inner = self.inner.lock().await;
-        let (Some(browser), Some(tab)) = (&inner.browser, inner.tabs.get(inner.current)) else {
+        let Some((cdp, session_id)) = self.view().current() else {
             return Ok(());
         };
-        let session = Some(tab.session_id.as_str());
-        let cdp = &browser.cdp;
+        let session = Some(session_id.as_str());
+        let cdp = &cdp;
         match input {
             UserInput::Mouse {
                 kind,

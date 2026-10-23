@@ -208,7 +208,8 @@ SearXNG instance you run and name in the user `runtime.jsonc`
 offered. Both ask per site in Custom, and **Allow in this chat** covers that site.
 Page text and results are treated as untrusted. See [web tools](web-tools.md).
 
-Agents can also drive a built-in browser (an installed Chrome, Chromium or Edge,
+Agents can also drive a built-in browser (its own headless Chromium engine, downloaded
+the first time it is used, or a Chrome, Chromium or Edge you choose in Settings › Browser,
 with its own profile per project). **Workspace → Browser** opens by itself when the
 agent starts using it in a run, so you can watch it: the
 line above the page says what the agent is doing. You can click, type or enter an

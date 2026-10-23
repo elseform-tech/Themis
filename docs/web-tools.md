@@ -67,10 +67,20 @@ means JSON output is off; an unreachable URL names the setting to fix.
 
 Agents also drive a real Chromium that you can watch and use in **Workspace →
 Browser**. Themis talks to it directly over the Chrome DevTools Protocol; there is
-no MCP server or Python to install. It uses Chrome, Chromium, Edge or Brave from
-the usual install folders (macOS `Applications`, Windows `Program Files` and
-`AppData\Local`, the Linux `PATH`), or `browser.executable` from the user
-`runtime.jsonc` (for example a Flatpak Chromium). Browser use, screenshots and
+no MCP server or Python to install. By default it uses its own engine, Google's
+`chrome-headless-shell` (Chrome for Testing, a pinned stable version), which the app downloads
+from `storage.googleapis.com/chrome-for-testing-public` into app-data `browser/engine/`
+the first time the browser is used (about 100 MB to download, 200 MB unpacked). It is a
+plain program rather than an app, so it never appears in the macOS Dock (a headless
+Google Chrome shows up under recent apps), and it needs no Chrome installed. The first
+browser step waits for the download (the address bar shows a loading bar); only if it
+fails is an installed Chrome, Chromium, Edge or Brave from the usual folders (macOS
+`Applications`, Windows `Program Files` and `AppData\Local`, the Linux `PATH`) used.
+The download is pinned to one version (`crates/core/src/browser/engine_pin.rs`, bumped
+with `node scripts/pin-browser-engine.mjs`) and checked against its SHA-256 before
+anything is unpacked or run; redirects are refused. A browser
+chosen in Settings › Browser or `browser.executable` in the user `runtime.jsonc` (for
+example a Flatpak Chromium) is always used instead. Tests never download the engine. Browser use, screenshots and
 recordings work the same on macOS, Windows and Linux. One gap: on Windows,
 continuously animated pages (canvas games, video) streaming into Workspace are
 unverified, since GitHub's GPU-less Windows test machines paint them only once.
@@ -101,7 +111,9 @@ without its sandbox, the only way it runs there.
 | `browser_tabs` | Lists, switches or closes this chat's tabs |
 
 Every action waits for the page to settle (loaded after a navigation, network quiet
-for half a second; at most 30 s after a navigation and 10 s otherwise) and returns a
+for half a second; a loaded page whose network never goes quiet, such as analytics or
+polling, counts as settled 2 s after loading; at most 30 s after a navigation and 10 s
+otherwise) and returns a
 fresh **snapshot**: the page's accessibility tree as an outline, at most 12,000
 characters, where elements the model can act on carry a ref right after their name:
 

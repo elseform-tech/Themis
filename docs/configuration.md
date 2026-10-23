@@ -200,7 +200,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `sandbox.allow_keychain` | macOS: `false` (default) keeps sandboxed commands out of the Keychain; `true` lets them use it (for example git's HTTPS credential helper); projects may only set `false` |
 | `web.search_url` | Optional http(s) URL of your SearXNG instance (JSON output enabled), at most 1,024 bytes, no credentials; user file only. Unset: the SearXNG built into Themis is used (when the build has it; otherwise `web_search` is not offered). See [web tools](web-tools.md) |
 | `browser.enabled` | Boolean, default `true`; projects may only set `false` |
-| `browser.executable` | Optional absolute path to a Chrome, Chromium or Edge binary, at most 1,024 bytes; user file only. Unset: an installed browser is found automatically |
+| `browser.executable` | Optional absolute path to a Chrome, Chromium or Edge binary, at most 1,024 bytes; user file only. Unset: the built-in engine (downloaded on first use), else an installed browser |
 | `browser.developer_mode` | Boolean, default `true` ("Enable full CDP access"): off offers no debugging tools on any page; projects may only set `false` |
 | `browser.permissions` | `browsing`, `downloads`, `debugging`: each `"allow"`, `"ask"` or `"block"`; defaults allow, allow, block. Projects may only make a value stricter. See [web tools](web-tools.md#permissions-settings--browser) |
 | `browser.site_exceptions` | Up to 500 `{ "site": "example.com", "browsing"?, "downloads"?, "debugging"? }`: a lowercase host covering its subdomains, most specific wins. Default: the starter blocks. A project's exceptions may only block, and they add to yours instead of replacing them (an exception to "arrays replace") |
