@@ -40,44 +40,81 @@ impl AppState {
     /// Reports whether the Go key is available (the value never leaves the store).
     pub async fn get_secret_status(&self) -> Result<SecretStatus, String> {
         Ok(SecretStatus {
-            go: self
-                .read_secret("go")
-                .await?
-                .is_some_and(|key| !key.trim().is_empty()),
+            go: self.read_secret("go").await?.is_some(),
         })
     }
 
-    /// Stores the API key for `provider`.
+    /// The Settings › Secrets secret OpenCode Go uses (`OPENCODE_KEY` unless chosen).
+    pub(super) async fn go_secret_name(&self) -> String {
+        self.inner.settings.get().await.go_secret
+    }
+
+    /// Stores the API key for `provider` in the secret it uses.
     pub async fn set_secret(&self, provider: String, value: String) -> Result<(), String> {
         let value = zeroize::Zeroizing::new(value);
-        let key = secret_key(&provider)?;
+        known_provider(&provider)?;
         crate::secrets::validate_provider_key(&value)?;
-        self.inner.secrets.set(key, &value)
+        let name = self.go_secret_name().await;
+        self.inner
+            .secrets
+            .set(&themis_core::plugins::keys::store_key(&name), &value)?;
+        self.record_key_name(&name)
     }
 
     /// Deletes the API key for `provider` (missing keys are a no-op success).
     pub async fn clear_secret(&self, provider: String) -> Result<(), String> {
-        let key = secret_key(&provider)?;
-        self.inner.secrets.clear(key)
+        known_provider(&provider)?;
+        clear_secret_named(self.inner.secrets.as_ref(), &self.go_secret_name().await)
+    }
+
+    /// Checks the OpenCode Go key with Go (without generating anything): `works`,
+    /// `rejected`, `unavailable`, or `missing` when the chosen secret has no value. Logs the
+    /// outcome and timing as metadata, never the key.
+    pub async fn check_go_key(&self) -> Result<serde_json::Value, String> {
+        let secret = self.go_secret_name().await;
+        let started = std::time::Instant::now();
+        let state = match self.read_secret("go").await? {
+            None => "missing".to_owned(),
+            Some(key) => {
+                let base_url = self
+                    .inner
+                    .go_base_url_override
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone()
+                    .unwrap_or_else(|| themis_core::providers::GO_BASE_URL.to_owned());
+                let checked = themis_core::providers::check_go_key(&base_url, &key).await;
+                serde_json::to_value(checked)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .unwrap_or_default()
+            }
+        };
+        let _ = self.inner.diagnostics.append(
+            "providers",
+            "key_checked",
+            if state == "works" { "info" } else { "warn" },
+            serde_json::json!({"provider": "go", "result": state, "duration_ms": started.elapsed().as_millis() as u64}),
+        );
+        Ok(serde_json::json!({"state": state, "secret": secret}))
     }
 
     /// Looks up the Go API key.
     pub(super) async fn api_key_for(&self, provider: ProviderKind) -> Result<String, String> {
         let name = provider.as_str();
-        self.read_secret(name)
-            .await?
-            .filter(|key| !key.trim().is_empty())
-            .ok_or_else(|| {
-                format!("no API key stored for provider '{name}': run themis providers or add one in Settings, then retry")
-            })
+        self.read_secret(name).await?.ok_or_else(|| {
+            format!("no API key stored for provider '{name}': run themis providers or add one in Settings, then retry")
+        })
     }
 
     async fn read_secret(&self, provider: &'static str) -> Result<Option<String>, String> {
+        known_provider(provider)?;
+        let name = self.go_secret_name().await;
         let secrets = self.inner.secrets.clone();
         // ponytail: native calls cannot be interrupted; a timed-out worker may finish later.
         tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            tokio::task::spawn_blocking(move || secrets.try_get(provider)),
+            tokio::task::spawn_blocking(move || read_secret_named(secrets.as_ref(), &name)),
         )
         .await
         .map_err(|_| {
@@ -85,6 +122,44 @@ impl AppState {
         })?
         .map_err(|_| "Credential lookup worker failed".to_owned())?
     }
+}
+
+/// The secret `name`: its saved value, else (for `OPENCODE_KEY`) a key saved before keys
+/// joined Settings › Secrets, else the environment variable of that name, as MCP servers
+/// read it. The old entry is copied once, the first time nothing is saved under the new one,
+/// and is then never read again (each read of an entry another build made can ask for
+/// Keychain access); it is cleared with the secret (see [`clear_secret_named`]).
+fn read_secret_named(
+    secrets: &dyn crate::secrets::SecretStore,
+    name: &str,
+) -> Result<Option<String>, String> {
+    let nonblank = |value: &String| !value.trim().is_empty();
+    let entry = themis_core::plugins::keys::store_key(name);
+    if let Some(saved) = secrets.stored(&entry)?.filter(nonblank) {
+        return Ok(Some(saved));
+    }
+    if name == crate::secrets::GO_KEY_NAME {
+        if let Some(legacy) = secrets
+            .stored(crate::secrets::LEGACY_GO_ENTRY)?
+            .filter(nonblank)
+        {
+            let _ = secrets.set(&entry, &legacy);
+            return Ok(Some(legacy));
+        }
+    }
+    Ok(std::env::var(name).ok().filter(nonblank))
+}
+
+/// Forgets the secret `name` (for `OPENCODE_KEY`, also a copy under its old entry).
+pub(super) fn clear_secret_named(
+    secrets: &dyn crate::secrets::SecretStore,
+    name: &str,
+) -> Result<(), String> {
+    secrets.clear(&themis_core::plugins::keys::store_key(name))?;
+    if name == crate::secrets::GO_KEY_NAME {
+        secrets.clear(crate::secrets::LEGACY_GO_ENTRY)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -142,9 +217,10 @@ mod tests {
 
     struct SlowReadStore(std::time::Duration);
     impl crate::secrets::SecretStore for SlowReadStore {
-        fn get(&self, _: &str) -> Option<String> {
+        fn get(&self, entry: &str) -> Option<String> {
             std::thread::sleep(self.0);
-            Some("synthetic-key".to_owned())
+            // A store with the key already in Settings › Keys (nothing to move).
+            (entry != crate::secrets::LEGACY_GO_ENTRY).then(|| "synthetic-key".to_owned())
         }
         fn has(&self, provider: &str) -> bool {
             self.get(provider).is_some()

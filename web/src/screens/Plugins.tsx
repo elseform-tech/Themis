@@ -16,7 +16,7 @@ function integrationError(error: unknown): string {
 type Category = "Plugins" | "Skills" | "MCP" | "Hooks";
 type Item = { key: string; name: string; plugin: Plugin; kind: "plugin" | "skill" | "mcp" | "hook"; id: string; enabled: boolean; unavailable?: boolean };
 type Panel = { item: Item; marketplace?: string; report?: ImportPreview["report"]; install?: boolean; scan?: string };
-const connectionLabels = { connecting: "Connecting…", connected: "Connected", failed: "Failed", needs_sign_in: "Sign in needed", needs_key: "Key needed" };
+const connectionLabels = { connecting: "Connecting…", connected: "Connected", failed: "Failed", needs_sign_in: "Sign in needed", needs_key: "Secret needed" };
 const categories: Category[] = ["Plugins", "Skills", "MCP", "Hooks"];
 type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye" | "trash" | "plus" | "back" | "warning";
 const skillGlyph = (id: string): Glyph => ["pdf", "docx", "xlsx"].includes(id) ? id as Glyph : "file";
@@ -309,7 +309,7 @@ export function Plugins() {
         {row.unavailable && <CompatibilityWarning reasons={compatibilityReasons(row.plugin.spec)} />}
         {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.reason && !["needs_sign_in", "needs_key"].includes(state.mcpConnections[row.key]?.status) && <CompatibilityWarning label="Connection details" reasons={[state.mcpConnections[row.key].reason!]} />}
         <span className={`themis-integration-status themis-compatibility-badge ${row.kind === "mcp" && row.enabled ? state.mcpConnections[row.key]?.status === "connected" ? "supported" : state.mcpConnections[row.key]?.status === "failed" ? "failed" : ["needs_sign_in", "needs_key"].includes(state.mcpConnections[row.key]?.status) ? "partial" : "unchecked" : row.enabled ? "supported" : "unchecked"}`}>{row.unavailable ? "Unavailable" : row.kind === "mcp" && row.enabled ? connectionLabels[state.mcpConnections[row.key]?.status ?? "connecting"] : row.enabled ? "Enabled" : "Disabled"}</span>
-        {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.status === "needs_key" && <button type="button" className="themis-text-action themis-integration-signin" title={state.mcpConnections[row.key].reason} onClick={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Keys", key: state.mcpConnections[row.key].keys?.[0] } })}>Add key</button>}
+        {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.status === "needs_key" && <button type="button" className="themis-text-action themis-integration-signin" title={state.mcpConnections[row.key].reason} onClick={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Secrets", key: state.mcpConnections[row.key].keys?.[0] } })}>Add secret</button>}
         {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.url && (state.mcpConnections[row.key]?.status === "needs_sign_in"
           ? signing === row.key
             ? <span className="themis-integration-signin themis-integration-waiting" role="status">Waiting for browser…<button type="button" className="themis-text-action" onClick={() => cancelSignIn(state.mcpConnections[row.key].url!)}>Cancel</button></span>

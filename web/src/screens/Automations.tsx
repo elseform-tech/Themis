@@ -1,3 +1,4 @@
+import { goUsable } from "../state/reducer";
 import { promptParts } from "../lib/prompt";
 import { PromptInput } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
@@ -372,14 +373,14 @@ export function Automations() {
               </div>}
             </div>
             <label className="themis-automations-field">Model
-              <span className="themis-automations-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={selectedModel ? dialog.form.model : ""} disabled={saving || modelsLoading || !state.secretStatus.go || models.length === 0} onChange={event => patchForm({ model: event.target.value, effort: "" })}>
-                <option value="" disabled>{modelsLoading ? "Loading models…" : !state.secretStatus.go ? "Connect OpenCode Go to load models" : models.length === 0 ? "No models available" : selectedModel ? "Choose a model" : `Current model unavailable: ${dialog.form.model || "default"}`}</option>
+              <span className="themis-automations-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={selectedModel ? dialog.form.model : ""} disabled={saving || modelsLoading || !goUsable(state) || models.length === 0} onChange={event => patchForm({ model: event.target.value, effort: "" })}>
+                <option value="" disabled>{modelsLoading ? "Loading models…" : !state.secretStatus.go ? "Connect OpenCode Go to load models" : !goUsable(state) ? "OpenCode Go rejected the key" : models.length === 0 ? "No models available" : selectedModel ? "Choose a model" : `Current model unavailable: ${dialog.form.model || "default"}`}</option>
                 {models.map(model => <option key={model.id} value={model.id} disabled={!!model.unavailable_reason} title={model.unavailable_reason ?? undefined}>{modelLabel(model)}</option>)}
               </select></span>
             </label>
             <div className="themis-automations-field">
               <label htmlFor="themis-automation-effort">Reasoning effort · {dialog.form.effort || "Default"}</label>
-              <input id="themis-automation-effort" aria-label="Reasoning effort" type="range" min="0" max={Math.max(1, effortLevels.length)} step="1" value={Math.max(0, ["", ...effortLevels].indexOf(dialog.form.effort))} disabled={saving || modelsLoading || !state.secretStatus.go || effortLevels.length === 0} aria-valuetext={dialog.form.effort || "Default"} onChange={event => patchForm({ effort: ["", ...effortLevels][Number(event.target.value)] ?? "" })} />
+              <input id="themis-automation-effort" aria-label="Reasoning effort" type="range" min="0" max={Math.max(1, effortLevels.length)} step="1" value={Math.max(0, ["", ...effortLevels].indexOf(dialog.form.effort))} disabled={saving || modelsLoading || !goUsable(state) || effortLevels.length === 0} aria-valuetext={dialog.form.effort || "Default"} onChange={event => patchForm({ effort: ["", ...effortLevels][Number(event.target.value)] ?? "" })} />
               <span className="themis-automations-hint">Default → {effortLevels[effortLevels.length - 1] ?? "No catalog levels"}</span>
             </div>
             {modelsError && <p className="themis-automations-error" role="alert">{modelsError}</p>}

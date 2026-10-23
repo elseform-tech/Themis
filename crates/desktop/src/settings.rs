@@ -217,6 +217,12 @@ impl SettingsStore {
                 }
                 current.config_editor = editor;
             }
+            if let Some(secret) = patch.go_secret {
+                if !themis_core::plugins::keys::valid_name(&secret) {
+                    return Err("Secret names use letters, digits and _ (up to 128)".to_owned());
+                }
+                current.go_secret = secret;
+            }
             if let Some(onboarded) = patch.onboarded {
                 current.onboarded = onboarded;
             }

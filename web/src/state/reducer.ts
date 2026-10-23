@@ -126,6 +126,10 @@ export interface AppState {
   settings: Settings;
   settingsLoaded: boolean;
   secretStatus: SecretStatus;
+  /** The secret status has loaded once (before that, nothing claims a key is missing). */
+  secretStatusLoaded: boolean;
+  /** What OpenCode Go said about the key last time it was checked (null = not yet). */
+  goKeyCheck: "works" | "rejected" | "unavailable" | "missing" | null;
   toasts: ToastItem[];
   diffPanelOpen: boolean;
   /** A file to show in the Workspace changes view, e.g. from an edited-files list. */
@@ -191,6 +195,7 @@ export type AppAction =
   | { type: "settings/loaded"; settings: Settings }
   | { type: "settings/patched"; settings: Settings }
   | { type: "secrets/loaded"; status: SecretStatus }
+  | { type: "provider/checked"; state: NonNullable<AppState["goKeyCheck"]> }
   | { type: "toast/push"; toast: ToastItem }
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView; settings?: { section: string; key?: string } }
@@ -260,6 +265,8 @@ export const initialState: AppState = {
   settings: DEFAULT_SETTINGS,
   settingsLoaded: false,
   secretStatus: DEFAULT_SECRET_STATUS,
+  secretStatusLoaded: false,
+  goKeyCheck: null,
   toasts: [],
   diffPanelOpen: false,
   diffFocus: null,
@@ -861,4 +868,9 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return state;
 
   }
+}
+
+/** OpenCode Go can be used: a key is set and OpenCode has not rejected it. */
+export function goUsable(state: Pick<AppState, "secretStatus" | "goKeyCheck">): boolean {
+  return state.secretStatus.go && state.goKeyCheck !== "rejected";
 }

@@ -73,8 +73,12 @@ OS lookup errors are preserved through the shared server and CLI rather than
 reported as a missing credential. Only a missing-entry result means absence.
 macOS errors expose a numeric Keychain status and fixed guidance; other platforms
 use fixed error text, without credential bytes or raw credential-store errors.
-The existing nonblank `OPENCODE_KEY` fallback remains available when the OS store
-has no accessible key. A valid stored key keeps precedence. No authentication is
+The OpenCode Go key is the Settings › Secrets secret named by the app setting
+`go_secret` (default `OPENCODE_KEY`; letters, digits and `_`, up to 128; set in Settings ›
+Models › Connections), stored as the credential entry `key:<name>`. Its value is the saved
+secret, else the environment variable of that name. For `OPENCODE_KEY`, an entry saved
+under the old name `go` is copied once when nothing is saved yet, never read again
+after, and cleared when the secret is removed. A valid stored key keeps precedence. No authentication is
 bypassed and no credential value is returned to the UI or CLI status command.
 
 Integrations → Discover installs into **User (Global)** scope without a destination

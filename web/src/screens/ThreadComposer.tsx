@@ -27,6 +27,8 @@ interface ThreadComposerProps {
   stopping: boolean;
   sendError: string | undefined;
   secretConfigured: boolean;
+  /** The secret OpenCode Go rejected: sending waits until it is fixed in Settings. */
+  keyRejected?: string;
   onDraftChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
@@ -59,6 +61,7 @@ export function ThreadComposer({
   stopping,
   sendError,
   secretConfigured,
+  keyRejected,
   onDraftChange,
   onSend,
   onStop,
@@ -99,6 +102,8 @@ export function ThreadComposer({
     menu?.closest("details")?.removeAttribute("open");
     onDraftChange(`${draft}${draft === "" || draft.endsWith(" ") || draft.endsWith("\n") ? "" : " "}${trigger}`);
   }
+  // A rejected key would only fail the run: wait for it to be fixed (queueing still works).
+  const sendBlocked = !running && Boolean(keyRejected);
   return (
     <>
       {sendError && <p className="themis-thread-senderror" role="alert">{sendError}</p>}
@@ -108,7 +113,13 @@ export function ThreadComposer({
         {!secretConfigured && !running && (
           <p className="themis-thread-hint">
             Connect OpenCode Go to send your first message. {" "}
-            <Button variant="ghost" size="small" onClick={onOpenSettings}>Open settings</Button>
+            <Button variant="ghost" size="small" onClick={onOpenSettings}>Model settings</Button>
+          </p>
+        )}
+        {secretConfigured && keyRejected && !running && (
+          <p className="themis-thread-hint" role="alert">
+            OpenCode Go rejected the key in {keyRejected}. {" "}
+            <Button variant="ghost" size="small" onClick={onOpenSettings}>Model settings</Button>
           </p>
         )}
         {attachments.length > 0 && <ul className="themis-composer-attachments" aria-label="Attached files">
@@ -119,7 +130,7 @@ export function ThreadComposer({
         </ul>}
         <PromptInput id="themis-composer" label="Message" value={draft} skills={skills} plugins={plugins} commands={COMMANDS} history={history} disabled={composerDisabled}
           placeholder={running ? "Queue a message — or steer it in" : readOnly ? "Start a new thread to continue" : "Ask Themis… @ for plugins, / for skills"}
-          onChange={onDraftChange} onSubmit={onSend} />
+          onChange={onDraftChange} onSubmit={() => { if (!sendBlocked) onSend(); }} />
         <div className="themis-thread-composer-actions">
           <details className="themis-composer-add" data-popover>
             <summary aria-label="Add files, skills or plugins" title="Add files, skills or plugins">
@@ -169,7 +180,7 @@ export function ThreadComposer({
               variant="primary"
               aria-label={running ? "Queue message" : "Send"}
               title={running ? "Queue (Enter) · sent when this turn ends, or steer it in" : "Send (Enter) · Shift+Enter for a new line · ⌘/Ctrl+Shift+O new thread"}
-              disabled={composerDisabled || (draft.trim() === "" && attachments.length === 0)}
+              disabled={composerDisabled || sendBlocked || (draft.trim() === "" && attachments.length === 0)}
               onClick={onSend}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
