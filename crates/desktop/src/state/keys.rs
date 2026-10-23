@@ -61,6 +61,17 @@ impl AppState {
         for name in self.saved_key_names() {
             used.entry(name).or_default();
         }
+        // Saved without its name recorded (copied from the old entry, or by the CLI with
+        // no server running): still listed, so it can be seen and removed.
+        let go = crate::secrets::GO_KEY_NAME;
+        if self
+            .inner
+            .secrets
+            .stored(&keys::store_key(go))
+            .is_ok_and(|value| value.is_some())
+        {
+            used.entry(go.to_owned()).or_default();
+        }
         Ok(json!(used
             .into_iter()
             .map(|(name, used_by)| {

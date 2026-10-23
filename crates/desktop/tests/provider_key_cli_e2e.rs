@@ -100,6 +100,9 @@ async fn cli_the_provider_key_is_a_settings_key_that_mcp_servers_can_use() {
         let keys = call(&dir, "list_keys", json!({}));
         let work = keys.as_array().unwrap().iter().find(|k| k["name"] == "WORK_GO_KEY").unwrap();
         assert_eq!(work["used_by"], json!(["OpenCode Go"]));
+        // OPENCODE_KEY stays listed (copied from the old entry, its name never recorded).
+        let default = keys.as_array().unwrap().iter().find(|k| k["name"] == "OPENCODE_KEY").unwrap();
+        assert_eq!(default["saved"], true, "{keys}");
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).unwrap()).unwrap();
         assert_eq!(saved["go_secret"], "WORK_GO_KEY");
         let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
