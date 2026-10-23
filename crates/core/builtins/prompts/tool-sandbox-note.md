@@ -1,0 +1,1 @@
+[note: this command ran in the Themis sandbox, which blocks writes outside the project and temporary folders and reads of secret folders. If that caused this failure, change the approach or ask the user.]

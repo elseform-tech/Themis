@@ -872,7 +872,7 @@ impl ChatBrowser {
             "reason": paused["reason"],
             "call_stack": frames,
             "variables": capped_strings(shown(Value::Object(variables), show_secrets), 200),
-            "note": "The page stays paused until you resume or step; it resumes by itself after 30 s."
+            "note": crate::prompts::TOOL_DEVTOOLS_PAUSED
         }))
     }
 

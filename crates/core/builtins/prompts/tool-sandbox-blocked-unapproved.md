@@ -1,0 +1,1 @@
+[Themis sandbox blocked this command: {{reason}}. Running it outside the sandbox was not approved.]

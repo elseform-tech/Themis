@@ -148,6 +148,46 @@ pub const TOOL_COMPACTED_RECEIPT: &str =
     include_str!("../builtins/prompts/tool-compacted-receipt.md");
 /// Warning on a bounded excerpt re-read from saved originals.
 pub const TOOL_EXCERPT_WARNING: &str = include_str!("../builtins/prompts/tool-excerpt-warning.md");
+/// Refusal guidance added to every denied tool call.
+pub const TOOL_REFUSAL: &str = include_str!("../builtins/prompts/tool-refusal.md");
+/// Note when a command's child process kept its output open.
+pub const TOOL_SHELL_OUTPUT_HELD: &str =
+    include_str!("../builtins/prompts/tool-shell-output-held.md");
+/// Note when the sandbox blocked a command and running it outside was not approved; `{{reason}}`.
+pub const TOOL_SANDBOX_BLOCKED_UNAPPROVED: &str =
+    include_str!("../builtins/prompts/tool-sandbox-blocked-unapproved.md");
+/// Note when the sandbox blocked a command without an approval prompt; `{{reason}}`.
+pub const TOOL_SANDBOX_BLOCKED: &str = include_str!("../builtins/prompts/tool-sandbox-blocked.md");
+/// Note when a failed command may have been blocked by the sandbox.
+pub const TOOL_SANDBOX_NOTE: &str = include_str!("../builtins/prompts/tool-sandbox-note.md");
+/// read_file warning on generated archive-recovery output.
+pub const TOOL_READ_RECOVERY_WARNING: &str =
+    include_str!("../builtins/prompts/tool-read-recovery-warning.md");
+/// read_file warning on a verbatim historical exchange record.
+pub const TOOL_READ_EXCHANGE_WARNING: &str =
+    include_str!("../builtins/prompts/tool-read-exchange-warning.md");
+/// read_file warning on an assistant navigation record.
+pub const TOOL_READ_NAVIGATION_WARNING: &str =
+    include_str!("../builtins/prompts/tool-read-navigation-warning.md");
+/// Note on fetched web content and search results.
+pub const TOOL_WEB_UNTRUSTED: &str = include_str!("../builtins/prompts/tool-web-untrusted.md");
+/// Note when a fetched page redirects to another site.
+pub const TOOL_WEB_REDIRECT: &str = include_str!("../builtins/prompts/tool-web-redirect.md");
+/// Note when a web search found nothing and some engines failed.
+pub const TOOL_WEB_NO_RESULTS: &str = include_str!("../builtins/prompts/tool-web-no-results.md");
+/// Note on recall results.
+pub const TOOL_RECALL_UNTRUSTED: &str =
+    include_str!("../builtins/prompts/tool-recall-untrusted.md");
+/// Note when recall's kinds/source filters matched nothing.
+pub const TOOL_RECALL_FILTERS_IGNORED: &str =
+    include_str!("../builtins/prompts/tool-recall-filters-ignored.md");
+/// Note on built-in browser page snapshots.
+pub const TOOL_BROWSER_UNTRUSTED: &str =
+    include_str!("../builtins/prompts/tool-browser-untrusted.md");
+/// Note when DevTools paused the page in the debugger.
+pub const TOOL_DEVTOOLS_PAUSED: &str = include_str!("../builtins/prompts/tool-devtools-paused.md");
+/// `next` hint after starting a background task.
+pub const TOOL_BACKGROUND_NEXT: &str = include_str!("../builtins/prompts/tool-background-next.md");
 
 /// Replace each `{{name}}` placeholder in `template` with its value.
 ///

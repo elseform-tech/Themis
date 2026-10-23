@@ -1,0 +1,1 @@
+The page stays paused until you resume or step; it resumes by itself after 30 s.
