@@ -47,9 +47,12 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
   if (site?.tools === "browser") {
     return <>Always allow on this site saves {browserPermission(request.tool)} for <TokenList argv={[site.site]} /> in Settings › Browser, where you can change it.</>;
   }
+  if (site?.tools === "web_search") {
+    // The site is the search server (the built-in one is a local address), not something the person picked.
+    return <>Allow in this chat covers web searches in later runs of this chat.</>;
+  }
   if (site) {
-    const what = site.tools === "browser" ? "every browser action on" : site.tools === "web_search" ? "searches through" : "reading pages from";
-    return <>Allow in this chat covers {what} <TokenList argv={[site.site]} /> in later runs of this chat. Other sites still ask.</>;
+    return <>Allow in this chat covers reading pages from <TokenList argv={[site.site]} /> in later runs of this chat. Other sites still ask.</>;
   }
   const outside = request.tool === UNSANDBOXED_TOOL;
   if ((request.tool !== "shell" && !outside) || !scope || scope.argv.length === 0) {
