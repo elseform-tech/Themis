@@ -611,13 +611,18 @@ fn opencode_mcp_inspection_names_fields_and_preserves_disabled_supported_servers
         .filter_map(|i| i.field.as_deref())
         .collect();
     assert!(fields.contains(&"mcp.slow.timeout"));
-    assert!(fields.contains(&"mcp.oauth.oauth"));
+    // OAuth servers import: the sign-in happens in Integrations afterwards.
+    assert!(!fields.contains(&"mcp.oauth.oauth"));
+    assert_eq!(
+        preview.spec.mcp["oauth"].url.as_deref(),
+        Some("https://example.com/mcp")
+    );
     assert!(store.import_mcp_json("global", "fixture", input).is_err());
     let installed = store
         .import_mcp_json_with_options("global", "fixture", input, true)
         .unwrap();
-    assert_eq!(installed.spec.mcp.len(), 1);
-    assert_eq!(store.list().unwrap()[0].spec.import_issues.len(), 2);
+    assert_eq!(installed.spec.mcp.len(), 2);
+    assert_eq!(store.list().unwrap()[0].spec.import_issues.len(), 1);
 }
 
 #[test]

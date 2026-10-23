@@ -26,7 +26,8 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["c
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync", "fs"] }
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync", "fs", "net"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects"] }

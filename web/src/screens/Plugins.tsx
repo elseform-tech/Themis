@@ -4,7 +4,7 @@ import { KnightLoading, readCompanionPreferences } from "../components/KnightCom
 import { ResponseBody } from "../components/ResponseBody";
 import { pluginAction } from "../lib/tauri";
 import { isPluginPackage } from "../lib/integrations";
-import type { ImportPreview, Marketplace, Plugin, PluginSpec } from "../lib/types";
+import type { ImportPreview, Marketplace, McpConnections, Plugin, PluginSpec } from "../lib/types";
 import { describeError, toast, useApp } from "../state/store";
 import "./Plugins.css";
 import { McpFileRow } from "./McpFile";
@@ -16,7 +16,7 @@ function integrationError(error: unknown): string {
 type Category = "Plugins" | "Skills" | "MCP" | "Hooks";
 type Item = { key: string; name: string; plugin: Plugin; kind: "plugin" | "skill" | "mcp" | "hook"; id: string; enabled: boolean; unavailable?: boolean };
 type Panel = { item: Item; marketplace?: string; report?: ImportPreview["report"]; install?: boolean; scan?: string };
-const connectionLabels = { connecting: "Connecting…", connected: "Connected", failed: "Failed" };
+const connectionLabels = { connecting: "Connecting…", connected: "Connected", failed: "Failed", needs_sign_in: "Sign in needed", needs_key: "Key needed" };
 const categories: Category[] = ["Plugins", "Skills", "MCP", "Hooks"];
 type Glyph = "folder" | "plug" | "file" | "hook" | "pdf" | "docx" | "xlsx" | "eye" | "trash" | "plus" | "back" | "warning";
 const skillGlyph = (id: string): Glyph => ["pdf", "docx", "xlsx"].includes(id) ? id as Glyph : "file";
@@ -163,6 +163,22 @@ export function Plugins() {
     } catch (error) { toast(dispatch, integrationError(error), "danger"); throw error; }
     finally { mutationPending.current = false; setMutating(false); setBusy(false); }
   }
+  // OAuth sign-in for a remote MCP server: the page opens in the person's browser.
+  const [signing, setSigning] = useState("");
+  async function signIn(key: string, url: string, out = false) {
+    setSigning(key);
+    try {
+      const connections = await pluginAction<McpConnections>({ action: out ? "mcp_sign_out" : "mcp_sign_in", projectRoot: root, url });
+      dispatch({ type: "mcp/status", connections });
+    } catch (error) {
+      // A sign-in you cancelled is not an error.
+      if (!integrationError(error).includes("Sign-in cancelled")) toast(dispatch, integrationError(error), "danger");
+    } finally {
+      setSigning("");
+    }
+  }
+  const cancelSignIn = (url: string) => void pluginAction({ action: "mcp_sign_in_cancel", url }).catch(() => {});
+
   async function toggle(item: Item) {
     const args = { scope: item.plugin.scope, name: item.plugin.spec.name };
     if (item.kind !== "plugin" && !item.plugin.enabled && !isPluginPackage(item.plugin)) await action({ ...args, action: "enable" });
@@ -291,8 +307,14 @@ export function Plugins() {
         <PluginIcon plugin={row.plugin.spec} fallback={row.kind === "plugin" ? "folder" : row.kind === "mcp" ? "plug" : row.kind === "hook" ? "hook" : skillGlyph(row.id)} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${row.name}`} onClick={() => open(row)}>{row.name}</button><span className="themis-integration-source">{row.kind === "plugin" ? row.plugin.spec.origin?.kind === "discovered" ? "Discovered" : row.plugin.source ?? row.plugin.spec.origin?.kind ?? "Personal" : pluginDisplayName(row.plugin)} · {row.plugin.scope === "global" ? "User" : "Project"}</span>
         <p className="themis-integration-description">{row.kind === "skill" ? row.plugin.spec.skills.find(skill => skill.id === row.id)?.description : row.kind === "mcp" ? <code>{mcpCommand(row.plugin.spec.mcp[row.id])}</code> : row.kind === "hook" ? row.plugin.spec.hooks.find(hook => hook.name === row.id)?.event : row.plugin.spec.description || capabilitySummary(row.plugin.spec)}</p>
         {row.unavailable && <CompatibilityWarning reasons={compatibilityReasons(row.plugin.spec)} />}
-        {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.reason && <CompatibilityWarning label="Connection details" reasons={[state.mcpConnections[row.key].reason!]} />}
-        <span className={`themis-integration-status themis-compatibility-badge ${row.kind === "mcp" && row.enabled ? state.mcpConnections[row.key]?.status === "connected" ? "supported" : state.mcpConnections[row.key]?.status === "failed" ? "failed" : "unchecked" : row.enabled ? "supported" : "unchecked"}`}>{row.unavailable ? "Unavailable" : row.kind === "mcp" && row.enabled ? connectionLabels[state.mcpConnections[row.key]?.status ?? "connecting"] : row.enabled ? "Enabled" : "Disabled"}</span>
+        {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.reason && !["needs_sign_in", "needs_key"].includes(state.mcpConnections[row.key]?.status) && <CompatibilityWarning label="Connection details" reasons={[state.mcpConnections[row.key].reason!]} />}
+        <span className={`themis-integration-status themis-compatibility-badge ${row.kind === "mcp" && row.enabled ? state.mcpConnections[row.key]?.status === "connected" ? "supported" : state.mcpConnections[row.key]?.status === "failed" ? "failed" : ["needs_sign_in", "needs_key"].includes(state.mcpConnections[row.key]?.status) ? "partial" : "unchecked" : row.enabled ? "supported" : "unchecked"}`}>{row.unavailable ? "Unavailable" : row.kind === "mcp" && row.enabled ? connectionLabels[state.mcpConnections[row.key]?.status ?? "connecting"] : row.enabled ? "Enabled" : "Disabled"}</span>
+        {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.status === "needs_key" && <button type="button" className="themis-text-action themis-integration-signin" title={state.mcpConnections[row.key].reason} onClick={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Keys", key: state.mcpConnections[row.key].keys?.[0] } })}>Add key</button>}
+        {row.kind === "mcp" && row.enabled && state.mcpConnections[row.key]?.url && (state.mcpConnections[row.key]?.status === "needs_sign_in"
+          ? signing === row.key
+            ? <span className="themis-integration-signin themis-integration-waiting" role="status">Waiting for browser…<button type="button" className="themis-text-action" onClick={() => cancelSignIn(state.mcpConnections[row.key].url!)}>Cancel</button></span>
+            : <Button className="themis-integration-signin" size="small" disabled={signing !== ""} onClick={() => void signIn(row.key, state.mcpConnections[row.key].url!)}>Sign in</Button>
+          : state.mcpConnections[row.key]?.signed_in && <button className="themis-text-action themis-integration-signin" disabled={signing !== ""} onClick={() => void signIn(row.key, state.mcpConnections[row.key].url!, true)}>Sign out</button>)}
         {!row.unavailable && <button className="themis-integration-toggle" role="switch" aria-label={`${row.name} enabled`} aria-checked={row.enabled} title={!row.plugin.enabled && row.kind !== "plugin" && isPluginPackage(row.plugin) ? "Enable the parent plugin first" : `Turn ${row.enabled ? "off" : "on"} ${row.name}`} disabled={busy || mutating || row.kind !== "plugin" && !row.plugin.enabled && isPluginPackage(row.plugin)} onClick={() => void toggle(row).catch(() => {})}><span className="themis-toggle-track"><span /></span></button>}
         {row.plugin.source !== "discovered" && row.plugin.spec.origin?.kind !== "discovered" && <button aria-label={`Uninstall ${row.name}`} title={`Uninstall ${row.name}`} disabled={busy || mutating} onClick={() => { setRemoving(row); }}><Icon name="trash" /></button>}
       </li>)}</ul>

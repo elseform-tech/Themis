@@ -71,6 +71,7 @@
 .themis-installed-integrations .themis-integration-status { grid-row: 1; grid-column: 3; }
 .themis-installed-integrations .themis-integration-toggle { grid-row: 1; grid-column: 4; }
 .themis-installed-integrations button[title^="Uninstall"] { grid-row: 1; grid-column: 5; }
+.themis-installed-integrations .themis-integration-signin { grid-row: 2; grid-column: 3 / -1; justify-self: end; }
 .themis-skill-viewer .themis-response { max-width: 72ch; margin: .5rem auto; padding: 1.25rem 1.5rem; background: var(--themis-canvas); border: 1px solid var(--themis-border-subtle); border-radius: .5rem; line-height: 1.8; }
 .themis-skill-viewer .themis-response h2 { color: var(--themis-accent); font-size: 1rem; margin-top: 1.5em; }
 .themis-skill-viewer .themis-response h1 { font-size: 1.3rem; }
@@ -118,3 +119,4 @@
 .themis-mcp-file-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
 .themis-mcp-file-actions select { border: 0; border-bottom: 1px solid var(--themis-border); background: transparent; color: var(--themis-text); font: inherit; padding: 4px; }
 .themis-mcp-file-actions button { border: 0; background: transparent; color: var(--themis-accent); font: inherit; cursor: pointer; }
+.themis-integration-waiting { display: inline-flex; align-items: center; gap: .75rem; font-size: .8rem; color: var(--themis-text-2); }

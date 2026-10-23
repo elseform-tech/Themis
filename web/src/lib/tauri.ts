@@ -447,3 +447,9 @@ export interface McpConfigStatus {
 }
 export function openMcpConfig(editor?: string): Promise<McpConfigStatus> { return invoke("open_mcp_config", editor ? { editor } : {}); }
 export function mcpConfigStatus(): Promise<McpConfigStatus> { return invoke("mcp_config_status"); }
+
+/** Settings › Keys: a key's name, whether it is saved or found in the environment, and its users (never its value). */
+export interface KeyEntry { name: string; saved: boolean; environment: boolean; used_by: string[] }
+export function listKeys(projectRoot?: string | null): Promise<KeyEntry[]> { return invoke("list_keys", projectRoot ? { projectRoot } : {}); }
+export function setKey(name: string, value: string): Promise<void> { return invoke("set_key", { name, value }); }
+export function removeKey(name: string): Promise<void> { return invoke("remove_key", { name }); }

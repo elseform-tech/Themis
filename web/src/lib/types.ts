@@ -616,7 +616,15 @@ export interface ThreadChange {
   thread?: ThreadInfo;
 }
 
-export type McpConnections = Record<string, { status: "connecting" | "connected" | "failed"; reason?: string }>;
+export type McpConnections = Record<string, {
+  status: "connecting" | "connected" | "failed" | "needs_sign_in" | "needs_key";
+  reason?: string;
+  /** needs_key: the missing key names, to add in Settings › Keys. */
+  keys?: string[];
+  /** Remote servers: whether this computer has a sign-in (OAuth) for it, and its address. */
+  signed_in?: boolean;
+  url?: string;
+}>;
 
 /** Settings › Browser: Allow (no prompt), Ask (a prompt) or Block (refused in every mode). */
 export type SiteAccess = "allow" | "ask" | "block";

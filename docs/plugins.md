@@ -29,7 +29,7 @@ It checks required fields, names, instruction/script limits, known tools, duplic
 
 The default source is Anthropic's `claude-plugins-official` Git repository; individual packages are installed by the user. Additional HTTPS Git repositories or local marketplace directories can be added. Repository imports support an explicit branch, tag, or commit and safe subdirectory. Personal imports accept local skill/plugin folders, a standalone `SKILL.md`, native JSON bundles, MCP JSON files, and pasted MCP JSON. Archives are rejected explicitly. Pasted MCP/native import JSON accepts JSONC comments and trailing commas; runtime and pasted configuration are limited to 1 MiB. File/repository import formats retain their own parser limits; JSONC is not universally supported by upstream manifest files. Imports read Claude marketplace/plugin manifests, `SKILL.md`, UTF-8 resources, `.mcp.json`, and command hooks. Imported MCP servers and hooks begin disabled. Source metadata records local paths, repository refs/subdirectories, or marketplace origin. Upstream icons are retained when they are validated HTTPS URLs or bundled SVG resources; unavailable binary icons are reported. Make a personal copy to customize a marketplace package without losing changes on update.
 
-Unsupported components are prominently listed in the plugin detail view. All import paths reject packages with no supported capabilities; inspection remains available, and existing installed packages are not removed. Binary resources, legacy commands, Claude subagents/LSP/settings, external config-file declarations, and restricted tool matchers are not executed. The importer supports simple scalar/block YAML frontmatter. Unsupported source types are rejected rather than silently ignored. MCP imports accept Claude `mcpServers` and OpenCode `mcp` shapes, normalize local command arrays and HTTP URLs, and require `${VARIABLE}` or `{env:VARIABLE}` environment references. Literal credentials and malformed definitions are rejected. Inspection reports browser OAuth, unsupported transports/headers, and unknown MCP options with an offending field, reason, and remedy. Advanced strict imports require `--allow-partial` for unsupported components. Catalog installation explicitly offers supported components only for partial packages; skipped capabilities remain recorded. Partial installation never bypasses safety or type validation. Imported connections remain disabled until explicitly enabled. This is compatibility with supported components, not the full Claude plugin runtime.
+Unsupported components are prominently listed in the plugin detail view. All import paths reject packages with no supported capabilities; inspection remains available, and existing installed packages are not removed. Binary resources, legacy commands, Claude subagents/LSP/settings, external config-file declarations, and restricted tool matchers are not executed. The importer supports simple scalar/block YAML frontmatter. Unsupported source types are rejected rather than silently ignored. MCP imports accept Claude `mcpServers` and OpenCode `mcp` shapes, normalize local command arrays and HTTP URLs, and require `${VARIABLE}` or `{env:VARIABLE}` environment references. Literal credentials and malformed definitions are rejected. Inspection reports unsupported transports/headers, and unknown MCP options with an offending field, reason, and remedy. Advanced strict imports require `--allow-partial` for unsupported components. Catalog installation explicitly offers supported components only for partial packages; skipped capabilities remain recorded. Partial installation never bypasses safety or type validation. Imported connections remain disabled until explicitly enabled. This is compatibility with supported components, not the full Claude plugin runtime.
 
 ## Skill discovery
 
@@ -39,9 +39,44 @@ User and project activation overrides persist in Themis. Discovered skills can b
 
 ## MCP and hooks
 
-Connections support stdio and Streamable HTTP JSON-RPC, initialization, paginated tool discovery, and tool calls. Optional server-provided initialization instructions reach the model as labelled external tool documentation after startup; they do not grant permissions. Malformed instructions or bodies larger than 32 KiB are rejected. MCP/hook-only plugins have zero bundled skills; Themis does not invent a placeholder `SKILL.md`. Exact legacy generated placeholders are excluded on registry load while authored skills, original resources and revision identities remain preserved. Configure environment-variable references for stdio and optional bearer authentication; credentials are not stored as literal configuration values. Browser OAuth and legacy SSE transports are not implemented. Enabling a connection yourself (UI or CLI) is the consent to start that exact definition: a changed command, arguments or URL, an agent edit you did not approve, or a definition arriving from a repository or import does not start until you enable it again, and an agent enabling or changing a command-based connection asks you about the exact command every time (an explicit deny rule still blocks startup; see [configuration](configuration.md)); tool calls use Themis approval gates independently of skill selection, and **Allow in this chat** on one tool covers the server's other tools. A failed connection is omitted with a sanitized warning; chat and management remain available to repair it. Blocking hooks retain their failure policy.
+Connections support stdio and Streamable HTTP JSON-RPC, initialization, paginated tool discovery, and tool calls. Optional server-provided initialization instructions reach the model as labelled external tool documentation after startup; they do not grant permissions. Malformed instructions or bodies larger than 32 KiB are rejected. MCP/hook-only plugins have zero bundled skills; Themis does not invent a placeholder `SKILL.md`. Exact legacy generated placeholders are excluded on registry load while authored skills, original resources and revision identities remain preserved. Credentials are never literal configuration values: a server reads keys as `${NAME}` references (see [Keys](#keys-for-mcp-servers)). Remote servers that require OAuth sign-in are supported (below); the legacy SSE transport is not. Enabling a connection yourself (UI or CLI) is the consent to start that exact definition: a changed command, arguments or URL, an agent edit you did not approve, or a definition arriving from a repository or import does not start until you enable it again, and an agent enabling or changing a command-based connection asks you about the exact command every time (an explicit deny rule still blocks startup; see [configuration](configuration.md)); tool calls use Themis approval gates independently of skill selection, and **Allow in this chat** on one tool covers the server's other tools. A failed connection is omitted with a sanitized warning; chat and management remain available to repair it. Blocking hooks retain their failure policy.
 
 Canonical hook events are `RunStart`, `BeforeTool`, `AfterTool`, `BeforeCompaction`, and `RunEnd`; legacy event aliases remain supported. Hook matchers select tools; ignore/abort failure policy is explicit. Commands receive a JSON payload through stdin and may return JSON. Before-event hooks can block on failure. Hooks cannot grant tool permissions. MCP server processes and hooks are not run inside the OS sandbox that confines agent commands (see [sandbox](sandbox.md#what-it-covers)); they run with your permissions once you enable them. Commands have bounded output/time; Unix process groups terminate descendants on timeout/cancellation. Imported resource roots are passed to hooks as `CLAUDE_PLUGIN_ROOT`, never substituted into shell source. Explicit chat/CLI tests run the saved configuration; normal runs request approvals.
+
+## Signing in to remote MCP servers (OAuth)
+
+A remote server that answers with a sign-in challenge (HTTP 401 with `WWW-Authenticate:
+Bearer`) shows **Sign in needed** in Integrations › MCP with a **Sign in** button. Themis
+follows the MCP authorization spec: it reads the server's protected-resource metadata
+(RFC 9728) to find its authorization server and that server's metadata (RFC 8414), registers
+itself as a client (dynamic client registration, RFC 7591), and opens the sign-in page in your
+own browser with PKCE (S256) and the `resource` parameter (RFC 8707). A one-time listener on
+`127.0.0.1` receives the result (five minutes at most); the tokens are stored in the Keychain
+(never in configuration files) and refreshed when they expire. **Sign out** forgets them.
+Sign-in and sign-out are offered only for servers you installed. A server whose sign-in needs a
+client registered by hand (no registration endpoint) is reported as such; use a
+`Bearer ${NAME}` header for it instead. A server that has its own key header never signs in. Imported definitions with an `oauth` setting are
+accepted; the sign-in happens after installing.
+
+## Keys for MCP servers
+
+A server reads a key as `${NAME}`, the same placeholder MCP documentation uses: in `env` for a
+local server (`"env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}`) or in a header for a
+remote one, as an optional literal prefix followed by one reference (`"Authorization": "Bearer
+${API_KEY}"`, `"X-Api-Key": "Token ${API_KEY}"`, `"CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"`).
+Header names are letters, digits, `-` and `_`; `Accept`, `Content-Type`, `Content-Length`,
+`Host` and the MCP session headers are reserved, and `Authorization` may appear once. When the
+server starts, each `${NAME}` is the key named NAME in **Settings › Keys**, or else the
+environment variable of that name (a saved key wins). Keys are stored in the system credential
+store (Keychain, Windows Credential Manager, Linux Secret Service, the same store as sign-ins);
+app data `keys.json` keeps only the names, because those stores cannot list entries. A server
+whose keys are missing shows **Key needed** with **Add key**, which opens Settings › Keys on that
+name; every missing name is reported at once. Settings › Keys lists each saved key and each key
+an installed server reads, with the servers that use it and its state (Saved, From environment,
+Missing), and offers Add or Replace (a masked field), Remove, and a new name. Values are never
+returned to the UI or written to logs; a server's stderr is redacted of the keys it was given.
+Names are letters, digits and `_` (up to 128); values are 1–4096 printable characters without
+spaces. The model provider key stays in Settings › Models.
 
 ## Programs MCP servers start with
 
@@ -56,8 +91,11 @@ was not found on this computer"); install it or save the command with its full p
 **Open** writes your personal (non-marketplace) global MCP servers to one copy,
 `mcp-edit/mcp.json` in the app data folder, in the standard `mcpServers` shape that Claude
 Desktop, Claude Code and Cursor use, keyed `integration/server`: local servers as
-`{"command": "npx", "args": [...], "env": {"KEY": "${VARIABLE}"}}`, remote ones as
-`{"type": "http", "url": "...", "headers": {"Authorization": "Bearer ${VARIABLE}"}}`. Whether a
+`{"command": "npx", "args": [...], "env": {"KEY": "${NAME}"}}`, remote ones as
+`{"type": "http", "url": "...", "headers": {"Authorization": "Bearer ${NAME}"}}` (any key header).
+The list starts with commented-out examples, one per way to authenticate (a local server with a
+key, a remote server with a key header, a remote server that signs in); remove the `//` to use
+one. Whether a
 server runs is not in the file (switch it in Integrations; an `"enabled"` you add is used),
 and opens it in the editor chosen under **Open with** (the same choice as Settings ›
 Permissions). While it is open Themis watches it: each save is parsed as JSONC and every
@@ -65,8 +103,8 @@ integration whose servers changed is saved through the integrations store with t
 the copy was made from, exactly as an edit in the CLI. The row then shows **Applied** with the
 integrations changed, **Invalid · line N** (nothing is applied), or a **conflict** when that
 integration changed elsewhere since the copy was opened (open it again). Adding a server under
-an existing personal integration name adds it; removing one removes it; a name outside your
-personal integrations is refused. As with any edit, a changed command, arguments or URL does
+an existing personal integration name adds it, and a new name makes a new personal integration;
+removing one removes it; a marketplace integration's name is refused. As with any edit, a changed command, arguments or URL does
 not start until you enable it again. Marketplace integrations are not listed: make a personal
 copy to edit one. The CLI uses the same methods: `open_mcp_config` (with `"open": false` to
 only write and watch the copy), `apply_mcp_config` and `mcp_config_status`.
@@ -132,7 +170,7 @@ The isolated test imports public sources at exact commits; it does not install i
 - Official Claude plugin catalog `d4226d062928f8d9505dbdeadd10217d23361052`: catalog read and `plugin-dev` installation passed; seven skills and nine compatibility notices.
 - Official filesystem MCP npm package `@modelcontextprotocol/server-filesystem@2026.8.31`: imported disabled, explicitly enabled, launched, negotiated the supported MCP protocol, discovered 14 tools, and read an isolated marker through the actual `read_file` tool.
 
-These checks verify supported imports and executable integration paths; they do not establish complete compatibility with upstream plugin runtimes, all skill workflows, browser OAuth, or current MCP specification revisions.
+These checks verify supported imports and executable integration paths; they do not establish complete compatibility with upstream plugin runtimes, all skill workflows, every OAuth provider, or current MCP specification revisions.
 
 Standalone skills appear under Skills and are invoked with `/`. Plugins contains real plugin packages (including packages with one bundled skill) and uses `@`. Standalone MCP JSON and hooks stay in their respective categories. Imports record `package_kind`; older imports are classified from preserved source metadata/resources without rewriting the source files.
 

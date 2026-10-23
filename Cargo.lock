@@ -5044,6 +5044,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "uuid",
  "windows-sys 0.61.2",
  "wiremock",
  "zune-jpeg",

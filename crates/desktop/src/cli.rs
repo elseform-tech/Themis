@@ -619,7 +619,7 @@ async fn ensure_server(client: &Client, directory: &std::path::Path) -> Result<(
             client.call("ping", Value::Null),
         )
     };
-    if ping().await.is_ok_and(|result| result.is_ok()) {
+    if client.answers(crate::server::SERVER_PATIENCE).await {
         return Ok(());
     }
     let mut child =

@@ -684,16 +684,28 @@ async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
         let broken = call(&dir, "apply_mcp_config", json!({}));
         assert_eq!(broken["state"], "invalid", "{broken}");
         assert_eq!(broken["line"], 3);
-        // A name outside your personal integrations is refused.
+        // A new integration name makes a new personal integration (as the examples do).
+        call(&dir, "open_mcp_config", json!({"open": false}));
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        assert!(fresh.contains("// \"personal/github\": {"), "{fresh}");
         std::fs::write(
             &path,
-            "{\"mcpServers\": {\"someone/else\": {\"url\": \"http://127.0.0.1:12/mcp\"}}}",
+            fresh.replacen(
+                "\"mcpServers\": {",
+                "\"mcpServers\": {\n    \"mine/extra\": { \"url\": \"http://127.0.0.1:12/mcp\" },",
+                1,
+            ),
         )
         .unwrap();
-        assert!(call(&dir, "apply_mcp_config", json!({}))["message"]
-            .as_str()
+        let added = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(added["changed"], json!(["mine"]), "{added}");
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        assert!(list
+            .as_array()
             .unwrap()
-            .contains("not one of your personal integrations"));
+            .iter()
+            .any(|p| p["spec"]["name"] == "mine"
+                && p["spec"]["mcp"]["extra"]["url"] == "http://127.0.0.1:12/mcp"));
         // A change made elsewhere since the copy was taken is a conflict, not overwritten.
         let reopened = call(&dir, "open_mcp_config", json!({"open": false}));
         let fresh = std::fs::read_to_string(&path).unwrap();
@@ -782,4 +794,52 @@ async fn cli_the_built_in_search_server_answers() {
     .unwrap();
     task.abort();
     themis_desktop::state::searxng_stop_for_test();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_a_remote_mcp_server_that_asks_for_sign_in_says_so() {
+    let mcp = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(401).insert_header("WWW-Authenticate", "Bearer"))
+        .mount(&mcp)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = data.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    let url = format!("{}/mcp", mcp.uri());
+    tokio::task::spawn_blocking(move || {
+        call(&dir, "plugin_action", json!({"action": "save", "scope": "global", "spec": {"name": "remote", "mcp": {"notes": {"url": url}}}}));
+        call(&dir, "plugin_action", json!({"action": "set_component_enabled", "scope": "global", "name": "remote", "kind": "mcp", "id": "notes", "enabled": true}));
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let status = loop {
+            let all = call(&dir, "plugin_action", json!({"action": "mcp_status", "projectRoot": project, "connect": true}));
+            let status = all["global:remote:mcp:notes"].clone();
+            if status["status"] != "connecting" && !status.is_null() {
+                break status;
+            }
+            assert!(std::time::Instant::now() < deadline, "{all}");
+            std::thread::sleep(Duration::from_millis(300));
+        };
+        assert_eq!(status["status"], "needs_sign_in", "{status}");
+        assert_eq!(status["signed_in"], false);
+        assert_eq!(status["url"], url.as_str());
+        // Sign-in and sign-out only for installed servers.
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args(["call", "plugin_action", &json!({"action": "mcp_sign_out", "projectRoot": project, "url": "https://elsewhere.example/mcp"}).to_string()])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("No installed MCP server"));
+        let out = call(&dir, "plugin_action", json!({"action": "mcp_sign_out", "projectRoot": project, "url": url}));
+        assert_eq!(out["global:remote:mcp:notes"]["signed_in"], false);
+    })
+    .await
+    .unwrap();
+    task.abort();
 }
