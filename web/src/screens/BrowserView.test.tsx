@@ -85,6 +85,34 @@ describe("BrowserView", () => {
     expect(document.querySelector("iframe.themis-browser-devtools")).toHaveAttribute("src", expect.stringContaining("/devtools/inspector.html"));
   });
 
+  it("shows a loading bar while a page loads or a typed address is opening", async () => {
+    const idle: BrowserState = { ...page, controller: "idle", activity: null };
+    vi.mocked(bridge.browserState).mockResolvedValue(idle);
+    await act(async () => { render(<BrowserView threadId="t1" />); });
+    expect(screen.queryByRole("progressbar", { name: "Loading page" })).toBeNull();
+    act(() => push({ kind: "state", state: { ...idle, loading: true } }));
+    expect(screen.getByRole("progressbar", { name: "Loading page" })).toBeInTheDocument();
+    act(() => push({ kind: "state", state: { ...idle, loading: false } }));
+    expect(screen.queryByRole("progressbar")).toBeNull();
+
+    // A typed address shows the bar at once, before the page reports loading.
+    let answer: () => void = () => undefined;
+    vi.mocked(bridge.browserOpenUrl).mockImplementationOnce(() => new Promise<void>(resolve => { answer = resolve; }));
+    const address = screen.getByLabelText("Address");
+    fireEvent.change(address, { target: { value: "docs.rs" } });
+    act(() => { fireEvent.submit(address); });
+    expect(screen.getByRole("progressbar", { name: "Loading page" })).toBeInTheDocument();
+    await act(async () => answer());
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("shows the loading bar while the browser starts", async () => {
+    vi.mocked(bridge.browserState).mockReturnValue(new Promise(() => undefined));
+    await act(async () => { render(<BrowserView threadId="t1" />); });
+    expect(screen.getByText("Loading browser…")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Loading browser" })).toBeInTheDocument();
+  });
+
   it("captures to the composer, records with a visible line, and stops into the composer", async () => {
     const store = new Map<string, string>();
     vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) });
