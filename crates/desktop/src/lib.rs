@@ -321,6 +321,72 @@ fn turn_off_text_substitutions() {
 }
 
 /// Runs the Tauri application.
+/// An app opened from Finder, the Dock or a desktop launcher gets the system's minimal `PATH`,
+/// so programs that MCP servers and hooks start with (`npx`, `uvx`, `docker` in
+/// /opt/homebrew/bin, ~/.local/bin, ...) are not found. Once at startup, adds the person's
+/// login-shell `PATH` (its order first), as code editors do. Bounded to three seconds; on
+/// any failure the `PATH` is left as it was.
+#[cfg(unix)]
+pub fn adopt_login_shell_path() {
+    let Some(login) = login_shell_path(std::time::Duration::from_secs(3)) else {
+        return;
+    };
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    std::env::set_var("PATH", merged_path(&login, &current));
+}
+
+#[cfg(not(unix))]
+pub fn adopt_login_shell_path() {}
+
+/// `login` first, then the directories of `current` it does not already have.
+fn merged_path(login: &std::ffi::OsStr, current: &std::ffi::OsStr) -> std::ffi::OsString {
+    let mut directories: Vec<std::path::PathBuf> = std::env::split_paths(login).collect();
+    for directory in std::env::split_paths(current) {
+        if !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    std::env::join_paths(directories).unwrap_or_else(|_| current.to_owned())
+}
+
+#[cfg(unix)]
+fn login_shell_path(limit: std::time::Duration) -> Option<std::ffi::OsString> {
+    use std::io::Read;
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| shell.starts_with('/'))
+        // The system's default login shell when SHELL is not passed to the app.
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "macos") {
+                "/bin/zsh"
+            } else {
+                "/bin/bash"
+            }
+            .to_owned()
+        });
+    let mut child = std::process::Command::new(shell)
+        .args(["-ilc", "printf '__THEMIS_PATH__%s__THEMIS_END__' \"$PATH\""])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let stdout = child.stdout.take()?;
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stdout.take(64 * 1024).read_to_string(&mut text);
+        let _ = send.send(text);
+    });
+    let text = receive.recv_timeout(limit).ok();
+    let _ = child.kill();
+    let _ = child.wait();
+    let text = text?;
+    let start = text.find("__THEMIS_PATH__")? + "__THEMIS_PATH__".len();
+    let end = start + text[start..].find("__THEMIS_END__")?;
+    Some(text[start..end].into()).filter(|path: &std::ffi::OsString| !path.is_empty())
+}
+
 pub fn run() {
     #[cfg(target_os = "macos")]
     turn_off_text_substitutions();
@@ -402,5 +468,29 @@ mod runtime_tests {
         let runtime = super::runtime().unwrap();
         let sum = runtime.block_on(async { tokio::spawn(async { deep(24) }).await.unwrap() });
         assert_eq!(sum, (0..=24).sum::<u64>());
+    }
+}
+
+#[cfg(test)]
+mod login_path_tests {
+    #[test]
+    fn the_login_path_comes_first_and_nothing_is_lost() {
+        // The platform's own separator (`:` on Unix, `;` on Windows).
+        let join = |dirs: &[&str]| std::env::join_paths(dirs).unwrap();
+        let merged = super::merged_path(
+            &join(&["/opt/homebrew/bin", "/usr/bin"]),
+            &join(&["/usr/bin", "/bin", "/sbin"]),
+        );
+        assert_eq!(
+            merged,
+            join(&["/opt/homebrew/bin", "/usr/bin", "/bin", "/sbin"])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_login_shell_path_is_read() {
+        // Whatever the shell's configuration, it reports a nonempty PATH within the limit.
+        assert!(super::login_shell_path(std::time::Duration::from_secs(10)).is_some());
     }
 }

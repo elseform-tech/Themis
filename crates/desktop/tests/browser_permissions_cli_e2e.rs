@@ -392,31 +392,59 @@ async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
             .unwrap()
             .iter()
             .any(|s| s == "paypal.com"));
-        let mut settings = view["settings"].clone();
-        settings["permissions"]["debugging"] = json!("ask");
-        settings["show_secrets"] = json!(true);
+        // Only the changed fields are sent, with the revision the page loaded.
+        let mut permissions = view["settings"]["permissions"].clone();
+        permissions["debugging"] = json!("ask");
         let saved = call(
             &dir,
             "update_browser_settings",
-            json!({"settings": settings}),
+            json!({"changes": {"permissions": permissions, "show_secrets": true}, "revision": view["revision"]}),
         );
-        assert_eq!(saved["permissions"]["debugging"], "ask");
+        assert_eq!(saved["settings"]["permissions"]["debugging"], "ask");
+        assert_ne!(saved["revision"], view["revision"]);
         let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
         assert!(file.contains("// my notes"), "{file}");
         assert_eq!(
             call(&dir, "get_browser_settings", json!({}))["settings"]["show_secrets"],
             true
         );
+        // A hand edit to the file while the page is open: the stale page's save is refused
+        // and the hand edit stays.
+        let edited = file.replace("\"developer_mode\": true", "\"developer_mode\": false");
+        assert_ne!(edited, file, "{file}");
+        std::fs::write(dir.join("runtime.jsonc"), &edited).unwrap();
+        let stale = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_browser_settings",
+                &json!({"changes": {"open_workspace": false}, "revision": saved["revision"]}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!stale.status.success());
+        assert!(String::from_utf8_lossy(&stale.stderr).contains("changed in runtime.jsonc"));
+        assert_eq!(std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap(), edited);
+        let fresh = call(&dir, "get_browser_settings", json!({}));
+        assert_eq!(fresh["settings"]["developer_mode"], false);
+        let saved = call(
+            &dir,
+            "update_browser_settings",
+            json!({"changes": {"open_workspace": false}, "revision": fresh["revision"]}),
+        );
+        assert_eq!(saved["settings"]["developer_mode"], false, "the hand edit is kept");
+        assert_eq!(saved["settings"]["open_workspace"], false);
+        let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
         // An invalid site is refused and the file is left as it was.
-        let mut bad = saved.clone();
-        bad["site_exceptions"] = json!([{"site": "https://x.com/path", "browsing": "block"}]);
+        let bad = json!({"site_exceptions": [{"site": "https://x.com/path", "browsing": "block"}]});
         let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
             .arg("--data-dir")
             .arg(&dir)
             .args([
                 "call",
                 "update_browser_settings",
-                &json!({"settings": bad}).to_string(),
+                &json!({"changes": bad}).to_string(),
             ])
             .output()
             .unwrap();
@@ -440,8 +468,280 @@ async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
             json!({"projectRoot": null, "range": "all", "types": ["history", "cookies", "cache"]}),
         );
         assert_eq!(cleared["cleared"], json!([]));
+        // Settings › Permissions: the editors offered start with the system text editor, and
+        // only a known editor can be remembered.
+        let editors = call(&dir, "list_editors", json!({}));
+        assert_eq!(
+            editors["editors"][0],
+            json!({"id": "", "name": "Text editor"})
+        );
+        let chosen = call(
+            &dir,
+            "update_settings",
+            json!({"patch": {"config_editor": "zed"}}),
+        );
+        assert_eq!(chosen["config_editor"], "zed");
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_settings",
+                &json!({"patch": {"config_editor": "sh -c x"}}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("Unknown editor"));
+        let opened = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "open_runtime_config",
+                &json!({"editor": "not-an-editor"}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!opened.status.success());
+        assert!(String::from_utf8_lossy(&opened.stderr).contains("unknown editor"));
+        // Settings › Permissions: new chats start in the chosen mode.
+        let saved = call(&dir, "update_settings", json!({"patch": {"default_approval_mode": "yolo"}}));
+        assert_eq!(saved["default_approval_mode"], "yolo");
+        let project = dir.join("mode-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let thread = call(
+            &dir,
+            "create_thread",
+            json!({"projectRoot": project, "provider": "go", "model": null}),
+        );
+        assert_eq!(thread["approval_mode"], "yolo", "{thread}");
     })
     .await
     .unwrap();
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_sets_and_checks_the_search_server() {
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        "{\n  // my notes\n  \"schema_version\": 1\n}\n",
+    )
+    .unwrap();
+    let searxng = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{"title": "Weather", "url": "https://example.com/w", "content": "Sunny"}],
+            "unresponsive_engines": [["google", "CAPTCHA"]]
+        })))
+        .mount(&searxng)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    let url = searxng.uri();
+    tokio::task::spawn_blocking(move || {
+        assert_eq!(
+            call(&dir, "get_web_settings", json!({}))["search_url"],
+            Value::Null
+        );
+        let saved = call(&dir, "update_web_settings", json!({"searchUrl": url}));
+        assert_eq!(saved["search_url"], url.as_str());
+        let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
+        assert!(
+            file.contains("// my notes") && file.contains(url.as_str()),
+            "{file}"
+        );
+        // The saved server answers, with one engine failing.
+        let status = call(&dir, "check_search_server", json!({}));
+        assert_eq!(status["state"], "degraded", "{status}");
+        assert_eq!(status["results"], 1);
+        assert_eq!(status["failed_engines"][0]["engine"], "google");
+        // A URL typed but not saved yet can be checked too.
+        let unsaved = call(
+            &dir,
+            "check_search_server",
+            json!({"url": "http://127.0.0.1:9"}),
+        );
+        assert_eq!(unsaved["state"], "unreachable");
+        // An invalid URL is refused and the file is left as it was.
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_web_settings",
+                &json!({"searchUrl": "ftp://x"}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap(),
+            file
+        );
+        // Clearing turns web_search off.
+        let cleared = call(&dir, "update_web_settings", json!({"searchUrl": ""}));
+        assert_eq!(cleared["search_url"], Value::Null);
+    })
+    .await
+    .unwrap();
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    let watcher = tokio::task::spawn_blocking(move || {
+        call(
+            &dir,
+            "plugin_action",
+            json!({"action": "save", "scope": "global", "spec": {"name": "personal", "mcp": {"docs": {"url": "http://127.0.0.1:9/mcp"}}}}),
+        );
+        let opened = call(&dir, "open_mcp_config", json!({"open": false}));
+        assert_eq!(opened["state"], "open", "{opened}");
+        assert_eq!(opened["servers"], 1);
+        let path = std::path::PathBuf::from(opened["path"].as_str().unwrap());
+        let copy = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            copy.contains("\"personal/docs\"") && copy.starts_with("// "),
+            "{copy}"
+        );
+        // The standard mcpServers shape (Claude Desktop, Claude Code, Cursor), no internals.
+        let parsed = themis_core::configuration::parse_jsonc(&copy).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["personal/docs"],
+            json!({"type": "http", "url": "http://127.0.0.1:9/mcp"})
+        );
+        assert!(
+            !copy.contains("bearer_env") && !copy.contains("\"enabled\""),
+            "{copy}"
+        );
+        // Saving the copy applies it: one server changed, one added (with a comment kept).
+        let edited = copy.replace("http://127.0.0.1:9/mcp", "http://127.0.0.1:10/mcp").replace(
+            "\"personal/docs\": {",
+            "\"personal/notes\": { \"url\": \"http://127.0.0.1:11/mcp\" }, // new\n    \"personal/docs\": {",
+        );
+        std::fs::write(&path, &edited).unwrap();
+        let status = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(status["state"], "applied", "{status}");
+        assert_eq!(status["changed"], json!(["personal"]));
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        let personal = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["spec"]["name"] == "personal")
+            .unwrap();
+        assert_eq!(
+            personal["spec"]["mcp"]["docs"]["url"],
+            "http://127.0.0.1:10/mcp"
+        );
+        assert_eq!(
+            personal["spec"]["mcp"]["notes"]["url"],
+            "http://127.0.0.1:11/mcp"
+        );
+        // A local server in the standard shape: its env reference round-trips.
+        let copy = std::fs::read_to_string(&path).unwrap();
+        let with_local = copy.replacen(
+            "\"mcpServers\": {",
+            "\"mcpServers\": {\n    \"personal/files\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"/tmp\"], \"env\": { \"API_KEY\": \"${FILES_KEY}\" } },",
+            1,
+        );
+        std::fs::write(&path, &with_local).unwrap();
+        let local = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(local["state"], "applied", "{local}");
+        let reopened = call(&dir, "open_mcp_config", json!({"open": false}));
+        assert_eq!(reopened["servers"], 3);
+        let copy =
+            themis_core::configuration::parse_jsonc(&std::fs::read_to_string(&path).unwrap())
+                .unwrap();
+        assert_eq!(
+            copy["mcpServers"]["personal/files"],
+            json!({"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"], "env": {"API_KEY": "${FILES_KEY}"}})
+        );
+        // A literal credential is refused, as for any import.
+        let literal = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("${FILES_KEY}", "sk-literal");
+        std::fs::write(&path, literal).unwrap();
+        let refused = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(refused["state"], "invalid", "{refused}");
+        // A broken file names its line and changes nothing.
+        std::fs::write(
+            &path,
+            "{\n  \"mcpServers\": {\n    \"personal/docs\": { \"url\": }\n  }\n}\n",
+        )
+        .unwrap();
+        let broken = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(broken["state"], "invalid", "{broken}");
+        assert_eq!(broken["line"], 3);
+        // A name outside your personal integrations is refused.
+        std::fs::write(
+            &path,
+            "{\"mcpServers\": {\"someone/else\": {\"url\": \"http://127.0.0.1:12/mcp\"}}}",
+        )
+        .unwrap();
+        assert!(call(&dir, "apply_mcp_config", json!({}))["message"]
+            .as_str()
+            .unwrap()
+            .contains("not one of your personal integrations"));
+        // A change made elsewhere since the copy was taken is a conflict, not overwritten.
+        let reopened = call(&dir, "open_mcp_config", json!({"open": false}));
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        let revision = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["spec"]["name"] == "personal")
+            .unwrap()["revision"]
+            .clone();
+        call(
+            &dir,
+            "plugin_action",
+            json!({"action": "save", "scope": "global", "expectedRevision": revision, "spec": {"name": "personal", "mcp": {"docs": {"url": "http://127.0.0.1:13/mcp"}}}}),
+        );
+        std::fs::write(&path, fresh.replace("127.0.0.1:10", "127.0.0.1:14")).unwrap();
+        let conflict = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(conflict["state"], "conflict", "{conflict} {reopened}");
+        // The watcher applies a save by itself.
+        let watched = call(&dir, "open_mcp_config", json!({"open": false}));
+        let copy = std::fs::read_to_string(&path).unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+        std::fs::write(&path, copy.replace("127.0.0.1:13", "127.0.0.1:15")).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let status = call(&dir, "mcp_config_status", json!({}));
+            if status["state"] == "applied" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "not applied: {status} {watched}"
+            );
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        let personal = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["spec"]["name"] == "personal")
+            .unwrap();
+        assert_eq!(
+            personal["spec"]["mcp"]["docs"]["url"],
+            "http://127.0.0.1:15/mcp"
+        );
+    });
+    watcher.await.unwrap();
     task.abort();
 }

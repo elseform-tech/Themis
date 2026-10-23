@@ -299,7 +299,13 @@ impl AppState {
                     Err(error) => {
                         // Transport errors may contain remote URLs, arguments or server
                         // responses. Only expose fixed, actionable failure categories.
-                        let reason = match error.to_string().as_str() {
+                        let text = error.to_string();
+                        let missing = format!("{error:#}").contains("MCP program not found")
+                            || text.starts_with("MCP process could not start: ");
+                        let reason = match text.as_str() {
+                            _ if missing => {
+                                "server process could not start: its program was not found"
+                            }
                             "Could not start MCP server"
                             | "MCP process could not start. Check the saved command." => {
                                 "server process could not start"
@@ -371,6 +377,7 @@ impl AppState {
                 state
                     .update_user_browser_config(|browser| {
                         super::browser::allow_site(browser, &site, permission);
+                        Ok(())
                     })
                     .map(|_| ())
             })

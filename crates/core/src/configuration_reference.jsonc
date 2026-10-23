@@ -1,0 +1,137 @@
+// Themis runtime.jsonc: every setting, its allowed values and its default.
+//
+// This is a reference, not your settings: Themis rewrites this example file and never reads
+// it. Your settings live in runtime.jsonc next to it; copy only the lines you want to change
+// (everything you leave out keeps the default shown here). Changes apply from each chat's next
+// message. A project's .themis/config.jsonc may only make things stricter.
+//
+// Format: JSON with // comments and trailing commas. Lists (arrays) replace the default list
+// instead of adding to it.
+{
+  "schema_version": 1,
+
+  // ─── APPROVAL ─────────────────────────────────────────────────────────────────────────
+  // Used in Custom mode (each chat's shield in the composer). YOLO asks nothing, but the
+  // sandbox and Settings › Browser blocks still apply.
+  "approval": {
+    // When no rule matches: "allow" (run), "ask" (show the approval prompt) or "deny".
+    "default": "ask",
+    // Checked top to bottom; the first rule that matches decides. At most 256 rules.
+    // Each rule:
+    //   "tool"    which tool: "*" for every tool, an exact name, or a prefix ending in *.
+    //             Common names: "shell", "shell_unsandboxed", "git", "read_file",
+    //             "write_file", "apply_patch", "fetch_url", "web_search", "browser_*",
+    //             "mcp_*" (all MCP tools) or "mcp_<server>_<tool>".
+    //   "action"  "allow", "ask" or "deny".
+    //   "risk"    optional; only actions of this kind: "read", "write", "execute",
+    //             "network" or "destructive" (force push, recursive delete, ...).
+    //   "command" optional, for "shell" (and "shell_unsandboxed") only: the command must
+    //             start with these words, e.g. ["cargo", "test"]. With a web or browser tool
+    //             it names one site instead, e.g. ["github.com"]. An allow rule never covers
+    //             destructive forms unless it says "risk": "destructive".
+    // Writing "rules" replaces this built-in list, so keep the read rule if you want reads
+    // to run without asking.
+    "rules": [
+      { "tool": "*", "risk": "read", "action": "allow" },
+    ],
+  },
+
+  // ─── SANDBOX ──────────────────────────────────────────────────────────────────────────
+  // Confines commands the agent runs (shell, background tasks, git, checks) in Custom and
+  // YOLO alike. Your secret folders (~/.ssh, ~/.aws, ...) are never readable inside it.
+  "sandbox": {
+    // true or false. Only this file can turn it off.
+    "enabled": true,
+    // "auto" (best for this system), "seatbelt" (macOS), "bubblewrap" or "landlock" (Linux).
+    // A named backend that is missing blocks commands; "auto" never does.
+    "backend": "auto",
+    // "allow" or "block" network access for commands.
+    "network": "allow",
+    // Extra folders commands may write to, absolute or starting with ~/ (at most 32). The
+    // project and temporary folders are always writable.
+    "writable_paths": [],
+    // macOS: true lets commands use the Keychain (e.g. git's HTTPS credential helper).
+    "allow_keychain": false,
+  },
+
+  // ─── BUILT-IN BROWSER (also in Settings › Browser) ────────────────────────────────────
+  "browser": {
+    // false removes every browser tool.
+    "enabled": true,
+    // Absolute path to Chrome, Chromium, Edge or Brave; leave out to find one automatically.
+    // "executable": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    // "Enable full CDP access": false offers no debugging (DevTools) tool at all.
+    "developer_mode": true,
+    // What the agent may do on a site: each "allow" (no prompt), "ask" or "block" (refused
+    // in every mode). Local apps (localhost, *.localhost, 127.0.0.1) are always allowed.
+    "permissions": { "browsing": "allow", "downloads": "allow", "debugging": "block" },
+    // Per-site values; a site covers its subdomains and the most specific one wins. Leave a
+    // permission out to use the default above. At most 500.
+    "site_exceptions": [
+      { "site": "paypal.com", "browsing": "block" },
+      { "site": "stripe.com", "browsing": "block" },
+      { "site": "wise.com", "browsing": "block" },
+      { "site": "revolut.com", "browsing": "block" },
+      { "site": "accounts.google.com", "browsing": "block" },
+      { "site": "login.microsoftonline.com", "browsing": "block" },
+      { "site": "appleid.apple.com", "browsing": "block" },
+      { "site": "id.me", "browsing": "block" },
+      { "site": "login.gov", "browsing": "block" },
+    ],
+    // true shows cookie values, auth headers and token-like values to the agent's
+    // debugging tool (httpOnly cookies never).
+    "show_secrets": false,
+    // Absolute folder for downloads; leave out for the system Downloads folder.
+    // "downloads_directory": "/Users/you/Downloads",
+    // Open Workspace on the Browser tab when the agent starts browsing.
+    "open_workspace": true,
+  },
+
+  // ─── WEB SEARCH (also in Settings › Web) ──────────────────────────────────────────────
+  "web": {
+    // Your SearXNG server with JSON output on; leave out and web_search is not offered.
+    // fetch_url (reading pages) needs no server.
+    // "search_url": "http://127.0.0.1:8888",
+  },
+
+  // ─── SKILLS AND INSTRUCTIONS ──────────────────────────────────────────────────────────
+  // Where a project's skills are found (relative to the project, at most 32). Your own
+  // skills in ~/.agents/skills, ~/.codex/skills and ~/.claude/skills are always found.
+  "skills": { "paths": [".agents/skills", ".codex/skills", ".claude/skills"] },
+  // Project files whose text the agent always reads, e.g. ["AGENTS.md"] (64 KiB in all).
+  // They guide; they never grant permissions.
+  "instructions": [],
+
+  // ─── RUN LIMITS (leave out to use Settings › Advanced) ────────────────────────────────
+  // "context_token_budget": 200000,   // 2,000–256,000 tokens of working context
+  // "recent_messages": 20,            // 2–200 earlier messages sent with each request
+  // "total_turns": 200,               // 1–2,000 steps per reply
+
+  // ─── LOGS ─────────────────────────────────────────────────────────────────────────────
+  // Diagnostics in the app-data logs folder; never prompts, tool payloads or secrets.
+  "logging": {
+    // "debug", "info", "warn" or "error".
+    "level": "info",
+    // Context accounting: "off", "summary" or "detailed".
+    "context_metrics": "summary",
+  },
+
+  // ─── LONG CHATS (context checkpoints and attached documents) ─────────────────────────
+  // Rarely needed; see docs/configuration.md for how each one is used.
+  "compaction": {
+    "timeout_seconds": 900,                  // 1–1,800: one checkpoint or document job
+    "document_batch_timeout_seconds": 3600,  // 1–21,600: all attachments of one message
+    "request_timeout_seconds": 300,          // 1–300: one summary request
+    "rate_limit_backoff_seconds": 10,        // 1–300: first wait after HTTP 429
+    "retry_limit": 2,                        // 0–2 retries per failed step
+    "maintenance_threshold_ratio": 0.83,     // 0.50–0.95 of the context before tidying
+    "semantic_threshold_ratio": 0.93,        // above that, at most 0.97: summarize
+    "target_headroom_interactions": 6,       // 1–20 steps of room kept free
+    "max_stages": 32,                        // 1–128 stages for one document
+    "summary_max_tokens": 8192,              // 256–16,384 summary output
+    "section_max_tokens": 4096,              // 256–16,384 (kept for older files)
+    "document_context_token_budget": 200000, // 24,000–1,000,000 document input
+    // "summary_model": "gpt-5.6-luna",      // or "longcat-2.5-preview-free", "gpt-6-luna"
+    // "prompt_file": "my-summary-guidance.md", // extra summary guidance, 32 KiB at most
+  },
+}

@@ -590,6 +590,10 @@ export interface Settings {
   automations_enabled: boolean;
   completion_sound: boolean;
   completion_haptic: boolean;
+  /** Editor that opens runtime.jsonc ("" = system text editor). */
+  config_editor?: string;
+  /** The approval mode a new chat starts in. */
+  default_approval_mode?: "custom" | "yolo";
   onboarded: boolean;
 }
 
@@ -638,6 +642,8 @@ export interface BrowserSettings {
 
 export interface BrowserSettingsView {
   settings: BrowserSettings;
+  /** What a save must name; a save is refused when runtime.jsonc changed since. */
+  revision: string;
   browsers: string[];
   default_downloads_directory: string;
   starter_sites: string[];

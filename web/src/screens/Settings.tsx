@@ -22,8 +22,15 @@ import "./Settings.css";
 import { AppearanceSettings } from "./Appearance";
 import { PermissionsSettings } from "./PermissionsView";
 import { BrowserSettingsSection } from "./BrowserSettings";
+import { WebSettingsSection } from "./WebSettings";
+import { SidebarIcon } from "./Sidebar";
+import { RefreshIcon, ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 
 const SECRET_PROVIDERS: Array<keyof SecretStatus> = ["go"];
+const SECTIONS = ["General", "Appearance", "Models", "Permissions", "Browser", "Web", "Advanced"];
+/** Backend field names in validation messages, as the labels the person sees. */
+const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_budget", "Context tokens"], ["context_messages", "Recent messages"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
+type NumberSetting = "max_total_turns" | "context_token_budget" | "context_messages" | "concurrency_limit" | "approval_timeout_seconds";
 
 /** Pure rendering of one update status (null = never checked). */
 export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
@@ -86,13 +93,11 @@ export function SettingsScreen() {
   const [form, setForm] = useState<Settings>(state.settings);
   const [models, setModels] = useState<GoModel[]>([]);
   const [connecting, setConnecting] = useState(false);
-  const [connection, setConnection] = useState("");
   const [modelRefresh, setModelRefresh] = useState(0);
   const [saving, setSaving] = useState(false);
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [keyBusy, setKeyBusy] = useState<string | null>(null);
   const [section, setSection] = useState("General");
-  const [saved, setSaved] = useState("");
   const [error, setError] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
@@ -104,9 +109,9 @@ export function SettingsScreen() {
   useEffect(() => {
     if (section !== "Models" || !state.secretStatus.go) return;
     let active = true;
-    setConnecting(true); setConnection(""); setError(""); setModels([]);
+    setConnecting(true); setError(""); setModels([]);
     void listGoModels().then(models => {
-      if (active) { setModels(models); setConnection(`${models.length} models available`); }
+      if (active) setModels(models);
     }).catch((error: unknown) => {
       if (active) setError(describeError(error));
     }).finally(() => {
@@ -117,14 +122,13 @@ export function SettingsScreen() {
 
   async function save(patch: Partial<Settings>) {
     if (saving) return false;
-    setSaving(true); setError(""); setSaved("");
+    setSaving(true); setError("");
     try {
       const settings = await updateSettings(patch);
       dispatch({ type: "settings/patched", settings });
-      setSaved("Saved");
       return true;
     } catch (error: unknown) {
-      setError(describeError(error));
+      setError(FIELD_LABELS.reduce((text, [field, label]) => text.replace(field, label), describeError(error)));
       setForm(state.settings);
       return false;
     } finally { setSaving(false); }
@@ -188,51 +192,59 @@ export function SettingsScreen() {
     );
   }
 
+  const number = (key: NumberSetting, label: string, min: number, max: number) => <label className="themis-settings-control">{label}
+    <input className="themis-settings-number" aria-label={label} type="number" min={min} max={max} value={form[key]} onChange={event => setForm(f => ({ ...f, [key]: Number(event.target.value) }))} onBlur={() => { if (form[key] !== state.settings[key]) void save({ [key]: form[key] }); }} />
+  </label>;
+  const logo = <span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span>;
+
   return (
     <div className="themis-settings">
-      <div className="themis-settings-heading"><h2 className="themis-settings-title">Settings</h2><span role="status" className="themis-settings-hint">{saving ? "Saving…" : saved}</span></div>
-      <nav className="themis-settings-tabs" aria-label="Settings sections">{["General", "Appearance", "Models", "Permissions", "Browser", "Advanced"].map(label => <button key={label} aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setSaved(""); }}>{label}</button>)}</nav>
-      {error && <p role="alert" className="themis-form-error">{error}</p>}
+      <nav className="themis-settings-nav" aria-label="Settings sections">
+        <button type="button" className="themis-settings-back" onClick={() => dispatch({ type: "ui/view", view: "thread" })}><SidebarIcon name="back" />Back to app</button>
+        {SECTIONS.map(label => <button key={label} type="button" aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setError(""); }}><SectionIcon section={label} />{label}</button>)}
+      </nav>
+      <div className="themis-settings-pane">
       <fieldset disabled={saving} className="themis-settings-fields">
-      {section === "General" && <>
-        <section className="themis-settings-section" aria-label="Projects"><h3 className="themis-settings-subtitle">Projects</h3>
-          <div className="themis-settings-control"><span>Projects folder</span><span className="themis-settings-root" title={state.settings.projects_directory}>{state.settings.projects_directory}</span></div>
-        </section>
-        <section className="themis-settings-section" aria-label="Automations"><h3 className="themis-settings-subtitle">Automations</h3><label className="themis-settings-check">Scheduled runs<Switch checked={form.automations_enabled} onChange={event => void save({ automations_enabled: event.target.checked })} /></label></section>
-        <section className="themis-settings-section" aria-label="Updates"><h3 className="themis-settings-subtitle">Updates</h3><div className="themis-settings-control"><span>Version</span><button type="button" className="themis-text-action" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check for updates"}</button></div><UpdateStatusView status={update} /></section>
-      </>}
+      <h2 className="themis-settings-pane-title">{section}</h2>
+      {error && <p role="alert" className="themis-form-error">{error}</p>}
+      {section === "General" && <SettingsGroup>
+        <div className="themis-settings-control"><span>Projects folder</span><span className="themis-settings-root" title={state.settings.projects_directory}>{state.settings.projects_directory}</span></div>
+        <label className="themis-settings-check">Scheduled runs<Switch checked={form.automations_enabled} onChange={event => void save({ automations_enabled: event.target.checked })} /></label>
+        <div className="themis-settings-control"><span>Updates</span><button type="button" className="themis-text-action" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check for updates"}</button></div>
+        {update && <UpdateStatusView status={update} />}
+      </SettingsGroup>}
       {section === "Appearance" && <>
         <AppearanceSettings settings={state.settings} save={save} />
-        <section className="themis-settings-section" aria-label="Completion feedback">
-          <h3 className="themis-settings-subtitle">Feedback</h3>
+        <SettingsGroup title="Feedback">
           <label className="themis-settings-check" title="Play a click when a response you started finishes">Sound when a reply finishes<Switch checked={form.completion_sound} onChange={event => void save({ completion_sound: event.target.checked })} /></label>
           {navigator.platform.startsWith("Mac") && <label className="themis-settings-check" title="Use trackpad feedback when available">Haptics<Switch checked={form.completion_haptic} onChange={event => void save({ completion_haptic: event.target.checked })} /></label>}
-        </section>
+        </SettingsGroup>
       </>}
       {section === "Models" && <>
-        <section className="themis-settings-section" aria-label="Model"><h3 className="themis-settings-subtitle">Model</h3>
-          <label className="themis-settings-control">New chats use<span className="themis-settings-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={models.some(model => model.id === form.default_model) ? form.default_model : ""} disabled={connecting || !state.secretStatus.go || models.length === 0} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>{connecting ? "Loading models…" : !state.secretStatus.go ? "Connect Go" : models.length === 0 ? "No models available" : models.some(model => model.id === form.default_model) ? "Choose a model" : `Unavailable: ${form.default_model}`}</option>{models.map(model => <option key={model.id} value={model.id} disabled={!!model.unavailable_reason} title={model.unavailable_reason ?? undefined}>{modelLabel(model)}</option>)}</select></span></label>
-          <div><Button variant="ghost" size="small" disabled={connecting || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button></div>{connection && <p role="status" className="themis-settings-hint">{connection}</p>}
-          <div><Button variant="ghost" size="small" onClick={() => void save({ default_provider: "go", default_model: DEFAULT_MODEL })}>Reset model</Button></div>
-        </section>
-        <section className="themis-settings-section" aria-label="Connections"><h3 className="themis-settings-subtitle">Connections</h3>
-          {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key"><div className="themis-settings-key-head"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><Badge tone={state.secretStatus[provider] ? "success" : "default"}>{state.secretStatus[provider] ? "Connected" : "Not connected"}</Badge></div>
-          <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`${provider} API key`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div>{provider === "go" && <p className="themis-settings-hint">Saved in macOS Keychain. An OPENCODE_KEY in your environment also works, and Forget key does not remove it.</p>}</details></div>)}
-        </section>
+        <SettingsGroup title="Default model" action={<span className="themis-settings-group-actions">
+          <SettingsIconButton label="Refresh models" disabled={connecting || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}><RefreshIcon /></SettingsIconButton>
+          <SettingsIconButton label="Reset model" onClick={() => void save({ default_provider: "go", default_model: DEFAULT_MODEL })}><ResetIcon /></SettingsIconButton>
+        </span>}>
+          <label className="themis-settings-control">New chats use<span className="themis-settings-model-picker"><select aria-label="Model" value={models.some(model => model.id === form.default_model) ? form.default_model : ""} disabled={connecting || !state.secretStatus.go || models.length === 0} onChange={event => void save({ default_model: event.target.value })}><option value="" disabled>{connecting ? "Loading models…" : !state.secretStatus.go ? "Connect Go" : models.length === 0 ? "No models available" : models.some(model => model.id === form.default_model) ? "Choose a model" : `Unavailable: ${form.default_model}`}</option>{models.map(model => <option key={model.id} value={model.id} disabled={!!model.unavailable_reason} title={model.unavailable_reason ?? undefined}>{modelLabel(model)}</option>)}</select></span></label>
+        </SettingsGroup>
+        <SettingsGroup title="Connections">
+          {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key">
+            <div className="themis-settings-control"><span className="themis-settings-key-head">{logo}</span><span className={`themis-settings-state is-${state.secretStatus[provider] ? "ok" : "off"}`} title="Saved in macOS Keychain. An OPENCODE_KEY in your environment also works.">{state.secretStatus[provider] ? "Connected" : "Not connected"}</span></div>
+            <details><summary>Manage key</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label="API key" type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save key</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Forget key</Button></div></details>
+          </div>)}
+        </SettingsGroup>
       </>}
-      {section === "Permissions" && <PermissionsSettings />}
+      {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}
       {section === "Browser" && <BrowserSettingsSection />}
-      {section === "Advanced" && <section className="themis-settings-section" aria-label="Advanced settings">
-        <h3 className="themis-settings-subtitle">Run limits</h3>
-        <Input id="themis-total-turns" label="Turn limit" type="number" min={1} max={2000} value={form.max_total_turns} onChange={event => setForm(f => ({ ...f, max_total_turns: Number(event.target.value) }))} onBlur={() => { if (form.max_total_turns !== state.settings.max_total_turns) void save({ max_total_turns: form.max_total_turns }); }} />
-        <Input id="themis-context-budget" label="Context tokens" type="number" min={2000} max={256000} value={form.context_token_budget} onChange={event => setForm(f => ({ ...f, context_token_budget: Number(event.target.value) }))} onBlur={() => { if (form.context_token_budget !== state.settings.context_token_budget) void save({ context_token_budget: form.context_token_budget }); }} />
-        <Input id="themis-context-messages" label="Recent messages" type="number" min={1} max={100} value={form.context_messages} onChange={event => setForm(f => ({ ...f, context_messages: Number(event.target.value) }))} onBlur={() => { if (form.context_messages !== state.settings.context_messages) void save({ context_messages: form.context_messages }); }} />
-        <Input id="themis-concurrency" label="Parallel runs" type="number" min={1} max={16} value={form.concurrency_limit} onChange={event => setForm(f => ({ ...f, concurrency_limit: Number(event.target.value) }))} onBlur={() => { if (form.concurrency_limit !== state.settings.concurrency_limit) void save({ concurrency_limit: form.concurrency_limit }); }} />
-        <Input id="themis-approval-timeout" label="Approval timeout (seconds)" type="number" min={30} max={600} value={form.approval_timeout_seconds} onChange={event => setForm(f => ({ ...f, approval_timeout_seconds: Number(event.target.value) }))} onBlur={() => { if (form.approval_timeout_seconds !== state.settings.approval_timeout_seconds) void save({ approval_timeout_seconds: form.approval_timeout_seconds }); }} />
-        <p className="themis-settings-hint">Limits apply to new runs.</p>
-        <div><Button variant="ghost" size="small" onClick={() => void save({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3, approval_timeout_seconds: 300 })}>Reset limits</Button></div>
-      </section>}
+      {section === "Web" && <WebSettingsSection />}
+      {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
+        {number("max_total_turns", "Turn limit", 1, 2000)}
+        {number("context_token_budget", "Context tokens", 2000, 256000)}
+        {number("context_messages", "Recent messages", 1, 100)}
+        {number("concurrency_limit", "Parallel runs", 1, 16)}
+      </SettingsGroup>}
       </fieldset>
+      </div>
     </div>
   );
 }

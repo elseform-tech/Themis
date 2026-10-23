@@ -57,7 +57,8 @@ export function listPromptSkills(projectRoot?: string | null): Promise<PromptSki
 export function pluginAction<T>(args: Record<string, unknown>): Promise<T> { return invoke("plugin_action", args); }
 
 /** Read-only effective permissions (rules, sandbox, config files, chat grants), re-read on every call. */
-export function openRuntimeConfig(): Promise<void> { return invoke("open_runtime_config"); }
+export function openRuntimeConfig(editor?: string): Promise<void> { return invoke("open_runtime_config", editor === undefined ? {} : { editor }); }
+export function listEditors(): Promise<{ editors: Array<{ id: string; name: string }> }> { return invoke("list_editors"); }
 export function getEffectivePermissions(projectRoot: string | null, threadId: string | null): Promise<EffectivePermissions> { return invoke("get_effective_permissions", { projectRoot, threadId }); }
 
 /** Themis's own CPU and memory use (app, built-in browser, tools), sampled every 5 s; null before the first sample. */
@@ -333,8 +334,10 @@ export function getBrowserSettings(): Promise<BrowserSettingsView> {
   return invoke('get_browser_settings');
 }
 
-export function updateBrowserSettings(settings: BrowserSettings): Promise<BrowserSettings> {
-  return invoke('update_browser_settings', { settings });
+/** Saves only `changes` (a cleared field as null), refused when the file changed since `revision`. */
+export function updateBrowserSettings(changes: Partial<BrowserSettings>, revision: string): Promise<{ settings: BrowserSettings; revision: string }> {
+  const sent = Object.fromEntries(Object.entries(changes).map(([key, value]) => [key, value === undefined ? null : value]));
+  return invoke('update_browser_settings', { changes: sent, revision });
 }
 
 export function browserHistory(projectRoot: string | null, query: string): Promise<{ entries: BrowserHistoryEntry[] }> {
@@ -415,3 +418,27 @@ export function onBackendResync(handler: () => void): Promise<UnlistenFn> {
 export function getPendingApprovals(): Promise<ApprovalRequest[]> {
   return invoke('get_pending_approvals');
 }
+
+/** Settings › Web: the SearXNG instance web_search uses (user runtime.jsonc). */
+export function getWebSettings(): Promise<{ search_url: string | null }> { return invoke("get_web_settings"); }
+export function updateWebSettings(searchUrl: string): Promise<{ search_url: string | null }> { return invoke("update_web_settings", { searchUrl }); }
+export interface SearchServerStatus {
+  state: "working" | "degraded" | "json_off" | "rate_limited" | "unreachable" | "invalid" | "error";
+  results?: number;
+  failed_engines?: Array<{ engine: string; reason: string }>;
+  message?: string;
+}
+/** One test search against `url`, or the saved server when omitted. */
+export function checkSearchServer(url?: string): Promise<SearchServerStatus> { return invoke("check_search_server", url ? { url } : {}); }
+
+/** Integrations › MCP: the state of the mcp.json copy being edited. */
+export interface McpConfigStatus {
+  state: "closed" | "open" | "applied" | "invalid" | "conflict" | "error";
+  changed?: string[];
+  line?: number;
+  message?: string;
+  servers?: number;
+  path?: string;
+}
+export function openMcpConfig(editor?: string): Promise<McpConfigStatus> { return invoke("open_mcp_config", editor ? { editor } : {}); }
+export function mcpConfigStatus(): Promise<McpConfigStatus> { return invoke("mcp_config_status"); }

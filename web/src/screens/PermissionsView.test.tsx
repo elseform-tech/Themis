@@ -1,16 +1,18 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { EffectivePermissions } from "../lib/types";
 
 const getEffectivePermissions = vi.fn();
 const openRuntimeConfig = vi.fn();
+const listEditors = vi.fn();
 vi.mock("../lib/tauri", () => ({
   getEffectivePermissions: (...args: unknown[]) => getEffectivePermissions(...args),
-  openRuntimeConfig: () => openRuntimeConfig(),
+  openRuntimeConfig: (...args: unknown[]) => openRuntimeConfig(...args),
+  listEditors: () => listEditors(),
 }));
 
-import { PermissionsSettings, permissionProblems } from "./PermissionsView";
+import { PermissionsSettings, fileState, permissionProblems } from "./PermissionsView";
 
 const SANDBOX = {
   enabled: true, state: "on" as const, backend: "Seatbelt", summary: "Seatbelt, chosen automatically for macOS", reason: "chosen automatically for macOS",
@@ -26,7 +28,7 @@ const VIEW: EffectivePermissions = {
   chat: null,
 };
 
-afterEach(() => { cleanup(); getEffectivePermissions.mockReset(); openRuntimeConfig.mockReset(); });
+afterEach(() => { cleanup(); getEffectivePermissions.mockReset(); openRuntimeConfig.mockReset(); listEditors.mockReset(); });
 
 async function show(view: EffectivePermissions) {
   getEffectivePermissions.mockResolvedValue(view);
@@ -43,6 +45,52 @@ describe("PermissionsSettings", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     // No rules, sandbox details, project or chat sections.
     expect(screen.queryByText(/Seatbelt|Rules|this chat|this project/)).toBeNull();
+  });
+
+  it("says whether the file was read", async () => {
+    await show(VIEW);
+    expect(screen.getByText("Loaded")).toBeInTheDocument();
+    expect(fileState({ ...VIEW, files: [{ ...VIEW.files[0], status: "missing" }] })).toEqual({ tone: "off", label: "Not created · defaults" });
+    expect(fileState({ ...VIEW, files: [{ ...VIEW.files[0], status: "invalid", error: { message: "bad", line: 4, column: 1 } }] })).toEqual({ tone: "bad", label: "Invalid · line 4" });
+    expect(fileState({ ...VIEW, validation_error: "runtime configuration: bad" })).toEqual({ tone: "bad", label: "Invalid" });
+  });
+
+  it("offers the installed editors and opens the file with the chosen one", async () => {
+    listEditors.mockResolvedValue({ editors: [{ id: "", name: "Text editor" }, { id: "zed", name: "Zed" }] });
+    openRuntimeConfig.mockResolvedValue(undefined);
+    const onEditor = vi.fn();
+    getEffectivePermissions.mockResolvedValue(VIEW);
+    render(<PermissionsSettings editor="zed" onEditor={onEditor} />);
+    await act(async () => {});
+    const select = screen.getByRole("combobox", { name: "Open with" });
+    expect(select).toHaveValue("zed");
+    fireEvent.change(select, { target: { value: "" } });
+    expect(onEditor).toHaveBeenCalledWith("");
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect(openRuntimeConfig).toHaveBeenCalledWith("zed");
+  });
+
+  it("lists the Custom rules read-only, ending with the default", async () => {
+    const rules = [{ tool: "run_command", action: "deny" as const, command: ["git", "push"], source: "user" as const }, ...VIEW.approval!.rules];
+    await show({ ...VIEW, approval: { ...VIEW.approval!, rules } });
+    const group = screen.getByRole("region", { name: "Custom rules" });
+    expect(group).toHaveTextContent("run_commandgit pushDeny");
+    expect(group).toHaveTextContent("*read actionsBuilt-inAllow");
+    expect(group).toHaveTextContent("Anything elseAsk");
+    expect(within(group).queryByRole("button")).toBeNull();
+  });
+
+  it("sets the mode new chats start in and the approval timeout", async () => {
+    const onPrefs = vi.fn();
+    getEffectivePermissions.mockResolvedValue(VIEW);
+    render(<PermissionsSettings prefs={{ default_approval_mode: "custom", approval_timeout_seconds: 300 }} onPrefs={onPrefs} />);
+    await act(async () => {});
+    fireEvent.change(screen.getByRole("combobox", { name: "New chats start in" }), { target: { value: "yolo" } });
+    expect(onPrefs).toHaveBeenCalledWith({ default_approval_mode: "yolo" });
+    const timeout = screen.getByRole("spinbutton", { name: "Approval timeout (seconds)" });
+    fireEvent.change(timeout, { target: { value: "120" } });
+    fireEvent.blur(timeout);
+    expect(onPrefs).toHaveBeenCalledWith({ approval_timeout_seconds: 120 });
   });
 
   it("opens the global file", async () => {

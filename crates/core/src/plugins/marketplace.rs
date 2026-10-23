@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportComponent {
@@ -1265,6 +1265,44 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
     }
     Ok(server)
 }
+/// One connection from the standard `mcpServers` shape used by Claude Desktop, Claude Code
+/// and Cursor: `{command, args, env}` for local servers, `{type: "http", url, headers}` for
+/// remote ones. Credentials must be `${VARIABLE}` references, as for any import.
+pub fn mcp_server_from_standard(name: &str, raw: &Value) -> anyhow::Result<McpServer> {
+    import_mcp_server(name, raw, false)
+}
+
+/// A connection in the standard `mcpServers` shape (the reverse of
+/// [`mcp_server_from_standard`]); whether it is enabled is left out.
+pub fn mcp_server_to_standard(server: &McpServer) -> Value {
+    let mut entry = serde_json::Map::new();
+    if let Some(command) = &server.command {
+        entry.insert("command".into(), json!(command));
+        if !server.args.is_empty() {
+            entry.insert("args".into(), json!(server.args));
+        }
+    }
+    if let Some(url) = &server.url {
+        entry.insert("type".into(), json!("http"));
+        entry.insert("url".into(), json!(url));
+        if let Some(bearer) = &server.bearer_env {
+            entry.insert(
+                "headers".into(),
+                json!({"Authorization": format!("Bearer ${{{bearer}}}")}),
+            );
+        }
+    }
+    if !server.env.is_empty() {
+        let env: serde_json::Map<String, Value> = server
+            .env
+            .iter()
+            .map(|(key, variable)| (key.clone(), json!(format!("${{{variable}}}"))))
+            .collect();
+        entry.insert("env".into(), Value::Object(env));
+    }
+    Value::Object(entry)
+}
+
 fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
     let events = value
         .get("hooks")

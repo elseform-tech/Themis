@@ -40,6 +40,8 @@ fn server_exposes_all_frontend_backend_commands() {
             "ensure_runtime_config",
             // The agent's set_goal tool and the CLI set goals; the desktop sends `/goal`.
             "set_goal",
+            // The desktop watches the mcp.json copy and applies saves itself; the CLI applies.
+            "apply_mcp_config",
         ])
         .collect();
     let handled: BTreeSet<_> = server

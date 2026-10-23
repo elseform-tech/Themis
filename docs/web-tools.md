@@ -25,7 +25,9 @@ carries `"untrusted": true`: page text is data, never instructions or permission
 ## `web_search`
 
 Asks your own [SearXNG](https://docs.searxng.org/) instance, a metasearch engine
-that queries Google, Bing, Brave, DuckDuckGo and others. Set it in the user
+that queries Google, Bing, Brave, DuckDuckGo and others. Set it in **Settings › Web**,
+which also runs a test search and shows whether it answers (Working, Some engines failing
+with each engine's reason, JSON output off, Not reachable, Rate limited), or in the user
 `runtime.jsonc` (a project cannot):
 
 ```jsonc
@@ -161,6 +163,12 @@ thread header shows a red pill with the time on every Workspace tab and with Wor
 closed; the pill opens the Browser tab.
 
 ## Permissions (Settings › Browser)
+
+These settings live in the `browser` block of your `runtime.jsonc`, which you may also edit
+by hand. Settings › Browser saves only the field you change and refuses a save when the file
+changed since the page loaded (showing the latest instead), so it never overwrites a hand
+edit; the page also re-reads the file when you return to the window. Changes apply from each
+chat's next message, existing chats included; a reply already running keeps its settings.
 
 What the agent may do in its browser is set in **Settings › Browser**, modelled on OpenAI
 Codex's built-in browser. Three permissions each have a default and per-site exceptions,

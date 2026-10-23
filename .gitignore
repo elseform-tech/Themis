@@ -18,4 +18,6 @@ __pycache__/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Built by scripts/bundle-searxng.mjs, shipped as a Tauri resource
 crates/desktop/searxng-runtime/

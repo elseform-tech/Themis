@@ -13,6 +13,8 @@ fn main() {
         }
         return;
     }
+    // Opened from Finder or the Dock: find the programs MCP servers and hooks use.
+    themis_desktop::adopt_login_shell_path();
     let mut args = std::env::args_os().skip(1);
     if args.next().as_deref() == Some(std::ffi::OsStr::new("--themis-server")) {
         let Some(data_dir) = args.next() else {

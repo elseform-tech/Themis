@@ -37,7 +37,7 @@ This applies to every screen, not just Settings. Before adding an element, ask w
 
 ## Layout and containers
 
-- Use whitespace, alignment, typography, and surface tone for hierarchy before adding borders or boxes.
+- Use whitespace, alignment, typography, and surface tone for hierarchy before adding borders or boxes. Settings is the exception: its groups of rows sit in quiet rounded containers so each section reads as a unit.
 - A container must group a meaningful unit. Avoid nested cards, boxed headings, decorative panels, and a separate box for every sentence or status.
 - Tiles are useful for browsing comparable integrations: recognizable icon, name, concise purpose, compatibility, and direct action. Keep repeated fields aligned.
 - Use lists for compact sequential content such as a plugin's skills. Do not turn each skill into a dashboard card.
