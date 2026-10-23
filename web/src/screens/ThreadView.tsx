@@ -277,7 +277,8 @@ export function ThreadView() {
       running={running}
       stopping={stopping}
       sendError={sendError ?? (skillsError ? `Skills unavailable: ${skillsError}` : undefined)}
-      secretConfigured={state.secretStatus.go}
+      // Until the status loads (a Keychain read can wait on a prompt), say nothing is missing.
+      secretConfigured={state.secretStatus.go || !state.secretStatusLoaded}
       keyRejected={state.goKeyCheck === "rejected" ? (state.settings.go_secret ?? "OPENCODE_KEY") : undefined}
       onDraftChange={setDraft}
       onSend={() => void send()}

@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { goUsable, initialState, reducer } from "./reducer";
 
 describe("OpenCode Go key check state", () => {
+  it("claims no missing key before the status has loaded", () => {
+    expect(initialState.secretStatusLoaded).toBe(false);
+    expect(reducer(initialState, { type: "secrets/loaded", status: { go: false } }).secretStatusLoaded).toBe(true);
+  });
+
   it("is usable only with a key that OpenCode has not rejected", () => {
     let state = reducer(initialState, { type: "secrets/loaded", status: { go: true } });
     expect(goUsable(state)).toBe(true);

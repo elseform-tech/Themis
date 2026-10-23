@@ -94,7 +94,7 @@ export function reduceCollectionActions(
     case "settings/patched":
       return { ...state, settings: action.settings, settingsLoaded: true };
     case "secrets/loaded":
-      return { ...state, secretStatus: action.status, goKeyCheck: action.status.go ? state.goKeyCheck : "missing" };
+      return { ...state, secretStatus: action.status, secretStatusLoaded: true, goKeyCheck: action.status.go ? state.goKeyCheck : "missing" };
     case "provider/checked":
       return { ...state, goKeyCheck: action.state };
     default:
