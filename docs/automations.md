@@ -34,7 +34,9 @@ falls inside a spring-forward gap, the occurrence moves to the first valid
 minute after that gap. An autumn repeated time runs at its earlier occurrence,
 once on that local day. If a time zone skips a whole date, that date is skipped.
 
-The local app server must be running for scheduled execution. On restart, a
+The local app server must be running for scheduled execution. The server the app
+starts quits with the app, so automations run while Themis is open, or while a server
+started with `themis serve` or `themis server start` is running. On restart, a
 persisted future occurrence stays unchanged; an overdue occurrence is deferred
 about one minute by the existing boot recovery policy. Missed repetitions are
 not replayed individually. Completion and failures select the next future
