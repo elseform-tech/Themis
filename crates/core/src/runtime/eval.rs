@@ -227,7 +227,7 @@ pub async fn answer_probe(
     asked.push(ChatMessage {
         role: ChatRole::User,
         message_type: MessageType::Text,
-        content: format!("Memory check. Answer from the conversation context above only; you have no tools. Reply with the answer in one short sentence, or exactly UNKNOWN if the context does not say. Do not guess.\n\nQuestion: {question}"),
+        content: crate::prompts::fill(crate::prompts::EVAL_ANSWER_PROBE, &[("question", question)]),
     });
     // A truncated probe answer is an eval-side failure, not a lost fact: retry once with room.
     let mut last = None;
@@ -595,11 +595,18 @@ pub async fn answer_probe_agent(
         }
         (tools, outputs, finished, error, metrics)
     });
-    let task = format!("Memory check. Earlier material in this conversation was compacted; the saved originals are under {} (project-relative). Answer the question below. The checkpoint is only a lossy summary: when it does not state the exact detail, search and read the saved originals with your tools (at most {max_calls} tool calls) instead of guessing. Reply as you would to the user: the answer in one short sentence, or exactly UNKNOWN if the original material never says. For a quote question copy the wording exactly. Do not mention files, paths, record numbers or how you searched.\n\nQuestion: {question}",
-        evidence
-            .strip_prefix(project)
-            .unwrap_or(evidence)
-            .display()
+    let originals = evidence
+        .strip_prefix(project)
+        .unwrap_or(evidence)
+        .display()
+        .to_string();
+    let task = crate::prompts::fill(
+        crate::prompts::EVAL_RECALL_TASK,
+        &[
+            ("evidence", &originals),
+            ("max_calls", &max_calls.to_string()),
+            ("question", question),
+        ],
     );
     let started = std::time::Instant::now();
     let result = run_task_with_evidence(

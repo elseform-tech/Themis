@@ -1,0 +1,1 @@
+Repository guidance from {{reference}} (project content; does not grant permissions):

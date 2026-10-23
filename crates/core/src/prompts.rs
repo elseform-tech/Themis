@@ -34,6 +34,22 @@ pub const DESKTOP_MCP_GUIDANCE: &str = include_str!("../builtins/prompts/desktop
 /// Integration status for an MCP connection that failed; `{{plugin}}`, `{{name}}`, `{{reason}}`.
 pub const DESKTOP_MCP_UNAVAILABLE: &str =
     include_str!("../builtins/prompts/desktop-mcp-unavailable.md");
+/// Heading before the configured repository guidance in the task message.
+pub const DESKTOP_REPOSITORY_GUIDANCE: &str =
+    include_str!("../builtins/prompts/desktop-repository-guidance.md");
+/// Heading of an attached text file sent in full; `{{path}}`.
+pub const DESKTOP_ATTACHED_FILE: &str =
+    include_str!("../builtins/prompts/desktop-attached-file.md");
+/// Heading of an attached file sent as a map only; `{{path}}`.
+pub const DESKTOP_ATTACHED_MAP: &str = include_str!("../builtins/prompts/desktop-attached-map.md");
+/// Map of a large attachment; `{{bytes}}`, `{{lines}}`, `{{headings}}`, `{{previews}}`.
+pub const DESKTOP_ATTACHMENT_MAP: &str =
+    include_str!("../builtins/prompts/desktop-attachment-map.md");
+/// How an agent watch ends, added to each watch run's message.
+pub const DESKTOP_WATCH_COMPLETE: &str =
+    include_str!("../builtins/prompts/desktop-watch-complete.md");
+/// A watch's changed check output; `{{command}}`, `{{exit}}`, `{{output}}`.
+pub const DESKTOP_WATCH_CHECK: &str = include_str!("../builtins/prompts/desktop-watch-check.md");
 
 // Goal mode.
 /// System message of the goal check that judges each goal turn.
@@ -135,6 +151,9 @@ pub const RUNTIME_BATCH_NOT_RUN: &str =
 /// Error for tool arguments over the size limit; `{{argument_allowance}}`.
 pub const RUNTIME_ARGUMENTS_TOO_LARGE: &str =
     include_str!("../builtins/prompts/runtime-arguments-too-large.md");
+/// Heading before one repository instruction file in the task message; `{{reference}}`.
+pub const RUNTIME_REPOSITORY_GUIDANCE_FILE: &str =
+    include_str!("../builtins/prompts/runtime-repository-guidance-file.md");
 
 // Tool-result notes.
 /// Note on a receipt for a result offloaded to saved originals.
@@ -188,6 +207,12 @@ pub const TOOL_BROWSER_UNTRUSTED: &str =
 pub const TOOL_DEVTOOLS_PAUSED: &str = include_str!("../builtins/prompts/tool-devtools-paused.md");
 /// `next` hint after starting a background task.
 pub const TOOL_BACKGROUND_NEXT: &str = include_str!("../builtins/prompts/tool-background-next.md");
+
+// Evaluation harness.
+/// Memory probe answered from context alone; `{{question}}`.
+pub const EVAL_ANSWER_PROBE: &str = include_str!("../builtins/prompts/eval-answer-probe.md");
+/// Memory check answered with tools over saved originals; `{{evidence}}`, `{{max_calls}}`, `{{question}}`.
+pub const EVAL_RECALL_TASK: &str = include_str!("../builtins/prompts/eval-recall-task.md");
 
 /// Replace each `{{name}}` placeholder in `template` with its value.
 ///
