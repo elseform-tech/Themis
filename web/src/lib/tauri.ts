@@ -1,6 +1,7 @@
 // Typed Tauri bridge client. All frontend code reaches the backend through
 // these functions — never raw invoke() with stringly-typed payloads elsewhere.
 import { convertFileSrc, invoke as tauriInvoke } from '@tauri-apps/api/core';
+import type { BrowserHistoryEntry, BrowserSettings, BrowserSettingsView } from "./types";
 import type { PromptSkill } from './prompt';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
@@ -56,7 +57,8 @@ export function listPromptSkills(projectRoot?: string | null): Promise<PromptSki
 export function pluginAction<T>(args: Record<string, unknown>): Promise<T> { return invoke("plugin_action", args); }
 
 /** Read-only effective permissions (rules, sandbox, config files, chat grants), re-read on every call. */
-export function openRuntimeConfig(): Promise<void> { return invoke("open_runtime_config"); }
+export function openRuntimeConfig(editor?: string): Promise<void> { return invoke("open_runtime_config", editor === undefined ? {} : { editor }); }
+export function listEditors(): Promise<{ editors: Array<{ id: string; name: string }> }> { return invoke("list_editors"); }
 export function getEffectivePermissions(projectRoot: string | null, threadId: string | null): Promise<EffectivePermissions> { return invoke("get_effective_permissions", { projectRoot, threadId }); }
 
 /** Themis's own CPU and memory use (app, built-in browser, tools), sampled every 5 s; null before the first sample. */
@@ -327,6 +329,29 @@ export function updateSettings(patch: Partial<Settings>): Promise<Settings> {
   return invoke('update_settings', { patch });
 }
 
+/** Settings › Browser, read from and saved to the user runtime.jsonc (`browser`). */
+export function getBrowserSettings(): Promise<BrowserSettingsView> {
+  return invoke('get_browser_settings');
+}
+
+/** Saves only `changes` (a cleared field as null), refused when the file changed since `revision`. */
+export function updateBrowserSettings(changes: Partial<BrowserSettings>, revision: string): Promise<{ settings: BrowserSettings; revision: string }> {
+  const sent = Object.fromEntries(Object.entries(changes).map(([key, value]) => [key, value === undefined ? null : value]));
+  return invoke('update_browser_settings', { changes: sent, revision });
+}
+
+export function browserHistory(projectRoot: string | null, query: string): Promise<{ entries: BrowserHistoryEntry[] }> {
+  return invoke('browser_history', { projectRoot, query });
+}
+
+export function removeBrowserHistory(projectRoot: string, url: string): Promise<void> {
+  return invoke('remove_browser_history', { projectRoot, url });
+}
+
+export function clearBrowsingData(projectRoot: string | null, range: "hour" | "day" | "week" | "all", types: Array<"history" | "cookies" | "cache">): Promise<unknown> {
+  return invoke('clear_browsing_data', { projectRoot, range, types });
+}
+
 export function getSecretStatus(): Promise<SecretStatus> {
   return invoke('get_secret_status');
 }
@@ -393,3 +418,32 @@ export function onBackendResync(handler: () => void): Promise<UnlistenFn> {
 export function getPendingApprovals(): Promise<ApprovalRequest[]> {
   return invoke('get_pending_approvals');
 }
+
+/** Settings › Web: the SearXNG instance web_search uses (user runtime.jsonc). */
+export interface WebSettingsView {
+  search_url: string | null;
+  /** The SearXNG built into Themis: whether this build has it, and its address or error. */
+  built_in?: { available: boolean; url?: string | null; error?: string | null };
+}
+export function getWebSettings(): Promise<WebSettingsView> { return invoke("get_web_settings"); }
+export function updateWebSettings(searchUrl: string): Promise<{ search_url: string | null }> { return invoke("update_web_settings", { searchUrl }); }
+export interface SearchServerStatus {
+  state: "working" | "degraded" | "json_off" | "rate_limited" | "unreachable" | "invalid" | "error";
+  results?: number;
+  failed_engines?: Array<{ engine: string; reason: string }>;
+  message?: string;
+}
+/** One test search against `url`, or the saved server when omitted. */
+export function checkSearchServer(url?: string): Promise<SearchServerStatus> { return invoke("check_search_server", url ? { url } : {}); }
+
+/** Integrations › MCP: the state of the mcp.json copy being edited. */
+export interface McpConfigStatus {
+  state: "closed" | "open" | "applied" | "invalid" | "conflict" | "error";
+  changed?: string[];
+  line?: number;
+  message?: string;
+  servers?: number;
+  path?: string;
+}
+export function openMcpConfig(editor?: string): Promise<McpConfigStatus> { return invoke("open_mcp_config", editor ? { editor } : {}); }
+export function mcpConfigStatus(): Promise<McpConfigStatus> { return invoke("mcp_config_status"); }

@@ -43,6 +43,10 @@ impl themis_core::browser::media::MediaSink for TempMedia {
     }
 }
 
+// One Chrome at a time: on GPU-less CI runners, Chromes started together
+// starve each other and an animated page paints only a few times a second.
+static ONE_BROWSER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn hub(root: &std::path::Path) -> Option<Arc<BrowserHub>> {
     let hub = BrowserHub::new(BrowserConfig {
         root: root.to_path_buf(),
@@ -74,6 +78,7 @@ fn ref_of(snapshot: &str, needle: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
+    let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
     let site = MockServer::start().await;
@@ -100,6 +105,10 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
     let tools = themis_core::browser::tools::browser_tools(
         approvals,
         themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
             chat: Arc::clone(&chat),
             cancel: None,
             media: Some(Arc::new(TempMedia(media_dir.path().to_path_buf()))),
@@ -305,6 +314,7 @@ async fn the_agent_fills_a_form_reads_notes_and_navigates_in_a_real_browser() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together() {
+    let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
     let project = tempfile::tempdir().unwrap();
@@ -410,6 +420,7 @@ async fn the_workspace_stream_sends_frames_and_the_person_and_agent_act_together
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
+    let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
     let project = tempfile::tempdir().unwrap();
@@ -447,6 +458,7 @@ async fn the_speaker_starts_off_and_turns_on_for_current_and_new_pages() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
+    let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
     let site = MockServer::start().await;
@@ -466,6 +478,10 @@ async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
     let tools = themis_core::browser::tools::browser_tools(
         Arc::new(FnHook::new(|_: &ToolAction| Approval::AllowOnce)),
         themis_core::browser::tools::BrowserScope {
+            permissions: themis_core::tools::site_permissions::SitePermissions::new(
+                Default::default(),
+                None,
+            ),
             chat: Arc::clone(&chat),
             cancel: None,
             media: None,
@@ -517,6 +533,7 @@ async fn the_agent_clicks_a_point_of_a_canvas_seen_in_a_screenshot() {
     ignore = "a GPU-less Windows runner paints an animated headless page only once"
 )]
 async fn an_animated_page_streams_at_about_thirty_frames_a_second() {
+    let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
     let project = tempfile::tempdir().unwrap();
@@ -567,6 +584,7 @@ async fn an_animated_page_streams_at_about_thirty_frames_a_second() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_view_shows_the_page_after_a_first_open_was_refused() {
+    let _browser = ONE_BROWSER.lock().await;
     let data = tempfile::tempdir().unwrap();
     let Some(hub) = hub(data.path()) else { return };
     let site = MockServer::start().await;

@@ -24,21 +24,35 @@ carries `"untrusted": true`: page text is data, never instructions or permission
 
 ## `web_search`
 
-Asks your own [SearXNG](https://docs.searxng.org/) instance, a metasearch engine
-that queries Google, Bing, Brave, DuckDuckGo and others. Set it in the user
+Asks [SearXNG](https://docs.searxng.org/), a metasearch engine that queries Google, Bing,
+Brave, DuckDuckGo and others. **Themis ships its own SearXNG**: a standalone Python with a
+pinned SearXNG (`scripts/bundle-searxng.mjs`, about 155 MB installed, 50 MB of the download;
+release builds add it with `tauri build --config tauri.searxng.conf.json`),
+started in the background with the app server on a private `127.0.0.1` port and stopped with
+it (a watchdog stops it too if the app is killed). Its settings, secret and log are in the
+app-data `searxng/` folder; nothing is installed system-wide. Settings › Web shows it as
+**Built-in** with its live status. This is macOS and Linux only: SearXNG does not run on Windows
+(it needs the Unix `pwd` module), so Windows builds ship without it and Settings › Web shows
+"Not set · web_search is off" until you enter a server's address (such as the Docker one below).
+`fetch_url` works everywhere.
+
+To use your own instance instead, enter its address in Settings › Web, or set it in the user
 `runtime.jsonc` (a project cannot):
 
 ```jsonc
 { "web": { "search_url": "http://127.0.0.1:8888" } }
 ```
 
-SearXNG must allow JSON output: add `json` to `search.formats` in its
+Your SearXNG must allow JSON output: add `json` to `search.formats` in its
 `settings.yml`. A local instance, for example:
 
 ```sh
 mkdir -p searxng && printf 'use_default_settings: true\nserver:\n  secret_key: "%s"\n  limiter: false\nsearch:\n  formats: [html, json]\n' "$(openssl rand -hex 32)" > searxng/settings.yml
 docker run -d --name searxng -p 127.0.0.1:8888:8080 -v "$PWD/searxng:/etc/searxng" searxng/searxng
 ```
+
+Development builds use the built-in one only with `THEMIS_SEARXNG_DIR` pointing at
+`crates/desktop/searxng-runtime` (built by `node scripts/bundle-searxng.mjs`).
 
 Results are titles, URLs, snippets and, when known, publication dates, plus
 `failed_engines`: the engines that did not answer and why (`CAPTCHA`, `Suspended:
@@ -62,12 +76,12 @@ continuously animated pages (canvas games, video) streaming into Workspace are
 unverified, since GitHub's GPU-less Windows test machines paint them only once.
 Themis knows the browser is ready from its "DevTools listening" line or from the
 `DevToolsActivePort` file it writes in the profile, whichever comes first (some
-Windows Chrome builds write only the file); if neither arrives within 20 seconds,
+Windows Chrome builds write only the file); if neither arrives within 45 seconds,
 the error quotes the browser's last few output lines.
 The browser runs headless with its own profile in app data
 (`browser/profiles/<project>/`): logins persist across a project's chats and never
 touch your own browser profile, Keychain or saved passwords. One browser serves a
-project; each chat has its own tabs (at most 8). Downloads are blocked. Discarding
+project; each chat has its own tabs (at most 8). Downloads are saved to the downloads folder (below). Discarding
 a chat closes its tabs; the browser exits when no chat of the project uses it.
 It never outlives Themis: if Themis crashes or is force-quit, a small guard
 process (macOS, Linux) or a kill-on-close job (Windows) ends the browser and its
@@ -160,15 +174,51 @@ the same way. While anything records, a red line above the page reads "Recording
 thread header shows a red pill with the time on every Workspace tab and with Workspace
 closed; the pill opens the Browser tab.
 
-## Approvals
+## Permissions (Settings › Browser)
 
-Each browser action asks for the site of the current page (for `browser_open`, the
-site it opens); snapshots, scrolling and listing tabs are reads. **Allow in this
-chat** on one browser action covers every browser action on that site, and a rule
-like `{ "tool": "browser_*", "command": ["example.com"], "action": "deny" }` keeps
-the agent off a site. The web tools ask per site, after they know it (the URL's host, or your SearXNG host
-for searches). In Custom, rules may name a site and **Allow in this chat** covers
-that tool on that site; see [composer permissions](configuration.md#composer-permissions).
+These settings live in the `browser` block of your `runtime.jsonc`, which you may also edit
+by hand. Settings › Browser saves only the field you change and refuses a save when the file
+changed since the page loaded (showing the latest instead), so it never overwrites a hand
+edit; the page also re-reads the file when you return to the window. Changes apply from each
+chat's next message, existing chats included; a reply already running keeps its settings.
+
+What the agent may do in its browser is set in **Settings › Browser**, modelled on OpenAI
+Codex's built-in browser. Three permissions each have a default and per-site exceptions,
+and each value is **Allow** (no prompt), **Ask** (an approval prompt) or **Block**:
+
+| Permission | Covers | Default |
+| --- | --- | --- |
+| Browsing | open, navigate, click, type, press, select, scroll, snapshot, screenshot, record, tabs | Allow |
+| Downloads | saving a file a page or an agent action downloads | Allow |
+| Debugging | the debugging tools (console, elements, network, debugger, storage, profiling) | Block |
+
+- **Local apps** (`localhost`, `*.localhost`, loopback addresses, `about:blank`) are always
+  Allow: they are the apps the agent builds.
+- **Site exceptions** name a host such as `example.com`; it covers its subdomains, and the
+  most specific matching exception wins. A starter set blocks Browsing on sign-in, payment
+  and identity sites (`paypal.com`, `stripe.com`, `wise.com`, `revolut.com`,
+  `accounts.google.com`, `login.microsoftonline.com`, `appleid.apple.com`, `id.me`,
+  `login.gov`); it is a starter, not complete, and you can edit or remove it. Lockdown is
+  Browsing default Block plus Allow exceptions for the sites you trust.
+- **Block** is refused in every approval mode, **YOLO included**, and the agent is told to
+  tell you instead of working around it. A click, redirect or script that lands on a
+  Browsing-Blocked site clears the tab and reports it. The lists bind the agent, not you:
+  you can visit any site in the Browser tab, but the agent will not read or act on a
+  blocked page you opened. They govern the pages the agent opens and acts on, not the
+  scripts, images or requests an allowed page loads.
+- **Ask** shows a prompt with **Allow once**, **Always allow on this site** (saves an Allow
+  exception for that permission in Settings › Browser, used for the rest of the run and
+  later runs) and **Deny**. YOLO turns Ask into Allow.
+- **Allow** runs without a prompt; a deny rule in `runtime.jsonc` (below) still refuses in
+  Custom.
+- `fetch_url` to a Browsing-Blocked site is refused too; otherwise the web tools keep their
+  own per-site approvals. `web_search` results are not filtered.
+
+The web tools ask per site, after they know it (the URL's host, or your SearXNG host for
+searches). In Custom, rules may name a site and **Allow in this chat** covers that web tool
+on that site; see [composer permissions](configuration.md#composer-permissions). Approval
+rules for `browser_*` (for example `{ "tool": "browser_*", "command": ["example.com"],
+"action": "deny" }`) keep working in Custom as an extra deny layer.
 
 ```jsonc
 { "approval": { "rules": [
@@ -180,3 +230,56 @@ that tool on that site; see [composer permissions](configuration.md#composer-per
 YOLO fetches without asking; the OS sandbox does not apply to these in-process
 requests, exactly as for MCP HTTP connections. Diagnostics never record page text
 or search results.
+
+## Downloads, history and browsing data
+
+- **Downloads** are allowed by default and saved to the system Downloads folder (on Linux
+  `XDG_DOWNLOAD_DIR` when set), or the folder chosen in Settings › Browser. Only a download
+  that starts within 3 seconds of your own input in the Browser tab (a click, a key, the
+  address bar) is yours and always saved. Every other download, the agent's or one a page
+  starts on its own, needs the Downloads permission for the page's site (Block cancels it, Ask
+  asks), and is cancelled when no run is there to decide it; the agent's step reports the
+  saved path, or why it was refused. A name already in the folder gets a numbered suffix;
+  nothing is opened or attached to the chat. The agent cannot upload files.
+- **History:** the browser keeps its own history per project in its profile. Settings ›
+  Browser › History and data searches it, reopens a page in the open chat's browser, and
+  removes entries. The agent has no history tool.
+- **Clear browsing data:** a time range (last hour, day, week, all time) and types: history;
+  cookies and site data (signs the agent out; site storage such as localStorage and IndexedDB
+  goes only with "all time"); cached files (always all). For one project or all. It closes
+  that project's browser first (chats reopen it when they next browse) and is refused while a
+  run is using it.
+- Camera, microphone, location and notifications are always denied to pages.
+
+## Debugging tools (Developer mode)
+
+With **Settings › Browser › Developer mode › Enable full CDP access** on (the default), the
+agent gets one `browser_devtools` tool for the chat's current tab, gated by the Debugging
+permission (always allowed on local apps, Block on other sites by default). One tool with a
+`panel` argument keeps the schema every request carries small:
+
+| Panel | Does |
+| --- | --- |
+| `console` | Runs a JavaScript expression (awaited, top-level `await` allowed) in the page, or in the paused call frame, and returns its value or exception; without one, returns console messages at every level (log, info, warning, error, exceptions with stacks) newer than `since` |
+| `elements` | Inspects one element (by CSS selector or snapshot ref): attributes, box, computed styles, HTML; or sets an attribute, style or text, or removes it, live (nothing is saved) |
+| `network` | Lists the tab's requests (method, URL, status, type, size, time, failure); with an id, headers and response body; blocks URL patterns or throttles (offline, slow3g, fast3g) |
+| `debugger` | Sets and removes breakpoints by script URL and line (optionally conditional), pauses on exceptions, pauses, resumes and steps; while paused, returns the call stack and the top frame's variables |
+| `storage` | Reads, sets, removes or clears the page's cookies, localStorage or sessionStorage |
+| `performance` | `metrics`: load timing, largest contentful paint, layout shift, resource sizes and page metrics; `trace`: records the main thread for 1–15 s, returns long tasks and scripting, rendering and painting time, and saves the trace as a file |
+| `memory` | `summary`: heap, DOM nodes, listeners and documents, with growth since the last summary (to find leaks); `snapshot`: a heap snapshot with the largest object kinds, saved as a file |
+
+Limits and safety:
+
+- **Secrets hidden (best-effort):** cookie values, credential headers (`Authorization`,
+  `Cookie`, `Set-Cookie`, `X-…-Token`) and token-like values (JWTs, long base64/hex strings,
+  values under keys such as `password` or `token`) become `[hidden: N chars]` in results and
+  chat history unless **Show secrets to the agent** is on. httpOnly cookie values are never
+  returned. This guards against accidental exposure, not a page that talked the agent into
+  encoding a secret; keep Debugging blocked on sites with accounts you care about.
+- **Bounds:** the last 500 console messages and 300 requests per tab, at most 50 per call,
+  16 KiB per value or body; traces and heap snapshots run one at a time.
+- **Pauses:** a pause the agent leaves alone resumes after 30 seconds; when a run ends or is
+  stopped, breakpoints, request blocks and throttling are cleared.
+- Diagnostics record which tool ran and the permission decision, never expressions, values,
+  bodies or sites.
+

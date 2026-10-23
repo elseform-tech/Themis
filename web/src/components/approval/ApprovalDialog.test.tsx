@@ -18,6 +18,13 @@ function setup(request: ApprovalRequest = REQUEST) {
 }
 
 describe("ApprovalDialog", () => {
+  it("names an MCP tool by server and tool, not its wire id", () => {
+    const tool = "mcp_fb67fe144f6fc34f56444b8d_list_allowed_directories";
+    render(<ApprovalDialog request={{ ...REQUEST, tool, summary: `call \`${tool}\` with {}` }} label="files · list_allowed_directories" open onDecide={() => {}} />);
+    expect(screen.getAllByText(/files · list allowed directories/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/fb67fe/)).toBeNull();
+  });
+
   afterEach(() => { vi.useRealTimers(); });
   it("shows tool, summary, and risk badge", () => {
     setup();
@@ -116,6 +123,16 @@ describe("ApprovalDialog", () => {
     expect(decided).toHaveBeenCalledWith("deny");
   });
 
+  it("offers browser actions Always allow on this site, saved in Settings", () => {
+    setup({ ...REQUEST, tool: "browser_devtools", grant_site: { tools: "browser", site: "example.com" } });
+    expect(screen.getByRole("button", { name: "Always allow on this site (2)" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
+    expect(document.body).toHaveTextContent("saves Debugging for example.com in Settings › Browser");
+    cleanup();
+    setup({ ...REQUEST, tool: "browser_download", grant_site: { tools: "browser", site: "files.example.com" } });
+    expect(document.body).toHaveTextContent("saves Downloads for files.example.com");
+  });
+
   it("maps Escape to deny", () => {
     const { onDecide } = setup();
     fireEvent.keyDown(document, { key: "Escape" });
@@ -198,9 +215,9 @@ describe("grant hint", () => {
     expect(screen.getByText("Allow in this chat covers every tool of this MCP server in later runs of this chat.")).toBeInTheDocument();
   });
 
-  it("names the site a web or browser grant covers", () => {
-    setup({ ...REQUEST, tool: "browser_click", risk: "network", grant_site: { tools: "browser", site: "localhost" } });
-    expect(screen.getByText(/every browser action on/)).toHaveTextContent("Allow in this chat covers every browser action on localhost in later runs of this chat. Other sites still ask.");
+  it("names the site and the Settings permission a browser grant saves", () => {
+    setup({ ...REQUEST, tool: "browser_click", risk: "network", grant_site: { tools: "browser", site: "example.org" } });
+    expect(screen.getByText(/Always allow on this site saves/)).toHaveTextContent("Always allow on this site saves Browsing for example.org in Settings › Browser, where you can change it.");
   });
 
   it("names the site for a page read", () => {

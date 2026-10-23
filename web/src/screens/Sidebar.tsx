@@ -9,11 +9,13 @@ import { MovingText } from "../components/MovingText";
 import "./Sidebar.css";
 
 const views: Array<[MainView, string]> = [["skills", "Integrations"], ["automations", "Automations"], ["queue", "Review queue"]];
-type SidebarIconName = "panel" | "chat" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search" | "rename" | "trash";
-const viewIcons: Record<MainView, SidebarIconName> = { thread: "thread", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
+type SidebarIconName = "home" | "back" | "panel" | "chat" | "thread" | "skills" | "automations" | "queue" | "project" | "settings" | "help" | "search" | "rename" | "trash";
+const viewIcons: Record<MainView, SidebarIconName> = { thread: "home", skills: "skills", automations: "automations", queue: "queue", settings: "settings" };
 
-export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
+export function Sidebar({ collapsed: folded, companionControl }: { collapsed: boolean; companionControl?: import("react").ReactNode }) {
   const { state, dispatch } = useApp();
+  // Settings shows its own section list in this place, so the workspace panel folds away.
+  const collapsed = folded || state.mainView === "settings";
   const [width, setWidth] = useState(() => Math.max(240, Math.min(560, Number(readSession("sidebarWidth", 292)) || 292)));
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
   const [resizing, setResizing] = useState(false);
@@ -93,6 +95,7 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
   return <>
     <div ref={slot} className={`themis-sidebar-slot ${collapsed ? "is-collapsed" : ""} ${resizing ? "is-resizing" : ""}`} style={{ "--themis-sidebar-width": `${width}px` } as import("react").CSSProperties}>
       <nav className="themis-sidebar-rail" aria-label="Utilities">
+        {nav("thread", "Home")}
         {views.map(([view, label]) => nav(view, label))}
         <div className="themis-rail-footer">{companionControl}{nav("settings", "Settings")}<Tooltip content="Help"><button type="button" className="themis-sidebar-row" aria-label="Help" onClick={() => setHelp(true)}><SidebarIcon name="help" /></button></Tooltip><Tooltip content="Search"><button type="button" className="themis-sidebar-row" aria-label="Search commands" onClick={() => dispatch({ type: "ui/palette", open: true })}><SidebarIcon name="search" /></button></Tooltip></div>
       </nav>
@@ -195,6 +198,8 @@ export function Sidebar({ collapsed, companionControl }: { collapsed: boolean; c
 // Lucide SVG paths from the approved Framed rail visualization (ISC license).
 export function SidebarIcon({ name }: { name: SidebarIconName }) {
   return <svg className="themis-sidebar-icon" viewBox={name === "help" || name === "search" ? "0 0 20 20" : "0 0 24 24"} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    {name === "home" && <><path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5" /></>}
+    {name === "back" && <path d="M15 18l-6-6 6-6" />}
     {name === "chat" && <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />}
     {name === "panel" && <><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /></>}
     {name === "thread" && <><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" /></>}

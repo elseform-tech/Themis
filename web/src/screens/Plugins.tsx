@@ -7,6 +7,7 @@ import { isPluginPackage } from "../lib/integrations";
 import type { ImportPreview, Marketplace, Plugin, PluginSpec } from "../lib/types";
 import { describeError, toast, useApp } from "../state/store";
 import "./Plugins.css";
+import { McpFileRow } from "./McpFile";
 
 function integrationError(error: unknown): string {
   return describeError(error).replace(/\nDiagnostic operation: [0-9a-f-]{36}$/, "").replace("No such file or directory (os error 2)", "Plugin files are missing.");
@@ -126,6 +127,8 @@ export function Plugins() {
     const [installed, sources] = await Promise.all([pluginAction<Plugin[]>({ action: "list", projectRoot: root }), pluginAction<Marketplace[]>({ action: "marketplaces" })]);
     if (request === loadRequest.current && root === activeRoot.current) { setPlugins(installed); setMarkets(sources); }
   }, [root]);
+  // A save of the mcp.json copy changed servers: show them.
+  const reloadAfterMcpEdit = useCallback(() => { void load().catch(() => {}); }, [load]);
   useEffect(() => {
     let cancelled = false;
     setPlugins([]); inspection.current.clear(); setChecks({}); setChecking({}); setCheckErrors({}); setInstalling(""); setAddingMarket(false); setPanel(null); setRemoving(null); setCatalog([]); setPublicView(false); catalogRequest.current++; previewRequest.current++; setBusy(false);
@@ -271,6 +274,7 @@ export function Plugins() {
       </select>
       <select aria-label="Source" value={originFilter} onChange={event => setOriginFilter(event.target.value)}><option value="all">All sources</option><option value="personal">Personal</option><option value="public">Public</option></select>
       <button aria-label="Refresh" title="Refresh" disabled={busy || mutating} onClick={() => { if (category === "MCP") window.dispatchEvent(new Event("themis-mcp-reconnect")); void (publicView && category === "Plugins" ? browse(market, true) : load()).catch(error => toast(dispatch, integrationError(error), "danger")); }}>↻</button></div></div>
+    {category === "MCP" && !publicView && <McpFileRow onApplied={reloadAfterMcpEdit} />}
     {(filtered || (publicView && catalogLoading)) && <div className="themis-filter-summary"><span>{publicView && catalogLoading ? "Checking catalog" : `${resultCount} result${resultCount === 1 ? "" : "s"}`}</span>{filtered && <button onClick={() => { setSearch(""); setOriginFilter("all"); if (publicView) setCatalogStatus("available"); else setInstalledStatus("all"); }}>Reset filters</button>}</div>}
     {publicView ? <>
       {catalogLoading ? <div className="themis-marketplace-loading"><KnightLoading variant={readCompanionPreferences().variant} status={scanProgress} progress={scanPercent} progressLabel="Marketplace compatibility" /></div> : !catalogRows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : "No plugins to show"} />}

@@ -207,6 +207,9 @@ describe("Workspace journey", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Attach files"})));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Settings"})));
+    // Settings stands in the sidebar's place; Back to app returns to the chats.
+    expect(screen.queryByRole("button", {name: /^Attachment test/})).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Back to app"})));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
     await act(async () => uploaded([{name:"music.mp3",path:"/tmp/fixed-themis/.themis/attachments/music.mp3",size:12}]));
     expect(await screen.findByRole("button", {name: "Remove music.mp3"})).toBeInTheDocument();
@@ -214,6 +217,7 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.sendMessage).mockImplementationOnce(() => new Promise(resolve => { sent = resolve; }));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Send"})));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Settings"})));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Home"})));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
     vi.mocked(bridge.attachFiles).mockResolvedValueOnce([{name:"next.txt",path:"/tmp/fixed-themis/.themis/attachments/next.txt",size:2}]);
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Attach files"})));
@@ -297,6 +301,7 @@ describe("Workspace journey", () => {
     expect(screen.queryByLabelText("New projects")).toBeNull();
     expect(screen.queryByText("/tmp/fixed-themis")).toBeNull();
     expect(screen.getByText(settings.projects_directory)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "New project" }));
     expect(screen.queryByText("Change location")).toBeNull();
     expect(screen.queryByLabelText("Parent folder")).toBeNull();
@@ -635,6 +640,8 @@ describe("Workspace journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
     expect(screen.queryByLabelText("Reveal the collapsed sidebar on hover")).not.toBeInTheDocument();
     expect(sidebar).toHaveAttribute("inert");
+    expect(screen.queryByRole("button", { name: "Show sidebar" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
     fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
     expect(sidebar).not.toHaveAttribute("inert");
   });
@@ -670,7 +677,7 @@ describe("Workspace journey", () => {
     expect(screen.getByLabelText("Context tokens")).toHaveValue(settings.context_token_budget);
     expect(screen.getByLabelText("Turn limit")).toHaveValue(settings.max_total_turns);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reset limits" })));
-    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3, approval_timeout_seconds: 300 });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3 });
   });
   it("keeps utilities separate from the expanded project dock and pins Themis", async () => {
     await mount();

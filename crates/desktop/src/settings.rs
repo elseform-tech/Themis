@@ -208,6 +208,15 @@ impl SettingsStore {
             if let Some(enabled) = patch.completion_haptic {
                 current.completion_haptic = enabled;
             }
+            if let Some(mode) = patch.default_approval_mode {
+                current.default_approval_mode = mode;
+            }
+            if let Some(editor) = patch.config_editor {
+                if !crate::state::editors::is_known(&editor) {
+                    return Err("Unknown editor".to_owned());
+                }
+                current.config_editor = editor;
+            }
             if let Some(onboarded) = patch.onboarded {
                 current.onboarded = onboarded;
             }

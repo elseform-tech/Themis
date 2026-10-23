@@ -16,7 +16,7 @@ import type { ToastTone } from "../components";
 import { invoke } from "@tauri-apps/api/core";
 import { playCompletionSound, prepareCompletionSound } from "../lib/completionSound";
 import type { McpConnections, PersistedMessage, ProjectInfo, ThreadInfo } from "../lib/types";
-import {
+import { getBrowserSettings,
   pluginAction,
   getSecretStatus,
   getPendingApprovals,
@@ -314,6 +314,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", visible);
     refresh();
+    Promise.resolve()
+      .then(() => getBrowserSettings())
+      .then(view => { if (!cancelled) dispatch({ type: "browser/opens-workspace", value: view.settings.open_workspace }); })
+      .catch(() => { /* the default (open) stays */ });
     getSettings()
       .then(async (settings) => {
         if (cancelled) return;

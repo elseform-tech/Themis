@@ -136,7 +136,22 @@ jobs:
           sudo apt update
           sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: astral-sh/setup-uv@v5
       - run: npm ci
         working-directory: web
-      - run: npx -y @tauri-apps/cli@2 build
+      # Packs the built-in SearXNG (standalone Python) into crates/desktop/searxng-runtime and
+      # ships it: only release builds add it (tauri.searxng.conf.json), so ordinary cargo
+      # builds and tests do not need it. SearXNG does not run on Windows (it needs the Unix
+      # `pwd` module), so Windows builds ship without it; web_search there uses a server
+      # address set in Settings › Web.
+      - if: runner.os != 'Windows'
+        run: node scripts/bundle-searxng.mjs
+      - if: runner.os != 'Windows'
+        run: npx -y @tauri-apps/cli@2 build --config tauri.searxng.conf.json
         working-directory: crates/desktop
+      - if: runner.os == 'Windows'
+        run: npx -y @tauri-apps/cli@2 build
+        working-directory: crates/desktop
+      # The packaged app's search server starts and answers (uses the built runtime).
+      - if: runner.os != 'Windows'
+        run: cargo test -p themis-desktop --test browser_permissions_cli_e2e cli_the_built_in_search_server_answers -- --nocapture

@@ -590,6 +590,10 @@ export interface Settings {
   automations_enabled: boolean;
   completion_sound: boolean;
   completion_haptic: boolean;
+  /** Editor that opens runtime.jsonc ("" = system text editor). */
+  config_editor?: string;
+  /** The approval mode a new chat starts in. */
+  default_approval_mode?: "custom" | "yolo";
   onboarded: boolean;
 }
 
@@ -613,3 +617,43 @@ export interface ThreadChange {
 }
 
 export type McpConnections = Record<string, { status: "connecting" | "connected" | "failed"; reason?: string }>;
+
+/** Settings › Browser: Allow (no prompt), Ask (a prompt) or Block (refused in every mode). */
+export type SiteAccess = "allow" | "ask" | "block";
+
+export interface SiteException {
+  site: string;
+  browsing?: SiteAccess;
+  downloads?: SiteAccess;
+  debugging?: SiteAccess;
+}
+
+/** The user `runtime.jsonc` `browser` block (see docs/web-tools.md). */
+export interface BrowserSettings {
+  enabled: boolean;
+  executable?: string;
+  developer_mode: boolean;
+  permissions: { browsing: SiteAccess; downloads: SiteAccess; debugging: SiteAccess };
+  site_exceptions: SiteException[];
+  show_secrets: boolean;
+  downloads_directory?: string;
+  open_workspace: boolean;
+}
+
+export interface BrowserSettingsView {
+  settings: BrowserSettings;
+  /** What a save must name; a save is refused when runtime.jsonc changed since. */
+  revision: string;
+  browsers: string[];
+  default_downloads_directory: string;
+  starter_sites: string[];
+}
+
+export interface BrowserHistoryEntry {
+  url: string;
+  title: string;
+  /** Unix seconds. */
+  last_visit: number;
+  visits: number;
+  project: string;
+}

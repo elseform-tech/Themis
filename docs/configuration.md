@@ -15,7 +15,7 @@ QA builds with a different app identifier have separate data directories.
 
 | Location | Purpose | Scope |
 | --- | --- | --- |
-| App-data `runtime.jsonc` | Runtime defaults, Custom approval rules, OS sandbox, logging, discovery | User, across projects |
+| App-data `runtime.jsonc` | Runtime defaults, Custom approval rules, OS sandbox, logging, discovery. A new file lists every setting commented out, with its explanation, allowed values and default (from `crates/core/src/configuration_reference.jsonc`; a test keeps it complete and equal to the defaults), then commented-out presets (approval variants, no-network sandbox, ask-before-browsing). Uncomment to use; Settings › Browser and Web add their blocks without removing the comments. An existing file is never rewritten | User, across projects |
 | Project `.themis/config.jsonc` | Project runtime overrides and additional approval and sandbox restrictions | Selected project/run root |
 | App-data `settings.json` | Existing desktop preferences and legacy run defaults | User |
 | App-data `compatibility-cache/` | Derived marketplace scan progress and validated package snapshots | User; refreshed explicitly |
@@ -194,9 +194,15 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `sandbox.network` | `allow` (default, also in Custom) or `block`; projects may only set `block` |
 | `sandbox.writable_paths` | At most 32 folders, absolute or `~/...`, 1–1,024 bytes, no `..`; projects may only remove entries |
 | `sandbox.allow_keychain` | macOS: `false` (default) keeps sandboxed commands out of the Keychain; `true` lets them use it (for example git's HTTPS credential helper); projects may only set `false` |
-| `web.search_url` | Optional http(s) URL of your SearXNG instance (JSON output enabled), at most 1,024 bytes, no credentials; user file only. Unset: `web_search` is not offered. See [web tools](web-tools.md) |
+| `web.search_url` | Optional http(s) URL of your SearXNG instance (JSON output enabled), at most 1,024 bytes, no credentials; user file only. Unset: the SearXNG built into Themis is used (when the build has it; otherwise `web_search` is not offered). See [web tools](web-tools.md) |
 | `browser.enabled` | Boolean, default `true`; projects may only set `false` |
 | `browser.executable` | Optional absolute path to a Chrome, Chromium or Edge binary, at most 1,024 bytes; user file only. Unset: an installed browser is found automatically |
+| `browser.developer_mode` | Boolean, default `true` ("Enable full CDP access"): off offers no debugging tools on any page; projects may only set `false` |
+| `browser.permissions` | `browsing`, `downloads`, `debugging`: each `"allow"`, `"ask"` or `"block"`; defaults allow, allow, block. Projects may only make a value stricter. See [web tools](web-tools.md#permissions-settings--browser) |
+| `browser.site_exceptions` | Up to 500 `{ "site": "example.com", "browsing"?, "downloads"?, "debugging"? }`: a lowercase host covering its subdomains, most specific wins. Default: the starter blocks. A project's exceptions may only block, and they add to yours instead of replacing them (an exception to "arrays replace") |
+| `browser.show_secrets` | Boolean, default `false`: show cookie values, auth headers and token-like values to the agent; projects may only set `false` |
+| `browser.downloads_directory` | Optional absolute folder for downloads; user file only. Unset: the system Downloads folder |
+| `browser.open_workspace` | Boolean, default `true`: open Workspace on the Browser tab when the agent starts browsing; user file only |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration

@@ -85,7 +85,7 @@ impl AppState {
         Ok(resolved)
     }
 
-    /// The global `runtime.jsonc`, created with [`RUNTIME_CONFIG_STARTER`]
+    /// The global `runtime.jsonc`, created with [`runtime_config_starter`]
     /// when it does not exist yet. An existing file is never touched.
     pub fn ensure_runtime_config(&self) -> Result<PathBuf, String> {
         let path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
@@ -100,7 +100,7 @@ impl AppState {
         {
             Ok(mut file) => {
                 use std::io::Write;
-                file.write_all(RUNTIME_CONFIG_STARTER.as_bytes())
+                file.write_all(runtime_config_starter().as_bytes())
                     .map_err(|e| format!("write '{}': {e}", path.display()))?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -109,10 +109,15 @@ impl AppState {
         Ok(path)
     }
 
-    /// Opens the global `runtime.jsonc` (creating the starter if needed) as
-    /// plain text in the system's text editor. It opens nothing else.
-    pub fn open_runtime_config(&self) -> Result<(), String> {
-        spawn_text_editor(&self.ensure_runtime_config()?)
+    /// Opens the global `runtime.jsonc` (creating the starter if needed) as plain text in
+    /// `editor`, or the one chosen in Settings (the system text editor by default). It opens
+    /// nothing else.
+    pub async fn open_runtime_config(&self, editor: Option<String>) -> Result<(), String> {
+        let editor = match editor {
+            Some(editor) => editor,
+            None => self.get_settings().await.config_editor,
+        };
+        super::editors::open_with(&editor, &self.ensure_runtime_config()?)
     }
 
     pub fn get_runtime_configuration(&self, project_root: Option<String>) -> Result<Value, String> {
@@ -222,6 +227,128 @@ impl AppState {
         self.get_runtime_configuration(project_root)
     }
 
+    /// The person's own browser settings: the user `runtime.jsonc` over the defaults, without
+    /// any project's restrictions (what Settings › Browser shows and edits).
+    pub fn user_browser_config(&self) -> Result<configuration::BrowserConfig, String> {
+        let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
+        let user = read_optional(&user_path)?;
+        configuration::resolve(user.as_deref(), None, None)
+            .map(|resolved| resolved.config.browser)
+            .map_err(|e| format!("runtime configuration: {e:#}"))
+    }
+
+    /// The browser settings with the revision a later edit must name (Settings › Browser).
+    pub fn user_browser_view(&self) -> Result<(configuration::BrowserConfig, String), String> {
+        let browser = self.user_browser_config()?;
+        let revision = browser_revision(&browser);
+        Ok((browser, revision))
+    }
+
+    /// Saves only the `changes` (top-level browser fields) on top of what the file holds now.
+    /// With `revision`, refuses when the file's browser settings changed since that revision
+    /// (an edit in the file or another window), so a stale page never overwrites them.
+    pub fn patch_user_browser_config(
+        &self,
+        changes: serde_json::Map<String, Value>,
+        revision: Option<&str>,
+    ) -> Result<(configuration::BrowserConfig, String), String> {
+        let saved = self.update_user_browser_config(|browser| {
+            if revision.is_some_and(|expected| expected != browser_revision(browser)) {
+                return Err(STALE_BROWSER_SETTINGS.to_owned());
+            }
+            let mut value = serde_json::to_value(&*browser).map_err(|e| e.to_string())?;
+            let object = value
+                .as_object_mut()
+                .ok_or("browser settings are not an object")?;
+            for (key, field) in changes {
+                object.insert(key, field);
+            }
+            *browser = serde_json::from_value(value)
+                .map_err(|e| format!("runtime configuration: browser: {e}"))?;
+            Ok(())
+        })?;
+        let revision = browser_revision(&saved);
+        Ok((saved, revision))
+    }
+
+    /// Applies `change` to the `browser` settings in the user `runtime.jsonc` and saves
+    /// them, leaving the rest of the file, comments included, as written. Later runs pick
+    /// them up; a run in progress keeps its own copy.
+    pub fn update_user_browser_config(
+        &self,
+        change: impl FnOnce(&mut configuration::BrowserConfig) -> Result<(), String>,
+    ) -> Result<configuration::BrowserConfig, String> {
+        self.update_user_block("browser", |config| {
+            let mut browser = config.browser.clone();
+            change(&mut browser)?;
+            browser.site_restrictions.clear();
+            serde_json::to_value(&browser).map_err(|e| e.to_string())
+        })
+        .map(|config| config.browser)
+    }
+
+    /// Applies `change` to the `web` settings in the user `runtime.jsonc`, in place.
+    pub fn update_user_web_config(
+        &self,
+        change: impl FnOnce(&mut configuration::WebConfig) -> Result<(), String>,
+    ) -> Result<configuration::WebConfig, String> {
+        self.update_user_block("web", |config| {
+            let mut web = config.web.clone();
+            change(&mut web)?;
+            serde_json::to_value(&web).map_err(|e| e.to_string())
+        })
+        .map(|config| config.web)
+    }
+
+    /// Replaces the top-level `key` of the user `runtime.jsonc` with what `block` builds from
+    /// the file's current settings, keeping the rest of the file and its comments. The result
+    /// must validate, and the file is replaced atomically; writes are serialized.
+    fn update_user_block(
+        &self,
+        key: &str,
+        block: impl FnOnce(&configuration::RuntimeConfig) -> Result<Value, String>,
+    ) -> Result<configuration::RuntimeConfig, String> {
+        static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        let path = self.ensure_runtime_config()?;
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err("configuration file cannot be a symlink".into());
+        }
+        let content = read_optional(&path)?.unwrap_or_default();
+        let current = configuration::resolve(Some(&content), None, None)
+            .map_err(|e| format!("runtime configuration: {e:#}"))?
+            .config;
+        let value = block(&current)?;
+        let updated = configuration::set_top_level(&content, key, &value)
+            .map_err(|e| format!("runtime configuration: {e:#}"))?;
+        let saved = configuration::resolve(Some(&updated), None, None)
+            .map_err(|e| format!("runtime configuration: {e:#}"))?
+            .config;
+        let parent = path.parent().ok_or("Invalid configuration path")?;
+        let temporary = parent.join(format!(".runtime-{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&temporary, &updated).map_err(|e| e.to_string())?;
+        if let Err(error) = std::fs::rename(&temporary, &path) {
+            let _ = std::fs::remove_file(temporary);
+            return Err(error.to_string());
+        }
+        let _ = self.inner.diagnostics.append(
+            "configuration",
+            "saved",
+            "info",
+            json!({"scope":"user","section":key}),
+        );
+        Ok(saved)
+    }
+
+    /// The `web` settings from the user `runtime.jsonc` (Settings › Web).
+    pub fn user_web_config(&self) -> Result<configuration::WebConfig, String> {
+        let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
+        let user = read_optional(&user_path)?;
+        configuration::resolve(user.as_deref(), None, None)
+            .map(|resolved| resolved.config.web)
+            .map_err(|e| format!("runtime configuration: {e:#}"))
+    }
+
     pub fn query_diagnostic_logs(
         &self,
         filter: themis_core::diagnostics::DiagnosticFilter,
@@ -256,65 +383,114 @@ impl AppState {
     }
 }
 
-/// Written once when Settings opens a `runtime.jsonc` that does not exist:
-/// every setting is commented out, so it changes nothing until edited.
-pub const RUNTIME_CONFIG_STARTER: &str = r#"// Themis settings for every project (JSON with // comments).
-//
-// Nothing below is active yet. Without settings Themis uses built-in defaults:
-//   - Custom mode allows reads and asks you before anything else.
-//   - The sandbox is on, chosen for your system, with network allowed.
-// To change something, remove the // in front of its lines and edit the value.
-// Changes apply from the next run. A project's .themis/config.jsonc can only
-// add restrictions on top of this file. Full reference: docs/configuration.md
-// and docs/sandbox.md.
-{
-  // APPROVAL (used in Custom mode; YOLO skips approval prompts)
-  // Rules are checked in order and the first match decides. Each rule has:
-  //   "tool":    a tool name such as "shell", "git", "read_file", "write_file",
-  //              "apply_patch", "mcp_<server>_<tool>"; a trailing * matches a
-  //              prefix ("mcp_*"), and "*" matches every tool.
-  //   "action":  "allow" (run without asking), "ask" (show the pop-up) or
-  //              "deny" (refuse).
-  //   "risk":    optional; only match this kind of action: "read", "write",
-  //              "execute", "network" or "destructive".
-  //   "command": optional, shell and git only; the command must start with
-  //              these words, e.g. ["cargo", "test"]. An allow rule never covers
-  //              destructive forms such as `git push --force` or `rm -rf`
-  //              unless it names them or sets "risk": "destructive".
-  // "default" applies when no rule matches: "allow", "ask" or "deny".
-  // Writing "rules" replaces the built-in list, so keep the read rule if you
-  // still want reads to run without asking.
-  //
-  // "approval": {
-  //   "default": "ask",
-  //   "rules": [
-  //     { "tool": "*", "risk": "read", "action": "allow" },
-  //     { "tool": "shell", "command": ["cargo", "test"], "action": "allow" },
-  //     { "tool": "shell", "command": ["git", "push"], "action": "deny" }
-  //   ]
-  // },
+/// Ready-made settings in a new `runtime.jsonc`, commented out: `(what it does, the setting)`.
+/// Uncomment one approval preset at a time (a later "approval" replaces an earlier one).
+pub const RUNTIME_CONFIG_PRESETS: [(&str, &str); 5] = [
+    (
+        "Approval: reads run, everything else asks (what Themis does without a file)",
+        r#""approval": {
+  "default": "ask",
+  "rules": [
+    { "tool": "*", "risk": "read", "action": "allow" }
+  ]
+},"#,
+    ),
+    (
+        "Approval: also run tests and builds without asking, and never push",
+        r#""approval": {
+  "default": "ask",
+  "rules": [
+    { "tool": "*", "risk": "read", "action": "allow" },
+    { "tool": "shell", "command": ["cargo", "test"], "action": "allow" },
+    { "tool": "shell", "command": ["npm", "test"], "action": "allow" },
+    { "tool": "shell", "command": ["git", "push"], "action": "deny" },
+    { "tool": "*", "risk": "destructive", "action": "deny" }
+  ]
+},"#,
+    ),
+    (
+        "Approval: read-only, refuse anything that writes, runs or browses",
+        r#""approval": {
+  "default": "deny",
+  "rules": [
+    { "tool": "*", "risk": "read", "action": "allow" }
+  ]
+},"#,
+    ),
+    (
+        "Sandbox: commands get no network",
+        r#""sandbox": { "network": "block" },"#,
+    ),
+    (
+        "Browser: ask before the agent opens any site (local apps stay allowed)",
+        r#""browser": { "permissions": { "browsing": "ask", "downloads": "ask", "debugging": "block" } },"#,
+    ),
+];
 
-  // SANDBOX (applies in Custom and YOLO)
-  //   "enabled":        true or false.
-  //   "backend":        "auto" (best for this system), "seatbelt" (macOS),
-  //                     "bubblewrap" or "landlock" (Linux). A named backend
-  //                     that is missing blocks commands; "auto" never does.
-  //   "network":        "allow" or "block".
-  //   "writable_paths": extra folders commands may write to, absolute or
-  //                     starting with ~/. The project and temporary folders
-  //                     are always writable.
-  // Always protected, whatever this file says: secret folders such as ~/.ssh
-  // and ~/.aws are never readable, and Themis' own settings and a project's
-  // .themis folder are never writable.
-  //
-  // "sandbox": {
-  //   "enabled": true,
-  //   "backend": "auto",
-  //   "network": "allow",
-  //   "writable_paths": []
-  // }
+/// A new `runtime.jsonc`: every setting from [`configuration::REFERENCE`] with its
+/// explanation, allowed values and default, then [`RUNTIME_CONFIG_PRESETS`]. Every setting
+/// is commented out, so the file changes nothing until someone uncomments a line.
+pub fn runtime_config_starter() -> String {
+    starter_from(configuration::REFERENCE)
 }
-"#;
+
+fn starter_from(reference: &str) -> String {
+    let mut text = String::from(
+        "// Themis settings for every project (JSON with // comments and trailing commas).\n\
+         //\n\
+         // Every setting is below, commented out and showing its default. To change one, remove\n\
+         // the // in front of it (and in front of the block it sits in, such as \"approval\": {\n\
+         // and its closing }), then edit the value. Ready-made presets are at the end; use only\n\
+         // one approval preset. Lists replace the default list instead of adding to it.\n\
+         // Changes apply from each chat's next message; a project's .themis/config.jsonc can\n\
+         // only make things stricter. Settings › Permissions shows whether this file is valid.\n\
+         {\n",
+    );
+    // Between the reference's opening `{` and closing `}` lines (either line ending: a
+    // Windows checkout may embed the file with CRLF).
+    let lines: Vec<&str> = reference.lines().collect();
+    let open = lines
+        .iter()
+        .position(|line| line.trim() == "{")
+        .unwrap_or(0);
+    let close = lines
+        .iter()
+        .rposition(|line| line.trim() == "}")
+        .unwrap_or(lines.len());
+    for line in lines.get(open + 1..close).unwrap_or_default() {
+        let setting = line.trim_start();
+        let indent = &line[..line.len() - setting.len()];
+        if setting.is_empty() || setting.starts_with("//") {
+            text.push_str(line);
+        } else {
+            text.push_str(&format!("{indent}// {setting}"));
+        }
+        text.push('\n');
+    }
+    text.push_str("\n  // ─── PRESETS ─────────────────────────────────────────────────────────────────────\n");
+    for (title, setting) in RUNTIME_CONFIG_PRESETS {
+        text.push_str(&format!("\n  // {title}\n"));
+        for line in setting.lines() {
+            text.push_str(&format!("  // {line}\n"));
+        }
+    }
+    text.push_str("}\n");
+    text
+}
+
+/// Refusal when the file's browser settings changed under an open Settings page.
+pub(crate) const STALE_BROWSER_SETTINGS: &str =
+    "Browser settings changed in runtime.jsonc since this page loaded; showing the latest";
+
+/// A short, stable fingerprint of browser settings as resolved from the file.
+fn browser_revision(browser: &configuration::BrowserConfig) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(browser)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
 
 #[cfg(test)]
 mod tests {
@@ -327,7 +503,7 @@ mod tests {
         assert_eq!(path, temporary.path().join("runtime.jsonc"));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            RUNTIME_CONFIG_STARTER
+            runtime_config_starter()
         );
         // The starter is valid and every setting in it is commented out.
         let starter = state.runtime_configuration(None, None).unwrap();
@@ -336,6 +512,49 @@ mod tests {
             serde_json::to_value(&starter.config).unwrap(),
             serde_json::to_value(&defaults.config).unwrap()
         );
+        // Each preset, uncommented on its own, is a valid setting.
+        for (title, setting) in RUNTIME_CONFIG_PRESETS {
+            let file = format!("{{{}}}", setting.trim_end_matches(','));
+            configuration::resolve(Some(&file), None, None)
+                .unwrap_or_else(|e| panic!("preset '{title}' is invalid: {e:#}"));
+        }
+        // A Windows checkout embeds the reference with CRLF: the same starter comes out.
+        assert_eq!(
+            starter_from(
+                &configuration::REFERENCE
+                    .replace("\r\n", "\n")
+                    .replace('\n', "\r\n")
+            ),
+            runtime_config_starter()
+        );
+        // Every setting of the reference is in the file, commented out.
+        let text = runtime_config_starter();
+        for line in configuration::REFERENCE.lines().map(str::trim) {
+            if let Some(field) = line.strip_prefix('"').and_then(|l| l.split('"').next()) {
+                assert!(
+                    text.contains(&format!("// \"{field}\"")),
+                    "'{field}' is missing from the starter"
+                );
+            }
+        }
+        // Settings › Browser and Web still write their blocks into it, comments kept.
+        state
+            .update_user_browser_config(|browser| {
+                browser.enabled = false;
+                Ok(())
+            })
+            .unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("// ─── PRESETS"));
+        assert!(
+            !state
+                .runtime_configuration(None, None)
+                .unwrap()
+                .config
+                .browser
+                .enabled
+        );
+        std::fs::write(&path, runtime_config_starter()).unwrap();
         // An existing file, even an invalid one, is left exactly as it is.
         std::fs::write(&path, "{ my edits").unwrap();
         state.ensure_runtime_config().unwrap();

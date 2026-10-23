@@ -657,6 +657,71 @@ async fn dispatch_command(
         "plugin_action" => output!(state.plugin_action(args).await?),
         "list_prompt_skills" => output!(state.prompt_skills(arg(&args, "projectRoot")?).await?),
         "ping" => output!(state.ping().await),
+        "get_browser_settings" => output!({
+            let (settings, revision) = state.user_browser_view()?;
+            json!({
+            "settings": settings,
+            "revision": revision,
+            "browsers": themis_core::browser::launch::installed_browsers(),
+            "default_downloads_directory": themis_core::browser::session::default_downloads_directory(),
+            "starter_sites": themis_core::configuration::STARTER_BLOCKED_SITES,
+            })
+        }),
+        "update_browser_settings" => {
+            let changes: serde_json::Map<String, Value> = arg(&args, "changes")?;
+            let revision: Option<String> = arg(&args, "revision")?;
+            let (settings, revision) =
+                state.patch_user_browser_config(changes, revision.as_deref())?;
+            output!(json!({"settings": settings, "revision": revision}))
+        }
+        "get_web_settings" => output!(json!({
+            "search_url": state.user_web_config()?.search_url,
+            "built_in": crate::state::searxng::status(),
+        })),
+        "update_web_settings" => {
+            let search_url: Option<String> = arg(&args, "searchUrl")?;
+            let search_url = search_url
+                .map(|url| url.trim().to_owned())
+                .filter(|url| !url.is_empty());
+            let web = state.update_user_web_config(|web| {
+                web.search_url = search_url;
+                Ok(())
+            })?;
+            output!(json!({"search_url": web.search_url}))
+        }
+        "check_search_server" => {
+            let url = match arg::<Option<String>>(&args, "url")? {
+                Some(url) => url,
+                None => match state.user_web_config()?.search_url {
+                    Some(url) => url,
+                    // Yours unset: the one built into Themis (started if needed).
+                    None => crate::state::searxng::url(&state.app_data_dir()).await?,
+                },
+            };
+            output!(themis_core::tools::web::check_search_server(&url).await)
+        }
+        "browser_history" => output!(
+            state
+                .browser_history(
+                    arg::<Option<String>>(&args, "projectRoot")?,
+                    arg::<Option<String>>(&args, "query")?.unwrap_or_default()
+                )
+                .await?
+        ),
+        "remove_browser_history" => done!(
+            state
+                .remove_browser_history(arg(&args, "projectRoot")?, arg(&args, "url")?)
+                .await
+        ),
+        "clear_browsing_data" => output!(
+            state
+                .clear_browsing_data(
+                    arg::<Option<String>>(&args, "projectRoot")?,
+                    arg(&args, "range")?,
+                    arg(&args, "types")?
+                )
+                .await?
+        ),
         "open_project" => output!(state.open_project(arg(&args, "path")?).await?),
         "rename_project" => output!(
             state
@@ -865,7 +930,18 @@ async fn dispatch_command(
                 .await?
         ),
         "ensure_runtime_config" => output!(state.ensure_runtime_config()?),
-        "open_runtime_config" => done!(state.open_runtime_config()),
+        "open_runtime_config" => done!(state.open_runtime_config(arg(&args, "editor")?).await),
+        "open_mcp_config" => output!(
+            state
+                .open_mcp_config(
+                    arg(&args, "editor")?,
+                    arg::<Option<bool>>(&args, "open")?.unwrap_or(true)
+                )
+                .await?
+        ),
+        "apply_mcp_config" => output!(state.apply_mcp_config().await?),
+        "mcp_config_status" => output!(state.mcp_config_status()),
+        "list_editors" => output!(json!({"editors": crate::state::editors::installed_editors()})),
         "open_in_editor" => done!(
             state
                 .open_in_editor(arg(&args, "path")?, arg(&args, "line")?)

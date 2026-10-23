@@ -1,0 +1,785 @@
+//! Settings › Browser permissions through the real shared server and the `themis` CLI: a
+//! Browsing-Blocked site is refused even in YOLO, an Ask site is allowed by YOLO without a
+//! prompt, and in Custom "Always allow on this site" answers the prompt and is saved in the
+//! user `runtime.jsonc` with the rest of the file kept. Skipped without a Chromium.
+
+use std::path::Path;
+use std::time::Duration;
+
+use serde_json::{json, Value};
+use themis_desktop::{server::Server, state::AppState, types::ProviderKind};
+use wiremock::matchers::method;
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+fn call(data: &Path, command: &str, args: Value) -> Value {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(data)
+        .args(["call", command, &args.to_string()])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .expect("CLI");
+    assert!(
+        output.status.success(),
+        "{command}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap_or(Value::Null)
+}
+
+fn tool_call(id: &str, name: &str, arguments: Value) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({
+        "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [{
+            "id": id, "type": "function",
+            "function": {"name": name, "arguments": arguments.to_string()}
+        }]}}]
+    }))
+}
+
+fn tool_results(body: &Value) -> Vec<String> {
+    body["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|message| message["role"] == "tool")
+        .map(|message| message["content"].to_string())
+        .collect()
+}
+
+/// Waits until the model has seen `count` tool results and the run ended; returns them.
+async fn results_after(
+    llm: &MockServer,
+    state: &AppState,
+    thread: &str,
+    count: usize,
+) -> Vec<String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(40);
+    loop {
+        let requests = llm.received_requests().await.unwrap_or_default();
+        let latest = requests
+            .iter()
+            .map(|request| tool_results(&request.body_json().unwrap_or(Value::Null)))
+            .rfind(|results| results.len() >= count);
+        if let Some(results) = latest {
+            if !state.get_thread(thread).await.is_ok_and(|t| t.running) {
+                return results;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "run did not finish; pending approvals: {:?}",
+            state.pending_approvals()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_browser_permissions_block_in_every_mode_and_always_allow_is_saved() {
+    if themis_core::browser::launch::find_browser(None, None).is_none() {
+        eprintln!("skipping: no Chromium browser installed");
+        return;
+    }
+    // `.invalid` never resolves, so no test reaches the network.
+    let llm = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body: Value = request.body_json().unwrap_or(Value::Null);
+            let task = body.to_string();
+            let results = tool_results(&body);
+            let first = if task.contains("Open the pay site") {
+                "https://www.paypal.com/"
+            } else {
+                "http://shop.example.invalid/"
+            };
+            match results.len() {
+                0 => tool_call("c1", "browser_open", json!({"url": first})),
+                1 if task.contains("Open the pay site") => {
+                    tool_call("c2", "browser_open", json!({"url": "http://shop.example.invalid/"}))
+                }
+                _ => ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{"message": {"role": "assistant", "content": "Done."}, "finish_reason": "stop"}]
+                })),
+            }
+        })
+        .mount(&llm)
+        .await;
+
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    // Outside a Git repository the app refuses changes without asking.
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap();
+    let file = "{\n  // kept as written\n  \"schema_version\": 1,\n  \"browser\": {\"site_exceptions\": [\n    {\"site\": \"paypal.com\", \"browsing\": \"block\"},\n    {\"site\": \"example.invalid\", \"browsing\": \"ask\"}\n  ]}\n}\n";
+    std::fs::write(data.path().join("runtime.jsonc"), file).unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(llm.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let root = project.path().to_string_lossy().to_string();
+
+    // YOLO: the blocked site is still refused; the Ask site runs without a prompt.
+    let yolo = state
+        .create_thread(root.clone(), ProviderKind::Go, Some("test-model".into()))
+        .await
+        .unwrap();
+    {
+        let (data, id) = (data.path().to_owned(), yolo.id.clone());
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": id, "mode": "yolo"}),
+            );
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": id, "text": "Open the pay site, then the shop."}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let results = results_after(&llm, &state, &yolo.id, 2).await;
+    assert!(
+        results[0].contains("Browsing is blocked for www.paypal.com in Settings › Browser"),
+        "{}",
+        results[0]
+    );
+    assert!(
+        !results[1].contains("blocked in Settings") && !results[1].contains("approval denied"),
+        "{}",
+        results[1]
+    );
+
+    // Custom: the Ask site prompts a connected window; "Always allow on this site" saves an
+    // exception.
+    let window = themis_desktop::server::Client::new(data.path().into());
+    let _events = window.subscribe().await.unwrap();
+    let custom = state
+        .create_thread(root, ProviderKind::Go, Some("test-model".into()))
+        .await
+        .unwrap();
+    {
+        let (data, id) = (data.path().to_owned(), custom.id.clone());
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": id, "text": "Open the shop."}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let approval = loop {
+        if let Some(request) = state
+            .pending_approvals()
+            .into_iter()
+            .find(|r| r.thread_id == custom.id)
+        {
+            break request;
+        }
+        if std::time::Instant::now() > deadline {
+            let requests = llm.received_requests().await.unwrap_or_default();
+            let seen: Vec<_> = requests
+                .iter()
+                .map(|r| tool_results(&r.body_json().unwrap_or(Value::Null)))
+                .collect();
+            let thread = state.get_thread(&custom.id).await;
+            panic!("no approval prompt for the Ask site; requests: {seen:?}; thread: {thread:?}");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(
+        approval.grant_site.as_ref().map(|site| site.tools.as_str()),
+        Some("browser")
+    );
+    {
+        let (data, id, approval_id) = (
+            data.path().to_owned(),
+            custom.id.clone(),
+            approval.approval_id.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "approve_action",
+                json!({"threadId": id, "approvalId": approval_id, "decision": "chat"}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let results = results_after(&llm, &state, &custom.id, 1).await;
+    assert!(!results[0].contains("approval denied"), "{}", results[0]);
+    let saved = std::fs::read_to_string(data.path().join("runtime.jsonc")).unwrap();
+    assert!(saved.contains("// kept as written"), "{saved}");
+    let browser = themis_core::configuration::resolve(Some(&saved), None, None)
+        .unwrap()
+        .config
+        .browser;
+    let shop = browser
+        .site_exceptions
+        .iter()
+        .find(|exception| exception.site == "shop.example.invalid")
+        .expect("the site exception was saved");
+    assert_eq!(
+        shop.browsing,
+        Some(themis_core::configuration::SiteAccess::Allow)
+    );
+    assert!(browser
+        .site_exceptions
+        .iter()
+        .any(|exception| exception.site == "paypal.com"));
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_debugging_tools_run_on_a_local_app_and_a_project_can_turn_them_off() {
+    if themis_core::browser::launch::find_browser(None, None).is_none() {
+        eprintln!("skipping: no Chromium browser installed");
+        return;
+    }
+    let site = MockServer::start().await;
+    Mock::given(wiremock::matchers::path("/app"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "<!doctype html><title>Local app</title><script>console.warn('slow start')</script><h1>Hi</h1>",
+            "text/html",
+        ))
+        .mount(&site)
+        .await;
+    let page = format!("http://127.0.0.1:{}/app", site.address().port());
+    let llm = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body: Value = request.body_json().unwrap_or(Value::Null);
+            match tool_results(&body).len() {
+                0 => tool_call("c1", "browser_open", json!({"url": page})),
+                1 if body["tools"].to_string().contains("browser_devtools") => tool_call(
+                    "c2",
+                    "browser_devtools",
+                    json!({"panel": "console", "expression": "document.title + '!'"}),
+                ),
+                2 => tool_call("c3", "browser_devtools", json!({"panel": "console"})),
+                _ => ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{"message": {"role": "assistant", "content": "Done."}, "finish_reason": "stop"}]
+                })),
+            }
+        })
+        .mount(&llm)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(llm.uri()));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().to_string(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap();
+    {
+        let (data, id) = (data.path().to_owned(), thread.id.clone());
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": id, "mode": "yolo"}),
+            );
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": id, "text": "Debug the app."}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let results = results_after(&llm, &state, &thread.id, 3).await;
+    assert!(results[1].contains("Local app!"), "{}", results[1]);
+    assert!(results[2].contains("slow start"), "{}", results[2]);
+
+    // A project that turns Developer mode off: no debugging tool is offered.
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"browser":{"developer_mode":false}}"#,
+    )
+    .unwrap();
+    let before = llm.received_requests().await.unwrap_or_default().len();
+    let quiet = state
+        .create_thread(
+            project.path().to_string_lossy().to_string(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap();
+    {
+        let (data, id) = (data.path().to_owned(), quiet.id.clone());
+        tokio::task::spawn_blocking(move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": id, "mode": "yolo"}),
+            );
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": id, "text": "Open it."}),
+            );
+        })
+        .await
+        .unwrap();
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let requests = llm.received_requests().await.unwrap_or_default();
+        if requests.len() > before && !state.get_thread(&quiet.id).await.is_ok_and(|t| t.running) {
+            let offered = requests[before].body_json::<Value>().unwrap()["tools"].to_string();
+            assert!(offered.contains("\"browser_open\""), "{offered}");
+            assert!(!offered.contains("\"browser_devtools\""));
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "second run did not finish"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        "{\n  // my notes\n  \"schema_version\": 1\n}\n",
+    )
+    .unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    tokio::task::spawn_blocking(move || {
+        let view = call(&dir, "get_browser_settings", json!({}));
+        assert_eq!(view["settings"]["permissions"]["debugging"], "block");
+        assert!(view["starter_sites"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s == "paypal.com"));
+        // Only the changed fields are sent, with the revision the page loaded.
+        let mut permissions = view["settings"]["permissions"].clone();
+        permissions["debugging"] = json!("ask");
+        let saved = call(
+            &dir,
+            "update_browser_settings",
+            json!({"changes": {"permissions": permissions, "show_secrets": true}, "revision": view["revision"]}),
+        );
+        assert_eq!(saved["settings"]["permissions"]["debugging"], "ask");
+        assert_ne!(saved["revision"], view["revision"]);
+        let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
+        assert!(file.contains("// my notes"), "{file}");
+        assert_eq!(
+            call(&dir, "get_browser_settings", json!({}))["settings"]["show_secrets"],
+            true
+        );
+        // A hand edit to the file while the page is open: the stale page's save is refused
+        // and the hand edit stays.
+        let edited = file.replace("\"developer_mode\": true", "\"developer_mode\": false");
+        assert_ne!(edited, file, "{file}");
+        std::fs::write(dir.join("runtime.jsonc"), &edited).unwrap();
+        let stale = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_browser_settings",
+                &json!({"changes": {"open_workspace": false}, "revision": saved["revision"]}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!stale.status.success());
+        assert!(String::from_utf8_lossy(&stale.stderr).contains("changed in runtime.jsonc"));
+        assert_eq!(std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap(), edited);
+        let fresh = call(&dir, "get_browser_settings", json!({}));
+        assert_eq!(fresh["settings"]["developer_mode"], false);
+        let saved = call(
+            &dir,
+            "update_browser_settings",
+            json!({"changes": {"open_workspace": false}, "revision": fresh["revision"]}),
+        );
+        assert_eq!(saved["settings"]["developer_mode"], false, "the hand edit is kept");
+        assert_eq!(saved["settings"]["open_workspace"], false);
+        let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
+        // An invalid site is refused and the file is left as it was.
+        let bad = json!({"site_exceptions": [{"site": "https://x.com/path", "browsing": "block"}]});
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_browser_settings",
+                &json!({"changes": bad}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap(),
+            file
+        );
+        // No browsing yet: empty history; clearing works and reports nothing.
+        assert_eq!(
+            call(
+                &dir,
+                "browser_history",
+                json!({"projectRoot": null, "query": ""})
+            )["entries"],
+            json!([])
+        );
+        let cleared = call(
+            &dir,
+            "clear_browsing_data",
+            json!({"projectRoot": null, "range": "all", "types": ["history", "cookies", "cache"]}),
+        );
+        assert_eq!(cleared["cleared"], json!([]));
+        // Settings › Permissions: the editors offered start with the system text editor, and
+        // only a known editor can be remembered.
+        let editors = call(&dir, "list_editors", json!({}));
+        assert_eq!(
+            editors["editors"][0],
+            json!({"id": "", "name": "Text editor"})
+        );
+        let chosen = call(
+            &dir,
+            "update_settings",
+            json!({"patch": {"config_editor": "zed"}}),
+        );
+        assert_eq!(chosen["config_editor"], "zed");
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_settings",
+                &json!({"patch": {"config_editor": "sh -c x"}}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("Unknown editor"));
+        let opened = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "open_runtime_config",
+                &json!({"editor": "not-an-editor"}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!opened.status.success());
+        assert!(String::from_utf8_lossy(&opened.stderr).contains("unknown editor"));
+        // Settings › Permissions: new chats start in the chosen mode.
+        let saved = call(&dir, "update_settings", json!({"patch": {"default_approval_mode": "yolo"}}));
+        assert_eq!(saved["default_approval_mode"], "yolo");
+        let project = dir.join("mode-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let thread = call(
+            &dir,
+            "create_thread",
+            json!({"projectRoot": project, "provider": "go", "model": null}),
+        );
+        assert_eq!(thread["approval_mode"], "yolo", "{thread}");
+    })
+    .await
+    .unwrap();
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_sets_and_checks_the_search_server() {
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        "{\n  // my notes\n  \"schema_version\": 1\n}\n",
+    )
+    .unwrap();
+    let searxng = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [{"title": "Weather", "url": "https://example.com/w", "content": "Sunny"}],
+            "unresponsive_engines": [["google", "CAPTCHA"]]
+        })))
+        .mount(&searxng)
+        .await;
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    let url = searxng.uri();
+    tokio::task::spawn_blocking(move || {
+        assert_eq!(
+            call(&dir, "get_web_settings", json!({}))["search_url"],
+            Value::Null
+        );
+        let saved = call(&dir, "update_web_settings", json!({"searchUrl": url}));
+        assert_eq!(saved["search_url"], url.as_str());
+        let file = std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap();
+        assert!(
+            file.contains("// my notes") && file.contains(url.as_str()),
+            "{file}"
+        );
+        // The saved server answers, with one engine failing.
+        let status = call(&dir, "check_search_server", json!({}));
+        assert_eq!(status["state"], "working", "{status}");
+        assert_eq!(status["results"], 1);
+        assert_eq!(status["failed_engines"][0]["engine"], "google");
+        // A URL typed but not saved yet can be checked too.
+        let unsaved = call(
+            &dir,
+            "check_search_server",
+            json!({"url": "http://127.0.0.1:9"}),
+        );
+        assert_eq!(unsaved["state"], "unreachable");
+        // An invalid URL is refused and the file is left as it was.
+        let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "update_web_settings",
+                &json!({"searchUrl": "ftp://x"}).to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("runtime.jsonc")).unwrap(),
+            file
+        );
+        // Clearing turns web_search off.
+        let cleared = call(&dir, "update_web_settings", json!({"searchUrl": ""}));
+        assert_eq!(cleared["search_url"], Value::Null);
+    })
+    .await
+    .unwrap();
+    task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    let watcher = tokio::task::spawn_blocking(move || {
+        call(
+            &dir,
+            "plugin_action",
+            json!({"action": "save", "scope": "global", "spec": {"name": "personal", "mcp": {"docs": {"url": "http://127.0.0.1:9/mcp"}}}}),
+        );
+        let opened = call(&dir, "open_mcp_config", json!({"open": false}));
+        assert_eq!(opened["state"], "open", "{opened}");
+        assert_eq!(opened["servers"], 1);
+        let path = std::path::PathBuf::from(opened["path"].as_str().unwrap());
+        let copy = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            copy.contains("\"personal/docs\"") && copy.starts_with("// "),
+            "{copy}"
+        );
+        // The standard mcpServers shape (Claude Desktop, Claude Code, Cursor), no internals.
+        let parsed = themis_core::configuration::parse_jsonc(&copy).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["personal/docs"],
+            json!({"type": "http", "url": "http://127.0.0.1:9/mcp"})
+        );
+        assert!(
+            !copy.contains("bearer_env") && !copy.contains("\"enabled\""),
+            "{copy}"
+        );
+        // Saving the copy applies it: one server changed, one added (with a comment kept).
+        let edited = copy.replace("http://127.0.0.1:9/mcp", "http://127.0.0.1:10/mcp").replace(
+            "\"personal/docs\": {",
+            "\"personal/notes\": { \"url\": \"http://127.0.0.1:11/mcp\" }, // new\n    \"personal/docs\": {",
+        );
+        std::fs::write(&path, &edited).unwrap();
+        let status = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(status["state"], "applied", "{status}");
+        assert_eq!(status["changed"], json!(["personal"]));
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        let personal = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["spec"]["name"] == "personal")
+            .unwrap();
+        assert_eq!(
+            personal["spec"]["mcp"]["docs"]["url"],
+            "http://127.0.0.1:10/mcp"
+        );
+        assert_eq!(
+            personal["spec"]["mcp"]["notes"]["url"],
+            "http://127.0.0.1:11/mcp"
+        );
+        // A local server in the standard shape: its env reference round-trips.
+        let copy = std::fs::read_to_string(&path).unwrap();
+        let with_local = copy.replacen(
+            "\"mcpServers\": {",
+            "\"mcpServers\": {\n    \"personal/files\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"/tmp\"], \"env\": { \"API_KEY\": \"${FILES_KEY}\" } },",
+            1,
+        );
+        std::fs::write(&path, &with_local).unwrap();
+        let local = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(local["state"], "applied", "{local}");
+        let reopened = call(&dir, "open_mcp_config", json!({"open": false}));
+        assert_eq!(reopened["servers"], 3);
+        let copy =
+            themis_core::configuration::parse_jsonc(&std::fs::read_to_string(&path).unwrap())
+                .unwrap();
+        assert_eq!(
+            copy["mcpServers"]["personal/files"],
+            json!({"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"], "env": {"API_KEY": "${FILES_KEY}"}})
+        );
+        // A literal credential is refused, as for any import.
+        let literal = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("${FILES_KEY}", "sk-literal");
+        std::fs::write(&path, literal).unwrap();
+        let refused = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(refused["state"], "invalid", "{refused}");
+        // A broken file names its line and changes nothing.
+        std::fs::write(
+            &path,
+            "{\n  \"mcpServers\": {\n    \"personal/docs\": { \"url\": }\n  }\n}\n",
+        )
+        .unwrap();
+        let broken = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(broken["state"], "invalid", "{broken}");
+        assert_eq!(broken["line"], 3);
+        // A name outside your personal integrations is refused.
+        std::fs::write(
+            &path,
+            "{\"mcpServers\": {\"someone/else\": {\"url\": \"http://127.0.0.1:12/mcp\"}}}",
+        )
+        .unwrap();
+        assert!(call(&dir, "apply_mcp_config", json!({}))["message"]
+            .as_str()
+            .unwrap()
+            .contains("not one of your personal integrations"));
+        // A change made elsewhere since the copy was taken is a conflict, not overwritten.
+        let reopened = call(&dir, "open_mcp_config", json!({"open": false}));
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        let revision = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["spec"]["name"] == "personal")
+            .unwrap()["revision"]
+            .clone();
+        call(
+            &dir,
+            "plugin_action",
+            json!({"action": "save", "scope": "global", "expectedRevision": revision, "spec": {"name": "personal", "mcp": {"docs": {"url": "http://127.0.0.1:13/mcp"}}}}),
+        );
+        std::fs::write(&path, fresh.replace("127.0.0.1:10", "127.0.0.1:14")).unwrap();
+        let conflict = call(&dir, "apply_mcp_config", json!({}));
+        assert_eq!(conflict["state"], "conflict", "{conflict} {reopened}");
+        // The watcher applies a save by itself.
+        let watched = call(&dir, "open_mcp_config", json!({"open": false}));
+        let copy = std::fs::read_to_string(&path).unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+        std::fs::write(&path, copy.replace("127.0.0.1:13", "127.0.0.1:15")).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let status = call(&dir, "mcp_config_status", json!({}));
+            if status["state"] == "applied" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "not applied: {status} {watched}"
+            );
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        let list = call(&dir, "plugin_action", json!({"action": "list"}));
+        let personal = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["spec"]["name"] == "personal")
+            .unwrap();
+        assert_eq!(
+            personal["spec"]["mcp"]["docs"]["url"],
+            "http://127.0.0.1:15/mcp"
+        );
+    });
+    watcher.await.unwrap();
+    task.abort();
+}
+
+/// The SearXNG built into Themis answers searches when no server of your own is set. Needs
+/// the runtime from `node scripts/bundle-searxng.mjs`; skipped where it was not built.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_the_built_in_search_server_answers() {
+    let runtime = Path::new(env!("CARGO_MANIFEST_DIR")).join("searxng-runtime");
+    if !runtime.join("VERSION").exists() {
+        eprintln!("skipping: run node scripts/bundle-searxng.mjs to build the search runtime");
+        return;
+    }
+    std::env::set_var("THEMIS_SEARXNG_DIR", &runtime);
+    let data = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let dir = data.path().to_owned();
+    tokio::task::spawn_blocking(move || {
+        let web = call(&dir, "get_web_settings", json!({}));
+        assert_eq!(web["search_url"], Value::Null);
+        assert_eq!(web["built_in"]["available"], true, "{web}");
+        // No server of your own: the check starts and asks the built-in one.
+        let status = call(&dir, "check_search_server", json!({}));
+        assert!(
+            matches!(status["state"].as_str(), Some("working" | "degraded")),
+            "{status}"
+        );
+        let web = call(&dir, "get_web_settings", json!({}));
+        let url = web["built_in"]["url"].as_str().unwrap().to_owned();
+        assert!(url.starts_with("http://127.0.0.1:"), "{web}");
+        // Its settings live in app data: JSON on, bound to this computer only.
+        let settings = std::fs::read_to_string(dir.join("searxng/settings.yml")).unwrap();
+        assert!(settings.contains("formats: [html, json]") && settings.contains("127.0.0.1"));
+    })
+    .await
+    .unwrap();
+    task.abort();
+    themis_desktop::state::searxng_stop_for_test();
+}

@@ -9,14 +9,17 @@ mod attachments;
 mod automation;
 mod background;
 mod browser;
+mod browser_data;
 mod changes;
 mod chat_grants;
 pub(crate) mod configuration;
+pub(crate) mod editors;
 mod goal;
 mod goal_tool;
 mod integration_tools;
 mod mcp;
 mod mcp_consent;
+mod mcp_file;
 mod media_tool;
 mod permissions;
 mod plugins;
@@ -25,6 +28,13 @@ mod projects;
 mod queue;
 mod reviews;
 mod run;
+pub(crate) mod searxng;
+
+/// Test support: stops the built-in search server.
+#[doc(hidden)]
+pub fn searxng_stop_for_test() {
+    searxng::stop();
+}
 mod skills;
 mod threads;
 mod workspace;

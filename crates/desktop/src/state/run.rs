@@ -24,6 +24,10 @@ struct AuditedApprovals {
     context: themis_core::diagnostics::DiagnosticContext,
 }
 impl ApprovalHook for AuditedApprovals {
+    fn denied_by_rule(&self, action: &themis_core::tools::ToolAction) -> bool {
+        self.inner.denied_by_rule(action)
+    }
+
     fn approve(&self, action: &themis_core::tools::ToolAction) -> themis_core::tools::Approval {
         let started = std::time::Instant::now();
         let decision = self.inner.approve(action);
@@ -295,7 +299,13 @@ impl AppState {
                     Err(error) => {
                         // Transport errors may contain remote URLs, arguments or server
                         // responses. Only expose fixed, actionable failure categories.
-                        let reason = match error.to_string().as_str() {
+                        let text = error.to_string();
+                        let missing = format!("{error:#}").contains("MCP program not found")
+                            || text.starts_with("MCP process could not start: ");
+                        let reason = match text.as_str() {
+                            _ if missing => {
+                                "server process could not start: its program was not found"
+                            }
                             "Could not start MCP server"
                             | "MCP process could not start. Check the saved command." => {
                                 "server process could not start"
@@ -359,10 +369,42 @@ impl AppState {
             root: snapshot.work_root.clone(),
             attached: std::sync::atomic::AtomicUsize::new(0),
         }));
-        // fetch_url always; web_search when the user file names a SearXNG instance.
+        // Settings › Browser for this run; "Always allow on this site" is saved for later runs.
+        let remember: themis_core::tools::site_permissions::RememberSite = {
+            let state = self.clone();
+            Arc::new(move |site: &str, permission| {
+                let site = site.to_owned();
+                state
+                    .update_user_browser_config(|browser| {
+                        super::browser::allow_site(browser, &site, permission);
+                        Ok(())
+                    })
+                    .map(|_| ())
+            })
+        };
+        let site_permissions = themis_core::tools::site_permissions::SitePermissions::new(
+            run_configuration.browser.clone(),
+            Some(remember),
+        );
+        // fetch_url always; web_search through your SearXNG, or the one built into Themis.
+        let mut web = run_configuration.web.clone();
+        if web.search_url.is_none() && super::searxng::runtime_dir().is_some() {
+            match super::searxng::url(&self.app_data_dir()).await {
+                Ok(url) => web.search_url = Some(url),
+                Err(error) => {
+                    let _ = self.inner.diagnostics.append(
+                        "web",
+                        "built_in_search_unavailable",
+                        "warn",
+                        json!({"reason": error}),
+                    );
+                }
+            }
+        }
         tools.extend(themis_core::tools::web::web_tools(
             approvals.clone(),
-            &run_configuration.web,
+            &web,
+            Some(Arc::clone(&site_permissions)),
         ));
         // The chat's built-in browser, shared with the Workspace Browser tab.
         if run_configuration.browser.enabled {
@@ -382,6 +424,7 @@ impl AppState {
                     media: Some(Arc::new(super::browser::ProjectMedia {
                         root: snapshot.work_root.clone(),
                     })),
+                    permissions: Arc::clone(&site_permissions),
                 },
             ));
         }
@@ -696,8 +739,12 @@ impl AppState {
     /// Marks a run idle, releases its concurrency permit, and persists.
     pub(super) async fn finish_run(&self, thread_id: &str) {
         self.close_steer_inbox(thread_id);
-        // A recording the agent left running ends with its run.
+        // A recording the agent left running ends with its run, and so do its breakpoints,
+        // request blocks and throttling.
         self.stop_agent_recording(thread_id).await;
+        if let Some(chat) = self.inner.browsers.existing(thread_id) {
+            chat.end_debugging().await;
+        }
         self.inner
             .stop_flags
             .lock()

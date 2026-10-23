@@ -51,8 +51,11 @@ const USER_AGENT: &str = concat!(
 pub fn web_tools(
     approvals: Arc<dyn ApprovalHook>,
     config: &crate::configuration::WebConfig,
+    permissions: Option<Arc<super::site_permissions::SitePermissions>>,
 ) -> Vec<Box<dyn ToolT>> {
-    let mut tools: Vec<Box<dyn ToolT>> = vec![Box::new(FetchUrlTool::new(Arc::clone(&approvals)))];
+    let mut fetch = FetchUrlTool::new(Arc::clone(&approvals));
+    fetch.permissions = permissions;
+    let mut tools: Vec<Box<dyn ToolT>> = vec![Box::new(fetch)];
     if let Some(base) = config
         .search_url
         .as_deref()
@@ -281,6 +284,8 @@ pub struct FetchUrlTool {
     approvals: Arc<dyn ApprovalHook>,
     client: reqwest::Client,
     cache: Arc<Mutex<PageCache>>,
+    /// Settings › Browser: a site blocked for Browsing is not fetched either.
+    pub permissions: Option<Arc<super::site_permissions::SitePermissions>>,
 }
 
 impl FetchUrlTool {
@@ -306,6 +311,7 @@ impl FetchUrlTool {
             approvals,
             client,
             cache: Arc::default(),
+            permissions: None,
         }
     }
 
@@ -469,6 +475,16 @@ impl ToolRuntime for FetchUrlTool {
             // Paging through a page already read (and approved) this run.
             Some(page) => page,
             None => {
+                let site = site_of(&url);
+                if self.permissions.as_ref().is_some_and(|permissions| {
+                    permissions.decide(super::site_permissions::Permission::Browsing, &site)
+                        == crate::configuration::SiteAccess::Block
+                }) {
+                    return Err(tool_error(format!(
+                        "fetch_url: {site} is blocked in Settings › Browser. {}",
+                        super::REFUSAL_NOTE
+                    )));
+                }
                 approve_site(
                     self.approvals.as_ref(),
                     "fetch_url",
@@ -809,6 +825,61 @@ impl ToolRuntime for WebSearchTool {
     }
 }
 
+/// Settings › Web: asks the SearXNG instance at `base` one test search and says how it
+/// answered: `working` (results, perhaps with some engines failing), `degraded` (no
+/// results), `json_off` (HTTP 403),
+/// `rate_limited`, `unreachable`, `invalid` (not an http(s) URL) or `error`.
+pub async fn check_search_server(base: &str) -> Value {
+    let base_url = match checked_url(base.trim()) {
+        Ok(url) => url,
+        Err(error) => return json!({"state": "invalid", "message": error}),
+    };
+    let mut url = base_url.clone();
+    let path = format!("{}/search", url.path().trim_end_matches('/'));
+    url.set_path(&path);
+    url.set_query(Some("q=weather&format=json&categories=general"));
+    let client = match reqwest::Client::builder()
+        .timeout(SEARCH_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent(USER_AGENT)
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => return json!({"state": "error", "message": error.to_string()}),
+    };
+    let mut response = match client.get(url).send().await {
+        Ok(response) => response,
+        Err(error) if error.is_connect() || error.is_timeout() => {
+            return json!({"state": "unreachable", "message": format!("Not reachable at {}", base.trim())})
+        }
+        Err(error) => return json!({"state": "error", "message": describe_request_error(&error)}),
+    };
+    match response.status().as_u16() {
+        200..=299 => {}
+        403 => {
+            return json!({"state": "json_off", "message": "JSON output is off: add json to search.formats in its settings.yml"})
+        }
+        429 => return json!({"state": "rate_limited", "message": "Rate limiting (HTTP 429)"}),
+        status => return json!({"state": "error", "message": format!("HTTP {status}")}),
+    }
+    let parsed = match read_capped(&mut response, SEARCH_MAX_BYTES)
+        .await
+        .and_then(|(body, _)| parse_searxng(&body, MAX_RESULTS))
+    {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return json!({"state": "error", "message": format!("Not a SearXNG answer: {error}")})
+        }
+    };
+    // Some engine is nearly always busy or asking for a CAPTCHA; results still mean it works.
+    let state = if parsed.results.is_empty() {
+        "degraded"
+    } else {
+        "working"
+    };
+    json!({"state": state, "results": parsed.results.len(), "failed_engines": parsed.failed_engines})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1053,6 +1124,54 @@ mod tests {
             .await
             .unwrap_err();
         assert!(denied.to_string().contains("approval"), "{denied}");
+    }
+
+    #[tokio::test]
+    async fn the_search_server_check_names_each_way_it_can_fail() {
+        use wiremock::{
+            matchers::{path, query_param},
+            Mock, MockServer, ResponseTemplate,
+        };
+        let server = MockServer::start().await;
+        Mock::given(path("/ok/search"))
+            .and(query_param("format", "json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "results": [{"title": "Weather", "url": "https://example.com/w", "content": "Sunny"}],
+                "unresponsive_engines": []
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(path("/some/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "results": [], "unresponsive_engines": [["google", "CAPTCHA"]]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(path("/off/search"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        let ok = check_search_server(&format!("{}/ok", server.uri())).await;
+        assert_eq!(
+            (ok["state"].as_str(), ok["results"].as_u64()),
+            (Some("working"), Some(1)),
+            "{ok}"
+        );
+        let some = check_search_server(&format!("{}/some", server.uri())).await;
+        assert_eq!(some["state"], "degraded");
+        assert_eq!(some["failed_engines"][0]["reason"], "CAPTCHA");
+        assert_eq!(
+            check_search_server(&format!("{}/off", server.uri())).await["state"],
+            "json_off"
+        );
+        assert_eq!(
+            check_search_server("http://127.0.0.1:9").await["state"],
+            "unreachable"
+        );
+        assert_eq!(
+            check_search_server("ftp://example.com").await["state"],
+            "invalid"
+        );
     }
 
     #[tokio::test]
