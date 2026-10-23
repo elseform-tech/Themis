@@ -356,6 +356,12 @@ export function getSecretStatus(): Promise<SecretStatus> {
   return invoke('get_secret_status');
 }
 
+/** What OpenCode Go says about the key in its chosen secret (nothing is generated). */
+export type GoKeyCheck = { state: "works" | "rejected" | "unavailable" | "missing"; secret: string };
+export function checkGoKey(): Promise<GoKeyCheck> {
+  return invoke('check_go_key');
+}
+
 export function setSecret(
   provider: 'go',
   value: string,

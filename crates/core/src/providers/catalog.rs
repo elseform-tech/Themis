@@ -459,3 +459,85 @@ pub async fn refresh_go_models(base_url: &str, api_key: &str) -> Result<Vec<Stri
         .with_context(|| format!("failed to parse Go models response: {body}"))?;
     Ok(parsed.data.into_iter().map(|entry| entry.id).collect())
 }
+
+/// What OpenCode Go says about an API key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoKeyCheck {
+    /// Go accepted the key.
+    Works,
+    /// Go refused the key (wrong, revoked or expired).
+    Rejected,
+    /// Go could not be reached or answered with a server error.
+    Unavailable,
+}
+
+/// Checks `api_key` with Go without generating anything (the model list does not check
+/// keys): a chat request with no messages is refused only after the key is checked, with
+/// 401 or 403 for a key Go does not accept.
+pub async fn check_go_key(base_url: &str, api_key: &str) -> GoKeyCheck {
+    let url = format!("{}/{CHAT_COMPLETIONS_PATH}", base_url.trim_end_matches('/'));
+    let sent = http_client()
+        .post(&url)
+        .bearer_auth(api_key)
+        .header("User-Agent", themis_user_agent())
+        .header(GO_SESSION_HEADER, go_session_id())
+        .timeout(std::time::Duration::from_secs(15))
+        .json(&serde_json::json!({"model": GO_DEFAULT_MODEL, "messages": []}))
+        .send()
+        .await;
+    match sent.map(|response| response.status()) {
+        Ok(status) if matches!(status.as_u16(), 401 | 403) => GoKeyCheck::Rejected,
+        Ok(status) if status.is_server_error() => GoKeyCheck::Unavailable,
+        Ok(_) => GoKeyCheck::Works,
+        Err(_) => GoKeyCheck::Unavailable,
+    }
+}
+
+#[cfg(test)]
+mod key_check_tests {
+    use super::*;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn go_answering(status: u16) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(header("authorization", "Bearer sk-test"))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn a_key_is_checked_without_generating_anything() {
+        for (status, expected) in [
+            (400, GoKeyCheck::Works),
+            (200, GoKeyCheck::Works),
+            (401, GoKeyCheck::Rejected),
+            (403, GoKeyCheck::Rejected),
+            (502, GoKeyCheck::Unavailable),
+        ] {
+            let go = go_answering(status).await;
+            assert_eq!(
+                check_go_key(&go.uri(), "sk-test").await,
+                expected,
+                "{status}"
+            );
+            let sent = &go.received_requests().await.unwrap()[0];
+            let body: serde_json::Value = serde_json::from_slice(&sent.body).unwrap();
+            assert_eq!(
+                body["messages"],
+                serde_json::json!([]),
+                "nothing to generate"
+            );
+        }
+        // Nothing listening: unavailable, not rejected.
+        assert_eq!(
+            check_go_key("http://127.0.0.1:9", "sk-test").await,
+            GoKeyCheck::Unavailable
+        );
+    }
+}

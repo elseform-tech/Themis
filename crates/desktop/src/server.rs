@@ -986,6 +986,7 @@ async fn dispatch_command(
                 .await?
         ),
         "get_secret_status" => output!(state.get_secret_status().await?),
+        "check_go_key" => output!(state.check_go_key().await?),
         "set_secret" => done!(
             state
                 .set_secret(arg(&args, "provider")?, arg(&args, "value")?)

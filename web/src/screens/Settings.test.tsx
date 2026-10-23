@@ -21,13 +21,14 @@ vi.mock("../lib/tauri", () => ({
   setSecret: vi.fn(async () => undefined),
   updateSettings: vi.fn(async (patch: object) => ({ ...settings, ...patch })),
   listGoModels: vi.fn(async () => []),
+  checkGoKey: vi.fn(async () => ({ state: "works", secret: "OPENCODE_KEY" })),
   listKeys: vi.fn(async () => [
     { name: "OPENCODE_KEY", saved: true, environment: false, used_by: ["OpenCode Go"] },
     { name: "WORK_GO_KEY", saved: true, environment: false, used_by: [] },
   ]),
 }));
 
-beforeEach(() => { dispatch.mockClear(); });
+beforeEach(() => { dispatch.mockClear(); vi.mocked(bridge.checkGoKey).mockClear(); });
 afterEach(cleanup);
 
 describe("Settings › Models › Connections", () => {
@@ -42,6 +43,25 @@ describe("Settings › Models › Connections", () => {
     expect(dispatch).toHaveBeenCalledWith({ type: "settings/patched", settings: expect.objectContaining({ go_secret: "WORK_GO_KEY" }) });
     expect(bridge.getSecretStatus).toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledWith({ type: "secrets/loaded", status: { go: false } });
+  });
+
+  it("checks the key with OpenCode and says so, and confirms a save inline", async () => {
+    await act(async () => { render(<SettingsScreen />); });
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    expect(bridge.checkGoKey).toHaveBeenCalledTimes(1);
+
+    vi.mocked(bridge.checkGoKey).mockResolvedValueOnce({ state: "rejected", secret: "OPENCODE_KEY" });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Check" })); });
+    expect(screen.getByText("Key rejected")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Set OPENCODE_KEY"));
+    fireEvent.change(screen.getByLabelText("Value of OPENCODE_KEY"), { target: { value: "sk-new" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
+    expect(bridge.setSecret).toHaveBeenCalledWith("go", "sk-new");
+    expect(screen.getByText("Saved OPENCODE_KEY")).toBeInTheDocument();
+    // Saving checks the new key right away.
+    expect(bridge.checkGoKey).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("Connected")).toBeInTheDocument();
   });
 
   it("names the section Secrets", async () => {

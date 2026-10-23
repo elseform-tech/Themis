@@ -49,6 +49,17 @@ async fn cli_the_provider_key_is_a_settings_key_that_mcp_servers_can_use() {
         .respond_with(ResponseTemplate::new(403))
         .mount(&mcp)
         .await;
+    // OpenCode Go checks keys on its chat endpoint (the model list accepts any key).
+    let go = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(header("authorization", "Bearer go-test-key"))
+        .respond_with(ResponseTemplate::new(400))
+        .mount(&go)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&go)
+        .await;
     let data = tempfile::tempdir().unwrap();
     let project = data.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
@@ -59,6 +70,7 @@ async fn cli_the_provider_key_is_a_settings_key_that_mcp_servers_can_use() {
         data.path().join("settings.json"),
         Arc::clone(&store) as Arc<dyn SecretStore>,
     );
+    state.set_go_base_url_override(Some(go.uri()));
     let server = Server::bind(state.clone(), data.path()).await.unwrap();
     let task = tokio::spawn(server.run());
     let dir = data.path().to_owned();
@@ -69,6 +81,15 @@ async fn cli_the_provider_key_is_a_settings_key_that_mcp_servers_can_use() {
         // left alone (no Keychain prompt to delete it) and never read again.
         assert_eq!(call(&dir, "get_secret_status", json!({}))["go"], true);
         assert_eq!(moved.get(GO_ENTRY).as_deref(), Some("go-test-key"));
+
+        // Settings › Models › Connections asks Go whether the key works.
+        assert_eq!(call(&dir, "check_go_key", json!({})), json!({"state": "works", "secret": "OPENCODE_KEY"}));
+        call(&dir, "set_key", json!({"name": "OPENCODE_KEY", "value": "go-wrong-key"}));
+        assert_eq!(call(&dir, "check_go_key", json!({}))["state"], "rejected");
+        call(&dir, "set_key", json!({"name": "OPENCODE_KEY", "value": "go-test-key"}));
+        let log = std::fs::read_to_string(dir.join("logs").join("diagnostics-0.jsonl")).unwrap();
+        assert!(log.contains("\"key_checked\"") && log.contains("\"rejected\""), "{log}");
+        assert!(!log.contains("go-test-key") && !log.contains("go-wrong-key"), "no key in the log");
 
         call(&dir, "plugin_action", json!({"action": "save", "scope": "global", "spec": {"name": "remote", "mcp": {"gateway": {"url": url, "headers": {"Authorization": "Bearer ${OPENCODE_KEY}"}}}}}));
         call(&dir, "plugin_action", json!({"action": "set_component_enabled", "scope": "global", "name": "remote", "kind": "mcp", "id": "gateway", "enabled": true}));

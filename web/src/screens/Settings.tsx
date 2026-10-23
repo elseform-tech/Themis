@@ -16,6 +16,8 @@ import {
   updateSettings,
   listGoModels,
   listKeys,
+  checkGoKey,
+  type GoKeyCheck,
 } from "../lib/tauri";
 import { describeError, toast, useApp } from "../state/store";
 import { DEFAULT_MODEL, modelLabel } from "../lib/models";
@@ -100,6 +102,8 @@ export function SettingsScreen() {
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [keyBusy, setKeyBusy] = useState<string | null>(null);
   const [secretNames, setSecretNames] = useState<string[]>([]);
+  const [keyCheck, setKeyCheck] = useState<GoKeyCheck["state"] | "checking" | null>(null);
+  const [keyNote, setKeyNote] = useState("");
   const [section, setSection] = useState(state.settingsFocus?.section ?? "General");
   const [error, setError] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -122,6 +126,15 @@ export function SettingsScreen() {
     });
     return () => { active = false; };
   }, [section, state.secretStatus.go, modelRefresh]);
+
+  // Asks Go whether the chosen secret's key works (the model list does not check keys).
+  async function runKeyCheck() {
+    setKeyCheck("checking");
+    try { setKeyCheck((await checkGoKey()).state); } catch { setKeyCheck("unavailable"); }
+  }
+  useEffect(() => {
+    if (section === "Models" && state.settingsLoaded) void runKeyCheck();
+  }, [section, state.settingsLoaded, state.settings.go_secret]);
 
   // The secrets Models › Connections can choose from (Settings › Secrets).
   useEffect(() => {
@@ -160,7 +173,9 @@ export function SettingsScreen() {
     try {
       await setSecret(provider, value);
       setKeys((prev) => ({ ...prev, [provider]: "" }));
+      setKeyNote(`Saved ${goSecret}`);
       await refreshSecrets();
+      await runKeyCheck();
       toast(dispatch, `Saved ${goSecret}`, "success");
     } catch (error: unknown) {
       toast(dispatch, `Save ${goSecret} failed: ${describeError(error)}`, "danger");
@@ -186,7 +201,9 @@ export function SettingsScreen() {
     setKeyBusy(provider);
     try {
       await clearSecret(provider);
+      setKeyNote(`Removed ${goSecret}`);
       await refreshSecrets();
+      await runKeyCheck();
       toast(dispatch, `Removed ${goSecret}`, "success");
     } catch (error: unknown) {
       toast(dispatch, `Remove ${goSecret} failed: ${describeError(error)}`, "danger");
@@ -209,8 +226,11 @@ export function SettingsScreen() {
   const goSecret = state.settings.go_secret ?? "OPENCODE_KEY";
   const secretChoices = [...new Set([goSecret, "OPENCODE_KEY", ...secretNames])].sort();
   async function chooseSecret(name: string) {
+    setKeyNote("");
     if (await save({ go_secret: name })) await refreshSecrets();
   }
+  const KEY_STATES = { checking: ["off", "Checking…"], works: ["ok", "Connected"], rejected: ["bad", "Key rejected"], unavailable: ["off", "Couldn't reach OpenCode"], missing: ["off", "Not set"] } as const;
+  const [keyTone, keyLabel] = keyCheck ? KEY_STATES[keyCheck] : ["off", "Checking…"];
   const logo = <span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span>;
 
   return (
@@ -245,9 +265,9 @@ export function SettingsScreen() {
         </SettingsGroup>
         <SettingsGroup title="Connections">
           {SECRET_PROVIDERS.map(provider => <div key={provider} className="themis-settings-key">
-            <div className="themis-settings-control"><span className="themis-settings-key-head">{logo}</span><span className={`themis-settings-state is-${state.secretStatus[provider] ? "ok" : "off"}`} title={`Reads the secret ${goSecret} (Settings › Secrets), or an environment variable of that name.`}>{state.secretStatus[provider] ? "Connected" : "Not connected"}</span></div>
+            <div className="themis-settings-control"><span className="themis-settings-key-head">{logo}</span><span className="themis-browser-pick"><span role="status" className={`themis-settings-state is-${keyTone}`} title={`Reads the secret ${goSecret} (Settings › Secrets), or an environment variable of that name. Checked with OpenCode, without using any credits.`}>{keyLabel}</span><button type="button" className="themis-text-action" disabled={keyCheck === "checking"} onClick={() => void runKeyCheck()}>Check</button></span></div>
             <label className="themis-settings-control">Secret<select aria-label="OpenCode Go secret" value={goSecret} disabled={saving} onChange={event => void chooseSecret(event.target.value)}>{secretChoices.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
-            <details><summary>Set {goSecret}</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`Value of ${goSecret}`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Remove</Button></div></details>
+            <details><summary>Set {goSecret}</summary><div className="themis-settings-key-form"><Input id={`themis-key-${provider}`} label={`Value of ${goSecret}`} type="password" autoComplete="off" value={keys[provider] ?? ""} disabled={keyBusy !== null} onChange={event => setKeys(prev => ({ ...prev, [provider]: event.target.value }))} /><Button variant="primary" size="small" disabled={keyBusy !== null || !(keys[provider] ?? "").trim()} onClick={() => void saveKey(provider)}>Save</Button><Button variant="ghost" size="small" disabled={keyBusy !== null || !state.secretStatus[provider]} onClick={() => void clearKey(provider)}>Remove</Button>{keyNote && <span role="status" className="themis-settings-hint">{keyNote}</span>}</div></details>
           </div>)}
         </SettingsGroup>
       </>}

@@ -67,6 +67,38 @@ impl AppState {
         clear_secret_named(self.inner.secrets.as_ref(), &self.go_secret_name().await)
     }
 
+    /// Checks the OpenCode Go key with Go (without generating anything): `works`,
+    /// `rejected`, `unavailable`, or `missing` when the chosen secret has no value. Logs the
+    /// outcome and timing as metadata, never the key.
+    pub async fn check_go_key(&self) -> Result<serde_json::Value, String> {
+        let secret = self.go_secret_name().await;
+        let started = std::time::Instant::now();
+        let state = match self.read_secret("go").await? {
+            None => "missing".to_owned(),
+            Some(key) => {
+                let base_url = self
+                    .inner
+                    .go_base_url_override
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone()
+                    .unwrap_or_else(|| themis_core::providers::GO_BASE_URL.to_owned());
+                let checked = themis_core::providers::check_go_key(&base_url, &key).await;
+                serde_json::to_value(checked)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .unwrap_or_default()
+            }
+        };
+        let _ = self.inner.diagnostics.append(
+            "providers",
+            "key_checked",
+            if state == "works" { "info" } else { "warn" },
+            serde_json::json!({"provider": "go", "result": state, "duration_ms": started.elapsed().as_millis() as u64}),
+        );
+        Ok(serde_json::json!({"state": state, "secret": secret}))
+    }
+
     /// Looks up the Go API key.
     pub(super) async fn api_key_for(&self, provider: ProviderKind) -> Result<String, String> {
         let name = provider.as_str();
