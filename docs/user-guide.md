@@ -28,7 +28,10 @@ work in isolation. Open an existing folder through the project actions menu.
 ## Keys
 
 Use `OPENCODE_KEY` in the environment when launching Themis, or enter a key in
-Settings → Models → Manage key → **Save key**.
+Settings → Models → Manage key → **Save key**. The OpenCode Go key is the key
+`OPENCODE_KEY` in **Settings › Keys** (listed there as used by OpenCode Go), so it can be
+replaced or removed there too, and MCP servers can read it as `${OPENCODE_KEY}`. A key
+saved by an earlier version moves there the first time it is read.
 Entered keys remain in macOS Keychain across app restarts. They are not saved
 in the conversation database, settings files, or browser storage.
 Forgetting a saved key does not unset an environment key. A Finder launch

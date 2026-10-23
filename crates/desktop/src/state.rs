@@ -1127,10 +1127,11 @@ fn without_tokens(text: &str) -> (String, Vec<&str>) {
     (kept.split_whitespace().collect::<Vec<_>>().join(" "), ids)
 }
 
-/// Only the OpenCode Go credential is accepted.
+/// Only the OpenCode Go credential is accepted; it is the Settings › Keys entry
+/// `OPENCODE_KEY`.
 fn secret_key(provider: &str) -> Result<&'static str, String> {
     match provider.trim().to_lowercase().as_str() {
-        "go" => Ok("go"),
+        "go" => Ok(crate::secrets::GO_ENTRY),
         other => Err(format!("unknown secret provider '{other}': expected go")),
     }
 }

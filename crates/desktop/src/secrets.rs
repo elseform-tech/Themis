@@ -20,9 +20,17 @@ fn credential_with_fallback(
     }
 }
 
+/// The OpenCode Go key's name in Settings › Keys (and its environment variable).
+pub const GO_KEY_NAME: &str = "OPENCODE_KEY";
+/// Where the OpenCode Go key is kept: the Settings › Keys entry `OPENCODE_KEY`, so MCP
+/// servers can reference it as `${OPENCODE_KEY}` too.
+pub const GO_ENTRY: &str = "key:OPENCODE_KEY";
+/// Where the key was kept before it joined Settings › Keys (moved on first read).
+pub const LEGACY_GO_ENTRY: &str = "go";
+
 fn go_environment_key(provider: &str) -> Option<String> {
-    (provider == "go")
-        .then(|| std::env::var("OPENCODE_KEY").ok())
+    (provider == GO_ENTRY)
+        .then(|| std::env::var(GO_KEY_NAME).ok())
         .flatten()
 }
 
@@ -214,8 +222,8 @@ impl SecretStore for SessionStore {
         self.keys
             .get(provider)
             .or_else(|| {
-                (provider == "go")
-                    .then(|| std::env::var("OPENCODE_KEY").ok())
+                (provider == GO_ENTRY)
+                    .then(|| std::env::var(GO_KEY_NAME).ok())
                     .flatten()
             })
             .filter(|key| !key.trim().is_empty())

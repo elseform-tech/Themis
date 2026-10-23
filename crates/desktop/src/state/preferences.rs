@@ -73,11 +73,12 @@ impl AppState {
     }
 
     async fn read_secret(&self, provider: &'static str) -> Result<Option<String>, String> {
+        let entry = secret_key(provider)?;
         let secrets = self.inner.secrets.clone();
         // ponytail: native calls cannot be interrupted; a timed-out worker may finish later.
         tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            tokio::task::spawn_blocking(move || secrets.try_get(provider)),
+            tokio::task::spawn_blocking(move || read_or_move(secrets.as_ref(), entry)),
         )
         .await
         .map_err(|_| {
@@ -85,6 +86,32 @@ impl AppState {
         })?
         .map_err(|_| "Credential lookup worker failed".to_owned())?
     }
+}
+
+/// Reads the key at `entry`, first moving an OpenCode Go key saved before keys joined
+/// Settings › Keys. The old entry is removed only once the new one reads back the same.
+fn read_or_move(
+    secrets: &dyn crate::secrets::SecretStore,
+    entry: &str,
+) -> Result<Option<String>, String> {
+    use crate::secrets::{GO_ENTRY, LEGACY_GO_ENTRY};
+    if entry != GO_ENTRY {
+        return secrets.try_get(entry);
+    }
+    // Checked first: the new entry also answers with OPENCODE_KEY from the environment,
+    // and a saved key takes precedence over it.
+    let Some(legacy) = secrets
+        .try_get(LEGACY_GO_ENTRY)?
+        .filter(|key| !key.trim().is_empty())
+    else {
+        return secrets.try_get(entry);
+    };
+    if secrets.set(GO_ENTRY, &legacy).is_ok()
+        && secrets.try_get(GO_ENTRY).ok().flatten().as_deref() == Some(legacy.as_str())
+    {
+        let _ = secrets.clear(LEGACY_GO_ENTRY);
+    }
+    Ok(Some(legacy))
 }
 
 #[cfg(test)]
@@ -142,9 +169,10 @@ mod tests {
 
     struct SlowReadStore(std::time::Duration);
     impl crate::secrets::SecretStore for SlowReadStore {
-        fn get(&self, _: &str) -> Option<String> {
+        fn get(&self, entry: &str) -> Option<String> {
             std::thread::sleep(self.0);
-            Some("synthetic-key".to_owned())
+            // A store with the key already in Settings › Keys (nothing to move).
+            (entry != crate::secrets::LEGACY_GO_ENTRY).then(|| "synthetic-key".to_owned())
         }
         fn has(&self, provider: &str) -> bool {
             self.get(provider).is_some()

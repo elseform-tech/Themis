@@ -54,6 +54,10 @@ impl AppState {
                 }
             }
         }
+        // The OpenCode Go key is the key OPENCODE_KEY, listed even before it is saved.
+        used.entry(crate::secrets::GO_KEY_NAME.to_owned())
+            .or_default()
+            .insert(0, "OpenCode Go".to_owned());
         for name in self.saved_key_names() {
             used.entry(name).or_default();
         }

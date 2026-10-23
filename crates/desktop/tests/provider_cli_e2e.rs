@@ -84,7 +84,11 @@ for cancel in [True, False]:
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(secrets.get("go").as_deref(), Some("synthetic-secrex"));
+    assert_eq!(
+        secrets.get(themis_desktop::secrets::GO_ENTRY).as_deref(),
+        Some("synthetic-secrex"),
+        "saved as the Settings › Keys key OPENCODE_KEY"
+    );
     assert!(
         !dir.path().join("settings.json").exists(),
         "no secret in settings"

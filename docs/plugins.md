@@ -73,7 +73,9 @@ app data `keys.json` keeps only the names, because those stores cannot list entr
 whose keys are missing shows **Key needed** with **Add key**, which opens Settings › Keys on that
 name; every missing name is reported at once. Settings › Keys lists each saved key and each key
 an installed server reads, with the servers that use it and its state (Saved, From environment,
-Missing), and offers Add or Replace (a masked field), Remove, and a new name. Values are never
+Missing), and offers Add or Replace (a masked field), Remove, and a new name. The OpenCode
+Go provider key is the key `OPENCODE_KEY` (always listed, used by OpenCode Go; Settings ›
+Models › Manage key edits the same key), so `${OPENCODE_KEY}` works in MCP configuration. Values are never
 returned to the UI or written to logs; a server's stderr is redacted of the keys it was given.
 Names are letters, digits and `_` (up to 128); values are 1–4096 printable characters without
 spaces. The model provider key stays in Settings › Models.
