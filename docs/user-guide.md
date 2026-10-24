@@ -345,8 +345,8 @@ Preferences persisted to `settings.json`:
 | `theme` | Dark only; legacy values normalize to `dark` | `dark` |
 | `default_provider` | Provider for new threads | `go` |
 | `default_model` | Model for new threads (`""` = provider default) | `""` |
-| `max_turns` | Max agent turns per run (backend validates 1–200) | `20` |
-| `context_messages` | Prior user/final assistant messages sent to the model (1–100) | `20` |
+| `max_total_turns` | Steps per reply (1–2,000; Settings → Advanced → Turn limit) | `200` |
+| `context_token_cap` | Working context: `0` = Auto (the model's window, up to 200,000), or a cap of 2,000–1,000,000 tokens (Settings → Advanced → Context tokens) | `0` |
 | `approval_timeout_seconds` | Seconds before an unanswered approval is denied (30–600; Settings → Permissions) | `300` |
 | `default_approval_mode` | Mode a new chat starts in: `custom` or `yolo` | `custom` |
 | `confirm_reads` | Require approval for read tools | `false` |
@@ -391,10 +391,10 @@ schema, limits, and CLI examples.
 
 **What does Themis cost?**
 Themis itself makes no paid calls. OpenCode Go billing applies under your own
-key. Keep `max_turns` low when testing long tasks.
+key. Keep the Turn limit low when testing long tasks.
 
 **What are the limits?**
-`max_turns` caps turns per run; `concurrency_limit` caps parallel runs;
+The Turn limit caps steps per reply; Context tokens caps working context (Auto follows the model); `concurrency_limit` caps parallel runs;
 approval dialogs deny after the configured timeout (default 5 minutes); each shell invocation captures at most
 32 KiB of output; provider HTTP calls time out after 120 s.
 

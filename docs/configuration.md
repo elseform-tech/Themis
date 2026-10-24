@@ -109,15 +109,47 @@ context, including after compaction and on short follow-ups. Paths mentioned in
 skill descriptions, attachments, examples, or older tasks do not redefine the
 current workspace. This context metadata does not change tool approval rules.
 
-Optional `context_token_budget`, `recent_messages`, and `total_turns` override
-the existing Settings defaults. Omit them to retain those settings.
+Optional `context_token_budget` and `total_turns` override Settings › Advanced
+(Context tokens, Turn limit); omit them to keep those settings.
+`recent_messages` is file-only (default 20).
+
+### Context budget
+
+`context_token_budget` is `"auto"` or a number. Auto (the default, and what an
+omitted field means when Settings › Advanced › Context tokens is also Auto)
+uses the selected model's context window, up to an Auto ceiling of 200,000
+tokens (`AUTO_CONTEXT_CEILING` in `crates/core/src/context_window.rs`, the one
+place it is set). A number (2,000–1,000,000) is a cap: the run uses the smaller
+of the cap and the model's window, so a cap above the Auto ceiling lets a model
+with a larger window use it. Layers override each other as usual, so a project
+`"auto"` undoes a user cap.
+
+The window comes from the public model catalog. When the catalog does not list
+the model, runs start from a 128,000-token guess. When a request fails with a
+context-length error, the run learns that model's limit (the number the error
+states, or 90% of the failed request when it states none, never below 8,000),
+shrinks its budget to it, compacts once and retries. Learned limits last for
+the app session and apply to later runs of that model; they only ever lower
+the window. Diagnostics label the window's `capacity_source` as `catalog`,
+`learned`, `guess`, or `caller_budget_unverified` (tests and override
+endpoints, where the configured budget is used as is).
+
+A goal whose first turn starts with an effective window below 128,000 tokens
+gets one note in the chat: "Context window is small (N tokens); long goals may
+stall."
+
+Settings files from before Auto stored `context_token_budget` 200,000 by
+default. On load, that value becomes Auto (the same budget at the current
+ceiling); any other stored number stays a cap. The app setting is now
+`context_token_cap` (`0` is Auto). The retired `max_turns` and
+`context_messages` settings are ignored when old files are read.
 
 Example user `runtime.jsonc`:
 
 ```jsonc
 {
   "schema_version": 1,
-  "context_token_budget": 200000,
+  "context_token_budget": "auto",
   "logging": { "level": "info" },
   "approval": {
     "default": "ask",
@@ -136,7 +168,6 @@ Example user `runtime.jsonc`:
     "document_batch_timeout_seconds": 3600,
     "rate_limit_backoff_seconds": 10,
     "retry_limit": 2,
-    "section_max_tokens": 4096,
     "summary_max_tokens": 8192
   }
 }
@@ -173,8 +204,8 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 
 | Field | Range/default |
 | --- | --- |
-| `context_token_budget` | 2,000–256,000; omitted uses Settings (default 200,000) |
-| `recent_messages` | 2–200; omitted uses Settings |
+| `context_token_budget` | `"auto"` (the model's window, up to 200,000) or a cap of 2,000–1,000,000 clamped to the window; omitted uses Settings (default Auto) |
+| `recent_messages` | 2–200; default 20 (file-only) |
 | `total_turns` | 1–2,000; omitted uses Settings |
 | `logging.level` | `debug`, `info` (default), `warn`, `error` |
 | `compaction.timeout_seconds` | 1–1800; default 900 per context checkpoint or uncached document job, including stages, retries and consolidation; explicit existing values are preserved |
@@ -187,7 +218,6 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.target_headroom_interactions` | 1–20; default 6; recent observed growth adjusts the trigger within a bounded reserve |
 | `compaction.max_stages` | 1–128; default 32, including consolidation. Applies to attached-document preparation; context checkpoints always use one request |
 | `compaction.retry_limit` | 0–2; default 2 (up to three attempts per failed stage) |
-| `compaction.section_max_tokens` | Legacy compatibility field, 256–16,384; retained for file compatibility; stage output is computed from consolidation capacity |
 | `compaction.document_context_token_budget` | Internal full-document preparation input budget, 24,000–1,000,000; default 200,000; clamped to the routed summary model capacity, with conservative 24,000 when unknown. Does not change ordinary context capacity. |
 | `compaction.summary_max_tokens` | Initial summary-output ceiling, 256–16,384; default 8,192. Retries may use up to twice the effective initial allowance, subject to capacity. |
 | `compaction.summary_model` | Optional `longcat-2.5-preview-free`, `gpt-5.6-luna`, or `gpt-6-luna`; omitted/null keeps automatic routing. Only internal summaries change; the configured model must be present in the captured Go catalog. |
@@ -554,7 +584,7 @@ Agent delivery limits (16 KiB per result, 48 KiB per batch, 64 KiB per serialize
 
 ## Context accounting API
 
-`logging.context_metrics` is captured once per run. `off` disables optional request accounting; bounds, evidence saves and loop guards remain active. `summary` retains aggregate counts and the latest request; `detailed` also retains the last 32 request records with mutually exclusive role and purpose distributions. These are alternative views of the same message bytes, never additive. Estimates use serialized bytes and message overhead, not a verified model tokenizer. Within a run, budget decisions scale the estimate by the ratio of provider-reported to estimated input tokens (clamped 0.75-4.0, no change until a request reports usage) and a context-length-exceeded error triggers one compaction and one retry; `token_calibration` samples in the snapshot show estimate versus report per request. No new configuration fields; see [estimate calibration](context-and-attachments.md#estimate-calibration-and-overflow-recovery). The live catalog is joined to models.dev context/output limits. Ordinary requests clamp to the selected model's published capacity; internal summaries separately clamp to the effective nonthinking summary model. Unknown production capacity uses a conservative 24k admission limit and is labeled unknown. Published metadata is not proof of successful live requests at that capacity.
+`logging.context_metrics` is captured once per run. `off` disables optional request accounting; bounds, evidence saves and loop guards remain active. `summary` retains aggregate counts and the latest request; `detailed` also retains the last 32 request records with mutually exclusive role and purpose distributions. These are alternative views of the same message bytes, never additive. Estimates use serialized bytes and message overhead, not a verified model tokenizer. Within a run, budget decisions scale the estimate by the ratio of provider-reported to estimated input tokens (clamped 0.75-4.0, no change until a request reports usage) and a context-length-exceeded error triggers one compaction and one retry; `token_calibration` samples in the snapshot show estimate versus report per request. No new configuration fields; see [estimate calibration](context-and-attachments.md#estimate-calibration-and-overflow-recovery). The live catalog is joined to models.dev context/output limits. Ordinary requests clamp to the selected model's published capacity; internal summaries separately clamp to the effective nonthinking summary model. Unknown production capacity starts from a 128,000-token guess (`capacity_source` `guess`) and learns the real limit from a context-length error (`learned`); see [Context budget](#context-budget). Published metadata is not proof of successful live requests at that capacity.
 
 Every actual provider attempt, including internal summaries and retries, contributes to request counts and latency. Reported input/output totals remain separate from cached-input and reasoning-output subcounts, which are included in normalized parent counts. Anthropic uncached input, cache reads and cache creation are combined once; OpenAI cache detail is already included in input. Missing usage is null/unavailable, with missing-request counts; it is never reported as zero. Partial streams retain reported usage when available, and cancelled/failed requests remain in accounting. Streaming Chat Completions requests ask for usage and consume trailing usage frames. Token cost is unavailable unless a verified price source is supplied.
 
