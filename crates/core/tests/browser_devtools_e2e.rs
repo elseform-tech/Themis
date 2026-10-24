@@ -157,12 +157,20 @@ async fn the_agent_debugs_a_local_app_with_the_devtools_toolset() {
         json!({"panel": "console", "expression": "console.info('later')"}),
     )
     .await;
-    let newer = run(
-        &tools,
-        "browser_devtools",
-        json!({"panel": "console", "since": next}),
-    )
-    .await;
+    // The message arrives as a browser event shortly after the expression returns.
+    let mut newer = Value::Null;
+    for _ in 0..20 {
+        newer = run(
+            &tools,
+            "browser_devtools",
+            json!({"panel": "console", "since": next}),
+        )
+        .await;
+        if newer["messages"].to_string().contains("later") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     assert!(
         newer["messages"].to_string().contains("later")
             && !newer["messages"].to_string().contains("booted"),
