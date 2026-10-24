@@ -1,9 +1,9 @@
 //! Runs one mid-turn re-read eval: copies the case's `project/` into a temporary folder,
-//! runs `task.json`'s task from an empty conversation with a small budget, so the run
-//! compacts while it works, and prints every tool call and checkpoint as JSON.
+//! runs `task.json`'s task from an empty conversation with the model's budget (Auto: its window,
+//! at most 200k) or a given one, and prints every tool call and checkpoint as JSON.
 //!
 //!   cargo run --release -p themis-core --features eval --example redo_eval -- \
-//!     --case evals/compaction/cases/midturn-ephemeris --model M --budget 16000 \
+//!     --case evals/compaction/cases/midturn-ephemeris --model M [--budget auto|N] \
 //!     [--turns 40] [--effort max] [--base-url URL] [--trace steps.jsonl] [--no-replay]
 //!
 //! `shell` and `git` are always denied; file tools may write inside the temporary project.
@@ -35,11 +35,17 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Auto budget: the model's window, at most this (the app's Auto ceiling).
+const AUTO_CEILING: usize = 200_000;
+/// Auto budget when the catalog does not list the model's window.
+const UNKNOWN_WINDOW: usize = 128_000;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let case = PathBuf::from(arg("--case").ok_or_else(|| anyhow::anyhow!("--case is required"))?);
     let model = arg("--model");
-    let budget: usize = arg("--budget").map_or(Ok(16_000), |v| v.parse())?;
+    // `--budget auto` (the default) follows the model, as the app's Auto setting does.
+    let budget_arg = arg("--budget").filter(|v| v != "auto");
     let recent: usize = arg("--recent").map_or(Ok(20), |v| v.parse())?;
     let turns: usize = arg("--turns").map_or(Ok(40), |v| v.parse())?;
     let spec: Value = serde_json::from_str(&std::fs::read_to_string(case.join("task.json"))?)?;
@@ -60,12 +66,6 @@ async fn main() -> anyhow::Result<()> {
         config = config.with_base_url(url);
     }
     let llm = resolve(&config).await?;
-    let project = tempfile::tempdir()?;
-    copy_tree(&case.join("project"), project.path())?;
-    let policy = EvalPolicy {
-        context_token_budget: budget,
-        recent_messages: recent,
-    };
     // As the app does: the live catalog's output limits and thinking switches apply (without
     // them a 24k budget caps each reply at 3k tokens and long file writes are cut off).
     let catalog = if arg("--base-url").is_none() {
@@ -74,6 +74,20 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_default()
     } else {
         Vec::new()
+    };
+    let window = catalog
+        .iter()
+        .find(|m| m.id == llm.model())
+        .and_then(|m| m.context_tokens);
+    let budget: usize = match budget_arg {
+        Some(v) => v.parse()?,
+        None => window.unwrap_or(UNKNOWN_WINDOW).min(AUTO_CEILING),
+    };
+    let project = tempfile::tempdir()?;
+    copy_tree(&case.join("project"), project.path())?;
+    let policy = EvalPolicy {
+        context_token_budget: budget,
+        recent_messages: recent,
     };
     // `--no-replay` stops sending the model's earlier reasoning back with each request.
     let replay = !std::env::args().any(|a| a == "--no-replay");
@@ -102,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
         .map(str::to_owned)
         .collect();
     let report = json!({
-        "case": spec["name"], "model": model, "budget": budget, "turns": turns, "replay_reasoning": replay,
+        "case": spec["name"], "model": model, "budget": budget, "window": window, "turns": turns, "replay_reasoning": replay,
         "steps": run.steps, "error": run.error, "outputs_written": written,
         "repeat_reminders": run.repeat_reminders, "loop_warnings": run.loop_warnings,
         "request_failures": run.request_failures,

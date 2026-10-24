@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 
 from . import behavior as behavior_grading
 from . import redo as redo_grading
@@ -265,7 +266,7 @@ def build_redo_runner():
 
 
 def midturn(args):
-    """Mid-turn re-read evals: a whole task with a small budget, compacting while it works."""
+    """Mid-turn re-read evals: a whole task with the model's budget (or a given one)."""
     cases = [os.path.join(CASES, name) for name in sorted(os.listdir(CASES))
              if os.path.isfile(os.path.join(CASES, name, "task.json"))
              and (not args.case or name in args.case)]
@@ -296,14 +297,22 @@ def midturn(args):
                 command += [flag, value]
         if args.no_replay:
             command.append("--no-replay")
+        with open(os.path.join(case, "task.json"), encoding="utf-8") as handle:
+            expected = len(json.load(handle).get("outputs") or [])
+        started = time.monotonic()
+
+        def timed(report):
+            if report:
+                report.update(expected_outputs=expected, duration_s=round(time.monotonic() - started))
+            return report
         try:
             done = subprocess.run(command, capture_output=True, text=True, timeout=args.timeout)
             if done.returncode != 0:
                 error = (done.stderr or done.stdout).strip()[-400:]
-                return job, partial(trace, error), error
-            return job, json.loads(done.stdout), None
+                return job, timed(partial(trace, error)), error
+            return job, timed(json.loads(done.stdout)), None
         except (subprocess.TimeoutExpired, ValueError) as error:
-            return job, partial(trace, error), str(error)
+            return job, timed(partial(trace, error)), str(error)
 
     rows, failures, raw = [], [], []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
@@ -315,10 +324,12 @@ def midturn(args):
                 continue
             graded = redo_grading.grade_run(report)
             rows.append(graded)
-            raw.append({"trial": trial, "case": name, "graded": graded, "steps": report["steps"],
+            raw.append({"trial": trial, "case": name, "budget": report.get("budget"), "window": report.get("window"),
+                        "graded": graded, "steps": report["steps"],
                         "request_failures": report.get("request_failures"),
                         "outputs_written": report.get("outputs_written"), "error": report.get("error")})
     summary = {"suite": "midturn", "model": args.model, "effort": args.effort, "budget": args.budget,
+               "budgets_used": sorted({r["budget"] for r in raw if r.get("budget")}),
                "replay_reasoning": not args.no_replay,
                "turns": args.turns, "trials_requested": args.trials, "failed_runs": failures,
                "summary": redo_grading.summarize(rows),
@@ -369,7 +380,7 @@ def main(argv=None):
     mid.add_argument("--case", action="append")
     mid.add_argument("--trials", type=int, default=3)
     mid.add_argument("--model", default=None)
-    mid.add_argument("--budget", type=int, default=16000)
+    mid.add_argument("--budget", default="auto", help="auto (the model's window, at most 200k) or tokens")
     mid.add_argument("--recent", type=int, default=20)
     mid.add_argument("--turns", type=int, default=40)
     mid.add_argument("--effort", default=None)

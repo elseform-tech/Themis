@@ -80,11 +80,20 @@ def grade_run(report):
         "cut_offs": sum("cut_off_calls" in f for f in report.get("request_failures") or []),
         "cut_off_writes": sum(any(c.get("tool") in ("write_file", "apply_patch") for c in f.get("cut_off_calls", []))
                               for f in report.get("request_failures") or []),
+        # Every output file the task asks for exists at the end.
+        "finished": (len(report["outputs_written"]) >= report["expected_outputs"]
+                     if report.get("outputs_written") is not None and report.get("expected_outputs") else None),
+        **{key: sum((s.get("request") or {}).get(key) or 0 for s in steps if s["kind"] == "request")
+           for key in TOKEN_KEYS},
+        "duration_s": report.get("duration_s"),
         # How often the runtime's own repeat reminder and loop warning fired.
         "repeat_reminders": report.get("repeat_reminders"),
         "loop_warnings": report.get("loop_warnings"),
         "error": report.get("error"),
     }
+
+
+TOKEN_KEYS = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")
 
 
 def summarize(rows):
@@ -97,6 +106,7 @@ def summarize(rows):
                 "min": min(values), "max": max(values)}
     keys = ("checkpoints", "calls", "failed_calls", "reads", "evidence_reads", "rereads_after_checkpoint",
             "repeated_reads", "reread_share", "outputs_written", "repeat_reminders", "loop_warnings",
-            "requests", "requests_not_completed", "cut_offs", "cut_off_writes")
+            "requests", "requests_not_completed", "cut_offs", "cut_off_writes", "finished", *TOKEN_KEYS,
+            "duration_s")
     return {"runs": len(rows), "errors": sum(1 for r in rows if r["error"]),
             **{key: stats(key) for key in keys}}

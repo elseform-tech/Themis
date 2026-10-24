@@ -446,6 +446,12 @@ class MidturnEndToEndTests(unittest.TestCase):
         # Both model requests are recorded and completed.
         self.assertEqual(result["details"][0]["graded"]["requests"], 2)
         self.assertEqual(result["details"][0]["graded"]["requests_not_completed"], 0)
+        # Auto budget: a model the catalog does not list gets the unknown-window guess.
+        self.assertEqual(result["budgets_used"], [128000])
+        self.assertIsNone(result["details"][0]["window"])
+        # The task asks for three files and the scripted run writes none.
+        self.assertIs(result["details"][0]["graded"]["finished"], False)
+        self.assertIsInstance(result["details"][0]["graded"]["duration_s"], int)
         self.assertEqual(result["summary"]["reads"]["mean"], 1)
 
 
