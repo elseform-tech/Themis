@@ -8,8 +8,11 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
+import time
 
 from . import behavior as behavior_grading
+from . import redo as redo_grading
 from .report import aggregate, trial_rows, trial_summary
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -169,6 +172,8 @@ def behavior(args):
                             "--recent", str(args.recent), "--anchors", args.anchors]
         if args.model:
             command += ["--model", args.model]
+        if args.effort:
+            command += ["--effort", args.effort]
         if args.base_url:
             command += ["--base-url", args.base_url]
         try:
@@ -187,7 +192,8 @@ def behavior(args):
             graded = behavior_grading.grade_run(case, report)
             rows += graded
             raw.append({"trial": trial, "case": case["name"], "turns": report["turns"], "graded": graded})
-    summary = {"suite": "behavior", "anchors": args.anchors, "model": args.model, "budget": args.budget,
+    summary = {"suite": "behavior", "anchors": args.anchors, "model": args.model, "effort": args.effort,
+               "budget": args.budget,
                "trials_requested": args.trials, "failed_runs": failures,
                "summary": behavior_grading.summarize(rows),
                "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -252,6 +258,96 @@ def run(args):
     return 1 if failures else 0
 
 
+def build_redo_runner():
+    command = ["cargo", "build", "--release", "-q", "-p", "themis-core", "--features", "eval",
+               "--example", "redo_eval"]
+    subprocess.run(command, cwd=ROOT, check=True)
+    return [os.path.join(target_dir(), "release", "examples", "redo_eval" + EXE)]
+
+
+def midturn(args):
+    """Mid-turn re-read evals: a whole task with the model's budget (or a given one)."""
+    cases = [os.path.join(CASES, name) for name in sorted(os.listdir(CASES))
+             if os.path.isfile(os.path.join(CASES, name, "task.json"))
+             and (not args.case or name in args.case)]
+    if not cases:
+        sys.exit("no midturn cases")
+    runner = ([args.runner] if args.runner and os.path.exists(args.runner)
+              else shlex.split(args.runner) if args.runner else build_redo_runner())
+    jobs = [(trial, case) for trial in range(args.trials) for case in cases]
+
+    traces = tempfile.mkdtemp(prefix="midturn-")
+
+    def partial(trace, error):
+        """A run that did not finish still has the steps it streamed to its trace."""
+        try:
+            with open(trace, encoding="utf-8") as handle:
+                steps = [json.loads(line) for line in handle if line.strip()]
+        except OSError:
+            return None
+        return {"steps": steps, "error": f"incomplete: {error}", "outputs_written": None} if steps else None
+
+    def work(job):
+        trial, case = job
+        trace = os.path.join(traces, f"{os.path.basename(case)}-{trial}.jsonl")
+        command = runner + ["--case", case, "--budget", str(args.budget), "--recent", str(args.recent),
+                            "--turns", str(args.turns), "--trace", trace]
+        for flag, value in (("--model", args.model), ("--effort", args.effort), ("--base-url", args.base_url)):
+            if value:
+                command += [flag, value]
+        if args.no_replay:
+            command.append("--no-replay")
+        with open(os.path.join(case, "task.json"), encoding="utf-8") as handle:
+            expected = len(json.load(handle).get("outputs") or [])
+        started = time.monotonic()
+
+        def timed(report):
+            if report:
+                report.update(expected_outputs=expected, duration_s=round(time.monotonic() - started))
+            return report
+        try:
+            done = subprocess.run(command, capture_output=True, text=True, timeout=args.timeout)
+            if done.returncode != 0:
+                error = (done.stderr or done.stdout).strip()[-400:]
+                return job, timed(partial(trace, error)), error
+            return job, timed(json.loads(done.stdout)), None
+        except (subprocess.TimeoutExpired, ValueError) as error:
+            return job, timed(partial(trace, error)), str(error)
+
+    rows, failures, raw = [], [], []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        for (trial, case), report, error in pool.map(work, jobs):
+            name = os.path.basename(case)
+            if error:
+                failures.append({"trial": trial, "case": name, "error": error, "partial": bool(report)})
+            if not report:
+                continue
+            graded = redo_grading.grade_run(report)
+            rows.append(graded)
+            raw.append({"trial": trial, "case": name, "budget": report.get("budget"), "window": report.get("window"),
+                        "graded": graded, "steps": report["steps"],
+                        "request_failures": report.get("request_failures"),
+                        "outputs_written": report.get("outputs_written"), "error": report.get("error")})
+    summary = {"suite": "midturn", "model": args.model, "effort": args.effort, "budget": args.budget,
+               "budgets_used": sorted({r["budget"] for r in raw if r.get("budget")}),
+               "replay_reasoning": not args.no_replay,
+               "turns": args.turns, "trials_requested": args.trials, "failed_runs": failures,
+               "summary": redo_grading.summarize(rows),
+               "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+               "git_commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
+                                            capture_output=True, text=True).stdout.strip(),
+               "note": "Live-model behavior audit; not an automated runtime check.", "details": raw}
+    out = args.out or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "results",
+        f"{datetime.date.today()}-midturn-{(args.model or 'default').replace('/', '_')}-{args.budget}.json")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2)
+        handle.write("\n")
+    print(out)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python3 -m evals.compaction")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -279,6 +375,22 @@ def main(argv=None):
     beh.add_argument("--jobs", type=int, default=3)
     beh.add_argument("--timeout", type=int, default=1200)
     beh.add_argument("--runner", default=None)
+    beh.add_argument("--effort", default=None, help="reasoning effort sent to the provider (e.g. max)")
+    mid = sub.add_parser("midturn", help="run the mid-turn re-read evals (a whole task, compacting while it works)")
+    mid.add_argument("--case", action="append")
+    mid.add_argument("--trials", type=int, default=3)
+    mid.add_argument("--model", default=None)
+    mid.add_argument("--budget", default="auto", help="auto (the model's window, at most 200k) or tokens")
+    mid.add_argument("--recent", type=int, default=20)
+    mid.add_argument("--turns", type=int, default=40)
+    mid.add_argument("--effort", default=None)
+    mid.add_argument("--base-url", default=None)
+    mid.add_argument("--jobs", type=int, default=3)
+    mid.add_argument("--timeout", type=int, default=2400)
+    mid.add_argument("--runner", default=None)
+    mid.add_argument("--out", default=None)
+    mid.add_argument("--no-replay", action="store_true",
+                     help="do not send the model's earlier reasoning back (eval comparison)")
     beh.add_argument("--out", default=None)
     again = sub.add_parser("regrade", help="re-grade a stored result offline")
     again.add_argument("result")
@@ -286,6 +398,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "behavior":
         return behavior(args)
+    if args.command == "midturn":
+        return midturn(args)
     return regrade(args) if args.command == "regrade" else run(args)
 
 

@@ -1,0 +1,29 @@
+[
+  {
+    "id": "columns",
+    "category": "identifier",
+    "question": "In a VSOP87D term line, what are the last three numbers?",
+    "planted_at": 5,
+    "expected": {
+      "regex": "(?is)amplitude.*phase.*frequency"
+    }
+  },
+  {
+    "id": "millennia",
+    "category": "identifier",
+    "question": "How is T computed for the VSOP87 series?",
+    "planted_at": 5,
+    "expected": {
+      "regex": "365250"
+    }
+  },
+  {
+    "id": "mars_ra",
+    "category": "identifier",
+    "question": "What is the reference RA of Mars?",
+    "planted_at": 10,
+    "expected": {
+      "regex": "213\\.47"
+    }
+  }
+]

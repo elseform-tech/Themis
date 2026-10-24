@@ -1,0 +1,1326 @@
+{
+  "suite": "midturn",
+  "model": "minimax-m3.1-flash-free",
+  "effort": null,
+  "budget": 24000,
+  "turns": 40,
+  "trials_requested": 4,
+  "failed_runs": [
+    {
+      "trial": 1,
+      "case": "midturn-ephemeris",
+      "error": "Command '['/private/tmp/claude-501/-Users-cutedandelion-Documents-ChatGPT-ThemisOS/a7183380-a982-4a60-8b7b-d67b7460268a/scratchpad/nudge-eval/redo_eval-nudge', '--case', '/Users/cutedandelion/Documents/ChatGPT/ThemisOS/evals/compaction/cases/midturn-ephemeris', '--budget', '24000', '--recent', '20', '--turns', '40', '--model', 'minimax-m3.1-flash-free']' timed out after 2400 seconds"
+    }
+  ],
+  "summary": {
+    "runs": 3,
+    "errors": 1,
+    "checkpoints": {
+      "mean": 7,
+      "sd": 3.464,
+      "min": 3,
+      "max": 9
+    },
+    "calls": {
+      "mean": 62.333,
+      "sd": 23.459,
+      "min": 36,
+      "max": 81
+    },
+    "failed_calls": {
+      "mean": 3.667,
+      "sd": 3.055,
+      "min": 1,
+      "max": 7
+    },
+    "reads": {
+      "mean": 40.667,
+      "sd": 11.15,
+      "min": 28,
+      "max": 49
+    },
+    "evidence_reads": {
+      "mean": 5.667,
+      "sd": 5.132,
+      "min": 0,
+      "max": 10
+    },
+    "rereads_after_checkpoint": {
+      "mean": 19.333,
+      "sd": 11.93,
+      "min": 6,
+      "max": 29
+    },
+    "repeated_reads": {
+      "mean": 1.667,
+      "sd": 0.577,
+      "min": 1,
+      "max": 2
+    },
+    "reread_share": {
+      "mean": 0.668,
+      "sd": 0.146,
+      "min": 0.5,
+      "max": 0.7632
+    },
+    "outputs_written": {
+      "mean": 0,
+      "sd": 0.0,
+      "min": 0,
+      "max": 0
+    }
+  },
+  "created": "2026-10-20T16:31:17.547380+00:00",
+  "git_commit": "927717b",
+  "note": "Live-model behavior audit; not an automated runtime check.",
+  "details": [
+    {
+      "trial": 0,
+      "case": "midturn-ephemeris",
+      "graded": {
+        "checkpoints": 3,
+        "calls": 36,
+        "failed_calls": 1,
+        "reads": 28,
+        "reads_after_checkpoint": 12,
+        "evidence_reads": 0,
+        "rereads_after_checkpoint": 6,
+        "repeated_reads": 1,
+        "reread_share": 0.5,
+        "outputs_written": 0,
+        "error": "LLM request failed: Generic Error : Provider response was truncated"
+      },
+      "steps": [
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\".\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"src\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"tests\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"data\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"docs\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"src/astro\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"data/vsop87\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"tests/time.test.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/horizons_reference.json\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"package.json\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"offset\":2000}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"src/astro/time.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"offset\":900}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `shell` with {\"command\":\"sh\",\"args\":[\"-c\",\"node -v; echo hi\"],\"background\":false,\"background_timeout_secs\":60,\"cwd\":\".\"}",
+          "tool": "shell"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"find\":\"col 80-97\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\" 441010\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"1.16499220918\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE 3\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"441010 1 0 3\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"1.16499220918\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"find\":\"col\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"1.16499220918\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"0.00000000000\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE 1\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE 2\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE 3\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":0}",
+          "tool": "read_file"
+        }
+      ],
+      "outputs_written": [],
+      "error": "LLM request failed: Generic Error : Provider response was truncated"
+    },
+    {
+      "trial": 2,
+      "case": "midturn-ephemeris",
+      "graded": {
+        "checkpoints": 9,
+        "calls": 81,
+        "failed_calls": 7,
+        "reads": 49,
+        "reads_after_checkpoint": 38,
+        "evidence_reads": 7,
+        "rereads_after_checkpoint": 29,
+        "repeated_reads": 2,
+        "reread_share": 0.7632,
+        "outputs_written": 0,
+        "error": null
+      },
+      "steps": [
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\".\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"src\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"docs\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"data\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"tests\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"package.json\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"src/astro\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"tests/time.test.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/horizons_reference.json\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"src/astro/time.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"data/vsop87\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"offset\":1200}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"offset\":600}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"offset\":3000}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `shell` with {\"command\":\"node\",\"args\":[\"-e\",\"console.log(process.version)\"],\"background\":false,\"background_timeout_secs\":60,\"cwd\":\".\"}",
+          "tool": "shell"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmppPdQNg/.themis/context/task\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `search_file` with {\"directory\":\"data/vsop87\",\"pattern\":\"*.ear\"}",
+          "tool": "search_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VSOP87 VERSION\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":8000}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":16000}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `shell` with {\"command\":\"node\",\"args\":[\"-e\",\"console.log(process.version)\"],\"background\":false,\"background_timeout_secs\":0,\"cwd\":\".\"}",
+          "tool": "shell"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `search_file` with {\"directory\":\"data/vsop87\",\"pattern\":\"TERMS\"}",
+          "tool": "search_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":34000}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":7900}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `git` with {\"args\":[\"log\",\"--oneline\",\"-20\"]}",
+          "tool": "git"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\".\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"src/astro/time.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\".\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `search_file` with {\"directory\":\".\",\"pattern\":\"*.js\"}",
+          "tool": "search_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/horizons_reference.json\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"tests/time.test.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `shell` with {\"command\":\"python3\",\"args\":[\"-c\",\"echo hello\"],\"background\":false,\"background_timeout_secs\":30,\"cwd\":\".\"}",
+          "tool": "shell"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmppPdQNg/.themis/context/task/snapshot-1792512209192480000.jsonl\",\"decode_tool_payload\":true,\"json_pointer\":\"/mes\u2026",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmppPdQNg/.themis/context/task/snapshot-1792512209192480000.jsonl\",\"jsonl_record\":9}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmppPdQNg/.themis/context/task\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmppPdQNg/.themis/context/task/snapshot-1792512240552128000.jsonl\",\"jsonl_record\":3}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmppPdQNg/.themis/context/task/snapshot-1792512240552128000.jsonl\",\"jsonl_record\":4}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmppPdQNg/.themis/context/task/snapshot-1792512240568270000.jsonl\",\"decode_tool_payload\":true,\"json_pointer\":\"/mes\u2026",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmppPdQNg/.themis/context/task/snapshot-1792512240552128000.jsonl\",\"decode_tool_payload\":true,\"json_pointer\":\"/mes\u2026",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\".\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"src/astro/time.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"tests/time.test.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"src/astro\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"offset\":1200}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `shell` with {\"command\":\"sh\",\"args\":[\"-c\",\"node --version\"],\"background\":false,\"background_timeout_secs\":30,\"cwd\":\".\"}",
+          "tool": "shell"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmppPdQNg/.themis/context/task/snapshot-1792512409428943000.jsonl\",\"json_pointer\":\"/content\",\"jsonl_record\":2,\"off\u2026",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"data\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"docs\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"src\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"tests\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"src/astro/time.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"tests/time.test.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/horizons_reference.json\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":0}",
+          "tool": "read_file"
+        }
+      ],
+      "outputs_written": [],
+      "error": null
+    },
+    {
+      "trial": 3,
+      "case": "midturn-ephemeris",
+      "graded": {
+        "checkpoints": 9,
+        "calls": 70,
+        "failed_calls": 3,
+        "reads": 45,
+        "reads_after_checkpoint": 31,
+        "evidence_reads": 10,
+        "rereads_after_checkpoint": 23,
+        "repeated_reads": 2,
+        "reread_share": 0.7419,
+        "outputs_written": 0,
+        "error": null
+      },
+      "steps": [
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\".\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"src\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"tests\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"data\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"docs\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"package.json\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"src/astro\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"tests/time.test.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/horizons_reference.json\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"src/astro/time.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"data/vsop87\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE 2\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `search_file` with {\"directory\":\"data/vsop87\",\"pattern\":\"VARIABLE\"}",
+          "tool": "search_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"TERMS\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `shell` with {\"command\":\"node\",\"args\":[\"-v\"],\"background\":false,\"background_timeout_secs\":30,\"cwd\":\".\"}",
+          "tool": "shell"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE 3\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"*T**1\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"TERMS\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\".\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `git` with {\"args\":[\"log\",\"--oneline\",-20]}",
+          "tool": "git"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"data\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"src\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"tests\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `list_dir` with {\"directory_path\":\"docs\"}",
+          "tool": "list_dir"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE 2\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE 3\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792512085796986000.jsonl\",\"find\":\"VARIABLE 2\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792512085796986000.jsonl\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792512085796986000.jsonl\",\"find\":\"truncated\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": false,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792512085796986000.jsonl\",\"decode_tool_payload\":true,\"json_pointer\":\"/mes\u2026",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792512085796986000.jsonl\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792512085796986000.jsonl\",\"json_pointer\":\"/content\",\"jsonl_record\":9}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792512085796986000.jsonl\",\"json_pointer\":\"/content\",\"jsonl_record\":10}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE 2\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"src/astro/time.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"tests/time.test.js\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792512526310987000.jsonl\",\"find\":\"julianMillennia\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"src/astro/time.js\",\"find\":\"export\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"tests/time.test.js\",\"find\":\"import\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"README.md\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"docs/vsop87.txt\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"offset\":0}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"TERMS\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE 2\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"*T**1\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE 3\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE 2\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792513211817548000.jsonl\",\"decode_tool_payload\":true,\"json_pointer\":\"/mes\u2026",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"/var/folders/2y/qs7xcd8s0xggtmq4_bxwtm8c0000gn/T/.tmpBONsPx/.themis/context/task/snapshot-1792513211817548000.jsonl\",\"decode_tool_payload\":true,\"json_pointer\":\"/mes\u2026",
+          "tool": "read_file"
+        },
+        {
+          "kind": "checkpoint"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.ear\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        },
+        {
+          "kind": "call",
+          "ok": true,
+          "summary": "call `read_file` with {\"file_path\":\"data/vsop87/VSOP87D.mar\",\"find\":\"VARIABLE\"}",
+          "tool": "read_file"
+        }
+      ],
+      "outputs_written": [],
+      "error": null
+    }
+  ]
+}

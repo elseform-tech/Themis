@@ -510,6 +510,13 @@ impl ChatEventStream {
 
     fn finish_choice(&mut self, reason: &str) -> Result<(), LLMError> {
         if reason == "length" {
+            // Eval-only: which calls the cut-off reply was writing, by name and size.
+            #[cfg(feature = "eval")]
+            crate::runtime::eval_note_failure(serde_json::json!({
+                "cut_off_calls": self.calls.values()
+                    .map(|call| serde_json::json!({"tool": call.function.name, "argument_chars": call.function.arguments.len()}))
+                    .collect::<Vec<_>>(),
+            }));
             return Err(LLMError::Generic(
                 "Provider response was truncated".to_owned(),
             ));

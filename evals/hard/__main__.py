@@ -39,7 +39,14 @@ def make_task(job, memory):
             "timeout": getattr(module, "TIMEOUT", 5400),
             **({"measure": module.measure} if hasattr(module, "measure") else {}),
             # YOLO-style approvals as a developer would use them; the OS sandbox still applies.
-            "allow_all": True, **MEMORY[memory]}
+            "allow_all": True, **memory_settings(memory)}
+
+
+def memory_settings(memory):
+    """A named memory preset, or `b<tokens>`: that budget with the app's default recent messages."""
+    if memory.startswith("b") and memory[1:].isdigit():
+        return {"budget": int(memory[1:]), "recent_messages": MEMORY["normal"]["recent_messages"]}
+    return MEMORY[memory]
 
 
 def summarize(rows):
@@ -113,7 +120,11 @@ def run(args):
 
         def runner_call(make):
             return run_task_retrying(runner, make, args)
-    memories = ["normal", "squeezed"] if args.memory == "both" else [args.memory]
+    memories = ([f"b{budget}" for budget in args.budgets] if args.budgets
+                else ["normal", "squeezed"] if args.memory == "both" else [args.memory])
+    if args.budgets and args.via == "app" and max(args.budgets) > 256_000:
+        print("--budgets above 256000 need --via runner: the app's settings stop at 256000", file=sys.stderr)
+        return 2
     if args.nudges_off and args.via == "app":
         print("--nudges-off needs --via runner: the app has no eval switches", file=sys.stderr)
         return 2
@@ -195,6 +206,8 @@ def main(argv=None):
     cmd.add_argument("--trials", type=int, default=1)
     cmd.add_argument("--model", default="muse-spark-1.3-contributor")
     cmd.add_argument("--memory", choices=("normal", "squeezed", "both"), default="both")
+    cmd.add_argument("--budgets", type=lambda text: [int(item) for item in text.split(",") if item],
+                     help="compare context budgets, e.g. 64000,200000,1000000 (replaces --memory)")
     cmd.add_argument("--jobs", type=int, default=2)
     cmd.add_argument("--nudges-off", type=lambda text: [item for item in text.split(",") if item], default=[],
                      help="runner only: comma-separated runtime nudges to switch off (e.g. spec_check,loop_warning)")
