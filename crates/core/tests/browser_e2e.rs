@@ -749,8 +749,19 @@ async fn the_person_is_never_held_up_by_an_agent_action_in_progress() {
         let url = format!("{}/busy", site.uri());
         tokio::spawn(async move { chat.open(&url, false).await })
     };
+    // Wait for the agent's page to commit (slow runners take over a second to get there),
+    // then give it a moment so its open is settling on the page's endless polling.
+    let waiting = std::time::Instant::now();
+    while !chat.state().await.url.ends_with("/busy") {
+        assert!(
+            waiting.elapsed() < std::time::Duration::from_secs(10),
+            "the agent's page never committed: {}",
+            chat.state().await.url
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     let opened = std::time::Instant::now();
-    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     assert!(!agent.is_finished(), "the agent's open is still settling");
 
     // Everything the person does answers at once while the agent's action runs.
