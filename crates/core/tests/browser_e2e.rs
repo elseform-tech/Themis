@@ -704,9 +704,11 @@ async fn follows(
         }
     })
     .await;
+    // On failure, also say what the stream did (counters are shared with tests alongside).
     assert!(
         followed.is_ok(),
-        "after {after}: frame {frame}, title {title:?} {titled}"
+        "after {after}: frame {frame}, title {title:?} {titled}; {:?}",
+        themis_core::browser::stream_stats()
     );
 }
 
