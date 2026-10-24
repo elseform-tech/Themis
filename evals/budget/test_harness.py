@@ -520,13 +520,15 @@ class RunnerEndToEndTests(unittest.TestCase):
 
 
 # A stand-in for the `themis` CLI with the commands `run_app` uses. `thread send --json` prints
-# the app's event lines; the first message writes the files named in FAKE_THEMIS_FILES, one tool
+# the app's event lines; the first message writes the files listed in the file named by `files`, one tool
 # call each, with a context_usage event after each. `thread stop` makes a running send fail.
 FAKE_THEMIS = r'''#!{python}
 import json, os, sys, time
 args = sys.argv[1:]
 data = args[1]
 words = args[2:]
+with open({env_seen!r}, "w") as handle:
+    json.dump(dict(os.environ), handle)
 state = os.path.join(data, "fake.json")
 stop = os.path.join(data, "stopped")
 def out(value):
@@ -544,7 +546,7 @@ elif words[:2] == ["thread", "send"]:
     with open(state) as handle:
         saved = json.load(handle)
     text = words[3]
-    files = json.load(open(os.environ["FAKE_THEMIS_FILES"])) if "Implement `settle" in text else []
+    files = json.load(open({files!r})) if "Implement `settle" in text else []
     def event(kind, **fields):
         out({{"name": "thread-event", "payload": {{"thread_id": "thread-1", "run_id": "r",
                                                   "event": dict(fields, kind=kind)}}}})
@@ -577,18 +579,19 @@ class AppPathTests(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, True)
         files = os.path.join(tmp, "files.json")
+        self.env_seen = os.path.join(tmp, "env.json")
         with open(files, "w", encoding="utf-8") as handle:
             json.dump(reference_files("small", 1), handle)
         binary = os.path.join(tmp, "themis")
         with open(binary, "w", encoding="utf-8") as handle:
-            handle.write(FAKE_THEMIS.format(python=sys.executable))
+            handle.write(FAKE_THEMIS.format(python=sys.executable, files=files, env_seen=self.env_seen))
         os.chmod(binary, 0o755)
         catalog = os.path.join(tmp, "api.json")
         with open(catalog, "w", encoding="utf-8") as handle:
             json.dump({"opencode-go": {"models": {"m": {"cost": {"input": 0.10, "output": 0.40, "cache_read": 0.01},
                                                          "limit": {"context": 262144}}}}}, handle)
         out = os.path.join(tmp, "result.json")
-        with mock.patch.dict(os.environ, {"FAKE_THEMIS_FILES": files}), \
+        with mock.patch.dict(os.environ, {"UNRELATED_SECRET": "x"}), \
                 mock.patch.object(spend, "preflight", return_value=(True, "")):
             code = harness.main(["run", "--sizes", "small", "--budgets", "128000", "--trials", "1", "--model", "m",
                                  "--via", "app", "--themis", binary, "--catalog", catalog, "--timeout", "300",
@@ -604,6 +607,13 @@ class AppPathTests(unittest.TestCase):
         self.assertEqual(row["calls"], len(reference_files("small", 1)))
         self.assertEqual(row["cached_share"], 0.6)
         self.assertEqual(row["input_tokens"], 1000 * row["requests"])
+
+    def test_the_app_gets_only_a_minimal_environment(self):
+        self.round([])
+        with open(self.env_seen, encoding="utf-8") as handle:
+            seen = json.load(handle)
+        self.assertNotIn("UNRELATED_SECRET", seen)
+        self.assertTrue(seen["HOME"].startswith(tempfile.gettempdir()) or "budget-app-" in seen["HOME"], seen["HOME"])
 
     def test_the_chat_is_stopped_when_the_run_passes_its_cost_limit(self):
         row = self.round(["--max-run-cost", "0.0002"])["rows"][0]

@@ -137,10 +137,10 @@ def run_app(binary, arm, messages_of, grade_of, meter, limit, options):
     HOME, YOLO approvals, and the arm's budget in the data folder's runtime.jsonc."""
     workdir = tempfile.mkdtemp(prefix="budget-app-")
     started = time.monotonic()
-    data, home = os.path.join(workdir, "data"), os.path.join(workdir, "home")
+    data = os.path.join(workdir, "data")
     os.makedirs(data)
-    os.makedirs(home)
-    env = {**os.environ, "HOME": home}
+    # Only PATH, the provider key and scratch HOME/TMP reach the app and the agent's commands.
+    env = isolated_env(workdir)
     try:
         project, spec, material = _project(workdir, arm)
         with open(os.path.join(data, "runtime.jsonc"), "w", encoding="utf-8") as handle:
