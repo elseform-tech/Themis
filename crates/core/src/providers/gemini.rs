@@ -57,10 +57,10 @@ impl CompatibleProvider {
             config["topP"] = top_p.into();
         }
         let level = if COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
-            Some("low")
+            Some("low".to_owned())
         } else {
             self.reasoning_effort
-                .as_deref()
+                .clone()
                 .or(thinking_default(&self.model).effort)
         };
         if let Some(level) = level {

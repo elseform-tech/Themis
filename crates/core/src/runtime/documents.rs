@@ -147,7 +147,7 @@ pub async fn prepare(
                 budget,
                 allowance,
                 crate::providers::bounded_output_limit(
-                    crate::providers::summary_model(llm.model()),
+                    &crate::providers::summary_model(llm.model()),
                     allowance
                 ),
             ))?)
@@ -163,7 +163,7 @@ pub async fn prepare(
                 budget,
                 allowance,
                 crate::providers::bounded_output_limit(
-                    crate::providers::summary_model(llm.model()),
+                    &crate::providers::summary_model(llm.model()),
                     allowance
                 ),
             ))?)
@@ -184,7 +184,7 @@ pub async fn prepare(
             let original = tokio::task::spawn_blocking(move || save_original(&save_directory,&save_sha,&save_text)).await??;
             let mut capsule = DocumentCapsule {
                 format_version:1, pipeline_version:PIPELINE_VERSION.into(),
-                summary_model:crate::providers::summary_model(llm.model()).into(), policy_sha256:policy_sha256.clone(),
+                summary_model:crate::providers::summary_model(llm.model()), policy_sha256:policy_sha256.clone(),
                 source_name:std::path::Path::new(&source.source_path).file_name().and_then(|s|s.to_str()).unwrap_or("document").into(),
                 source_path:source.source_path.clone(), source_sha256:sha.clone(), source_bytes:source.text.len(), original_snapshot:original.clone(), summary:String::new(),
             };
@@ -606,7 +606,7 @@ mod tests {
                     budget,
                     allowance,
                     crate::providers::bounded_output_limit(
-                        crate::providers::summary_model(llm.model()),
+                        &crate::providers::summary_model(llm.model()),
                         allowance
                     ),
                 ))
@@ -616,7 +616,7 @@ mod tests {
         let legacy = DocumentCapsule {
             format_version: 1,
             pipeline_version: PIPELINE_VERSION.into(),
-            summary_model: crate::providers::summary_model(llm.model()).into(),
+            summary_model: crate::providers::summary_model(llm.model()),
             policy_sha256: legacy_hash,
             source_name: "complete.md".into(),
             source_path: source.source_path.clone(),
