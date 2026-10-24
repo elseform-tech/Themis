@@ -23,6 +23,7 @@ vi.mock("../lib/tauri", () => ({
   updateSettings: vi.fn(async (patch: object) => ({ ...settings, ...patch })),
   listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", name: "Muse Spark" }]),
   checkGoKey: vi.fn(async () => ({ state: "works", secret: "OPENCODE_KEY" })),
+  listModelProviders: vi.fn(async () => []),
   listKeys: vi.fn(async () => [
     { name: "OPENCODE_KEY", saved: true, environment: false, used_by: ["OpenCode Go"] },
     { name: "WORK_GO_KEY", saved: true, environment: false, used_by: [] },
@@ -31,15 +32,20 @@ vi.mock("../lib/tauri", () => ({
 
 beforeEach(() => {
   dispatch.mockClear(); goKeyCheck = "works";
-  vi.mocked(bridge.checkGoKey).mockClear(); vi.mocked(bridge.setSecret).mockClear(); vi.mocked(bridge.listGoModels).mockClear();
+  vi.mocked(bridge.checkGoKey).mockClear(); vi.mocked(bridge.setSecret).mockClear(); vi.mocked(bridge.listGoModels).mockClear(); vi.mocked(bridge.listModelProviders).mockClear();
 });
 afterEach(cleanup);
+
+/** A provider's row in Settings › Models (the model picker's option groups share its name). */
+function providerRow(name: string): HTMLElement {
+  return screen.getAllByRole("group", { name }).find(element => element.tagName === "DIV")!;
+}
 
 describe("Settings › Models", () => {
   it("shows the connection first, checks the key with OpenCode, and offers the models", async () => {
     await act(async () => { render(<SettingsScreen />); });
     const groups = [...document.querySelectorAll(".themis-settings-subtitle")].map(node => node.textContent);
-    expect(groups).toEqual(["Connection", "Default model"]);
+    expect(groups).toEqual(["Providers", "Default model"]);
     expect(screen.getByText("Connected")).toBeInTheDocument();
     expect(bridge.checkGoKey).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith({ type: "provider/checked", state: "works" });
@@ -86,6 +92,38 @@ describe("Settings › Models", () => {
     // Kept in app settings, so it applies every time the app opens.
     expect(bridge.updateSettings).toHaveBeenCalledWith({ go_secret: "WORK_GO_KEY" });
     expect(dispatch).toHaveBeenCalledWith({ type: "settings/patched", settings: expect.objectContaining({ go_secret: "WORK_GO_KEY" }) });
+  });
+
+  it("lists the providers from runtime.jsonc with their secret and status, and their models by provider", async () => {
+    vi.mocked(bridge.listModelProviders).mockResolvedValueOnce([
+      { id: "local", name: "Local server", secret: "LOCAL_KEY", status: "works", models: 1 },
+      { id: "spare", name: "Spare", secret: "SPARE_KEY", status: "missing", models: 0 },
+    ]);
+    vi.mocked(bridge.listGoModels).mockResolvedValueOnce([
+      { id: "muse-spark-1.3-contributor", effort_levels: [] },
+      { id: "local/qwen/coder", effort_levels: [], provider: "local" },
+    ]);
+    await act(async () => { render(<SettingsScreen />); });
+    const local = providerRow("Local server");
+    expect(local).toHaveTextContent("LOCAL_KEY");
+    expect(within(local).getByRole("status")).toHaveTextContent("Connected");
+    expect(within(providerRow("Spare")).getByRole("status")).toHaveTextContent("Not set");
+    const picker = screen.getByRole("combobox", { name: "Model" });
+    const groups = [...picker.querySelectorAll("optgroup")].map(group => [group.label, [...group.querySelectorAll("option")].map(option => option.textContent)]);
+    expect(groups).toEqual([["OpenCode Go", ["muse-spark-1.3-contributor"]], ["Local server", ["qwen/coder"]]]);
+    await act(async () => { fireEvent.change(picker, { target: { value: "local/qwen/coder" } }); });
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ default_model: "local/qwen/coder" });
+  });
+
+  it("offers a connected provider's models while OpenCode rejects its key", async () => {
+    goKeyCheck = "rejected";
+    vi.mocked(bridge.checkGoKey).mockResolvedValueOnce({ state: "rejected", secret: "OPENCODE_KEY" });
+    vi.mocked(bridge.listModelProviders).mockResolvedValueOnce([{ id: "local", name: "Local server", secret: "LOCAL_KEY", status: "unchecked", models: 1 }]);
+    vi.mocked(bridge.listGoModels).mockResolvedValueOnce([{ id: "local/m", effort_levels: [], provider: "local" }]);
+    await act(async () => { render(<SettingsScreen />); });
+    expect(within(providerRow("Local server")).getByRole("status")).toHaveTextContent("Key set");
+    expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled();
+    expect(bridge.listGoModels).toHaveBeenCalled();
   });
 
   it("names the section Secrets", async () => {
