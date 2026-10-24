@@ -283,6 +283,96 @@ pub struct GoModel {
     /// Why the model cannot be used, when Themis does not speak its protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+    /// The public catalog's list price, when it publishes one (an estimate's basis).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<ModelPrice>,
+}
+
+/// A model's published list price in US dollars per million tokens (models.dev `cost`).
+/// Plans may bill differently; Themis uses it only for labelled estimates.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ModelPrice {
+    pub input: f64,
+    pub output: f64,
+    /// Cached input; `None` bills cached input as ordinary input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<f64>,
+    /// Higher prices for requests whose input exceeds a context size, smallest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tiers: Vec<PriceTier>,
+}
+
+/// The price of requests with more than `above_input_tokens` input tokens.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PriceTier {
+    pub above_input_tokens: u64,
+    pub input: f64,
+    pub output: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<f64>,
+}
+
+// Prices come from JSON numbers, which are finite, so equality is reflexive.
+impl Eq for ModelPrice {}
+impl Eq for PriceTier {}
+
+impl ModelPrice {
+    /// Every rate is zero: the catalog lists the model as free.
+    pub fn is_free(&self) -> bool {
+        self.input == 0.0
+            && self.output == 0.0
+            && self.cache_read.unwrap_or(0.0) == 0.0
+            && self.tiers.is_empty()
+    }
+
+    /// Estimated dollars for one request. `input` includes `cached`; reasoning is part of
+    /// `output`, as providers report it.
+    pub fn request_cost(&self, input: u64, cached: u64, output: u64) -> f64 {
+        let (rate_in, rate_out, rate_cached) = self
+            .tiers
+            .iter()
+            .rev()
+            .find(|tier| input > tier.above_input_tokens)
+            .map_or((self.input, self.output, self.cache_read), |tier| {
+                (tier.input, tier.output, tier.cache_read)
+            });
+        let cached = cached.min(input);
+        ((input - cached) as f64 * rate_in
+            + cached as f64 * rate_cached.unwrap_or(rate_in)
+            + output as f64 * rate_out)
+            / 1_000_000.0
+    }
+
+    /// Reads a models.dev `cost` object; anything malformed or negative means no price.
+    fn from_catalog(cost: &serde_json::Value) -> Option<Self> {
+        let rate = |value: &serde_json::Value, key: &str| {
+            value[key]
+                .as_f64()
+                .filter(|rate| rate.is_finite() && *rate >= 0.0 && *rate < 1_000_000.0)
+        };
+        let mut tiers = cost["tiers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|tier| tier["tier"]["type"] == "context")
+            .filter_map(|tier| {
+                Some(PriceTier {
+                    above_input_tokens: tier["tier"]["size"].as_u64()?,
+                    input: rate(tier, "input")?,
+                    output: rate(tier, "output")?,
+                    cache_read: rate(tier, "cache_read"),
+                })
+            })
+            .take(8)
+            .collect::<Vec<_>>();
+        tiers.sort_by_key(|tier| tier.above_input_tokens);
+        Some(Self {
+            input: rate(cost, "input")?,
+            output: rate(cost, "output")?,
+            cache_read: rate(cost, "cache_read"),
+            tiers,
+        })
+    }
 }
 
 impl GoModel {
@@ -323,6 +413,9 @@ struct CatalogModel {
     /// Per-model overrides of the provider's package and endpoint.
     #[serde(default)]
     provider: CatalogAccess,
+    /// List price; read leniently so a malformed price never hides the model.
+    #[serde(default)]
+    cost: serde_json::Value,
 }
 
 /// How a catalog entry is reached: the AI SDK package (naming the protocol) and endpoint.
@@ -396,6 +489,11 @@ pub(super) fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoM
                     package.unwrap_or("an unknown protocol")
                 )
             });
+            let price = catalog
+                .go
+                .models
+                .get(&id)
+                .and_then(|model| ModelPrice::from_catalog(&model.cost));
             GoModel {
                 id,
                 effort_levels,
@@ -405,6 +503,7 @@ pub(super) fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoM
                 protocol,
                 endpoint,
                 unavailable_reason,
+                price,
             }
         })
         .collect()

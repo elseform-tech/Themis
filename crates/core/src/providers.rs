@@ -96,6 +96,8 @@ pub(crate) fn note_stream_progress() {
 /// `GoConfig` type; the SDK trait it was meant to implement is `pub(crate)` in
 /// autoagents-llm 0.4.0 (see the module docs), so the value lives here instead.
 pub const GO_PROVIDER_NAME: &str = "OpenCode Go";
+/// OpenCode Go's id in the usage ledger (its key in the public models.dev catalog).
+pub const GO_PROVIDER_ID: &str = "opencode-go";
 
 /// Default Go API root (OpenAI chat-completions wire format).
 pub const GO_BASE_URL: &str = "https://opencode.ai/inference/go/v1";
@@ -555,6 +557,15 @@ impl CompatibleProvider {
         &self.base_url
     }
 
+    /// The stable provider id the usage ledger records (`opencode-go` for Go).
+    pub fn provider_id(&self) -> &'static str {
+        if self.provider_name == GO_PROVIDER_NAME {
+            GO_PROVIDER_ID
+        } else {
+            self.provider_name
+        }
+    }
+
     /// The wire protocol for this provider's model (see [`catalog::route`]).
     fn protocol(&self) -> Protocol {
         if self.provider_name == GO_PROVIDER_NAME {
@@ -802,6 +813,7 @@ impl CompatibleProvider {
             tools,
             COMPACTION_REQUEST.try_with(|_| ()).is_ok(),
         );
+        trace.provider(self.provider_id());
         trace.output_limit(
             sampling
                 .and_then(|s| s.max_tokens)
@@ -960,6 +972,7 @@ impl ChatProvider for CompatibleProvider {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamChunk, LLMError>> + Send>>, LLMError> {
         let mut trace =
             crate::context_metrics::RequestTrace::begin(&self.model, messages, tools, false);
+        trace.provider(self.provider_id());
         trace.output_limit(
             OUTPUT_LIMIT
                 .try_with(|limit| bounded_output_limit(&self.model, *limit))
