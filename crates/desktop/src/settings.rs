@@ -379,8 +379,8 @@ mod tests {
         assert_eq!(SettingsStore::load(path).get().await, auto);
     }
 
-    #[tokio::test]
-    async fn saved_context_budget_migrates_to_auto_or_a_cap() {
+    #[test]
+    fn saved_context_budget_migrates_to_auto_or_a_cap() {
         let dir = tempfile::tempdir().unwrap();
         let load = |text: &str| {
             let path = dir.path().join("settings.json");

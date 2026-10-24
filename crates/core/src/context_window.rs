@@ -178,7 +178,7 @@ pub fn stated_limit(text: &str) -> Option<usize> {
             let start = from + found + anchor.len();
             // The number must follow directly ("is 8192", "of 32,768"), not
             // come from somewhere later in the message.
-            if let Some(number) = first_number(connected(&lower[start..])) {
+            if let Some(number) = leading_number(connected(&lower[start..])) {
                 if (MIN_LEARNED_WINDOW..=MAX_CONTEXT_TOKENS).contains(&number) {
                     return Some(number);
                 }
@@ -205,14 +205,13 @@ fn connected(mut text: &str) -> &str {
 }
 
 /// The number at the start of `text`, allowing `,` or `_` group separators.
-fn first_number(text: &str) -> Option<usize> {
-    let start = 0;
+fn leading_number(text: &str) -> Option<usize> {
     if !text.starts_with(|c: char| c.is_ascii_digit()) {
         return None;
     }
     let mut value: usize = 0;
     let mut digits = 0;
-    for c in text[start..].chars() {
+    for c in text.chars() {
         if let Some(digit) = c.to_digit(10) {
             value = value.checked_mul(10)?.checked_add(digit as usize)?;
             digits += 1;
