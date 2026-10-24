@@ -637,6 +637,7 @@ impl AppState {
             // UI waiting: join the run, then synthesize the terminal event.
             let document_state = state.clone();
             let document_thread = thread_id.clone();
+            let usage_recorder = state.usage_recorder(&thread_id, &run_id);
             let run_outcome = tokio::spawn(async move {
                 for event in setup_events {
                     let _ = events_tx.send(event).await;
@@ -644,7 +645,7 @@ impl AppState {
                 let hook_task = task.clone();
                 themis_core::providers::with_catalog_limits(
                     &capacity_catalog,
-                    themis_core::diagnostics::ACTIVE.scope(
+                    themis_core::context_metrics::with_usage_recorder(usage_recorder, Box::pin(themis_core::diagnostics::ACTIVE.scope(
                         diagnostic_context,
                         themis_core::runtime::with_short_reply_turn(short_reply, themis_core::runtime::with_model_context_capacity(
                             if endpoint_override {
@@ -709,7 +710,7 @@ impl AppState {
                             ),
                         )),
                     ),
-                )
+                )))
                 .await
             })
             .await;

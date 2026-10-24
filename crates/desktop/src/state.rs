@@ -38,6 +38,7 @@ pub fn searxng_stop_for_test() {
 }
 mod skills;
 mod threads;
+mod usage;
 mod workspace;
 pub use browser::update_payload as browser_update_payload;
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
@@ -225,6 +226,8 @@ struct AppStateInner {
     mcp: std::sync::Mutex<mcp::Connections>,
     settings: SettingsStore,
     transcript: TranscriptStore,
+    /// Token usage per completed model request (`usage.sqlite3`).
+    usage: Arc<crate::usage::UsageStore>,
     diagnostics: Arc<themis_core::diagnostics::DiagnosticLog>,
     secrets: Arc<dyn SecretStore>,
     go_base_url_override: std::sync::Mutex<Option<String>>,
@@ -462,6 +465,10 @@ impl AppState {
         let diagnostics = Arc::new(themis_core::diagnostics::DiagnosticLog::new(
             themis_core::diagnostics::directory_for(&app_dir),
         ));
+        let usage = Arc::new(crate::usage::UsageStore::open(
+            &app_dir.join("usage.sqlite3"),
+            Arc::clone(&diagnostics),
+        ));
         if let Ok(content) = std::fs::read_to_string(app_dir.join("runtime.jsonc")) {
             if let Ok(config) = themis_core::configuration::resolve(Some(&content), None, None) {
                 diagnostics.set_level(&config.config.logging.level);
@@ -478,6 +485,7 @@ impl AppState {
                 mcp: std::sync::Mutex::new(HashMap::new()),
                 settings: SettingsStore::load_with_projects_root(settings_path, projects_root),
                 transcript,
+                usage,
                 diagnostics,
                 secrets,
                 go_base_url_override: std::sync::Mutex::new(None),
