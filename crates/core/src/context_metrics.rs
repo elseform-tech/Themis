@@ -20,6 +20,9 @@ struct Metrics {
     output: u64,
     known_input: usize,
     known_output: usize,
+    cached: u64,
+    reasoning: u64,
+    estimated_input: u64,
     failed: usize,
     run_metadata: Value,
     activities: std::collections::BTreeMap<String, u64>,
@@ -121,6 +124,8 @@ pub fn snapshot() -> Option<Value> {
             "run":metrics.run_metadata,"activities":metrics.activities,"token_calibration":metrics.calibration,"total_requests":metrics.total_requests,"failed_or_cancelled_requests":metrics.failed,
             "provider_input_tokens":if metrics.known_input>0 {Some(metrics.input)} else {None},
             "provider_output_tokens":if metrics.known_output>0 {Some(metrics.output)} else {None},
+            "provider_cached_input_tokens":metrics.cached,"provider_reasoning_output_tokens":metrics.reasoning,
+            "estimated_input_tokens":metrics.estimated_input,
             "requests_with_input_usage":metrics.known_input,"requests_with_output_usage":metrics.known_output,
             "requests_missing_input_usage":metrics.total_requests-metrics.known_input,
             "requests_missing_output_usage":metrics.total_requests-metrics.known_output,
@@ -325,6 +330,10 @@ impl Drop for RequestTrace {
             metrics.output += n;
             metrics.known_output += 1;
         }
+        // Subcounts of the totals above, reported by the provider; zero when it reports none.
+        metrics.cached += self.record["cached_input_tokens"].as_u64().unwrap_or(0);
+        metrics.reasoning += self.record["reasoning_output_tokens"].as_u64().unwrap_or(0);
+        metrics.estimated_input += self.record["estimated_input_tokens"].as_u64().unwrap_or(0);
         if self.record["status"] != "completed" {
             metrics.failed += 1;
         }
@@ -358,6 +367,8 @@ mod tests {
             {let _unknown=RequestTrace::begin("safe-model",&[],None,true);}
             let s=snapshot().unwrap();assert_eq!(s["provider_input_tokens"],100);assert_eq!(s["provider_output_tokens"],20);
             assert_eq!(s["requests_missing_input_usage"],1);assert_eq!(s["failed_or_cancelled_requests"],1);
+            assert_eq!(s["provider_cached_input_tokens"],80);assert_eq!(s["provider_reasoning_output_tokens"],12);
+            assert!(s["estimated_input_tokens"].as_u64().is_some());
             assert!(s["recent_requests"][1]["input_tokens"].is_null());
         })).await;
         with_level(
