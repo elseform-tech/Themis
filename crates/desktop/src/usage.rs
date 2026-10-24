@@ -304,11 +304,20 @@ pub fn insert(connection: &Connection, row: &UsageRow) -> rusqlite::Result<()> {
 }
 
 fn read_rows(connection: &Connection, since_ms: i64) -> rusqlite::Result<Vec<UsageRow>> {
-    let mut statement = connection.prepare(
-        "SELECT at_ms,provider,model,kind,thread_id,run_id,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens FROM usage_requests WHERE at_ms>=?1 ORDER BY at_ms",
-    )?;
+    select_rows(connection, "at_ms>=?1 ORDER BY at_ms", since_ms)
+}
+
+/// Raw rows matching `condition` on one time bound.
+fn select_rows(
+    connection: &Connection,
+    condition: &str,
+    bound_ms: i64,
+) -> rusqlite::Result<Vec<UsageRow>> {
+    let mut statement = connection.prepare(&format!(
+        "SELECT at_ms,provider,model,kind,thread_id,run_id,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens FROM usage_requests WHERE {condition}"
+    ))?;
     let count = |value: Option<i64>| value.map(|value| value.max(0) as u64);
-    let rows = statement.query_map([since_ms], |row| {
+    let rows = statement.query_map([bound_ms], |row| {
         Ok(UsageRow {
             at_ms: row.get(0)?,
             provider: row.get(1)?,
@@ -333,27 +342,7 @@ pub fn rollup<Tz: TimeZone>(
     zone: &Tz,
 ) -> rusqlite::Result<usize> {
     let cutoff = (now - Duration::days(RAW_RETENTION_DAYS)).timestamp_millis();
-    let old = {
-        let mut statement = connection.prepare(
-            "SELECT at_ms,provider,model,kind,thread_id,run_id,input_tokens,cached_input_tokens,output_tokens,reasoning_tokens FROM usage_requests WHERE at_ms<?1",
-        )?;
-        let count = |value: Option<i64>| value.map(|value| value.max(0) as u64);
-        let rows = statement.query_map([cutoff], |row| {
-            Ok(UsageRow {
-                at_ms: row.get(0)?,
-                provider: row.get(1)?,
-                model: row.get(2)?,
-                kind: kind_from(&row.get::<_, String>(3)?),
-                thread_id: row.get(4)?,
-                run_id: row.get(5)?,
-                input_tokens: count(row.get(6)?),
-                cached_input_tokens: count(row.get(7)?),
-                output_tokens: count(row.get(8)?),
-                reasoning_tokens: count(row.get(9)?),
-            })
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
-    };
+    let old = select_rows(connection, "at_ms<?1", cutoff)?;
     let mut days: BTreeMap<(String, String, String, &'static str, String), Totals> =
         BTreeMap::new();
     for row in &old {
