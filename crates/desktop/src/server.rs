@@ -990,6 +990,7 @@ async fn dispatch_command(
                 .open_in_editor(arg(&args, "path")?, arg(&args, "line")?)
                 .await
         ),
+        "record_notification" => done!(state.record_notification(arg(&args, "record")?)),
         "get_settings" => output!(state.get_settings().await),
         "update_settings" => output!(
             state

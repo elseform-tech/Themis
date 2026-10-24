@@ -10,6 +10,7 @@ pub mod cli;
 pub mod commands;
 pub mod diff;
 pub mod doctor;
+pub mod notifications;
 pub mod resources;
 pub mod secrets;
 pub mod server;
@@ -178,10 +179,12 @@ fn completion_haptic(app: tauri::AppHandle) -> Result<(), String> {
 
 fn forward_remote_events(app: tauri::AppHandle, client: server::Client) {
     tauri::async_runtime::spawn(async move {
+        let mut goals = notifications::GoalWatch::default();
         loop {
             if let Ok(mut stream) = client.subscribe().await {
                 let _ = app.emit("backend-resync", ());
                 while let Ok(event) = server::Client::next_event(&mut stream).await {
+                    notifications::watch_event(&app, &client, &mut goals, &event);
                     if let (Some(name), Some(payload)) = (
                         event.get("name").and_then(Value::as_str),
                         event.get("payload"),
@@ -463,6 +466,7 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             let client = server::Client::new(data_dir.clone());
             app.manage(ServerLifeline(ensure_server(&client, &data_dir)?));
+            notifications::install(app.handle());
             forward_remote_events(app.handle().clone(), client.clone());
             app.manage(client);
             app.manage(BrowserStreams::default());
@@ -474,6 +478,7 @@ pub fn run() {
             browser_stream_stop,
             attachment_file,
             completion_haptic,
+            notifications::notification_permission,
             commands::check_for_updates,
         ])
         .run(context)
