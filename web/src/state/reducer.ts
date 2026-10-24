@@ -226,6 +226,7 @@ export const DEFAULT_SETTINGS: Settings = {
   automations_enabled: true,
   completion_sound: true,
   completion_haptic: false,
+  goal_notifications: true,
   onboarded: false,
 };
 
