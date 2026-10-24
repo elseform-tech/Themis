@@ -17,7 +17,7 @@
 .themis-usage-stack { display: flex; flex-direction: column-reverse; gap: 2px; width: 100%; min-height: 0; overflow: hidden; border-radius: 4px 4px 0 0; }
 .themis-usage-stack > span { flex-basis: 0; min-height: 2px; }
 .themis-usage-axis { display: flex; justify-content: space-between; color: var(--themis-text-3); font-size: .6875rem; }
-.themis-usage-tip { position: absolute; z-index: 5; bottom: calc(100% - 12px); transform: translateX(-50%); display: grid; gap: 3px; min-width: 150px; max-width: 240px; padding: 8px 10px; border-radius: 10px; background: var(--themis-raised); box-shadow: 0 10px 30px rgb(0 0 0 / .45); font-size: .75rem; color: var(--themis-text-2); pointer-events: none; }
+.themis-usage-tip { position: absolute; z-index: 5; top: 22px; display: grid; gap: 3px; min-width: 150px; max-width: 240px; padding: 8px 10px; border-radius: 10px; background: var(--themis-raised); box-shadow: 0 10px 30px rgb(0 0 0 / .45); font-size: .75rem; color: var(--themis-text-2); pointer-events: none; }
 .themis-usage-tip strong { color: var(--themis-text); font-weight: 600; }
 .themis-usage-tip-row { display: flex; align-items: center; gap: 6px; }
 .themis-usage-tip-row i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
@@ -29,5 +29,5 @@
 .themis-usage-legend em { font-style: normal; color: var(--themis-text-2); font-size: .75rem; }
 .themis-usage-legend b { margin-left: auto; font-weight: 500; color: var(--themis-text-2); font-variant-numeric: tabular-nums; }
 
-.themis-settings-card .themis-usage-chat > span:first-child { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-settings-card .themis-settings-control.themis-usage-chat > span:first-child { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .themis-usage-chat > span:last-child { flex: none; font-variant-numeric: tabular-nums; }

@@ -324,9 +324,20 @@ usable model when that one is gone too.
 
 ## Settings reference
 
-Settings has General, Appearance, Models, Permissions, Browser, Web, and Advanced sections,
-listed in place of the chats sidebar while Settings is open; **Back to app** at the top,
-or **Home** at the top of the rail, returns to the chat.
+Settings has General, Appearance, Models, Usage, Permissions, Browser, Web, and Advanced
+sections, listed in place of the chats sidebar while Settings is open; **Back to app** at
+the top, or **Home** at the top of the rail, returns to the chat.
+**Usage** shows the tokens Themis used for the last 5 hours, this week (from Monday) and
+this month: input with its cached share, output with its reasoning, requests and, when
+the public models.dev catalog lists prices, an estimated "≈ List price" (a "+" means some
+requests had no published price). Below are the last 30 days as daily bars by model
+(hover or focus a bar for its numbers; free models are marked Free) and the chats that
+used most. Only requests this Themis made are counted, so the provider's own dashboard
+can show more, and the estimate is not your bill: OpenCode Go plans charge a flat fee with
+their own usage limits, which Themis does not show. The context panel in the composer adds
+one line with the open chat's total so far. Each request is kept for 35 days, then as daily
+totals for 400 days, in `usage.sqlite3` in the app data folder (numbers and ids only).
+`themis usage` prints the same totals.
 **Browser** sets what the agent may do in its built-in browser (Allow, Ask or Block for
 browsing, downloads and debugging, with per-site exceptions), Developer mode, the downloads
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).

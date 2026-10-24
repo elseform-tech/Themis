@@ -375,8 +375,14 @@ pub fn render_usage(summary: &Value) -> String {
             (Some(cost), _) => format!("  ≈${cost:.2}+"),
             (None, _) => String::new(),
         };
+        // One column of names: long model or chat names are cut to fit it.
+        let label = if label.chars().count() > 24 {
+            format!("{}…", label.chars().take(23).collect::<String>())
+        } else {
+            label.to_owned()
+        };
         format!(
-            "{label:<11} {:>6} requests  {:>8} in ({} cached)  {:>8} out ({} reasoning){cost}\n",
+            "{label:<24} {:>5} requests  {:>7} in ({} cached)  {:>7} out ({} reasoning){cost}\n",
             number(totals, "requests"),
             tokens(number(totals, "input_tokens")),
             tokens(number(totals, "cached_input_tokens")),

@@ -93,7 +93,10 @@ function DailyChart({ summary }: { summary: UsageSummary }) {
           </div>
         </div>)}
       </div>
-      {shown && <div className="themis-usage-tip" role="status" style={{ left: `${Math.min(80, Math.max(20, (active! + 0.5) / days.length * 100))}%` }}>
+      {/* Beside the bar, on the side with room, so it never covers the bar or the table above. */}
+      {shown && <div className="themis-usage-tip" role="status" style={active! < days.length / 2
+        ? { left: `calc(${(active! + 1) / days.length * 100}% + 8px)` }
+        : { right: `calc(${(days.length - active!) / days.length * 100}% + 8px)` }}>
         <strong>{dayLabel(shown.day)}</strong>
         <span>{compactTokens(shown.total)} tokens · {shown.requests} request{shown.requests === 1 ? "" : "s"}</span>
         {shown.parts.filter(part => part.tokens > 0).map(part => <span key={part.name} className="themis-usage-tip-row"><i style={{ background: part.color }} />{part.name}<b>{compactTokens(part.tokens)}</b></span>)}

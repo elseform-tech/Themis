@@ -26,6 +26,7 @@ QA builds with a different app identifier have separate data directories.
 | App-data `logs/diagnostics-0.jsonl` | Active structured diagnostic records | User/server |
 | App-data `logs/diagnostics-1.jsonl`, `diagnostics-2.jsonl` | Rotated records | User/server |
 | App-data `sessions.sqlite3` | Conversation history, run events, compaction checkpoints | User/server |
+| App-data `usage.sqlite3` | Token usage: one row per completed model request (35 days), then daily totals (400 days); numbers and ids only | User/server |
 | App-data `browser/profiles/<project key>/` | The built-in browser's profile (cookies, logins, cache) for one project's chats; never your own browser profile | Project, in app data |
 
 JSONC is configuration; JSONL is the diagnostic event stream. There is no
@@ -556,7 +557,7 @@ Agent delivery limits (16 KiB per result, 48 KiB per batch, 64 KiB per serialize
 
 `logging.context_metrics` is captured once per run. `off` disables optional request accounting; bounds, evidence saves and loop guards remain active. `summary` retains aggregate counts and the latest request; `detailed` also retains the last 32 request records with mutually exclusive role and purpose distributions. These are alternative views of the same message bytes, never additive. Estimates use serialized bytes and message overhead, not a verified model tokenizer. Within a run, budget decisions scale the estimate by the ratio of provider-reported to estimated input tokens (clamped 0.75-4.0, no change until a request reports usage) and a context-length-exceeded error triggers one compaction and one retry; `token_calibration` samples in the snapshot show estimate versus report per request. No new configuration fields; see [estimate calibration](context-and-attachments.md#estimate-calibration-and-overflow-recovery). The live catalog is joined to models.dev context/output limits. Ordinary requests clamp to the selected model's published capacity; internal summaries separately clamp to the effective nonthinking summary model. Unknown production capacity uses a conservative 24k admission limit and is labeled unknown. Published metadata is not proof of successful live requests at that capacity.
 
-Every actual provider attempt, including internal summaries and retries, contributes to request counts and latency. Reported input/output totals remain separate from cached-input and reasoning-output subcounts, which are included in normalized parent counts. Anthropic uncached input, cache reads and cache creation are combined once; OpenAI cache detail is already included in input. Missing usage is null/unavailable, with missing-request counts; it is never reported as zero. Partial streams retain reported usage when available, and cancelled/failed requests remain in accounting. Streaming Chat Completions requests ask for usage and consume trailing usage frames. Token cost is unavailable unless a verified price source is supplied.
+Every actual provider attempt, including internal summaries and retries, contributes to request counts and latency. Reported input/output totals remain separate from cached-input and reasoning-output subcounts, which are included in normalized parent counts. Anthropic uncached input, cache reads and cache creation are combined once; OpenAI cache detail is already included in input. Missing usage is null/unavailable, with missing-request counts; it is never reported as zero. Partial streams retain reported usage when available, and cancelled/failed requests remain in accounting. Streaming Chat Completions requests ask for usage and consume trailing usage frames. Run snapshots carry no cost; Settings › Usage shows labelled list-price estimates (see [token usage records](#token-usage-records)).
 
 Metadata snapshots persist as context_usage events in the existing sessions database. The final accounting snapshot can follow the terminal event so cancelled request cleanup is included. Query without reading conversation payloads:
 
@@ -565,6 +566,55 @@ themis call get_context_usage '{"threadId":"THREAD","runId":"RUN"}'
 ```
 
 Omit runId for the latest snapshot; no available snapshot returns null. Diagnostic JSONL remains bounded and rotating as documented below. It records correlation IDs, pipeline/job/stage/attempt, model, sizes, estimates, provider usage, timing and outcome categories. It excludes prompts, filenames, arguments, results, document passages, provider bodies and credentials. Historical source excerpts and stage notes belong only in transcript/evidence storage. This provides backend data for a future dashboard; no raw-log viewer or new dashboard UI is added. Usage and runtime events are observations, not automatic judgments of narrative or coding correctness.
+
+## Token usage records
+
+Every completed model request is recorded once in app-data `usage.sqlite3`, whatever
+`logging.context_metrics` says: time, provider id (`opencode-go`), model id, kind
+(`answer` for conversation turns including spec checks, `summary` for checkpoints and
+document capsules, `goal_check` for goal mode's check), chat and run id, and the
+provider-reported input, cached input, output and reasoning tokens (null when the
+provider reported none). Input includes cached input and output includes reasoning, as
+in the context accounting above. Failed and cancelled requests are not recorded. No
+prompt, reply, file name, tool argument or credential is stored.
+
+- Recording never waits on the database: rows go through a bounded queue (1,024) to one
+  writer thread, in a separate file so a usage write never takes the conversation
+  store's lock. A full queue or a failed write drops the row and logs
+  `usage`/`rows_dropped` or `usage`/`write_failed` (counts and error kinds only); a file
+  that cannot open logs `usage`/`store_unavailable` and the Usage section says so.
+- Rows older than 35 days are rolled into daily totals per local day, provider, model,
+  kind and chat; daily totals older than 400 days are deleted. The writer rolls up when
+  it starts and every 500 rows. Deleting a chat keeps its usage (listed as Deleted chats).
+- Only requests this Themis made are counted. Another app or device using the same
+  account is not, so the provider's own figures can be higher.
+
+`get_usage_summary` (no arguments) returns, in this computer's time zone: `windows`
+(`five_hours` = the last 5 hours, `today` from local midnight, `week` from Monday 00:00,
+`month` from the 1st), each with `requests`, `unreported_requests`, the four token sums,
+`estimated_cost_usd` (absent when no request was priced) and `unpriced_requests`;
+`days` (the last 30 local days, oldest first, input + output tokens per model);
+`by_provider`, `by_model` (with `free` for zero-priced models) and `by_chat` (top five
+existing chats with titles, then one `key: null` row for deleted chats), all over the 30
+days; and `billing`, one entry per provider with `kind` (`plan_windows`,
+`pay_per_token`, `free`, `local`), `windows` (verified plan limits; always empty today)
+and `price_source`. A day whose midnight is skipped by a clock change starts at its first
+existing hour; a repeated midnight uses the earlier one. `get_chat_usage` with
+`threadId` returns one chat's totals, raw rows plus daily totals.
+
+Estimated cost uses the per-model list prices (`cost.input`, `cost.output`,
+`cost.cache_read`, and context tiers by input size) in the public models.dev catalog that
+the model list already reads; cache writes are priced as input. It is an estimate of
+list-price usage, not a bill: OpenCode Go charges a flat fee with usage limits per 5 hours,
+week and month, and Themis shows no allowance or percentage because those limits are not
+published in a verified form. Models the catalog does not price are counted in
+`unpriced_requests` and left out of the estimate.
+
+```sh
+themis usage          # the same windows, models and chats as plain text
+themis usage --json   # get_usage_summary
+themis call get_chat_usage '{"threadId":"THREAD"}'
+```
 
 ## Shared-server event stream additions
 
