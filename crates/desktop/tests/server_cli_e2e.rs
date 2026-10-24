@@ -906,7 +906,7 @@ async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
     state
         .update_settings(themis_desktop::types::SettingsPatch {
             // Leave room for tool schemas; the oversized active request still triggers compaction.
-            context_token_budget: Some(10000),
+            context_token_cap: Some(10000),
             ..Default::default()
         })
         .await

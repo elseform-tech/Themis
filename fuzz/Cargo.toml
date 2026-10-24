@@ -111,3 +111,10 @@ path = "fuzz_targets/browser_snapshot.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "context_limit"
+path = "fuzz_targets/context_limit.rs"
+test = false
+doc = false
+bench = false

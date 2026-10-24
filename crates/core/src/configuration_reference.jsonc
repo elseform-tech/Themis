@@ -103,7 +103,8 @@
   "instructions": [],
 
   // ─── RUN LIMITS (leave out to use Settings › Advanced) ────────────────────────────────
-  // "context_token_budget": 200000,   // 2,000–256,000 tokens of working context
+  // "context_token_budget": "auto",   // "auto" = the model's window (up to 200,000),
+  //                                   // or a cap of 2,000–1,000,000 tokens
   // "recent_messages": 20,            // 2–200 earlier messages sent with each request
   // "total_turns": 200,               // 1–2,000 steps per reply
 
@@ -129,7 +130,6 @@
     "target_headroom_interactions": 6,       // 1–20 steps of room kept free
     "max_stages": 32,                        // 1–128 stages for one document
     "summary_max_tokens": 8192,              // 256–16,384 summary output
-    "section_max_tokens": 4096,              // 256–16,384 (kept for older files)
     "document_context_token_budget": 200000, // 24,000–1,000,000 document input
     // "summary_model": "gpt-5.6-luna",      // or "longcat-2.5-preview-free", "gpt-6-luna"
     // "prompt_file": "my-summary-guidance.md", // extra summary guidance, 32 KiB at most
