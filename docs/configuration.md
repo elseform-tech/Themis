@@ -355,7 +355,13 @@ at most 2,000 characters; `active_ms` is the goal's total running time, saved ev
 it runs, so a crash or quit loses at most a minute of it). They grant nothing; a damaged file is ignored (fixed
 `queue_ignored`/`goal_ignored` diagnostics, never the contents), and discarding a chat or its
 project removes both. Diagnostics record queue and goal ids, status changes, check verdict kinds
-and retry counts, never message text, the goal sentence or check prompts. Each goal check reads
+and retry counts, never message text, the goal sentence or check prompts.
+Goal notifications are sent by the desktop app (it watches `goal_changed` events and checks
+its own window focus and the `goal_notifications` setting), which reports each attempt through
+`record_notification` (`{"record":{"thread_id","kind","outcome"}}`, unknown fields refused):
+service `notifications`, event `goal_notification`, with the chat id, `kind` (`reached`,
+`stuck`, `waiting`, `quota`) and `outcome` (`sent`; or, at `warn`, `denied`, `failed`,
+`unavailable`), never the chat title, goal sentence or reason. Each goal check reads
 the commands and file changes recorded since `checked_seq` (the history position the last decided
 check read through), in pages of 2,000 items, keeping the newest 32,000 characters of command
 output; an output longer than 6,000 characters keeps its first 2,000 and last 4,000 with a
@@ -521,6 +527,7 @@ themis call get_runtime_configuration '{"projectRoot":"/path/to/project"}'
 themis call query_diagnostic_logs '{"service":"integration","limit":200}'
 themis call query_diagnostic_logs '{"operationId":"OPERATION_UUID"}'
 themis call query_diagnostic_logs '{"service":"resources","limit":60}'
+themis call query_diagnostic_logs '{"service":"notifications","limit":50}'
 themis call resource_usage '{}'
 ```
 

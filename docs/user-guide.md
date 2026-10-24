@@ -123,6 +123,14 @@ is reached; for example `/goal optimize this app to speed up p95`.
   the goal, then Resume), waiting
   for your answer (your reply resumes it), or out of model quota (it retries every
   15 minutes; switching the model resumes it at once).
+- **Notifications** (macOS): while Themis is in the background, a desktop
+  notification names the chat when its goal is reached, gets stuck, waits for your
+  answer, or runs out of model quota (once per quota pause, not at every retry).
+  Pausing a goal yourself never notifies. Clicking one brings Themis forward and
+  opens the chat. Turn them off with **Notify when a goal finishes or pauses** in
+  Settings › General › Notifications. macOS asks for permission the first time one
+  is needed or when you turn the switch on; if notifications are off for Themis in
+  System Settings › Notifications, the switch says so.
 - A goal never grants permissions: approvals and the sandbox apply as usual, and
   while an approval waits the goal waits too. A reached goal leaves the composer;
   its note stays in the conversation. Sending a new message after a goal
@@ -331,6 +339,8 @@ or **Home** at the top of the rail, returns to the chat.
 browsing, downloads and debugging, with per-site exceptions), Developer mode, the downloads
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
 It saves to the `browser` block of your `runtime.jsonc`.
+**General › Notifications** holds **Sound when a reply finishes**, **Haptics** (macOS) and
+**Notify when a goal finishes or pauses** (macOS; see [Goals](#goals)).
 Ordinary preferences save on change; text inputs save when focus leaves the field.
 Errors appear inline, and rejected changes leave the previous preferences intact.
 Permissions sets the mode new chats start in (Custom or YOLO; each chat can still switch in
@@ -353,6 +363,9 @@ Preferences persisted to `settings.json`:
 | `recent_roots` | Recently opened projects, most recent first (max 10, managed automatically) | `[]` |
 | `concurrency_limit` | Max parallel runs across all threads (1–16); sends past the limit are rejected | `3` |
 | `automations_enabled` | Global automation kill-switch | `true` |
+| `completion_sound` | Play a click when a reply you started finishes | `true` |
+| `completion_haptic` | Trackpad feedback when a reply you started finishes (macOS) | `false` |
+| `goal_notifications` | Desktop notification when a goal is reached or pauses while Themis is in the background (macOS) | `true` |
 | `projects_directory` | Fixed parent folder for new projects | `~/ThemisOS/Projects` |
 | `text_size` | Conversation text size (12–18 px) | `13` |
 | `sidebar_hover` | Reveal collapsed navigation on edge hover | `true` |
