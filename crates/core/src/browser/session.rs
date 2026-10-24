@@ -899,14 +899,20 @@ async fn settle_view(
 ) {
     for attempt in 1..=12 {
         tokio::time::sleep(Duration::from_millis(250)).await;
-        let (moved_on, titled, drawn) = {
+        let (moved_on, titled, drawn, blank) = {
             let tab = state.lock().unwrap_or_else(|e| e.into_inner());
             (
                 tab.document != document,
                 !tab.title.is_empty(),
                 tab.frames > frames_before,
+                tab.url == "about:blank",
             )
         };
+        // A blank page has no title and may draw nothing: there is nothing to catch up
+        // with, and restarting its stream would only slow the next navigation.
+        if blank {
+            return;
+        }
         let streaming = chat
             .screencast
             .lock()
