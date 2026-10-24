@@ -126,16 +126,19 @@ with the 2026-10-13/14 files. See `docs/verification/simplify-compaction-2026-10
 
 ## Mid-turn re-read evals
 
-`python3 -m evals.compaction midturn --trials 4 --model M --budget 24000 [--turns 40] [--effort max]`
+`python3 -m evals.compaction midturn --trials 4 --model M [--budget auto|N] [--turns 40] [--effort max]`
 runs a whole task from an empty conversation (`redo_eval` example, feature `eval`): the case's
 `project/` is copied into a temporary folder, the task in `task.json` runs with every file tool
-allowed and `shell`/`git` denied, and the budget is small enough that the run compacts while it
-works. The live catalog's output limits apply, as in the app. `redo.py` counts a re-read when the
+allowed and `shell`/`git` denied. The budget defaults to `auto`, as in the app: the model's window
+from the live catalog, at most 200k (128k when the catalog does not list the model). The case's
+project is about 20k tokens, so it compacts only under a small explicit budget (the recorded
+results below used 24k); real long tasks run at the model's budget. The live catalog's output limits apply, as in the app. `redo.py` counts a re-read when the
 same slice of a file (path, offset, limit, find) is read again after a checkpoint without the
 file having been written since; reads of the run's own saved outputs (`.themis/`) count apart.
 Reported: checkpoints, calls, reads, `rereads_after_checkpoint`, `reread_share` (re-reads over
 reads after the first checkpoint), `repeated_reads` (no checkpoint in between) and
-`outputs_written` (of the files `task.json` lists).
+`outputs_written` (of the files `task.json` lists), `finished` (all of them written), input,
+cached, output and reasoning tokens, and `duration_s`.
 
 ## Recorded results (2026-10-20)
 
