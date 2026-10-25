@@ -633,7 +633,11 @@ async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
         std::fs::write(&path, &edited).unwrap();
         let status = call(&dir, "apply_mcp_config", json!({}));
         assert_eq!(status["state"], "applied", "{status}");
-        assert_eq!(status["changed"], json!(["personal"]));
+        // The app's watcher may apply the save first; then nothing is left to change.
+        assert!(
+            [json!(["personal"]), json!([])].contains(&status["changed"]),
+            "{status}"
+        );
         let list = call(&dir, "plugin_action", json!({"action": "list"}));
         let personal = list
             .as_array()
@@ -698,7 +702,11 @@ async fn cli_edits_mcp_servers_in_a_copy_applied_on_save() {
         )
         .unwrap();
         let added = call(&dir, "apply_mcp_config", json!({}));
-        assert_eq!(added["changed"], json!(["mine"]), "{added}");
+        assert_eq!(added["state"], "applied", "{added}");
+        assert!(
+            [json!(["mine"]), json!([])].contains(&added["changed"]),
+            "{added}"
+        );
         let list = call(&dir, "plugin_action", json!({"action": "list"}));
         assert!(list
             .as_array()
