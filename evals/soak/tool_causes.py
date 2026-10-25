@@ -78,6 +78,8 @@ def classify(tool, output, mode="yolo", summary=""):
         else:
             allowed = tool in ALLOWED_TOOLS
         return ("ours", "approval_refused") if allowed else ("model", "denied_by_rule")
+    if re.search(r"Permission denied", text) and _writes_protected(summary):
+        return "model", "protected_file"
     for code, pattern in OURS:
         if code == "approval_refused" and mode != "yolo":
             continue
@@ -122,6 +124,17 @@ def _differs_from_check(summary):
     if command != CHECK_COMMAND[0]:
         return True
     return first is not None and first != CHECK_COMMAND[1]
+
+
+# The files `run.protect` makes read-only.
+PROTECTED = re.compile(r"^(?:\./)?(?:check\.py|FORMAT\.md|src/[^/]+)$")
+_PATH = re.compile(r'^\{"file_path":' + _STRING)
+
+
+def _writes_protected(summary):
+    _, _, raw = (summary or "").partition(" with ")
+    match = _PATH.match(raw)
+    return bool(match) and bool(PROTECTED.match(json.loads(f'"{match.group(1)}"')))
 
 
 def sample(output, limit=120):

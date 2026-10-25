@@ -408,16 +408,16 @@ def failed_runs(trace):
 
 
 def infrastructure(trace):
-    """Whether the run was lost to the provider: it did not reach its goal and the last thing
-    that failed was a provider request (rate limit, outage, cut-off reply), or the runner
-    recorded an infrastructure end."""
+    """Whether the run was lost to the provider: it did not reach its goal and its last run
+    failed on a provider request (rate limit, outage, cut-off reply), or the runner recorded an
+    infrastructure end. A provider failure the goal recovered from, with later runs, is not."""
     end = trace.get("end") or {}
     if end.get("reason") == "infrastructure":
         return True
     if end.get("reason") == "reached":
         return False
-    failures = [run["end"] for run in runs(trace) if run["end"] and run["end"].get("kind") == "failed"]
-    if failures and is_infrastructure(classify_error(failures[-1].get("error"))):
+    ended = [run["end"] for run in runs(trace) if run["end"]]
+    if ended and ended[-1].get("kind") == "failed" and is_infrastructure(classify_error(ended[-1].get("error"))):
         return True
     notes = [event for _i, _r, event in _flat(trace) if event.get("kind") == "goal_note"]
     return bool(notes) and notes[-1].get("outcome") == "quota"

@@ -99,10 +99,12 @@ python3 -m evals.soak trend                                               # late
   summaries), and each count is the larger of the two. A run that passes `--max-run-cost`
   (default $1.50) is paused and stopped at once; a run starts only if the round's spend plus its
   estimate stays under `--max-round-cost` (default $5).
-- Other caps: `--max-turns` goal turns (80), `--timeout` seconds (3600). With the goal running and
-  the chat idle for `--idle-timeout` seconds (300), the run ends as `not_continuing`.
-- A run lost to the provider (rate limit, outage, cut-off reply, quota) is rerun once with the
-  same seed, then recorded as infrastructure and left out of the trend.
+- Other caps: `--max-turns` goal turns (80), `--timeout` seconds (7200). With the goal running and
+  the chat idle for `--idle-timeout` seconds (300), the run ends as `not_continuing`. The goal
+  event the app repeats every minute while a goal runs does not count as activity.
+- A run lost to the provider (its last run failed on a rate limit, outage, cut-off reply or
+  quota) is rerun once with the same seed, then recorded as infrastructure and left out of the
+  trend. A provider failure the goal recovered from, with later turns, does not lose the run.
 - Each run writes its trace (`results/DATE/soak-BUDGET-SEED-ATTEMPT.json`), appends one record to
   `history.jsonl`, and the round writes `results/DATE/report.md`. Commit the history with the
   live-check report. `--keep DIR` keeps each run's scratch folders.
@@ -173,4 +175,4 @@ breakage: a goal that stops continuing, a turn after reached, a failed checkpoin
 does not shrink, a redo after a checkpoint, a tool's internal error), the trend logic (fewer than
 5 runs, series split, infrastructure left out), and the runner end to end against
 `fake_themis.py`, a stand-in CLI with a scripted agent (a clean run, a run stopped by the spend
-cap, a goal that stops continuing). `evals/kit/test_kit.py` covers the shared kit.
+cap, a goal that stops continuing while the app repeats its minute goal event). `evals/kit/test_kit.py` covers the shared kit.

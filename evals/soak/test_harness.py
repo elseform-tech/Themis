@@ -443,6 +443,12 @@ class GraderTests(unittest.TestCase):
             "kind": "failed", "error": "LLM request failed: HTTP 429 Too Many Requests"}})
         self.assertEqual(grade(lost, lost["spec"])[0]["failed_runs"], 0)
         self.assertTrue(infrastructure(lost))
+        # A provider failure the goal recovered from (later turns ran) does not lose the run.
+        recovered = clean()
+        recovered["end"] = {"reason": "stuck", "detail": ""}
+        recovered["events"].insert(0, {"t": 0, "run_id": "early", "event": {
+            "kind": "failed", "error": "LLM request failed: Generic Error : Provider response failed or was incomplete"}})
+        self.assertFalse(infrastructure(recovered))
         stopped = clean()
         stopped["events"].append({"t": 0, "run_id": "gz", "event": {"kind": "failed", "error": "Stopped by you"}})
         self.assertEqual(grade(stopped, stopped["spec"])[0]["failed_runs"], 0)
@@ -507,6 +513,12 @@ class GraderTests(unittest.TestCase):
                                ('call `shell` with {"args":["x"],"command":"sh', "unclassified")):
             self.assertEqual(tool_causes.classify("shell", shell_denied, mode="custom", summary=summary)[0], cause,
                              summary)
+        # The soak makes check.py, FORMAT.md and the memos read-only: writing them is the model's.
+        refused = "tool 'write_file' failed: Permission denied (os error 13)"
+        for path, cause in (("check.py", "model"), ("./src/a-b.txt", "model"), ("out/a-b.md", "unclassified")):
+            summary = 'call `write_file` with {"file_path":"%s","content":"x' % path
+            self.assertEqual(tool_causes.classify("write_file", refused, mode="custom", summary=summary)[0], cause,
+                             path)
         self.assertEqual(tool_causes.APPROVAL["rules"][0], {"tool": "shell_unsandboxed", "action": "deny"})
 
 
