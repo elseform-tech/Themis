@@ -21,6 +21,8 @@ const GOAL: &str = "GOAL-SOAK write out/item-01.md through out/item-14.md, one p
 const CHECK_MARKER: &str = "You decide whether an agent has reached a goal";
 const SUMMARY_MARKER: &str = "You summarize agent context";
 const TURN_MARKER: &str = "[Goal — runtime, not from the user]";
+/// The app's one short turn after the check finds the goal reached.
+const REACHED_TURN: &str = "A separate check found the goal reached";
 const SPEC_MARKER: &str = "[Runtime check, not from the user]";
 const CHECKPOINT: &str = "Goal/constraints: write the item files in order, one per turn. Unresolved work: the remaining item files. Next action: write the next item file.";
 /// Generous: CI runs every test binary at once.
@@ -136,6 +138,9 @@ fn respond(
     }
     if text.contains("RULE-MARKER-7") {
         return reply("Noted the rule.");
+    }
+    if text.contains(REACHED_TURN) {
+        return reply("I've reached the goal: every item file is written.");
     }
     // A goal turn: write the next item.
     let (item, wait) = {
@@ -366,7 +371,18 @@ async fn soak() -> Soak {
         goal["active_ms"].as_u64().unwrap() > elapsed,
         "elapsed time grows again once resumed: {goal}"
     );
+    // The agent's short turn telling the user starts right after the status changes.
     let deadline = Instant::now() + DEADLINE;
+    while !llm
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .any(|request| String::from_utf8_lossy(&request.body).contains(REACHED_TURN))
+    {
+        assert!(Instant::now() < deadline, "the reached turn never started");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     while running(&dir, &id) {
         assert!(Instant::now() < deadline);
         tokio::time::sleep(Duration::from_millis(50)).await;
