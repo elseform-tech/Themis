@@ -71,6 +71,11 @@ pub struct ToolTaskReport {
     pub sandbox_active: bool,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    /// Provider-reported subcounts of the totals above (zero when it reports none).
+    pub cached_input_tokens: u64,
+    pub reasoning_output_tokens: u64,
+    /// Byte estimate of every request's input, for requests the provider reported no usage for.
+    pub estimated_input_tokens: u64,
     pub latency_ms: u128,
 }
 
@@ -178,6 +183,9 @@ pub async fn run_tool_task(
         sandbox_active: false,
         input_tokens: None,
         output_tokens: None,
+        cached_input_tokens: 0,
+        reasoning_output_tokens: 0,
+        estimated_input_tokens: 0,
         latency_ms: 0,
     };
     // The app's default OS sandbox, as a run in the app gets it: commands may write only
@@ -193,7 +201,16 @@ pub async fn run_tool_task(
     report.sandbox_active = sandbox.is_active();
     let started = std::time::Instant::now();
     for (turn, prompt) in prompts.iter().enumerate() {
-        let run = run_turn(llm, project, prompt, history.clone(), &options, &sandbox).await?;
+        let run = run_turn(
+            llm,
+            project,
+            prompt,
+            history.clone(),
+            &options,
+            &sandbox,
+            turn,
+        )
+        .await?;
         let calls_before_turn = report.calls.len();
         report
             .checkpoints
@@ -251,6 +268,19 @@ pub async fn run_tool_task(
                 *total = Some(total.unwrap_or(0) + value);
             }
         }
+        for (total, key) in [
+            (
+                &mut report.cached_input_tokens,
+                "provider_cached_input_tokens",
+            ),
+            (
+                &mut report.reasoning_output_tokens,
+                "provider_reasoning_output_tokens",
+            ),
+            (&mut report.estimated_input_tokens, "estimated_input_tokens"),
+        ] {
+            *total += run.metrics[key].as_u64().unwrap_or(0);
+        }
     }
     report.compactions = report.checkpoints.len();
     report.latency_ms = started.elapsed().as_millis();
@@ -276,6 +306,7 @@ async fn run_turn(
     history: Vec<ConversationTurn>,
     options: &ToolTaskOptions,
     sandbox: &Arc<crate::sandbox::SandboxPlan>,
+    turn: usize,
 ) -> anyhow::Result<TurnRun> {
     let approvals: Arc<dyn ApprovalHook> = if options.allow_all {
         Arc::new(crate::tools::AllowAllHook)
@@ -354,7 +385,13 @@ async fn run_turn(
                         }),
                     }
                 }
-                RunEvent::ContextUsage { metrics: latest } => metrics = latest,
+                RunEvent::ContextUsage { metrics: latest } => {
+                    eprintln!(
+                        "{}",
+                        usage_line(turn, &latest, calls.len(), checkpoints.len())
+                    );
+                    metrics = latest;
+                }
                 RunEvent::ContextCheckpoint { summary } => checkpoints.push((calls.len(), summary)),
                 RunEvent::Finished { result } => finished = Some(result),
                 RunEvent::Incomplete { result } => error = Some(format!("incomplete: {result}")),
@@ -419,6 +456,32 @@ async fn run_turn(
     })
 }
 
+/// One content-free progress line (counts only) for a harness that watches a run's spend
+/// while it runs: this turn's totals so far, which a harness sums over turns.
+fn usage_line(
+    turn: usize,
+    metrics: &serde_json::Value,
+    calls: usize,
+    checkpoints: usize,
+) -> String {
+    let count = |key: &str| metrics[key].as_u64().unwrap_or(0);
+    format!(
+        "eval-usage {}",
+        serde_json::json!({
+            "turn": turn,
+            "requests": count("total_requests"),
+            "input_tokens": count("provider_input_tokens"),
+            "output_tokens": count("provider_output_tokens"),
+            "cached_input_tokens": count("provider_cached_input_tokens"),
+            "reasoning_output_tokens": count("provider_reasoning_output_tokens"),
+            "estimated_input_tokens": count("estimated_input_tokens"),
+            "requests_missing_input_usage": count("requests_missing_input_usage"),
+            "calls": calls,
+            "checkpoints": checkpoints,
+        })
+    )
+}
+
 /// Copies readable project files for a per-turn grade. Symlinks are skipped, so a snapshot
 /// never follows a link out of the scratch project.
 fn snapshot(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
@@ -445,6 +508,22 @@ fn snapshot(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_line_carries_counts_only() {
+        let metrics = serde_json::json!({"total_requests": 3, "provider_input_tokens": 900,
+            "provider_output_tokens": 40, "provider_cached_input_tokens": 600,
+            "provider_reasoning_output_tokens": 12, "estimated_input_tokens": 950,
+            "requests_missing_input_usage": 0, "recent_requests": [{"model": "m"}]});
+        let line = usage_line(1, &metrics, 7, 2);
+        let parsed: serde_json::Value =
+            serde_json::from_str(line.strip_prefix("eval-usage ").unwrap()).unwrap();
+        assert_eq!(parsed["turn"], 1);
+        assert_eq!(parsed["input_tokens"], 900);
+        assert_eq!(parsed["cached_input_tokens"], 600);
+        assert_eq!(parsed["calls"], 7);
+        assert!(parsed.get("recent_requests").is_none());
+    }
 
     #[test]
     fn snapshot_copies_project_files_but_not_agent_state_or_links() {

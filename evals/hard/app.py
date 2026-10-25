@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 
+from evals.longform.__main__ import isolated_env
 from evals.tools.tasks import commit_all, git
 
 
@@ -42,10 +43,11 @@ def keep_evidence(workdir, keep, name):
 def run_app_task(binary, task, model, timeout=5400, keep=None):
     """(row, error): one task as a real app chat, graded by the task's check."""
     workdir = tempfile.mkdtemp(prefix="hard-app-")
-    data, home, project = (os.path.join(workdir, name) for name in ("data", "home", "project"))
-    for path in (data, home, project):
+    data, project = (os.path.join(workdir, name) for name in ("data", "project"))
+    for path in (data, project):
         os.makedirs(path)
-    env = {**os.environ, "HOME": home}
+    # Only PATH, the provider key and scratch HOME/TMP reach the app and the agent's commands.
+    env = isolated_env(workdir)
     if task["budget"] != 200_000:
         with open(os.path.join(data, "runtime.jsonc"), "w", encoding="utf-8") as handle:
             json.dump({"schema_version": 1, "context_token_budget": task["budget"],
