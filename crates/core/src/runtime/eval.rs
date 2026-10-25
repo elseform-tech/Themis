@@ -131,6 +131,16 @@ pub fn parse_transcript(jsonl: &str) -> anyhow::Result<Vec<ChatMessage>> {
 }
 
 /// Number of transcript records (excluding the system message).
+/// The transcript's first user message, as the desktop hands it to every checkpoint request
+/// (`runtime::with_first_request`). Empty when there is none.
+pub fn first_user_request(messages: &[ChatMessage]) -> String {
+    messages
+        .iter()
+        .find(|message| message.role == ChatRole::User)
+        .map(|message| message.content.clone())
+        .unwrap_or_default()
+}
+
 pub fn record_count(messages: &[ChatMessage]) -> usize {
     messages.len().saturating_sub(1)
 }

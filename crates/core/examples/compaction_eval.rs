@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 use themis_core::providers::{resolve, ProviderConfig, ProviderKind};
 use themis_core::runtime::eval::{
-    answer_probe, compact_chunks, parse_transcript, record_count, EvalPolicy,
+    answer_probe, compact_chunks, first_user_request, parse_transcript, record_count, EvalPolicy,
 };
 
 struct Args {
@@ -25,6 +25,7 @@ struct Args {
     recent: usize,
     base_url: Option<String>,
     out: Option<PathBuf>,
+    first_request: bool,
 }
 
 fn parse_args() -> anyhow::Result<Args> {
@@ -35,6 +36,7 @@ fn parse_args() -> anyhow::Result<Args> {
         recent: 20,
         base_url: None,
         out: None,
+        first_request: true,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(flag) = iter.next() {
@@ -49,6 +51,8 @@ fn parse_args() -> anyhow::Result<Args> {
             "--recent" => args.recent = value()?.parse()?,
             "--base-url" => args.base_url = Some(value()?),
             "--out" => args.out = Some(value()?.into()),
+            // `off` compacts as before the chat's first message reached every checkpoint.
+            "--first-request" => args.first_request = value()? != "off",
             other => anyhow::bail!("unknown argument {other}"),
         }
     }
@@ -92,15 +96,23 @@ async fn main() -> anyhow::Result<()> {
     }
     let llm = resolve(&config).await?;
     let evidence = tempfile::tempdir()?;
-    let outcome = compact_chunks(
-        &llm,
-        &transcript,
-        &ends,
-        EvalPolicy {
-            context_token_budget: args.budget,
-            recent_messages: args.recent,
-        },
-        evidence.path(),
+    let first = if args.first_request {
+        first_user_request(&transcript)
+    } else {
+        String::new()
+    };
+    let outcome = themis_core::runtime::with_first_request(
+        first,
+        compact_chunks(
+            &llm,
+            &transcript,
+            &ends,
+            EvalPolicy {
+                context_token_budget: args.budget,
+                recent_messages: args.recent,
+            },
+            evidence.path(),
+        ),
     )
     .await?;
     let mut answers = Vec::new();
@@ -117,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
         "model": args.model,
         "budget": args.budget,
         "recent_messages": args.recent,
+        "first_request": args.first_request,
         "transcript_records": record_count(&transcript),
         "chunks": outcome.chunks,
         "valid": outcome.valid,

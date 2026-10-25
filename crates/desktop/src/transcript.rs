@@ -510,6 +510,19 @@ impl TranscriptStore {
         Ok(turns.into_iter().skip(skip).collect())
     }
 
+    /// The chat's first user message, which every context checkpoint request carries.
+    pub fn first_user_request(&self, thread_id: &str) -> Result<Option<String>, String> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        connection
+            .query_row(
+                "SELECT text FROM context_turns WHERE thread_id=?1 AND role='user' ORDER BY seq LIMIT 1",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| format!("read first user request: {e}"))
+    }
+
     /// Select original exchanges for recall, keeping historical text out of the instruction role.
     pub fn context_for_request(
         &self,

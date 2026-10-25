@@ -519,13 +519,9 @@ async fn goal_soak_e2e() {
     );
 }
 
-/// Known gap, kept as a failing check (run with `--ignored`): the first message reaches
-/// the summarizer only while a lexical anchor or the previous checkpoint carries it.
-/// `Transcript::context_for_request` drops the "Verbatim first and recent user requests"
-/// turn, and once later turns crowd the rule out of the anchors, a rule the summary did
-/// not keep never reaches the summarizer (or the agent) again.
+/// Every checkpoint request carries the chat's first message verbatim, so a rule given
+/// there never depends on an earlier summary having kept it.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "known gap: the first message's rule stops reaching the summarizer after a few checkpoints"]
 async fn every_summarizer_request_carries_the_first_messages_rule() {
     let soak = soak().await;
     let missing: Vec<usize> = soak

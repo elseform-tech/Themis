@@ -1986,6 +1986,31 @@ tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
 tokio::task_local! { static SHORT_REPLY_TURN: bool; }
 tokio::task_local! { static STEER_INBOX: SteerInbox; }
 
+tokio::task_local! { static FIRST_REQUEST: String; }
+
+/// Runs `future` with the chat's first user message, which every context checkpoint
+/// request then carries verbatim (bounded), so its rules never depend on earlier summaries.
+pub async fn with_first_request<F: std::future::Future>(first: String, future: F) -> F::Output {
+    FIRST_REQUEST.scope(first, future).await
+}
+
+/// The checkpoint request's first-request section, unless there is no first message or
+/// the summarized records already hold it verbatim.
+fn first_request_section(older: &[ChatMessage]) -> Option<String> {
+    let first = FIRST_REQUEST.try_with(Clone::clone).ok()?;
+    if first.trim().is_empty()
+        || older
+            .iter()
+            .any(|message| message.role == ChatRole::User && message.content == first)
+    {
+        return None;
+    }
+    Some(crate::prompts::fill(
+        crate::prompts::SUMMARY_FIRST_REQUEST,
+        &[("first_request", &bounded_context_hint(&first))],
+    ))
+}
+
 /// Messages the user steers into a running run, oldest first. The caller
 /// pushes; the run takes them before its next model request.
 pub type SteerInbox = Arc<Mutex<std::collections::VecDeque<String>>>;
@@ -2378,6 +2403,7 @@ fn prepare_compaction(
         .map(checkpoint_task_state)
         .unwrap_or("");
     let (records, skipped) = summary_evidence::records(older)?;
+    let first_request = first_request_section(older);
     let build = |limit: usize, dropped: usize| {
         let mut sampled = dropped > 0;
         let mut projected = records[dropped..].to_vec();
@@ -2427,6 +2453,9 @@ fn prepare_compaction(
             .collect::<Vec<_>>()
             .join("\n");
         let mut request = context_update_messages(&notes, previous, current_request, true);
+        if let Some(section) = &first_request {
+            request[1].content.push_str(&format!("\n\n{section}"));
+        }
         request[1].content.push_str(&format!("\n\n{coverage}"));
         (request, coverage, sampled)
     };
@@ -3544,6 +3573,52 @@ mod tests {
             snapshot,
         )
     }
+    #[tokio::test]
+    async fn checkpoint_requests_carry_the_first_request_unless_already_summarized() {
+        let message = |role, content: &str| ChatMessage {
+            role,
+            message_type: MessageType::Text,
+            content: content.into(),
+        };
+        let first = "Rule: every file starts with owner: heron";
+        let later = vec![
+            message(ChatRole::Assistant, "Checkpoint state"),
+            message(ChatRole::User, "Continue the goal"),
+        ];
+        let section = "FIRST USER REQUEST OF THIS CHAT";
+        let request = |older: Vec<ChatMessage>| async move {
+            FIRST_REQUEST
+                .scope(first.to_owned(), async move {
+                    prepare_compaction(&older, "Continue", 24_000, 1024)
+                        .unwrap()
+                        .0
+                })
+                .await
+        };
+        // After a checkpoint the first message is gone from the records: it is carried.
+        let carried = request(later.clone()).await;
+        assert!(carried[1].content.contains(section) && carried[1].content.contains(first));
+        // Still among the records being summarized: no second copy.
+        let mut early = later.clone();
+        early.insert(0, message(ChatRole::User, first));
+        assert!(!request(early).await[1].content.contains(section));
+        // Outside a chat run (no first request): unchanged.
+        let plain = prepare_compaction(&later, "Continue", 24_000, 1024)
+            .unwrap()
+            .0;
+        assert!(!plain[1].content.contains(section));
+        // A long first message is bounded.
+        let long = "x".repeat(50_000);
+        let bounded = FIRST_REQUEST
+            .scope(long, async {
+                prepare_compaction(&later, "Continue", 24_000, 1024)
+                    .unwrap()
+                    .0
+            })
+            .await;
+        assert!(bounded[1].content.len() < 20_000);
+    }
+
     #[test]
     fn short_records_that_fit_do_not_fallback_because_of_omission_marker_overhead() {
         let older = (0..39)
