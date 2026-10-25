@@ -511,6 +511,23 @@ async fn cli_chat_grant_from_run_one_covers_run_two_of_the_same_chat() {
         0
     );
     assert!(project.join("a.txt").exists(), "run two reused the grant");
+    // The log shows the person's answer once ("chat") and both runs' writes as allowed.
+    let records = cli(
+        data.path(),
+        &["call", "query_diagnostic_logs", r#"{"service":"approval"}"#],
+    );
+    let records = records.as_array().expect("records");
+    let answers: Vec<&Value> = records
+        .iter()
+        .filter(|r| r["event"] == "answered")
+        .map(|r| &r["details"]["answer"])
+        .collect();
+    assert_eq!(answers, [&json!("chat")], "{records:?}");
+    let allowed = records
+        .iter()
+        .filter(|r| r["event"] == "decided" && r["details"]["outcome"] == "allowed")
+        .count();
+    assert!(allowed >= 2, "{records:?}");
 
     // Undo: deleting the chat's file makes the next run ask again.
     std::fs::remove_file(grants_file(data.path(), &id)).unwrap();

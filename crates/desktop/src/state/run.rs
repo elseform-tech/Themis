@@ -18,6 +18,9 @@ use super::{AppState, RunSnapshot};
 /// Channel capacity for the run-event pump (runs emit a handful of events).
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
 
+/// Logs every gated action's final outcome (`approval/decided`: allowed or denied, by a rule,
+/// a chat grant, YOLO or a person). What a person answered in a dialog is the hook's own
+/// `approval/answered` event.
 struct AuditedApprovals {
     inner: Arc<dyn ApprovalHook>,
     context: themis_core::diagnostics::DiagnosticContext,
@@ -32,7 +35,7 @@ impl ApprovalHook for AuditedApprovals {
         let decision = self.inner.approve(action);
         let _ = self.context.log.append_with_level("approval", "decided", "info", json!({
             "thread_id":self.context.thread_id,"run_id":self.context.run_id,"operation_id":self.context.run_id,"tool":action.tool,
-            "risk":format!("{:?}",action.risk),"decision":format!("{decision:?}"),"elapsed_ms":started.elapsed().as_millis()
+            "risk":format!("{:?}",action.risk),"outcome":if decision == themis_core::tools::Approval::Deny { "denied" } else { "allowed" },"elapsed_ms":started.elapsed().as_millis()
         }), Some(&self.context.level));
         decision
     }
@@ -166,7 +169,8 @@ impl AppState {
                 snapshot.approval_timeout_seconds,
             )))
             .with_read_approval(true)
-            .with_unattended(snapshot.automation_run),
+            .with_unattended(snapshot.automation_run)
+            .with_audit(diagnostic_context.clone()),
         );
         // "Allow in this chat" grants persist for the chat: loaded now, extended
         // by this run's answers, and inherited by later runs (including the

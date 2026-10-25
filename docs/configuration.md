@@ -573,7 +573,10 @@ severity, service, or operation ID.
 
 Records contain epoch-millisecond timestamp, severity, service, event, and
 metadata. Events cover server lifecycle, configuration saves, integration
-inspection/import/test outcomes, approval decisions, the sandbox state each run
+inspection/import/test outcomes, approvals (`approval`/`decided`: each gated action's
+`outcome`, `allowed` or `denied`, whether a rule, a chat grant, YOLO or a person settled it;
+`approval`/`answered`: only when a dialog was shown, what the person chose: `once`, `chat`
+for Allow in this chat, `deny`, or `none` when it expired, with `waited_ms`), the sandbox state each run
 captured (`sandbox`/`run_plan`: state, backend and network, never paths or
 commands), and compaction stages. A failed server command (`server`/`command_failed`)
 records its method and a fixed `category` (`unknown_method` when a window and the

@@ -271,7 +271,7 @@ async fn configured_policy_and_repository_guidance_reach_the_actual_run() {
         .query_diagnostic_logs(Default::default())
         .unwrap()
         .iter()
-        .any(|r| r.service == "approval" && r.details["decision"] == "Deny"));
+        .any(|r| r.service == "approval" && r.details["outcome"] == "denied"));
     // Legacy confirm-reads still applies when all policy provenance is default.
     provider.reset().await;
     use wiremock::matchers::{method, path};
