@@ -54,22 +54,10 @@ required-features = ["eval"]
 name = "behavior_eval"
 required-features = ["eval"]
 
-[[example]]
-name = "redo_eval"
-required-features = ["eval"]
-
 [[test]]
 name = "compaction_eval"
-required-features = ["eval"]
-
-[[example]]
-name = "longform_eval"
 required-features = ["eval"]
 
 [lints.rust]
 # Set by the eval harnesses when the tree has the `recall` tool (older refs do not).
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(eval_recall)'] }
-
-[[example]]
-name = "tool_eval"
-required-features = ["eval"]
