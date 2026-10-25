@@ -6,6 +6,7 @@
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import unittest
@@ -73,6 +74,10 @@ class GitTests(unittest.TestCase):
             git.commit_all(folder, "more")
             self.assertEqual(git.commits(folder), 2)
         finally:
+            # Git leaves its objects read-only, which Windows refuses to delete.
+            for parent, _dirs, names in os.walk(folder):
+                for name in names:
+                    os.chmod(os.path.join(parent, name), stat.S_IWRITE | stat.S_IREAD)
             shutil.rmtree(folder)
 
 

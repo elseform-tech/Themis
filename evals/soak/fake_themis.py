@@ -148,6 +148,13 @@ def agent(data, run_id, text):
             if stopped(data):
                 return
             queue = _load(data, "queue.json", [])
+            if not todo and not since:
+                # The runner queues the follow-up between its polls; a fast machine must not
+                # reach the goal before it lands (bounded, so a run without one still ends).
+                deadline = time.monotonic() + 5
+                while not queue and time.monotonic() < deadline and not stopped(data):
+                    time.sleep(0.05)
+                    queue = _load(data, "queue.json", [])
             if queue:
                 _save(data, "queue.json", [])
                 queued_run = str(uuid.uuid4())
