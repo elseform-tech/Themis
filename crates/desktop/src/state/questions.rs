@@ -26,7 +26,8 @@ pub(super) const MAX_OPEN: usize = 8;
 const MAX_KEPT: usize = 100;
 const MAX_QUESTION_CHARS: usize = 1_000;
 const MAX_ASSUMPTION_CHARS: usize = 1_000;
-const MAX_CHOICES: usize = 6;
+/// A question offers 2 to 4 choices, or none (then its recommendation is a suggestion).
+const MAX_CHOICES: usize = 4;
 const MAX_CHOICE_CHARS: usize = 200;
 const MAX_TOPIC_CHARS: usize = 80;
 const MAX_ANSWER_CHARS: usize = 10_000;
@@ -40,6 +41,8 @@ pub(crate) const ANSWER_MARKER: &str = "[Answer to your question — from the us
 pub(super) struct NewQuestion {
     pub question: String,
     pub choices: Vec<String>,
+    /// The agent's recommended answer (`recommended`), which it works on until the
+    /// answer comes: one of the choices, or a suggestion when there are none.
     pub assumption: Option<String>,
     pub blocking: bool,
     pub topic: Option<String>,
@@ -50,6 +53,30 @@ pub(super) struct NewQuestion {
 pub(super) enum AskRefused {
     Empty,
     TooMany,
+}
+
+/// The choices as shown: the recommended one first, distinct, at most
+/// [`MAX_CHOICES`]; a lone choice is no choice but the suggestion.
+fn shape_choices(
+    choices: Vec<String>,
+    recommended: Option<String>,
+) -> (Vec<String>, Option<String>) {
+    let mut shaped: Vec<String> = Vec::new();
+    for choice in recommended
+        .iter()
+        .filter(|_| !choices.is_empty())
+        .chain(&choices)
+    {
+        if !shaped.contains(choice) {
+            shaped.push(choice.clone());
+        }
+    }
+    shaped.truncate(MAX_CHOICES);
+    if shaped.len() < 2 {
+        let suggestion = recommended.or_else(|| shaped.pop());
+        return (Vec::new(), suggestion);
+    }
+    (shaped, recommended)
 }
 
 fn bounded(text: &str, max: usize) -> String {
@@ -155,12 +182,12 @@ impl AppState {
             .iter()
             .map(|choice| bounded(choice, MAX_CHOICE_CHARS))
             .filter(|choice| !choice.is_empty())
-            .take(MAX_CHOICES)
             .collect();
         let assumption = asked
             .assumption
             .map(|text| bounded(&text, MAX_ASSUMPTION_CHARS))
             .filter(|text| !text.is_empty());
+        let (choices, assumption) = shape_choices(choices, assumption);
         let _guard = self
             .inner
             .question_lock
@@ -384,5 +411,37 @@ impl AppState {
                 let _ = std::fs::remove_file(path);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| (*item).to_owned()).collect()
+    }
+
+    #[test]
+    fn the_recommended_choice_comes_first_and_choices_stay_two_to_four() {
+        let (choices, recommended) = shape_choices(
+            strings(&["MIT", "Apache-2.0", "GPL"]),
+            Some("Apache-2.0".into()),
+        );
+        assert_eq!(choices, strings(&["Apache-2.0", "MIT", "GPL"]));
+        assert_eq!(recommended.as_deref(), Some("Apache-2.0"));
+        // A recommendation outside the choices joins them, first.
+        let (choices, _) = shape_choices(strings(&["a", "b", "c", "d"]), Some("e".into()));
+        assert_eq!(choices, strings(&["e", "a", "b", "c"]));
+        // One choice is no choice: it is the suggestion.
+        let (choices, suggestion) = shape_choices(strings(&["Pebble"]), None);
+        assert!(choices.is_empty());
+        assert_eq!(suggestion.as_deref(), Some("Pebble"));
+        let (choices, suggestion) = shape_choices(Vec::new(), Some("Pebble".into()));
+        assert!(choices.is_empty());
+        assert_eq!(suggestion.as_deref(), Some("Pebble"));
+        // Repeats count once.
+        let (choices, _) = shape_choices(strings(&["x", "x", "y"]), None);
+        assert_eq!(choices, strings(&["x", "y"]));
     }
 }

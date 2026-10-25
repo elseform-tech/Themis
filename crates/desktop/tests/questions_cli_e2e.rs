@@ -175,7 +175,7 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
         }
         if text.contains("add a license") {
             return if results == 0 {
-                tools(&[("l1", "ask_user", json!({"question": "Which license?", "assumption": "MIT", "topic": "license"}))])
+                tools(&[("l1", "ask_user", json!({"question": "Which license?", "recommended": "MIT", "topic": "license"}))])
             } else {
                 reply("Added an MIT license.")
             };
@@ -184,9 +184,9 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
             return reply("Re-indented with tabs.");
         }
         match results {
-            0 => tools(&[("q1", "ask_user", json!({"question": "Tabs or spaces?", "choices": ["Tabs", "Spaces"], "assumption": "Spaces", "topic": "indent"}))]),
+            0 => tools(&[("q1", "ask_user", json!({"question": "Tabs or spaces?", "choices": ["Tabs", "Spaces"], "recommended": "Spaces", "topic": "indent"}))]),
             // Asked again on the same open topic: the question is updated, not added.
-            1 => tools(&[("q2", "ask_user", json!({"question": "Tabs or spaces for indentation?", "choices": ["Tabs", "Spaces"], "assumption": "Spaces", "topic": "indent"}))]),
+            1 => tools(&[("q2", "ask_user", json!({"question": "Tabs or spaces for indentation?", "choices": ["Tabs", "Spaces"], "recommended": "Spaces", "topic": "indent"}))]),
             _ => {
                 // The run keeps working while the user answers.
                 held.wait();
@@ -220,6 +220,8 @@ async fn a_question_keeps_the_run_going_and_its_answer_arrives_during_or_after_i
                 "one topic, one question: {questions}"
             );
             assert_eq!(questions[0]["assumption"], "Spaces");
+            // The recommended choice comes first.
+            assert_eq!(questions[0]["choices"], json!(["Spaces", "Tabs"]));
             assert!(running(&data, &thread), "the question did not stop the run");
             let id = questions[0]["id"].as_str().unwrap().to_owned();
             let answered = call(
@@ -335,8 +337,8 @@ async fn a_blocking_question_ends_the_run_and_the_goal_waits_for_that_answer_onl
         }
         if results == 0 {
             return tools(&[
-                ("a", "ask_user", json!({"question": "Dark mode by default?", "assumption": "Yes"})),
-                ("b", "ask_user", json!({"question": "Which license?", "assumption": "MIT"})),
+                ("a", "ask_user", json!({"question": "Dark mode by default?", "recommended": "Yes"})),
+                ("b", "ask_user", json!({"question": "Which license?", "recommended": "MIT"})),
                 ("c", "ask_user", json!({"question": "Which API key name?", "blocking": true})),
             ]);
         }

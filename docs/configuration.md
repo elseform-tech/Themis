@@ -475,12 +475,14 @@ minutes) are fixed, not runtime configuration. App server commands:
 (also through `themis call`).
 **Questions.** The agent's `ask_user` tool (no approval prompt, like `set_goal`; a deny rule
 for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.json` (app data):
-`[{"id","run_id","question","choices","assumption","blocking","topic","asked_at","answer"}]`,
+`[{"id","run_id","question","choices","assumption","blocking","topic","asked_at","answer"}]`
+(`assumption` holds the tool's `recommended` answer, which the agent works on until answered),
 at most 8 open at once (the tool then tells the agent to keep working on its assumption) and
-100 kept (the oldest answered go first); a question is at most 1,000 characters, with up to 6
-choices of 200, and an answer at most 10,000. Asking again on an open `topic`, or with the same
+100 kept (the oldest answered go first); a question is at most 1,000 characters, with 2 to 4
+choices of 200 (the recommended one first; a single choice becomes the suggestion), and an
+answer at most 10,000. Asking again on an open `topic`, or with the same
 wording, updates that question. The transcript records `question_asked` and `question_answered`
-events so the chat shows them. A non-blocking question needs an `assumption` and the run goes on;
+events so the chat shows them. A non-blocking question needs a `recommended` answer and the run goes on;
 a blocking one ends the run after that tool batch with a fixed sentence, and in goal mode the
 goal waits until that question is answered (answers to other questions run but leave it
 waiting). `answer_question` (`threadId`, `questionId`, `answer`) delivers the answer like a

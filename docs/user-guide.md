@@ -90,9 +90,10 @@ levels are listed.
 ### Questions from the agent
 
 When the agent needs your input, it asks without stopping its work. The
-question shows in the chat with any choices it offers (one per line) and what
-it is **Working on** until you answer, and the agent carries on with that
-assumption.
+question shows in the chat with 2–4 options, one per line, its recommended one
+marked **Recommended**, or, for an open question such as a name, its
+**Suggested** answer. The agent carries on with that answer until you click
+another option or write your own.
 
 - The question stays open until you answer it. After five minutes without an
   answer it shrinks to one **Open question** line; click it to answer whenever
@@ -105,7 +106,7 @@ assumption.
   without it) ends its turn; it never shrinks, and in
   goal mode the goal waits for that answer only.
 - A goal can be reached with questions still open: the agent's message says
-  which ones and what it assumed. Questions stay with the chat across restarts;
+  which ones and what it recommended. Questions stay with the chat across restarts;
   from the CLI, `themis call list_questions` and `answer_question` do the same.
 
 ### Goals

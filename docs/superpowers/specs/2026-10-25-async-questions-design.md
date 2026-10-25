@@ -88,9 +88,13 @@ A new agent tool, `ask_user`, available in every chat (approval-free like
 ### The box
 
 - Inline at the point it was asked, styled as a question, not as an error or a
-  goal note. Shows the question, choices as full-width buttons one per line (a
-  choice can be a long sentence), a text field, and "Working on: <assumption>"
-  (not for a blocking question).
+  goal note. Every question comes with the agent's answer (owner, 2026-10-25:
+  "options or suggestion", "2 - 4"): 2–4 choices as full-width buttons one per
+  line (a choice can be a long sentence) with the recommended one first and
+  marked **Recommended**, or, for an open question, one **Suggested** answer.
+  The agent works on that answer until the person picks or writes another; a
+  text field is always there. (The tool argument is `recommended`; it replaced
+  the separate "Working on" line, one fact in one place.)
 - Collapses to a single row "Open question · <question>" after five minutes
   without an answer; a blocking question never collapses. Expanding it shows
   the full box again.

@@ -47,7 +47,8 @@ fn parse(args: &Value) -> NewQuestion {
                     .collect()
             })
             .unwrap_or_default(),
-        assumption: text("assumption"),
+        // `assumption` was the name before `recommended`; either is read.
+        assumption: text("recommended").or_else(|| text("assumption")),
         blocking: args["blocking"].as_bool().unwrap_or(false),
         topic: text("topic"),
     }
@@ -64,7 +65,7 @@ impl ToolRuntime for QuestionTool {
                 .is_none_or(|a| a.trim().is_empty())
         {
             return Err(error(
-                "ask_user needs `assumption`: what you will assume and work on until the user answers (or set `blocking` when nothing more can be done without the answer)",
+                "ask_user needs `recommended`: your recommended answer (one of the choices, or your suggestion), which you work on until the user answers (or set `blocking` when nothing more can be done without the answer)",
             ));
         }
         let action = ToolAction {
@@ -130,8 +131,8 @@ impl ToolT for QuestionTool {
     fn args_schema(&self) -> Value {
         json!({"type":"object","properties":{
             "question":{"type":"string","description":"One question to the user."},
-            "choices":{"type":"array","items":{"type":"string"},"description":"Up to six short answers to pick from, when the answer is one of a few options."},
-            "assumption":{"type":"string","description":"What you will assume and work on until the user answers."},
+            "choices":{"type":"array","items":{"type":"string"},"minItems":2,"maxItems":4,"description":"2 to 4 answers to pick from, when the answer is one of a few options; include your recommended one."},
+            "recommended":{"type":"string","description":"Your recommended answer: one of the choices, or your suggestion when there are none. You work on it until the user answers."},
             "blocking":{"type":"boolean","description":"True only when nothing more can be done without the answer: the run ends and waits."},
             "topic":{"type":"string","description":"A short key; asking again with an open topic updates that question."}
         },"required":["question"],"additionalProperties":false})
@@ -148,7 +149,7 @@ mod tests {
     #[test]
     fn arguments_are_read_leniently() {
         let asked = parse(
-            &json!({"question": "Tabs?", "choices": ["Yes", 3, "No"], "assumption": "Yes", "topic": "indent"}),
+            &json!({"question": "Tabs?", "choices": ["Yes", 3, "No"], "recommended": "Yes", "topic": "indent"}),
         );
         assert_eq!(asked.question, "Tabs?");
         assert_eq!(asked.choices, ["Yes", "No"]);
@@ -156,5 +157,12 @@ mod tests {
         assert!(!asked.blocking);
         assert_eq!(asked.topic.as_deref(), Some("indent"));
         assert!(parse(&json!({"question": "Key?", "blocking": true})).blocking);
+        // The older name still reads.
+        assert_eq!(
+            parse(&json!({"question": "Q", "assumption": "A"}))
+                .assumption
+                .as_deref(),
+            Some("A")
+        );
     }
 }

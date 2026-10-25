@@ -43,6 +43,7 @@ export function QuestionBox({ question, onAnswer }: QuestionBoxProps) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const anchor = `themis-question-${question.id}`;
+  const options = question.choices?.length ? question.choices : question.assumption ? [question.assumption] : [];
 
   if (question.answer !== undefined) {
     return (
@@ -73,18 +74,21 @@ export function QuestionBox({ question, onAnswer }: QuestionBoxProps) {
       <QuestionMark />
       <div className="themis-question-body">
         <p className="themis-question-text">{question.question}</p>
-        {/* A blocking question has nothing to work on until the answer comes. */}
-        {question.assumption && !question.blocking && <p className="themis-question-assumption">Working on: {question.assumption}</p>}
-        {!!question.choices?.length && (
+        {/* 2–4 choices with the agent's recommendation first, or its one suggestion; the
+            agent works on that answer until the person picks or writes another. */}
+        {options.length > 0 && (
           <div className="themis-question-choices">
-            {question.choices.map(choice => (
-              <button key={choice} type="button" className="themis-question-choice" disabled={sending} onClick={() => void send(choice)}>{choice}</button>
+            {options.map(option => (
+              <button key={option} type="button" className="themis-question-choice" disabled={sending} onClick={() => void send(option)}>
+                <span>{option}</span>
+                {option === question.assumption && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}</small>}
+              </button>
             ))}
           </div>
         )}
         <form className="themis-question-form" onSubmit={event => { event.preventDefault(); void send(draft); }}>
           <label className="themis-sr-only" htmlFor={`${anchor}-answer`}>Your answer</label>
-          <input id={`${anchor}-answer`} className="themis-question-input" value={draft} placeholder={question.choices?.length ? "Or write your answer" : "Your answer"}
+          <input id={`${anchor}-answer`} className="themis-question-input" value={draft} placeholder={options.length ? "Or write your answer" : "Your answer"}
             maxLength={10000} disabled={sending} onChange={event => setDraft(event.target.value)} />
           <button type="submit" className="themis-goal-icon is-primary themis-icon-tip" data-tooltip="Send answer" aria-label="Send answer" disabled={sending || draft.trim() === ""}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>

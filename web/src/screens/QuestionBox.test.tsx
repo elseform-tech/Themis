@@ -13,19 +13,25 @@ const question = (overrides: Partial<Question> = {}): Question => ({
 });
 
 describe("QuestionBox", () => {
-  it("shows the question, the assumption and the choices while the agent has not moved on", async () => {
+  it("shows the question with its choices, the recommended one marked, and answers with a click", async () => {
     const answer = vi.fn().mockResolvedValue(undefined);
-    render(<QuestionBox question={question()} onAnswer={answer} />);
+    render(<QuestionBox question={question({ choices: ["Spaces", "Tabs"] })} onAnswer={answer} />);
     const box = screen.getByRole("region", { name: "Question from the agent" });
     expect(box).toHaveTextContent("Tabs or spaces?");
-    expect(box).toHaveTextContent("Working on: Spaces");
+    expect(screen.getByRole("button", { name: /^Spaces/ })).toHaveTextContent("Recommended");
+    expect(screen.getByRole("button", { name: "Tabs" })).not.toHaveTextContent("Recommended");
     fireEvent.click(screen.getByRole("button", { name: "Tabs" }));
     await waitFor(() => expect(answer).toHaveBeenCalledWith("Tabs"));
   });
 
-  it("says nothing about working on an assumption for a blocking question", () => {
-    render(<QuestionBox question={question({ blocking: true, assumption: "Nothing until you answer" })} onAnswer={vi.fn()} />);
-    expect(screen.getByRole("region", { name: "Question from the agent" })).not.toHaveTextContent("Working on");
+  it("offers an open question's suggestion as one answer, beside a written one", async () => {
+    const answer = vi.fn().mockResolvedValue(undefined);
+    render(<QuestionBox question={question({ question: "What is the app called?", choices: [], assumption: "Pebble" })} onAnswer={answer} />);
+    const suggestion = screen.getByRole("button", { name: /^Pebble/ });
+    expect(suggestion).toHaveTextContent("Suggested");
+    expect(screen.getByLabelText("Your answer")).toHaveAttribute("placeholder", "Or write your answer");
+    fireEvent.click(suggestion);
+    await waitFor(() => expect(answer).toHaveBeenCalledWith("Pebble"));
   });
 
   it("sends a written answer, and not an empty one", async () => {
