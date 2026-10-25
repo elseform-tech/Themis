@@ -26,6 +26,7 @@ QA builds with a different app identifier have separate data directories.
 | App-data `logs/diagnostics-0.jsonl` | Active structured diagnostic records | User/server |
 | App-data `logs/diagnostics-1.jsonl`, `diagnostics-2.jsonl` | Rotated records | User/server |
 | App-data `sessions.sqlite3` | Conversation history, run events, compaction checkpoints | User/server |
+| App-data `usage.sqlite3` | Token usage: one row per completed model request (35 days), then daily totals (400 days); numbers and ids only | User/server |
 | App-data `browser/profiles/<project key>/` | The built-in browser's profile (cookies, logins, cache) for one project's chats; never your own browser profile | Project, in app data |
 
 JSONC is configuration; JSONL is the diagnostic event stream. There is no
@@ -75,7 +76,7 @@ macOS errors expose a numeric Keychain status and fixed guidance; other platform
 use fixed error text, without credential bytes or raw credential-store errors.
 The OpenCode Go key is the Settings › Secrets secret named by the app setting
 `go_secret` (default `OPENCODE_KEY`; letters, digits and `_`, up to 128; set in Settings ›
-Models › Connections), stored as the credential entry `key:<name>`. Its value is the saved
+Models › Providers), stored as the credential entry `key:<name>`. Its value is the saved
 secret, else the environment variable of that name. For `OPENCODE_KEY`, an entry saved
 under the old name `go` is copied once when nothing is saved yet, never read again
 after, and cleared when the secret is removed. A valid stored key keeps precedence. No authentication is
@@ -109,15 +110,47 @@ context, including after compaction and on short follow-ups. Paths mentioned in
 skill descriptions, attachments, examples, or older tasks do not redefine the
 current workspace. This context metadata does not change tool approval rules.
 
-Optional `context_token_budget`, `recent_messages`, and `total_turns` override
-the existing Settings defaults. Omit them to retain those settings.
+Optional `context_token_budget` and `total_turns` override Settings › Advanced
+(Context tokens, Turn limit); omit them to keep those settings.
+`recent_messages` is file-only (default 20).
+
+### Context budget
+
+`context_token_budget` is `"auto"` or a number. Auto (the default, and what an
+omitted field means when Settings › Advanced › Context tokens is also Auto)
+uses the selected model's context window, up to an Auto ceiling of 200,000
+tokens (`AUTO_CONTEXT_CEILING` in `crates/core/src/context_window.rs`, the one
+place it is set). A number (2,000–1,000,000) is a cap: the run uses the smaller
+of the cap and the model's window, so a cap above the Auto ceiling lets a model
+with a larger window use it. Layers override each other as usual, so a project
+`"auto"` undoes a user cap.
+
+The window comes from the public model catalog. When the catalog does not list
+the model, runs start from a 128,000-token guess. When a request fails with a
+context-length error, the run learns that model's limit (the number the error
+states, or 90% of the failed request when it states none, never below 8,000),
+shrinks its budget to it, compacts once and retries. Learned limits last for
+the app session and apply to later runs of that model; they only ever lower
+the window. Diagnostics label the window's `capacity_source` as `catalog`,
+`learned`, `guess`, or `caller_budget_unverified` (tests and override
+endpoints, where the configured budget is used as is).
+
+A goal whose first turn starts with an effective window below 128,000 tokens
+gets one note in the chat: "Context window is small (N tokens); long goals may
+stall."
+
+Settings files from before Auto stored `context_token_budget` 200,000 by
+default. On load, that value becomes Auto (the same budget at the current
+ceiling); any other stored number stays a cap. The app setting is now
+`context_token_cap` (`0` is Auto). The retired `max_turns` and
+`context_messages` settings are ignored when old files are read.
 
 Example user `runtime.jsonc`:
 
 ```jsonc
 {
   "schema_version": 1,
-  "context_token_budget": 200000,
+  "context_token_budget": "auto",
   "logging": { "level": "info" },
   "approval": {
     "default": "ask",
@@ -136,7 +169,6 @@ Example user `runtime.jsonc`:
     "document_batch_timeout_seconds": 3600,
     "rate_limit_backoff_seconds": 10,
     "retry_limit": 2,
-    "section_max_tokens": 4096,
     "summary_max_tokens": 8192
   }
 }
@@ -173,8 +205,8 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 
 | Field | Range/default |
 | --- | --- |
-| `context_token_budget` | 2,000–256,000; omitted uses Settings (default 200,000) |
-| `recent_messages` | 2–200; omitted uses Settings |
+| `context_token_budget` | `"auto"` (the model's window, up to 200,000) or a cap of 2,000–1,000,000 clamped to the window; omitted uses Settings (default Auto) |
+| `recent_messages` | 2–200; default 20 (file-only) |
 | `total_turns` | 1–2,000; omitted uses Settings |
 | `logging.level` | `debug`, `info` (default), `warn`, `error` |
 | `compaction.timeout_seconds` | 1–1800; default 900 per context checkpoint or uncached document job, including stages, retries and consolidation; explicit existing values are preserved |
@@ -187,10 +219,11 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.target_headroom_interactions` | 1–20; default 6; recent observed growth adjusts the trigger within a bounded reserve |
 | `compaction.max_stages` | 1–128; default 32, including consolidation. Applies to attached-document preparation; context checkpoints always use one request |
 | `compaction.retry_limit` | 0–2; default 2 (up to three attempts per failed stage) |
-| `compaction.section_max_tokens` | Legacy compatibility field, 256–16,384; retained for file compatibility; stage output is computed from consolidation capacity |
 | `compaction.document_context_token_budget` | Internal full-document preparation input budget, 24,000–1,000,000; default 200,000; clamped to the routed summary model capacity, with conservative 24,000 when unknown. Does not change ordinary context capacity. |
 | `compaction.summary_max_tokens` | Initial summary-output ceiling, 256–16,384; default 8,192. Retries may use up to twice the effective initial allowance, subject to capacity. |
-| `compaction.summary_model` | Optional `longcat-2.5-preview-free`, `gpt-5.6-luna`, or `gpt-6-luna`; omitted/null keeps automatic routing. Only internal summaries change; the configured model must be present in the captured Go catalog. |
+| `compaction.summary_model` | Optional model id (1–256 printable bytes, no spaces): any model a connected provider offers, `<provider>/<id>` for one from `providers`; omitted/null keeps automatic routing. Only internal summaries change. A run fails before it starts when the model is not in the captured catalogs (OpenCode Go's and the configured providers'); a model on another provider than the chat's is called with that provider's key. |
+| `providers` | User file only; at most 16 OpenAI-compatible providers. See [Model providers](#model-providers-and-per-model-overrides) |
+| `models` | At most 256 per-model overrides keyed by model id or `<provider>/<id>`; any layer. See [Model providers](#model-providers-and-per-model-overrides) |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
 | `approval.rules` | At most 256 ordered rules `{tool, action, risk?, command?}`; `command` is an argv-prefix array (see Composer permissions) |
 | `sandbox.enabled` | Boolean, default `true`; only the user file (or no file) can turn it off |
@@ -267,6 +300,69 @@ approval mode change affects subsequent runs, not tasks already started. See
 [sandbox.md](sandbox.md#background-shell-tasks) for behavior and lifetime, and
 `get_thread_tasks` (`background_tasks`), `get_background_task_log` and
 `stop_background_task` for the shared-server API.
+
+## Model providers and per-model overrides
+
+OpenCode Go is built in. `providers` in the **user** `runtime.jsonc` adds
+OpenAI-compatible providers (Chat Completions); a project file or run override
+that names `providers` fails validation, since each request carries your key.
+Arrays replace earlier arrays, so the list is the user file's. Provenance reports
+`providers` as `user`.
+
+```jsonc
+{
+  "providers": [
+    { "id": "local", "name": "Local models", "base_url": "http://127.0.0.1:8080/v1",
+      "secret": "${LOCAL_KEY}",
+      "models": [{ "id": "qwen3-coder", "context_tokens": 131072, "output_tokens": 16384,
+                   "price": { "input_per_mtok": 0.2, "cached_input_per_mtok": 0.05,
+                              "output_per_mtok": 0.8 } }] }
+  ],
+  "models": {
+    "glm-5.3": { "context_tokens": 128000, "thinking": false },
+    "local/qwen3-coder": { "reasoning_effort": "low" }
+  }
+}
+```
+
+| Field | Range/default |
+| --- | --- |
+| `providers[].id` | 1–32 lowercase letters, digits, `-`, `_`, starting with a letter or digit; unique; `go` and `opencode-go` are reserved. A chat names the provider's model `<id>/<model>` |
+| `providers[].name` | 1–64 printable characters, shown in Settings › Models |
+| `providers[].base_url` | The API root, at most 1,024 bytes; `https`, or `http` only for `localhost`, `127.0.0.1` or `[::1]`; no credentials, query or fragment. Requests go to `<base_url>/chat/completions` and `<base_url>/models` |
+| `providers[].secret` | A Settings › Secrets name written `${NAME}` (letters, digits, `_`, up to 128); its value is the saved secret, else the environment variable of that name. A literal key fails validation |
+| `providers[].models` | Optional, at most 512 `{id, context_tokens?, output_tokens?, price?}` with unique ids (1–256 printable bytes, no spaces). Left out, Themis reads `GET <base_url>/models` (OpenAI-shaped `{"data":[{"id":…}]}`, at most 4 MiB; unusable or repeated ids are skipped and at most 512 kept) with the key and keeps the list until Settings › Models checks again |
+| `…models[].context_tokens` | 1,000–10,000,000; the model's window. An unknown window (as for models read from `/models`) starts at the 128,000-token guess and is learned from the provider's context-length error (see [Context budget](#context-budget)); give one with this field or `models.<provider>/<id>.context_tokens` |
+| `…models[].output_tokens` | 256–1,000,000; caps every reply's `max_tokens` |
+| `…models[].price` | `input_per_mtok`, optional `cached_input_per_mtok`, `output_per_mtok`: US dollars per million tokens, 0–10,000. Carried on the model list for usage reporting; no request uses it |
+| `models.<id>.context_tokens` | 1,000–10,000,000; caps the model's window (the lower of the two; an unknown window takes the cap). Applied through the model capacity a run captures, so the context budget is at most this |
+| `models.<id>.output_tokens` | 256–1,000,000; caps the model's output limit, never raises it |
+| `models.<id>.reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`: the effort when the chat chose none. An OpenCode Go model must offer it (a run on that model fails otherwise); a configured provider's model receives it as `reasoning_effort` |
+| `models.<id>.thinking` | `true` or `false`, for a model whose catalog lists a thinking switch: `false` sends thinking disabled instead of turning it on. A run on a model without a switch fails |
+
+`models` keys may be a bare id (`glm-5.3`, or `qwen3-coder` for every provider
+offering it) or provider-qualified (`go/glm-5.3`, `local/qwen3-coder`); for each
+field the qualified entry wins. Objects merge by field across layers, so a
+project may lower a cap or set an effort for its runs. Only the run's own model
+is checked against its catalog.
+
+Configured providers speak Chat Completions only, without OpenCode's session
+header or thinking fields. Their models get no automatic summary routing: a
+chat on one summarizes with its own model unless `compaction.summary_model`
+names another. Settings › Models lists each provider with its secret and status:
+Connected (`/models` answered), Key set (models listed in the file, `/models`
+unavailable), Key rejected (401/403), Couldn't reach it, or Not set (no value).
+Settings › Secrets lists the secret with the provider's name among its users.
+Each check logs `providers`/`provider_checked` with the provider id, result,
+model count and duration only; keys and provider response bodies are never logged,
+and errors from `/models` carry the HTTP status, not the body.
+
+Shared API: `list_model_providers` returns `[{id, name, secret, status, models}]`
+(`status`: `works`, `unchecked`, `rejected`, `unavailable`, `missing`);
+`list_go_models` returns OpenCode Go's models followed by every configured
+provider's (each with `provider`, and `price` when the file gives one). With
+configured providers, an OpenCode Go failure leaves Go's models out instead of
+failing the call.
 
 ## Composer permissions
 
@@ -355,7 +451,13 @@ at most 2,000 characters; `active_ms` is the goal's total running time, saved ev
 it runs, so a crash or quit loses at most a minute of it). They grant nothing; a damaged file is ignored (fixed
 `queue_ignored`/`goal_ignored` diagnostics, never the contents), and discarding a chat or its
 project removes both. Diagnostics record queue and goal ids, status changes, check verdict kinds
-and retry counts, never message text, the goal sentence or check prompts. Each goal check reads
+and retry counts, never message text, the goal sentence or check prompts.
+Goal notifications are sent by the desktop app (it watches `goal_changed` events and checks
+its own window focus and the `goal_notifications` setting), which reports each attempt through
+`record_notification` (`{"record":{"thread_id","kind","outcome"}}`, unknown fields refused):
+service `notifications`, event `goal_notification`, with the chat id, `kind` (`reached`,
+`stuck`, `waiting`, `quota`) and `outcome` (`sent`; or, at `warn`, `denied`, `failed`,
+`unavailable`), never the chat title, goal sentence or reason. Each goal check reads
 the commands and file changes recorded since `checked_seq` (the history position the last decided
 check read through), in pages of 2,000 items, keeping the newest 32,000 characters of command
 output; an output longer than 6,000 characters keeps its first 2,000 and last 4,000 with a
@@ -521,6 +623,7 @@ themis call get_runtime_configuration '{"projectRoot":"/path/to/project"}'
 themis call query_diagnostic_logs '{"service":"integration","limit":200}'
 themis call query_diagnostic_logs '{"operationId":"OPERATION_UUID"}'
 themis call query_diagnostic_logs '{"service":"resources","limit":60}'
+themis call query_diagnostic_logs '{"service":"notifications","limit":50}'
 themis call resource_usage '{}'
 ```
 
@@ -554,9 +657,9 @@ Agent delivery limits (16 KiB per result, 48 KiB per batch, 64 KiB per serialize
 
 ## Context accounting API
 
-`logging.context_metrics` is captured once per run. `off` disables optional request accounting; bounds, evidence saves and loop guards remain active. `summary` retains aggregate counts and the latest request; `detailed` also retains the last 32 request records with mutually exclusive role and purpose distributions. These are alternative views of the same message bytes, never additive. Estimates use serialized bytes and message overhead, not a verified model tokenizer. Within a run, budget decisions scale the estimate by the ratio of provider-reported to estimated input tokens (clamped 0.75-4.0, no change until a request reports usage) and a context-length-exceeded error triggers one compaction and one retry; `token_calibration` samples in the snapshot show estimate versus report per request. No new configuration fields; see [estimate calibration](context-and-attachments.md#estimate-calibration-and-overflow-recovery). The live catalog is joined to models.dev context/output limits. Ordinary requests clamp to the selected model's published capacity; internal summaries separately clamp to the effective nonthinking summary model. Unknown production capacity uses a conservative 24k admission limit and is labeled unknown. Published metadata is not proof of successful live requests at that capacity.
+`logging.context_metrics` is captured once per run. `off` disables optional request accounting; bounds, evidence saves and loop guards remain active. `summary` retains aggregate counts and the latest request; `detailed` also retains the last 32 request records with mutually exclusive role and purpose distributions. These are alternative views of the same message bytes, never additive. Estimates use serialized bytes and message overhead, not a verified model tokenizer. Within a run, budget decisions scale the estimate by the ratio of provider-reported to estimated input tokens (clamped 0.75-4.0, no change until a request reports usage) and a context-length-exceeded error triggers one compaction and one retry; `token_calibration` samples in the snapshot show estimate versus report per request. No new configuration fields; see [estimate calibration](context-and-attachments.md#estimate-calibration-and-overflow-recovery). The live catalog is joined to models.dev context/output limits. Ordinary requests clamp to the selected model's published capacity; internal summaries separately clamp to the effective nonthinking summary model. Unknown production capacity starts from a 128,000-token guess (`capacity_source` `guess`) and learns the real limit from a context-length error (`learned`); see [Context budget](#context-budget). Published metadata is not proof of successful live requests at that capacity.
 
-Every actual provider attempt, including internal summaries and retries, contributes to request counts and latency. Reported input/output totals remain separate from cached-input and reasoning-output subcounts, which are included in normalized parent counts. Snapshots also total those subcounts over the run (`provider_cached_input_tokens`, `provider_reasoning_output_tokens`; zero when the provider reports none) and the byte estimate of every request's input (`estimated_input_tokens`), which the budget eval uses to estimate spend. Anthropic uncached input, cache reads and cache creation are combined once; OpenAI cache detail is already included in input. Missing usage is null/unavailable, with missing-request counts; it is never reported as zero. Partial streams retain reported usage when available, and cancelled/failed requests remain in accounting. Streaming Chat Completions requests ask for usage and consume trailing usage frames. Token cost is unavailable unless a verified price source is supplied.
+Every actual provider attempt, including internal summaries and retries, contributes to request counts and latency. Reported input/output totals remain separate from cached-input and reasoning-output subcounts, which are included in normalized parent counts. Snapshots also total those subcounts over the run (`provider_cached_input_tokens`, `provider_reasoning_output_tokens`; zero when the provider reports none) and the byte estimate of every request's input (`estimated_input_tokens`), which the budget eval uses to estimate spend. Anthropic uncached input, cache reads and cache creation are combined once; OpenAI cache detail is already included in input. Missing usage is null/unavailable, with missing-request counts; it is never reported as zero. Partial streams retain reported usage when available, and cancelled/failed requests remain in accounting. Streaming Chat Completions requests ask for usage and consume trailing usage frames. Run snapshots carry no cost; Settings › Usage shows labelled list-price estimates (see [token usage records](#token-usage-records)).
 
 Metadata snapshots persist as context_usage events in the existing sessions database. The final accounting snapshot can follow the terminal event so cancelled request cleanup is included. Query without reading conversation payloads:
 
@@ -565,6 +668,55 @@ themis call get_context_usage '{"threadId":"THREAD","runId":"RUN"}'
 ```
 
 Omit runId for the latest snapshot; no available snapshot returns null. Diagnostic JSONL remains bounded and rotating as documented below. It records correlation IDs, pipeline/job/stage/attempt, model, sizes, estimates, provider usage, timing and outcome categories. It excludes prompts, filenames, arguments, results, document passages, provider bodies and credentials. Historical source excerpts and stage notes belong only in transcript/evidence storage. This provides backend data for a future dashboard; no raw-log viewer or new dashboard UI is added. Usage and runtime events are observations, not automatic judgments of narrative or coding correctness.
+
+## Token usage records
+
+Every completed model request is recorded once in app-data `usage.sqlite3`, whatever
+`logging.context_metrics` says: time, provider id (`opencode-go`), model id, kind
+(`answer` for conversation turns including spec checks, `summary` for checkpoints and
+document capsules, `goal_check` for goal mode's check), chat and run id, and the
+provider-reported input, cached input, output and reasoning tokens (null when the
+provider reported none). Input includes cached input and output includes reasoning, as
+in the context accounting above. Failed and cancelled requests are not recorded. No
+prompt, reply, file name, tool argument or credential is stored.
+
+- Recording never waits on the database: rows go through a bounded queue (1,024) to one
+  writer thread, in a separate file so a usage write never takes the conversation
+  store's lock. A full queue or a failed write drops the row and logs
+  `usage`/`rows_dropped` or `usage`/`write_failed` (counts and error kinds only); a file
+  that cannot open logs `usage`/`store_unavailable` and the Usage section says so.
+- Rows older than 35 days are rolled into daily totals per local day, provider, model,
+  kind and chat; daily totals older than 400 days are deleted. The writer rolls up when
+  it starts and every 500 rows. Deleting a chat keeps its usage (listed as Deleted chats).
+- Only requests this Themis made are counted. Another app or device using the same
+  account is not, so the provider's own figures can be higher.
+
+`get_usage_summary` (no arguments) returns, in this computer's time zone: `windows`
+(`five_hours` = the last 5 hours, `today` from local midnight, `week` from Monday 00:00,
+`month` from the 1st), each with `requests`, `unreported_requests`, the four token sums,
+`estimated_cost_usd` (absent when no request was priced) and `unpriced_requests`;
+`days` (the last 30 local days, oldest first, input + output tokens per model);
+`by_provider`, `by_model` (with `free` for zero-priced models) and `by_chat` (top five
+existing chats with titles, then one `key: null` row for deleted chats), all over the 30
+days; and `billing`, one entry per provider with `kind` (`plan_windows`,
+`pay_per_token`, `free`, `local`), `windows` (verified plan limits; always empty today)
+and `price_source`. A day whose midnight is skipped by a clock change starts at its first
+existing hour; a repeated midnight uses the earlier one. `get_chat_usage` with
+`threadId` returns one chat's totals, raw rows plus daily totals.
+
+Estimated cost uses the per-model list prices (`cost.input`, `cost.output`,
+`cost.cache_read`, and context tiers by input size) in the public models.dev catalog that
+the model list already reads; cache writes are priced as input. It is an estimate of
+list-price usage, not a bill: OpenCode Go charges a flat fee with usage limits per 5 hours,
+week and month, and Themis shows no allowance or percentage because those limits are not
+published in a verified form. Models the catalog does not price are counted in
+`unpriced_requests` and left out of the estimate.
+
+```sh
+themis usage          # the same windows, models and chats as plain text
+themis usage --json   # get_usage_summary
+themis call get_chat_usage '{"threadId":"THREAD"}'
+```
 
 ## Shared-server event stream additions
 

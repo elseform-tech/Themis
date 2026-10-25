@@ -354,6 +354,208 @@ pub async fn behavior_turn(
     })
 }
 
+/// One step of a [`task_run`]: a tool call, a checkpoint or a context snapshot.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskStep {
+    /// `"call"`, `"checkpoint"`, `"budget"` or `"request"`.
+    pub kind: &'static str,
+    /// Tool name for a call.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub tool: String,
+    /// One-line call summary (tool arguments); empty for a checkpoint.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub summary: String,
+    /// Whether the call succeeded; `None` for a checkpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ok: Option<bool>,
+    /// Call: what the agent said since the previous call. Checkpoint: the summary text.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    /// Call: characters of the result shown to the agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_chars: Option<usize>,
+    /// `"budget"` steps: the context snapshot taken before a model request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<ContextBudget>,
+    /// `"request"` steps: one model request's record (status, output limit and tokens).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<serde_json::Value>,
+}
+
+impl TaskStep {
+    fn new(kind: &'static str) -> Self {
+        Self {
+            kind,
+            tool: String::new(),
+            summary: String::new(),
+            ok: None,
+            text: String::new(),
+            output_chars: None,
+            budget: None,
+            request: None,
+        }
+    }
+}
+
+/// A whole agent run of one task, compacting mid-turn whenever the budget requires.
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskRun {
+    pub steps: Vec<TaskStep>,
+    pub result: String,
+    pub error: Option<String>,
+    /// Results the runtime marked as an unchanged repeat of an earlier one.
+    pub repeat_reminders: usize,
+    /// Loop warnings (three unchanged results in a row).
+    pub loop_warnings: usize,
+    /// Failed model requests: the error, and any calls a cut-off reply was writing.
+    pub request_failures: Vec<serde_json::Value>,
+}
+
+/// Lets file tools edit the throwaway project; refuses `shell` and `git`, so no
+/// model-written command runs on the machine that hosts the eval.
+struct FileToolsOnly;
+
+impl crate::tools::ApprovalHook for FileToolsOnly {
+    fn approve(&self, action: &crate::tools::ToolAction) -> crate::tools::Approval {
+        if matches!(action.tool.as_str(), "shell" | "git") {
+            crate::tools::Approval::Deny
+        } else {
+            crate::tools::Approval::AllowOnce
+        }
+    }
+}
+
+/// Runs `task` from an empty conversation in `project`, as a chat turn would, and
+/// records every tool call and in-run checkpoint in order.
+pub async fn task_run(
+    llm: &Arc<dyn LLMProvider>,
+    task: &str,
+    project: &std::path::Path,
+    policy: EvalPolicy,
+    max_turns: usize,
+    trace: Option<std::path::PathBuf>,
+) -> anyhow::Result<TaskRun> {
+    use crate::tools::{boxed_tools, ApprovalHook};
+    let evidence = project.join(".themis/context/task");
+    std::fs::create_dir_all(&evidence)?;
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(FileToolsOnly);
+    let (events, mut receiver) = tokio::sync::mpsc::channel(4096);
+    let collector = tokio::spawn(async move {
+        let mut steps: Vec<TaskStep> = Vec::new();
+        let mut said = String::new();
+        let mut requests_seen = 0u64;
+        // Each step is appended to the trace as it happens, so a run cut off by a harness
+        // timeout still leaves its record.
+        let mut trace = trace.and_then(|path| std::fs::File::create(path).ok());
+        let mut written = 0;
+        while let Some(event) = receiver.recv().await {
+            if let RunEvent::ContextUsage { metrics } = &event {
+                let total = metrics["total_requests"].as_u64().unwrap_or(requests_seen);
+                let records = metrics["recent_requests"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                let new = (total.saturating_sub(requests_seen) as usize).min(records.len());
+                for record in &records[records.len() - new..] {
+                    steps.push(TaskStep {
+                        request: Some(record.clone()),
+                        ..TaskStep::new("request")
+                    });
+                }
+                requests_seen = total;
+            }
+            match event {
+                RunEvent::AssistantText(delta) => said.push_str(&delta),
+                RunEvent::ToolCallStarted { tool, summary } => steps.push(TaskStep {
+                    tool,
+                    summary,
+                    text: std::mem::take(&mut said),
+                    ..TaskStep::new("call")
+                }),
+                RunEvent::ToolCallFinished { ok, output, .. } => {
+                    if let Some(step) = steps.iter_mut().rev().find(|s| s.kind == "call") {
+                        if step.ok.is_none() {
+                            step.ok = Some(ok);
+                            step.output_chars = Some(output.chars().count());
+                        }
+                    }
+                }
+                RunEvent::ContextCheckpoint { summary } => steps.push(TaskStep {
+                    text: summary,
+                    ..TaskStep::new("checkpoint")
+                }),
+                RunEvent::ContextBudget(budget) => steps.push(TaskStep {
+                    budget: Some(budget),
+                    ..TaskStep::new("budget")
+                }),
+                _ => {}
+            }
+            if let Some(file) = trace.as_mut() {
+                use std::io::Write;
+                // A call is written once its result is in; earlier steps are complete.
+                let complete = steps.len()
+                    - usize::from(
+                        steps
+                            .last()
+                            .is_some_and(|s| s.kind == "call" && s.ok.is_none()),
+                    );
+                for step in &steps[written.min(complete)..complete] {
+                    let _ = writeln!(file, "{}", serde_json::to_string(step).unwrap_or_default());
+                }
+                written = written.max(complete);
+            }
+        }
+        steps
+    });
+    let tools = boxed_tools(project, approvals.clone())?;
+    let reminders = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let warnings = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let failures = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let result = crate::context_metrics::with_level(
+        crate::configuration::ContextMetricsLevel::Detailed,
+        EVAL_REQUEST_FAILURES.scope(
+            failures.clone(),
+            EVAL_REPEAT_REMINDERS.scope(
+                reminders.clone(),
+                EVAL_LOOP_WARNINGS.scope(
+                    warnings.clone(),
+                    run_task_with_evidence(
+                        llm.clone(),
+                        tools,
+                        task.to_owned(),
+                        Vec::new(),
+                        approvals,
+                        RunPolicy {
+                            total_turns: max_turns,
+                            context_token_budget: policy.context_token_budget,
+                            recent_messages: policy.recent_messages,
+                        },
+                        events,
+                        Arc::new(AtomicBool::new(false)),
+                        String::new(),
+                        Some(evidence),
+                    ),
+                ),
+            ),
+        ),
+    )
+    .await;
+    let steps = collector.await?;
+    let request_failures = std::mem::take(&mut *failures.lock().unwrap_or_else(|e| e.into_inner()));
+    let (result, error) = match result {
+        Ok(text) => (text, None),
+        Err(error) => (String::new(), Some(error.to_string())),
+    };
+    Ok(TaskRun {
+        steps,
+        result,
+        error,
+        repeat_reminders: reminders.load(std::sync::atomic::Ordering::SeqCst),
+        loop_warnings: warnings.load(std::sync::atomic::Ordering::SeqCst),
+        request_failures,
+    })
+}
+
 /// What one tool call returned to the agent during a probe (bounded), so a harness can
 /// check that a correct answer was grounded in material the agent actually read.
 #[derive(Debug, Clone, Serialize)]

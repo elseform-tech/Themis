@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Badge, EmptyState, Switch } from "../components";
 import type { Settings, UpdateStatus } from "../lib/types";
-import { checkForUpdates, updateSettings } from "../lib/tauri";
+import { checkForUpdates, notificationPermission, updateSettings } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
 import "./Settings.css";
 import { AppearanceSettings } from "./Appearance";
@@ -11,12 +11,15 @@ import { WebSettingsSection } from "./WebSettings";
 import { SidebarIcon } from "./Sidebar";
 import { SecretsSettings } from "./SecretsSettings";
 import { ModelsSettings } from "./ModelsSettings";
+import { UsageSettingsSection } from "./UsageSettings";
 import { ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 
-const SECTIONS = ["General", "Appearance", "Models", "Secrets", "Permissions", "Browser", "Web", "Advanced"];
+const SECTIONS = ["General", "Appearance", "Models", "Usage", "Secrets", "Permissions", "Browser", "Web", "Advanced"];
 /** Backend field names in validation messages, as the labels the person sees. */
-const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_budget", "Context tokens"], ["context_messages", "Recent messages"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
-type NumberSetting = "max_total_turns" | "context_token_budget" | "context_messages" | "concurrency_limit" | "approval_timeout_seconds";
+const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_cap", "Context tokens"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
+type NumberSetting = "max_total_turns" | "context_token_cap" | "concurrency_limit" | "approval_timeout_seconds";
+/** The cap Custom starts from: the Auto ceiling, so switching changes nothing until edited. */
+const CUSTOM_CONTEXT_START = 200000;
 
 /** Pure rendering of one update status (null = never checked). */
 export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
@@ -74,6 +77,33 @@ export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
   }
 }
 
+/** Settings › General › Notifications. Goal notifications are macOS-only, so
+ *  their switch (like Haptics) shows only there; permission is asked when the
+ *  switch is turned on, and a refusal leaves one short hint. */
+function NotificationSettings({ form, save }: { form: Settings; save: (patch: Partial<Settings>) => Promise<boolean> }) {
+  const mac = navigator.platform.startsWith("Mac");
+  const [denied, setDenied] = useState(false);
+  const goals = form.goal_notifications;
+  useEffect(() => {
+    if (!mac || !goals) { setDenied(false); return; }
+    let current = true;
+    void Promise.resolve().then(() => notificationPermission(false))
+      .then(permission => { if (current) setDenied(permission === "denied"); })
+      .catch(() => {});
+    return () => { current = false; };
+  }, [mac, goals]);
+  async function toggleGoals(enabled: boolean) {
+    if (!await save({ goal_notifications: enabled }) || !enabled) return;
+    try { setDenied(await notificationPermission(true) === "denied"); } catch { /* not in the desktop app */ }
+  }
+  return <SettingsGroup title="Notifications">
+    <label className="themis-settings-check" title="Play a click when a response you started finishes">Sound when a reply finishes<Switch checked={form.completion_sound} onChange={event => void save({ completion_sound: event.target.checked })} /></label>
+    {mac && <label className="themis-settings-check" title="Use trackpad feedback when available">Haptics<Switch checked={form.completion_haptic} onChange={event => void save({ completion_haptic: event.target.checked })} /></label>}
+    {mac && <label className="themis-settings-check" title="Only while Themis is in the background">Notify when a goal finishes or pauses<Switch checked={goals} onChange={event => void toggleGoals(event.target.checked)} /></label>}
+    {mac && goals && denied && <p className="themis-settings-hint">Notifications are off for Themis in System Settings › Notifications.</p>}
+  </SettingsGroup>;
+}
+
 export function SettingsScreen() {
   const { state, dispatch } = useApp();
   const [form, setForm] = useState<Settings>(state.settings);
@@ -122,9 +152,23 @@ export function SettingsScreen() {
     );
   }
 
+  const numberInput = (key: NumberSetting, label: string, min: number, max: number) =>
+    <input className="themis-settings-number" aria-label={label} type="number" min={min} max={max} value={form[key]} onChange={event => setForm(f => ({ ...f, [key]: Number(event.target.value) }))} onBlur={() => { if (form[key] !== state.settings[key]) void save({ [key]: form[key] }); }} />;
   const number = (key: NumberSetting, label: string, min: number, max: number) => <label className="themis-settings-control">{label}
-    <input className="themis-settings-number" aria-label={label} type="number" min={min} max={max} value={form[key]} onChange={event => setForm(f => ({ ...f, [key]: Number(event.target.value) }))} onBlur={() => { if (form[key] !== state.settings[key]) void save({ [key]: form[key] }); }} />
+    {numberInput(key, label, min, max)}
   </label>;
+  // Auto (0) follows the model's context window; Custom caps it.
+  const customContext = state.settings.context_token_cap !== 0;
+  const contextTokens = <div className="themis-settings-control">
+    <span title="Auto uses the model's context window">Context tokens</span>
+    <span className="themis-settings-pair">
+      {customContext && numberInput("context_token_cap", "Context token cap", 2000, 1000000)}
+      <select aria-label="Context tokens" value={customContext ? "custom" : "auto"} onChange={event => void save({ context_token_cap: event.target.value === "auto" ? 0 : CUSTOM_CONTEXT_START })}>
+        <option value="auto">Auto</option>
+        <option value="custom">Custom</option>
+      </select>
+    </span>
+  </div>;
 
   return (
     <div className="themis-settings">
@@ -142,22 +186,17 @@ export function SettingsScreen() {
         <div className="themis-settings-control"><span>Updates</span><button type="button" className="themis-text-action" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check for updates"}</button></div>
         {update && <UpdateStatusView status={update} />}
       </SettingsGroup>}
-      {section === "Appearance" && <>
-        <AppearanceSettings settings={state.settings} save={save} />
-        <SettingsGroup title="Feedback">
-          <label className="themis-settings-check" title="Play a click when a response you started finishes">Sound when a reply finishes<Switch checked={form.completion_sound} onChange={event => void save({ completion_sound: event.target.checked })} /></label>
-          {navigator.platform.startsWith("Mac") && <label className="themis-settings-check" title="Use trackpad feedback when available">Haptics<Switch checked={form.completion_haptic} onChange={event => void save({ completion_haptic: event.target.checked })} /></label>}
-        </SettingsGroup>
-      </>}
+      {section === "General" && <NotificationSettings form={form} save={save} />}
+      {section === "Appearance" && <AppearanceSettings settings={state.settings} save={save} />}
       {section === "Models" && <ModelsSettings save={save} saving={saving} />}
+      {section === "Usage" && <UsageSettingsSection />}
       {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}
       {section === "Secrets" && <SecretsSettings focusKey={state.settingsFocus?.key} />}
       {section === "Browser" && <BrowserSettingsSection />}
       {section === "Web" && <WebSettingsSection />}
-      {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
+      {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
         {number("max_total_turns", "Turn limit", 1, 2000)}
-        {number("context_token_budget", "Context tokens", 2000, 256000)}
-        {number("context_messages", "Recent messages", 1, 100)}
+        {contextTokens}
         {number("concurrency_limit", "Parallel runs", 1, 16)}
       </SettingsGroup>}
       </fieldset>

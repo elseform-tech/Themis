@@ -5,7 +5,6 @@ use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use themis_core::providers::ProviderConfig;
 use themis_core::runtime::{run_task_with_evidence, RunEvent, RunPolicy};
 use themis_core::skills::materialize_scripts;
 use themis_core::tools::ApprovalHook;
@@ -50,12 +49,6 @@ impl AppState {
         task: String,
         policy: RunPolicy,
     ) -> Result<(), String> {
-        if snapshot.provider != crate::types::ProviderKind::Go {
-            return Err(
-                "This thread used a retired provider; select an OpenCode Go model to continue"
-                    .to_owned(),
-            );
-        }
         // What already differs from HEAD before this run, so the end of the run
         // can report only the files this turn changed.
         let changes_before = {
@@ -72,97 +65,87 @@ impl AppState {
             .get(thread_id)
             .cloned()
             .ok_or_else(|| "Run is no longer active".to_owned())?;
-        let endpoint_override = self
-            .inner
-            .go_base_url_override
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some();
-        let api_key = tokio::select! {
+        let run_config = &snapshot.runtime_configuration;
+        let summary_model = run_config.compaction.summary_model.clone();
+        // A model from `providers` in runtime.jsonc needs neither the Go key nor its catalog.
+        let configured = Self::is_configured_model(run_config, &snapshot.model);
+        let go_summary = summary_model
+            .as_deref()
+            .is_some_and(|model| !Self::is_configured_model(run_config, model));
+        let endpoint_override = !configured
+            && self
+                .inner
+                .go_base_url_override
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some();
+        let mut config = tokio::select! {
             biased;
             _ = async {
                 while !stopped.load(Ordering::SeqCst) {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
             } => return Err("Stopped by you".to_owned()),
-            key = async {
-                let key = self.api_key_for(snapshot.provider).await?;
+            config = async {
+                let config = Box::pin(self.provider_config_for(run_config, &snapshot.model, thread_id)).await?;
                 // Unknown limits remain explicit and use conservative admission.
                 // Effort selection still requires a successfully loaded catalog.
-                let requires_catalog = snapshot.reasoning_effort.is_some()
-                    || snapshot.runtime_configuration.compaction.summary_model.is_some();
-                if !endpoint_override || requires_catalog {
+                let requires_catalog = (!configured && snapshot.reasoning_effort.is_some()) || go_summary;
+                if (!configured && !endpoint_override) || requires_catalog {
                     let catalog = self.ensure_go_catalog().await;
                     if requires_catalog {catalog?;}
                 }
-                Ok::<_, String>(key)
-            } => key?,
+                Ok::<_, String>(config)
+            } => config?,
         };
-        if let Some(reason) = self
-            .inner
-            .go_catalog
-            .read()
-            .await
+        let wanted: Vec<&str> = std::iter::once(snapshot.model.as_str())
+            .chain(summary_model.as_deref())
+            .collect();
+        let capacity_catalog = Box::pin(self.run_catalog(run_config, &wanted)).await;
+        let entry = capacity_catalog
             .iter()
-            .find(|model| model.id == snapshot.model)
-            .and_then(|model| model.unavailable_reason.clone())
-        {
+            .find(|model| model.id == snapshot.model);
+        if let Some(reason) = entry.and_then(|model| model.unavailable_reason.clone()) {
             return Err(format!(
                 "Model '{}' is unavailable: {reason}",
                 snapshot.model
             ));
         }
         if let Some(effort) = &snapshot.reasoning_effort {
-            if !self.effort_offered(&snapshot.model, effort).await {
+            if configured || !self.effort_offered(&snapshot.model, effort).await {
                 return Err(format!(
                     "Effort '{effort}' is unavailable for model '{}'",
                     snapshot.model
                 ));
             }
         }
-        let capacity_catalog = self.inner.go_catalog.read().await.clone();
-        if let Some(model) = snapshot.runtime_configuration.compaction.summary_model {
-            if !capacity_catalog
-                .iter()
-                .any(|entry| entry.id == model.as_str())
-            {
+        themis_core::providers::check_model_override(
+            &capacity_catalog,
+            &snapshot.model,
+            &run_config.models,
+        )?;
+        if let Some(model) = &summary_model {
+            if !capacity_catalog.iter().any(|entry| entry.id == *model) {
                 return Err(format!(
-                    "Summary model '{}' is unavailable in the loaded OpenCode Go catalog",
-                    model.as_str()
+                    "Summary model '{model}' is unavailable: it is not among the models OpenCode Go or the providers in runtime.jsonc offer"
                 ));
             }
         }
-        let context_capacity = self
-            .inner
-            .go_catalog
-            .read()
-            .await
-            .iter()
-            .find(|model| model.id == snapshot.model)
-            .and_then(|model| model.context_tokens);
-        let mut config = ProviderConfig::new(themis_core::providers::ProviderKind::Go, api_key);
-        config.reasoning_effort = snapshot.reasoning_effort;
-        config.session_id = Some(thread_id.to_owned());
-        if !snapshot.model.trim().is_empty() {
-            config = config.with_model(snapshot.model.clone());
-        }
-        if let Some(url) = self
-            .inner
-            .go_base_url_override
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone()
-        {
-            config = config.with_base_url(url);
-        }
+        // The model's window, lowered by a `models` context cap.
+        let context_capacity = entry.and_then(|model| model.context_tokens);
+        // The window this run starts with (test endpoints report none, so the
+        // configured cap stands); a goal's first turn warns when it is small.
+        let window = themis_core::context_window::window(
+            &snapshot.model,
+            (!endpoint_override).then_some(context_capacity),
+        );
+        let effective_context =
+            themis_core::context_window::effective_budget(policy.context_token_budget, window);
+        self.warn_small_goal_window(sink.as_ref(), thread_id, run_id, effective_context);
+        config.reasoning_effort = snapshot.reasoning_effort.clone();
         let llm = themis_core::providers::resolve(&config)
             .await
-            .map_err(|err| {
-                format!(
-                    "failed to resolve provider '{}': {err:#}",
-                    snapshot.provider.as_str()
-                )
-            })?;
+            .map_err(|err| format!("failed to resolve the model provider: {err:#}"))?;
         let diagnostic_context = themis_core::diagnostics::DiagnosticContext {
             log: self.inner.diagnostics.clone(),
             thread_id: thread_id.to_owned(),
@@ -637,6 +620,7 @@ impl AppState {
             // UI waiting: join the run, then synthesize the terminal event.
             let document_state = state.clone();
             let document_thread = thread_id.clone();
+            let usage_recorder = state.usage_recorder(&thread_id, &run_id);
             let run_outcome = tokio::spawn(async move {
                 for event in setup_events {
                     let _ = events_tx.send(event).await;
@@ -644,7 +628,7 @@ impl AppState {
                 let hook_task = task.clone();
                 themis_core::providers::with_catalog_limits(
                     &capacity_catalog,
-                    themis_core::diagnostics::ACTIVE.scope(
+                    themis_core::context_metrics::with_usage_recorder(usage_recorder, Box::pin(themis_core::diagnostics::ACTIVE.scope(
                         diagnostic_context,
                         themis_core::runtime::with_short_reply_turn(short_reply, themis_core::runtime::with_model_context_capacity(
                             if endpoint_override {
@@ -662,7 +646,7 @@ impl AppState {
                                         events_tx,
                                         |events_tx| {
                                             Box::pin(themis_core::context_metrics::collect(async move {
-                                                themis_core::context_metrics::set_run_metadata(serde_json::json!({"thread_id":document_thread,"run_id":themis_core::diagnostics::ACTIVE.try_with(|context|context.run_id.clone()).ok(),"phase":"document_preparation","requested_context_tokens":policy.context_token_budget,"effective_context_tokens":if endpoint_override {policy.context_token_budget} else {policy.context_token_budget.min(context_capacity.unwrap_or(24000))},"provider_capacity_tokens":if endpoint_override {None} else {context_capacity},"capacity_source":if endpoint_override {"test_endpoint_unverified"} else if context_capacity.is_some() {"public_model_catalog"} else {"unknown_conservative_24k"},"configuration_fingerprint":themis_core::context_metrics::config_fingerprint()}));
+                                                themis_core::context_metrics::set_run_metadata(serde_json::json!({"thread_id":document_thread,"run_id":themis_core::diagnostics::ACTIVE.try_with(|context|context.run_id.clone()).ok(),"phase":"document_preparation","requested_context_tokens":policy.context_token_budget,"effective_context_tokens":effective_context,"provider_capacity_tokens":window.tokens,"capacity_source":window.source.as_str(),"configuration_fingerprint":themis_core::context_metrics::config_fingerprint()}));
                                                 let mut history = snapshot.history;
                                                 match themis_core::runtime::documents::prepare(
                                                     &llm, &snapshot.documents,
@@ -709,7 +693,7 @@ impl AppState {
                             ),
                         )),
                     ),
-                )
+                )))
                 .await
             })
             .await;

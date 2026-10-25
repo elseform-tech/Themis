@@ -1,0 +1,1 @@
+Each term: A*cos(B+C*T). T in thousands of Julian years from J2000.

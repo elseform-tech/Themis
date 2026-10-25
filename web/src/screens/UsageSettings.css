@@ -1,0 +1,33 @@
+/* Settings › Usage: a windows table, a 30-day stacked bar chart and top chats. */
+.themis-usage-windows { width: 100%; border-collapse: collapse; font-size: .875rem; font-variant-numeric: tabular-nums; }
+.themis-usage-windows th, .themis-usage-windows td { padding: 10px 0; text-align: right; font-weight: 400; white-space: nowrap; }
+.themis-usage-windows th:first-child { text-align: left; }
+.themis-usage-windows th + th, .themis-usage-windows td { padding-left: 16px; }
+.themis-usage-windows thead th { padding-block: 10px 4px; color: var(--themis-text-2); font-size: .75rem; }
+.themis-usage-windows tbody tr + tr > * { border-top: 1px solid var(--themis-border-subtle); }
+.themis-usage-sub { color: var(--themis-text-2); font-size: .8125rem; }
+
+.themis-usage-chart-card { display: grid; gap: 12px; padding-block: 14px 12px; }
+.themis-usage-chart { position: relative; display: grid; gap: 6px; padding-top: 18px; }
+.themis-usage-max { position: absolute; top: 0; left: 0; color: var(--themis-text-3); font-size: .6875rem; font-variant-numeric: tabular-nums; }
+.themis-usage-bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; border-top: 1px dashed var(--themis-border-subtle); border-bottom: 1px solid var(--themis-border); }
+.themis-usage-day { flex: 1; display: flex; align-items: flex-end; height: 100%; min-width: 0; border-radius: 4px 4px 0 0; outline: none; cursor: default; }
+.themis-usage-day.is-active, .themis-usage-day:focus-visible { background: color-mix(in srgb, var(--themis-text) 6%, transparent); }
+.themis-usage-day:focus-visible { box-shadow: 0 0 0 2px var(--themis-accent); }
+.themis-usage-stack { display: flex; flex-direction: column-reverse; gap: 2px; width: 100%; min-height: 0; overflow: hidden; border-radius: 4px 4px 0 0; }
+.themis-usage-stack > span { flex-basis: 0; min-height: 2px; }
+.themis-usage-axis { display: flex; justify-content: space-between; color: var(--themis-text-3); font-size: .6875rem; }
+.themis-usage-tip { position: absolute; z-index: 5; top: 22px; display: grid; gap: 3px; min-width: 150px; max-width: 240px; padding: 8px 10px; border-radius: 10px; background: var(--themis-raised); box-shadow: 0 10px 30px rgb(0 0 0 / .45); font-size: .75rem; color: var(--themis-text-2); pointer-events: none; }
+.themis-usage-tip strong { color: var(--themis-text); font-weight: 600; }
+.themis-usage-tip-row { display: flex; align-items: center; gap: 6px; }
+.themis-usage-tip-row i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.themis-usage-tip-row b { margin-left: auto; padding-left: 10px; font-weight: 500; color: var(--themis-text); font-variant-numeric: tabular-nums; }
+
+.themis-usage-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 18px; margin: 0; padding: 0; list-style: none; font-size: .8125rem; }
+.themis-usage-legend li { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 24px; }
+.themis-usage-legend li > span { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.themis-usage-legend em { font-style: normal; color: var(--themis-text-2); font-size: .75rem; }
+.themis-usage-legend b { margin-left: auto; font-weight: 500; color: var(--themis-text-2); font-variant-numeric: tabular-nums; }
+
+.themis-settings-card .themis-settings-control.themis-usage-chat > span:first-child { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-usage-chat > span:last-child { flex: none; font-variant-numeric: tabular-nums; }

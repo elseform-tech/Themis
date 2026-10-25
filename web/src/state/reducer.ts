@@ -215,10 +215,8 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   default_provider: "go",
   default_model: DEFAULT_MODEL,
-  max_turns: 20,
   max_total_turns: 200,
-  context_token_budget: 200000,
-  context_messages: 20,
+  context_token_cap: 0,
   approval_timeout_seconds: 300,
   confirm_reads: false,
   recent_roots: [],
@@ -226,6 +224,7 @@ export const DEFAULT_SETTINGS: Settings = {
   automations_enabled: true,
   completion_sound: true,
   completion_haptic: false,
+  goal_notifications: true,
   onboarded: false,
 };
 

@@ -2508,3 +2508,84 @@ async fn replayed_reasoning_counts_toward_the_context_budget() {
         "32,000 tokens of replayed reasoning against a 24,000 budget must checkpoint"
     );
 }
+
+/// Unknown window: the run starts at the moderate guess, and a context-length
+/// error that states the model's limit teaches it: the run shrinks to it,
+/// compacts, retries and finishes, and later runs of that model start there.
+#[tokio::test]
+async fn unknown_window_learns_the_stated_limit_from_a_context_length_error() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use themis_core::context_window::{learned_limit, UNKNOWN_WINDOW_GUESS};
+    use themis_core::runtime::{with_model_context_capacity, ConversationRole, ConversationTurn};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+    const MODEL: &str = "learned-window-e2e-model";
+    let server = MockServer::start().await;
+    let ordinary = Arc::new(AtomicUsize::new(0));
+    let counter = ordinary.clone();
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(move |request: &wiremock::Request| {
+            let input: serde_json::Value = request.body_json().unwrap();
+            if input["messages"][0]["content"]
+                .as_str()
+                .is_some_and(|text| text.contains("You summarize agent context"))
+            {
+                return ResponseTemplate::new(200).set_body_json(common::final_text_body("Goal/constraints: preserve the request. Confirmed findings: none yet. Completed changes/tests: observed actions only. Unresolved work: finish the request. Next action: continue from recorded state."));
+            }
+            if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                return ResponseTemplate::new(400).set_body_json(json!({"error": {
+                    "code": "context_length_exceeded",
+                    "message": "This model's maximum context length is 30000 tokens."
+                }}));
+            }
+            ResponseTemplate::new(200).set_body_json(common::final_text_body("Learned and finished"))
+        })
+        .mount(&server)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let evidence = project.path().join(".themis/context/learned");
+    std::fs::create_dir_all(&evidence).unwrap();
+    let history = (0..24)
+        .map(|index| ConversationTurn {
+            role: ConversationRole::User,
+            text: format!("Historical packet {index}: {}", "observation; ".repeat(60)),
+        })
+        .collect();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model(MODEL)
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2048);
+    let result = with_model_context_capacity(
+        Some(None),
+        themis_core::runtime::run_task_with_evidence(
+            llm,
+            Vec::new(),
+            "Finish.".into(),
+            history,
+            approvals,
+            RunPolicy {
+                total_turns: 4,
+                context_token_budget: themis_core::context_window::AUTO_CONTEXT_CEILING,
+                recent_messages: 4,
+            },
+            tx,
+            Arc::new(AtomicBool::new(false)),
+            String::new(),
+            Some(evidence),
+        ),
+    )
+    .await;
+    let events = common::drain(&mut rx).await;
+    assert_eq!(result.unwrap(), "Learned and finished");
+    let budgets = budget_events(&events);
+    assert_eq!(budgets.first().unwrap().budget_tokens, UNKNOWN_WINDOW_GUESS);
+    assert_eq!(budgets.last().unwrap().budget_tokens, 30_000);
+    assert_eq!(learned_limit(MODEL), Some(30_000));
+    assert_eq!(checkpoints(&events), 1, "the shrunk budget compacts once");
+}

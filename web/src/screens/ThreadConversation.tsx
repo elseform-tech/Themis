@@ -249,14 +249,15 @@ const GOAL_NOTE_TITLE: Record<NonNullable<ChatMessage["goalNote"]>["outcome"], s
   waiting: "Paused — waiting for your reply.",
   quota: "Paused — quota used up.",
   failed: "Turn failed.",
+  small_window: "",
 };
 
-/** What the goal check concluded after a turn. */
-function GoalNote({ note }: { note: NonNullable<ChatMessage["goalNote"]> }) {
+/** What the goal check concluded after a turn, or a warning as the goal starts (no title). */
+export function GoalNote({ note }: { note: NonNullable<ChatMessage["goalNote"]> }) {
   return (
     <div className="themis-goal-note" role="note" data-outcome={note.outcome}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></svg>
-      <span><strong>{GOAL_NOTE_TITLE[note.outcome]}</strong> {note.reason}</span>
+      <span>{GOAL_NOTE_TITLE[note.outcome] && <><strong>{GOAL_NOTE_TITLE[note.outcome]}</strong> </>}{note.reason}</span>
     </div>
   );
 }

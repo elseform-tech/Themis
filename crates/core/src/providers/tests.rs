@@ -237,6 +237,97 @@ async fn responses_reject_incomplete_streams() {
 }
 
 #[tokio::test]
+async fn completed_requests_reach_the_usage_recorder_at_any_metrics_level() {
+    use futures_util::StreamExt;
+    let server = MockServer::start().await;
+    let events=concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"PRIVATE-CONTENT-911\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":80},\"completion_tokens_details\":{\"reasoning_tokens\":12}}}\n\n",
+        "data: [DONE]\n\n");
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(events, "text/event-stream"))
+        .mount(&server)
+        .await;
+    let provider = CompatibleProvider::go(
+        "synthetic".into(),
+        "test-model".into(),
+        Some(server.uri()),
+        None,
+    );
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = std::sync::Arc::clone(&seen);
+    let recorder: crate::context_metrics::UsageRecorder =
+        std::sync::Arc::new(move |record| sink.lock().unwrap().push(record));
+    crate::context_metrics::with_usage_recorder(
+        recorder,
+        crate::context_metrics::with_level(crate::configuration::ContextMetricsLevel::Off, async {
+            let chunks = provider
+                .chat_stream_with_tools(&[user_message("PRIVATE-PROMPT-911")], None, None)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await;
+            assert!(chunks.iter().all(Result::is_ok));
+            crate::context_metrics::with_usage_kind(
+                crate::context_metrics::UsageKind::GoalCheck,
+                async {
+                    // A request that never completes is not recorded.
+                    let _ = provider.chat(&[user_message("x")], None).await;
+                },
+            )
+            .await;
+        }),
+    )
+    .await;
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen[0],
+        crate::context_metrics::UsageRecord {
+            provider: "opencode-go".into(),
+            model: "test-model".into(),
+            kind: crate::context_metrics::UsageKind::Answer,
+            input_tokens: Some(100),
+            cached_input_tokens: Some(80),
+            output_tokens: Some(20),
+            reasoning_tokens: Some(12),
+        }
+    );
+    assert!(seen
+        .iter()
+        .skip(1)
+        .all(|record| record.kind == crate::context_metrics::UsageKind::GoalCheck));
+}
+
+#[test]
+fn catalog_prices_are_read_leniently_and_estimate_with_cache_and_tiers() {
+    let catalog: CatalogRoot = serde_json::from_value(json!({
+        "opencode-go": {"models": {
+            "priced": {"cost": {"input": 2, "output": 10, "cache_read": 0.2,
+                "tiers": [{"input": 4, "output": 20, "cache_read": 0.4, "tier": {"type": "context", "size": 200000}}]}},
+            "free": {"cost": {"input": 0, "output": 0, "cache_read": 0}},
+            "broken": {"cost": {"input": "two", "output": -1}},
+            "unpriced": {}
+        }}
+    })).unwrap();
+    let models = join_go_catalog(
+        ["priced", "free", "broken", "unpriced"]
+            .map(String::from)
+            .to_vec(),
+        catalog,
+    );
+    let priced = models[0].price.clone().unwrap();
+    assert!(!priced.is_free());
+    // 100k input of which 50k cached, 10k output: 0.05×2 + 0.05×0.2 + 0.01×10.
+    assert!((priced.request_cost(100_000, 50_000, 10_000) - 0.21).abs() < 1e-9);
+    // Under the tier size the base price applies; above it the tier's.
+    assert!((priced.request_cost(100_000, 0, 0) - 0.2).abs() < 1e-9);
+    assert!((priced.request_cost(300_000, 0, 0) - 1.2).abs() < 1e-9);
+    assert!(models[1].price.as_ref().unwrap().is_free());
+    assert_eq!(models[2].price, None);
+    assert_eq!(models[3].price, None);
+}
+
+#[tokio::test]
 async fn streaming_usage_after_finish_is_captured_without_retaining_content() {
     use futures_util::StreamExt;
     let server = MockServer::start().await;
@@ -1265,11 +1356,7 @@ async fn thinking_is_on_by_default_for_answers_but_not_for_summaries() {
                 scoped()
             }
         };
-        let models: HashMap<_, _> = catalog
-            .iter()
-            .map(|m| (m.id.clone(), (m.thinking_toggle, m.effort_levels.clone())))
-            .collect();
-        MODEL_THINKING.sync_scope(models, run)
+        MODEL_THINKING.sync_scope(thinking_table(&catalog), run)
     };
     assert_eq!(
         body("longcat-test", None, false)["thinking"],
@@ -2890,4 +2977,307 @@ proptest::proptest! {
         }
         let _ = gemini::gemini_response(value);
     }
+}
+
+fn local_endpoint(server: &MockServer) -> CustomEndpoint {
+    CustomEndpoint {
+        id: "local".into(),
+        name: "Local server".into(),
+        base_url: format!("{}/v1/", server.uri()),
+    }
+}
+
+#[tokio::test]
+async fn a_configured_provider_gets_its_own_model_id_key_and_no_opencode_fields() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(chat_ok_body("hello")))
+        .mount(&server)
+        .await;
+    let mut config = ProviderConfig::new(ProviderKind::Go, "local-key")
+        .with_model("local/qwen/coder")
+        .with_base_url("http://ignored.invalid");
+    config.endpoint = Some(local_endpoint(&server));
+    config.session_id = Some("thread-1".into());
+    let llm = resolve(&config).await.unwrap();
+    assert_eq!(
+        llm.model(),
+        "local/qwen/coder",
+        "the catalog id stays qualified"
+    );
+    let catalog = [GoModel {
+        id: "local/qwen/coder".into(),
+        protocol: Some(Protocol::ChatCompletions),
+        provider: Some("local".into()),
+        output_tokens: Some(2048),
+        ..Default::default()
+    }];
+    let messages = [user_message("hi")];
+    with_catalog_limits(&catalog, async {
+        llm.chat(&messages, None).await.unwrap();
+        COMPACTION_REQUEST
+            .scope(
+                (),
+                llm.chat_and_sampling(
+                    &messages,
+                    None,
+                    Some(&SamplingOverrides::with_max_tokens(4096)),
+                ),
+            )
+            .await
+            .unwrap();
+    })
+    .await;
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(request.headers["authorization"], "Bearer local-key");
+        assert!(!request.headers.contains_key(GO_SESSION_HEADER));
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        assert_eq!(body["model"], "qwen/coder");
+        assert!(body.get("thinking").is_none(), "{body}");
+        assert!(body.get("reasoning_effort").is_none(), "{body}");
+    }
+    let summary: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(
+        summary["max_tokens"], 2048,
+        "capped by the declared output limit"
+    );
+}
+
+#[tokio::test]
+async fn a_summary_model_on_another_provider_uses_that_provider_and_key() {
+    let go = MockServer::start().await;
+    mount_chat(&go, chat_ok_body("answer")).await;
+    let local = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(chat_ok_body("summary")))
+        .mount(&local)
+        .await;
+    let mut summary = ProviderConfig::new(ProviderKind::Go, "local-key").with_model("local/sum");
+    summary.endpoint = Some(local_endpoint(&local));
+    let mut config = ProviderConfig::new(ProviderKind::Go, "go-key")
+        .with_model("glm-5.3")
+        .with_base_url(go.uri());
+    config.summary = Some(Box::new(summary));
+    let llm = resolve(&config).await.unwrap();
+    let catalog = [
+        GoModel::listed("glm-5.3".into()),
+        GoModel {
+            id: "local/sum".into(),
+            provider: Some("local".into()),
+            protocol: Some(Protocol::ChatCompletions),
+            ..Default::default()
+        },
+    ];
+    let compaction = serde_json::from_value::<crate::configuration::CompactionConfig>(
+        json!({"summary_model":"local/sum"}),
+    )
+    .unwrap();
+    let messages = [user_message("Summarize")];
+    with_catalog_limits(
+        &catalog,
+        crate::runtime::with_configuration(compaction, async {
+            COMPACTION_REQUEST
+                .scope((), llm.chat(&messages, None))
+                .await
+                .unwrap();
+            llm.chat(&messages, None).await.unwrap();
+        }),
+    )
+    .await;
+    let summary = &local.received_requests().await.unwrap()[0];
+    assert_eq!(summary.headers["authorization"], "Bearer local-key");
+    let body: Value = serde_json::from_slice(&summary.body).unwrap();
+    assert_eq!(body["model"], "sum");
+    let answer = &go.received_requests().await.unwrap()[0];
+    assert_eq!(answer.headers["authorization"], "Bearer go-key");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&answer.body).unwrap()["model"],
+        "glm-5.3"
+    );
+}
+
+#[tokio::test]
+async fn a_configured_providers_model_summarizes_with_itself() {
+    let catalog = [
+        GoModel::listed("longcat-2.5-preview-free".into()),
+        GoModel {
+            id: "local/m".into(),
+            provider: Some("local".into()),
+            ..Default::default()
+        },
+    ];
+    let (local, go) = with_catalog_limits(&catalog, async {
+        (summary_model("local/m"), summary_model("glm-5.3"))
+    })
+    .await;
+    assert_eq!(local, "local/m");
+    assert_eq!(go, "longcat-2.5-preview-free");
+}
+
+#[test]
+fn model_overrides_cap_limits_and_choose_thinking_where_the_catalog_allows() {
+    let overrides: std::collections::BTreeMap<String, crate::configuration::ModelOverride> =
+        serde_json::from_value(json!({
+            "glm-5.3": {"context_tokens": 100000, "output_tokens": 4096, "thinking": false,
+                        "reasoning_effort": "max"},
+            "go/muse": {"reasoning_effort": "high", "thinking": true},
+            "local/m": {"context_tokens": 50000, "reasoning_effort": "low"},
+        }))
+        .unwrap();
+    let catalog = vec![
+        GoModel {
+            id: "glm-5.3".into(),
+            context_tokens: Some(200000),
+            output_tokens: Some(2048),
+            thinking_toggle: true,
+            effort_levels: vec!["high".into()],
+            ..Default::default()
+        },
+        GoModel {
+            id: "muse".into(),
+            effort_levels: vec!["low".into(), "high".into()],
+            ..Default::default()
+        },
+        GoModel {
+            id: "local/m".into(),
+            provider: Some("local".into()),
+            ..Default::default()
+        },
+    ];
+    let applied = apply_model_overrides(&catalog, &overrides);
+    assert_eq!(applied[0].context_tokens, Some(100000), "lowered");
+    assert_eq!(applied[0].output_tokens, Some(2048), "never raised");
+    assert_eq!(applied[0].thinking, Some(false));
+    assert_eq!(applied[0].default_effort, None, "max is not offered");
+    assert_eq!(applied[1].default_effort.as_deref(), Some("high"));
+    assert_eq!(applied[1].thinking, None, "muse has no thinking switch");
+    assert_eq!(
+        applied[2].context_tokens,
+        Some(50000),
+        "an unknown limit takes the cap"
+    );
+    assert_eq!(applied[2].default_effort.as_deref(), Some("low"));
+    // A run refuses what its model cannot do, and only for its own model.
+    assert!(check_model_override(&catalog, "glm-5.3", &overrides)
+        .unwrap_err()
+        .contains("'max'"));
+    assert!(check_model_override(&catalog, "muse", &overrides)
+        .unwrap_err()
+        .contains("no thinking switch"));
+    assert!(check_model_override(&catalog, "local/m", &overrides).is_ok());
+    assert!(check_model_override(&catalog, "unlisted", &overrides).is_ok());
+
+    // The thinking switch turned off goes out as disabled, with no default effort.
+    let (glm, muse) = MODEL_THINKING.sync_scope(thinking_table(&applied), || {
+        (thinking_default("glm-5.3"), thinking_default("muse"))
+    });
+    assert!(glm.switch_off && !glm.switch_on && glm.effort.is_none());
+    assert_eq!(muse.effort.as_deref(), Some("high"));
+    let body = MODEL_THINKING.sync_scope(thinking_table(&applied), || {
+        let provider = CompatibleProvider::go("k".into(), "glm-5.3".into(), None, None);
+        let request = provider
+            .chat_request(&[user_message("hi")], None, false, None)
+            .unwrap()
+            .build()
+            .unwrap();
+        serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap()).unwrap()
+    });
+    assert_eq!(body["thinking"], json!({"type":"disabled"}));
+}
+
+#[test]
+fn a_models_list_keeps_unique_usable_ids_only() {
+    let body = json!({"object":"list","data":[
+        {"id":"a"},{"id":"a"},{"id":"has space"},{"id":7},{"name":"x"},{"id":"b/c"},{"id":""}
+    ]})
+    .to_string();
+    assert_eq!(parse_model_ids(&body).unwrap(), ["a", "b/c"]);
+    for bad in ["", "not json", "{}", r#"{"data":{"x":"leak"}}"#, "[]"] {
+        let error = parse_model_ids(bad).unwrap_err().to_string();
+        assert!(
+            !error.contains("leak") && !error.contains("not json"),
+            "{error}"
+        );
+    }
+    let many =
+        json!({"data": (0..2000).map(|n| json!({"id": format!("m{n}")})).collect::<Vec<_>>()});
+    assert_eq!(
+        parse_model_ids(&many.to_string()).unwrap().len(),
+        crate::configuration::MAX_PROVIDER_MODELS
+    );
+}
+
+#[tokio::test]
+async fn a_providers_models_list_is_read_with_its_key_and_errors_hide_the_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer local-key",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data":[{"id":"m1"}]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("secret-body-text"))
+        .mount(&server)
+        .await;
+    let base = format!("{}/v1", server.uri());
+    assert_eq!(
+        refresh_provider_models(&base, "local-key").await.unwrap(),
+        ["m1"]
+    );
+    let error = refresh_provider_models(&base, "wrong")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("401") && !error.contains("secret-body-text"),
+        "{error}"
+    );
+    let provider: crate::configuration::ProviderDefinition = serde_json::from_value(json!({
+        "id":"local","name":"Local","base_url":base,"secret":"${K}"
+    }))
+    .unwrap();
+    let listed = provider_models(&provider, &["m1".into()]);
+    assert_eq!(listed[0].id, "local/m1");
+    assert_eq!(listed[0].provider.as_deref(), Some("local"));
+}
+
+proptest::proptest! {
+    /// Any `/models` body parses or fails without panicking; kept ids are unique, usable as
+    /// model ids, and come from the body.
+    #[test]
+    fn any_models_list_body_is_parsed_safely(
+        body in "\\PC{0,200}",
+        ids in proptest::collection::vec("\\PC{0,20}", 0..20),
+    ) {
+        let _ = parse_model_ids(&body);
+        let wrapped = json!({"data": ids.iter().map(|id| json!({"id": id})).collect::<Vec<_>>()}).to_string();
+        let kept = parse_model_ids(&wrapped).unwrap();
+        let unique: std::collections::HashSet<_> = kept.iter().collect();
+        proptest::prop_assert_eq!(unique.len(), kept.len());
+        for id in &kept {
+            proptest::prop_assert!(crate::configuration::valid_model_id(id));
+            proptest::prop_assert!(ids.contains(id));
+        }
+    }
+}
+
+#[test]
+fn the_usage_ledger_records_a_configured_providers_own_id() {
+    let go = CompatibleProvider::go("k".into(), "glm-5.3".into(), None, None);
+    assert_eq!(go.provider_id(), GO_PROVIDER_ID);
+    let endpoint = CustomEndpoint {
+        id: "local".into(),
+        name: "Local server".into(),
+        base_url: "http://127.0.0.1:9/v1".into(),
+    };
+    let local = CompatibleProvider::custom(&endpoint, "k".into(), "local/qwen3".into());
+    assert_eq!(local.provider_id(), "local");
 }

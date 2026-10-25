@@ -59,6 +59,10 @@ async fn every_fixture_compacts_and_answers_through_the_runtime() {
     let mut cases = 0;
     for entry in std::fs::read_dir(cases_dir()).unwrap() {
         let dir = entry.unwrap().path();
+        // Mid-turn cases (`task.json`) run a whole task instead of replaying a transcript.
+        if !dir.join("case.json").is_file() {
+            continue;
+        }
         let case: Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("case.json")).unwrap()).unwrap();
         let probes: Value =

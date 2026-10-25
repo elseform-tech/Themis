@@ -1,6 +1,8 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDismiss } from "../lib/dismiss";
-import type { ContextBudget } from "../lib/types";
+import { getChatUsage } from "../lib/tauri";
+import type { ContextBudget, UsageTotals } from "../lib/types";
+import { compactTokens } from "./UsageSettings";
 import { usedPercent } from "../state/reducer";
 
 type Part = { key: keyof ContextBudget["breakdown"]; label: string; color: string; optional?: boolean };
@@ -19,10 +21,18 @@ export function formatTokens(tokens: number): string {
 }
 
 /** Byte-estimated context distribution with the runtime's own thresholds. */
-export function ContextMeter({ budget, compacting = false, running = false }: { budget: ContextBudget | undefined; compacting?: boolean; running?: boolean }) {
+export function ContextMeter({ budget, compacting = false, running = false, threadId }: { budget: ContextBudget | undefined; compacting?: boolean; running?: boolean; threadId?: string }) {
   const [open, setOpen] = useState(false);
+  const [chatUsage, setChatUsage] = useState<UsageTotals | null>(null);
   const root = useRef<HTMLDivElement>(null);
   useDismiss(root, open, useCallback(() => setOpen(false), []));
+  // This chat's recorded tokens, read each time the panel opens.
+  useEffect(() => {
+    if (!open || !threadId) return;
+    let current = true;
+    getChatUsage(threadId).then(usage => { if (current) setChatUsage(usage); }).catch(() => { if (current) setChatUsage(null); });
+    return () => { current = false; };
+  }, [open, threadId]);
   if (budget === undefined) return null;
   const percent = usedPercent(budget);
   // The projection only matters while a run can still reach the threshold.
@@ -60,6 +70,7 @@ export function ContextMeter({ budget, compacting = false, running = false }: { 
           <ul className="themis-context-legend">
             {parts.map(part => <li key={part.key}><span style={{ background: part.color }} aria-hidden="true" />{part.label}<b>{formatTokens(tokensOf(part))}</b></li>)}
           </ul>
+          {chatUsage && chatUsage.requests > 0 && <p className="themis-context-note" title="Tokens the provider reported for this chat's requests, from Themis only">This chat so far: {compactTokens(chatUsage.input_tokens)} in · {compactTokens(chatUsage.output_tokens)} out · {chatUsage.requests} request{chatUsage.requests === 1 ? "" : "s"}</p>}
           <p className="themis-context-note">Held outside the bar: {formatTokens(budget.tool_definition_tokens)} tool definitions · {formatTokens(budget.output_reserve_tokens)} reply · {formatTokens(budget.safety_margin_tokens)} safety margin. Estimates (bytes ÷ 4).</p>
           {soon && <p className="themis-context-warn">Close to auto-compact. Themis will summarise older work into a checkpoint and task ledger; every original stays on disk.</p>}
         </div>

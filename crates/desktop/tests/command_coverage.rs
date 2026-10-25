@@ -9,7 +9,10 @@ fn server_exposes_all_frontend_backend_commands() {
         include_str!("../../../web/src/lib/browser.ts")
     );
     let server = include_str!("../src/server.rs");
-    let native = include_str!("../src/lib.rs");
+    let native = concat!(
+        include_str!("../src/lib.rs"),
+        include_str!("../src/notifications.rs")
+    );
     let called: BTreeSet<_> = frontend
         .lines()
         .filter_map(|line| {

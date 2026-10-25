@@ -18,9 +18,7 @@ use themis_core::goal::{self as core_goal, Failure, Verdict};
 use super::chat_grants::safe_chat_id;
 use super::AppState;
 use crate::sink::EventSink;
-use crate::types::{
-    Goal, GoalNoteKind, GoalStatus, ProviderKind, ThreadEvent, ThreadEventEnvelope,
-};
+use crate::types::{Goal, GoalNoteKind, GoalStatus, ThreadEvent, ThreadEventEnvelope};
 
 /// Directory name under the app data directory.
 pub(super) const GOALS_DIR: &str = "goals";
@@ -58,6 +56,20 @@ fn now_ms() -> i64 {
 pub(super) fn backoff(failures: u32) -> Duration {
     let seconds = 30u64.saturating_mul(1 << failures.saturating_sub(1).min(10));
     Duration::from_secs(seconds).min(MAX_BACKOFF)
+}
+
+/// The goal note for a small context window, such as "Context window is
+/// small (32,768 tokens); long goals may stall."
+pub(super) fn small_window_note(tokens: usize) -> String {
+    let digits = tokens.to_string();
+    let mut grouped = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    format!("Context window is small ({grouped} tokens); long goals may stall.")
 }
 
 /// Moves a goal to `status`, counting running time only while it runs.
@@ -402,6 +414,46 @@ impl AppState {
         })
     }
 
+    /// Notes once, when a goal's first turn starts, that the context window
+    /// is below [`themis_core::context_window::SMALL_WINDOW_TOKENS`]: long
+    /// goals may stall there.
+    pub(super) fn warn_small_goal_window(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        run_id: &str,
+        window_tokens: usize,
+    ) {
+        if window_tokens >= themis_core::context_window::SMALL_WINDOW_TOKENS {
+            return;
+        }
+        let first_turn = self
+            .inner
+            .goal_turn_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(run_id)
+            && self
+                .goal_for(thread_id)
+                .is_some_and(|goal| goal.status == GoalStatus::Running && goal.turns <= 1);
+        if !first_turn {
+            return;
+        }
+        let _ = self.inner.diagnostics.append(
+            "goal",
+            "small_context_window",
+            "info",
+            json!({"thread_id": thread_id, "run_id": run_id, "window_tokens": window_tokens}),
+        );
+        self.goal_note(
+            sink,
+            thread_id,
+            run_id,
+            GoalNoteKind::SmallWindow,
+            &small_window_note(window_tokens),
+        );
+    }
+
     fn mark_goal_turn(&self, run_id: &str) {
         self.inner
             .goal_turn_runs
@@ -580,12 +632,17 @@ impl AppState {
             self.turn_evidence(&thread_id, goal.checked_seq);
         let checked_goal = goal.started_at;
         let verdict = match self.goal_check_config(&thread_id).await {
-            Ok(config) => {
+            Ok((config, catalog)) => {
                 // The same per-model routes and limits real runs use.
-                let catalog = self.inner.go_catalog.read().await.clone();
                 themis_core::providers::with_catalog_limits(
                     &catalog,
-                    core_goal::check_with_config(&config, &goal.text, &answer, &evidence),
+                    themis_core::context_metrics::with_usage_recorder(
+                        self.usage_recorder(&thread_id, &run_id),
+                        themis_core::context_metrics::with_usage_kind(
+                            themis_core::context_metrics::UsageKind::GoalCheck,
+                            core_goal::check_with_config(&config, &goal.text, &answer, &evidence),
+                        ),
+                    ),
                 )
                 .await
                 .map_err(|error| format!("{error:#}"))
@@ -901,11 +958,18 @@ impl AppState {
         (evidence, changed, through)
     }
 
-    /// The provider for the goal check: the chat's current model.
+    /// The provider for the goal check (the chat's current model, from OpenCode Go or a
+    /// provider in runtime.jsonc) and the catalog its routes and limits come from.
     async fn goal_check_config(
         &self,
         thread_id: &str,
-    ) -> Result<themis_core::providers::ProviderConfig, String> {
+    ) -> Result<
+        (
+            themis_core::providers::ProviderConfig,
+            Vec<themis_core::providers::GoModel>,
+        ),
+        String,
+    > {
         let model = self
             .inner
             .threads
@@ -914,24 +978,14 @@ impl AppState {
             .get(thread_id)
             .map(|record| record.model.clone())
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
-        let key = self.api_key_for(ProviderKind::Go).await?;
-        let mut config = themis_core::providers::ProviderConfig::new(
-            themis_core::providers::ProviderKind::Go,
-            key,
-        );
-        if !model.trim().is_empty() {
-            config = config.with_model(model);
-        }
-        if let Some(url) = self
-            .inner
-            .go_base_url_override
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-        {
-            config = config.with_base_url(url);
-        }
-        Ok(config)
+        let mut runtime = self.runtime_configuration(None, None)?.config;
+        // The check is one short request on the chat's model; it writes no summary.
+        runtime.compaction.summary_model = None;
+        let config = self
+            .provider_config_for(&runtime, &model, thread_id)
+            .await?;
+        let catalog = self.run_catalog(&runtime, &[model.as_str()]).await;
+        Ok((config, catalog))
     }
 
     /// On start: goals that were running carry on (the cut-off turn is
@@ -1017,6 +1071,22 @@ fn clip_output(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn small_window_note_groups_the_token_count() {
+        assert_eq!(
+            small_window_note(32_768),
+            "Context window is small (32,768 tokens); long goals may stall."
+        );
+        assert_eq!(
+            small_window_note(8_000),
+            "Context window is small (8,000 tokens); long goals may stall."
+        );
+        assert_eq!(
+            small_window_note(127_999),
+            "Context window is small (127,999 tokens); long goals may stall."
+        );
+    }
 
     #[test]
     fn repeated_hard_failures_pause_but_transient_ones_keep_retrying() {

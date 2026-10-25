@@ -779,6 +779,7 @@ async fn dispatch_command(
         ),
         "stop_thread" => done!(state.stop_thread(arg(&args, "threadId")?).await),
         "list_go_models" => output!(state.list_go_models().await?),
+        "list_model_providers" => output!(state.list_model_providers().await?),
         "create_thread" => output!(
             state
                 .create_thread(
@@ -797,6 +798,8 @@ async fn dispatch_command(
                 )
                 .await?
         ),
+        "get_usage_summary" => output!(state.get_usage_summary().await?),
+        "get_chat_usage" => output!(state.get_chat_usage(arg(&args, "threadId")?).await?),
         "get_thread_history" => output!(
             state
                 .get_thread_history(&arg::<String>(&args, "threadId")?)
@@ -990,6 +993,7 @@ async fn dispatch_command(
                 .open_in_editor(arg(&args, "path")?, arg(&args, "line")?)
                 .await
         ),
+        "record_notification" => done!(state.record_notification(arg(&args, "record")?)),
         "get_settings" => output!(state.get_settings().await),
         "update_settings" => output!(
             state

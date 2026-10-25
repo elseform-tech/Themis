@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
 
+mod providers;
+pub use providers::{
+    model_override, provider_for, valid_model_id, ModelOverride, ModelPrice, ProviderDefinition,
+    ProviderModel, GO_PROVIDER_ID, MAX_PROVIDER_MODELS, REASONING_EFFORTS,
+};
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
@@ -411,26 +417,6 @@ pub fn configured_hook_with_grants(
     })
 }
 
-/// Only provider models whose reasoning-off controls are verified by wire tests.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum SummaryModel {
-    #[serde(rename = "longcat-2.5-preview-free")]
-    LongCat,
-    #[serde(rename = "gpt-5.6-luna")]
-    Gpt56Luna,
-    #[serde(rename = "gpt-6-luna")]
-    Gpt6Luna,
-}
-impl SummaryModel {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::LongCat => "longcat-2.5-preview-free",
-            Self::Gpt56Luna => "gpt-5.6-luna",
-            Self::Gpt6Luna => "gpt-6-luna",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CompactionConfig {
@@ -447,11 +433,16 @@ pub struct CompactionConfig {
     pub target_headroom_interactions: usize,
     pub max_stages: usize,
     pub retry_limit: u8,
+    /// Legacy: accepted so older files still load; has no effect on stage
+    /// output and is not written or documented.
+    #[serde(skip_serializing)]
     pub section_max_tokens: u32,
     pub summary_max_tokens: u32,
-    /// Explicit internal routing only; absent retains ordinary-model-based routing.
+    /// Explicit internal routing only; absent retains ordinary-model-based routing. Any model
+    /// a connected provider offers (`<provider>/<id>` for one from `providers`); a run checks
+    /// it against the captured catalogs.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary_model: Option<SummaryModel>,
+    pub summary_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_file: Option<String>,
     /// Resolved before a run starts; never accepted from JSON.
@@ -795,8 +786,16 @@ pub struct RuntimeConfig {
     pub web: WebConfig,
     /// The built-in browser; see [`BrowserConfig`].
     pub browser: BrowserConfig,
+    /// OpenAI-compatible providers besides OpenCode Go; user file only.
+    pub providers: Vec<ProviderDefinition>,
+    /// Per-model overrides keyed by model id or `<provider>/<id>`.
+    pub models: BTreeMap<String, ModelOverride>,
+    /// `"auto"` or a cap in tokens; omitted falls back to the app setting
+    /// (Auto by default). See [`ContextTokenBudget`].
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_token_budget: Option<usize>,
+    pub context_token_budget: Option<ContextTokenBudget>,
+    /// Earlier messages sent with each request; file-only (default
+    /// [`DEFAULT_RECENT_MESSAGES`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recent_messages: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -815,12 +814,69 @@ impl Default for RuntimeConfig {
             compaction: CompactionConfig::default(),
             web: WebConfig::default(),
             browser: BrowserConfig::default(),
+            providers: Vec::new(),
+            models: BTreeMap::new(),
             context_token_budget: None,
             recent_messages: None,
             total_turns: None,
         }
     }
 }
+/// Earlier messages sent with each request when `recent_messages` is omitted.
+pub const DEFAULT_RECENT_MESSAGES: usize = 20;
+/// Smallest configurable context cap.
+pub const MIN_CONTEXT_TOKENS: usize = 2_000;
+
+/// How much working context a run may use (`context_token_budget`).
+///
+/// `Auto` follows the selected model's context window up to
+/// [`crate::context_window::AUTO_CONTEXT_CEILING`]; `Tokens(n)` is a cap that
+/// is still clamped to the window. Written as `"auto"` or a number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContextTokenBudget {
+    #[default]
+    Auto,
+    Tokens(usize),
+}
+
+impl ContextTokenBudget {
+    /// The cap a run applies before clamping to the model's window.
+    #[must_use]
+    pub const fn cap(self) -> usize {
+        match self {
+            Self::Auto => crate::context_window::AUTO_CONTEXT_CEILING,
+            Self::Tokens(tokens) => tokens,
+        }
+    }
+}
+
+impl Serialize for ContextTokenBudget {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Auto => serializer.serialize_str("auto"),
+            Self::Tokens(tokens) => serializer.serialize_u64(*tokens as u64),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ContextTokenBudget {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Tokens(usize),
+            Text(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Tokens(tokens) => Ok(Self::Tokens(tokens)),
+            Raw::Text(text) if text == "auto" => Ok(Self::Auto),
+            Raw::Text(_) => Err(serde::de::Error::custom(
+                "context_token_budget must be \"auto\" or a number of tokens",
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedConfig {
     pub config: RuntimeConfig,
@@ -1183,6 +1239,7 @@ pub fn resolve(
                     crate::sandbox::check_restriction(&current, sandbox, origin)?;
                 }
                 check_web_restriction(&layer, origin)?;
+                providers::check_provider_restriction(&layer, origin)?;
                 let current: BrowserConfig = serde_json::from_value(value["browser"].clone())
                     .context("invalid browser configuration")?;
                 tighten_browser_layer(&current, &mut layer, origin)?;
@@ -1281,6 +1338,7 @@ pub fn validate_relative_paths(paths: &[String]) -> Result<()> {
 pub fn validate(config: &RuntimeConfig) -> Result<()> {
     crate::sandbox::validate(&config.sandbox)?;
     validate_web(config)?;
+    providers::validate(&config.providers, &config.models)?;
     validate_relative_paths(&config.skills.paths)?;
     validate_relative_paths(&config.instructions)?;
     ensure!(
@@ -1332,6 +1390,12 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         config.compaction.retry_limit <= 2,
         "compaction.retry_limit must be 0..2"
     );
+    if let Some(model) = &compaction.summary_model {
+        ensure!(
+            valid_model_id(model),
+            "compaction.summary_model must be a model id (<provider>/<id> for a model from providers)"
+        );
+    }
     for (name, tokens) in [
         ("section_max_tokens", config.compaction.section_max_tokens),
         ("summary_max_tokens", config.compaction.summary_max_tokens),
@@ -1341,13 +1405,14 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
             "compaction.{name} must be 256..16384"
         );
     }
+    if let Some(ContextTokenBudget::Tokens(tokens)) = config.context_token_budget {
+        let high = crate::context_window::MAX_CONTEXT_TOKENS;
+        ensure!(
+            (MIN_CONTEXT_TOKENS..=high).contains(&tokens),
+            "context_token_budget must be \"auto\" or {MIN_CONTEXT_TOKENS}..{high}"
+        );
+    }
     for (name, value, low, high) in [
-        (
-            "context_token_budget",
-            config.context_token_budget,
-            2000,
-            256000,
-        ),
         ("recent_messages", config.recent_messages, 2, 200),
         ("total_turns", config.total_turns, 1, 2000),
     ] {
@@ -1460,6 +1525,14 @@ pub fn load_instructions(config: &RuntimeConfig, project: &std::path::Path) -> R
 
 /// Editor schema for the same configuration accepted by the runtime.
 pub fn schema() -> Value {
+    let mut schema = base_schema();
+    let (providers, models) = providers::schema();
+    schema["properties"]["providers"] = providers;
+    schema["properties"]["models"] = models;
+    schema
+}
+
+fn base_schema() -> Value {
     serde_json::json!({
         "$schema":"https://json-schema.org/draft/2020-12/schema",
         "title":"Themis runtime configuration","type":"object","additionalProperties":false,
@@ -1468,7 +1541,7 @@ pub fn schema() -> Value {
             "instructions":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":1024}},
             "logging":{"type":"object","additionalProperties":false,"properties":{"level":{"enum":["debug","info","warn","error"],"default":"info"},"context_metrics":{"enum":["off","summary","detailed"],"default":"summary"}}},
         "$schema":{"type":"string"},"schema_version":{"const":1,"default":1},
-            "context_token_budget":{"type":"integer","minimum":2000,"maximum":256000},
+            "context_token_budget":{"oneOf":[{"const":"auto"},{"type":"integer","minimum":2000,"maximum":1000000}],"default":"auto"},
             "recent_messages":{"type":"integer","minimum":2,"maximum":200},
             "total_turns":{"type":"integer","minimum":1,"maximum":2000},
             "approval":{"type":"object","additionalProperties":false,"properties":{
@@ -1520,9 +1593,9 @@ pub fn schema() -> Value {
                 "target_headroom_interactions":{"type":"integer","minimum":1,"maximum":20,"default":6},
                 "max_stages":{"type":"integer","minimum":1,"maximum":128,"default":32},
                 "retry_limit":{"type":"integer","minimum":0,"maximum":2,"default":2},
-                "section_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":4096},
+                "section_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"deprecated":true},
                 "summary_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":8192},
-                "summary_model":{"enum":[null,"longcat-2.5-preview-free","gpt-5.6-luna","gpt-6-luna"],"default":null},
+                "summary_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"Any model a connected provider offers; <provider>/<id> for one from providers"},
                 "prompt_file":{"type":"string"}
             }}
         }
@@ -1808,7 +1881,18 @@ mod tests {
             serde_json::to_value(cleared.config).unwrap()["compaction"]["summary_model"].is_null()
         );
         assert_eq!(cleared.provenance["compaction.summary_model"], "run");
-        for model in ["step-5-preview-free", "unknown-model", "", "longcat-2.0"] {
+        // Any model id is accepted here; a run checks it against the captured catalogs.
+        for model in ["step-5-preview-free", "local/qwen/coder"] {
+            assert!(resolve(
+                Some(&format!(
+                    r#"{{"compaction":{{"summary_model":"{model}"}}}}"#
+                )),
+                None,
+                None
+            )
+            .is_ok());
+        }
+        for model in ["", "has space", "line\\nbreak"] {
             assert!(resolve(
                 Some(&format!(
                     r#"{{"compaction":{{"summary_model":"{model}"}}}}"#
@@ -1856,7 +1940,7 @@ mod tests {
     #[test]
     fn document_input_capacity_is_validated_independently_of_ordinary_context() {
         let mut config = RuntimeConfig {
-            context_token_budget: Some(24000),
+            context_token_budget: Some(ContextTokenBudget::Tokens(24000)),
             compaction: CompactionConfig {
                 document_context_token_budget: 1000000,
                 ..Default::default()
@@ -1864,7 +1948,10 @@ mod tests {
             ..Default::default()
         };
         validate(&config).unwrap();
-        assert_eq!(config.context_token_budget, Some(24000));
+        assert_eq!(
+            config.context_token_budget,
+            Some(ContextTokenBudget::Tokens(24000))
+        );
         config.compaction.document_context_token_budget = 1000001;
         assert!(validate(&config)
             .unwrap_err()
@@ -1878,12 +1965,18 @@ mod tests {
     fn adaptive_context_configuration_accepts_256k_and_validates_shared_controls() {
         let source = r#"{"context_token_budget":256000,"compaction":{"maintenance_threshold_ratio":0.83,"semantic_threshold_ratio":0.93,"target_headroom_interactions":6,"timeout_seconds":600,"request_timeout_seconds":300},"logging":{"context_metrics":"detailed"}}"#;
         let resolved = resolve(Some(source), None, None).unwrap();
-        assert_eq!(resolved.config.context_token_budget, Some(256000));
+        assert_eq!(
+            resolved.config.context_token_budget,
+            Some(ContextTokenBudget::Tokens(256000))
+        );
         assert_eq!(
             resolved.provenance["compaction.request_timeout_seconds"],
             "user"
         );
-        assert!(resolve(Some(r#"{"context_token_budget":256001}"#), None, None).is_err());
+        assert!(resolve(Some(r#"{"context_token_budget":1000000}"#), None, None).is_ok());
+        assert!(resolve(Some(r#"{"context_token_budget":1000001}"#), None, None).is_err());
+        assert!(resolve(Some(r#"{"context_token_budget":1999}"#), None, None).is_err());
+        assert!(resolve(Some(r#"{"context_token_budget":"big"}"#), None, None).is_err());
         for source in [
             r#"{"compaction":{"maintenance_threshold_ratio":0.96,"semantic_threshold_ratio":0.93}}"#,
             r#"{"compaction":{"semantic_threshold_ratio":1.0}}"#,
@@ -1958,7 +2051,10 @@ mod tests {
     fn jsonc_layers_and_validation() {
         let c=resolve(Some("{\"compaction\":{\"timeout_seconds\":90,},//comment\n\"context_token_budget\":10000}"),Some("{\"context_token_budget\":12000}"),None).unwrap();
         assert_eq!(c.config.compaction.timeout_seconds, 90);
-        assert_eq!(c.config.context_token_budget, Some(12000));
+        assert_eq!(
+            c.config.context_token_budget,
+            Some(ContextTokenBudget::Tokens(12000))
+        );
         assert_eq!(c.provenance["context_token_budget"], "project");
         assert!(resolve(Some("{\"unknown\":1}"), None, None).is_err());
         assert!(parse("{/*").is_err());
@@ -3181,5 +3277,61 @@ mod tests {
             Arc::new(crate::tools::DenyAllHook),
         );
         assert_eq!(hook.approve(&action("shell")), Approval::AllowOnce);
+    }
+
+    #[test]
+    fn context_budget_is_auto_or_a_cap_through_every_layer() {
+        // Omitted everywhere: no override, the app setting (Auto by default) applies.
+        let none = resolve(None, None, None).unwrap();
+        assert_eq!(none.config.context_token_budget, None);
+        assert!(!none.provenance.contains_key("context_token_budget"));
+        // A user cap, then a project "auto" back to Auto, then a run cap.
+        let user = r#"{"context_token_budget":500000}"#;
+        let project = r#"{"context_token_budget":"auto"}"#;
+        let layered = resolve(Some(user), Some(project), None).unwrap();
+        assert_eq!(
+            layered.config.context_token_budget,
+            Some(ContextTokenBudget::Auto)
+        );
+        assert_eq!(layered.provenance["context_token_budget"], "project");
+        let run = resolve(
+            Some(user),
+            Some(project),
+            Some(r#"{"context_token_budget":64000}"#),
+        )
+        .unwrap();
+        assert_eq!(
+            run.config.context_token_budget,
+            Some(ContextTokenBudget::Tokens(64000))
+        );
+        assert_eq!(run.provenance["context_token_budget"], "run");
+        assert_eq!(
+            ContextTokenBudget::Auto.cap(),
+            crate::context_window::AUTO_CONTEXT_CEILING
+        );
+        assert_eq!(ContextTokenBudget::Tokens(64000).cap(), 64000);
+        assert_eq!(
+            serde_json::to_value(ContextTokenBudget::Auto).unwrap(),
+            "auto"
+        );
+        assert_eq!(
+            serde_json::to_value(ContextTokenBudget::Tokens(9000)).unwrap(),
+            9000
+        );
+        assert!(resolve(Some(r#"{"context_token_budget":"Auto"}"#), None, None).is_err());
+    }
+
+    #[test]
+    fn legacy_section_max_tokens_still_loads_but_is_not_written() {
+        let resolved = resolve(
+            Some(r#"{"compaction":{"section_max_tokens":2048}}"#),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(resolved.config.compaction.section_max_tokens, 2048);
+        let written = serde_json::to_value(&resolved.config).unwrap();
+        assert!(written["compaction"].get("section_max_tokens").is_none());
+        assert_eq!(CompactionConfig::default().section_max_tokens, 4096);
     }
 }

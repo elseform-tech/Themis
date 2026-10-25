@@ -28,6 +28,7 @@ import type {
   ReviewStatus,
   Skill,
   SkillInput,
+  ModelProvider,
   ProviderKind,
   RunHandle,
   SecretStatus,
@@ -39,6 +40,8 @@ import type {
   BackgroundTaskLog,
   ThreadInfo,
   ThreadChange,
+  UsageSummary,
+  UsageTotals,
 } from './types';
 import {
   APPROVAL_EXPIRED_NAME,
@@ -65,6 +68,9 @@ export function getEffectivePermissions(projectRoot: string | null, threadId: st
 export interface ResourceGroup { group: "app" | "browser" | "tools"; cpu_percent: number; memory_bytes: number; processes: number; growing_bytes?: number }
 export interface ResourceUsage { sampled_at_ms: number; cpu_percent: number; memory_bytes: number; cores: number; groups: ResourceGroup[] }
 export function resourceUsage(): Promise<ResourceUsage | null> { return invoke("resource_usage"); }
+/** Tokens Themis used: windows, the 30-day chart and breakdowns (see `UsageSummary`). */
+export function getUsageSummary(): Promise<UsageSummary> { return invoke("get_usage_summary"); }
+export function getChatUsage(threadId: string): Promise<UsageTotals> { return invoke("get_chat_usage", { threadId }); }
 export function getWorkspace(projectRoot: string, pullRequests = false): Promise<WorkspaceInfo> { return invoke("get_workspace", { projectRoot, pullRequests }); }
 export function listProjectDir(projectRoot: string, path: string): Promise<DirListing> { return invoke("list_project_dir", { projectRoot, path }); }
 export function readProjectFile(projectRoot: string, path: string): Promise<FileView> { return invoke("read_project_file", { projectRoot, path }); }
@@ -77,6 +83,7 @@ export function renameThread(threadId: string, title: string): Promise<ThreadInf
 
 export function stopThread(threadId: string): Promise<void> { return invoke("stop_thread", { threadId }); }
 export function listGoModels(): Promise<GoModel[]> { return invoke("list_go_models"); }
+export function listModelProviders(): Promise<ModelProvider[]> { return invoke("list_model_providers"); }
 
 export function createProject(name: string): Promise<ProjectInfo> {
   return invoke("create_project", { name });
@@ -416,6 +423,16 @@ export function setThreadApprovalMode(threadId: string, mode: "custom" | "yolo")
   const tracked = request.finally(() => { if (pendingPermissionChanges.get(threadId) === tracked) pendingPermissionChanges.delete(threadId); });
   pendingPermissionChanges.set(threadId, tracked);
   return tracked;
+}
+
+/** Whether Themis may show desktop notifications; `request` asks the system when not decided yet. */
+export type NotifyPermission = "granted" | "denied" | "undetermined" | "unavailable";
+export function notificationPermission(request: boolean): Promise<NotifyPermission> {
+  return tauriInvoke<NotifyPermission>("notification_permission", { request });
+}
+/** A goal notification was clicked: open its chat. */
+export function onNotificationOpened(cb: (threadId: string) => void): Promise<UnlistenFn> {
+  return listen<string>("notification-opened", (event) => cb(event.payload));
 }
 
 export function onBackendResync(handler: () => void): Promise<UnlistenFn> {
