@@ -3,8 +3,10 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use serde_json::json;
+use themis_core::diagnostics::DiagnosticContext;
 use themis_core::tools::{Approval, ApprovalHook, RiskLevel as CoreRisk, ToolAction};
 
 use crate::sink::EventSink;
@@ -52,6 +54,7 @@ pub struct DesktopApprovalHook {
     confirm_reads: bool,
     unattended: bool,
     test_decisions: Option<Arc<Mutex<VecDeque<Approval>>>>,
+    audit: Option<DiagnosticContext>,
 }
 
 impl DesktopApprovalHook {
@@ -71,7 +74,37 @@ impl DesktopApprovalHook {
             confirm_reads: false,
             unattended: false,
             test_decisions: None,
+            audit: None,
         }
+    }
+
+    /// Logs each dialog's answer (`approval/answered`) to the run's diagnostics.
+    #[must_use]
+    pub fn with_audit(mut self, context: DiagnosticContext) -> Self {
+        self.audit = Some(context);
+        self
+    }
+
+    /// What the person answered, before any downgrade: `once`, `chat` ("Allow in
+    /// this chat"), `deny`, or `none` when the dialog expired or was dropped.
+    fn log_answer(&self, action: &ToolAction, decision: Option<Approval>, waited: Duration) {
+        let Some(context) = &self.audit else {
+            return;
+        };
+        let answer = match decision {
+            Some(Approval::AllowOnce) => "once",
+            Some(Approval::AllowAlways) => "chat",
+            Some(Approval::Deny) => "deny",
+            None => "none",
+        };
+        let _ = context.log.append_with_level(
+            "approval",
+            "answered",
+            "info",
+            json!({"thread_id": context.thread_id, "run_id": context.run_id, "tool": action.tool,
+                   "risk": format!("{:?}", action.risk), "answer": answer, "waited_ms": waited.as_millis()}),
+            Some(&context.level),
+        );
     }
 
     /// Overrides the decision wait (tests use a short timeout).
@@ -163,8 +196,10 @@ impl ApprovalHook for DesktopApprovalHook {
                 },
             );
         }
+        let asked = Instant::now();
         self.sink.emit_approval_request(&request);
         let decision = wait_for_decision(&receiver, self.timeout);
+        self.log_answer(action, decision, asked.elapsed());
         // `approve_action` removes its entry on success; this covers timeouts.
         self.pending
             .lock()
@@ -507,6 +542,76 @@ mod tests {
             .sender;
         sender.send(Approval::AllowAlways).expect("deliver");
         assert_eq!(handle.join().expect("hook thread"), Approval::AllowAlways);
+    }
+
+    #[test]
+    fn dialog_answers_are_logged_as_answered_not_as_the_outcome() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let context = DiagnosticContext {
+            log: Arc::new(themis_core::diagnostics::DiagnosticLog::new(
+                directory.path().join("logs"),
+            )),
+            thread_id: "thread-1".to_owned(),
+            run_id: "run-1".to_owned(),
+            level: "info".to_owned(),
+        };
+        let (sink, mut rx) = ChannelSink::channel();
+        let pending: PendingMap = PendingMap::default();
+        let hook = Arc::new(
+            DesktopApprovalHook::new(
+                "thread-1".to_owned(),
+                true,
+                Arc::new(sink),
+                Arc::clone(&pending),
+            )
+            .with_timeout(Duration::from_millis(300))
+            .with_audit(context),
+        );
+        // A read passes without a dialog, so nothing is answered.
+        assert_eq!(
+            hook.approve(&action("read_file", CoreRisk::Read)),
+            Approval::AllowOnce
+        );
+        // "Allow in this chat" is logged as `chat`, then an expired dialog as `none`.
+        let asking = Arc::clone(&hook);
+        let handle =
+            std::thread::spawn(move || asking.approve(&action("write_file", CoreRisk::Write)));
+        let request = loop {
+            if let TestEvent::Approval(request) = rx.blocking_recv().expect("event stream open") {
+                break request;
+            }
+        };
+        let sender = pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&request.approval_id)
+            .expect("pending entry")
+            .sender;
+        sender.send(Approval::AllowAlways).expect("deliver");
+        assert_eq!(handle.join().expect("hook thread"), Approval::AllowAlways);
+        assert_eq!(
+            hook.approve(&action("shell", CoreRisk::Execute)),
+            Approval::Deny
+        );
+
+        let text = std::fs::read_to_string(directory.path().join("logs/diagnostics-0.jsonl"))
+            .expect("log");
+        let answers: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("json"))
+            .filter(|record| record["event"] == "answered")
+            .map(|record| record["details"].clone())
+            .collect();
+        assert_eq!(answers.len(), 2, "{text}");
+        assert_eq!(
+            (answers[0]["tool"].as_str(), answers[0]["answer"].as_str()),
+            (Some("write_file"), Some("chat"))
+        );
+        assert_eq!(
+            (answers[1]["tool"].as_str(), answers[1]["answer"].as_str()),
+            (Some("shell"), Some("none"))
+        );
+        assert_eq!(answers[0]["thread_id"], "thread-1");
     }
 
     #[tokio::test(flavor = "multi_thread")]
