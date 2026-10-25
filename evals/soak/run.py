@@ -156,6 +156,7 @@ class Soak:
         spec = generate(self.seed, self.project, self.options["items"], self.options["filler_chars"])
         script = messages(spec)
         git.init(self.project)
+        protect(self.project)
         with open(os.path.join(self.data, "runtime.jsonc"), "w", encoding="utf-8") as handle:
             json.dump({"schema_version": 1, "context_token_budget": self.budget, "approval": APPROVAL}, handle)
         trace = {"spec": spec, "budget": self.budget, "seed": self.seed, "model": self.options["model"],
@@ -340,6 +341,17 @@ def checkpoint_summary(line):
     return event.get("summary") if item.get("kind") == "event" and event.get("kind") == "context_checkpoint" else None
 
 
+def protect(project):
+    """Makes the given files read-only, so the agent cannot rewrite `check.py` into a script
+    it may run, nor change the memos or FORMAT.md (it has no command to undo this)."""
+    paths = [os.path.join(project, name) for name in ("check.py", "FORMAT.md")]
+    source = os.path.join(project, "src")
+    paths += [os.path.join(source, name) for name in os.listdir(source)] if os.path.isdir(source) else []
+    for path in paths:
+        if os.path.isfile(path):
+            os.chmod(path, 0o444)
+
+
 def final_state(project, env, spec):
     """The project's outputs, `check.py`'s verdict and the git state when the run ended."""
     files = {}
@@ -362,4 +374,10 @@ def final_state(project, env, spec):
         passed = False
     finally:
         os.remove(checker)
-    return {"files": files, "check_passed": passed, "commits": git.commits(project), "dirty": git.dirty(project)}
+    try:
+        with open(os.path.join(project, "check.py"), encoding="utf-8") as handle:
+            modified = handle.read() != checker_text(spec)
+    except OSError:
+        modified = True
+    return {"files": files, "check_passed": passed, "check_modified": modified,
+            "commits": git.commits(project), "dirty": git.dirty(project)}

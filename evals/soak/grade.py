@@ -65,6 +65,7 @@ MEASURES = {
     "index_accuracy": ("memory", "model", "higher"),
     "format_change_applied": ("memory", "model", "higher"),
     "check_passes": ("memory", "model", "higher"),
+    "check_modified": ("tools", "model", "lower"),
     "recall_correct": ("memory", "model", "higher"),
     "tool_errors_ours": ("tools", "harness", "lower"),
     "tool_errors_model": ("tools", "model", "lower"),
@@ -348,6 +349,7 @@ def memory_measures(trace, spec):
              "index_accuracy": None if index_text is None else round(generate.index_statuses(spec, index_text), 3),
              "format_change_applied": applied,
              "check_passes": None if final.get("check_passed") is None else int(bool(final["check_passed"])),
+             "check_modified": None if final.get("check_modified") is None else int(bool(final["check_modified"])),
              "recall_correct": correct if recall else None},
             {"segments": {str(k): v for k, v in sorted(segments.items())},
              "final_rule_violations": sum(bool(rule_violations(items[n], files.get(f"out/{n}.md"))) for n in items)})
@@ -375,7 +377,7 @@ def tool_measures(trace):
     for call in tool_calls(trace):
         if call["ok"] is not False:
             continue
-        cause, code = tool_causes.classify(call["tool"], call["output"], trace.get("mode", "yolo"))
+        cause, code = tool_causes.classify(call["tool"], call["output"], trace.get("mode", "yolo"), call["summary"])
         counts[cause] += 1
         if cause == "unclassified":
             unclassified.append({"tool": call["tool"], "error": tool_causes.sample(call["output"])})

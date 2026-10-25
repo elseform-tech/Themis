@@ -165,6 +165,16 @@ class GeneratorTests(unittest.TestCase):
         for name in os.listdir(os.path.join(self.dirs[0], "src")):
             self.assertLess(os.path.getsize(os.path.join(self.dirs[0], "src", name)), 8000, name)
 
+    def test_the_checker_memos_and_format_are_read_only(self):
+        import stat
+
+        from evals.soak.run import protect
+        gen.generate(3, self.dirs[0], items=6)
+        protect(self.dirs[0])
+        for name in ("check.py", "FORMAT.md", os.path.join("src", sorted(os.listdir(os.path.join(self.dirs[0], "src")))[0])):
+            mode = os.stat(os.path.join(self.dirs[0], name)).st_mode
+            self.assertFalse(mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH), name)
+
     def test_rules_live_only_in_the_first_message(self):
         made = gen.generate(2, self.dirs[0], items=10)
         script = gen.messages(made)
@@ -477,7 +487,12 @@ class GraderTests(unittest.TestCase):
                   ("shell", denied.format("shell", "shell", '{"command":"sh","args":["-c","python3 x.py"]}'), "model"),
                   ("search_file", denied.format("search_file", "search_file", '{"pattern":"owner"}'), "model")]
         for tool, text, cause in custom:
-            self.assertEqual(tool_causes.classify(tool, text, mode="custom")[0], cause, text)
+            summary = "call `{}` with {}".format(tool, text.split(" with ", 1)[1].rsplit(" The action", 1)[0])
+            self.assertEqual(tool_causes.classify(tool, text, mode="custom", summary=summary)[0], cause, text)
+        # A shell call whose arguments cannot be parsed is left for a person, not attributed.
+        self.assertEqual(tool_causes.classify("shell", custom[1][1], mode="custom", summary="call `shell` with ???")[0],
+                         "unclassified")
+        self.assertEqual(tool_causes.APPROVAL["rules"][0], {"tool": "shell_unsandboxed", "action": "deny"})
 
 
 # --- trend --------------------------------------------------------------------------------------
