@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc};
 
+mod providers;
+pub use providers::{
+    model_override, provider_for, valid_model_id, ModelOverride, ModelPrice, ProviderDefinition,
+    ProviderModel, GO_PROVIDER_ID, MAX_PROVIDER_MODELS, REASONING_EFFORTS,
+};
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
@@ -411,26 +417,6 @@ pub fn configured_hook_with_grants(
     })
 }
 
-/// Only provider models whose reasoning-off controls are verified by wire tests.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum SummaryModel {
-    #[serde(rename = "longcat-2.5-preview-free")]
-    LongCat,
-    #[serde(rename = "gpt-5.6-luna")]
-    Gpt56Luna,
-    #[serde(rename = "gpt-6-luna")]
-    Gpt6Luna,
-}
-impl SummaryModel {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::LongCat => "longcat-2.5-preview-free",
-            Self::Gpt56Luna => "gpt-5.6-luna",
-            Self::Gpt6Luna => "gpt-6-luna",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CompactionConfig {
@@ -449,9 +435,11 @@ pub struct CompactionConfig {
     pub retry_limit: u8,
     pub section_max_tokens: u32,
     pub summary_max_tokens: u32,
-    /// Explicit internal routing only; absent retains ordinary-model-based routing.
+    /// Explicit internal routing only; absent retains ordinary-model-based routing. Any model
+    /// a connected provider offers (`<provider>/<id>` for one from `providers`); a run checks
+    /// it against the captured catalogs.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary_model: Option<SummaryModel>,
+    pub summary_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_file: Option<String>,
     /// Resolved before a run starts; never accepted from JSON.
@@ -795,6 +783,10 @@ pub struct RuntimeConfig {
     pub web: WebConfig,
     /// The built-in browser; see [`BrowserConfig`].
     pub browser: BrowserConfig,
+    /// OpenAI-compatible providers besides OpenCode Go; user file only.
+    pub providers: Vec<ProviderDefinition>,
+    /// Per-model overrides keyed by model id or `<provider>/<id>`.
+    pub models: BTreeMap<String, ModelOverride>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_token_budget: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -815,6 +807,8 @@ impl Default for RuntimeConfig {
             compaction: CompactionConfig::default(),
             web: WebConfig::default(),
             browser: BrowserConfig::default(),
+            providers: Vec::new(),
+            models: BTreeMap::new(),
             context_token_budget: None,
             recent_messages: None,
             total_turns: None,
@@ -1183,6 +1177,7 @@ pub fn resolve(
                     crate::sandbox::check_restriction(&current, sandbox, origin)?;
                 }
                 check_web_restriction(&layer, origin)?;
+                providers::check_provider_restriction(&layer, origin)?;
                 let current: BrowserConfig = serde_json::from_value(value["browser"].clone())
                     .context("invalid browser configuration")?;
                 tighten_browser_layer(&current, &mut layer, origin)?;
@@ -1281,6 +1276,7 @@ pub fn validate_relative_paths(paths: &[String]) -> Result<()> {
 pub fn validate(config: &RuntimeConfig) -> Result<()> {
     crate::sandbox::validate(&config.sandbox)?;
     validate_web(config)?;
+    providers::validate(&config.providers, &config.models)?;
     validate_relative_paths(&config.skills.paths)?;
     validate_relative_paths(&config.instructions)?;
     ensure!(
@@ -1332,6 +1328,12 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         config.compaction.retry_limit <= 2,
         "compaction.retry_limit must be 0..2"
     );
+    if let Some(model) = &compaction.summary_model {
+        ensure!(
+            valid_model_id(model),
+            "compaction.summary_model must be a model id (<provider>/<id> for a model from providers)"
+        );
+    }
     for (name, tokens) in [
         ("section_max_tokens", config.compaction.section_max_tokens),
         ("summary_max_tokens", config.compaction.summary_max_tokens),
@@ -1460,6 +1462,14 @@ pub fn load_instructions(config: &RuntimeConfig, project: &std::path::Path) -> R
 
 /// Editor schema for the same configuration accepted by the runtime.
 pub fn schema() -> Value {
+    let mut schema = base_schema();
+    let (providers, models) = providers::schema();
+    schema["properties"]["providers"] = providers;
+    schema["properties"]["models"] = models;
+    schema
+}
+
+fn base_schema() -> Value {
     serde_json::json!({
         "$schema":"https://json-schema.org/draft/2020-12/schema",
         "title":"Themis runtime configuration","type":"object","additionalProperties":false,
@@ -1522,7 +1532,7 @@ pub fn schema() -> Value {
                 "retry_limit":{"type":"integer","minimum":0,"maximum":2,"default":2},
                 "section_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":4096},
                 "summary_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":8192},
-                "summary_model":{"enum":[null,"longcat-2.5-preview-free","gpt-5.6-luna","gpt-6-luna"],"default":null},
+                "summary_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"Any model a connected provider offers; <provider>/<id> for one from providers"},
                 "prompt_file":{"type":"string"}
             }}
         }
@@ -1808,7 +1818,18 @@ mod tests {
             serde_json::to_value(cleared.config).unwrap()["compaction"]["summary_model"].is_null()
         );
         assert_eq!(cleared.provenance["compaction.summary_model"], "run");
-        for model in ["step-5-preview-free", "unknown-model", "", "longcat-2.0"] {
+        // Any model id is accepted here; a run checks it against the captured catalogs.
+        for model in ["step-5-preview-free", "local/qwen/coder"] {
+            assert!(resolve(
+                Some(&format!(
+                    r#"{{"compaction":{{"summary_model":"{model}"}}}}"#
+                )),
+                None,
+                None
+            )
+            .is_ok());
+        }
+        for model in ["", "has space", "line\\nbreak"] {
             assert!(resolve(
                 Some(&format!(
                     r#"{{"compaction":{{"summary_model":"{model}"}}}}"#

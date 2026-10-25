@@ -28,7 +28,7 @@ work in isolation. Open an existing folder through the project actions menu.
 ## Secrets
 
 API keys and tokens are **secrets**, kept in **Settings › Secrets** by name. OpenCode Go
-reads the secret chosen under Settings → Models → Connections → **Secret** (`OPENCODE_KEY`
+reads the secret chosen under Settings → Models → Providers → **Secret** (`OPENCODE_KEY`
 unless you pick another); the choice is saved and applies every time Themis opens. Set
 its value there (**Set OPENCODE_KEY**) or in Settings › Secrets, or launch Themis with an
 environment variable of that name. MCP servers read secrets as `${NAME}`, so
@@ -301,8 +301,30 @@ minutes (≥ 1), task prompt, and enabled flag. Choose where each run goes:
 
 ## Providers
 
-OpenCode Go is the supported provider. Set the default Go model in Settings;
-choose a model per thread in the composer.
+OpenCode Go is built in. You can add OpenAI-compatible providers (any service or
+local server that speaks Chat Completions) under `"providers"` in the global
+`runtime.jsonc`, which Settings › Permissions opens in your editor:
+
+```jsonc
+"providers": [
+  { "id": "local", "name": "Local models", "base_url": "http://127.0.0.1:8080/v1",
+    "secret": "${LOCAL_KEY}" }
+]
+```
+
+Put the key in Settings › Secrets under the name the provider's `secret` gives
+(never in the file). Without `"models"`, Themis reads the provider's
+`<base_url>/models` list; list them yourself to add context and output limits and
+prices. Settings › Models › Providers shows each provider with its secret and
+status (Connected, Key set, Key rejected, Couldn't reach it, Not set), and the
+default-model picker groups the models of every connected provider by provider.
+A chat on one of these models is named `<id>/<model>` and needs no OpenCode Go
+key. Only your own `runtime.jsonc` can add providers; a project's
+`.themis/config.jsonc` cannot. See [configuration](configuration.md#model-providers-and-per-model-overrides)
+for every field and limit, and for the `"models"` block that caps a model's
+context or output and sets its default effort or thinking.
+
+Set the default model in Settings; choose a model per thread in the composer.
 
 Model resolution order for a run:
 

@@ -2,13 +2,27 @@
 // The desktop agent implements EXACTLY these command names, payloads, and
 // event shapes. UI agents consume them via ./tauri.ts only.
 
-export type ProviderKind = 'go' | 'legacy';
+/** OpenCode Go, plus the providers in runtime.jsonc, whose models are named `<provider>/<model>`. */
+export type ProviderKind = 'go';
 
 export interface GoModel {
   id: string;
   effort_levels: string[];
   /** Set when Themis does not speak the model's protocol; such a model cannot be chosen. */
   unavailable_reason?: string | null;
+  /** The runtime.jsonc provider serving the model (`id` is then `<provider>/<model>`); absent for OpenCode Go. */
+  provider?: string | null;
+}
+
+/** A provider from `providers` in runtime.jsonc (`list_model_providers`); never key values. */
+export interface ModelProvider {
+  id: string;
+  name: string;
+  /** The Settings › Secrets secret holding its key. */
+  secret: string;
+  /** `unchecked`: the key is set and the models are listed in the file. */
+  status: "works" | "rejected" | "unavailable" | "missing" | "unchecked";
+  models: number;
 }
 export type RiskLevel = 'read' | 'write' | 'execute' | 'network' | 'destructive';
 /** `chat` is "Allow in this chat": allow now and for every later run of this chat. */
