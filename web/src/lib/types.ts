@@ -2,13 +2,27 @@
 // The desktop agent implements EXACTLY these command names, payloads, and
 // event shapes. UI agents consume them via ./tauri.ts only.
 
-export type ProviderKind = 'go' | 'legacy';
+/** OpenCode Go, plus the providers in runtime.jsonc, whose models are named `<provider>/<model>`. */
+export type ProviderKind = 'go';
 
 export interface GoModel {
   id: string;
   effort_levels: string[];
   /** Set when Themis does not speak the model's protocol; such a model cannot be chosen. */
   unavailable_reason?: string | null;
+  /** The runtime.jsonc provider serving the model (`id` is then `<provider>/<model>`); absent for OpenCode Go. */
+  provider?: string | null;
+}
+
+/** A provider from `providers` in runtime.jsonc (`list_model_providers`); never key values. */
+export interface ModelProvider {
+  id: string;
+  name: string;
+  /** The Settings › Secrets secret holding its key. */
+  secret: string;
+  /** `unchecked`: the key is set and the models are listed in the file. */
+  status: "works" | "rejected" | "unavailable" | "missing" | "unchecked";
+  models: number;
 }
 export type RiskLevel = 'read' | 'write' | 'execute' | 'network' | 'destructive';
 /** `chat` is "Allow in this chat": allow now and for every later run of this chat. */
@@ -328,7 +342,7 @@ export interface QueuedMessage {
 }
 
 export type GoalStatus = 'running' | 'paused' | 'waiting' | 'stuck' | 'quota' | 'reached';
-export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed';
+export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed' | 'small_window';
 
 /** A chat's goal: one sentence the agent keeps working toward. */
 export interface Goal {
@@ -622,11 +636,9 @@ export interface Settings {
   theme: ThemeMode;
   default_provider: ProviderKind;
   default_model: string;
-  /** Legacy checkpoint interval; retained for compatibility, no runtime effect. */
-  max_turns: number;
   max_total_turns: number;
-  context_token_budget: number;
-  context_messages: number;
+  /** Working-context cap in tokens; 0 is Auto (the model's window, up to the Auto ceiling). */
+  context_token_cap: number;
   approval_timeout_seconds: number;
   confirm_reads: boolean;
   recent_roots: string[];

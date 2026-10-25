@@ -422,10 +422,8 @@ describe("settings", () => {
         theme: "light",
         default_provider: "go",
         default_model: "claude",
-      max_turns: 20,
       max_total_turns: 200,
-      context_token_budget: 16000,
-      context_messages: 20,
+      context_token_cap: 16000,
       approval_timeout_seconds: 300,
       confirm_reads: false,
         recent_roots: ["/repo"],
@@ -438,7 +436,7 @@ describe("settings", () => {
     });
     expect(s.settingsLoaded).toBe(true);
     expect(s.settings.theme).toBe("light");
-    expect(s.settings.max_turns).toBe(20);
+    expect(s.settings.context_token_cap).toBe(16000);
   });
 });
 

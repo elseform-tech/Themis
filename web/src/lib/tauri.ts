@@ -28,6 +28,7 @@ import type {
   ReviewStatus,
   Skill,
   SkillInput,
+  ModelProvider,
   ProviderKind,
   RunHandle,
   SecretStatus,
@@ -82,6 +83,7 @@ export function renameThread(threadId: string, title: string): Promise<ThreadInf
 
 export function stopThread(threadId: string): Promise<void> { return invoke("stop_thread", { threadId }); }
 export function listGoModels(): Promise<GoModel[]> { return invoke("list_go_models"); }
+export function listModelProviders(): Promise<ModelProvider[]> { return invoke("list_model_providers"); }
 
 export function createProject(name: string): Promise<ProjectInfo> {
   return invoke("create_project", { name });

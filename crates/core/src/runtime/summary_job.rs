@@ -368,7 +368,7 @@ async fn stage_with_legacy(
     purpose: Purpose,
 ) -> anyhow::Result<String> {
     cache_directory(cache)?;
-    let model = crate::providers::summary_model(llm.model());
+    let model = &crate::providers::summary_model(llm.model());
     let input = stage_fingerprint(request, model, allowance, purpose)?;
     let path = cache.join(format!("{job}-{index}-{input}.json"));
     if let Some(text) = cached_stage(&path, &input, allowance, purpose)? {
@@ -478,11 +478,11 @@ pub(super) async fn summarize_for(
     let job = fingerprint(&serde_json::to_vec(&(
         VERSION,
         purpose,
-        crate::providers::summary_model(llm.model()),
+        &crate::providers::summary_model(llm.model()),
         budget,
         allowance,
         crate::providers::bounded_output_limit(
-            crate::providers::summary_model(llm.model()),
+            &crate::providers::summary_model(llm.model()),
             allowance,
         ),
         semantic_policy(&config)?,
@@ -493,11 +493,11 @@ pub(super) async fn summarize_for(
         Some(fingerprint(&serde_json::to_vec(&(
             VERSION,
             purpose,
-            crate::providers::summary_model(llm.model()),
+            &crate::providers::summary_model(llm.model()),
             budget,
             allowance,
             crate::providers::bounded_output_limit(
-                crate::providers::summary_model(llm.model()),
+                &crate::providers::summary_model(llm.model()),
                 allowance,
             ),
             legacy_policy(&config),
@@ -734,11 +734,11 @@ mod tests {
             "[{},{},{},{},{},{},{},{},{}]",
             serde_json::to_string(VERSION).unwrap(),
             serde_json::to_string(&Purpose::Document).unwrap(),
-            serde_json::to_string(crate::providers::summary_model(llm.model())).unwrap(),
+            serde_json::to_string(&crate::providers::summary_model(llm.model())).unwrap(),
             budget,
             allowance,
             serde_json::to_string(&crate::providers::bounded_output_limit(
-                crate::providers::summary_model(llm.model()),
+                &crate::providers::summary_model(llm.model()),
                 allowance
             ))
             .unwrap(),
@@ -905,7 +905,7 @@ mod tests {
         std::fs::create_dir(&alias).unwrap();
         let input = stage_fingerprint(
             &request,
-            crate::providers::summary_model(llm.model()),
+            &crate::providers::summary_model(llm.model()),
             256,
             Purpose::Context,
         )

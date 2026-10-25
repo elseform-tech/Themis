@@ -74,8 +74,9 @@ whose secrets are missing shows **Secret needed** with **Add secret**, which ope
 on that name; every missing name is reported at once. Settings › Secrets lists each saved secret and each secret
 an installed server reads, with the servers that use it and its state (Saved, From environment,
 Missing), and offers Add or Replace (a masked field), Remove, and a new name. The secret
-OpenCode Go uses (Settings › Models › Connections, `OPENCODE_KEY` by default) is always
-listed with "OpenCode Go" among its users, so it works in MCP configuration as `${NAME}` too. Values are never
+OpenCode Go uses (Settings › Models › Providers, `OPENCODE_KEY` by default) is always
+listed with "OpenCode Go" among its users, and the secret of each provider in `runtime.jsonc`
+with that provider's name, so it works in MCP configuration as `${NAME}` too. Values are never
 returned to the UI or written to logs; a server's stderr is redacted of the keys it was given.
 Names are letters, digits and `_` (up to 128); values are 1–4096 printable characters without
 spaces. The model provider key stays in Settings › Models.

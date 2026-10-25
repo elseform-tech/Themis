@@ -1135,3 +1135,67 @@ async fn a_chat_wide_error_holds_one_message_and_keeps_the_rest_in_order() {
     assert_eq!(notes, 1, "one note for one cause");
     settle(&state, &thread).await;
 }
+
+/// A goal whose context window is small says so once, on its first turn,
+/// and still runs to the end; a later turn does not repeat the note.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_goal_with_a_small_context_window_warns_once() {
+    let server = MockServer::start().await;
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            if is_check(&body(request)) {
+                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
+                    reply(r#"{"verdict":"not_yet","reason":"One more step.","progress":"step 1"}"#)
+                } else {
+                    reply(r#"{"verdict":"reached","reason":"Done.","progress":"step 2"}"#)
+                };
+            }
+            reply("Did a step.")
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    // The test endpoint reports no window, so the configured cap is the window.
+    state
+        .update_settings(themis_desktop::types::SettingsPatch {
+            context_token_cap: Some(64_000),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let (sink, mut rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(sink.clone(), thread.clone(), "/goal take two steps".into())
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |event| {
+        matches!(
+            event,
+            ThreadEvent::GoalNote {
+                outcome: GoalNoteKind::Reached,
+                ..
+            }
+        )
+    })
+    .await;
+    let warnings: Vec<_> = seen
+        .iter()
+        .filter_map(|event| match event {
+            ThreadEvent::GoalNote {
+                outcome: GoalNoteKind::SmallWindow,
+                reason,
+            } => Some(reason.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        warnings,
+        ["Context window is small (64,000 tokens); long goals may stall."]
+    );
+    assert_eq!(state.goal_for(&thread).unwrap().turns, 2);
+    settle(&state, &thread).await;
+}

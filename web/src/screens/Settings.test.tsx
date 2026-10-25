@@ -23,6 +23,7 @@ vi.mock("../lib/tauri", () => ({
   updateSettings: vi.fn(async (patch: object) => ({ ...settings, ...patch })),
   listGoModels: vi.fn(async () => [{ id: "muse-spark-1.3-contributor", name: "Muse Spark" }]),
   checkGoKey: vi.fn(async () => ({ state: "works", secret: "OPENCODE_KEY" })),
+  listModelProviders: vi.fn(async () => []),
   listKeys: vi.fn(async () => [
     { name: "OPENCODE_KEY", saved: true, environment: false, used_by: ["OpenCode Go"] },
     { name: "WORK_GO_KEY", saved: true, environment: false, used_by: [] },
@@ -31,15 +32,20 @@ vi.mock("../lib/tauri", () => ({
 
 beforeEach(() => {
   dispatch.mockClear(); goKeyCheck = "works";
-  vi.mocked(bridge.checkGoKey).mockClear(); vi.mocked(bridge.setSecret).mockClear(); vi.mocked(bridge.listGoModels).mockClear();
+  vi.mocked(bridge.checkGoKey).mockClear(); vi.mocked(bridge.setSecret).mockClear(); vi.mocked(bridge.listGoModels).mockClear(); vi.mocked(bridge.listModelProviders).mockClear();
 });
 afterEach(cleanup);
+
+/** A provider's row in Settings › Models (the model picker's option groups share its name). */
+function providerRow(name: string): HTMLElement {
+  return screen.getAllByRole("group", { name }).find(element => element.tagName === "DIV")!;
+}
 
 describe("Settings › Models", () => {
   it("shows the connection first, checks the key with OpenCode, and offers the models", async () => {
     await act(async () => { render(<SettingsScreen />); });
     const groups = [...document.querySelectorAll(".themis-settings-subtitle")].map(node => node.textContent);
-    expect(groups).toEqual(["Connection", "Default model"]);
+    expect(groups).toEqual(["Providers", "Default model"]);
     expect(screen.getByText("Connected")).toBeInTheDocument();
     expect(bridge.checkGoKey).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith({ type: "provider/checked", state: "works" });
@@ -88,9 +94,82 @@ describe("Settings › Models", () => {
     expect(dispatch).toHaveBeenCalledWith({ type: "settings/patched", settings: expect.objectContaining({ go_secret: "WORK_GO_KEY" }) });
   });
 
+  it("lists the providers from runtime.jsonc with their secret and status, and their models by provider", async () => {
+    vi.mocked(bridge.listModelProviders).mockResolvedValueOnce([
+      { id: "local", name: "Local server", secret: "LOCAL_KEY", status: "works", models: 1 },
+      { id: "spare", name: "Spare", secret: "SPARE_KEY", status: "missing", models: 0 },
+    ]);
+    vi.mocked(bridge.listGoModels).mockResolvedValueOnce([
+      { id: "muse-spark-1.3-contributor", effort_levels: [] },
+      { id: "local/qwen/coder", effort_levels: [], provider: "local" },
+    ]);
+    await act(async () => { render(<SettingsScreen />); });
+    const local = providerRow("Local server");
+    expect(local).toHaveTextContent("LOCAL_KEY");
+    expect(within(local).getByRole("status")).toHaveTextContent("Connected");
+    expect(within(providerRow("Spare")).getByRole("status")).toHaveTextContent("Not set");
+    const picker = screen.getByRole("combobox", { name: "Model" });
+    const groups = [...picker.querySelectorAll("optgroup")].map(group => [group.label, [...group.querySelectorAll("option")].map(option => option.textContent)]);
+    expect(groups).toEqual([["OpenCode Go", ["muse-spark-1.3-contributor"]], ["Local server", ["qwen/coder"]]]);
+    await act(async () => { fireEvent.change(picker, { target: { value: "local/qwen/coder" } }); });
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ default_model: "local/qwen/coder" });
+  });
+
+  it("offers a connected provider's models while OpenCode rejects its key", async () => {
+    goKeyCheck = "rejected";
+    vi.mocked(bridge.checkGoKey).mockResolvedValueOnce({ state: "rejected", secret: "OPENCODE_KEY" });
+    vi.mocked(bridge.listModelProviders).mockResolvedValueOnce([{ id: "local", name: "Local server", secret: "LOCAL_KEY", status: "unchecked", models: 1 }]);
+    vi.mocked(bridge.listGoModels).mockResolvedValueOnce([{ id: "local/m", effort_levels: [], provider: "local" }]);
+    await act(async () => { render(<SettingsScreen />); });
+    expect(within(providerRow("Local server")).getByRole("status")).toHaveTextContent("Key set");
+    expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled();
+    expect(bridge.listGoModels).toHaveBeenCalled();
+  });
+
   it("names the section Secrets", async () => {
     await act(async () => { render(<SettingsScreen />); });
     expect(screen.getByRole("button", { name: "Secrets" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Keys" })).toBeNull();
+  });
+});
+
+describe("Settings › Advanced › Context tokens", () => {
+  afterEach(() => { settings.context_token_cap = 0; vi.mocked(bridge.updateSettings).mockClear(); });
+
+  async function openAdvanced() {
+    await act(async () => { render(<SettingsScreen />); });
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  }
+
+  it("is Auto by default, with no number and no recent-messages control", async () => {
+    await openAdvanced();
+    expect(screen.getByRole("combobox", { name: "Context tokens" })).toHaveValue("auto");
+    expect(screen.queryByLabelText("Context token cap")).toBeNull();
+    expect(screen.queryByLabelText("Recent messages")).toBeNull();
+    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Context tokens" }), { target: { value: "custom" } }); });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ context_token_cap: 200000 });
+  });
+
+  it("shows a custom cap, saves an edited number, and goes back to Auto", async () => {
+    settings.context_token_cap = 64000;
+    await openAdvanced();
+    const cap = screen.getByLabelText("Context token cap");
+    expect(cap).toHaveValue(64000);
+    expect(cap).toHaveAttribute("max", "1000000");
+    fireEvent.change(cap, { target: { value: "500000" } });
+    await act(async () => { fireEvent.blur(cap); });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ context_token_cap: 500000 });
+    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Context tokens" }), { target: { value: "auto" } }); });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ context_token_cap: 0 });
+  });
+
+  it("names the field in a rejected cap's error", async () => {
+    settings.context_token_cap = 64000;
+    vi.mocked(bridge.updateSettings).mockRejectedValueOnce("context_token_cap must be Auto or between 2000 and 1000000");
+    await openAdvanced();
+    const cap = screen.getByLabelText("Context token cap");
+    fireEvent.change(cap, { target: { value: "10" } });
+    await act(async () => { fireEvent.blur(cap); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Context tokens must be Auto or between 2000 and 1000000");
   });
 });

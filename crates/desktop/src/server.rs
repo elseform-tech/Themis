@@ -779,6 +779,7 @@ async fn dispatch_command(
         ),
         "stop_thread" => done!(state.stop_thread(arg(&args, "threadId")?).await),
         "list_go_models" => output!(state.list_go_models().await?),
+        "list_model_providers" => output!(state.list_model_providers().await?),
         "create_thread" => output!(
             state
                 .create_thread(

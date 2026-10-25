@@ -169,6 +169,11 @@ class TaskTest(unittest.TestCase):
             self.assertEqual(make_task(job, "squeezed")["budget"], 32_000)
             self.assertTrue(make_task(job, "normal")["allow_all"])
 
+    def test_a_budget_arm_sets_that_budget_with_default_recent_messages(self):
+        task = make_task("sheet-long", "b1000000")
+        self.assertEqual((task["budget"], task["recent_messages"]), (1_000_000, 20))
+        self.assertEqual(task["name"], "sheet-long-b1000000")
+
 
 class FollowupTests(unittest.TestCase):
     def turns(self, *turns):

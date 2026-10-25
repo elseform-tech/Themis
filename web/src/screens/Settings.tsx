@@ -16,8 +16,10 @@ import { ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton } from "./Set
 
 const SECTIONS = ["General", "Appearance", "Models", "Usage", "Secrets", "Permissions", "Browser", "Web", "Advanced"];
 /** Backend field names in validation messages, as the labels the person sees. */
-const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_budget", "Context tokens"], ["context_messages", "Recent messages"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
-type NumberSetting = "max_total_turns" | "context_token_budget" | "context_messages" | "concurrency_limit" | "approval_timeout_seconds";
+const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_cap", "Context tokens"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
+type NumberSetting = "max_total_turns" | "context_token_cap" | "concurrency_limit" | "approval_timeout_seconds";
+/** The cap Custom starts from: the Auto ceiling, so switching changes nothing until edited. */
+const CUSTOM_CONTEXT_START = 200000;
 
 /** Pure rendering of one update status (null = never checked). */
 export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
@@ -123,9 +125,23 @@ export function SettingsScreen() {
     );
   }
 
+  const numberInput = (key: NumberSetting, label: string, min: number, max: number) =>
+    <input className="themis-settings-number" aria-label={label} type="number" min={min} max={max} value={form[key]} onChange={event => setForm(f => ({ ...f, [key]: Number(event.target.value) }))} onBlur={() => { if (form[key] !== state.settings[key]) void save({ [key]: form[key] }); }} />;
   const number = (key: NumberSetting, label: string, min: number, max: number) => <label className="themis-settings-control">{label}
-    <input className="themis-settings-number" aria-label={label} type="number" min={min} max={max} value={form[key]} onChange={event => setForm(f => ({ ...f, [key]: Number(event.target.value) }))} onBlur={() => { if (form[key] !== state.settings[key]) void save({ [key]: form[key] }); }} />
+    {numberInput(key, label, min, max)}
   </label>;
+  // Auto (0) follows the model's context window; Custom caps it.
+  const customContext = state.settings.context_token_cap !== 0;
+  const contextTokens = <div className="themis-settings-control">
+    <span title="Auto uses the model's context window">Context tokens</span>
+    <span className="themis-settings-pair">
+      {customContext && numberInput("context_token_cap", "Context token cap", 2000, 1000000)}
+      <select aria-label="Context tokens" value={customContext ? "custom" : "auto"} onChange={event => void save({ context_token_cap: event.target.value === "auto" ? 0 : CUSTOM_CONTEXT_START })}>
+        <option value="auto">Auto</option>
+        <option value="custom">Custom</option>
+      </select>
+    </span>
+  </div>;
 
   return (
     <div className="themis-settings">
@@ -156,10 +172,9 @@ export function SettingsScreen() {
       {section === "Secrets" && <SecretsSettings focusKey={state.settingsFocus?.key} />}
       {section === "Browser" && <BrowserSettingsSection />}
       {section === "Web" && <WebSettingsSection />}
-      {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
+      {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
         {number("max_total_turns", "Turn limit", 1, 2000)}
-        {number("context_token_budget", "Context tokens", 2000, 256000)}
-        {number("context_messages", "Recent messages", 1, 100)}
+        {contextTokens}
         {number("concurrency_limit", "Parallel runs", 1, 16)}
       </SettingsGroup>}
       </fieldset>

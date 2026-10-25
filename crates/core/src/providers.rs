@@ -192,6 +192,23 @@ pub struct ProviderConfig {
     pub reasoning_effort: Option<String>,
     /// Stable OpenCode routing session for this conversation.
     pub session_id: Option<String>,
+    /// A provider from `providers` in runtime.jsonc instead of OpenCode Go; the model is
+    /// then `<provider id>/<its model id>`.
+    pub endpoint: Option<CustomEndpoint>,
+    /// The provider that writes summaries when `compaction.summary_model` is on another
+    /// provider than the chat's model (it needs that provider's key).
+    pub summary: Option<Box<ProviderConfig>>,
+}
+
+/// An OpenAI-compatible provider from `providers` in runtime.jsonc.
+#[derive(Debug, Clone)]
+pub struct CustomEndpoint {
+    /// The provider's `id`; models are qualified as `<id>/<model>`.
+    pub id: String,
+    /// Its display name, used in errors.
+    pub name: String,
+    /// The API root; Chat Completions requests go to `{base_url}/chat/completions`.
+    pub base_url: String,
 }
 
 impl ProviderConfig {
@@ -204,6 +221,8 @@ impl ProviderConfig {
             base_url: None,
             reasoning_effort: None,
             session_id: None,
+            endpoint: None,
+            summary: None,
         }
     }
 
@@ -282,7 +301,12 @@ fn go_session_id() -> String {
 /// and then [`GO_DEFAULT_SESSION`].
 #[derive(Clone)]
 pub struct CompatibleProvider {
-    provider_name: &'static str,
+    provider_name: Arc<str>,
+    /// `Some(id)` for a provider from `providers`: Chat Completions only, the model sent
+    /// without its `<id>/` prefix, and no OpenCode-specific fields or headers.
+    custom: Option<String>,
+    /// Writes summaries when the configured summary model is on another provider.
+    summary_provider: Option<Arc<CompatibleProvider>>,
     api_key: String,
     base_url: String,
     /// `base_url` was set explicitly (a test server): every protocol is served from it.
@@ -488,6 +512,13 @@ impl ChatEventStream {
 
     fn finish_choice(&mut self, reason: &str) -> Result<(), LLMError> {
         if reason == "length" {
+            // Eval-only: which calls the cut-off reply was writing, by name and size.
+            #[cfg(feature = "eval")]
+            crate::runtime::eval_note_failure(serde_json::json!({
+                "cut_off_calls": self.calls.values()
+                    .map(|call| serde_json::json!({"tool": call.function.name, "argument_chars": call.function.arguments.len()}))
+                    .collect::<Vec<_>>(),
+            }));
             return Err(LLMError::Generic(
                 "Provider response was truncated".to_owned(),
             ));
@@ -530,7 +561,9 @@ impl CompatibleProvider {
             .filter(|id| !id.trim().is_empty())
             .unwrap_or_else(go_session_id);
         Self {
-            provider_name: GO_PROVIDER_NAME,
+            provider_name: GO_PROVIDER_NAME.into(),
+            custom: None,
+            summary_provider: None,
             api_key,
             base_override: base_url.is_some(),
             base_url: normalize_base(base_url.as_deref().unwrap_or(GO_BASE_URL)),
@@ -539,6 +572,32 @@ impl CompatibleProvider {
             client: http_client(),
             reasoning_effort: None,
         }
+    }
+
+    /// Builds the provider for an OpenAI-compatible endpoint from `providers`: `model` is the
+    /// qualified `<id>/<model>`, sent as `<model>`.
+    pub fn custom(endpoint: &CustomEndpoint, api_key: String, model: String) -> Self {
+        Self {
+            provider_name: endpoint.name.as_str().into(),
+            custom: Some(endpoint.id.clone()),
+            summary_provider: None,
+            api_key,
+            base_override: true,
+            base_url: normalize_base(&endpoint.base_url),
+            model,
+            extra_headers: Vec::new(),
+            client: http_client(),
+            reasoning_effort: None,
+        }
+    }
+
+    /// The model id the provider expects: a configured provider's without its `<id>/`.
+    fn wire_model(&self) -> &str {
+        self.custom
+            .as_deref()
+            .and_then(|id| self.model.strip_prefix(id))
+            .and_then(|rest| rest.strip_prefix('/'))
+            .unwrap_or(&self.model)
     }
 
     /// Adds an extra header sent on every request (e.g. per-thread overrides).
@@ -557,18 +616,15 @@ impl CompatibleProvider {
         &self.base_url
     }
 
-    /// The stable provider id the usage ledger records (`opencode-go` for Go).
-    pub fn provider_id(&self) -> &'static str {
-        if self.provider_name == GO_PROVIDER_NAME {
-            GO_PROVIDER_ID
-        } else {
-            self.provider_name
-        }
+    /// The stable provider id the usage ledger records: `opencode-go` for Go, else the
+    /// configured provider's `id` from runtime.jsonc.
+    pub fn provider_id(&self) -> &str {
+        self.custom.as_deref().unwrap_or(GO_PROVIDER_ID)
     }
 
     /// The wire protocol for this provider's model (see [`catalog::route`]).
     fn protocol(&self) -> Protocol {
-        if self.provider_name == GO_PROVIDER_NAME {
+        if self.custom.is_none() {
             route(&self.model).0
         } else {
             Protocol::ChatCompletions
@@ -623,7 +679,7 @@ impl CompatibleProvider {
             messages_body(&self.model, messages, tools, stream)?
         } else {
             serde_json::to_value(WireChatRequest {
-                model: &self.model,
+                model: self.wire_model(),
                 messages: to_wire_messages(messages)?,
                 stream,
                 reasoning_effort: self.reasoning_effort.as_deref(),
@@ -643,7 +699,8 @@ impl CompatibleProvider {
         if stream && !self.uses_messages() && !self.uses_responses() {
             body["stream_options"] = serde_json::json!({"include_usage":true});
         }
-        if COMPACTION_REQUEST.try_with(|_| ()).is_ok() {
+        // A configured provider gets no OpenCode thinking field it may not know.
+        if COMPACTION_REQUEST.try_with(|_| ()).is_ok() && self.custom.is_none() {
             if self.uses_responses() {
                 body["reasoning"] = serde_json::json!({"effort":summary_effort(&self.model)});
             } else {
@@ -669,19 +726,28 @@ impl CompatibleProvider {
         // Thinking on by default for answers (summaries keep it off, above).
         if COMPACTION_REQUEST.try_with(|_| ()).is_err() {
             let thinking = thinking_default(&self.model);
-            if let (None, Some(effort), false) =
-                (&self.reasoning_effort, thinking.effort, thinking.switch_on)
-            {
+            if let (None, Some(effort), false) = (
+                &self.reasoning_effort,
+                thinking.effort.as_deref(),
+                thinking.switch_on,
+            ) {
                 if self.uses_responses() {
                     body["reasoning"] = serde_json::json!({"effort":effort});
                 } else if !self.uses_messages() {
                     body["reasoning_effort"] = effort.into();
                 }
             }
-            if thinking.switch_on && self.model.starts_with("claude-") {
+            if thinking.switch_off && !self.uses_responses() {
+                // The person turned this model's thinking switch off (`models` override).
+                body["thinking"] = serde_json::json!({"type":"disabled"});
+            } else if thinking.switch_on && self.model.starts_with("claude-") {
                 // Claude rejects a fixed budget: adaptive thinking, steered by effort.
                 body["thinking"] = serde_json::json!({"type":"adaptive"});
-                if let Some(effort) = self.reasoning_effort.as_deref().or(thinking.effort) {
+                if let Some(effort) = self
+                    .reasoning_effort
+                    .as_deref()
+                    .or(thinking.effort.as_deref())
+                {
                     body["output_config"] = serde_json::json!({"effort":effort});
                 }
             } else if thinking.switch_on {
@@ -825,7 +891,7 @@ impl CompatibleProvider {
             .send()
             .await
             .map_err(|err| transport_error("chat request failed", err))?;
-        let response = ensure_success(response, self.provider_name).await?;
+        let response = ensure_success(response, &self.provider_name).await?;
         let raw = response
             .text()
             .await
@@ -926,11 +992,19 @@ impl ChatProvider for CompatibleProvider {
         sampling: Option<&SamplingOverrides>,
     ) -> Result<Box<dyn ChatResponse>, LLMError> {
         // ponytail: keep only verified off controls; use the known no-thinking Go
-        // summarizer for other models until their disable capability is verified.
-        let summary_provider = COMPACTION_REQUEST.try_with(|_| ()).ok().map(|()| Self {
-            model: summary_model(&self.model).to_owned(),
-            reasoning_effort: None,
-            ..self.clone()
+        // summarizer for other models until their disable capability is verified. A summary
+        // model on another provider is called with that provider (and its key).
+        let summary_provider = COMPACTION_REQUEST.try_with(|_| ()).ok().map(|()| {
+            let model = summary_model(&self.model);
+            match &self.summary_provider {
+                Some(other) if other.model == model => Self::clone(other),
+                _ => Self {
+                    model,
+                    reasoning_effort: None,
+                    summary_provider: None,
+                    ..self.clone()
+                },
+            }
         });
         let Some(summary) = summary_provider else {
             return self.chat_once(messages, tools, sampling).await;
@@ -984,7 +1058,7 @@ impl ChatProvider for CompatibleProvider {
             .send()
             .await
             .map_err(|error| transport_error("stream request failed", error))?;
-        let response = ensure_success(response, self.provider_name).await?;
+        let response = ensure_success(response, &self.provider_name).await?;
         // Some compatible endpoints return a complete JSON response despite stream=true.
         if !response
             .headers()
@@ -1077,7 +1151,7 @@ impl CompletionProvider for CompatibleProvider {
         };
         let body = WireChatRequest {
             reasoning_effort: self.reasoning_effort.as_deref(),
-            model: &self.model,
+            model: self.wire_model(),
             messages: to_wire_messages(std::slice::from_ref(&message))?,
             stream: false,
             max_tokens: request.max_tokens,
@@ -1090,7 +1164,7 @@ impl CompletionProvider for CompatibleProvider {
             .send()
             .await
             .map_err(|err| transport_error("completion request failed", err))?;
-        let response = ensure_success(response, self.provider_name).await?;
+        let response = ensure_success(response, &self.provider_name).await?;
         let raw = response
             .text()
             .await
@@ -1135,7 +1209,7 @@ impl EmbeddingProvider for CompatibleProvider {
             )));
         }
         let body = serde_json::json!({
-            "model": self.model,
+            "model": self.wire_model(),
             "input": input,
         });
         let response = self
@@ -1144,7 +1218,7 @@ impl EmbeddingProvider for CompatibleProvider {
             .send()
             .await
             .map_err(|err| transport_error("embedding request failed", err))?;
-        let response = ensure_success(response, self.provider_name).await?;
+        let response = ensure_success(response, &self.provider_name).await?;
         let raw = response
             .text()
             .await
@@ -1181,18 +1255,29 @@ fn require_api_key(config: &ProviderConfig) -> Result<()> {
     Ok(())
 }
 
-/// Resolves the OpenCode Go backend for the agent runtime.
+/// Resolves the provider for the agent runtime: OpenCode Go, or a provider from
+/// `providers` when the config names its endpoint.
 pub async fn resolve(config: &ProviderConfig) -> Result<Arc<dyn LLMProvider>> {
+    Ok(Arc::new(compatible(config)?))
+}
+
+fn compatible(config: &ProviderConfig) -> Result<CompatibleProvider> {
     require_api_key(config)?;
     let model = effective_model(config).unwrap_or_else(|| GO_DEFAULT_MODEL.to_owned());
-    let mut provider = CompatibleProvider::go(
-        config.api_key.clone(),
-        model,
-        effective_base_url(config),
-        config.session_id.clone(),
-    );
+    let mut provider = match &config.endpoint {
+        Some(endpoint) => CompatibleProvider::custom(endpoint, config.api_key.clone(), model),
+        None => CompatibleProvider::go(
+            config.api_key.clone(),
+            model,
+            effective_base_url(config),
+            config.session_id.clone(),
+        ),
+    };
     provider.reasoning_effort = config.reasoning_effort.clone();
-    Ok(Arc::new(provider))
+    if let Some(summary) = &config.summary {
+        provider.summary_provider = Some(Arc::new(compatible(summary)?));
+    }
+    Ok(provider)
 }
 
 /// Entry points for the `fuzz/` cargo-fuzz targets; not a stable API.

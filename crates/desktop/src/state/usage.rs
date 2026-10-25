@@ -41,7 +41,9 @@ impl AppState {
                 model.price.clone().map(|price| {
                     (
                         (
-                            themis_core::providers::GO_PROVIDER_ID.to_owned(),
+                            model.provider.clone().unwrap_or_else(|| {
+                                themis_core::providers::GO_PROVIDER_ID.to_owned()
+                            }),
                             model.id.clone(),
                         ),
                         price,
