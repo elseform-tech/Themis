@@ -489,6 +489,20 @@ export function applyThreadEvent(
       return { ...state, goals: { ...state.goals, [threadId]: event.goal } };
     case "goal_note":
       return appendMessage(state, threadId, { id: newId("msg"), role: "system", text: event.reason, runId, goalNote: { outcome: event.outcome, reason: event.reason } });
+    case "question_asked": {
+      // A question asked again on its open topic updates its box where it was first asked.
+      const rows = state.messages[threadId] ?? [];
+      if (rows.some(row => row.question?.id === event.question.id)) {
+        const updated = rows.map(row => row.question?.id === event.question.id ? { ...row, text: event.question.question, question: { ...event.question, answer: row.question.answer ?? event.question.answer } } : row);
+        return { ...state, messages: { ...state.messages, [threadId]: updated } };
+      }
+      return appendMessage(state, threadId, { id: `question-${event.question.id}`, role: "system", text: event.question.question, runId: event.question.run_id, question: event.question });
+    }
+    case "question_answered": {
+      const rows = state.messages[threadId] ?? [];
+      const updated = rows.map(row => row.question?.id === event.id ? { ...row, question: { ...row.question, answer: event.answer } } : row);
+      return { ...state, messages: { ...state.messages, [threadId]: updated } };
+    }
     case "context_budget": {
       const rows = state.messages[threadId] ?? [];
       const last = rows[rows.length - 1];

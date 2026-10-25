@@ -358,6 +358,15 @@ impl AppState {
             thread_id: thread_id.to_owned(),
             run: check_approval.clone(),
         }));
+        let end_request = themis_core::runtime::EndRequest::default();
+        tools.push(Box::new(super::question_tool::QuestionTool {
+            state: self.clone(),
+            sink: Arc::clone(sink),
+            thread_id: thread_id.to_owned(),
+            run_id: run_id.to_owned(),
+            run: check_approval.clone(),
+            end: Arc::clone(&end_request),
+        }));
         tools.push(Box::new(super::media_tool::AttachFileTool {
             state: self.clone(),
             sink: Arc::clone(sink),
@@ -680,7 +689,7 @@ impl AppState {
                                                 }
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_steer_inbox(steer_inbox, Box::pin(run_task_with_evidence(
+                                                themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_end_request(end_request, themis_core::runtime::with_steer_inbox(steer_inbox, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 if yolo {
                                                     tools
@@ -697,7 +706,7 @@ impl AppState {
                                                 stopped,
                                                 skill_catalog,
                                                 Some(evidence_directory),
-                                            )))).await
+                                            ))))).await
                                             }))
                                         },
                                     ),

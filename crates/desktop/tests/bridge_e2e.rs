@@ -118,6 +118,8 @@ fn event_kinds(events: &[ThreadEvent]) -> Vec<&'static str> {
             ThreadEvent::QueueChanged { .. } => "queue_changed",
             ThreadEvent::GoalChanged { .. } => "goal_changed",
             ThreadEvent::GoalNote { .. } => "goal_note",
+            ThreadEvent::QuestionAsked { .. } => "question_asked",
+            ThreadEvent::QuestionAnswered { .. } => "question_answered",
         })
         .collect()
 }

@@ -99,7 +99,7 @@ impl AppState {
     }
 
     /// Changes the chat's queue under one lock and announces the result.
-    fn edit_queue<T>(
+    pub(super) fn edit_queue<T>(
         &self,
         sink: &dyn EventSink,
         thread_id: &str,

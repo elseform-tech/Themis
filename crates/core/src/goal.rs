@@ -71,7 +71,8 @@ pub enum Verdict {
     Reached,
     /// Not yet; the next turn starts.
     NotYet,
-    /// The goal cannot be reached as written; it waits for an edit.
+    /// Older checks could call a goal unreachable; a goal never gives up, so
+    /// this counts as not yet.
     Unreachable,
     /// The turn asked the user something only they can decide.
     NeedsUser,
@@ -81,7 +82,7 @@ pub enum Verdict {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalVerdict {
     pub verdict: Verdict,
-    /// One plain sentence, shown in the chat.
+    /// One plain sentence, passed to the agent's next turn.
     pub reason: String,
     /// One short measured fact (for example `p95 238 ms`), shown on the goal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -214,6 +215,20 @@ pub fn turn_message(turn: u32, goal: &str, note: &str) -> String {
     )
 }
 
+/// The message that has the agent tell the user the goal is reached, as turn
+/// `turn`; `reason` is the check's.
+pub fn reached_message(turn: u32, goal: &str, reason: &str) -> String {
+    crate::prompts::fill(
+        crate::prompts::GOAL_REACHED_TURN,
+        &[
+            ("goal_turn_marker", GOAL_TURN_MARKER),
+            ("turn", &turn.to_string()),
+            ("goal", goal),
+            ("reason", reason),
+        ],
+    )
+}
+
 /// The turn number in a goal-turn message, if `text` is one.
 pub fn turn_number(text: &str) -> Option<u32> {
     let rest = text.strip_prefix(GOAL_TURN_MARKER)?.trim_start();
@@ -337,6 +352,10 @@ mod tests {
     fn turn_messages_carry_their_number() {
         let text = turn_message(24, "speed up p95", "p95 still 238 ms");
         assert_eq!(turn_number(&text), Some(24));
+        assert_eq!(
+            turn_number(&reached_message(25, "speed up p95", "p95 is 180 ms")),
+            Some(25)
+        );
         assert_eq!(turn_number("Turn 3 of mine"), None);
     }
 

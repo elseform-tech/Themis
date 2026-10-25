@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { usePopoverDismissal } from "./lib/dismiss";
-import { ApprovalDialog, Button, Toasts } from "./components";
-import type { ApprovalDecision } from "./lib/types";
-import { approveAction } from "./lib/tauri";
+import { Button, Toasts } from "./components";
 import {
   AppProvider,
   describeError,
@@ -43,7 +41,6 @@ function Shell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- react only to the panel opening or closing
   }, [state.diffPanelOpen]);
   useEffect(() => { applyAppearance(state.settings); }, [state.settings]);
-  const headApproval = state.approvals[0];
 
   // Global keys: Cmd/Ctrl+K toggles the palette, Esc closes the topmost layer.
   useEffect(() => {
@@ -71,18 +68,6 @@ function Shell() {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [dispatch, state.paletteOpen, state.projectDialogOpen, state.diffPanelOpen]);
-
-  async function decideApproval(decision: ApprovalDecision) {
-    if (headApproval === undefined) return;
-    const { thread_id, approval_id } = headApproval;
-    try {
-      await approveAction(thread_id, approval_id, decision);
-      dispatch({ type: "approval/dequeued", approvalId: approval_id });
-    } catch (error: unknown) {
-      toast(dispatch, `Approval failed: ${describeError(error)}`, "danger");
-    }
-
-  }
 
   const threadId = state.activeThreadId;
   const messages = threadId ? state.messages[threadId] ?? [] : [];
@@ -115,15 +100,6 @@ function Shell() {
         {companion.enabled && !desktopCompanion && <KnightCompanion preferences={companion} onChange={updateCompanion} mood={mood} />}
       </main>
       </div>
-      {headApproval !== undefined && (
-        <ApprovalDialog
-          request={headApproval}
-          // An MCP tool's readable name ("files · read text file"), as the step list shows it.
-          label={[...(state.traces[headApproval.thread_id] ?? [])].reverse().find(entry => entry.tool === headApproval.tool && entry.label)?.label}
-          open
-          onDecide={(decision) => void decideApproval(decision)}
-        />
-      )}
       <Palette />
       <Toasts
         toasts={state.toasts}

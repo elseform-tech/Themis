@@ -905,8 +905,9 @@ async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
     let state = AppState::new_for_test(data.path().join("settings.json"));
     state
         .update_settings(themis_desktop::types::SettingsPatch {
-            // Leave room for tool schemas; the oversized active request still triggers compaction.
-            context_token_cap: Some(10000),
+            // Leave room for tool schemas (they grow with each built-in tool); the
+            // oversized active request still triggers compaction.
+            context_token_cap: Some(12000),
             ..Default::default()
         })
         .await
