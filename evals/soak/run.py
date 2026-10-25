@@ -24,6 +24,7 @@ import time
 from evals.kit import app, git
 from evals.kit import spend as spend_kit
 from evals.kit.env import isolated_env
+from evals.kit.errors import classify_error, is_infrastructure
 
 from .generate import generate, material_tokens, messages
 
@@ -206,6 +207,8 @@ class Soak:
         end = self.wait_run(handle["run_id"], max(1, deadline - time.monotonic()))
         if end is None:
             return self._ended(deadline, "first message never finished")
+        if end.get("kind") == "failed" and is_infrastructure(classify_error(end.get("error"))):
+            return {"reason": "infrastructure", "detail": f"first message: {classify_error(end.get('error'))}"}
         handle, error = self.call("send_message", {"threadId": self.thread, "text": script["goal"]})
         if error or not isinstance(handle, dict):
             return {"reason": "crash", "detail": f"/goal: {error}"}
