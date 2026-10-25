@@ -470,6 +470,16 @@ impl Default for CompactionConfig {
         }
     }
 }
+/// Goal mode (`goal`); file only.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GoalConfig {
+    /// The model that checks each goal turn; absent, the chat's own model. Any
+    /// model a connected provider offers (`<provider>/<id>` for one from `providers`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_model: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LoggingConfig {
@@ -782,6 +792,8 @@ pub struct RuntimeConfig {
     /// OS sandbox for commands the agent runs; see [`crate::sandbox`].
     pub sandbox: crate::sandbox::SandboxConfig,
     pub compaction: CompactionConfig,
+    /// Goal mode; see [`GoalConfig`].
+    pub goal: GoalConfig,
     /// `web_search` backend; see [`WebConfig`].
     pub web: WebConfig,
     /// The built-in browser; see [`BrowserConfig`].
@@ -812,6 +824,7 @@ impl Default for RuntimeConfig {
             approval: ApprovalPolicy::default(),
             sandbox: crate::sandbox::SandboxConfig::default(),
             compaction: CompactionConfig::default(),
+            goal: GoalConfig::default(),
             web: WebConfig::default(),
             browser: BrowserConfig::default(),
             providers: Vec::new(),
@@ -1390,11 +1403,17 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         config.compaction.retry_limit <= 2,
         "compaction.retry_limit must be 0..2"
     );
-    if let Some(model) = &compaction.summary_model {
-        ensure!(
-            valid_model_id(model),
-            "compaction.summary_model must be a model id (<provider>/<id> for a model from providers)"
-        );
+    for (field, model) in [
+        ("compaction.summary_model", &compaction.summary_model),
+        ("goal.check_model", &config.goal.check_model),
+    ] {
+        if let Some(model) = model {
+            ensure!(
+                valid_model_id(model),
+                "{field} must be a model id (<provider>/<id> for a model from providers)"
+            );
+            providers::check_model_prefix(&config.providers, field, model, false)?;
+        }
     }
     for (name, tokens) in [
         ("section_max_tokens", config.compaction.section_max_tokens),
@@ -1597,6 +1616,9 @@ fn base_schema() -> Value {
                 "summary_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"default":8192},
                 "summary_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"Any model a connected provider offers; <provider>/<id> for one from providers"},
                 "prompt_file":{"type":"string"}
+            }},
+            "goal":{"type":"object","additionalProperties":false,"properties":{
+                "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"}
             }}
         }
     })
@@ -1650,6 +1672,7 @@ mod tests {
             "recent_messages",
             "total_turns",
             "summary_model",
+            "check_model",
             "prompt_file",
             "command",
             "downloads",
@@ -1882,16 +1905,30 @@ mod tests {
         );
         assert_eq!(cleared.provenance["compaction.summary_model"], "run");
         // Any model id is accepted here; a run checks it against the captured catalogs.
-        for model in ["step-5-preview-free", "local/qwen/coder"] {
-            assert!(resolve(
-                Some(&format!(
-                    r#"{{"compaction":{{"summary_model":"{model}"}}}}"#
-                )),
-                None,
-                None
-            )
-            .is_ok());
+        // A prefix must name a provider from `providers`: a bare id is OpenCode Go.
+        let local = r#""providers":[{"id":"local","name":"Local","base_url":"http://127.0.0.1:11434/v1","secret":"${LOCAL_KEY}"}]"#;
+        for (model, providers) in [("step-5-preview-free", ""), ("local/qwen/coder", local)] {
+            let separator = if providers.is_empty() { "" } else { "," };
+            assert!(
+                resolve(
+                    Some(&format!(
+                        r#"{{"compaction":{{"summary_model":"{model}"}}{separator}{providers}}}"#
+                    )),
+                    None,
+                    None
+                )
+                .is_ok(),
+                "{model}"
+            );
         }
+        let unknown = resolve(
+            Some(r#"{"compaction":{"summary_model":"local/qwen/coder"}}"#),
+            None,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(unknown.contains("names provider 'local'"), "{unknown}");
         for model in ["", "has space", "line\\nbreak"] {
             assert!(resolve(
                 Some(&format!(
@@ -1903,6 +1940,52 @@ mod tests {
             .is_err());
         }
     }
+    #[test]
+    fn goal_check_model_follows_precedence_and_needs_a_known_provider_prefix() {
+        let user = r#"{"goal":{"check_model":"glm-5.3"}}"#;
+        let project = r#"{"goal":{"check_model":"qwen3.8-flash"}}"#;
+        let resolved = resolve(Some(user), Some(project), None).unwrap();
+        assert_eq!(
+            resolved.config.goal.check_model.as_deref(),
+            Some("qwen3.8-flash")
+        );
+        assert_eq!(resolved.provenance["goal.check_model"], "project");
+        let cleared = resolve(Some(user), None, Some(r#"{"goal":{"check_model":null}}"#)).unwrap();
+        assert!(cleared.config.goal.check_model.is_none());
+        assert!(
+            RuntimeConfig::default().goal.check_model.is_none(),
+            "absent: the chat's model"
+        );
+        for bad in [
+            r#"{"goal":{"check_model":"has space"}}"#,
+            r#"{"goal":{"check_model":"nope/model"}}"#,
+            r#"{"goal":{"unknown":1}}"#,
+        ] {
+            assert!(resolve(Some(bad), None, None).is_err(), "{bad}");
+        }
+        // A `models` key may also name OpenCode Go as go/<id>; another prefix needs a provider.
+        assert!(resolve(
+            Some(r#"{"models":{"go/glm-5.3":{"context_tokens":64000}}}"#),
+            None,
+            None
+        )
+        .is_ok());
+        assert!(resolve(
+            Some(r#"{"models":{"glm-5.3":{"context_tokens":64000}}}"#),
+            None,
+            None
+        )
+        .is_ok());
+        let typo = resolve(
+            Some(r#"{"models":{"lcoal/qwen":{"context_tokens":64000}}}"#),
+            None,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(typo.contains("names provider 'lcoal'"), "{typo}");
+    }
+
     #[test]
     fn document_batch_and_summary_backoff_have_bounded_independent_configuration() {
         let mut config = RuntimeConfig::default();

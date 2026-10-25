@@ -300,6 +300,7 @@ pub(super) fn validate(
             valid_model_id(key) && key.len() <= 300,
             "models: '{key}' must be a model id, optionally as <provider>/<id>"
         );
+        check_model_prefix(providers, "models", key, true)?;
         validate_tokens(
             &format!("models.{key}.context_tokens"),
             entry.context_tokens,
@@ -320,6 +321,32 @@ pub(super) fn validate(
             );
         }
     }
+    Ok(())
+}
+
+/// A model id with a `/` names a provider before it: one from `providers` (or, for a
+/// `models` key, `go` for OpenCode Go). A bare id is an OpenCode Go model, so a prefix
+/// that names no provider is a mistake, not a Go model.
+pub(super) fn check_model_prefix(
+    providers: &[ProviderDefinition],
+    field: &str,
+    model: &str,
+    go_allowed: bool,
+) -> Result<()> {
+    let Some((prefix, _)) = model.split_once('/') else {
+        return Ok(());
+    };
+    let known = providers.iter().any(|provider| provider.id == prefix)
+        || (go_allowed && prefix == GO_PROVIDER_ID);
+    ensure!(
+        known,
+        "{field}: '{model}' names provider '{prefix}', which is not in providers{}",
+        if go_allowed {
+            " (use go/<id> or the bare id for OpenCode Go)"
+        } else {
+            " (use the bare id for OpenCode Go)"
+        }
+    );
     Ok(())
 }
 

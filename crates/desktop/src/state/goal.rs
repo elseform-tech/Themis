@@ -958,8 +958,9 @@ impl AppState {
         (evidence, changed, through)
     }
 
-    /// The provider for the goal check (the chat's current model, from OpenCode Go or a
-    /// provider in runtime.jsonc) and the catalog its routes and limits come from.
+    /// The provider for the goal check (`goal.check_model`, else the chat's current model,
+    /// from OpenCode Go or a provider in runtime.jsonc) and the catalog its routes and
+    /// limits come from.
     async fn goal_check_config(
         &self,
         thread_id: &str,
@@ -970,16 +971,20 @@ impl AppState {
         ),
         String,
     > {
-        let model = self
+        let (chat_model, project_root) = self
             .inner
             .threads
             .read()
             .await
             .get(thread_id)
-            .map(|record| record.model.clone())
+            .map(|record| (record.model.clone(), record.project_root.clone()))
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
-        let mut runtime = self.runtime_configuration(None, None)?.config;
-        // The check is one short request on the chat's model; it writes no summary.
+        // The chat's project may set `goal.check_model` too.
+        let mut runtime = self
+            .runtime_configuration(Some(&project_root), None)?
+            .config;
+        // One short request on `goal.check_model`, else the chat's model; it writes no summary.
+        let model = runtime.goal.check_model.clone().unwrap_or(chat_model);
         runtime.compaction.summary_model = None;
         let config = self
             .provider_config_for(&runtime, &model, thread_id)

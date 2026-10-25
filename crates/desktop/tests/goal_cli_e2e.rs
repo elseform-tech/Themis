@@ -311,3 +311,83 @@ async fn a_model_switch_mid_run_applies_next_turn_without_foreign_reasoning() {
     );
     settle(&state, &thread.id).await;
 }
+
+/// `goal.check_model` (here from the project's config) sends the goal check to that
+/// model; the turns stay on the chat's model.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_goal_check_uses_goal_check_model_and_turns_use_the_chats_model() {
+    let llm = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            if is_check(request) {
+                reply(r#"{"verdict":"reached","reason":"Done.","progress":"done"}"#)
+            } else {
+                reply("Did it.")
+            }
+        })
+        .mount(&llm)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"goal":{"check_model":"check-model"}}"#,
+    )
+    .unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(llm.uri()));
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap();
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let data_dir = data.path().to_owned();
+    let thread_id = thread.id.clone();
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data_dir,
+            "send_message",
+            json!({"threadId": thread_id, "text": "/goal do the thing"}),
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while call(&data_dir, "get_goal", json!({"threadId": thread_id}))["status"] != "reached" {
+            assert!(std::time::Instant::now() < deadline, "goal never reached");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    })
+    .await
+    .unwrap();
+    let requests = llm.received_requests().await.unwrap();
+    let model = |request: &Request| {
+        request.body_json::<Value>().unwrap_or(Value::Null)["model"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let checks: Vec<String> = requests.iter().filter(|r| is_check(r)).map(model).collect();
+    let turns: Vec<String> = requests
+        .iter()
+        .filter(|r| !is_check(r))
+        .map(model)
+        .collect();
+    assert!(
+        !checks.is_empty() && checks.iter().all(|m| m == "check-model"),
+        "{checks:?}"
+    );
+    assert!(
+        !turns.is_empty() && turns.iter().all(|m| m == "test-model"),
+        "{turns:?}"
+    );
+    settle(&state, &thread.id).await;
+    task.abort();
+}
