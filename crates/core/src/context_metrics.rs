@@ -10,6 +10,61 @@ tokio::task_local! { static STAGE: (String, usize); }
 tokio::task_local! { static ATTEMPT: usize; }
 tokio::task_local! { static USAGE_SINK: Arc<std::sync::atomic::AtomicU64>; }
 tokio::task_local! { static CONFIG_FINGERPRINT: String; }
+tokio::task_local! { static USAGE_RECORDER: UsageRecorder; }
+tokio::task_local! { static USAGE_KIND: UsageKind; }
+
+/// What a model request was for, in the durable usage ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageKind {
+    /// A turn of the conversation (including its spec checks and hand-offs).
+    Answer,
+    /// A context checkpoint or document capsule summary.
+    Summary,
+    /// The separate goal-mode check after a goal turn.
+    GoalCheck,
+}
+
+impl UsageKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Answer => "answer",
+            Self::Summary => "summary",
+            Self::GoalCheck => "goal_check",
+        }
+    }
+}
+
+/// One completed model request: provider, model, kind and provider-reported token
+/// counts only (never prompts, replies or credentials). `None` means the provider
+/// reported no such count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageRecord {
+    pub provider: String,
+    pub model: String,
+    pub kind: UsageKind,
+    pub input_tokens: Option<u64>,
+    pub cached_input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+}
+
+/// Receives each completed request inside its scope. It must return quickly and never
+/// fail: it is called while the request finishes.
+pub type UsageRecorder = Arc<dyn Fn(UsageRecord) + Send + Sync>;
+
+/// Every request completed inside `future` is handed to `recorder`, at any metrics level.
+pub async fn with_usage_recorder<F: std::future::Future>(
+    recorder: UsageRecorder,
+    future: F,
+) -> F::Output {
+    USAGE_RECORDER.scope(recorder, future).await
+}
+
+/// Labels the requests made inside `future` (summaries are recognised on their own).
+pub async fn with_usage_kind<F: std::future::Future>(kind: UsageKind, future: F) -> F::Output {
+    USAGE_KIND.scope(kind, future).await
+}
 
 #[derive(Default)]
 struct Metrics {
@@ -140,6 +195,8 @@ pub struct RequestTrace {
     collector: Option<Arc<Mutex<Metrics>>>,
     record: Value,
     started: std::time::Instant,
+    recorder: Option<UsageRecorder>,
+    usage: UsageRecord,
 }
 
 impl RequestTrace {
@@ -153,11 +210,29 @@ impl RequestTrace {
             c.lock().unwrap_or_else(|e| e.into_inner()).level != ContextMetricsLevel::Off
         });
         let started = std::time::Instant::now();
+        let usage = UsageRecord {
+            provider: String::new(),
+            model: model.to_owned(),
+            kind: if summary {
+                UsageKind::Summary
+            } else {
+                USAGE_KIND
+                    .try_with(|kind| *kind)
+                    .unwrap_or(UsageKind::Answer)
+            },
+            input_tokens: None,
+            cached_input_tokens: None,
+            output_tokens: None,
+            reasoning_tokens: None,
+        };
+        let recorder = USAGE_RECORDER.try_with(Arc::clone).ok();
         if collector.is_none() {
             return Self {
                 collector,
                 record: Value::Null,
                 started,
+                recorder,
+                usage,
             };
         }
         let detailed = collector.as_ref().is_some_and(|c| {
@@ -241,7 +316,13 @@ impl RequestTrace {
             collector,
             record,
             started,
+            recorder,
+            usage,
         }
+    }
+    /// The provider id the durable usage ledger files this request under.
+    pub fn provider(&mut self, id: &str) {
+        self.usage.provider = id.to_owned();
     }
     pub fn output_limit(&mut self, limit: Option<u32>) {
         if self.collector.is_some() {
@@ -293,6 +374,10 @@ impl RequestTrace {
                     "anthropic_uncached_plus_cache_read_and_creation".into();
             }
         }
+        self.usage.input_tokens = self.record["input_tokens"].as_u64();
+        self.usage.cached_input_tokens = self.record["cached_input_tokens"].as_u64();
+        self.usage.output_tokens = self.record["output_tokens"].as_u64();
+        self.usage.reasoning_tokens = self.record["reasoning_output_tokens"].as_u64();
         if let Some(input) = self.record["input_tokens"].as_u64() {
             let _ =
                 USAGE_SINK.try_with(|sink| sink.store(input, std::sync::atomic::Ordering::SeqCst));
@@ -305,6 +390,11 @@ impl RequestTrace {
 
 impl Drop for RequestTrace {
     fn drop(&mut self) {
+        if let Some(recorder) = self.recorder.take() {
+            if self.record["status"] == "completed" {
+                recorder(self.usage.clone());
+            }
+        }
         let Some(collector) = &self.collector else {
             return;
         };

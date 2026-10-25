@@ -237,6 +237,97 @@ async fn responses_reject_incomplete_streams() {
 }
 
 #[tokio::test]
+async fn completed_requests_reach_the_usage_recorder_at_any_metrics_level() {
+    use futures_util::StreamExt;
+    let server = MockServer::start().await;
+    let events=concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"PRIVATE-CONTENT-911\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":80},\"completion_tokens_details\":{\"reasoning_tokens\":12}}}\n\n",
+        "data: [DONE]\n\n");
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(events, "text/event-stream"))
+        .mount(&server)
+        .await;
+    let provider = CompatibleProvider::go(
+        "synthetic".into(),
+        "test-model".into(),
+        Some(server.uri()),
+        None,
+    );
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = std::sync::Arc::clone(&seen);
+    let recorder: crate::context_metrics::UsageRecorder =
+        std::sync::Arc::new(move |record| sink.lock().unwrap().push(record));
+    crate::context_metrics::with_usage_recorder(
+        recorder,
+        crate::context_metrics::with_level(crate::configuration::ContextMetricsLevel::Off, async {
+            let chunks = provider
+                .chat_stream_with_tools(&[user_message("PRIVATE-PROMPT-911")], None, None)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>()
+                .await;
+            assert!(chunks.iter().all(Result::is_ok));
+            crate::context_metrics::with_usage_kind(
+                crate::context_metrics::UsageKind::GoalCheck,
+                async {
+                    // A request that never completes is not recorded.
+                    let _ = provider.chat(&[user_message("x")], None).await;
+                },
+            )
+            .await;
+        }),
+    )
+    .await;
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen[0],
+        crate::context_metrics::UsageRecord {
+            provider: "opencode-go".into(),
+            model: "test-model".into(),
+            kind: crate::context_metrics::UsageKind::Answer,
+            input_tokens: Some(100),
+            cached_input_tokens: Some(80),
+            output_tokens: Some(20),
+            reasoning_tokens: Some(12),
+        }
+    );
+    assert!(seen
+        .iter()
+        .skip(1)
+        .all(|record| record.kind == crate::context_metrics::UsageKind::GoalCheck));
+}
+
+#[test]
+fn catalog_prices_are_read_leniently_and_estimate_with_cache_and_tiers() {
+    let catalog: CatalogRoot = serde_json::from_value(json!({
+        "opencode-go": {"models": {
+            "priced": {"cost": {"input": 2, "output": 10, "cache_read": 0.2,
+                "tiers": [{"input": 4, "output": 20, "cache_read": 0.4, "tier": {"type": "context", "size": 200000}}]}},
+            "free": {"cost": {"input": 0, "output": 0, "cache_read": 0}},
+            "broken": {"cost": {"input": "two", "output": -1}},
+            "unpriced": {}
+        }}
+    })).unwrap();
+    let models = join_go_catalog(
+        ["priced", "free", "broken", "unpriced"]
+            .map(String::from)
+            .to_vec(),
+        catalog,
+    );
+    let priced = models[0].price.clone().unwrap();
+    assert!(!priced.is_free());
+    // 100k input of which 50k cached, 10k output: 0.05×2 + 0.05×0.2 + 0.01×10.
+    assert!((priced.request_cost(100_000, 50_000, 10_000) - 0.21).abs() < 1e-9);
+    // Under the tier size the base price applies; above it the tier's.
+    assert!((priced.request_cost(100_000, 0, 0) - 0.2).abs() < 1e-9);
+    assert!((priced.request_cost(300_000, 0, 0) - 1.2).abs() < 1e-9);
+    assert!(models[1].price.as_ref().unwrap().is_free());
+    assert_eq!(models[2].price, None);
+    assert_eq!(models[3].price, None);
+}
+
+#[tokio::test]
 async fn streaming_usage_after_finish_is_captured_without_retaining_content() {
     use futures_util::StreamExt;
     let server = MockServer::start().await;
@@ -3176,4 +3267,17 @@ proptest::proptest! {
             proptest::prop_assert!(ids.contains(id));
         }
     }
+}
+
+#[test]
+fn the_usage_ledger_records_a_configured_providers_own_id() {
+    let go = CompatibleProvider::go("k".into(), "glm-5.3".into(), None, None);
+    assert_eq!(go.provider_id(), GO_PROVIDER_ID);
+    let endpoint = CustomEndpoint {
+        id: "local".into(),
+        name: "Local server".into(),
+        base_url: "http://127.0.0.1:9/v1".into(),
+    };
+    let local = CompatibleProvider::custom(&endpoint, "k".into(), "local/qwen3".into());
+    assert_eq!(local.provider_id(), "local");
 }

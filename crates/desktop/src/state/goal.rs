@@ -636,7 +636,13 @@ impl AppState {
                 // The same per-model routes and limits real runs use.
                 themis_core::providers::with_catalog_limits(
                     &catalog,
-                    core_goal::check_with_config(&config, &goal.text, &answer, &evidence),
+                    themis_core::context_metrics::with_usage_recorder(
+                        self.usage_recorder(&thread_id, &run_id),
+                        themis_core::context_metrics::with_usage_kind(
+                            themis_core::context_metrics::UsageKind::GoalCheck,
+                            core_goal::check_with_config(&config, &goal.text, &answer, &evidence),
+                        ),
+                    ),
                 )
                 .await
                 .map_err(|error| format!("{error:#}"))

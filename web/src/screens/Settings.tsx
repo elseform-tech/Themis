@@ -11,9 +11,10 @@ import { WebSettingsSection } from "./WebSettings";
 import { SidebarIcon } from "./Sidebar";
 import { SecretsSettings } from "./SecretsSettings";
 import { ModelsSettings } from "./ModelsSettings";
+import { UsageSettingsSection } from "./UsageSettings";
 import { ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 
-const SECTIONS = ["General", "Appearance", "Models", "Secrets", "Permissions", "Browser", "Web", "Advanced"];
+const SECTIONS = ["General", "Appearance", "Models", "Usage", "Secrets", "Permissions", "Browser", "Web", "Advanced"];
 /** Backend field names in validation messages, as the labels the person sees. */
 const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_cap", "Context tokens"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
 type NumberSetting = "max_total_turns" | "context_token_cap" | "concurrency_limit" | "approval_timeout_seconds";
@@ -166,6 +167,7 @@ export function SettingsScreen() {
         </SettingsGroup>
       </>}
       {section === "Models" && <ModelsSettings save={save} saving={saving} />}
+      {section === "Usage" && <UsageSettingsSection />}
       {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}
       {section === "Secrets" && <SecretsSettings focusKey={state.settingsFocus?.key} />}
       {section === "Browser" && <BrowserSettingsSection />}

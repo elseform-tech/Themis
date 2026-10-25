@@ -367,6 +367,51 @@ export interface ThreadEventEnvelope {
   event: ThreadEvent;
 }
 
+/** Token sums the provider reported for requests Themis made. Input includes cached input; output includes reasoning. */
+export interface UsageTotals {
+  requests: number;
+  unreported_requests: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  /** List-price estimate of the priced requests (models.dev); absent when none was priced. */
+  estimated_cost_usd?: number;
+  unpriced_requests: number;
+}
+
+export interface UsageBreakdown {
+  /** Provider, model or chat id; null for deleted chats. */
+  key: string | null;
+  provider?: string;
+  title?: string;
+  /** The model's published price is zero. */
+  free?: boolean;
+  totals: UsageTotals;
+}
+
+/** How a provider bills; `windows` stays empty until a provider publishes verified limits. */
+export interface ProviderBilling {
+  provider: string;
+  kind: "plan_windows" | "pay_per_token" | "free" | "local";
+  windows: Array<{ window: string; limit_usd: number }>;
+  price_source?: string;
+}
+
+export interface UsageSummary {
+  available: boolean;
+  scope: "themis_only";
+  generated_at_ms: number;
+  week_starts: "monday";
+  windows: { five_hours: UsageTotals; today: UsageTotals; week: UsageTotals; month: UsageTotals };
+  /** The last 30 local days, oldest first: input + output tokens per model. */
+  days: Array<{ day: string; models: Record<string, number>; requests: number }>;
+  by_provider: UsageBreakdown[];
+  by_model: UsageBreakdown[];
+  by_chat: UsageBreakdown[];
+  billing: ProviderBilling[];
+}
+
 /** Byte-estimated context accounting emitted before each bounded model request. */
 export interface ContextBudget {
   budget_tokens: number;

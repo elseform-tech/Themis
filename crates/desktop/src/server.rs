@@ -798,6 +798,8 @@ async fn dispatch_command(
                 )
                 .await?
         ),
+        "get_usage_summary" => output!(state.get_usage_summary().await?),
+        "get_chat_usage" => output!(state.get_chat_usage(arg(&args, "threadId")?).await?),
         "get_thread_history" => output!(
             state
                 .get_thread_history(&arg::<String>(&args, "threadId")?)

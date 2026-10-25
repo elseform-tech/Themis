@@ -45,6 +45,7 @@ Commands:
   doctor [--json] [--deep]       Read-only local diagnostics
   permissions [PROJECT] [--thread ID] [--json]
                                 Effective approval rules, sandbox and chat grants (read-only)
+  usage [--json]                Tokens Themis used: 5 hours, today, week, month
   providers                     Select OpenCode Go and enter a hidden API key
   auth status                   Report key availability only
   thread create PROJECT [MODEL]  Create a shared desktop conversation
@@ -112,6 +113,7 @@ pub async fn run() -> Result<(), String> {
                 | "mcp"
                 | "hook"
                 | "permissions"
+                | "usage"
         )
     }) {
         ensure_server(&client, &directory).await?;
@@ -147,6 +149,23 @@ pub async fn run() -> Result<(), String> {
     }
     if words.first().is_some_and(|word| word == "permissions") {
         return permissions(&client, &words[1..]).await;
+    }
+    if words.first().is_some_and(|word| word == "usage") {
+        let as_json = match &words[1..] {
+            [] => false,
+            [flag] if flag == "--json" => true,
+            _ => return Err(usage().to_owned()),
+        };
+        let summary = client.call("get_usage_summary", Value::Null).await?;
+        if as_json {
+            println!(
+                "{}",
+                serde_json::to_string(&summary).map_err(|err| err.to_string())?
+            );
+        } else {
+            print!("{}", render_usage(&summary));
+        }
+        return Ok(());
     }
     let result = match words.as_slice() {
         [kind, create, id, request] if kind == "skill" && create == "create" => {
@@ -328,6 +347,81 @@ pub async fn run() -> Result<(), String> {
         serde_json::to_string(&result).map_err(|err| err.to_string())?
     );
     Ok(())
+}
+
+/// Token counts the way the Usage settings show them: 1234, 12.3k, 4.56M.
+fn tokens(count: u64) -> String {
+    match count {
+        0..1_000 => count.to_string(),
+        1_000..1_000_000 => format!("{:.1}k", count as f64 / 1e3),
+        _ => format!("{:.2}M", count as f64 / 1e6),
+    }
+}
+
+/// `themis usage`: the same totals as Settings › Usage, as plain text.
+pub fn render_usage(summary: &Value) -> String {
+    let mut out = String::from("Tokens from Themis only (provider dashboards may count more)\n");
+    if summary["available"] == false {
+        out.push_str("Usage records are not available (see `themis doctor`).\n");
+        return out;
+    }
+    let number = |value: &Value, key: &str| value[key].as_u64().unwrap_or(0);
+    let line = |label: &str, totals: &Value| {
+        let cost = match (
+            totals["estimated_cost_usd"].as_f64(),
+            number(totals, "unpriced_requests"),
+        ) {
+            (Some(cost), 0) => format!("  ≈${cost:.2}"),
+            (Some(cost), _) => format!("  ≈${cost:.2}+"),
+            (None, _) => String::new(),
+        };
+        // One column of names: long model or chat names are cut to fit it.
+        let label = if label.chars().count() > 24 {
+            format!("{}…", label.chars().take(23).collect::<String>())
+        } else {
+            label.to_owned()
+        };
+        format!(
+            "{label:<24} {:>5} requests  {:>7} in ({} cached)  {:>7} out ({} reasoning){cost}\n",
+            number(totals, "requests"),
+            tokens(number(totals, "input_tokens")),
+            tokens(number(totals, "cached_input_tokens")),
+            tokens(number(totals, "output_tokens")),
+            tokens(number(totals, "reasoning_tokens")),
+        )
+    };
+    let windows = &summary["windows"];
+    for (label, key) in [
+        ("5 hours", "five_hours"),
+        ("Today", "today"),
+        ("This week", "week"),
+        ("This month", "month"),
+    ] {
+        out.push_str(&line(label, &windows[key]));
+    }
+    let models = summary["by_model"].as_array().cloned().unwrap_or_default();
+    if !models.is_empty() {
+        out.push_str("Models, last 30 days\n");
+        for model in models {
+            let name = model["key"].as_str().unwrap_or("unknown");
+            let free = if model["free"] == true { " (free)" } else { "" };
+            out.push_str(&line(&format!("  {name}{free}"), &model["totals"]));
+        }
+    }
+    let chats = summary["by_chat"].as_array().cloned().unwrap_or_default();
+    if !chats.is_empty() {
+        out.push_str("Chats, last 30 days\n");
+        for chat in chats {
+            let name = chat["title"].as_str().unwrap_or("Deleted chats");
+            out.push_str(&line(&format!("  {name}"), &chat["totals"]));
+        }
+    }
+    if windows["month"]["estimated_cost_usd"].is_number() {
+        out.push_str(
+            "≈ costs are estimates at public list prices (models.dev); plans may bill differently.\n",
+        );
+    }
+    out
 }
 
 /// `themis permissions [PROJECT] [--thread ID] [--json]`: the same read-only
