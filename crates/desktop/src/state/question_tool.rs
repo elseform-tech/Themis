@@ -160,12 +160,12 @@ impl ToolT for QuestionTool {
     }
     fn args_schema(&self) -> Value {
         json!({"type":"object","properties":{
-            "question":{"type":"string","description":"One question to the user."},
-            "choices":{"type":"array","minItems":2,"maxItems":4,"items":{"type":"object","properties":{"answer":{"type":"string"},"why":{"type":"string","description":"One short line on its tradeoff."}},"required":["answer"]},"description":"2 to 4 answers to pick from, when the answer is one of a few options; include your recommended one."},
-            "recommended":{"type":"string","description":"Your recommended answer: one of the choices, or your suggestion when there are none. You work on it until the user answers."},
-            "why":{"type":"string","description":"One short line on why you recommend that answer."},
-            "blocking":{"type":"boolean","description":"True only when you cannot recommend any answer and nothing more can be done without it: the run ends and waits. Ignored when `recommended` is given."},
-            "topic":{"type":"string","description":"A short key; asking again with an open topic updates that question."}
+            "question":{"type":"string"},
+            "choices":{"type":"array","minItems":2,"maxItems":4,"items":{"type":"object","properties":{"answer":{"type":"string"},"why":{"type":"string"}},"required":["answer"]}},
+            "recommended":{"type":"string"},
+            "why":{"type":"string"},
+            "blocking":{"type":"boolean"},
+            "topic":{"type":"string"}
         },"required":["question"],"additionalProperties":false})
     }
     fn output_schema(&self) -> Option<Value> {
