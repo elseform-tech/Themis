@@ -73,6 +73,17 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (GOAL_NOTE_FAILED, "goal-note-failed", &["error"]),
     (GOAL_NOTE_INTERRUPTED, "goal-note-interrupted", &[]),
     (GOAL_SET_NOTE, "goal-set-note", &[]),
+    (GOAL_OPEN_QUESTIONS, "goal-open-questions", &["questions"]),
+    (ASK_USER_DESCRIPTION, "ask-user-description", &[]),
+    (ASK_USER_ASKED, "ask-user-asked", &["assumption"]),
+    (ASK_USER_BLOCKING, "ask-user-blocking", &[]),
+    (ASK_USER_WAITING, "ask-user-waiting", &[]),
+    (ASK_USER_LIMIT, "ask-user-limit", &["max"]),
+    (
+        QUESTION_ANSWER,
+        "question-answer",
+        &["question", "assumption", "answer"],
+    ),
     (COMPACTION_CHECKPOINT, "compaction-checkpoint", &[]),
     (
         SUMMARY_CHECKPOINT_REQUEST,
@@ -332,7 +343,7 @@ fn goal_prompts_are_byte_identical() {
     let goal = "speed up p95 {{x}}";
     assert_eq!(
         format!("\n\n{}", fill(GOAL_CONTEXT, &[("goal", goal)])),
-        format!("\n\nActive goal for this chat (runtime context, not a new request): {goal}\nThe runtime starts further turns until a separate check finds the goal reached. That check reads only the commands run in the turn it judges (long outputs clipped to their start and end), never earlier turns or your claims, so when you believe the goal is met, end the turn with one compact verification whose output proves every requirement at once (for example a script that prints one PASS/FAIL line with the measured value per requirement). If this message is a different request from the user, handle it first; the goal continues afterwards. On the first goal turn, say in one line how you will measure the goal and take a baseline. If you need the user's input, ask plainly, say what you will assume meanwhile, and keep working on that assumption; stop to wait only when nothing more can be done toward the goal without their answer.")
+        format!("\n\nActive goal for this chat (runtime context, not a new request): {goal}\nThe runtime starts further turns until a separate check finds the goal reached. That check reads only the commands run in the turn it judges (long outputs clipped to their start and end), never earlier turns or your claims, so when you believe the goal is met, end the turn with one compact verification whose output proves every requirement at once (for example a script that prints one PASS/FAIL line with the measured value per requirement). If this message is a different request from the user, handle it first; the goal continues afterwards. On the first goal turn, say in one line how you will measure the goal and take a baseline. If you need the user's input, ask with `ask_user`, say what you will assume meanwhile, and keep working on that assumption; make the question blocking only when nothing more can be done toward the goal without their answer.")
     );
     const GOAL_TURN_MARKER: &str = "[Goal — runtime, not from the user]";
     let (turn, note) = (3, "Not yet.");
@@ -359,7 +370,7 @@ fn goal_prompts_are_byte_identical() {
                 ("reason", reason),
             ],
         ),
-        format!("{GOAL_TURN_MARKER} Turn {turn}. Goal: {goal}\nA separate check found the goal reached: {reason}\nTell the user in one or two sentences, in your own words, that the goal is reached and what shows it. Do not run tools or redo any work.")
+        format!("{GOAL_TURN_MARKER} Turn {turn}. Goal: {goal}\nA separate check found the goal reached: {reason}\nTell the user in one or two sentences, in your own words, that the goal is reached and what shows it; if open questions are listed, name each with the assumption you used, since they stay open for the user. Do not run tools or redo any work.")
     );
     assert_eq!(
         fill(GOAL_NOTE_STALLED, &[("turns", "3")]),

@@ -1062,6 +1062,14 @@ async fn run_task_with_evidence_inner(
             message_type: MessageType::ToolResult(results),
             content: String::new(),
         });
+        if let Some(result) = take_end_request() {
+            emit(RunEvent::Finished {
+                result: result.clone(),
+            })
+            .await
+            .ok();
+            return Ok(result);
+        }
     }
 
     check_stopped(&stopped, &events).await?;
@@ -2007,6 +2015,25 @@ pub type SteerInbox = Arc<Mutex<std::collections::VecDeque<String>>>;
 /// Runs `future` with a steer inbox; without one, steering is unavailable.
 pub async fn with_steer_inbox<F: std::future::Future>(inbox: SteerInbox, future: F) -> F::Output {
     STEER_INBOX.scope(inbox, future).await
+}
+
+tokio::task_local! { static END_REQUEST: EndRequest; }
+
+/// Set by a tool that needs the user before anything more can happen (a
+/// blocking question): the run ends after that tool batch, with this text as
+/// its answer, instead of asking the model again.
+pub type EndRequest = Arc<Mutex<Option<String>>>;
+
+/// Runs `future` with an end request a tool can set; without one, nothing ends a run early.
+pub async fn with_end_request<F: std::future::Future>(end: EndRequest, future: F) -> F::Output {
+    END_REQUEST.scope(end, future).await
+}
+
+fn take_end_request() -> Option<String> {
+    END_REQUEST
+        .try_with(|end| end.lock().unwrap_or_else(|e| e.into_inner()).take())
+        .ok()
+        .flatten()
 }
 
 /// Takes every steered message waiting for this run.
@@ -5178,6 +5205,66 @@ mod tests {
             (answer.as_str(), bodies.len(), checks(&bodies)),
             ("Done.", 2, 0)
         );
+    }
+
+    /// A blocking question ends the run after its tool batch, without another model request.
+    #[tokio::test]
+    async fn an_end_request_finishes_the_run_after_its_tool_batch() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let end: EndRequest = Arc::default();
+        let tool_end = Arc::clone(&end);
+        Mock::given(method("POST"))
+            .respond_with(move |_: &wiremock::Request| {
+                // As a blocking question would, mid-batch.
+                *tool_end.lock().unwrap() = Some("Waiting for your answer.".into());
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Asking.","tool_calls":[{"id":"l","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}))
+            })
+            .mount(&server)
+            .await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let tools =
+            crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook)).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let policy = RunPolicy {
+            total_turns: 8,
+            context_token_budget: 24000,
+            recent_messages: 4,
+        };
+        let answer = with_end_request(
+            Arc::clone(&end),
+            run_task_with_evidence(
+                llm,
+                tools,
+                "Do the work.".into(),
+                vec![],
+                Arc::new(crate::tools::AllowAllHook),
+                policy,
+                tx,
+                Arc::new(AtomicBool::new(false)),
+                String::new(),
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer, "Waiting for your answer.");
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        assert!(end.lock().unwrap().is_none(), "the request is used once");
+        let mut finished = None;
+        while let Ok(event) = rx.try_recv() {
+            if let RunEvent::Finished { result } = event {
+                finished = Some(result);
+            }
+        }
+        assert_eq!(finished.as_deref(), Some("Waiting for your answer."));
     }
 
     /// A steered message reaches the model at the next request boundary, once, and in order;

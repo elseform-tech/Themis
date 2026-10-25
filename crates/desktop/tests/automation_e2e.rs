@@ -196,6 +196,8 @@ async fn skilled_run_filters_tools_composes_instructions_and_materializes() {
         vec![
             "read_file",
             "set_goal",
+            // Asking the user is never a skill's to grant or withhold.
+            "ask_user",
             // Showing project files under the reply comes with `read_file`.
             "attach_file",
             "list_plugins",

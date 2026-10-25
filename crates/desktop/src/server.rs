@@ -950,6 +950,17 @@ async fn dispatch_command(
                 .steer_queued_message(sink, arg(&args, "threadId")?, arg(&args, "messageId")?)
                 .await
         ),
+        "list_questions" => output!(state.list_questions(arg(&args, "threadId")?).await?),
+        "answer_question" => output!(
+            state
+                .answer_question(
+                    sink,
+                    arg(&args, "threadId")?,
+                    arg(&args, "questionId")?,
+                    arg(&args, "answer")?,
+                )
+                .await?
+        ),
         "get_goal" => output!(state.get_goal(arg(&args, "threadId")?).await?),
         "set_goal" => output!(
             state

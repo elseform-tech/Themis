@@ -390,7 +390,15 @@ impl AppState {
             self.mark_goal_turn(run_id);
         } else if !is_turn {
             match self.goal_for(thread_id).map(|goal| goal.status) {
-                Some(GoalStatus::Waiting) => {
+                // An answer to another question leaves the goal waiting on
+                // the blocking one; any other reply resumes it.
+                Some(GoalStatus::Waiting)
+                    if !(text.starts_with(super::questions::ANSWER_MARKER)
+                        && self
+                            .open_questions(thread_id)
+                            .iter()
+                            .any(|question| question.blocking)) =>
+                {
                     self.update_goal(sink, thread_id, |goal| {
                         set_status(goal, GoalStatus::Running, None);
                     });
@@ -541,6 +549,7 @@ impl AppState {
         if goal.status != GoalStatus::Running {
             return;
         }
+        let note = self.with_open_questions(&thread_id, note);
         let text = core_goal::turn_message(goal.turns, &goal.text, &note);
         let run_id = uuid::Uuid::new_v4().to_string();
         self.mark_goal_turn(&run_id);
@@ -616,6 +625,17 @@ impl AppState {
             _ => return,
         };
         self.update_goal(sink.as_ref(), &thread_id, |goal| goal.failures = 0);
+        // A blocking question ended the run: the goal waits for its answer.
+        if let Some(question) = self
+            .open_questions(&thread_id)
+            .into_iter()
+            .find(|question| question.blocking && question.run_id == run_id)
+        {
+            self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                set_status(goal, GoalStatus::Waiting, Some(question.question.clone()));
+            });
+            return;
+        }
         if !was_turn {
             // The run answered the user (or set the goal): no check, just continue.
             self.start_goal_turn(
@@ -773,6 +793,14 @@ impl AppState {
         }
     }
 
+    /// `note` followed by the chat's open questions, so they survive checkpoints.
+    fn with_open_questions(&self, thread_id: &str, note: String) -> String {
+        match self.open_questions_note(thread_id) {
+            Some(open) => format!("{note}\n{open}"),
+            None => note,
+        }
+    }
+
     /// One short turn in which the agent tells the user the goal is reached,
     /// in its own words. The goal is already reached, so no check follows it.
     async fn announce_reached(
@@ -782,7 +810,8 @@ impl AppState {
         goal: &Goal,
         reason: &str,
     ) {
-        let text = core_goal::reached_message(goal.turns.saturating_add(1), &goal.text, reason);
+        let reason = self.with_open_questions(thread_id, reason.to_owned());
+        let text = core_goal::reached_message(goal.turns.saturating_add(1), &goal.text, &reason);
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, _) = self
             .send_from_server(sink, thread_id, text, &run_id, None, Vec::new())

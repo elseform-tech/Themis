@@ -141,7 +141,9 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.getThreadHistory).mockResolvedValueOnce([{ kind: "event", envelope: { thread_id: thread.id, run_id: "active", event: { kind: "started", task: "Read skill", max_turns: 5 } } }]);
     vi.mocked(bridge.getPendingApprovals).mockResolvedValueOnce([{ thread_id: thread.id, approval_id: "pending", tool: "read_file", risk: "read", summary: "Read skill instructions" }]);
     await mount();
-    expect(await screen.findByRole("dialog", { name: "Approval required" })).toHaveTextContent("Read skill instructions");
+    // The chat says it waits; the approval itself sits in that chat.
+    await act(async () => fireEvent.click(await screen.findByRole("button", { name: /^Waiting for approval/ })));
+    expect(await screen.findByRole("region", { name: "Approval needed" })).toHaveTextContent("Read skill instructions");
     expect(screen.queryByText(/Run interrupted/)).toBeNull();
   });
 

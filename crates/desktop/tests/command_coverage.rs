@@ -45,6 +45,8 @@ fn server_exposes_all_frontend_backend_commands() {
             "set_goal",
             // The desktop watches the mcp.json copy and applies saves itself; the CLI applies.
             "apply_mcp_config",
+            // The desktop rebuilds questions from the chat's history; the CLI lists them.
+            "list_questions",
         ])
         .collect();
     let handled: BTreeSet<_> = server

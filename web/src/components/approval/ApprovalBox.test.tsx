@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ApprovalRequest } from "../../lib/types";
-import { ApprovalDialog, displayToken } from "./ApprovalDialog";
+import { ApprovalBox, displayToken } from "./ApprovalBox";
 
 const REQUEST: ApprovalRequest = {
   thread_id: "t1",
@@ -11,16 +11,19 @@ const REQUEST: ApprovalRequest = {
   risk: "execute",
 };
 
+/** Keys reach the box only while focus is inside it. */
+const box = () => screen.getByRole("region");
+
 function setup(request: ApprovalRequest = REQUEST) {
   const onDecide = vi.fn();
-  render(<ApprovalDialog request={request} open onDecide={onDecide} />);
+  render(<ApprovalBox request={request} open onDecide={onDecide} />);
   return { onDecide };
 }
 
-describe("ApprovalDialog", () => {
+describe("ApprovalBox", () => {
   it("names an MCP tool by server and tool, not its wire id", () => {
     const tool = "mcp_fb67fe144f6fc34f56444b8d_list_allowed_directories";
-    render(<ApprovalDialog request={{ ...REQUEST, tool, summary: `call \`${tool}\` with {}` }} label="files · list_allowed_directories" open onDecide={() => {}} />);
+    render(<ApprovalBox request={{ ...REQUEST, tool, summary: `call \`${tool}\` with {}` }} label="files · list_allowed_directories" open onDecide={() => {}} />);
     expect(screen.getAllByText(/files · list allowed directories/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/fb67fe/)).toBeNull();
   });
@@ -68,11 +71,11 @@ describe("ApprovalDialog", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup({ ...REQUEST, risk: "destructive", grantable: false });
     vi.advanceTimersByTime(600);
-    fireEvent.keyDown(document, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).not.toHaveBeenCalled();
-    fireEvent.keyDown(document, { key: "3" });
+    fireEvent.keyDown(box(), { key: "3" });
     expect(onDecide).toHaveBeenLastCalledWith("deny");
-    fireEvent.keyDown(document, { key: "1" });
+    fireEvent.keyDown(box(), { key: "1" });
     expect(onDecide).toHaveBeenLastCalledWith("once");
   });
 
@@ -80,11 +83,11 @@ describe("ApprovalDialog", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup();
     vi.advanceTimersByTime(600);
-    fireEvent.keyDown(document, { key: "1" });
+    fireEvent.keyDown(box(), { key: "1" });
     expect(onDecide).toHaveBeenCalledWith("once");
-    fireEvent.keyDown(document, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).toHaveBeenCalledWith("chat");
-    fireEvent.keyDown(document, { key: "3" });
+    fireEvent.keyDown(box(), { key: "3" });
     expect(onDecide).toHaveBeenCalledWith("deny");
   });
 
@@ -93,10 +96,10 @@ describe("ApprovalDialog", () => {
     const { onDecide } = setup();
     vi.advanceTimersByTime(600);
     // fireEvent returns false when the handler cancelled the key's default (typing it).
-    expect(fireEvent.keyDown(document, { key: "3" })).toBe(false);
+    expect(fireEvent.keyDown(box(), { key: "3" })).toBe(false);
     expect(onDecide).toHaveBeenCalledWith("deny");
     // Other keys keep their default.
-    expect(fireEvent.keyDown(document, { key: "7" })).toBe(true);
+    expect(fireEvent.keyDown(box(), { key: "7" })).toBe(true);
   });
 
   it("decides by digit while its own button has focus, as it does on opening", () => {
@@ -114,12 +117,12 @@ describe("ApprovalDialog", () => {
     // fresh onDecide, which restarted the 500 ms pause, so 1/2/3 never decided.
     vi.useFakeTimers({ toFake: ["Date"] });
     const decided = vi.fn();
-    const { rerender } = render(<ApprovalDialog request={REQUEST} open onDecide={decision => decided(decision)} />);
+    const { rerender } = render(<ApprovalBox request={REQUEST} open onDecide={decision => decided(decision)} />);
     for (let tick = 0; tick < 6; tick += 1) {
       vi.advanceTimersByTime(200);
-      rerender(<ApprovalDialog request={REQUEST} open onDecide={decision => decided(decision)} />);
+      rerender(<ApprovalBox request={REQUEST} open onDecide={decision => decided(decision)} />);
     }
-    fireEvent.keyDown(document, { key: "3" });
+    fireEvent.keyDown(screen.getByRole("region"), { key: "3" });
     expect(decided).toHaveBeenCalledWith("deny");
   });
 
@@ -133,23 +136,30 @@ describe("ApprovalDialog", () => {
     expect(document.body).toHaveTextContent("saves Downloads for files.example.com");
   });
 
-  it("maps Escape to deny", () => {
+  it("sits in the chat instead of covering it, and only an explicit choice decides", () => {
     const { onDecide } = setup();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("region", { name: "Approval needed" })).toBeInTheDocument();
+    // Escape closes panels elsewhere in the app; it never denies.
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(onDecide).toHaveBeenCalledWith("deny");
+    fireEvent.mouseDown(document.body);
+    expect(onDecide).not.toHaveBeenCalled();
   });
 
-  it("ignores a click outside the dialog: only an explicit choice decides", () => {
+  it("ignores digits typed anywhere outside the box, such as after a missed click", () => {
+    // Seen live: a click meant for a question's answer field missed, and the "3" in the
+    // typed answer denied the waiting write.
+    vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup();
-    const overlay = document.querySelector(".themis-dialog-overlay")!;
-    fireEvent.mouseDown(overlay);
+    vi.advanceTimersByTime(600);
+    for (const key of ["1", "2", "3"]) fireEvent.keyDown(document.body, { key });
     expect(onDecide).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it("renders nothing when closed", () => {
     const onDecide = vi.fn();
-    render(<ApprovalDialog request={REQUEST} open={false} onDecide={onDecide} />);
+    render(<ApprovalBox request={REQUEST} open={false} onDecide={onDecide} />);
     expect(screen.queryByText("shell.exec")).not.toBeInTheDocument();
   });
 });
@@ -237,14 +247,14 @@ describe("single-key shortcuts", () => {
   it("ignores digits typed during the first 500 ms and held-down repeats", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup();
-    fireEvent.keyDown(document.body, { key: "2" }); // typed into the composer just as the dialog opened
+    fireEvent.keyDown(box(), { key: "2" }); // pressed just as the box appeared
     vi.advanceTimersByTime(499);
-    fireEvent.keyDown(document.body, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).not.toHaveBeenCalled();
     vi.advanceTimersByTime(2);
-    fireEvent.keyDown(document.body, { key: "2", repeat: true });
+    fireEvent.keyDown(box(), { key: "2", repeat: true });
     expect(onDecide).not.toHaveBeenCalled();
-    fireEvent.keyDown(document.body, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).toHaveBeenCalledWith("chat");
   });
   it("ignores digits typed into the composer or another field", () => {
@@ -260,9 +270,9 @@ describe("single-key shortcuts", () => {
     document.body.append(composer, input);
     for (const target of [editor, composer, input]) fireEvent.keyDown(target, { key: "2" });
     expect(onDecide).not.toHaveBeenCalled();
-    fireEvent.keyDown(document.body, { key: "2", metaKey: true });
+    fireEvent.keyDown(box(), { key: "2", metaKey: true });
     expect(onDecide).not.toHaveBeenCalled();
-    fireEvent.keyDown(document.body, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).toHaveBeenCalledWith("chat");
     composer.remove(); input.remove();
   });
@@ -332,7 +342,7 @@ describe("command display", () => {
       grant_scope: { argv, covers_further_args: false },
       command: { argv, cwd: "/repo", sandbox_blocked: "writing to /Users/me/x is blocked\u202E: only the project is writable" },
     });
-    expect(screen.getByRole("dialog", { name: "Run outside the sandbox?" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Run outside the sandbox?" })).toBeInTheDocument();
     expect(screen.getByText("shell (outside the sandbox)")).toBeInTheDocument();
     expect(screen.getByText(/The sandbox blocked it/)).toHaveTextContent("writing to /Users/me/x is blocked⟨U+202E⟩: only the project is writable. Outside the sandbox");
     expect(screen.getByText(/run outside the sandbox in later runs of this chat/)).toBeInTheDocument();

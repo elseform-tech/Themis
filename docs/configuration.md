@@ -425,7 +425,7 @@ or the same server after its plugin revision changes, asks again. Web and browse
 keyed by site: one grant on a browser action covers every browser action on that host, and a
 `fetch_url` or `web_search` grant covers that tool on that host.
 
-**Chat grants.** The approval dialog offers **Allow once**, **Allow in this chat** and
+**Chat grants.** The approval box offers **Allow once**, **Allow in this chat** and
 **Deny**. *Allow in this chat* runs the action now and saves the grant to the chat's own
 file, `chat_grants/<chat id>.json` in the app data directory (beside `threads.json`). Format:
 `{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<16 hex>","risk":"network"}]}`;
@@ -473,6 +473,29 @@ minutes) are fixed, not runtime configuration. App server commands:
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
 `steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
 (also through `themis call`).
+**Questions.** The agent's `ask_user` tool (no approval prompt, like `set_goal`; a deny rule
+for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.json` (app data):
+`[{"id","run_id","question","choices","assumption","reasons","blocking","topic","asked_at","answer"}]`
+(`assumption` holds the tool's `recommended` answer, which the agent works on until answered;
+`reasons` maps an answer to its one-line tradeoff, at most 160 characters, the recommended one's
+from the tool's `why`, which a non-blocking question must give),
+at most 8 open at once (the tool then tells the agent to keep working on its assumption) and
+100 kept (the oldest answered go first); a question is at most 1,000 characters, with 2 to 4
+choices of 200 (the recommended one first; a single choice becomes the suggestion), and an
+answer at most 10,000. Asking again on an open `topic`, or with the same
+wording, updates that question. The transcript records `question_asked` and `question_answered`
+events so the chat shows them. A non-blocking question needs a `recommended` answer and the run goes on (a question with
+a recommendation is never blocking, whatever the model asks for);
+a blocking one ends the run after that tool batch with a fixed sentence, and in goal mode the
+goal waits until that question is answered (answers to other questions run but leave it
+waiting). `answer_question` (`threadId`, `questionId`, `answer`) delivers the answer like a
+steer when a run is going (unread, it returns to the front of the queue), otherwise first in
+the queue as the next message, joining an answer already waiting there; `list_questions`
+(`threadId`) lists them. The answer message starts with a fixed marker the goal supervisor
+reads. Open questions are listed in each goal turn's message and in the reached turn's. A
+damaged file is ignored (`questions_ignored`); diagnostics record question ids, the blocking
+flag and the delivery path (`asked`, `updated`, `answered`), never the question or answer text.
+Answers grant nothing.
 **To undo** a grant, edit or delete its entry in the chat's file, or start a new chat; there is
 deliberately no UI for this, and the composer shield stays YOLO/Custom only.
 Destructive actions (the variants below and the `destructive` risk class such as

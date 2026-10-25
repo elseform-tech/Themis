@@ -87,6 +87,29 @@ levels are listed.
 - **Changing the model or effort during a run** applies from the next turn:
   the running turn finishes on the model it started with.
 
+### Questions from the agent
+
+When the agent needs your input, it asks without stopping its work. The
+question shows in the chat with 2–4 options, one per line, its recommended one
+marked **Recommended**, or, for an open question such as a name, its
+**Suggested** answer. Each option has one short line on its tradeoff, and the
+recommended one says why. The agent carries on with that answer until you click
+another option or write your own.
+
+- The question stays open until you answer it. After five minutes without an
+  answer it shrinks to one **Open question** line; click it to answer whenever
+  you like. Above the composer, **N open questions** counts those and jumps to
+  the oldest one.
+- Your answer reaches the agent right away when it is working (read before its
+  next step), or goes out as the next message when it is not. If the answer
+  differs from what it assumed, it fixes that work first.
+- Only a question the agent cannot recommend any answer to, and that blocks all
+  further work (the name of your own key, say), ends its turn; it never shrinks, and in
+  goal mode the goal waits for that answer only.
+- A goal can be reached with questions still open: the agent's message says
+  which ones and what it recommended. Questions stay with the chat across restarts;
+  from the CLI, `themis call list_questions` and `answer_question` do the same.
+
 ### Goals
 
 A goal is one sentence the agent keeps working toward, turn after turn, until it
@@ -123,10 +146,9 @@ is reached; for example `/goal optimize this app to speed up p95`.
   limit. Your messages are handled first, then the goal continues. Failed turns are
   retried with growing waits (up to 15 minutes) however often they fail; **Stop**
   ends only the current turn; a closed app resumes running goals when it opens
-  again. A goal pauses only when it is reached, waiting for your answer (the agent
-  asked you something only you can decide and can do nothing more toward the goal
-  without it; your reply resumes it; a question it can work around, it asks while
-  carrying on with a stated assumption), or out of model
+  again. A goal pauses only when it is reached, waiting for your answer (a blocking
+  question: the agent can do nothing more toward the goal without it; answering
+  it resumes the goal, see **Questions from the agent**), or out of model
   quota (it retries every 15 minutes; switching the model resumes it at once). A
   goal saved as stuck by an earlier version waits for Resume.
 - **Notifications** (macOS): while Themis is in the background, a desktop
@@ -191,7 +213,11 @@ Its default policy allows reads and asks before other tools. A matching deny
 rule rejects the action; a matching allow rule proceeds. Projects can add
 restrictions but cannot grant access.
 
-When a rule asks, the dialog shows the tool, summary, and risk:
+When a rule asks, an **Approval needed** box appears in that chat, below the work
+it interrupts, like a question from the agent. Only that action waits: the chat
+stays readable and open questions stay answerable. Another chat that waits for
+you shows **Needs approval** in the sidebar. The box shows the tool, summary,
+and risk, with one choice per line:
 
 - **Allow once (1)** — allow this call only.
 - **Allow in this chat (2)** — allow the same command family (for example `cargo test`
@@ -206,7 +232,7 @@ chat grants. Grants live in the chat's own file, `chat_grants/<chat id>.json` in
 folder; to undo one, remove its entry (or delete the file) or start a new chat. Enabling an MCP
 connection is the permission to start it, so no start prompt appears.
 
-Approval timeouts deny pending requests and remove the dialog with a short note. Reopening the app restores requests still pending in the running backend. With no explicit approval
+Approval timeouts deny pending requests and remove the box with a short note. Reopening the app restores requests still pending in the running backend. With no explicit approval
 configuration, **Ask before read tools** still controls reads. **YOLO** means no
 approval prompts: it bypasses harness approval and tool restrictions, including
 the filesystem root and Git allowlist, but the sandbox still applies. Mode and

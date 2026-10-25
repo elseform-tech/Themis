@@ -1,0 +1,1 @@
+Not asked: {{max}} questions are already open. Keep working on your assumption and ask later, once some are answered.
