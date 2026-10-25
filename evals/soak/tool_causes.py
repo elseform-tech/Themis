@@ -27,7 +27,9 @@ OURS = (
 MODEL = (
     ("batch_limit", r"^Not run: this batch|Tool arguments exceed"),
     ("bad_arguments", r"argument '[^']+' is invalid|invalid arguments|invalid (?:type|value|JSON)"
-                      r"|missing field|unknown field|must not be empty"),
+                      r"|missing field|unknown field|must not be empty"
+                      # a JSONL field asked of a file that has none; a cwd that is no directory
+                      r"|Selected JSONL field is missing|working directory '[^']*' is not a directory"),
     ("unknown_tool", r"unknown tool '"),
     ("missing_path", r"(?:no such file|not found|does not exist|cannot find).{0,80}['`\"/]"
                      r"|['`\"][^'`\"]+['`\"].{0,40}(?:no such file|not found|does not exist)"),

@@ -57,19 +57,17 @@ The chat, through the app server and CLI:
 ### Expected size (an estimate; the live pilot confirms it)
 
 At the defaults (60 items, 6,000 filler characters) the material is about 98k tokens: about 1,650
-per memo. A run adds roughly 160k tokens to the context:
+per memo, about 98k for 60 memos; the default is 120 memos (about 196k). A run adds roughly
+twice the material to the context: one read of every memo, a second read of the memos written
+before the follow-up, writes and edits, plus tool overhead.
 
-- one read of every memo, about 98k;
-- a second read of the memos written before the follow-up, about 49k;
-- writes and edits, about 12k;
-- plus tool overhead.
-
-A checkpoint at a 24k budget frees about 12–14k, so expect about 11–14 checkpoints. That means
-150–250 requests (fewer when the model batches reads) and about 3M input tokens. At
-`muse-spark-1.3-contributor` prices ($0.10/M input, $0.20/M output, $0.002/M cached) that is
-≈ $0.30–0.40 per run, well under the $1.50 cap, and roughly 15–25 minutes. How many goal turns
-this takes depends on how much the model does per turn. `--items` and `--filler-chars` scale the
-job; changing either starts a new series.
+The default budget is 64k (decided 2026-10-25). A first pilot at 24k checkpointed every ~5
+requests and never wrote an output file in an hour: too little room to read a memo and write
+its file between checkpoints. At 64k a checkpoint frees about 40k, so expect about 8–12
+checkpoints, a few hundred requests and ≈ $0.5–1 per run at `muse-spark-1.3-contributor` prices,
+under the $1.50 cap; runs are capped at 2 hours. How many goal turns this takes depends on how
+much the model does per turn. `--items` and `--filler-chars` scale the job; changing either
+starts a new series.
 
 ## Running
 

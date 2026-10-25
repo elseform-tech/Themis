@@ -1,6 +1,6 @@
 """CLI for the goal soak (a live benchmark audit, not an automated check).
 
-    python3 -m evals.soak run --model M [--budgets 24000,64000,auto] [--seeds 1,2,3]
+    python3 -m evals.soak run --model M [--budgets 64000,auto] [--seeds 1,2,3]
     python3 -m evals.soak report TRACE.json [...]   # grade saved traces against the history
     python3 -m evals.soak trend [--model M]          # the latest run of every series
 """
@@ -158,13 +158,13 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="run the soak live through the app (spends money)")
     run.add_argument("--model", default=spend_kit.DEFAULT_MODEL)
-    run.add_argument("--budgets", default=[24000], type=lambda text: [parse_budget(b) for b in text.split(",")],
-                     help="comma-separated context budgets (tokens or auto); default 24000")
+    run.add_argument("--budgets", default=[64000], type=lambda text: [parse_budget(b) for b in text.split(",")],
+                     help="comma-separated context budgets (tokens or auto); default 64000")
     run.add_argument("--seeds", default=[1], type=lambda text: [int(s) for s in text.split(",")])
     run.add_argument("--items", type=int, default=DEFAULT_ITEMS)
     run.add_argument("--filler-chars", type=int, default=DEFAULT_FILLER_CHARS)
     run.add_argument("--max-turns", type=int, default=80, help="goal turns before the run is capped")
-    run.add_argument("--timeout", type=int, default=3600, help="seconds before the run is capped")
+    run.add_argument("--timeout", type=int, default=7200, help="seconds before the run is capped")
     run.add_argument("--idle-timeout", type=int, default=300,
                      help="seconds with the goal running and no run going before it counts as not continuing")
     run.add_argument("--max-run-cost", type=float, default=spend_kit.MAX_RUN_COST)

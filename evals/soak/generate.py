@@ -29,7 +29,7 @@ import random
 import re
 
 JOB = "items-v2"
-DEFAULT_ITEMS = 60
+DEFAULT_ITEMS = 120
 DEFAULT_FILLER_CHARS = 6000
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROMPTS = os.path.join(HERE, "prompts")

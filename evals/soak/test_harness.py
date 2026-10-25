@@ -159,8 +159,8 @@ class GeneratorTests(unittest.TestCase):
             gen.spec_for(1, 5)
         gen.generate(1, self.dirs[0])
         tokens = gen.material_tokens(self.dirs[0])
-        # The defaults: 60 memos of about 1,650 tokens each (see the README's size estimate).
-        self.assertTrue(90_000 < tokens < 110_000, tokens)
+        # The defaults: 120 memos of about 1,650 tokens each (see the README's size estimate).
+        self.assertTrue(180_000 < tokens < 215_000, tokens)
         # Every memo fits one read_file call (8,000 characters).
         for name in os.listdir(os.path.join(self.dirs[0], "src")):
             self.assertLess(os.path.getsize(os.path.join(self.dirs[0], "src", name)), 8000, name)
@@ -462,6 +462,10 @@ class GraderTests(unittest.TestCase):
                  ("bogus", "unknown tool 'bogus'. (available: read_file)", "model"),
                  ("shell", "Traceback (most recent call last): ZeroDivisionError", "model"),
                  ("read_file", "path '../x' escapes the project root", "model"),
+                 # From the first live pilot: a JSONL field asked of a memo; the text "null" as cwd.
+                 ("read_file", "tool 'read_file' failed: Selected JSONL field is missing or is not a string", "model"),
+                 ("shell", "tool 'shell' failed: shell: working directory '/tmp/soak/project/null' is not a directory",
+                  "model"),
                  ("web_search", "web_search: the moon is in the way", "unclassified")]
         for tool, text, cause in cases:
             self.assertEqual(tool_causes.classify(tool, text)[0], cause, text)
