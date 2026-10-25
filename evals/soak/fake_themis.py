@@ -209,9 +209,16 @@ def call(data, method, args):
 
 
 def watch(data):
+    """Like the app, it also repeats the goal every so often while it runs (an elapsed-time tick)."""
     path = _path(data, "events.jsonl")
-    offset = 0
+    offset, tick = 0, time.monotonic()
     while True:
+        goal = _load(data, "goal.json", None)
+        if (goal or {}).get("status") == "running" and time.monotonic() - tick >= 0.3:
+            tick = time.monotonic()
+            frame = {"name": "thread-event", "payload": {"thread_id": "t1", "run_id": "",
+                                                         "event": {"kind": "goal_changed", "goal": goal}}}
+            print(json.dumps(frame), flush=True)
         if os.path.exists(path):
             with open(path, "rb") as handle:
                 handle.seek(offset)

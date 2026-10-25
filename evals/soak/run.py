@@ -62,7 +62,9 @@ class Watch:
                     "event": payload["event"]}
             with self.lock:
                 self.events.append(item)
-                self.last = time.monotonic()
+                # The app repeats the goal every minute while it runs: that tick is not activity.
+                if payload["event"].get("kind") != "goal_changed":
+                    self.last = time.monotonic()
             if self.on_event:
                 self.on_event(item)
 
