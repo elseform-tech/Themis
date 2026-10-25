@@ -1,3 +1,0 @@
-This project is the settlement service for {{desk_count}} trading desks. Implement `settle(entries)` in every desk module under ledger/desks/, exactly as docs/overview.md and that desk's own page in docs/desks/ describe. Each desk's code, currency, fee rate, rounding, minimum fee, floor, error numbers and line order are only on its own page, so read every page.
-
-Use the standard library only (Python 3.10+). Add unittest tests in tests/ that `python3 -m unittest discover -s tests` runs, and run them. Work through every desk: it should all work when you are done.

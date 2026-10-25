@@ -18,6 +18,7 @@ import type {
   WorkspaceInfo,
   GoModel,
   Goal,
+  Question,
   QueuedMessage,
   HistoryItem,
   PersistedMessage,
@@ -151,6 +152,11 @@ export function removeQueuedMessage(threadId: string, messageId: string): Promis
 /** Delivers a queued message into the running run, read before its next step. */
 export function steerQueuedMessage(threadId: string, messageId: string): Promise<void> {
   return invoke('steer_queued_message', { threadId, messageId });
+}
+
+/** Answers a question the agent asked; the agent reads it now or in its next turn. */
+export function answerQuestion(threadId: string, questionId: string, answer: string): Promise<Question> {
+  return invoke('answer_question', { threadId, questionId, answer });
 }
 
 export function getGoal(threadId: string): Promise<Goal | null> {

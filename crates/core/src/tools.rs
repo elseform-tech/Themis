@@ -102,10 +102,10 @@ pub fn integration_risk(name: &str, args: &Value) -> Option<RiskLevel> {
 /// anything else; the dispatcher therefore neither prompts nor arms a permit.
 #[must_use]
 pub fn tool_approves_itself(name: &str) -> bool {
-    // `set_goal` only sets the calling chat's goal; its deny rules apply inside.
-    // Web and browser tools approve per site, and only they know the site (the
-    // browser's current page).
-    matches!(name, "manage_automations" | "set_goal") || is_site_tool(name)
+    // `set_goal` only sets the calling chat's goal and `ask_user` only adds a
+    // question to it; their deny rules apply inside. Web and browser tools
+    // approve per site, and only they know the site (the browser's current page).
+    matches!(name, "manage_automations" | "set_goal" | "ask_user") || is_site_tool(name)
 }
 
 /// Tools whose approval identity is a site: the action's `command` holds the
@@ -1192,16 +1192,50 @@ impl ToolT for GatedTool {
 #[async_trait]
 impl ToolRuntime for GatedTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
+        // The toolkit reports file-system failures as the bare OS error ("Permission denied
+        // (os error 13)"); name the paths the model gave, so the error says which file failed.
+        let paths = PATH_KEYS
+            .iter()
+            .filter_map(|key| args.get(*key).and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.execute_gated(args).await.map_err(|error| {
+            if paths.is_empty() || !is_bare_os_error(&error) {
+                return error;
+            }
+            ToolCallError::RuntimeError(format!("{paths}: {}", runtime_message(&error)).into())
+        })
+    }
+}
+
+/// Argument names that hold a path, in the order a failing call's paths are reported.
+const PATH_KEYS: [&str; 6] = [
+    "file_path",
+    "path",
+    "source_path",
+    "destination_path",
+    "directory_path",
+    "directory",
+];
+
+fn runtime_message(error: &ToolCallError) -> String {
+    match error {
+        ToolCallError::RuntimeError(inner) => inner.to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// An OS error that names no path (the standard library adds none to `io::Error`).
+fn is_bare_os_error(error: &ToolCallError) -> bool {
+    let message = runtime_message(error);
+    message.contains("(os error ") && !message.contains('/') && !message.contains('\\')
+}
+
+impl GatedTool {
+    async fn execute_gated(&self, args: Value) -> Result<Value, ToolCallError> {
         let mut args = args;
         if let Some(root) = &self.relative_root {
-            for key in [
-                "path",
-                "file_path",
-                "directory_path",
-                "source_path",
-                "destination_path",
-                "directory",
-            ] {
+            for key in PATH_KEYS {
                 if let Some(path) = args.get(key).and_then(Value::as_str) {
                     if !Path::new(path).is_absolute() {
                         args[key] = Value::String(root.join(path).to_string_lossy().into_owned());
@@ -1213,14 +1247,7 @@ impl ToolRuntime for GatedTool {
             // absolute path they were shown (e.g. the evidence directory); an absolute path
             // inside the project becomes relative, and the toolkit still validates the rest
             // (traversal, symlinks). Paths outside the project are left to be refused.
-            for key in [
-                "path",
-                "file_path",
-                "directory_path",
-                "source_path",
-                "destination_path",
-                "directory",
-            ] {
+            for key in PATH_KEYS {
                 if let Some(relative) = args
                     .get(key)
                     .and_then(Value::as_str)
@@ -3146,6 +3173,23 @@ mod tests {
         let message = err.to_string().to_lowercase();
         assert!(message.contains("approv"), "{message}");
         assert!(!root.join("note.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn gated_write_os_error_names_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_tmp, root) = rooted_case();
+        fs::write(root.join("locked.txt"), "old").unwrap();
+        fs::set_permissions(root.join("locked.txt"), fs::Permissions::from_mode(0o444)).unwrap();
+        let tools = boxed_tools(&root, allow_all()).unwrap();
+        let err = find_tool(&tools, "write_file")
+            .execute(json!({"file_path": "locked.txt", "content": "new"}))
+            .await
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("os error"), "{message}");
+        assert!(message.contains("locked.txt"), "{message}");
     }
 
     #[tokio::test]

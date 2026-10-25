@@ -27,6 +27,8 @@ mod plugins;
 mod preferences;
 mod projects;
 mod providers;
+mod question_tool;
+mod questions;
 mod queue;
 mod reviews;
 mod run;
@@ -288,6 +290,11 @@ struct AppStateInner {
     /// Steer inboxes of running runs, by chat, with the sink of the run (to
     /// announce steers put back in the queue when the run ends).
     steer_inboxes: std::sync::Mutex<HashMap<String, SteerEntry>>,
+    /// Per-chat questions to the user (`questions/<chat id>.json`), loaded on first use.
+    questions: std::sync::Mutex<HashMap<String, Vec<crate::types::Question>>>,
+    questions_dir: PathBuf,
+    /// Serializes question changes.
+    question_lock: std::sync::Mutex<()>,
     /// Per-chat goals (`goals/<chat id>.json`), loaded on first use.
     goals: std::sync::Mutex<HashMap<String, Option<crate::types::Goal>>>,
     goals_dir: PathBuf,
@@ -530,6 +537,9 @@ impl AppState {
                 queues_dir: app_dir.join(queue::QUEUES_DIR),
                 queue_lock: std::sync::Mutex::new(()),
                 steer_inboxes: std::sync::Mutex::new(HashMap::new()),
+                questions: std::sync::Mutex::new(HashMap::new()),
+                questions_dir: app_dir.join(questions::QUESTIONS_DIR),
+                question_lock: std::sync::Mutex::new(()),
                 goals: std::sync::Mutex::new(HashMap::new()),
                 goals_dir: app_dir.join(goal::GOALS_DIR),
                 goal_lock: std::sync::Mutex::new(()),

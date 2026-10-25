@@ -35,8 +35,6 @@ mod notes;
 mod pending;
 mod summary_evidence;
 mod summary_job;
-#[cfg(feature = "eval")]
-pub mod tool_eval;
 
 use crate::skills::{compose_task, filter_tools, Skill};
 use crate::tools::{Approval, ApprovalHook, RiskLevel, ToolAction};
@@ -980,12 +978,9 @@ async fn run_task_with_evidence_inner(
                 };
                 if value["arguments_rejected"] != true && unchanged {
                     unchanged_results += 1;
-                    #[cfg(feature = "eval")]
-                    let _ = EVAL_REPEAT_REMINDERS
-                        .try_with(|count| count.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
                     // Every streak of three gets a warning, never a stop: a re-read after a
                     // checkpoint can be needed, and stopping hides why the agent repeats itself.
-                    // The run's turn limit bounds a real loop; evals count the warnings.
+                    // The run's turn limit bounds a real loop.
                     let warn = unchanged_results >= 3;
                     // An identical result still in context is referenced, not resent.
                     let live =
@@ -1021,10 +1016,6 @@ async fn run_task_with_evidence_inner(
                         if !nudge_off("loop_warning") {
                             warn_repeated_results(result);
                         }
-                        #[cfg(feature = "eval")]
-                        let _ = EVAL_LOOP_WARNINGS.try_with(|count| {
-                            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                        });
                     }
                 } else {
                     unchanged_results = 0;
@@ -1071,6 +1062,14 @@ async fn run_task_with_evidence_inner(
             message_type: MessageType::ToolResult(results),
             content: String::new(),
         });
+        if let Some(result) = take_end_request() {
+            emit(RunEvent::Finished {
+                result: result.clone(),
+            })
+            .await
+            .ok();
+            return Ok(result);
+        }
     }
 
     check_stopped(&stopped, &events).await?;
@@ -1423,8 +1422,6 @@ async fn request_answer_inner(
         else {
             return result.map(|(text, calls)| (with_shown(&shown, text), calls));
         };
-        #[cfg(feature = "eval")]
-        eval_note_failure(serde_json::json!({"error": error.to_string(), "retry": retries}));
         let empty_output = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == EMPTY_ANSWER);
         let truncated = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == "Provider response was truncated");
         // A stream that dropped or failed part-way is as temporary as a transport error.
@@ -2020,6 +2017,25 @@ pub async fn with_steer_inbox<F: std::future::Future>(inbox: SteerInbox, future:
     STEER_INBOX.scope(inbox, future).await
 }
 
+tokio::task_local! { static END_REQUEST: EndRequest; }
+
+/// Set by a tool that needs the user before anything more can happen (a
+/// blocking question): the run ends after that tool batch, with this text as
+/// its answer, instead of asking the model again.
+pub type EndRequest = Arc<Mutex<Option<String>>>;
+
+/// Runs `future` with an end request a tool can set; without one, nothing ends a run early.
+pub async fn with_end_request<F: std::future::Future>(end: EndRequest, future: F) -> F::Output {
+    END_REQUEST.scope(end, future).await
+}
+
+fn take_end_request() -> Option<String> {
+    END_REQUEST
+        .try_with(|end| end.lock().unwrap_or_else(|e| e.into_inner()).take())
+        .ok()
+        .flatten()
+}
+
 /// Takes every steered message waiting for this run.
 fn take_steers() -> Vec<String> {
     STEER_INBOX
@@ -2044,35 +2060,6 @@ fn steer_waiting() -> bool {
 /// arriving mid-run so the model adjusts the work it is doing.
 pub fn steered_message(text: &str) -> String {
     format!("{}\n{text}", crate::prompts::RUNTIME_STEERED)
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
-    /// Eval-only: loop warnings given in the run (each would once have stopped it after the first).
-    pub static EVAL_LOOP_WARNINGS: Arc<std::sync::atomic::AtomicUsize>;
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
-    /// Eval-only: why model requests failed, with any tool call a cut-off reply was writing.
-    pub static EVAL_REQUEST_FAILURES: Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
-}
-
-/// Eval-only: notes one failed model request (no prompt or argument content, only sizes).
-#[cfg(feature = "eval")]
-pub(crate) fn eval_note_failure(record: serde_json::Value) {
-    let _ = EVAL_REQUEST_FAILURES.try_with(|failures| {
-        failures
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(record)
-    });
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
-    /// Eval-only: results marked as an unchanged repeat (a reference or a reminder note).
-    pub static EVAL_REPEAT_REMINDERS: Arc<std::sync::atomic::AtomicUsize>;
 }
 
 #[cfg(feature = "eval")]
@@ -2277,9 +2264,7 @@ fn suspended_progress(
     if !messages.iter().any(|message| matches!(&message.message_type, MessageType::ToolResult(results) if !results.is_empty())) {
         return None;
     }
-    let task = messages
-        .iter()
-        .rposition(|message| message.role == ChatRole::User)?;
+    let task = active_request_index(messages)?;
     let snapshot = evidence_relative_path(snapshot);
     let source = serde_json::json!({
         "path":&snapshot,
@@ -2330,11 +2315,7 @@ async fn compact_context_inner(
     events.send(RunEvent::ContextCompacting).await.ok();
     let summary_tokens = checkpoint_token_allowance(messages, policy);
     let current_request = bounded_context_hint(
-        messages
-            .iter()
-            .rev()
-            .find(|message| message.role == ChatRole::User)
-            .map_or("", |message| message.content.as_str()),
+        active_request_index(messages).map_or("", |index| messages[index].content.as_str()),
     );
     let summary_input_budget = MODEL_REQUEST_BUDGET
         .try_with(|budget| *budget)
@@ -2604,6 +2585,23 @@ fn calibration_sample(
     })
 }
 
+/// Notes the runtime adds as user messages during a run; none is a new request.
+const RUNTIME_NOTES: [&str; 4] = [
+    SPEC_CHECK,
+    CUT_OFF_NOTE,
+    SILENT_CUT_OFF_NOTE,
+    EMPTY_ANSWER_NOTE,
+];
+
+/// The request being worked on: the last user message that is not one of the
+/// runtime's own notes. A checkpoint keeps it whole and tells the summarizer it is
+/// the current request, so a spec check late in a goal turn must not displace it.
+fn active_request_index(messages: &[ChatMessage]) -> Option<usize> {
+    messages.iter().rposition(|message| {
+        message.role == ChatRole::User && !RUNTIME_NOTES.contains(&message.content.as_str())
+    })
+}
+
 fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
     // Keep recent full messages within a third of the space left after instructions.
     let recent_budget = policy
@@ -2630,7 +2628,7 @@ fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
 
 fn checkpoint_token_allowance(messages: &[ChatMessage], policy: &RunPolicy) -> u32 {
     let split = context_split(messages, policy);
-    let active = messages.iter().rposition(|m| m.role == ChatRole::User);
+    let active = active_request_index(messages);
     let fixed = estimated_tokens(&messages[..1])
         .saturating_add(estimated_tokens(&messages[split..]))
         .saturating_add(
@@ -2686,9 +2684,7 @@ async fn replace_context(
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     original_snapshot: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    let active_index = messages
-        .iter()
-        .rposition(|message| matches!(message.role, ChatRole::User));
+    let active_index = active_request_index(messages);
     let active_request = active_index
         .filter(|index| *index < split)
         .map(|index| messages[index].clone());
@@ -3479,6 +3475,32 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod tests {
+    /// Found by the scripted goal soak: a checkpoint during a goal turn's spec
+    /// check kept the check as the active request and summarized the goal turn
+    /// away, so later requests lost the goal.
+    #[test]
+    fn runtime_notes_are_never_the_active_request() {
+        let text = |role, content: &str| ChatMessage {
+            role,
+            message_type: MessageType::Text,
+            content: content.to_owned(),
+        };
+        for note in RUNTIME_NOTES {
+            let messages = [
+                text(ChatRole::System, "system"),
+                text(ChatRole::User, "earlier request"),
+                text(
+                    ChatRole::User,
+                    "[Goal — runtime, not from the user] Turn 7. Goal: g",
+                ),
+                text(ChatRole::Assistant, "Wrote the item file."),
+                text(ChatRole::User, note),
+            ];
+            assert_eq!(active_request_index(&messages), Some(2), "{note}");
+        }
+        assert_eq!(active_request_index(&[text(ChatRole::System, "s")]), None);
+    }
+
     #[test]
     fn tool_failures_read_as_the_tool_wrote_them() {
         let error = crate::tools::tool_error(
@@ -5183,6 +5205,66 @@ mod tests {
             (answer.as_str(), bodies.len(), checks(&bodies)),
             ("Done.", 2, 0)
         );
+    }
+
+    /// A blocking question ends the run after its tool batch, without another model request.
+    #[tokio::test]
+    async fn an_end_request_finishes_the_run_after_its_tool_batch() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let end: EndRequest = Arc::default();
+        let tool_end = Arc::clone(&end);
+        Mock::given(method("POST"))
+            .respond_with(move |_: &wiremock::Request| {
+                // As a blocking question would, mid-batch.
+                *tool_end.lock().unwrap() = Some("Waiting for your answer.".into());
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":{"content":"Asking.","tool_calls":[{"id":"l","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}]}))
+            })
+            .mount(&server)
+            .await;
+        let llm = crate::providers::resolve(
+            &crate::providers::ProviderConfig::new(crate::providers::ProviderKind::Go, "synthetic")
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+        )
+        .await
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let tools =
+            crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook)).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let policy = RunPolicy {
+            total_turns: 8,
+            context_token_budget: 24000,
+            recent_messages: 4,
+        };
+        let answer = with_end_request(
+            Arc::clone(&end),
+            run_task_with_evidence(
+                llm,
+                tools,
+                "Do the work.".into(),
+                vec![],
+                Arc::new(crate::tools::AllowAllHook),
+                policy,
+                tx,
+                Arc::new(AtomicBool::new(false)),
+                String::new(),
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer, "Waiting for your answer.");
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        assert!(end.lock().unwrap().is_none(), "the request is used once");
+        let mut finished = None;
+        while let Ok(event) = rx.try_recv() {
+            if let RunEvent::Finished { result } = event {
+                finished = Some(result);
+            }
+        }
+        assert_eq!(finished.as_deref(), Some("Waiting for your answer."));
     }
 
     /// A steered message reaches the model at the next request boundary, once, and in order;

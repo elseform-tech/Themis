@@ -60,7 +60,12 @@ pub const GOAL_CHECK_USER: &str = include_str!("../builtins/prompts/goal-check-u
 pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md");
 /// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.
 pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
-/// Goal-turn note after the user resumes a stuck goal.
+/// Message that tells the user a checked goal is reached; `{{goal_turn_marker}}`,
+/// `{{turn}}`, `{{goal}}`, `{{reason}}`.
+pub const GOAL_REACHED_TURN: &str = include_str!("../builtins/prompts/goal-reached-turn.md");
+/// Goal-turn note after turns without progress; `{{turns}}`.
+pub const GOAL_NOTE_STALLED: &str = include_str!("../builtins/prompts/goal-note-stalled.md");
+/// Goal-turn note after the user resumes a goal saved as stuck (older versions).
 pub const GOAL_NOTE_RESUMED_STUCK: &str =
     include_str!("../builtins/prompts/goal-note-resumed-stuck.md");
 /// Goal-turn note after the user stopped the previous turn.
@@ -70,6 +75,22 @@ pub const GOAL_NOTE_FAILED: &str = include_str!("../builtins/prompts/goal-note-f
 /// Goal-turn note after Themis closed during a turn.
 pub const GOAL_NOTE_INTERRUPTED: &str =
     include_str!("../builtins/prompts/goal-note-interrupted.md");
+/// Goal-turn note listing the questions still open; `{{questions}}`.
+pub const GOAL_OPEN_QUESTIONS: &str = include_str!("../builtins/prompts/goal-open-questions.md");
+
+// Questions to the user.
+/// Description of the `ask_user` tool.
+pub const ASK_USER_DESCRIPTION: &str = include_str!("../builtins/prompts/ask-user-description.md");
+/// `note` of an `ask_user` result that keeps the run going; `{{assumption}}`.
+pub const ASK_USER_ASKED: &str = include_str!("../builtins/prompts/ask-user-asked.md");
+/// `note` of a blocking `ask_user` result: the run ends.
+pub const ASK_USER_BLOCKING: &str = include_str!("../builtins/prompts/ask-user-blocking.md");
+/// The answer of a run that ended on a blocking question.
+pub const ASK_USER_WAITING: &str = include_str!("../builtins/prompts/ask-user-waiting.md");
+/// `ask_user` refusal when too many questions are open; `{{max}}`.
+pub const ASK_USER_LIMIT: &str = include_str!("../builtins/prompts/ask-user-limit.md");
+/// The message that delivers the user's answer; `{{question}}`, `{{assumption}}`, `{{answer}}`.
+pub const QUESTION_ANSWER: &str = include_str!("../builtins/prompts/question-answer.md");
 /// `note` field of the set_goal tool result.
 pub const GOAL_SET_NOTE: &str = include_str!("../builtins/prompts/goal-set-note.md");
 

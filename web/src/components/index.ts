@@ -42,5 +42,5 @@ export type { DiffViewProps } from "./diff/DiffView";
 export { FileTree } from "./diff/FileTree";
 export type { FileTreeProps } from "./diff/FileTree";
 
-export { ApprovalDialog } from "./approval/ApprovalDialog";
-export type { ApprovalDialogProps } from "./approval/ApprovalDialog";
+export { ApprovalBox } from "./approval/ApprovalBox";
+export type { ApprovalBoxProps } from "./approval/ApprovalBox";

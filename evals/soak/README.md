@@ -28,7 +28,7 @@ allowed tool is graded as ours; any other denial is the model reaching past the 
 `key: value` sources) was finished in 2 goal turns by one Python script that parsed every file,
 so v2 makes every item need the model's own reading:
 
-- `src/<name>.txt` for N items (default 60) is a prose memo in varied, seeded wording. No fact is
+- `src/<name>.txt` for N items (default 120) is a prose memo in varied, seeded wording. No fact is
   a `key: value` line, and each has to be resolved:
   - **owner**: the team that holds the item *now*, after a hand-over told in a sentence ("took it
     over from", "ownership passed from … to …"), sometimes next to a proposed move that was dropped;
@@ -63,18 +63,19 @@ The chat, through the app server and CLI:
 4. After `reached`, three recall questions as ordinary messages, to be answered from memory: an
    early fact (the first item's count), a rule, the number of retired items.
 
-### Expected size (an estimate; the live pilot confirms it)
+### Size
 
-At the defaults (60 items, 6,000 filler characters) the material is about 98k tokens: about 1,650
-per memo, about 98k for 60 memos; the default is 120 memos (about 196k). A run adds roughly
+At the defaults (120 items, 6,000 filler characters) the material is about 196k tokens, about
+1,650 per memo. A run adds roughly
 twice the material to the context: one read of every memo, a second read of the memos written
 before the follow-up, writes and edits, plus tool overhead.
 
 The default budget is 64k (decided 2026-10-25). A first pilot at 24k checkpointed every ~5
 requests and never wrote an output file in an hour: too little room to read a memo and write
-its file between checkpoints. At 64k a checkpoint frees about 40k, so expect about 8–12
-checkpoints, a few hundred requests and ≈ $0.5–1 per run at `muse-spark-1.3-contributor` prices,
-under the $1.50 cap; runs are capped at 2 hours. How many goal turns this takes depends on how
+its file between checkpoints. At 64k a checkpoint frees about 40k. The first
+round with limited tools (five runs on main, `muse-spark-1.3-contributor`, 2026-10-25) took 13–39
+checkpoints, 370–570 requests, 18–83 minutes and $0.33–0.58 per run, under the $1.50 cap; runs
+are capped at 2 hours. How many goal turns this takes depends on how
 much the model does per turn. `--items` and `--filler-chars` scale the job; changing either
 starts a new series.
 
@@ -90,7 +91,7 @@ python3 -m evals.soak trend                                               # late
 - Each run gets a scratch HOME, TMP and data folder (`evals.kit.env.isolated_env`): only `PATH`,
   `OPENCODE_KEY` and the scratch folders reach the app, so no Keychain and no real app data are
   touched. The budget goes in the data folder's `runtime.jsonc` (`context_token_budget`, a
-  number or `"auto"`); the chat uses YOLO approvals; the app's own OS sandbox applies.
+  number or `"auto"`) with the job's Custom approval rules; the app's own OS sandbox applies.
 - `--themis` takes a prebuilt CLI; otherwise `cargo build -p themis-desktop --bin themis` runs.
 - **Spend**: cheap models only (≤ $0.20 per million input tokens at the run's budget; `auto` is
   priced at the model's dearest context tier). A preflight checks the model is listed by
@@ -117,8 +118,8 @@ flagged).
 
 | Area | Measure | Kind | Meaning |
 | --- | --- | --- | --- |
-| goal | `goal_continuation_breaks` | harness | A `not_yet` goal note with no goal turn after it (unless a cap ended the run right there). |
-| goal | `turns_after_reached` | harness | Goal turns that started after the `reached` note (recall messages do not count). |
+| goal | `goal_continuation_breaks` | harness | The goal stayed running with no turn starting until the idle timeout (`not_continuing`); a cap that cuts a turn short is not a break. Goals never stop for lack of progress, so a run ends reached, waiting, at a cap, or broken. |
+| goal | `turns_after_reached` | harness | Goal turns that started after the goal's status became `reached` (the app's one short turn telling the user, and recall messages, do not count). |
 | goal | `goal_changed` | harness | `get_goal` polls, while the goal ran, that found no goal or a different text. |
 | goal | `reached` | model | 1 when the goal was reached within the caps. |
 | goal | `goal_turns` | reported | Goal turns started. |

@@ -5,7 +5,12 @@ import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { describeError, toast, useActiveProject, useApp } from "../state/store";
 import { browserOpenUrl } from "../lib/browser";
-import type { ChangedFile } from "../lib/types";
+import { ANSWER_MARKER, type ChangedFile, type Question } from "../lib/types";
+import { answerQuestion } from "../lib/tauri";
+import { QuestionBox } from "./QuestionBox";
+import { ApprovalBox } from "../components";
+import { approveAction } from "../lib/tauri";
+import type { ApprovalDecision, ApprovalRequest } from "../lib/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResponseBody, ResponseLinks } from "../components/ResponseBody";
 import "./GoalBar.css";
@@ -51,7 +56,8 @@ export function ThreadConversation({
   const [viewing, setViewing] = useState<number | null>(null);
   const openMedia = useCallback((path: string) => { const index = media.findIndex(file => file.path === path); if (index >= 0) setViewing(index); }, [media]);
   const gallery = useMemo(() => ({ threadId, items: media, open: openMedia }), [threadId, media, openMedia]);
-  const { dispatch } = useApp();
+  const { state, dispatch } = useApp();
+  const approvals = useMemo(() => state.approvals.filter(approval => approval.thread_id === threadId), [state.approvals, threadId]);
   // Links in replies open in this chat's browser, shown in the Workspace Browser tab.
   const openLink = useCallback((url: string) => {
     dispatch({ type: "ui/diff-panel", open: true, tab: "browser" });
@@ -66,9 +72,10 @@ export function ThreadConversation({
     return () => clearInterval(timer);
   }, [running, threadId]);
 
+  // New output, and an approval that appears below it, scroll into view while following.
   useEffect(() => {
     if (followOutput.current) endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, stream]);
+  }, [messages, stream, approvals]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -102,6 +109,9 @@ export function ThreadConversation({
           />
         ))
       )}
+      {approvals.map(request => (
+        <ApprovalRow key={request.approval_id} request={request} traces={traces} />
+      ))}
       {stream !== "" && (
         <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--live">
           <ResponseBody text={stream} streaming />
@@ -146,6 +156,9 @@ function ConversationRow({
   skills: PromptSkill[];
   plugins: PromptPlugin[];
 }) {
+  if (row.kind === "message" && row.message.question) {
+    return <QuestionRow threadId={threadId} question={row.message.question} />;
+  }
   if (row.kind === "message") return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
   if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
 
@@ -262,8 +275,34 @@ export function GoalNote({ note }: { note: NonNullable<ChatMessage["goalNote"]> 
   );
 }
 
+/** An action of this chat waiting for a decision. */
+function ApprovalRow({ request, traces }: { request: ApprovalRequest; traces: ToolTraceEntry[] }) {
+  const { dispatch } = useApp();
+  async function decide(decision: ApprovalDecision) {
+    try {
+      await approveAction(request.thread_id, request.approval_id, decision);
+      dispatch({ type: "approval/dequeued", approvalId: request.approval_id });
+    } catch (error: unknown) {
+      toast(dispatch, `Approval failed: ${describeError(error)}`, "danger");
+    }
+  }
+  return <ApprovalBox request={request} open
+    // An MCP tool's readable name ("files · read text file"), as the step list shows it.
+    label={[...traces].reverse().find(entry => entry.tool === request.tool && entry.label)?.label}
+    onDecide={decision => void decide(decision)} />;
+}
+
+function QuestionRow({ threadId, question }: { threadId: string; question: Question }) {
+  const { dispatch } = useApp();
+  return <QuestionBox question={question} onAnswer={async answer => {
+    try { await answerQuestion(threadId, question.id, answer); } catch (error) { toast(dispatch, `Could not send the answer: ${describeError(error)}`, "danger"); throw error; }
+  }} />;
+}
+
 function Message({ message, threadId, activeRunId, skills, plugins }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
   if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
+  // The answered question box already shows the answer the agent was sent.
+  if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
   if (message.goalTurn !== undefined) return <div className="themis-goal-turn" role="separator" aria-label={`Goal turn ${message.goalTurn}`}>Turn {message.goalTurn}</div>;
   if (message.goalNote) return <GoalNote note={message.goalNote} />;

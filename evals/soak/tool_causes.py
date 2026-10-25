@@ -49,6 +49,7 @@ MODEL = (
                      r"|['`\"][^'`\"]+['`\"].{0,40}(?:no such file|not found|does not exist)"),
     ("outside_project", r"escapes the project root|outside the project|Absolute paths are not allowed"),
     ("read_past_end", r"Read offset \d+ is past the end"),
+    ("unsupported_url", r"only http and https URLs are supported"),
     ("patch_mismatch", r"patch does not apply|context mismatch|ambiguous|No files were changed"),
     ("command_failed", r"exit(?:ed)?(?: with)?(?: code| status)?\s*[:=]?\s*[1-9]|non-zero|command failed"
                        r"|failed to start '"),
