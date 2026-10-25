@@ -17,6 +17,7 @@ vi.mock("../state/store", async importOriginal => ({
 }));
 vi.mock("../lib/tauri", () => ({
   checkForUpdates: vi.fn(),
+  notificationPermission: vi.fn(async () => "granted"),
   clearSecret: vi.fn(async () => undefined),
   getSecretStatus: vi.fn(async () => ({ go: true })),
   setSecret: vi.fn(async () => undefined),
@@ -130,6 +131,67 @@ describe("Settings › Models", () => {
     await act(async () => { render(<SettingsScreen />); });
     expect(screen.getByRole("button", { name: "Secrets" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Keys" })).toBeNull();
+  });
+});
+
+describe("Settings › General › Notifications", () => {
+  let platform: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    vi.mocked(bridge.updateSettings).mockClear();
+    vi.mocked(bridge.notificationPermission).mockClear().mockResolvedValue("granted");
+  });
+  afterEach(() => { platform.mockRestore(); settings.goal_notifications = true; });
+
+  async function openGeneral() {
+    await act(async () => { render(<SettingsScreen />); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "General" })); });
+  }
+
+  it("holds the sound, haptics and goal switches; Appearance no longer has them", async () => {
+    await openGeneral();
+    const group = screen.getByRole("region", { name: "Notifications" });
+    expect(within(group).getAllByRole("checkbox").map(box => box.closest("label")?.textContent)).toEqual(["Sound when a reply finishes", "Haptics", "Notify when a goal finishes or pauses"]);
+    expect(within(group).getByLabelText("Notify when a goal finishes or pauses")).toBeChecked();
+    // Checking the status on open never asks the system.
+    expect(bridge.notificationPermission).toHaveBeenCalledWith(false);
+    expect(bridge.notificationPermission).not.toHaveBeenCalledWith(true);
+    expect(within(group).queryByText(/System Settings/)).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Appearance" })); });
+    expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Feedback" })).toBeNull();
+    expect(screen.queryByText("Sound when a reply finishes")).toBeNull();
+  });
+
+  it("saves the switch off without asking for permission", async () => {
+    await openGeneral();
+    vi.mocked(bridge.notificationPermission).mockClear();
+    await act(async () => { fireEvent.click(screen.getByLabelText("Notify when a goal finishes or pauses")); });
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ goal_notifications: false });
+    expect(bridge.notificationPermission).not.toHaveBeenCalledWith(true);
+  });
+
+  it("asks for permission when turned on and hints once when it is refused", async () => {
+    settings.goal_notifications = false;
+    vi.mocked(bridge.notificationPermission).mockResolvedValue("denied");
+    await openGeneral();
+    expect(bridge.notificationPermission).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(screen.getByLabelText("Notify when a goal finishes or pauses")); });
+    expect(bridge.updateSettings).toHaveBeenCalledWith({ goal_notifications: true });
+    expect(bridge.notificationPermission).toHaveBeenCalledWith(true);
+    // The stored setting is still off in this mock, so the hint shows only for an on switch.
+    cleanup();
+    settings.goal_notifications = true;
+    await openGeneral();
+    expect(screen.getByText("Notifications are off for Themis in System Settings › Notifications.")).toBeInTheDocument();
+  });
+
+  it("shows only the sound switch outside macOS", async () => {
+    platform.mockReturnValue("Win32");
+    await openGeneral();
+    const group = screen.getByRole("region", { name: "Notifications" });
+    expect(within(group).getAllByRole("checkbox")).toHaveLength(1);
+    expect(bridge.notificationPermission).not.toHaveBeenCalled();
   });
 });
 

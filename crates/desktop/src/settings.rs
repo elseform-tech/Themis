@@ -224,6 +224,9 @@ impl SettingsStore {
             if let Some(enabled) = patch.completion_haptic {
                 current.completion_haptic = enabled;
             }
+            if let Some(enabled) = patch.goal_notifications {
+                current.goal_notifications = enabled;
+            }
             if let Some(mode) = patch.default_approval_mode {
                 current.default_approval_mode = mode;
             }
@@ -316,6 +319,7 @@ mod tests {
                 automations_enabled: Some(false),
                 completion_sound: Some(false),
                 completion_haptic: Some(true),
+                goal_notifications: Some(false),
                 onboarded: Some(true),
                 ..SettingsPatch::default()
             })
@@ -329,6 +333,7 @@ mod tests {
         assert!(!updated.automations_enabled);
         assert!(!updated.completion_sound);
         assert!(updated.completion_haptic);
+        assert!(!updated.goal_notifications);
         assert!(updated.onboarded);
         assert!(path.exists(), "settings file was written");
 
@@ -443,6 +448,7 @@ mod tests {
         assert!(settings.automations_enabled);
         assert!(settings.completion_sound);
         assert!(!settings.completion_haptic);
+        assert!(settings.goal_notifications);
         assert!(!settings.onboarded);
     }
 

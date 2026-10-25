@@ -606,6 +606,36 @@ impl AppState {
             .clone()
     }
 
+    /// Logs one desktop notification attempt (sent by the app, which has no log
+    /// of its own). Metadata only: the chat id, what it reported and how it ended.
+    pub fn record_notification(
+        &self,
+        record: crate::notifications::NotificationRecord,
+    ) -> Result<(), String> {
+        use crate::notifications::NotificationOutcome;
+        if !chat_grants::safe_chat_id(&record.thread_id) {
+            return Err("invalid chat id".to_owned());
+        }
+        let level = if record.outcome == NotificationOutcome::Sent {
+            "info"
+        } else {
+            "warn"
+        };
+        self.inner
+            .diagnostics
+            .append(
+                "notifications",
+                "goal_notification",
+                level,
+                serde_json::json!({
+                    "thread_id": record.thread_id,
+                    "kind": record.kind,
+                    "outcome": record.outcome,
+                }),
+            )
+            .map_err(|error| error.to_string())
+    }
+
     /// Records a command failure in the diagnostics ring (oldest-first,
     /// capped at [`MAX_RECENT_ERRORS`]; the oldest entry is evicted on
     /// overflow). Every fallible Tauri command reports its `Err` here via

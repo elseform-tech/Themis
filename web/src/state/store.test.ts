@@ -431,6 +431,7 @@ describe("settings", () => {
         automations_enabled: true,
         completion_sound: true,
         completion_haptic: false,
+        goal_notifications: true,
         onboarded: true,
       },
     });

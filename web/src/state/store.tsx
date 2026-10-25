@@ -22,6 +22,7 @@ import { getBrowserSettings,
   checkGoKey,
   getPendingApprovals,
   onBackendResync,
+  onNotificationOpened,
   getSettings,
   getDefaultProject,
   getThread,
@@ -131,6 +132,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (restoredSession.current && state.activeProjectRoot && state.activeThreadId) writeSession("selection", { root: state.activeProjectRoot, threadId: state.activeThreadId });
   }, [state.activeProjectRoot, state.activeThreadId]);
+
+  // A clicked goal notification opens its chat (the app already came forward).
+  useEffect(() => {
+    let cancelled = false;
+    let off: (() => void) | undefined;
+    void Promise.resolve()
+      .then(() => onNotificationOpened(threadId => {
+        const { threadsByProject } = currentState.current;
+        const projectRoot = Object.keys(threadsByProject).find(root => threadsByProject[root].some(thread => thread.id === threadId));
+        if (projectRoot) dispatch({ type: "thread/selected", projectRoot, threadId });
+      }))
+      .then(unlisten => { if (cancelled) unlisten(); else off = unlisten; })
+      .catch(() => {});
+    return () => { cancelled = true; off?.(); };
+  }, []);
 
   // Subscribe to backend events once on mount.
   useEffect(() => {

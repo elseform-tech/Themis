@@ -647,6 +647,8 @@ export interface Settings {
   automations_enabled: boolean;
   completion_sound: boolean;
   completion_haptic: boolean;
+  /** A desktop notification when a goal is reached or pauses while the app is in the background. */
+  goal_notifications: boolean;
   /** Editor that opens runtime.jsonc ("" = system text editor). */
   config_editor?: string;
   /** The approval mode a new chat starts in. */

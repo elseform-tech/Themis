@@ -425,6 +425,16 @@ export function setThreadApprovalMode(threadId: string, mode: "custom" | "yolo")
   return tracked;
 }
 
+/** Whether Themis may show desktop notifications; `request` asks the system when not decided yet. */
+export type NotifyPermission = "granted" | "denied" | "undetermined" | "unavailable";
+export function notificationPermission(request: boolean): Promise<NotifyPermission> {
+  return tauriInvoke<NotifyPermission>("notification_permission", { request });
+}
+/** A goal notification was clicked: open its chat. */
+export function onNotificationOpened(cb: (threadId: string) => void): Promise<UnlistenFn> {
+  return listen<string>("notification-opened", (event) => cb(event.payload));
+}
+
 export function onBackendResync(handler: () => void): Promise<UnlistenFn> {
   return listen('backend-resync', handler);
 }

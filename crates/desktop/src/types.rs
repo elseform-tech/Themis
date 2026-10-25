@@ -925,6 +925,9 @@ pub struct Settings {
     pub completion_sound: bool,
     #[serde(default)]
     pub completion_haptic: bool,
+    /// A desktop notification when a goal is reached or pauses while the app is not focused.
+    #[serde(default = "default_goal_notifications")]
+    pub goal_notifications: bool,
     /// Editor Settings › Permissions opens `runtime.jsonc` with (`""` = system text editor).
     #[serde(default)]
     pub config_editor: String,
@@ -964,6 +967,10 @@ const fn default_completion_sound() -> bool {
     true
 }
 
+const fn default_goal_notifications() -> bool {
+    true
+}
+
 pub const fn default_max_total_turns() -> u32 {
     200
 }
@@ -993,6 +1000,7 @@ impl Default for Settings {
             automations_enabled: default_automations_enabled(),
             completion_sound: default_completion_sound(),
             completion_haptic: false,
+            goal_notifications: default_goal_notifications(),
             config_editor: String::new(),
             default_approval_mode: Default::default(),
             go_secret: default_go_secret(),
@@ -1038,6 +1046,8 @@ pub struct SettingsPatch {
     pub completion_sound: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_haptic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_notifications: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_editor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1564,6 +1574,7 @@ mod tests {
                 "automations_enabled": true,
                 "completion_sound": true,
                 "completion_haptic": false,
+                "goal_notifications": true,
                 "config_editor": "",
                 "default_approval_mode": "custom",
                 "go_secret": "OPENCODE_KEY",
@@ -1602,6 +1613,7 @@ mod tests {
         assert!(legacy.automations_enabled);
         assert!(legacy.completion_sound);
         assert!(!legacy.completion_haptic);
+        assert!(legacy.goal_notifications);
         assert!(!legacy.onboarded);
         let status = SecretStatus { go: true };
         assert_eq!(to_value(&status), json!({"go": true}));

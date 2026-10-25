@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Badge, EmptyState, Switch } from "../components";
 import type { Settings, UpdateStatus } from "../lib/types";
-import { checkForUpdates, updateSettings } from "../lib/tauri";
+import { checkForUpdates, notificationPermission, updateSettings } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
 import "./Settings.css";
 import { AppearanceSettings } from "./Appearance";
@@ -75,6 +75,33 @@ export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
         </div>
       );
   }
+}
+
+/** Settings › General › Notifications. Goal notifications are macOS-only, so
+ *  their switch (like Haptics) shows only there; permission is asked when the
+ *  switch is turned on, and a refusal leaves one short hint. */
+function NotificationSettings({ form, save }: { form: Settings; save: (patch: Partial<Settings>) => Promise<boolean> }) {
+  const mac = navigator.platform.startsWith("Mac");
+  const [denied, setDenied] = useState(false);
+  const goals = form.goal_notifications;
+  useEffect(() => {
+    if (!mac || !goals) { setDenied(false); return; }
+    let current = true;
+    void Promise.resolve().then(() => notificationPermission(false))
+      .then(permission => { if (current) setDenied(permission === "denied"); })
+      .catch(() => {});
+    return () => { current = false; };
+  }, [mac, goals]);
+  async function toggleGoals(enabled: boolean) {
+    if (!await save({ goal_notifications: enabled }) || !enabled) return;
+    try { setDenied(await notificationPermission(true) === "denied"); } catch { /* not in the desktop app */ }
+  }
+  return <SettingsGroup title="Notifications">
+    <label className="themis-settings-check" title="Play a click when a response you started finishes">Sound when a reply finishes<Switch checked={form.completion_sound} onChange={event => void save({ completion_sound: event.target.checked })} /></label>
+    {mac && <label className="themis-settings-check" title="Use trackpad feedback when available">Haptics<Switch checked={form.completion_haptic} onChange={event => void save({ completion_haptic: event.target.checked })} /></label>}
+    {mac && <label className="themis-settings-check" title="Only while Themis is in the background">Notify when a goal finishes or pauses<Switch checked={goals} onChange={event => void toggleGoals(event.target.checked)} /></label>}
+    {mac && goals && denied && <p className="themis-settings-hint">Notifications are off for Themis in System Settings › Notifications.</p>}
+  </SettingsGroup>;
 }
 
 export function SettingsScreen() {
@@ -159,13 +186,8 @@ export function SettingsScreen() {
         <div className="themis-settings-control"><span>Updates</span><button type="button" className="themis-text-action" disabled={checking} onClick={() => void checkUpdates()}>{checking ? "Checking…" : "Check for updates"}</button></div>
         {update && <UpdateStatusView status={update} />}
       </SettingsGroup>}
-      {section === "Appearance" && <>
-        <AppearanceSettings settings={state.settings} save={save} />
-        <SettingsGroup title="Feedback">
-          <label className="themis-settings-check" title="Play a click when a response you started finishes">Sound when a reply finishes<Switch checked={form.completion_sound} onChange={event => void save({ completion_sound: event.target.checked })} /></label>
-          {navigator.platform.startsWith("Mac") && <label className="themis-settings-check" title="Use trackpad feedback when available">Haptics<Switch checked={form.completion_haptic} onChange={event => void save({ completion_haptic: event.target.checked })} /></label>}
-        </SettingsGroup>
-      </>}
+      {section === "General" && <NotificationSettings form={form} save={save} />}
+      {section === "Appearance" && <AppearanceSettings settings={state.settings} save={save} />}
       {section === "Models" && <ModelsSettings save={save} saving={saving} />}
       {section === "Usage" && <UsageSettingsSection />}
       {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}

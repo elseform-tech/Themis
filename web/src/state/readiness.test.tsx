@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ApprovalRequest, ThreadEventEnvelope } from "../lib/types";
+import type { ApprovalRequest, ThreadEventEnvelope, ThreadInfo } from "../lib/types";
 import { AppProvider, useApp } from "./store";
 
 const backend = vi.hoisted(() => ({
@@ -10,6 +10,7 @@ const backend = vi.hoisted(() => ({
   reconnect: null as (() => void) | null,
   approval: null as ((request: ApprovalRequest) => void) | null,
   expired: null as ((expired: { thread_id: string; approval_id: string }) => void) | null,
+  opened: null as ((threadId: string) => void) | null,
   automations: vi.fn(async () => [] as unknown[]),
 }));
 
@@ -45,6 +46,10 @@ vi.mock("../lib/tauri", () => ({
   },
   onReviewItemAdded: async () => () => {},
   onThreadChanged: async () => () => {},
+  onNotificationOpened: async (callback: typeof backend.opened) => {
+    backend.opened = callback;
+    return () => { backend.opened = null; };
+  },
 }));
 
 function Readiness() {
@@ -123,4 +128,20 @@ it("removes an expired approval dialog when the backend reports the expiry", asy
   act(() => backend.expired?.({ thread_id: "t", approval_id: "a1" }));
   await screen.findByText("no dialogs");
   expect(screen.getByText("Approval expired — the action was skipped")).toBeInTheDocument();
+});
+
+it("opens the chat of a clicked goal notification", async () => {
+  function Active() {
+    const { state, dispatch } = useApp();
+    return <><button type="button" onClick={() => dispatch({ type: "thread/listed", projectRoot: "/p", threads: [{ id: "t1", title: "Fix the build" } as ThreadInfo] })}>list</button>
+      <output>{state.activeThreadId ?? "none"}</output></>;
+  }
+  render(<AppProvider><Active /></AppProvider>);
+  await waitFor(() => expect(backend.opened).toBeTypeOf("function"));
+  // A chat no open project knows stays unopened.
+  act(() => backend.opened!("t1"));
+  expect(screen.getByText("none")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "list" }));
+  act(() => backend.opened!("t1"));
+  expect(screen.getByText("t1")).toBeInTheDocument();
 });
