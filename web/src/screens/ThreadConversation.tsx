@@ -72,9 +72,10 @@ export function ThreadConversation({
     return () => clearInterval(timer);
   }, [running, threadId]);
 
+  // New output, and an approval that appears below it, scroll into view while following.
   useEffect(() => {
     if (followOutput.current) endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, stream]);
+  }, [messages, stream, approvals]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -108,8 +109,8 @@ export function ThreadConversation({
           />
         ))
       )}
-      {approvals.map((request, index) => (
-        <ApprovalRow key={request.approval_id} request={request} first={index === 0} traces={traces} />
+      {approvals.map(request => (
+        <ApprovalRow key={request.approval_id} request={request} traces={traces} />
       ))}
       {stream !== "" && (
         <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--live">
@@ -274,8 +275,8 @@ export function GoalNote({ note }: { note: NonNullable<ChatMessage["goalNote"]> 
   );
 }
 
-/** An action of this chat waiting for a decision; only the first answers to 1/2/3. */
-function ApprovalRow({ request, first, traces }: { request: ApprovalRequest; first: boolean; traces: ToolTraceEntry[] }) {
+/** An action of this chat waiting for a decision. */
+function ApprovalRow({ request, traces }: { request: ApprovalRequest; traces: ToolTraceEntry[] }) {
   const { dispatch } = useApp();
   async function decide(decision: ApprovalDecision) {
     try {
@@ -285,7 +286,7 @@ function ApprovalRow({ request, first, traces }: { request: ApprovalRequest; fir
       toast(dispatch, `Approval failed: ${describeError(error)}`, "danger");
     }
   }
-  return <ApprovalBox request={request} open shortcuts={first}
+  return <ApprovalBox request={request} open
     // An MCP tool's readable name ("files · read text file"), as the step list shows it.
     label={[...traces].reverse().find(entry => entry.tool === request.tool && entry.label)?.label}
     onDecide={decision => void decide(decision)} />;

@@ -11,6 +11,9 @@ const REQUEST: ApprovalRequest = {
   risk: "execute",
 };
 
+/** Keys reach the box only while focus is inside it. */
+const box = () => screen.getByRole("region");
+
 function setup(request: ApprovalRequest = REQUEST) {
   const onDecide = vi.fn();
   render(<ApprovalBox request={request} open onDecide={onDecide} />);
@@ -68,11 +71,11 @@ describe("ApprovalBox", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup({ ...REQUEST, risk: "destructive", grantable: false });
     vi.advanceTimersByTime(600);
-    fireEvent.keyDown(document, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).not.toHaveBeenCalled();
-    fireEvent.keyDown(document, { key: "3" });
+    fireEvent.keyDown(box(), { key: "3" });
     expect(onDecide).toHaveBeenLastCalledWith("deny");
-    fireEvent.keyDown(document, { key: "1" });
+    fireEvent.keyDown(box(), { key: "1" });
     expect(onDecide).toHaveBeenLastCalledWith("once");
   });
 
@@ -80,11 +83,11 @@ describe("ApprovalBox", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup();
     vi.advanceTimersByTime(600);
-    fireEvent.keyDown(document, { key: "1" });
+    fireEvent.keyDown(box(), { key: "1" });
     expect(onDecide).toHaveBeenCalledWith("once");
-    fireEvent.keyDown(document, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).toHaveBeenCalledWith("chat");
-    fireEvent.keyDown(document, { key: "3" });
+    fireEvent.keyDown(box(), { key: "3" });
     expect(onDecide).toHaveBeenCalledWith("deny");
   });
 
@@ -93,10 +96,10 @@ describe("ApprovalBox", () => {
     const { onDecide } = setup();
     vi.advanceTimersByTime(600);
     // fireEvent returns false when the handler cancelled the key's default (typing it).
-    expect(fireEvent.keyDown(document, { key: "3" })).toBe(false);
+    expect(fireEvent.keyDown(box(), { key: "3" })).toBe(false);
     expect(onDecide).toHaveBeenCalledWith("deny");
     // Other keys keep their default.
-    expect(fireEvent.keyDown(document, { key: "7" })).toBe(true);
+    expect(fireEvent.keyDown(box(), { key: "7" })).toBe(true);
   });
 
   it("decides by digit while its own button has focus, as it does on opening", () => {
@@ -119,7 +122,7 @@ describe("ApprovalBox", () => {
       vi.advanceTimersByTime(200);
       rerender(<ApprovalBox request={REQUEST} open onDecide={decision => decided(decision)} />);
     }
-    fireEvent.keyDown(document, { key: "3" });
+    fireEvent.keyDown(screen.getByRole("region"), { key: "3" });
     expect(decided).toHaveBeenCalledWith("deny");
   });
 
@@ -143,12 +146,13 @@ describe("ApprovalBox", () => {
     expect(onDecide).not.toHaveBeenCalled();
   });
 
-  it("leaves the digits to the first waiting approval only", () => {
-    vi.useFakeTimers();
-    const onDecide = vi.fn();
-    render(<ApprovalBox request={REQUEST} open shortcuts={false} onDecide={onDecide} />);
+  it("ignores digits typed anywhere outside the box, such as after a missed click", () => {
+    // Seen live: a click meant for a question's answer field missed, and the "3" in the
+    // typed answer denied the waiting write.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { onDecide } = setup();
     vi.advanceTimersByTime(600);
-    fireEvent.keyDown(document, { key: "1" });
+    for (const key of ["1", "2", "3"]) fireEvent.keyDown(document.body, { key });
     expect(onDecide).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
@@ -243,14 +247,14 @@ describe("single-key shortcuts", () => {
   it("ignores digits typed during the first 500 ms and held-down repeats", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { onDecide } = setup();
-    fireEvent.keyDown(document.body, { key: "2" }); // typed into the composer just as the dialog opened
+    fireEvent.keyDown(box(), { key: "2" }); // pressed just as the box appeared
     vi.advanceTimersByTime(499);
-    fireEvent.keyDown(document.body, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).not.toHaveBeenCalled();
     vi.advanceTimersByTime(2);
-    fireEvent.keyDown(document.body, { key: "2", repeat: true });
+    fireEvent.keyDown(box(), { key: "2", repeat: true });
     expect(onDecide).not.toHaveBeenCalled();
-    fireEvent.keyDown(document.body, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).toHaveBeenCalledWith("chat");
   });
   it("ignores digits typed into the composer or another field", () => {
@@ -266,9 +270,9 @@ describe("single-key shortcuts", () => {
     document.body.append(composer, input);
     for (const target of [editor, composer, input]) fireEvent.keyDown(target, { key: "2" });
     expect(onDecide).not.toHaveBeenCalled();
-    fireEvent.keyDown(document.body, { key: "2", metaKey: true });
+    fireEvent.keyDown(box(), { key: "2", metaKey: true });
     expect(onDecide).not.toHaveBeenCalled();
-    fireEvent.keyDown(document.body, { key: "2" });
+    fireEvent.keyDown(box(), { key: "2" });
     expect(onDecide).toHaveBeenCalledWith("chat");
     composer.remove(); input.remove();
   });

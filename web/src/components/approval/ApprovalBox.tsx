@@ -1,5 +1,6 @@
 import { toolDisplayName } from "../../lib/toolNames";
 import { useEffect, useRef } from "react";
+import type React from "react";
 import type { ApprovalDecision, ApprovalRequest, RiskLevel } from "../../lib/types";
 import { UNSANDBOXED_TOOL } from "../../lib/types";
 import { singleKeyShortcutAllowed } from "../../lib/keyboard";
@@ -13,8 +14,6 @@ export interface ApprovalBoxProps {
   /** A readable name for an MCP tool, shown instead of its opaque wire id. */
   label?: string;
   open: boolean;
-  /** Whether 1/2/3 decide this one (the first waiting in the chat); default true. */
-  shortcuts?: boolean;
   onDecide: (decision: ApprovalDecision) => void;
 }
 
@@ -75,43 +74,34 @@ const SHORTCUT_DELAY_MS = 500;
 /** An action waiting for the person's decision, inline in its chat below the work it
  *  interrupts, like a question from the agent. Only that action waits; nothing else is
  *  covered, so the chat stays readable and questions stay answerable meanwhile. */
-export function ApprovalBox({ request, label, open, shortcuts = true, onDecide }: ApprovalBoxProps) {
+export function ApprovalBox({ request, label, open, onDecide }: ApprovalBoxProps) {
   const grantable = request.grantable !== false;
   const outside = request.tool === UNSANDBOXED_TOOL;
   const blocked = request.command?.sandbox_blocked;
-  // The caller passes a new onDecide on every render; the shortcut uses the latest one
-  // without re-registering, so the pause below counts from when this request appeared,
-  // not from the last re-render (during a run the app re-renders more often than that).
-  const decide = useRef(onDecide);
-  useEffect(() => { decide.current = onDecide; }, [onDecide]);
+  // Keys typed just before the box appeared must not decide it: the pause counts from
+  // when this request appeared, not from the last re-render (a run re-renders often).
+  const openedAt = useRef(Date.now());
   const approvalId = request.approval_id;
-  useEffect(() => {
-    if (!open || !shortcuts) return;
-    // Keys typed just before the box appeared (for example digits in the composer) must not decide it.
-    const openedAt = Date.now();
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.repeat || Date.now() - openedAt < SHORTCUT_DELAY_MS) return;
-      // Digits decide the approval only when they are not being typed into the composer or another field.
-      if (!singleKeyShortcutAllowed(event)) return;
-      // Numbering is stable: 1 Allow once, 2 Allow in this chat, 3 Deny. Requests that
-      // cannot be allowed for the chat offer only 1 and 3, so a held 2 never denies.
-      const decision = event.key === "1" ? "once" : event.key === "2" && grantable ? "chat" : event.key === "3" ? "deny" : null;
-      if (decision === null) return;
-      // The box goes away on this keydown; without this the digit would land in
-      // whatever field takes the focus next.
-      event.preventDefault();
-      decide.current(decision);
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, shortcuts, grantable, approvalId]);
+  useEffect(() => { openedAt.current = Date.now(); }, [approvalId]);
+  // Digits decide only while focus is inside this box (after a click or Tab into it):
+  // the box sits beside question fields and the composer, and a digit typed after a
+  // missed click must never approve or deny an action.
+  function onKeyDown(event: React.KeyboardEvent) {
+    if (event.repeat || Date.now() - openedAt.current < SHORTCUT_DELAY_MS) return;
+    if (!singleKeyShortcutAllowed(event.nativeEvent)) return;
+    // Numbering is stable: 1 Allow once, 2 Allow in this chat, 3 Deny. Requests that
+    // cannot be allowed for the chat offer only 1 and 3, so a held 2 never denies.
+    const decision = event.key === "1" ? "once" : event.key === "2" && grantable ? "chat" : event.key === "3" ? "deny" : null;
+    if (decision === null) return;
+    // The box goes away on this keydown; the digit must not land anywhere else.
+    event.preventDefault();
+    onDecide(decision);
+  }
 
   if (!open) return null;
   const title = outside ? "Run outside the sandbox?" : "Approval needed";
   return (
-    <section className="themis-approval-box" aria-label={title}>
+    <section className="themis-approval-box" aria-label={title} onKeyDown={onKeyDown}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" /></svg>
       <div className="themis-approval">
         <p className="themis-approval-title">{title}</p>
