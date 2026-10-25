@@ -464,10 +464,14 @@ the commands and file changes recorded since `checked_seq` (the history position
 check read through), in pages of 2,000 items, keeping the newest 32,000 characters of command
 output; an output longer than 6,000 characters keeps its first 2,000 and last 4,000 with a
 clipped marker, and the check asks for a compact proof (a count, a grep) rather than a whole file.
-A check that fails does not move it. The goal check, the
-stall rule (three turns without progress), the failure rule (three failed turns in a row
-with an error that is not a rate limit, timeout or server error pause the goal), quota retries (every 15 minutes) and error backoff
-(30 s doubling to 15 minutes) are fixed, not runtime configuration. App server commands:
+A check that fails does not move it. A goal never stops on its own: after three
+turns without progress (a turn that changed files always counts as progress) the next turn
+is told to try a different approach, failed turns retry with backoff however often they fail,
+and `stuck` remains only for goals saved by earlier versions. When the check finds the goal
+reached, one short unchecked turn has the agent tell the user; the check's verdicts post no
+`goal_note` (only the small-window, quota and failed-turn notes remain). The goal check, the
+stall nudge, quota retries (every 15 minutes) and error backoff (30 s doubling to 15
+minutes) are fixed, not runtime configuration. App server commands:
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
 `steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
 (also through `themis call`).

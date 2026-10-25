@@ -115,7 +115,6 @@ def agent(data, run_id, text):
                 emit(data, run_id, {"kind": "user_message", "text": f"{MARKER}\nTurn {turn}: continue"})
             if mode == "stall" and turn == 2:
                 emit(data, run_id, {"kind": "finished", "result": "Paused."})
-                emit(data, run_id, {"kind": "goal_note", "outcome": "not_yet", "reason": "more items"})
                 return  # the goal stays running, the chat is idle, and nothing starts
             emit(data, run_id, {"kind": "context_budget", "budget": {"used_tokens": used}})
             usage(data, run_id, used, mode)
@@ -167,10 +166,14 @@ def agent(data, run_id, text):
                     emit(data, queued_run, {"kind": "tool_finished", "tool": "write_file", "ok": True, "output": "ok"})
                 emit(data, queued_run, {"kind": "finished", "result": "Updated."})
             if not todo and os.path.exists(os.path.join(project, "out", "INDEX.md")):
-                emit(data, run_id, {"kind": "goal_note", "outcome": "reached", "reason": "check passes"})
                 set_goal(data, status="reached", turns=turn)
+                # Then the app's own short turn: the agent tells the user.
+                told = str(uuid.uuid4())
+                emit(data, told, {"kind": "user_message", "text": f"{MARKER} Turn {turn + 1}. Goal: {goal_text}\n"
+                                                                  "A separate check found the goal reached: check passes"})
+                time.sleep(0.5)
+                emit(data, told, {"kind": "finished", "result": "I've reached the goal: check.py passes."})
                 return
-            emit(data, run_id, {"kind": "goal_note", "outcome": "not_yet", "reason": "more items"})
             turn += 1
             set_goal(data, turns=turn)
             time.sleep(0.05)

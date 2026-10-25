@@ -280,16 +280,21 @@ class Soak:
         thread, error = self.call("get_thread", {"threadId": self.thread}, timeout=30)
         return not error and isinstance(thread, dict) and not thread.get("running")
 
-    def _after_reached(self, trace, script, deadline):
-        """Waits out any run still going, watches for a goal turn that must not start, then asks
-        the recall questions as ordinary messages."""
-        settle = time.monotonic() + 120
+    def _wait_idle(self, seconds):
+        settle = time.monotonic() + seconds
         while time.monotonic() < settle:
             thread, error = self.call("get_thread", {"threadId": self.thread}, timeout=30)
             if error or not (isinstance(thread, dict) and thread.get("running")):
-                break
+                return
             time.sleep(2)
+
+    def _after_reached(self, trace, script, deadline):
+        """Waits out any run still going, watches for a goal turn that must not start, then asks
+        the recall questions as ordinary messages."""
+        self._wait_idle(120)
         time.sleep(self.options.get("grace_s", 30))
+        # The app's short "goal reached" turn may start just after the status changes.
+        self._wait_idle(120)
         for question in script["recall"]:
             if self.stop_reason or time.monotonic() >= deadline:
                 break

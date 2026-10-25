@@ -339,6 +339,9 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
                     reply(r#"{"verdict":"reached","reason":"Counter is 2.","progress":"counter 2"}"#)
                 };
             }
+            if mentions(&body, "A separate check found the goal reached") {
+                return reply("I've reached the goal: the counter is 2.");
+            }
             reply("Incremented the counter.")
         })
         .mount(&server)
@@ -368,18 +371,17 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
     assert_eq!(goal.turns, 2);
     assert_eq!(goal.reason.as_deref(), Some("Counter is 2."));
     assert!(goal.running_since.is_none());
+    // The agent says it in its own words; the check posts no note of its own.
     let mut seen = Vec::new();
-    until(&mut rx, &mut seen, |event| {
-        matches!(
-            event,
-            ThreadEvent::GoalNote {
-                outcome: GoalNoteKind::Reached,
-                ..
-            }
-        )
-    })
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "I've reached the goal: the counter is 2."),
+    )
     .await;
-    assert!(seen.iter().any(|event| matches!(event, ThreadEvent::GoalNote { outcome: GoalNoteKind::NotYet, reason } if reason == "Counter is 1; needs 2.")));
+    assert!(!seen
+        .iter()
+        .any(|event| matches!(event, ThreadEvent::GoalNote { .. })));
     // The second turn was started by the runtime, carrying the check's reason.
     let bodies: Vec<Value> = distinct(
         server
@@ -391,13 +393,32 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
             .collect(),
     );
     let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
-    assert_eq!(turns.len(), 2);
+    assert_eq!(turns.len(), 3);
+    assert_eq!(
+        checks.load(Ordering::SeqCst),
+        2,
+        "no check after the reached turn"
+    );
     assert!(mentions(turns[0], "Active goal for this chat"));
     assert!(mentions(
         turns[1],
         "[Goal — runtime, not from the user] Turn 2."
     ));
     assert!(mentions(turns[1], "Last check: Counter is 1; needs 2."));
+    assert!(mentions(
+        turns[1],
+        "Start your reply with one short sentence"
+    ));
+    // Then one short turn, unchecked, tells the user the goal is reached.
+    assert!(mentions(
+        turns[2],
+        "[Goal — runtime, not from the user] Turn 3."
+    ));
+    assert!(mentions(
+        turns[2],
+        "A separate check found the goal reached: Counter is 2."
+    ));
+    assert_eq!(state.goal_for(&thread).unwrap().turns, 2);
     // The check sees the goal and the answer as fenced data.
     let check = bodies.iter().find(|body| is_check(body)).unwrap();
     assert!(mentions(check, "make the counter reach 2"));
@@ -412,10 +433,12 @@ async fn a_goal_runs_turn_after_turn_until_the_check_finds_it_reached() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn turns_that_only_re_verify_stall_even_when_the_check_rewords_its_progress() {
+async fn turns_that_only_re_verify_stall_and_the_goal_changes_course_instead_of_stopping() {
     // A live goal looped for ten turns: each re-ran a few checks, the check
     // said "not shown this turn" and phrased its measured fact differently,
     // which counted as progress. The check's own progress judgement decides.
+    // A goal never gives up: after three such turns the next one is told to
+    // try a different approach, and the goal keeps running.
     let server = MockServer::start().await;
     let checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = Arc::clone(&checks);
@@ -443,11 +466,103 @@ async fn turns_that_only_re_verify_stall_even_when_the_check_rewords_its_progres
         )
         .await
         .unwrap();
-    goal_until(&state, &thread, |status| status == GoalStatus::Stuck).await;
+    let changed_course = tokio::time::timeout(DEADLINE, async {
+        loop {
+            let requests = server.received_requests().await.unwrap();
+            if requests
+                .iter()
+                .map(body)
+                .any(|body| !is_check(&body) && mentions(&body, "try a different approach"))
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(
+        changed_course.is_ok(),
+        "goal: {:?}",
+        state.goal_for(&thread)
+    );
     let goal = state.goal_for(&thread).unwrap();
-    assert_eq!(goal.stalls, 3);
-    assert_eq!(checks.load(std::sync::atomic::Ordering::SeqCst), 4);
+    assert_eq!(goal.status, GoalStatus::Running);
+    assert!(goal.stalls >= 3, "stalls {}", goal.stalls);
+    assert!(checks.load(std::sync::atomic::Ordering::SeqCst) >= 4);
     settle(&state, &thread).await;
+}
+
+/// Found in the goal soak: a turn that rewrote 172 files was judged "no
+/// progress" by a check that looked only for proof of completion. A turn
+/// that changed files is never a stall, whatever the check says.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_that_changed_files_is_never_a_stall() {
+    let server = MockServer::start().await;
+    let checks = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&checks);
+    let writes = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                counted.fetch_add(1, Ordering::SeqCst);
+                return reply(
+                    r#"{"verdict":"not_yet","reason":"No passing check shown.","progressed":false}"#,
+                );
+            }
+            let tool_done = body["messages"]
+                .as_array()
+                .and_then(|messages| messages.last())
+                .is_some_and(|message| message["role"] == "tool");
+            if tool_done {
+                return reply("Wrote the next file.");
+            }
+            let n = writes.fetch_add(1, Ordering::SeqCst);
+            let arguments = json!({"file_path": format!("out/{n}.md"), "content": format!("item {n}")});
+            ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":format!("w{n}"),"type":"function","function":{"name":"write_file","arguments":arguments.to_string()}}]},"finish_reason":"tool_calls"}]}))
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, project, thread) = chat(&server).await;
+    // Changed files are read from Git, as in a real project.
+    let git = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .unwrap();
+    assert!(git.success());
+    state
+        .set_thread_approval_mode(
+            thread.clone(),
+            themis_core::configuration::ApprovalMode::Yolo,
+        )
+        .await
+        .unwrap();
+    let (sink, _rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal write every file".into(),
+        )
+        .await
+        .unwrap();
+    let checked = tokio::time::timeout(DEADLINE, async {
+        while checks.load(Ordering::SeqCst) < 4 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(checked.is_ok(), "goal: {:?}", state.goal_for(&thread));
+    settle(&state, &thread).await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.stalls, 0, "every turn wrote a file");
+    let requests = server.received_requests().await.unwrap();
+    assert!(!requests
+        .iter()
+        .map(body)
+        .any(|body| !is_check(&body) && mentions(&body, "try a different approach")));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -488,7 +603,7 @@ async fn a_running_goal_saves_its_elapsed_time_during_a_turn() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
+async fn pause_holds_the_goal_resume_continues_and_stalls_never_stop_it() {
     let server = MockServer::start().await;
     // The first turn's answer waits for the test to pause the goal, so the
     // pause always lands while that turn runs, however slow the machine.
@@ -576,25 +691,25 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
         .resume_goal(sink.clone(), thread.clone())
         .await
         .unwrap();
-    // Every turn makes no progress and changes no file: after three it is stuck.
-    goal_until(&state, &thread, |status| status == GoalStatus::Stuck).await;
+    // Every turn makes no progress and changes no file; the goal keeps going.
+    let checks = |requests: &[Request]| {
+        requests
+            .iter()
+            .filter(|request| is_check(&body(request)))
+            .count()
+    };
+    let kept_going = tokio::time::timeout(DEADLINE, async {
+        while checks(&server.received_requests().await.unwrap()) < 5 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(kept_going.is_ok(), "goal: {:?}", state.goal_for(&thread));
     let goal = state.goal_for(&thread).unwrap();
-    assert!(goal
-        .reason
-        .unwrap()
-        .starts_with("No progress over the last 3 turns"));
-    assert_eq!(goal.stalls, 3);
-    let checks = server
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .filter(|request| is_check(&body(request)))
-        .count();
-    // The first measurement counts as progress; three unchanged ones follow.
-    assert_eq!(checks, 4);
-    // Editing the goal and resuming gives it a fresh start.
-    state
+    assert_eq!(goal.status, GoalStatus::Running);
+    assert!(goal.stalls >= 3, "stalls {}", goal.stalls);
+    // Editing the goal gives it a fresh start.
+    let edited = state
         .edit_goal(
             sink.clone(),
             thread.clone(),
@@ -602,6 +717,7 @@ async fn pause_holds_the_goal_resume_continues_and_stalls_pause_it() {
         )
         .await
         .unwrap();
+    assert_eq!(edited.stalls, 0);
     state
         .resume_goal(sink.clone(), thread.clone())
         .await
@@ -811,7 +927,7 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
         )
         .await
         .unwrap();
-    let (sink, mut rx) = ChannelSink::channel();
+    let (sink, _rx) = ChannelSink::channel();
     let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
     state
         .send_message(
@@ -832,26 +948,9 @@ async fn the_check_sees_work_done_since_the_last_check_and_never_waits_without_a
         .await
         .unwrap();
     gate.open();
+    // "Waiting for you" without a question went on as not yet, to the end.
     goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
-    let mut seen = Vec::new();
-    until(&mut rx, &mut seen, |event| {
-        matches!(
-            event,
-            ThreadEvent::GoalNote {
-                outcome: GoalNoteKind::Reached,
-                ..
-            }
-        )
-    })
-    .await;
-    let outcomes: Vec<_> = seen
-        .iter()
-        .filter_map(|event| match event {
-            ThreadEvent::GoalNote { outcome, .. } => Some(*outcome),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(outcomes, [GoalNoteKind::NotYet, GoalNoteKind::Reached]);
+    assert_eq!(checks.load(Ordering::SeqCst), 2);
     let first_check = server
         .received_requests()
         .await
@@ -1051,10 +1150,20 @@ async fn a_goal_whose_turn_cannot_start_retries_and_a_failed_check_is_not_a_stal
         .resume_goal(sink.clone(), thread.clone())
         .await
         .unwrap();
-    until(&mut rx, &mut seen, |event| {
-        matches!(event, ThreadEvent::GoalNote { outcome: GoalNoteKind::NotYet, reason } if reason.contains("could not decide"))
+    // The next turn carries the failed check's note.
+    let continued = tokio::time::timeout(DEADLINE, async {
+        loop {
+            let requests = server.received_requests().await.unwrap();
+            if requests.iter().map(body).any(|body| {
+                !is_check(&body) && mentions(&body, "Last check: The goal check could not decide")
+            }) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     })
     .await;
+    assert!(continued.is_ok(), "goal: {:?}", state.goal_for(&thread));
     assert_eq!(
         state.goal_for(&thread).unwrap().stalls,
         0,
@@ -1152,6 +1261,9 @@ async fn a_goal_with_a_small_context_window_warns_once() {
                     reply(r#"{"verdict":"reached","reason":"Done.","progress":"step 2"}"#)
                 };
             }
+            if mentions(&body(request), "A separate check found the goal reached") {
+                return reply("Both steps are done, so the goal is reached.");
+            }
             reply("Did a step.")
         })
         .mount(&server)
@@ -1172,15 +1284,11 @@ async fn a_goal_with_a_small_context_window_warns_once() {
         .await
         .unwrap();
     let mut seen = Vec::new();
-    until(&mut rx, &mut seen, |event| {
-        matches!(
-            event,
-            ThreadEvent::GoalNote {
-                outcome: GoalNoteKind::Reached,
-                ..
-            }
-        )
-    })
+    until(
+        &mut rx,
+        &mut seen,
+        |event| matches!(event, ThreadEvent::Finished { result, .. } if result == "Both steps are done, so the goal is reached."),
+    )
     .await;
     let warnings: Vec<_> = seen
         .iter()

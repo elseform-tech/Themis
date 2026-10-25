@@ -35,8 +35,6 @@ mod notes;
 mod pending;
 mod summary_evidence;
 mod summary_job;
-#[cfg(feature = "eval")]
-pub mod tool_eval;
 
 use crate::skills::{compose_task, filter_tools, Skill};
 use crate::tools::{Approval, ApprovalHook, RiskLevel, ToolAction};
@@ -980,12 +978,9 @@ async fn run_task_with_evidence_inner(
                 };
                 if value["arguments_rejected"] != true && unchanged {
                     unchanged_results += 1;
-                    #[cfg(feature = "eval")]
-                    let _ = EVAL_REPEAT_REMINDERS
-                        .try_with(|count| count.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
                     // Every streak of three gets a warning, never a stop: a re-read after a
                     // checkpoint can be needed, and stopping hides why the agent repeats itself.
-                    // The run's turn limit bounds a real loop; evals count the warnings.
+                    // The run's turn limit bounds a real loop.
                     let warn = unchanged_results >= 3;
                     // An identical result still in context is referenced, not resent.
                     let live =
@@ -1021,10 +1016,6 @@ async fn run_task_with_evidence_inner(
                         if !nudge_off("loop_warning") {
                             warn_repeated_results(result);
                         }
-                        #[cfg(feature = "eval")]
-                        let _ = EVAL_LOOP_WARNINGS.try_with(|count| {
-                            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                        });
                     }
                 } else {
                     unchanged_results = 0;
@@ -1423,8 +1414,6 @@ async fn request_answer_inner(
         else {
             return result.map(|(text, calls)| (with_shown(&shown, text), calls));
         };
-        #[cfg(feature = "eval")]
-        eval_note_failure(serde_json::json!({"error": error.to_string(), "retry": retries}));
         let empty_output = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == EMPTY_ANSWER);
         let truncated = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == "Provider response was truncated");
         // A stream that dropped or failed part-way is as temporary as a transport error.
@@ -2044,35 +2033,6 @@ fn steer_waiting() -> bool {
 /// arriving mid-run so the model adjusts the work it is doing.
 pub fn steered_message(text: &str) -> String {
     format!("{}\n{text}", crate::prompts::RUNTIME_STEERED)
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
-    /// Eval-only: loop warnings given in the run (each would once have stopped it after the first).
-    pub static EVAL_LOOP_WARNINGS: Arc<std::sync::atomic::AtomicUsize>;
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
-    /// Eval-only: why model requests failed, with any tool call a cut-off reply was writing.
-    pub static EVAL_REQUEST_FAILURES: Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
-}
-
-/// Eval-only: notes one failed model request (no prompt or argument content, only sizes).
-#[cfg(feature = "eval")]
-pub(crate) fn eval_note_failure(record: serde_json::Value) {
-    let _ = EVAL_REQUEST_FAILURES.try_with(|failures| {
-        failures
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(record)
-    });
-}
-
-#[cfg(feature = "eval")]
-tokio::task_local! {
-    /// Eval-only: results marked as an unchanged repeat (a reference or a reminder note).
-    pub static EVAL_REPEAT_REMINDERS: Arc<std::sync::atomic::AtomicUsize>;
 }
 
 #[cfg(feature = "eval")]

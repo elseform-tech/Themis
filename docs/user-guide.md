@@ -105,26 +105,32 @@ is reached; for example `/goal optimize this app to speed up p95`.
   no further turns or checks), and **Show/Hide** for the full sentence. In a narrow
   chat the sentence sits on its own line below the icons.
 - **After each turn** a separate check, with a fresh context, reads the goal, the
-  turn's answer and the commands it ran, and decides: reached, not yet (the next
-  turn starts by itself, told why), or not reachable as written. With a number in
+  turn's answer and the commands it ran, and decides: reached or not yet (the next
+  turn starts by itself, told why). With a number in
   the goal, that number is the bar; without one, the check decides when further
   gains are not worth it and says why.
   The check reads only the commands of the turn it judges (long outputs keep their
   start and end), never earlier turns or the agent's claims, so the agent ends a
   turn it thinks finishes the goal with one compact verification of every
-  requirement. The check also says whether the turn moved the work forward; turns
-  that only re-check count toward being stuck.
-- **It keeps going.** There is no time, turn or cost limit. Your messages are
-  handled first, then the goal continues. Errors are retried with growing waits;
-  **Stop** ends only the current turn; a closed app resumes running goals when it
-  opens again. A goal pauses only when it is reached, genuinely stuck (no progress
-  over three turns, not reachable as written, or three turns in a row failing with
-  an error that retrying will not fix, such as a rejected request; fix it or edit
-  the goal, then Resume), waiting
-  for your answer (your reply resumes it), or out of model quota (it retries every
-  15 minutes; switching the model resumes it at once).
+  requirement. The check also says whether the turn moved the work forward (a turn
+  that changed files always did); after three turns that only re-check, the next
+  one is told to step back and try a different approach.
+- **The agent says where it stands.** There is no status box after a turn: each
+  goal turn opens with the agent saying, in its own words, where the goal stands
+  and what it will do next, and once the check finds the goal reached, one short
+  turn has the agent tell you so and what shows it.
+- **It keeps going and never gives up.** There is no time, turn, cost or stall
+  limit. Your messages are handled first, then the goal continues. Failed turns are
+  retried with growing waits (up to 15 minutes) however often they fail; **Stop**
+  ends only the current turn; a closed app resumes running goals when it opens
+  again. A goal pauses only when it is reached, waiting for your answer (the agent
+  asked you something only you can decide and can do nothing more toward the goal
+  without it; your reply resumes it; a question it can work around, it asks while
+  carrying on with a stated assumption), or out of model
+  quota (it retries every 15 minutes; switching the model resumes it at once). A
+  goal saved as stuck by an earlier version waits for Resume.
 - **Notifications** (macOS): while Themis is in the background, a desktop
-  notification names the chat when its goal is reached, gets stuck, waits for your
+  notification names the chat when its goal is reached, waits for your
   answer, or runs out of model quota (once per quota pause, not at every retry).
   Pausing a goal yourself never notifies. Clicking one brings Themis forward and
   opens the chat. Turn them off with **Notify when a goal finishes or pauses** in
@@ -133,7 +139,7 @@ is reached; for example `/goal optimize this app to speed up p95`.
   System Settings › Notifications, the switch says so.
 - A goal never grants permissions: approvals and the sandbox apply as usual, and
   while an approval waits the goal waits too. A reached goal leaves the composer;
-  its note stays in the conversation. Sending a new message after a goal
+  the agent's message saying so stays in the conversation. Sending a new message after a goal
   is reached clears it; `/goal` again replaces the current goal.
 - **⌘/Ctrl+B** collapses or pins the sidebar. Hovering at the left edge reveals
   an overlay after 300 ms. It closes 700 ms after leaving, unless focus is inside.
