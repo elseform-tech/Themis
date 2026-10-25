@@ -473,6 +473,24 @@ minutes) are fixed, not runtime configuration. App server commands:
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
 `steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
 (also through `themis call`).
+**Questions.** The agent's `ask_user` tool (no approval prompt, like `set_goal`; a deny rule
+for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.json` (app data):
+`[{"id","run_id","question","choices","assumption","blocking","topic","asked_at","answer"}]`,
+at most 8 open at once (the tool then tells the agent to keep working on its assumption) and
+100 kept (the oldest answered go first); a question is at most 1,000 characters, with up to 6
+choices of 200, and an answer at most 10,000. Asking again on an open `topic`, or with the same
+wording, updates that question. The transcript records `question_asked` and `question_answered`
+events so the chat shows them. A non-blocking question needs an `assumption` and the run goes on;
+a blocking one ends the run after that tool batch with a fixed sentence, and in goal mode the
+goal waits until that question is answered (answers to other questions run but leave it
+waiting). `answer_question` (`threadId`, `questionId`, `answer`) delivers the answer like a
+steer when a run is going (unread, it returns to the front of the queue), otherwise first in
+the queue as the next message, joining an answer already waiting there; `list_questions`
+(`threadId`) lists them. The answer message starts with a fixed marker the goal supervisor
+reads. Open questions are listed in each goal turn's message and in the reached turn's. A
+damaged file is ignored (`questions_ignored`); diagnostics record question ids, the blocking
+flag and the delivery path (`asked`, `updated`, `answered`), never the question or answer text.
+Answers grant nothing.
 **To undo** a grant, edit or delete its entry in the chat's file, or start a new chat; there is
 deliberately no UI for this, and the composer shield stays YOLO/Custom only.
 Destructive actions (the variants below and the `destructive` risk class such as

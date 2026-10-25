@@ -257,6 +257,40 @@ pub enum ThreadEvent {
         outcome: GoalNoteKind,
         reason: String,
     },
+    /// The agent asked the user a question (`ask_user`), or updated one still
+    /// open on the same topic (same `id`).
+    QuestionAsked {
+        question: Question,
+    },
+    /// The user answered a question.
+    QuestionAnswered {
+        id: String,
+        answer: String,
+    },
+}
+
+/// A question the agent asked the user (`questions/<chat id>.json`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Question {
+    pub id: String,
+    /// The run that asked it.
+    pub run_id: String,
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<String>,
+    /// What the agent works on until the answer comes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assumption: Option<String>,
+    /// Nothing more could be done without the answer: the run ended on it.
+    #[serde(default)]
+    pub blocking: bool,
+    /// Asking again on an open topic updates this question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<String>,
+    /// Unix milliseconds.
+    pub asked_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
 }
 
 /// A message waiting in a chat's queue for the current run to end.

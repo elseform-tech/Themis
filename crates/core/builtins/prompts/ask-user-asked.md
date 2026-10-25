@@ -1,0 +1,1 @@
+Asked. Keep working on your assumption ({{assumption}}). The user's answer arrives as a message; if it differs from your assumption, first fix what you did on it.

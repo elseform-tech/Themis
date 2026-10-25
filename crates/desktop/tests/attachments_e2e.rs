@@ -967,7 +967,9 @@ async fn cli_bounds_alternating_unchanged_reads_by_the_turn_limit() {
     // A model that never stops re-reading is warned at every streak and ends at the
     // configured turn limit; no repeat stops the run early.
     assert_eq!(terminal["kind"], "incomplete", "{terminal}");
-    assert_eq!(compactions, 1);
+    // At this budget the tool definitions alone take about a third of the window, so
+    // how many checkpoints the old evidence needs moves with the tool list.
+    assert!(compactions >= 1, "{compactions}");
     assert_eq!(completed, 10, "every turn ran its read");
     // Ten tool turns, then the handoff request for the incomplete summary.
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 11);
