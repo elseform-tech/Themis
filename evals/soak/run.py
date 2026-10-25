@@ -26,9 +26,8 @@ from evals.kit import spend as spend_kit
 from evals.kit.env import isolated_env
 from evals.kit.errors import classify_error, is_infrastructure
 
-from .generate import generate, material_tokens, messages
+from .generate import checker_text, generate, material_tokens, messages
 
-CHECKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "check_template.py")
 TERMINAL = ("finished", "failed", "incomplete")
 STOPPED_GOAL = {"reached": "reached", "stuck": "stuck", "waiting": "waiting", "quota": "infrastructure",
                 "paused": "failed"}
@@ -178,7 +177,7 @@ class Soak:
             app.cli(self.binary, self.data, self.env, "server", "stop")
             if self.watch is not None:
                 self.watch.stop()
-            trace["final"] = final_state(self.project, self.env)
+            trace["final"] = final_state(self.project, self.env, spec)
             trace["wall_s"] = round(time.monotonic() - started, 1)
             if self.options.get("keep"):
                 app.keep_evidence(self.workdir, self.options["keep"], f"soak-{self.budget}-{self.seed}")
@@ -340,7 +339,7 @@ def checkpoint_summary(line):
     return event.get("summary") if item.get("kind") == "event" and event.get("kind") == "context_checkpoint" else None
 
 
-def final_state(project, env):
+def final_state(project, env, spec):
     """The project's outputs, `check.py`'s verdict and the git state when the run ended."""
     files = {}
     out = os.path.join(project, "out")
@@ -352,7 +351,8 @@ def final_state(project, env):
                     files[f"out/{name}"] = handle.read(20_000)
     # The harness's own copy of the checker: the agent may have edited the project's check.py.
     checker = os.path.join(project, ".soak-check.py")
-    shutil.copy(CHECKER, checker)
+    with open(checker, "w", encoding="utf-8") as handle:
+        handle.write(checker_text(spec))
     try:
         done = subprocess.run([sys.executable, checker], cwd=project, capture_output=True, text=True, env=env,
                               timeout=120, check=False)

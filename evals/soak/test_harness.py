@@ -9,6 +9,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,19 +46,19 @@ class TraceBuilder:
         self.emit(run_id, "tool_started", tool=tool, summary=summary)
         self.emit(run_id, "tool_finished", tool=tool, ok=ok, output=output)
 
-    def checkpoint(self, run_id, written, before, after, upper=False):
+    def checkpoint(self, run_id, written, before, after, since=False):
         self.emit(run_id, "context_budget", budget={"used_tokens": before})
         self.emit(run_id, "context_compacting")
         self.emit(run_id, "context_checkpoint", summary=(
             "Goal: write every out/<name>.md, then out/INDEX.md, run python3 check.py, commit. Rules from the "
             "first message: every item file starts with `owner: <team>`; retired items are listed in the index "
-            f"but get no file. Done: {', '.join(written)}." + (" Status is now written in upper case." if upper else "")))
+            f"but get no file. Done: {', '.join(written)}." + (" Every file now has a since line." if since else "")))
         self.emit(run_id, "context_budget", budget={"used_tokens": after})
 
     def build(self):
         items = self.spec["items"]
         active = [item for item in items if item["status"] != "retired"]
-        files, written, upper = {}, [], False
+        files, written, since = {}, [], False
         self.emit("r0", "user_message", text=self.messages["rules"])
         self.emit("r0", "finished", result="Rules noted.")
         half = len(active) // 2
@@ -69,21 +70,21 @@ class TraceBuilder:
                                                      "provider_output_tokens": 300})
             self.tool(run, "read_file", f"read `src/{item['name']}.txt`")
             self.tool(run, "write_file", f"write `out/{item['name']}.md`")
-            files[f"out/{item['name']}.md"] = gen.output_text(item, upper)
+            files[f"out/{item['name']}.md"] = gen.output_text(item, since)
             written.append(item["name"])
             if turn % self.every == 0:
-                self.checkpoint(run, written, before=20000, after=6000, upper=upper)
+                self.checkpoint(run, written, before=20000, after=6000, since=since)
             self.emit(run, "finished", result=f"Wrote {item['name']}.")
             if turn == half:
                 self.emit("q1", "user_message", text=self.messages["followup"])
-                upper = True
+                since = True
                 for name in written:
                     self.tool("q1", "apply_patch", f"call `apply_patch` with --- a/out/{name}.md +++ b/out/{name}.md")
                     files[f"out/{name}.md"] = gen.output_text(next(i for i in items if i["name"] == name), True)
                 self.emit("q1", "finished", result="Updated.")
             if turn == len(active):
                 self.tool(run, "shell", "call `shell` with python3 check.py", output="OK")
-                files["out/INDEX.md"] = gen.index_text(self.spec, upper=True)
+                files["out/INDEX.md"] = gen.index_text(self.spec)
                 self.emit(run, "goal_note", outcome="reached", reason="check passes")
             else:
                 self.emit(run, "goal_note", outcome="not_yet", reason="more items")
@@ -156,9 +157,13 @@ class GeneratorTests(unittest.TestCase):
                 self.assertGreaterEqual(sum(item["status"] == status for item in made["items"]), 2)
         with self.assertRaises(ValueError):
             gen.spec_for(1, 5)
-        gen.generate(1, self.dirs[0], items=40, filler_chars=4000)
+        gen.generate(1, self.dirs[0])
         tokens = gen.material_tokens(self.dirs[0])
-        self.assertTrue(38_000 < tokens < 48_000, tokens)
+        # The defaults: 60 memos of about 1,650 tokens each (see the README's size estimate).
+        self.assertTrue(90_000 < tokens < 110_000, tokens)
+        # Every memo fits one read_file call (8,000 characters).
+        for name in os.listdir(os.path.join(self.dirs[0], "src")):
+            self.assertLess(os.path.getsize(os.path.join(self.dirs[0], "src", name)), 8000, name)
 
     def test_rules_live_only_in_the_first_message(self):
         made = gen.generate(2, self.dirs[0], items=10)
@@ -167,10 +172,24 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("retired", script["rules"])
         for text in (script["goal"], script["followup"], self.tree(self.dirs[0])["FORMAT.md"]):
             self.assertNotIn("owner", text)
+            self.assertNotRegex(text.lower(), r"no file|never get|without (?:a|its own) file")
+        for text in (script["goal"], script["followup"]):
             self.assertNotIn("retired", text.lower())
         self.assertTrue(script["goal"].startswith("/goal "))
 
-    def test_check_passes_on_correct_outputs_and_names_wrong_facts(self):
+    def test_memos_state_no_fact_as_a_key_value_line(self):
+        made = gen.generate(5, self.dirs[0], items=20)
+        for item in made["items"]:
+            text = self.tree(self.dirs[0])[os.path.join("src", f"{item['name']}.txt")]
+            self.assertNotRegex(text, r"(?m)^(?:owner|status|count|purpose|since)\s*:")
+            self.assertIn(item["owner"], text)
+            self.assertIn(str(item["since"]), text)
+        self.assertEqual(gen.words(412), "four hundred and twelve")
+        self.assertEqual(gen.words(1905), "one thousand nine hundred and five")
+        self.assertEqual(gen.words(1040), "one thousand and forty")
+        self.assertEqual(gen.words(70), "seventy")
+
+    def test_check_checks_structure_and_total_but_reveals_no_fact(self):
         made = gen.generate(4, self.dirs[0], items=10)
         out = os.path.join(self.dirs[0], "out")
         os.makedirs(out)
@@ -185,16 +204,28 @@ class GeneratorTests(unittest.TestCase):
         with open(os.path.join(out, "INDEX.md"), "w", encoding="utf-8") as handle:
             handle.write(gen.index_text(made))
         self.assertEqual(check().returncode, 0, check().stdout)
-        # The format change (upper-case status) still passes; a wrong count does not.
-        with open(os.path.join(out, "INDEX.md"), "w", encoding="utf-8") as handle:
-            handle.write(gen.index_text(made, upper=True))
-        self.assertEqual(check().returncode, 0)
+        # Wrong facts in an item file pass (check.py cannot know them); the since line is allowed.
         item = next(i for i in made["items"] if i["status"] != "retired")
         with open(os.path.join(out, f"{item['name']}.md"), "w", encoding="utf-8") as handle:
-            handle.write(gen.output_text(dict(item, count=item["count"] + 1)))
-        result = check()
-        self.assertEqual(result.returncode, 1)
-        self.assertIn(f"out/{item['name']}.md: count", result.stdout)
+            handle.write(gen.output_text(dict(item, count=item["count"] + 1, status="paused"), since=True))
+        self.assertEqual(check().returncode, 0, check().stdout)
+        # A wrong total, a count in words or an unknown status fails.
+        with open(os.path.join(out, "INDEX.md"), "w", encoding="utf-8") as handle:
+            handle.write(gen.index_text(made).replace(f"total: {gen.total(made)}", f"total: {gen.total(made) + 1}"))
+        self.assertIn("the total is not the sum", check().stdout)
+        with open(os.path.join(out, f"{item['name']}.md"), "w", encoding="utf-8") as handle:
+            handle.write(gen.output_text(item).replace(f"count: {item['count']}", "count: many")
+                         .replace(f"status: {item['status']}", "status: sleeping"))
+        result = check().stdout
+        self.assertIn("must be a number in digits", result)
+        self.assertIn("must be one of", result)
+        # The checker holds no fact: not the total, a count or an owner.
+        source = self.tree(self.dirs[0])["check.py"]
+        self.assertNotIn(str(gen.total(made)), source)
+        for team in gen.TEAMS:
+            self.assertNotIn(team, source)
+        for other in made["items"]:
+            self.assertNotRegex(source, rf"\b{other['count']}\b")
 
     def test_prompt_files_have_no_trailing_newline_and_fill_placeholders(self):
         for name in os.listdir(gen.PROMPTS):
@@ -202,6 +233,58 @@ class GeneratorTests(unittest.TestCase):
                 self.assertFalse(handle.read().endswith("\n"), name)
         with self.assertRaises(KeyError):
             gen.prompt("recall-fact")
+
+
+class ScriptShortcutTests(unittest.TestCase):
+    """A script over the memos (the pilot's agent wrote one) gets most items wrong."""
+
+    STATUS = (("active", r"running|in service|daily use|went live|without interruption"),
+              ("paused", r"on hold|suspended|idle"), ("retired", r"shut down|decommissioned|switched off|recycled"))
+
+    def extract(self, text, pick, targeted):
+        if targeted:
+            # Phrase-aware: the team after "to"/"belongs to"/"keepers are", the number after
+            # "holds"/"total is", the purpose after "keep the".
+            teams = re.findall(r"(?:to|belongs to|keepers are|of|by) (team-[a-z]+)", text)
+            numbers = [int(n) for n in re.findall(r"(?:holds|total is|other) (\d+)", text)]
+            purposes = re.findall(r"keep(?:s)? the ([a-z]+)", text)
+        else:
+            teams = re.findall(r"team-[a-z]+", text)
+            numbers = [int(n) for n in re.findall(r"\b\d+\b", text) if not 1990 < int(n) < 2030]
+            purposes = [word for word in re.findall(r"[a-z]+", text) if word in gen.PURPOSES]
+        found = sorted((m.start(), status) for status, pattern in self.STATUS for m in re.finditer(pattern, text))
+        return {"owner": pick(teams), "count": pick(numbers), "purpose": pick(purposes),
+                "status": pick([status for _at, status in found])}
+
+    def test_regex_extractors_get_most_items_wrong(self):
+        folder = tempfile.mkdtemp()
+        try:
+            made = gen.generate(1, folder, items=60)
+            for targeted in (False, True):
+                for pick in (lambda found: found[0] if found else None, lambda found: found[-1] if found else None):
+                    right = 0
+                    for item in made["items"]:
+                        with open(os.path.join(folder, "src", f"{item['name']}.txt"), encoding="utf-8") as handle:
+                            got = self.extract(handle.read(), pick, targeted)
+                        right += all(got[key] == item[key] for key in ("owner", "count", "purpose", "status"))
+                    self.assertLess(right / len(made["items"]), 0.2, f"targeted={targeted}")
+            # A correct reading passes the grader's checks for every item.
+            for item in made["items"]:
+                self.assertTrue(gen.item_correct(item, gen.output_text(item)))
+                self.assertTrue(gen.owner_correct(item, gen.output_text(item)))
+                self.assertTrue(gen.since_correct(item, gen.output_text(item, since=True)))
+            self.assertEqual(gen.index_statuses(made, gen.index_text(made)), 1.0)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_item_checks_are_exact(self):
+        item = gen.spec_for(1, 10)["items"][0]
+        good = gen.output_text(item)
+        self.assertFalse(gen.item_correct(item, good.replace(f"count: {item['count']}", f"count: {item['count'] + 1}")))
+        self.assertFalse(gen.item_correct(item, good.replace(item["purpose"], "nothing")))
+        self.assertFalse(gen.item_correct(item, None))
+        self.assertFalse(gen.owner_correct(item, good.replace(item["owner"], "team-zzz")))
+        self.assertFalse(gen.since_correct(item, good))
 
 
 # --- graders ------------------------------------------------------------------------------------
@@ -220,6 +303,8 @@ class GraderTests(unittest.TestCase):
         self.assertEqual(measures["rereads_after_checkpoint"], 0)
         self.assertEqual(measures["rule_violations_after_checkpoint"], 0)
         self.assertEqual(measures["format_change_applied"], 1.0)
+        self.assertEqual((measures["item_accuracy"], measures["owner_accuracy"], measures["index_accuracy"]),
+                         (1.0, 1.0, 1.0))
         self.assertEqual(measures["recall_correct"], 3)
         self.assertEqual(measures["cached_share"], 0.25)
         self.assertEqual(details["end_state"], "reached")
@@ -301,7 +386,11 @@ class GraderTests(unittest.TestCase):
         trace = clean()
         active = [i for i in trace["spec"]["items"] if i["status"] != "retired"]
         last = active[-1]
-        trace["final"]["files"][f"out/{last['name']}.md"] = gen.output_text(last).split("\n", 1)[1]
+        trace["final"]["files"][f"out/{last['name']}.md"] = gen.output_text(last, since=True).split("\n", 1)[1]
+        # A wrong team on the owner line is a misreading, not a forgotten rule.
+        misread = active[-2]
+        trace["final"]["files"][f"out/{misread['name']}.md"] = gen.output_text(misread, since=True).replace(
+            misread["owner"], "team-zzz")
         retired = next(i for i in trace["spec"]["items"] if i["status"] == "retired")
         trace["final"]["files"][f"out/{retired['name']}.md"] = gen.output_text(retired)
         trace["saved_checkpoints"] = ["Goal: out/INDEX.md and check.py. Done: three items.",
@@ -310,6 +399,7 @@ class GraderTests(unittest.TestCase):
         measures, details = grade(trace, trace["spec"])
         self.assertEqual(measures["rule_violations_after_checkpoint"], 1)
         self.assertEqual(details["final_rule_violations"], 2)
+        self.assertLess(measures["owner_accuracy"], 1.0)
         self.assertEqual(measures["duplicated_items"], 0)
         self.assertEqual(details["retention"][0]["kept"], {"goal": True, "rule_owner": False, "rule_retired": False})
         self.assertAlmostEqual(measures["rule_retention_min"], 1 / 3, places=3)
@@ -478,14 +568,14 @@ class RunnerTests(unittest.TestCase):
 
     def soak(self, mode, **options):
         soak = Soak(self.binary, dict(self.OPTIONS, **options), 24000, 1, Price(0.1, 0.4))
-        if mode != "clean":
-            original = soak._drive
+        original = soak._drive
 
-            def drive(trace, script, started):
-                with open(os.path.join(soak.data, "fake.json"), "w", encoding="utf-8") as handle:
-                    json.dump({"mode": mode}, handle)
-                return original(trace, script, started)
-            soak._drive = drive
+        def drive(trace, script, started):
+            # The stand-in agent cannot read prose: it is handed the true facts.
+            with open(os.path.join(soak.data, "fake.json"), "w", encoding="utf-8") as handle:
+                json.dump({"mode": mode, "items": trace["spec"]["items"]}, handle)
+            return original(trace, script, started)
+        soak._drive = drive
         return soak.run()
 
     def test_clean_run_end_to_end(self):

@@ -1,76 +1,76 @@
-"""Checks the facts in out/ against src/ (python3 check.py). Exit 0 when everything matches."""
+"""Checks the structure of out/ and the index total (python3 check.py). Exit 0 when it is right.
 
+It does not check counts, statuses, owners or summaries: those come from reading the memos.
+"""
+
+import hashlib
 import os
 import re
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-FIELDS = ("region", "count", "status")
+STATUSES = ("active", "paused", "retired")
+TOTAL_DIGEST = "{{total_digest}}"
+SALT = "{{salt}}"
 
 
-def facts(path):
-    found = {}
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            match = re.match(r"^(name|owner|region|count|status):\s*(\S+)\s*$", line)
-            if match:
-                found.setdefault(match.group(1), match.group(2))
-    return found
-
-
-def listed(text, field):
-    match = re.search(rf"^\s*-\s*{field}:\s*(\S+)\s*$", text, re.MULTILINE)
+def field(text, name):
+    match = re.search(rf"^\s*-\s*{name}:\s*(.+?)\s*$", text, re.MULTILINE)
     return match.group(1) if match else None
 
 
 def problems():
-    items = []
-    src = os.path.join(ROOT, "src")
-    for name in sorted(os.listdir(src)):
-        if name.endswith(".txt"):
-            items.append(facts(os.path.join(src, name)))
+    names = sorted(name[:-4] for name in os.listdir(os.path.join(ROOT, "src")) if name.endswith(".txt"))
     found = []
-    for item in items:
-        if item.get("status") == "retired":
+    out = os.path.join(ROOT, "out")
+    if not os.path.isdir(out):
+        return ["missing out/"]
+    for file in sorted(os.listdir(out)):
+        if file == "INDEX.md" or not file.endswith(".md"):
             continue
-        path = os.path.join(ROOT, "out", f"{item['name']}.md")
-        if not os.path.isfile(path):
-            found.append(f"missing out/{item['name']}.md")
+        name = file[:-3]
+        if name not in names:
+            found.append(f"out/{file}: no source src/{name}.txt")
             continue
-        with open(path, encoding="utf-8") as handle:
+        with open(os.path.join(out, file), encoding="utf-8") as handle:
             text = handle.read()
-        if not re.search(rf"^#\s*{re.escape(item['name'])}\s*$", text, re.MULTILINE):
-            found.append(f"out/{item['name']}.md: no '# {item['name']}' line")
-        for field in FIELDS:
-            value = listed(text, field)
-            if value is None:
-                found.append(f"out/{item['name']}.md: no '- {field}:' line")
-            elif value.lower() != item[field].lower():
-                found.append(f"out/{item['name']}.md: {field} is {value}, the source says {item[field]}")
-    index = os.path.join(ROOT, "out", "INDEX.md")
+        if not re.search(rf"^#\s*{re.escape(name)}\s*$", text, re.MULTILINE):
+            found.append(f"out/{file}: no '# {name}' line")
+        count = field(text, "count")
+        if count is None or not re.fullmatch(r"\d+", count):
+            found.append(f"out/{file}: '- count:' must be a number in digits")
+        status = field(text, "status")
+        if status not in STATUSES:
+            found.append(f"out/{file}: '- status:' must be one of {', '.join(STATUSES)}")
+        summary = field(text, "summary")
+        if summary is None or len(summary.split()) < 3:
+            found.append(f"out/{file}: '- summary:' must be a sentence")
+        since = field(text, "since")
+        if since is not None and not re.fullmatch(r"(19|20)\d\d", since):
+            found.append(f"out/{file}: '- since:' must be a year")
+    index = os.path.join(out, "INDEX.md")
     if not os.path.isfile(index):
         found.append("missing out/INDEX.md")
         return found
     with open(index, encoding="utf-8") as handle:
         text = handle.read()
     rows = re.findall(r"^\s*-\s*([a-z]+-[a-z]+):\s*(\S+)\s*$", text, re.MULTILINE)
-    seen = [name for name, _status in rows]
-    for item in items:
-        times = seen.count(item["name"])
+    listed = [name for name, _status in rows]
+    for name in names:
+        times = listed.count(name)
         if times != 1:
-            found.append(f"out/INDEX.md: {item['name']} is listed {times} times")
-            continue
-        status = dict(rows)[item["name"]]
-        if status.lower() != item["status"].lower():
-            found.append(f"out/INDEX.md: {item['name']} is {status}, the source says {item['status']}")
-    if seen != sorted(seen):
+            found.append(f"out/INDEX.md: {name} is listed {times} times")
+    for name, status in rows:
+        if status not in STATUSES:
+            found.append(f"out/INDEX.md: {name} has status {status}, not one of {', '.join(STATUSES)}")
+    if listed != sorted(listed):
         found.append("out/INDEX.md: items are not sorted by name")
-    expected = sum(int(item["count"]) for item in items)
     total = re.search(r"^\s*total:\s*(\d+)\s*$", text, re.MULTILINE)
     if not total:
         found.append("out/INDEX.md: no 'total: <number>' line")
-    elif int(total.group(1)) != expected:
-        found.append(f"out/INDEX.md: total is {total.group(1)}, expected the sum of all counts")
+    elif hashlib.sha256(f"{SALT}:{int(total.group(1))}".encode()).hexdigest() != TOTAL_DIGEST:
+        found.append("out/INDEX.md: the total is not the sum of every item's count (retired items included); "
+                     "recheck the counts")
     return found
 
 
@@ -83,4 +83,4 @@ if __name__ == "__main__":
         if len(issues) > 15:
             print(f"- ... and {len(issues) - 15} more")
         sys.exit(1)
-    print("OK: every output matches its source")
+    print("OK: structure and total are right")

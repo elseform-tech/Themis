@@ -1,1 +1,1 @@
-A change for all items: write the status in upper case from now on (for example `- status: ACTIVE`), in every `out/<name>.md` and in `out/INDEX.md`. Update the files already written, and use it for the rest.
+A change for all items: add a line `- since: <year>` right after the status line of every `out/<name>.md`, giving the year the item's current status began, as its memo tells it. Update the files already written, and include the line in the rest.

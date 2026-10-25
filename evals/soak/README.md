@@ -13,30 +13,63 @@ look. Nothing is pass or fail. Only the offline self-tests run automatically (in
 python3 -m unittest evals.kit.test_kit evals.soak.test_harness
 ```
 
-## The job
+## The job (`items-v2`)
 
-`generate.py` writes a project, deterministic per (seed, items):
+`generate.py` writes a project, deterministic per (seed, items). The first pilot (`items-v1`,
+`key: value` sources) was finished in 2 goal turns by one Python script that parsed every file,
+so v2 makes every item need the model's own reading:
 
-- `src/<name>.txt` for N items (default 40): owner team, region, count and status (`active`,
-  `paused` or `retired`; at least two of each), above about 4,000 characters of notes, so
-  reading every source fills the context and forces checkpoints (≈ 42k tokens of material at
-  the defaults; `--items` and `--filler-chars` change it);
-- `FORMAT.md` (how each output and the index are written) and `check.py`, which checks the facts
-  in `out/` against `src/`. It checks neither rule below.
+- `src/<name>.txt` for N items (default 60) is a prose memo in varied, seeded wording. No fact is
+  a `key: value` line, and each has to be resolved:
+  - **owner**: the team that holds the item *now*, after a hand-over told in a sentence ("took it
+    over from", "ownership passed from … to …"), sometimes next to a proposed move that was dropped;
+  - **status** (`active`, `paused`, `retired`): implied by events ("switched off for good", "put on
+    hold … nobody has switched it off", "running again since"), often after an earlier state;
+  - **count** of records: in words, as a sum of two sites, as a corrected audit figure, or next to
+    a figure that belongs to another system;
+  - **purpose**: the keyword the one-line summary must contain, next to a sibling with another
+    purpose;
+  - **since** (asked for by the follow-up): the year the current status began, among other years.
+
+  About 6,000 characters of background per memo (other teams, years, record counts, hand-overs and
+  shutdowns of other things) pad it and defeat regexes. A first- or last-match regex, plain or
+  phrase-aware, gets under 20% of items fully right (`ScriptShortcutTests`). Every memo stays under
+  8,000 characters, so it fits one `read_file`.
+- `FORMAT.md` says how each output and the index are written (it mentions neither rule), and
+  `check.py` checks only structure (fields present, a count in digits, a known status, a sentence of
+  summary, a year for `since`) and the index total, by a salted hash. It holds no fact and checks
+  neither rule.
 
 The chat, through the app server and CLI:
 
 1. An ordinary first message with two rules (`prompts/rules.md`): every item file starts with
-   `owner: <team>`, and retired items are listed in the index but get no file. The rules appear
-   nowhere else: not in the goal (which is added to every request, so it never depends on
-   compaction), not in `FORMAT.md`.
+   `owner: <team>` (the current owner), and retired items are listed in the index but get no file.
+   The rules appear nowhere else: not in the goal (which is added to every request, so it never
+   depends on compaction), not in `FORMAT.md`, not in `check.py`.
 2. `/goal` (`prompts/goal.md`): write every `out/<name>.md` and `out/INDEX.md`, run
    `python3 check.py` until it passes, commit.
 3. Once half the active items have files, a follow-up is queued with `enqueue_message`
-   (`prompts/followup.md`): statuses in upper case from now on, and update the files already
-   written.
+   (`prompts/followup.md`): add `- since: <year>` to every item file. The year comes from each
+   memo, so the files already written need their memos read again and every file edited.
 4. After `reached`, three recall questions as ordinary messages, to be answered from memory: an
-   early fact, a rule, a count.
+   early fact (the first item's count), a rule, the number of retired items.
+
+### Expected size (an estimate; the live pilot confirms it)
+
+At the defaults (60 items, 6,000 filler characters) the material is about 98k tokens: about 1,650
+per memo. A run adds roughly 160k tokens to the context:
+
+- one read of every memo, about 98k;
+- a second read of the memos written before the follow-up, about 49k;
+- writes and edits, about 12k;
+- plus tool overhead.
+
+A checkpoint at a 24k budget frees about 12–14k, so expect about 11–14 checkpoints. That means
+150–250 requests (fewer when the model batches reads) and about 3M input tokens. At
+`muse-spark-1.3-contributor` prices ($0.10/M input, $0.20/M output, $0.002/M cached) that is
+≈ $0.30–0.40 per run, well under the $1.50 cap, and roughly 15–25 minutes. How many goal turns
+this takes depends on how much the model does per turn. `--items` and `--filler-chars` scale the
+job; changing either starts a new series.
 
 ## Running
 
@@ -84,13 +117,16 @@ flagged).
 | compaction | `failed_checkpoints` | harness | `context_suspended`, a budget-exceeded error, or a run that failed while compacting. |
 | compaction | `checkpoints_not_shrinking` | harness | Checkpoints whose next context (`context_budget.used_tokens`) is not smaller than the one before. |
 | compaction | `rule_retention`, `rule_retention_min` | model | Mean and lowest share of the goal, both rules (and, after the follow-up, the format change) kept in each saved checkpoint (`get_thread_history_page`), by text patterns. |
-| memory | `rule_violations_after_checkpoint` | model | Item files last written after a checkpoint that break a rule (per checkpoint in the report). |
+| memory | `rule_violations_after_checkpoint` | model | Item files last written after a checkpoint that break a rule: no `owner:` first line, or a file for a retired item (per checkpoint in the report). A wrong team on the owner line is `owner_accuracy`, not a forgotten rule. |
 | memory | `redone_items` | model | Full rewrites of an item file with no change asked (same side of the follow-up, no `check.py` run between). |
 | memory | `redone_checkpoint_share` | reported | Of those, redos right after a checkpoint whose saved progress already named the item: the checkpoint's share. |
 | memory | `skipped_items`, `duplicated_items` | model | Active items with no file; stray files and items listed twice in the index. |
-| memory | `rereads_after_checkpoint` | model | `read_file` of a source whose output was written before an earlier checkpoint. |
-| memory | `format_change_applied` | model | Share of active items whose final status is upper case. |
-| memory | `check_passes` | model | The harness's own copy of `check.py` passes on the final project. |
+| memory | `rereads_after_checkpoint` | model | `read_file` of a memo whose output was already written, in the same phase (before or after the follow-up, which needs every memo again), before an earlier checkpoint. |
+| memory | `item_accuracy` | model | Share of active items whose final file has the right count, status and purpose keyword. |
+| memory | `owner_accuracy` | model | Share of active items whose first line names the current owner exactly. |
+| memory | `index_accuracy` | model | Share of items whose status in `out/INDEX.md` is right. |
+| memory | `format_change_applied` | model | Share of active items whose final `since` year is right. |
+| memory | `check_passes` | model | The harness's own copy of `check.py` (structure and total) passes on the final project. |
 | memory | `recall_correct` | model | Recall answers that match and used no tools (0–3). |
 | tools | `tool_errors_ours` | harness | Failed calls classified as ours (see below). |
 | tools | `tool_errors_model` | model | Failed calls caused by the model. |
@@ -124,7 +160,8 @@ budget.
 ## Offline self-tests
 
 `test_harness.py` checks the generator (determinism, sizes, the rules only in the first
-message, `check.py`), every grader on synthetic event streams (a clean run, and one per planted
+message, no fact as a `key: value` line, `check.py` revealing no fact), that regex extractors get
+most items wrong, every grader on synthetic event streams (a clean run, and one per planted
 breakage: a goal that stops continuing, a turn after reached, a failed checkpoint, a context that
 does not shrink, a redo after a checkpoint, a tool's internal error), the trend logic (fewer than
 5 runs, series split, infrastructure left out), and the runner end to end against

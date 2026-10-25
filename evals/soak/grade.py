@@ -18,7 +18,7 @@ import re
 
 from evals.kit.errors import classify_error, is_infrastructure
 
-from . import tool_causes
+from . import generate, tool_causes
 
 GOAL_TURN_MARKER = "[Goal — runtime, not from the user]"
 ITEM = r"[a-z]+-[a-z]+"
@@ -38,7 +38,7 @@ RETENTION = {
     "goal": (r"INDEX\.md", r"check\.py"),
     "rule_owner": (r"owner\s*:|\bowner\b.{0,60}\b(?:first|start|begin|top)|\b(?:first|start|begin)\w*\b.{0,60}\bowner\b",),
     "rule_retired": (r"retired",),
-    "format_change": (r"upper|capital|\b(?:ACTIVE|PAUSED|RETIRED)\b",),
+    "format_change": (r"\bsince\b",),
 }
 _NEGATION = re.compile(r"\b(?:no|not|never|without|skip|omit|exclude|don't|do not|n't)\b", re.IGNORECASE)
 
@@ -60,6 +60,9 @@ MEASURES = {
     "skipped_items": ("memory", "model", "lower"),
     "duplicated_items": ("memory", "model", "lower"),
     "rereads_after_checkpoint": ("memory", "model", "lower"),
+    "item_accuracy": ("memory", "model", "higher"),
+    "owner_accuracy": ("memory", "model", "higher"),
+    "index_accuracy": ("memory", "model", "higher"),
     "format_change_applied": ("memory", "model", "higher"),
     "check_passes": ("memory", "model", "higher"),
     "recall_correct": ("memory", "model", "higher"),
@@ -313,21 +316,23 @@ def memory_measures(trace, spec):
     listed = re.findall(rf"^\s*-\s*({ITEM}):", files.get("out/INDEX.md") or "", re.MULTILINE)
     duplicated = len(strays) + sum(listed.count(name) - 1 for name in set(listed) if listed.count(name) > 1)
 
-    rereads, done_before = 0, {}
-    for name, made in writes.items():
-        done_before[name] = made[0]["checkpoint"]
+    # A re-read counts when the item's output was already written, in the same phase (before or
+    # after the follow-up, which asks for a new fact from every memo), before an earlier checkpoint.
+    def phase(index):
+        return followup_index is not None and index > followup_index
+    rereads = 0
     for call in calls:
         if call["tool"] != "read_file" or call["checkpoint"] == 0:
             continue
         for name in set(SRC_PATH.findall(call["summary"])):
-            if name in done_before and done_before[name] < call["checkpoint"] and writes[name][0]["index"] < call["index"]:
+            done = [w for w in writes.get(name, []) if w["index"] < call["index"] and phase(w["index"]) == phase(call["index"])]
+            if done and done[0]["checkpoint"] < call["checkpoint"]:
                 rereads += 1
 
-    applied = None
-    if followup_index is not None and active:
-        upper = sum(bool(re.search(r"^\s*-\s*status:\s*[A-Z]+\s*$", files.get(f"out/{name}.md") or "", re.MULTILINE))
-                    for name in active)
-        applied = round(upper / len(active), 3)
+    def share(test, names):
+        return round(sum(bool(test(items[n], files.get(f"out/{n}.md"))) for n in names) / len(names), 3) if names else None
+    applied = share(generate.since_correct, active) if followup_index is not None else None
+    index_text = files.get("out/INDEX.md")
 
     # A recall answer counts when it matches and came from memory (no tool call in its run).
     recall = trace.get("recall") or []
@@ -338,6 +343,9 @@ def memory_measures(trace, spec):
     return ({"rule_violations_after_checkpoint": after_checkpoint, "redone_items": redone,
              "redone_checkpoint_share": redone_listed, "skipped_items": skipped,
              "duplicated_items": duplicated, "rereads_after_checkpoint": rereads,
+             "item_accuracy": share(generate.item_correct, active),
+             "owner_accuracy": share(generate.owner_correct, active),
+             "index_accuracy": None if index_text is None else round(generate.index_statuses(spec, index_text), 3),
              "format_change_applied": applied,
              "check_passes": None if final.get("check_passed") is None else int(bool(final["check_passed"])),
              "recall_correct": correct if recall else None},
@@ -346,14 +354,15 @@ def memory_measures(trace, spec):
 
 
 def rule_violations(item, text):
-    """The rules an item's final output breaks: `owner` (first line is not `owner: <team>`) and
-    `retired` (a retired item has a file)."""
+    """The rules an item's final output breaks: `owner` (the first line is not an `owner: <team>`
+    line: the rule was forgotten; naming the wrong team is `owner_accuracy`) and `retired` (a
+    retired item has a file)."""
     broken = []
     if item["status"] == "retired":
         if text is not None:
             broken.append("retired")
         return broken
-    if text is not None and (text.splitlines() or [""])[0].strip() != f"owner: {item['owner']}":
+    if text is not None and not re.fullmatch(r"owner:\s*team-[a-z]+", (text.splitlines() or [""])[0].strip()):
         broken.append("owner")
     return broken
 

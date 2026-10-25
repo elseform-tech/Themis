@@ -1,19 +1,21 @@
 # Output format
 
-For each source file `src/<name>.txt`, write `out/<name>.md` with these lines, taking the values from the source file:
+Each source file `src/<name>.txt` is a memo about one item. Read it and write `out/<name>.md` with these lines:
 
 ```
 # <name>
-- region: <region>
-- count: <count>
-- status: <status>
+- count: <the number of records it holds now, in digits>
+- status: <active, paused or retired: what it is now>
+- summary: <one sentence on what it is for>
 ```
 
-`out/INDEX.md` lists every item, one line each, sorted by name, then a total of every item's count:
+Memos describe things in their own words: work out each value from what the memo says, not from the first number or team you see.
+
+`out/INDEX.md` lists every item, one line each, sorted by name, then the total of every item's count (retired items included):
 
 ```
 - <name>: <status>
 total: <sum of all counts>
 ```
 
-`python3 check.py` checks the facts in these files.
+`python3 check.py` checks the structure of these files and the total; it does not check the other values.

@@ -2,9 +2,9 @@
 
 It answers the commands the runner uses, keeps its state in the data folder, and plays a
 scripted agent: each goal turn writes the next item file (keeping both rules), a checkpoint
-every few turns, the queued follow-up upper-cases the statuses, and the goal is reached once
+every few turns, the queued follow-up adds the since line to every file, and the goal is reached once
 `out/INDEX.md` is written. `fake.json` in the data folder selects a planted behaviour:
-`{"mode": "clean" | "expensive" | "stall"}`.
+`{"mode": "clean" | "expensive" | "stall", "items": [true facts]}`.
 """
 
 import json
@@ -14,6 +14,9 @@ import subprocess
 import sys
 import time
 import uuid
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from evals.soak import generate  # noqa: E402
 
 MARKER = "[Goal — runtime, not from the user]"
 CHECKPOINT_EVERY = 3
@@ -48,25 +51,15 @@ def emit(data, run_id, event):
             handle.write(json.dumps(item) + "\n")
 
 
-def items(project):
-    found = []
-    for name in sorted(os.listdir(os.path.join(project, "src"))):
-        facts = {}
-        with open(os.path.join(project, "src", name), encoding="utf-8") as handle:
-            for line in handle:
-                match = re.match(r"^(name|owner|region|count|status):\s*(\S+)", line)
-                if match:
-                    facts.setdefault(match.group(1), match.group(2))
-        found.append(facts)
-    return found
+def items(data):
+    """The project's true facts, which the test hands over in `fake.json` (the memos are prose)."""
+    return _load(data, "fake.json", {}).get("items") or []
 
 
-def write_item(project, item, upper):
+def write_item(project, item, since):
     os.makedirs(os.path.join(project, "out"), exist_ok=True)
-    status = item["status"].upper() if upper else item["status"]
     with open(os.path.join(project, "out", f"{item['name']}.md"), "w", encoding="utf-8") as handle:
-        handle.write(f"owner: {item['owner']}\n# {item['name']}\n- region: {item['region']}\n"
-                     f"- count: {item['count']}\n- status: {status}\n")
+        handle.write(generate.output_text(item, since=since))
 
 
 def usage(data, run_id, tokens, mode):
@@ -105,17 +98,17 @@ def agent(data, run_id, text):
             answer = "Rules noted."
             match = re.search(r"count of `([a-z]+-[a-z]+)`", text)
             if match:
-                answer = str(next(i["count"] for i in items(project) if i["name"] == match.group(1)))
+                answer = str(next(i["count"] for i in items(data) if i["name"] == match.group(1)))
             elif "first line" in text:
                 answer = "owner: <team>"
             elif "retired" in text:
-                answer = str(sum(i["status"] == "retired" for i in items(project)))
+                answer = str(sum(i["status"] == "retired" for i in items(data)))
             emit(data, run_id, {"kind": "finished", "result": answer})
             return
         goal_text = text[len("/goal"):].strip()
         set_goal(data, text=goal_text, status="running", turns=1, started_at=0)
-        todo = [i for i in items(project) if i["status"] != "retired"]
-        upper, turn, used, written = False, 1, 3000, []
+        todo = [i for i in items(data) if i["status"] != "retired"]
+        since, turn, used, written = False, 1, 3000, []
         while True:
             if turn > 1:
                 run_id = str(uuid.uuid4())
@@ -131,17 +124,15 @@ def agent(data, run_id, text):
                 emit(data, run_id, {"kind": "tool_started", "tool": "read_file",
                                     "summary": f"read `src/{item['name']}.txt`"})
                 emit(data, run_id, {"kind": "tool_finished", "tool": "read_file", "ok": True, "output": "..."})
-                write_item(project, item, upper)
+                write_item(project, item, since)
                 written.append(item)
                 emit(data, run_id, {"kind": "tool_started", "tool": "write_file",
                                     "summary": f"write `out/{item['name']}.md`"})
                 emit(data, run_id, {"kind": "tool_finished", "tool": "write_file", "ok": True, "output": "ok"})
                 used += 1500
             else:
-                lines = [f"- {i['name']}: {i['status'].upper() if upper else i['status']}" for i in items(project)]
-                total = sum(int(i["count"]) for i in items(project))
                 with open(os.path.join(project, "out", "INDEX.md"), "w", encoding="utf-8") as handle:
-                    handle.write("\n".join(lines) + f"\ntotal: {total}\n")
+                    handle.write(generate.index_text({"items": items(data)}))
                 subprocess.run(["git", "add", "-A"], cwd=project, capture_output=True, check=False)
                 subprocess.run(["git", "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "out"],
                                cwd=project, capture_output=True, check=False)
@@ -150,7 +141,7 @@ def agent(data, run_id, text):
                 emit(data, run_id, {"kind": "context_checkpoint", "summary": (
                     f"Goal: write out/ files, out/INDEX.md, run check.py. Rules: every file starts with "
                     f"owner: <team>; retired items get no file. Done: {', '.join(i['name'] for i in written)}."
-                    + (" Status now in upper case." if upper else ""))})
+                    + (" Each file now has a since line." if since else ""))})
                 used = 2500
                 emit(data, run_id, {"kind": "context_budget", "budget": {"used_tokens": used}})
             emit(data, run_id, {"kind": "finished", "result": f"Turn {turn} done."})
@@ -161,7 +152,7 @@ def agent(data, run_id, text):
                 _save(data, "queue.json", [])
                 queued_run = str(uuid.uuid4())
                 emit(data, queued_run, {"kind": "user_message", "text": queue[0]})
-                upper = True
+                since = True
                 for item in written:
                     write_item(project, item, True)
                     emit(data, queued_run, {"kind": "tool_started", "tool": "write_file",
