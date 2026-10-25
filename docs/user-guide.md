@@ -354,9 +354,10 @@ usable model when that one is gone too.
 
 ## Settings reference
 
-Settings has General, Appearance, Models, Usage, Permissions, Browser, Web, and Advanced
-sections, listed in place of the chats sidebar while Settings is open; **Back to app** at
-the top, or **Home** at the top of the rail, returns to the chat.
+Settings has General, Appearance, Models, Usage, Secrets, Permissions, Browser, Web, and
+Advanced sections. While Settings is open they take over the whole left sidebar (the icon
+rail is hidden) and **Back to app** at the top returns to the chat. The sidebar toggle in
+the header (⌘B) folds the list to icons, as it does the rail.
 **Usage** shows the tokens Themis used for the last 5 hours, this week (from Monday) and
 this month: input with its cached share, output with its reasoning, requests and, when
 the public models.dev catalog lists prices, an estimated "≈ List price" (a "+" means some
