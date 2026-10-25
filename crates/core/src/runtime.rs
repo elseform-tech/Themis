@@ -2237,9 +2237,7 @@ fn suspended_progress(
     if !messages.iter().any(|message| matches!(&message.message_type, MessageType::ToolResult(results) if !results.is_empty())) {
         return None;
     }
-    let task = messages
-        .iter()
-        .rposition(|message| message.role == ChatRole::User)?;
+    let task = active_request_index(messages)?;
     let snapshot = evidence_relative_path(snapshot);
     let source = serde_json::json!({
         "path":&snapshot,
@@ -2290,11 +2288,7 @@ async fn compact_context_inner(
     events.send(RunEvent::ContextCompacting).await.ok();
     let summary_tokens = checkpoint_token_allowance(messages, policy);
     let current_request = bounded_context_hint(
-        messages
-            .iter()
-            .rev()
-            .find(|message| message.role == ChatRole::User)
-            .map_or("", |message| message.content.as_str()),
+        active_request_index(messages).map_or("", |index| messages[index].content.as_str()),
     );
     let summary_input_budget = MODEL_REQUEST_BUDGET
         .try_with(|budget| *budget)
@@ -2564,6 +2558,23 @@ fn calibration_sample(
     })
 }
 
+/// Notes the runtime adds as user messages during a run; none is a new request.
+const RUNTIME_NOTES: [&str; 4] = [
+    SPEC_CHECK,
+    CUT_OFF_NOTE,
+    SILENT_CUT_OFF_NOTE,
+    EMPTY_ANSWER_NOTE,
+];
+
+/// The request being worked on: the last user message that is not one of the
+/// runtime's own notes. A checkpoint keeps it whole and tells the summarizer it is
+/// the current request, so a spec check late in a goal turn must not displace it.
+fn active_request_index(messages: &[ChatMessage]) -> Option<usize> {
+    messages.iter().rposition(|message| {
+        message.role == ChatRole::User && !RUNTIME_NOTES.contains(&message.content.as_str())
+    })
+}
+
 fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
     // Keep recent full messages within a third of the space left after instructions.
     let recent_budget = policy
@@ -2590,7 +2601,7 @@ fn context_split(messages: &[ChatMessage], policy: &RunPolicy) -> usize {
 
 fn checkpoint_token_allowance(messages: &[ChatMessage], policy: &RunPolicy) -> u32 {
     let split = context_split(messages, policy);
-    let active = messages.iter().rposition(|m| m.role == ChatRole::User);
+    let active = active_request_index(messages);
     let fixed = estimated_tokens(&messages[..1])
         .saturating_add(estimated_tokens(&messages[split..]))
         .saturating_add(
@@ -2646,9 +2657,7 @@ async fn replace_context(
     events: &tokio::sync::mpsc::Sender<RunEvent>,
     original_snapshot: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    let active_index = messages
-        .iter()
-        .rposition(|message| matches!(message.role, ChatRole::User));
+    let active_index = active_request_index(messages);
     let active_request = active_index
         .filter(|index| *index < split)
         .map(|index| messages[index].clone());
@@ -3439,6 +3448,32 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod tests {
+    /// Found by the scripted goal soak: a checkpoint during a goal turn's spec
+    /// check kept the check as the active request and summarized the goal turn
+    /// away, so later requests lost the goal.
+    #[test]
+    fn runtime_notes_are_never_the_active_request() {
+        let text = |role, content: &str| ChatMessage {
+            role,
+            message_type: MessageType::Text,
+            content: content.to_owned(),
+        };
+        for note in RUNTIME_NOTES {
+            let messages = [
+                text(ChatRole::System, "system"),
+                text(ChatRole::User, "earlier request"),
+                text(
+                    ChatRole::User,
+                    "[Goal — runtime, not from the user] Turn 7. Goal: g",
+                ),
+                text(ChatRole::Assistant, "Wrote the item file."),
+                text(ChatRole::User, note),
+            ];
+            assert_eq!(active_request_index(&messages), Some(2), "{note}");
+        }
+        assert_eq!(active_request_index(&[text(ChatRole::System, "s")]), None);
+    }
+
     #[test]
     fn tool_failures_read_as_the_tool_wrote_them() {
         let error = crate::tools::tool_error(

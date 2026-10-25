@@ -4,9 +4,11 @@
 //! The goal lives in `goals/<chat id>.json` beside `threads.json`. Each goal
 //! turn is an ordinary run. When a run ends and nothing is queued, the
 //! supervisor here runs the goal check and either ends the goal, starts the
-//! next turn, or pauses it. A goal pauses only when it is reached, genuinely
-//! stuck, waiting for the user, or out of model quota; errors and restarts
-//! never stop it.
+//! next turn, or pauses it. A goal never gives up: it pauses only when it is
+//! reached, waiting for the user, or out of model quota (and retries that);
+//! turns without progress, errors and restarts never stop it. The agent says
+//! where the goal stands at the start of each turn, and once the check finds
+//! it reached, one short turn has the agent tell the user.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,16 +24,12 @@ use crate::types::{Goal, GoalNoteKind, GoalStatus, ThreadEvent, ThreadEventEnvel
 
 /// Directory name under the app data directory.
 pub(super) const GOALS_DIR: &str = "goals";
-/// Turns without progress before a goal counts as stuck.
+/// Turns without progress before the next turn is told to try a different approach.
 const STALL_TURNS: u32 = 3;
 /// How often a goal out of quota tries again.
 const QUOTA_RETRY: Duration = Duration::from_secs(15 * 60);
 /// Longest wait between attempts after failed turns.
 const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
-/// Turns in a row that may fail with a non-transient error (a rejected
-/// request, a bad configuration) before the goal pauses as stuck: retrying
-/// the same request would fail the same way.
-const MAX_FAILED_TURNS: u32 = 3;
 /// How often a running goal's time is saved, so a crash or quit mid-turn
 /// loses at most this much of the elapsed time.
 pub(super) const BANK_INTERVAL: Duration = Duration::from_secs(60);
@@ -710,53 +708,32 @@ impl AppState {
         }
         match verdict.verdict {
             Verdict::Reached => {
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    GoalNoteKind::Reached,
-                    &verdict.reason,
-                );
-                self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                let Some(goal) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
                     goal.progress = verdict.progress.clone().or(goal.progress.take());
                     set_status(goal, GoalStatus::Reached, Some(verdict.reason.clone()));
-                });
-            }
-            Verdict::Unreachable => {
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    GoalNoteKind::Stuck,
-                    &verdict.reason,
-                );
-                self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                    set_status(goal, GoalStatus::Stuck, Some(verdict.reason.clone()));
-                });
+                }) else {
+                    return;
+                };
+                self.announce_reached(sink, &thread_id, &goal, &verdict.reason)
+                    .await;
             }
             Verdict::NeedsUser => {
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    GoalNoteKind::Waiting,
-                    &verdict.reason,
-                );
+                // The answer already asks the user; the goal waits for the reply.
                 self.update_goal(sink.as_ref(), &thread_id, |goal| {
                     set_status(goal, GoalStatus::Waiting, Some(verdict.reason.clone()));
                 });
             }
-            Verdict::NotYet => {
+            Verdict::NotYet | Verdict::Unreachable => {
                 // The check judges progress; a reworded measurement is not.
-                // Without its judgement, fall back to changed files or a new
-                // measured fact.
-                let progressed = verdict.progressed.unwrap_or_else(|| {
-                    changed_files
-                        || verdict
+                // Changed files always are: a checker looking only for proof
+                // of completion must not count real work as a stall.
+                let progressed = changed_files
+                    || verdict.progressed.unwrap_or_else(|| {
+                        verdict
                             .progress
                             .as_ref()
                             .is_some_and(|progress| Some(progress) != goal.progress.as_ref())
-                });
+                    });
                 // The checker failing says nothing about the agent's progress.
                 let stalls = if progressed {
                     0
@@ -765,44 +742,65 @@ impl AppState {
                 } else {
                     goal.stalls.saturating_add(1)
                 };
-                if stalls >= STALL_TURNS {
-                    let reason = format!(
-                        "No progress over the last {STALL_TURNS} turns: {}",
-                        verdict.reason
-                    );
-                    self.goal_note(
-                        sink.as_ref(),
-                        &thread_id,
-                        &run_id,
-                        GoalNoteKind::Stuck,
-                        &reason,
-                    );
-                    self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                        goal.stalls = stalls;
-                        set_status(goal, GoalStatus::Stuck, Some(reason.clone()));
-                    });
-                    return;
-                }
-                self.goal_note(
-                    sink.as_ref(),
-                    &thread_id,
-                    &run_id,
-                    GoalNoteKind::NotYet,
-                    &verdict.reason,
-                );
                 self.update_goal(sink.as_ref(), &thread_id, |goal| {
                     goal.stalls = stalls;
                     if verdict.progress.is_some() {
                         goal.progress = verdict.progress.clone();
                     }
                 });
-                self.start_goal_turn(sink, thread_id, verdict.reason).await;
+                // Turns without progress never stop the goal; the next one is
+                // told to change course.
+                let note = if stalls >= STALL_TURNS {
+                    let _ = self.inner.diagnostics.append(
+                        "goal",
+                        "stalled",
+                        "info",
+                        json!({"thread_id": thread_id, "run_id": run_id, "stalls": stalls}),
+                    );
+                    format!(
+                        "{} {}",
+                        verdict.reason,
+                        themis_core::prompts::fill(
+                            themis_core::prompts::GOAL_NOTE_STALLED,
+                            &[("turns", &stalls.to_string())],
+                        )
+                    )
+                } else {
+                    verdict.reason
+                };
+                self.start_goal_turn(sink, thread_id, note).await;
             }
         }
     }
 
+    /// One short turn in which the agent tells the user the goal is reached,
+    /// in its own words. The goal is already reached, so no check follows it.
+    async fn announce_reached(
+        &self,
+        sink: Arc<dyn EventSink>,
+        thread_id: &str,
+        goal: &Goal,
+        reason: &str,
+    ) {
+        let text = core_goal::reached_message(goal.turns.saturating_add(1), &goal.text, reason);
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let (sent, _) = self
+            .send_from_server(sink, thread_id, text, &run_id, None, Vec::new())
+            .await;
+        if sent.is_err() {
+            // The goal stays reached; only the agent's sentence is missing.
+            let _ = self.inner.diagnostics.append(
+                "goal",
+                "reached_turn_not_started",
+                "warn",
+                json!({"thread_id": thread_id}),
+            );
+        }
+    }
+
     /// A goal turn failed: Stop continues with the next turn, a used-up quota
-    /// pauses and retries every 15 minutes, anything else retries after a wait.
+    /// pauses and retries every 15 minutes, anything else retries after a
+    /// growing wait, however often it fails.
     fn goal_turn_failed(
         &self,
         sink: Arc<dyn EventSink>,
@@ -847,23 +845,6 @@ impl AppState {
                         goal.failures = goal.failures.saturating_add(1);
                     })
                     .map_or(1, |goal| goal.failures);
-                if stops_retrying(failure, failures) {
-                    let reason = format!(
-                        "The last {failures} turns failed ({}). Fix the cause or switch the model, then Resume.",
-                        core_goal::one_line(error, 160)
-                    );
-                    self.update_goal(sink.as_ref(), &thread_id, |goal| {
-                        set_status(goal, GoalStatus::Stuck, Some(reason.clone()));
-                    });
-                    self.goal_note(
-                        sink.as_ref(),
-                        &thread_id,
-                        &run_id,
-                        GoalNoteKind::Stuck,
-                        &reason,
-                    );
-                    return;
-                }
                 let wait = backoff(failures);
                 self.goal_note(
                     sink.as_ref(),
@@ -1050,12 +1031,6 @@ impl AppState {
     }
 }
 
-/// Whether a goal stops retrying after `failures` failed turns in a row:
-/// only errors that are not transient, since those would fail the same way.
-fn stops_retrying(failure: Failure, failures: u32) -> bool {
-    failure == Failure::Other && failures >= MAX_FAILED_TURNS
-}
-
 /// A long command output without its middle, marked where it was cut.
 fn clip_output(output: &str) -> String {
     let count = output.chars().count();
@@ -1086,18 +1061,6 @@ mod tests {
             small_window_note(127_999),
             "Context window is small (127,999 tokens); long goals may stall."
         );
-    }
-
-    #[test]
-    fn repeated_hard_failures_pause_but_transient_ones_keep_retrying() {
-        let rejected = core_goal::classify_failure(
-            "LLM request failed: HTTP Status Error (400): Duplicate item found with id `rs_1`",
-        );
-        assert_eq!(rejected, Failure::Other);
-        assert!(!stops_retrying(rejected, 2));
-        assert!(stops_retrying(rejected, 3));
-        let outage = core_goal::classify_failure("HTTP 503 service unavailable");
-        assert!(!stops_retrying(outage, 50));
     }
 
     #[test]
