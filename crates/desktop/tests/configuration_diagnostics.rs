@@ -59,7 +59,10 @@ fn documented_configuration_examples_use_the_runtime_resolver() {
     );
     let resolved =
         themis_core::configuration::resolve(Some(examples[0]), Some(examples[1]), None).unwrap();
-    assert_eq!(resolved.config.context_token_budget, Some(200000));
+    assert_eq!(
+        resolved.config.context_token_budget,
+        Some(themis_core::configuration::ContextTokenBudget::Auto)
+    );
     assert_eq!(resolved.provenance["instructions"], "project");
     assert_eq!(resolved.config.approval.rules[0].tool, "git");
 }
@@ -527,5 +530,56 @@ async fn cli_retries_required_summary_automatically_and_exposes_usage() {
     }
     assert!(ordinary_requests >= 2);
     cli(data.path(), "shutdown", Value::Null);
+    host.await.unwrap().unwrap();
+}
+
+/// Auto context through the shared server and CLI: an old saved budget
+/// migrates, the app setting takes Auto (0) or a cap, and runtime files take
+/// "auto" or a number with project provenance.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_context_budget_is_auto_or_a_cap_in_settings_and_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("settings.json"),
+        r#"{"theme":"dark","default_provider":"go","default_model":"m","max_turns":20,"context_token_budget":64000,"context_messages":12}"#,
+    )
+    .unwrap();
+    let state = AppState::new_for_test(directory.path().join("settings.json"));
+    let server = Server::bind(state.clone(), directory.path()).await.unwrap();
+    let host = tokio::spawn(server.run());
+    let root = project.path().to_str().unwrap();
+    // A deliberately chosen old budget stays a cap; retired fields are gone.
+    let settings = cli(directory.path(), "get_settings", Value::Null);
+    assert_eq!(settings["context_token_cap"], 64000);
+    assert!(settings.get("max_turns").is_none());
+    assert!(settings.get("context_messages").is_none());
+    let auto = cli(
+        directory.path(),
+        "update_settings",
+        json!({"patch":{"context_token_cap":0}}),
+    );
+    assert_eq!(auto["context_token_cap"], 0);
+    let saved = cli(
+        directory.path(),
+        "save_runtime_configuration",
+        json!({"scope":"user","projectRoot":root,"json":r#"{"context_token_budget":"auto","recent_messages":6}"#}),
+    );
+    assert_eq!(saved["config"]["context_token_budget"], "auto");
+    assert_eq!(saved["config"]["recent_messages"], 6);
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"context_token_budget":500000}"#,
+    )
+    .unwrap();
+    let resolved = cli(
+        directory.path(),
+        "get_runtime_configuration",
+        json!({"projectRoot":root}),
+    );
+    assert_eq!(resolved["config"]["context_token_budget"], 500000);
+    assert_eq!(resolved["provenance"]["context_token_budget"], "project");
+    cli(directory.path(), "shutdown", Value::Null);
     host.await.unwrap().unwrap();
 }

@@ -10,6 +10,23 @@ pub(super) fn send_must_wait(error: &str) -> bool {
     error.contains(BUSY) || error.contains(CONCURRENCY_LIMIT)
 }
 
+/// The context cap a run applies before clamping to the model's window: the
+/// resolved configuration's `context_token_budget` when a file sets it, else
+/// the app setting (`0` is Auto).
+pub(super) fn context_cap(
+    configuration: &themis_core::configuration::RuntimeConfig,
+    settings: &crate::types::Settings,
+) -> usize {
+    use themis_core::configuration::ContextTokenBudget;
+    configuration
+        .context_token_budget
+        .unwrap_or(match settings.context_token_cap {
+            0 => ContextTokenBudget::Auto,
+            tokens => ContextTokenBudget::Tokens(tokens as usize),
+        })
+        .cap()
+}
+
 impl AppState {
     /// Threads share the project checkout, including existing uncommitted files.
     pub async fn create_thread(
@@ -262,16 +279,12 @@ impl AppState {
         let resolved_configuration =
             self.runtime_configuration(Some(&project_root), explicit.as_deref())?;
         let mut runtime_configuration = resolved_configuration.config;
-        history.extend(
-            self.inner.transcript.context_for_request(
-                &thread_id,
-                &text,
-                runtime_configuration
-                    .context_token_budget
-                    .unwrap_or(settings.context_token_budget as usize)
-                    / 2,
-            )?,
-        );
+        let context_cap = context_cap(&runtime_configuration, &settings);
+        history.extend(self.inner.transcript.context_for_request(
+            &thread_id,
+            &text,
+            context_cap / 2,
+        )?);
         if settings.confirm_reads
             && !resolved_configuration
                 .provenance
@@ -295,10 +308,7 @@ impl AppState {
         let (files, mut manifest) = super::attachments::attachment_context_with_budget(
             &project_root,
             &other_attachments,
-            runtime_configuration
-                .context_token_budget
-                .unwrap_or(settings.context_token_budget as usize)
-                / 2,
+            context_cap / 2,
         )?;
         history.extend(files);
         for source in &documents {
@@ -308,10 +318,7 @@ impl AppState {
             self.inner.transcript.document_context(
                 &thread_id,
                 &text,
-                runtime_configuration
-                    .context_token_budget
-                    .unwrap_or(settings.context_token_budget as usize)
-                    / 2,
+                context_cap / 2,
                 &documents
                     .iter()
                     .map(|source| source.source_path.clone())
@@ -536,12 +543,10 @@ impl AppState {
             total_turns: runtime_configuration
                 .total_turns
                 .unwrap_or(settings.max_total_turns.clamp(1, 2000) as usize),
-            context_token_budget: runtime_configuration
-                .context_token_budget
-                .unwrap_or(settings.context_token_budget.clamp(2000, 256000) as usize),
+            context_token_budget: context_cap,
             recent_messages: runtime_configuration
                 .recent_messages
-                .unwrap_or(settings.context_messages.clamp(1, 100) as usize),
+                .unwrap_or(themis_core::configuration::DEFAULT_RECENT_MESSAGES),
         };
         let started = ThreadEventEnvelope {
             thread_id: thread_id.clone(),

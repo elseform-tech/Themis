@@ -338,6 +338,8 @@ pub enum GoalNoteKind {
     Waiting,
     Quota,
     Failed,
+    /// The goal started with a small context window (a warning; the goal runs on).
+    SmallWindow,
 }
 
 impl From<RunEvent> for ThreadEvent {
@@ -898,14 +900,14 @@ pub struct Settings {
     pub theme: ThemeMode,
     pub default_provider: ProviderKind,
     pub default_model: String,
-    /// Legacy checkpoint interval, retained for settings/API compatibility; no runtime effect.
-    pub max_turns: u32,
     #[serde(default = "default_max_total_turns")]
     pub max_total_turns: u32,
-    #[serde(default = "default_context_token_budget")]
-    pub context_token_budget: u32,
-    #[serde(default = "default_context_messages")]
-    pub context_messages: u32,
+    /// Context cap in tokens; `0` is Auto (the model's window, up to
+    /// [`themis_core::context_window::AUTO_CONTEXT_CEILING`]). Files from
+    /// before this field carry `context_token_budget`, migrated on load
+    /// (see [`crate::settings::SettingsStore`]).
+    #[serde(default)]
+    pub context_token_cap: u32,
     #[serde(default = "default_approval_timeout_seconds")]
     pub approval_timeout_seconds: u32,
     #[serde(default)]
@@ -958,19 +960,12 @@ const fn default_text_size() -> u32 {
     13
 }
 
-pub const fn default_context_messages() -> u32 {
-    20
-}
-
 const fn default_completion_sound() -> bool {
     true
 }
 
 pub const fn default_max_total_turns() -> u32 {
     200
-}
-pub const fn default_context_token_budget() -> u32 {
-    200_000
 }
 
 pub const fn default_approval_timeout_seconds() -> u32 {
@@ -989,10 +984,8 @@ impl Default for Settings {
             theme: ThemeMode::Dark,
             default_provider: ProviderKind::Go,
             default_model: themis_core::providers::GO_DEFAULT_MODEL.to_owned(),
-            max_turns: 20,
             max_total_turns: default_max_total_turns(),
-            context_token_budget: default_context_token_budget(),
-            context_messages: default_context_messages(),
+            context_token_cap: 0,
             approval_timeout_seconds: default_approval_timeout_seconds(),
             confirm_reads: false,
             recent_roots: Vec::new(),
@@ -1027,14 +1020,10 @@ pub struct SettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Legacy checkpoint interval; accepted for compatibility, no runtime effect.
-    pub max_turns: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_total_turns: Option<i64>,
+    /// `0` is Auto; otherwise a cap in tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_token_budget: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_messages: Option<i64>,
+    pub context_token_cap: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_timeout_seconds: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1548,7 +1537,7 @@ mod tests {
         assert_eq!(settings.theme, ThemeMode::Dark);
         assert_eq!(settings.default_provider, ProviderKind::Go);
         assert_eq!(settings.default_model, "muse-spark-1.3-contributor");
-        assert_eq!(settings.max_turns, 20);
+        assert_eq!(settings.context_token_cap, 0);
         assert!(settings.recent_roots.is_empty());
         assert_eq!(settings.concurrency_limit, 3);
         assert!(settings.automations_enabled);
@@ -1566,10 +1555,8 @@ mod tests {
                 "theme": "dark",
                 "default_provider": "go",
                 "default_model": "muse-spark-1.3-contributor",
-                "max_turns": 20,
                 "max_total_turns": 200,
-                "context_token_budget": 200000,
-                "context_messages": 20,
+                "context_token_cap": 0,
                 "approval_timeout_seconds": 300,
                 "confirm_reads": false,
                 "recent_roots": [],
@@ -1587,7 +1574,8 @@ mod tests {
         let patch: SettingsPatch =
             serde_json::from_value(json!({"theme": "dark", "max_turns": 42})).unwrap();
         assert_eq!(patch.theme, Some(ThemeMode::Dark));
-        assert_eq!(patch.max_turns, Some(42));
+        // The retired `max_turns` from old clients is ignored.
+        assert!(patch.context_token_cap.is_none());
         assert!(patch.default_provider.is_none());
         assert!(patch.default_model.is_none());
         assert!(patch.recent_roots.is_none());

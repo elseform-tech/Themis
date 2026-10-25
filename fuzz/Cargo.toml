@@ -113,6 +113,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "context_limit"
+path = "fuzz_targets/context_limit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "provider_models"
 path = "fuzz_targets/provider_models.rs"
 test = false

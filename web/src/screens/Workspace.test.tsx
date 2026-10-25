@@ -674,10 +674,12 @@ describe("Workspace journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
     expect(screen.queryByLabelText("Checkpoint turns")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Context tokens")).toHaveValue(settings.context_token_budget);
+    expect(screen.getByLabelText("Context tokens")).toHaveValue("auto");
+    expect(screen.queryByLabelText("Context token cap")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Recent messages")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Turn limit")).toHaveValue(settings.max_total_turns);
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reset limits" })));
-    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ max_total_turns: 200, context_token_budget: 200000, context_messages: 20, concurrency_limit: 3 });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 });
   });
   it("keeps utilities separate from the expanded project dock and pins Themis", async () => {
     await mount();

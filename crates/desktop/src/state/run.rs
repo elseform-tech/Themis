@@ -133,6 +133,15 @@ impl AppState {
         }
         // The model's window, lowered by a `models` context cap.
         let context_capacity = entry.and_then(|model| model.context_tokens);
+        // The window this run starts with (test endpoints report none, so the
+        // configured cap stands); a goal's first turn warns when it is small.
+        let window = themis_core::context_window::window(
+            &snapshot.model,
+            (!endpoint_override).then_some(context_capacity),
+        );
+        let effective_context =
+            themis_core::context_window::effective_budget(policy.context_token_budget, window);
+        self.warn_small_goal_window(sink.as_ref(), thread_id, run_id, effective_context);
         config.reasoning_effort = snapshot.reasoning_effort.clone();
         let llm = themis_core::providers::resolve(&config)
             .await
@@ -636,7 +645,7 @@ impl AppState {
                                         events_tx,
                                         |events_tx| {
                                             Box::pin(themis_core::context_metrics::collect(async move {
-                                                themis_core::context_metrics::set_run_metadata(serde_json::json!({"thread_id":document_thread,"run_id":themis_core::diagnostics::ACTIVE.try_with(|context|context.run_id.clone()).ok(),"phase":"document_preparation","requested_context_tokens":policy.context_token_budget,"effective_context_tokens":if endpoint_override {policy.context_token_budget} else {policy.context_token_budget.min(context_capacity.unwrap_or(24000))},"provider_capacity_tokens":if endpoint_override {None} else {context_capacity},"capacity_source":if endpoint_override {"test_endpoint_unverified"} else if context_capacity.is_some() {"public_model_catalog"} else {"unknown_conservative_24k"},"configuration_fingerprint":themis_core::context_metrics::config_fingerprint()}));
+                                                themis_core::context_metrics::set_run_metadata(serde_json::json!({"thread_id":document_thread,"run_id":themis_core::diagnostics::ACTIVE.try_with(|context|context.run_id.clone()).ok(),"phase":"document_preparation","requested_context_tokens":policy.context_token_budget,"effective_context_tokens":effective_context,"provider_capacity_tokens":window.tokens,"capacity_source":window.source.as_str(),"configuration_fingerprint":themis_core::context_metrics::config_fingerprint()}));
                                                 let mut history = snapshot.history;
                                                 match themis_core::runtime::documents::prepare(
                                                     &llm, &snapshot.documents,

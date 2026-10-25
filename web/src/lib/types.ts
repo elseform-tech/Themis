@@ -342,7 +342,7 @@ export interface QueuedMessage {
 }
 
 export type GoalStatus = 'running' | 'paused' | 'waiting' | 'stuck' | 'quota' | 'reached';
-export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed';
+export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed' | 'small_window';
 
 /** A chat's goal: one sentence the agent keeps working toward. */
 export interface Goal {
@@ -591,11 +591,9 @@ export interface Settings {
   theme: ThemeMode;
   default_provider: ProviderKind;
   default_model: string;
-  /** Legacy checkpoint interval; retained for compatibility, no runtime effect. */
-  max_turns: number;
   max_total_turns: number;
-  context_token_budget: number;
-  context_messages: number;
+  /** Working-context cap in tokens; 0 is Auto (the model's window, up to the Auto ceiling). */
+  context_token_cap: number;
   approval_timeout_seconds: number;
   confirm_reads: boolean;
   recent_roots: string[];

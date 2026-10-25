@@ -132,3 +132,44 @@ describe("Settings › Models", () => {
     expect(screen.queryByRole("button", { name: "Keys" })).toBeNull();
   });
 });
+
+describe("Settings › Advanced › Context tokens", () => {
+  afterEach(() => { settings.context_token_cap = 0; vi.mocked(bridge.updateSettings).mockClear(); });
+
+  async function openAdvanced() {
+    await act(async () => { render(<SettingsScreen />); });
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+  }
+
+  it("is Auto by default, with no number and no recent-messages control", async () => {
+    await openAdvanced();
+    expect(screen.getByRole("combobox", { name: "Context tokens" })).toHaveValue("auto");
+    expect(screen.queryByLabelText("Context token cap")).toBeNull();
+    expect(screen.queryByLabelText("Recent messages")).toBeNull();
+    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Context tokens" }), { target: { value: "custom" } }); });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ context_token_cap: 200000 });
+  });
+
+  it("shows a custom cap, saves an edited number, and goes back to Auto", async () => {
+    settings.context_token_cap = 64000;
+    await openAdvanced();
+    const cap = screen.getByLabelText("Context token cap");
+    expect(cap).toHaveValue(64000);
+    expect(cap).toHaveAttribute("max", "1000000");
+    fireEvent.change(cap, { target: { value: "500000" } });
+    await act(async () => { fireEvent.blur(cap); });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ context_token_cap: 500000 });
+    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Context tokens" }), { target: { value: "auto" } }); });
+    expect(bridge.updateSettings).toHaveBeenLastCalledWith({ context_token_cap: 0 });
+  });
+
+  it("names the field in a rejected cap's error", async () => {
+    settings.context_token_cap = 64000;
+    vi.mocked(bridge.updateSettings).mockRejectedValueOnce("context_token_cap must be Auto or between 2000 and 1000000");
+    await openAdvanced();
+    const cap = screen.getByLabelText("Context token cap");
+    fireEvent.change(cap, { target: { value: "10" } });
+    await act(async () => { fireEvent.blur(cap); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Context tokens must be Auto or between 2000 and 1000000");
+  });
+});

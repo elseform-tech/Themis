@@ -2329,10 +2329,16 @@ async fn cli_large_source_checkpoint_excerpts_once_and_preserves_restart_recover
         .await
         .unwrap();
     rebooted.set_go_base_url_override(Some(provider.uri()));
+    // Recent messages are file-only configuration.
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"recent_messages":4}"#,
+    )
+    .unwrap();
     rebooted
         .update_settings(themis_desktop::types::SettingsPatch {
-            context_token_budget: Some(40000),
-            context_messages: Some(4),
+            context_token_cap: Some(40000),
             ..Default::default()
         })
         .await

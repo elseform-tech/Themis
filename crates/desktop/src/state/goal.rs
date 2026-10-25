@@ -58,6 +58,20 @@ pub(super) fn backoff(failures: u32) -> Duration {
     Duration::from_secs(seconds).min(MAX_BACKOFF)
 }
 
+/// The goal note for a small context window, such as "Context window is
+/// small (32,768 tokens); long goals may stall."
+pub(super) fn small_window_note(tokens: usize) -> String {
+    let digits = tokens.to_string();
+    let mut grouped = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    format!("Context window is small ({grouped} tokens); long goals may stall.")
+}
+
 /// Moves a goal to `status`, counting running time only while it runs.
 fn set_status(goal: &mut Goal, status: GoalStatus, reason: Option<String>) {
     let now = now_ms();
@@ -398,6 +412,46 @@ impl AppState {
             Some(goal) if goal.status == GoalStatus::Running => core_goal::goal_context(&goal.text),
             _ => String::new(),
         })
+    }
+
+    /// Notes once, when a goal's first turn starts, that the context window
+    /// is below [`themis_core::context_window::SMALL_WINDOW_TOKENS`]: long
+    /// goals may stall there.
+    pub(super) fn warn_small_goal_window(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        run_id: &str,
+        window_tokens: usize,
+    ) {
+        if window_tokens >= themis_core::context_window::SMALL_WINDOW_TOKENS {
+            return;
+        }
+        let first_turn = self
+            .inner
+            .goal_turn_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(run_id)
+            && self
+                .goal_for(thread_id)
+                .is_some_and(|goal| goal.status == GoalStatus::Running && goal.turns <= 1);
+        if !first_turn {
+            return;
+        }
+        let _ = self.inner.diagnostics.append(
+            "goal",
+            "small_context_window",
+            "info",
+            json!({"thread_id": thread_id, "run_id": run_id, "window_tokens": window_tokens}),
+        );
+        self.goal_note(
+            sink,
+            thread_id,
+            run_id,
+            GoalNoteKind::SmallWindow,
+            &small_window_note(window_tokens),
+        );
     }
 
     fn mark_goal_turn(&self, run_id: &str) {
@@ -1011,6 +1065,22 @@ fn clip_output(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn small_window_note_groups_the_token_count() {
+        assert_eq!(
+            small_window_note(32_768),
+            "Context window is small (32,768 tokens); long goals may stall."
+        );
+        assert_eq!(
+            small_window_note(8_000),
+            "Context window is small (8,000 tokens); long goals may stall."
+        );
+        assert_eq!(
+            small_window_note(127_999),
+            "Context window is small (127,999 tokens); long goals may stall."
+        );
+    }
 
     #[test]
     fn repeated_hard_failures_pause_but_transient_ones_keep_retrying() {

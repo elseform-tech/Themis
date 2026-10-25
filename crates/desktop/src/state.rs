@@ -1845,21 +1845,21 @@ mod tests {
         let updated = state
             .update_settings(SettingsPatch {
                 theme: Some(ThemeMode::Light),
-                max_turns: Some(7),
+                context_token_cap: Some(64_000),
                 ..SettingsPatch::default()
             })
             .await
             .expect("update");
         assert_eq!(updated.theme, ThemeMode::Dark);
-        assert_eq!(updated.max_turns, 7);
+        assert_eq!(updated.context_token_cap, 64_000);
         let bad = state
             .update_settings(SettingsPatch {
-                max_turns: Some(0),
+                context_token_cap: Some(10),
                 ..SettingsPatch::default()
             })
             .await
             .expect_err("validated");
-        assert!(bad.contains("max_turns"), "{bad}");
+        assert!(bad.contains("context_token_cap"), "{bad}");
     }
 
     #[tokio::test]
