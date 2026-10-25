@@ -47,7 +47,8 @@ MODEL = (
     ("unknown_tool", r"unknown tool '"),
     ("missing_path", r"(?:no such file|not found|does not exist|cannot find).{0,80}['`\"/]"
                      r"|['`\"][^'`\"]+['`\"].{0,40}(?:no such file|not found|does not exist)"),
-    ("outside_project", r"escapes the project root|outside the project"),
+    ("outside_project", r"escapes the project root|outside the project|Absolute paths are not allowed"),
+    ("read_past_end", r"Read offset \d+ is past the end"),
     ("patch_mismatch", r"patch does not apply|context mismatch|ambiguous|No files were changed"),
     ("command_failed", r"exit(?:ed)?(?: with)?(?: code| status)?\s*[:=]?\s*[1-9]|non-zero|command failed"
                        r"|failed to start '"),
@@ -70,6 +71,8 @@ def classify(tool, output, mode="yolo", summary=""):
         if tool == "shell":
             argv = _shell_argv(summary)
             if argv is None:
+                if _differs_from_check(summary):
+                    return "model", "denied_by_rule"
                 return "unclassified", "unparsed_shell_call"
             allowed = argv == CHECK_COMMAND
         else:
@@ -101,6 +104,24 @@ def _shell_argv(summary):
     if not isinstance(rest, list) or not all(isinstance(item, str) for item in rest):
         return None
     return [arguments["command"], *rest]
+
+
+# The complete leading strings of a summary cut short: `{"command":"…"` and `"args":["…"`.
+_STRING = r'"((?:[^"\\]|\\.)*)"'
+_PREFIX = re.compile(r'^\{"command":' + _STRING + r'(?:,"args":\[' + _STRING + r'[,\]])?')
+
+
+def _differs_from_check(summary):
+    """True when a cut-short shell summary already shows a command or first argument that is not
+    the check command's. Only complete JSON strings count, so a cut never decides it."""
+    _, _, raw = (summary or "").partition(" with ")
+    match = _PREFIX.match(raw)
+    if not match:
+        return False
+    command, first = (json.loads(f'"{part}"') if part is not None else None for part in match.groups())
+    if command != CHECK_COMMAND[0]:
+        return True
+    return first is not None and first != CHECK_COMMAND[1]
 
 
 def sample(output, limit=120):

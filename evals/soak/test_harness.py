@@ -476,6 +476,11 @@ class GraderTests(unittest.TestCase):
                  ("read_file", "tool 'read_file' failed: Selected JSONL field is missing or is not a string", "model"),
                  ("shell", "tool 'shell' failed: shell: working directory '/tmp/soak/project/null' is not a directory",
                   "model"),
+                 # From the first 64k round: reading past a record's end; an absolute path.
+                 ("read_file", "tool 'read_file' failed: Read offset 1000 is past the end: the text has 0 characters, "
+                               "so everything was already read", "model"),
+                 ("read_file", "tool 'read_file' failed: Absolute paths are not allowed inside root-scoped tools: /x",
+                  "model"),
                  ("web_search", "web_search: the moon is in the way", "unclassified")]
         for tool, text, cause in cases:
             self.assertEqual(tool_causes.classify(tool, text)[0], cause, text)
@@ -492,6 +497,16 @@ class GraderTests(unittest.TestCase):
         # A shell call whose arguments cannot be parsed is left for a person, not attributed.
         self.assertEqual(tool_causes.classify("shell", custom[1][1], mode="custom", summary="call `shell` with ???")[0],
                          "unclassified")
+        # Summaries are cut short: a complete command or first argument that differs from the
+        # check command is enough; a cut that leaves the check command possible is not.
+        shell_denied = denied.format("shell", "shell", "{...}")
+        for summary, cause in (('call `shell` with {"command":"sh","args":["-c","echo SRC=$(ls src | wc', "model"),
+                               ('call `shell` with {"command":"python3","args":["-c","import os,subpro', "model"),
+                               ('call `shell` with {"command":"python3","args":["check.py"', "unclassified"),
+                               ('call `shell` with {"command":"pyth', "unclassified"),
+                               ('call `shell` with {"args":["x"],"command":"sh', "unclassified")):
+            self.assertEqual(tool_causes.classify("shell", shell_denied, mode="custom", summary=summary)[0], cause,
+                             summary)
         self.assertEqual(tool_causes.APPROVAL["rules"][0], {"tool": "shell_unsandboxed", "action": "deny"})
 
 
