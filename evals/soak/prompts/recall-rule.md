@@ -1,0 +1,1 @@
+Answer from memory, without using any tools: what must the first line of every item file under `out/` be? Reply with just that line's pattern.

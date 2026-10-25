@@ -60,6 +60,8 @@ jobs:
         run: |
           cargo test -p themis-core --features eval --lib agent_policy
           python -m unittest evals.longform.test_harness
+      - name: Goal soak eval harness and shared eval kit (offline - generator, graders, trend, stand-in CLI)
+        run: python -m unittest evals.kit.test_kit evals.soak.test_harness
 
   rust-coverage:
     runs-on: ubuntu-latest

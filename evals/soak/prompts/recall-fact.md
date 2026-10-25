@@ -1,0 +1,1 @@
+Answer from memory, without using any tools: what is the count of `{{name}}`? Reply with just the number.

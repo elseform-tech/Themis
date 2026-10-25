@@ -1,0 +1,1 @@
+A change for all items: add a line `- since: <year>` right after the status line of every `out/<name>.md`, giving the year the item's current status began, as its memo tells it. Update the files already written, and include the line in the rest.
