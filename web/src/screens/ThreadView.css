@@ -146,6 +146,8 @@
 .themis-composer-branch { font-family: ui-monospace, SFMono-Regular, monospace; }
 .themis-composer-permissions summary::-webkit-details-marker { display: none; }
 .themis-composer-permissions[data-mode="yolo"] summary { color: var(--themis-warning); }
+/* YOLO has no approvals and no sandbox walls: the mode reads as a warning. */
+.themis-composer-label.is-yolo { color: var(--themis-warning); }
 .themis-permissions-panel { position: absolute; z-index: 30; bottom: calc(100% + 8px); left: 0; width: max-content; padding: 12px; border-radius: 16px; background: var(--themis-raised); box-shadow: 0 16px 40px rgb(0 0 0 / .45); font-size: .8rem; }
 .themis-permissions-panel p { max-width: 18rem; margin: 0 0 8px; color: var(--themis-text-2); font-size: .75rem; line-height: 1.5; }
 .themis-permissions-panel label { display: flex; gap: 8px; align-items: center; }

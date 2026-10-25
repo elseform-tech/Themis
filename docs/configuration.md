@@ -189,8 +189,9 @@ Example project `.themis/config.jsonc`:
 ```
 
 The `sandbox` block configures the OS sandbox for commands the agent runs
-(`shell`, background tasks, the `git` tool and watch checks), in Custom and YOLO
-alike; see [sandbox](sandbox.md) for what it allows, the secret locations it
+(`shell`, background tasks, the `git` tool and watch checks) in Custom; YOLO runs
+use an open plan that ignores `network`, `writable_paths` and `allow_keychain` and
+keeps only the app data and `.themis/` read-only. See [sandbox](sandbox.md) for what it allows, the secret locations it
 hides, backend choice and limits. A project file and an explicit run override may
 only tighten it (block the network, enable it, drop writable paths); anything
 else fails validation with a message naming the field.
@@ -536,11 +537,16 @@ always see the argv the model sent.
 
 Unattended CLI `ask` requests deny; use explicit policy or an interactive client.
 
-YOLO means no approval prompts: it bypasses harness approval gates, filesystem
-root restrictions, skill tool filters, and the Git subcommand allowlist. The OS
-sandbox (and the file guard) still apply, as do operating-system permissions,
-tool input validation, time/output bounds, and child environment handling; a
-command the sandbox blocks fails without asking. Custom is a tool policy on top
+YOLO means no approval prompts and no sandbox walls but Themis' own settings: it
+bypasses harness approval gates, filesystem root restrictions, skill tool filters,
+and the Git subcommand allowlist, and its commands may write anywhere, read secret
+locations and use the network and Keychain. Writes to the app data and the
+project's `.themis/` stay refused (commands and file tools alike; under Landlock
+only the file tools protect `.themis/`), and a YOLO run's system prompt carries a
+caution against unrequested destructive actions (`desktop-run-yolo.md`).
+Operating-system permissions, tool input validation, time/output bounds, and child
+environment handling still apply; a command blocked by that one wall fails without
+asking. Custom is a tool policy on top
 of the same sandbox: approved programs, including an explicit shell interpreter,
 perform their own filesystem/network operations inside it. See
 [sandbox](sandbox.md) for the enforcement boundary.

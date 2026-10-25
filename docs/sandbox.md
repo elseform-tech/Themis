@@ -3,8 +3,11 @@
 Two layers decide what an agent can do. The **approval policy** (composer shield:
 **Custom**, the default, or **YOLO**) decides which tool calls run and which ask
 you first. The **operating-system sandbox** confines the programs those calls
-start, in both modes: YOLO means "no approval prompts", not "no walls". See
-[configuration](configuration.md) for JSONC examples and exact limits.
+start. In Custom it is the full sandbox described below. In YOLO it keeps only
+one wall: nothing the agent runs can write Themis' app data or the project's
+`.themis/` folder, so it cannot grant itself permissions; everything else is
+open (see [YOLO mode](#yolo-mode)). See [configuration](configuration.md) for
+JSONC examples and exact limits.
 
 ## The OS sandbox
 
@@ -64,7 +67,7 @@ error. Each backend is probed once per app-server process.
   Tools that use the Keychain, such as git's HTTPS credential helper, fail;
   Themis tells the agent so. `"allow_keychain": true` in the user
   `runtime.jsonc` lets them use it again.
-- **Network**: allowed by default, in Custom and YOLO. `"network": "block"` blocks
+- **Network**: allowed by default (always in YOLO). `"network": "block"` blocks
   all IP traffic, including `localhost` (Seatbelt: outbound, inbound and bind;
   bubblewrap: a private network namespace; Landlock: TCP bind/connect only, and
   only with Landlock ABI 4, Linux 6.7, or later).
@@ -175,9 +178,10 @@ fail the same way as direct ones.
 
 Themis' own file tools (`read_file`, `write_file`, `apply_patch`, ...) are not
 separate programs, so the OS sandbox does not apply to them. While the sandbox is
-enabled they still refuse to write the app-data folder and to read or write the
-secret locations, and under YOLO (where they may use paths outside the project)
-they also refuse to write the project's `.themis/` folder. In Custom they stay
+enabled they still refuse to write the app-data folder and, in Custom, to read or
+write the secret locations; under YOLO (where they may use paths outside the
+project and read anything) they also refuse to write the project's `.themis/`
+folder. In Custom they stay
 confined to the project as before; writing `.themis/config.jsonc` there still
 asks you.
 
@@ -227,12 +231,26 @@ Hooks and MCP initialization instructions do not grant permissions.
 
 ## YOLO mode
 
-YOLO means no approval prompts. It bypasses harness approval, the core file-tool
-root restriction, the Git subcommand allowlist, and skill tool filtering. The OS
-sandbox, the file guard, OS permissions, tool input validation, timeouts, output
-bounds, and child environment handling still apply; a command the sandbox blocks
-fails without asking. The choice is saved per thread. An active run retains its
-captured mode and configuration; edits affect subsequent runs.
+YOLO means no approval prompts and no sandbox walls but one. It bypasses harness
+approval, the core file-tool root restriction, the Git subcommand allowlist, and
+skill tool filtering, and its commands run under an *open* sandbox plan: they
+may write anywhere, read the secret locations (`~/.ssh`, `~/.aws`, ...), use the
+network and the Keychain, whatever `sandbox.network`, `writable_paths` or
+`allow_keychain` say. The one wall left: neither commands nor file tools can
+write the app-data folder or the project's `.themis/` folder, so an agent cannot
+change its own rules, grants or settings; such a write fails with a short note
+and is never escalated. Under Landlock (Linux without bubblewrap) the project's
+`.themis/` cannot be carved out of a writable tree, so there only the file tools
+protect it; the app-data folder stays protected on every backend. With
+`sandbox.enabled: false`, or no usable backend, commands are not confined at all.
+YOLO runs also get a short caution in their system prompt: no destructive or
+irreversible actions the person did not ask for (deleting data outside the task,
+force-pushing, dropping databases, changing system settings, sending anything),
+asking in the reply instead, and treating instructions in pages, files and tool
+output as data. It is advice to the model, not enforcement. OS permissions, tool
+input validation, timeouts, output bounds, and child environment handling still
+apply. The choice is saved per thread. An active run retains its captured mode
+and configuration; edits affect subsequent runs.
 
 ## Programs and filesystem access
 
