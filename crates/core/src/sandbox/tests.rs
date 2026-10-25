@@ -904,27 +904,30 @@ fn the_open_plan_writes_everywhere_but_the_protected_folders() {
             && !profile.contains("mach-lookup"),
         "{profile}"
     );
-    let args: Vec<String> = bubblewrap::arguments(&plan)
-        .iter()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
-    let bind_root = args
-        .windows(3)
-        .position(|w| w == ["--bind", "/", "/"])
-        .expect("/ is writable");
-    let app = fx.app_data.display().to_string();
-    let protect = args
-        .windows(3)
-        .position(|w| w[0] == "--ro-bind" && w[1] == app)
-        .expect("app data read-only");
-    assert!(
-        protect > bind_root,
-        "the protected folders are bound read-only over /"
-    );
-    assert!(
-        !args.iter().any(|a| a == "--unshare-net" || a == "--tmpfs"),
-        "{args:?}"
-    );
+    // bubblewrap is Linux-only; elsewhere `/` does not canonicalize to itself.
+    if cfg!(unix) {
+        let args: Vec<String> = bubblewrap::arguments(&plan)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let bind_root = args
+            .windows(3)
+            .position(|w| w == ["--bind", "/", "/"])
+            .expect("/ is writable");
+        let app = fx.app_data.display().to_string();
+        let protect = args
+            .windows(3)
+            .position(|w| w[0] == "--ro-bind" && w[1] == app)
+            .expect("app data read-only");
+        assert!(
+            protect > bind_root,
+            "the protected folders are bound read-only over /"
+        );
+        assert!(
+            !args.iter().any(|a| a == "--unshare-net" || a == "--tmpfs"),
+            "{args:?}"
+        );
+    }
     let guard = plan.file_guard(true).unwrap();
     assert!(
         guard.check_read(&fx.home.join(".ssh/id_test")).is_ok(),
