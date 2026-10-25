@@ -386,6 +386,40 @@ async fn yolo_has_no_walls_but_themis_own_settings() {
     );
 }
 
+/// YOLO never asks, but a deny rule someone wrote still refuses (here inside an
+/// allowed `sh -c` script); other commands run.
+#[tokio::test(flavor = "multi_thread")]
+async fn yolo_still_respects_a_written_deny_rule() {
+    if !common::git_available() {
+        return;
+    }
+    let fx = fixture();
+    fx.save_user_config(
+        r#"{"approval":{"rules":[{"tool":"shell","command":["touch"],"action":"deny"}]}}"#,
+    );
+    let scripts = vec![
+        "touch denied.txt".to_owned(),
+        "echo ok > allowed.txt".to_owned(),
+    ];
+    let (_, outcome) = run(&fx, ApprovalMode::Yolo, scripts, |_| ApprovalDecision::Once).await;
+    assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+    assert!(
+        outcome.approvals.is_empty(),
+        "YOLO never asks: {:?}",
+        outcome.approvals
+    );
+    assert!(
+        !fx.project.join("denied.txt").exists(),
+        "{:?}",
+        outcome.outputs
+    );
+    assert!(
+        fx.project.join("allowed.txt").exists(),
+        "{:?}",
+        outcome.outputs
+    );
+}
+
 /// A one-shot HTTP server on localhost; returns its port.
 fn http_server() -> u16 {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -445,7 +479,7 @@ async fn network_is_allowed_by_default_and_blocked_by_configuration() {
         );
         return;
     }
-    let (_, blocked) = run(&fx, ApprovalMode::Custom, vec![fetch], |_| {
+    let (_, blocked) = run(&fx, ApprovalMode::Custom, vec![fetch.clone()], |_| {
         ApprovalDecision::Deny
     })
     .await;
@@ -459,6 +493,12 @@ async fn network_is_allowed_by_default_and_blocked_by_configuration() {
         "{:?}",
         blocked.outputs
     );
+    // YOLO opens the network, but not when the configuration blocks it explicitly.
+    let (_, yolo) = run(&fx, ApprovalMode::Yolo, vec![fetch], |_| {
+        ApprovalDecision::Deny
+    })
+    .await;
+    assert!(!yolo.outputs[0].contains("fetched"), "{:?}", yolo.outputs);
 }
 
 #[tokio::test(flavor = "multi_thread")]

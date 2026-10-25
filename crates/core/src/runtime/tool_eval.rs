@@ -196,7 +196,7 @@ pub async fn run_tool_task(
             project_root: project,
             app_data: None,
             home: None,
-            open: false,
+            open: None,
         },
     ));
     report.sandbox_active = sandbox.is_active();

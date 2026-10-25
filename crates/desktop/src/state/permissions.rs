@@ -4,7 +4,7 @@
 use super::*;
 use serde_json::{json, Value};
 use themis_core::configuration::{self, ApprovalMode};
-use themis_core::sandbox::{PlanInputs, SandboxConfig, SandboxPlan};
+use themis_core::sandbox::{PlanInputs, SandboxConfig, SandboxPlan, YoloSandbox};
 
 impl AppState {
     /// Test seam: the home folder sandbox plans use for `~/` paths and the
@@ -24,12 +24,12 @@ impl AppState {
 
     /// The sandbox commands of a run (or a watch check) in `root` use under
     /// `config`, protecting this app's data folder. `open` (YOLO) leaves only the
-    /// protected folders read-only.
+    /// protected folders read-only and the blocks a file wrote.
     pub(crate) fn sandbox_plan(
         &self,
         root: &Path,
         config: &SandboxConfig,
-        open: bool,
+        open: Option<YoloSandbox>,
     ) -> Arc<SandboxPlan> {
         let home = self
             .inner
@@ -161,7 +161,8 @@ impl AppState {
                         &resolved.config.sandbox,
                         thread
                             .as_ref()
-                            .is_some_and(|(mode, _)| *mode == ApprovalMode::Yolo),
+                            .is_some_and(|(mode, _)| *mode == ApprovalMode::Yolo)
+                            .then(|| resolved.yolo_sandbox()),
                     )
                     .status(),
                 )

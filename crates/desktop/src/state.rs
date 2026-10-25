@@ -139,6 +139,8 @@ struct RunSnapshot {
     approval_timeout_seconds: u32,
     approval_mode: themis_core::configuration::ApprovalMode,
     runtime_configuration: themis_core::configuration::RuntimeConfig,
+    /// The sandbox settings a file or override wrote, which YOLO keeps.
+    yolo_sandbox: themis_core::sandbox::YoloSandbox,
     /// Tool sandbox root: the shared project checkout.
     work_root: PathBuf,
     is_git: bool,

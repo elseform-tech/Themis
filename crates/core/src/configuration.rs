@@ -77,6 +77,32 @@ impl ApprovalPolicy {
         decision
     }
 
+    /// The rules as YOLO applies them: a deny rule still denies (the defaults
+    /// ship none, so every deny rule is one a person or project wrote), while ask
+    /// rules and the default allow, because YOLO never asks.
+    #[must_use]
+    pub fn yolo(&self) -> Self {
+        Self {
+            default: PolicyAction::Allow,
+            rules: self
+                .rules
+                .iter()
+                .filter(|rule| {
+                    rule.action == PolicyAction::Deny || rule.action == PolicyAction::Allow
+                })
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// [`Self::yolo`]'s decision: `Deny` for a matching deny rule, otherwise `Allow`.
+    pub fn yolo_decision(&self, action: &ToolAction) -> PolicyAction {
+        match self.yolo().decision(action) {
+            PolicyAction::Deny => PolicyAction::Deny,
+            _ => PolicyAction::Allow,
+        }
+    }
+
     fn rule_decision(&self, action: &ToolAction) -> PolicyAction {
         self.rules
             .iter()
@@ -313,7 +339,11 @@ impl ApprovalHook for ConfiguredHook {
             return self.approve_escape(action);
         }
         if self.mode == ApprovalMode::Yolo {
-            return Approval::AllowOnce;
+            // No prompts, but a deny rule you wrote still holds.
+            return match self.policy.yolo_decision(action) {
+                PolicyAction::Deny => Approval::Deny,
+                _ => Approval::AllowOnce,
+            };
         }
         // Browser permissions are kept in Settings › Browser, not chat grants: an "always"
         // answer goes back to the browser tool, which saves it as a site exception.
@@ -341,7 +371,10 @@ impl ApprovalHook for ConfiguredHook {
 }
 impl ConfiguredHook {
     fn rule_denies(&self, action: &ToolAction) -> bool {
-        self.mode == ApprovalMode::Custom && self.policy.decision(action) == PolicyAction::Deny
+        match self.mode {
+            ApprovalMode::Custom => self.policy.decision(action) == PolicyAction::Deny,
+            ApprovalMode::Yolo => self.policy.yolo_decision(action) == PolicyAction::Deny,
+        }
     }
 
     /// Running a sandbox-blocked command outside the sandbox needs a person:
@@ -885,6 +918,21 @@ pub struct ResolvedConfig {
     /// `default` (built-in), `user`, `project` or `run`.
     #[serde(default)]
     pub rule_sources: Vec<String>,
+}
+
+impl ResolvedConfig {
+    /// The sandbox settings YOLO keeps: those some file or override wrote.
+    pub fn yolo_sandbox(&self) -> crate::sandbox::YoloSandbox {
+        let written = |key: &str| {
+            self.provenance
+                .get(key)
+                .is_some_and(|origin| origin != "default")
+        };
+        crate::sandbox::YoloSandbox {
+            network_written: written("sandbox.network"),
+            keychain_written: written("sandbox.allow_keychain"),
+        }
+    }
 }
 
 pub fn parse(content: &str) -> Result<Value> {
@@ -2984,6 +3032,47 @@ mod tests {
             ChatGrants::in_memory(),
         );
         assert_eq!((decision, asked), (Approval::Deny, 0));
+    }
+
+    /// YOLO never asks, but a deny rule someone wrote still holds; ask rules and a
+    /// `deny` default (no rule matched) do not stop it.
+    #[test]
+    fn yolo_keeps_written_deny_rules_and_nothing_else() {
+        let rules = r#"{"approval":{"default":"deny","rules":[
+            {"tool":"shell","command":["git","push","--force"],"action":"deny"},
+            {"tool":"shell","command":["make"],"action":"ask"}]}}"#;
+        let policy = resolve(Some(rules), None, None).unwrap().config.approval;
+        let run = |argv: &[&str]| {
+            let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let hook = configured_hook_with_grants(
+                ApprovalMode::Yolo,
+                policy.clone(),
+                counting_hook(&calls, Approval::Deny),
+                ChatGrants::in_memory(),
+            );
+            let action = shell_action(argv);
+            let decision = (hook.approve(&action), hook.denied_by_rule(&action));
+            assert_eq!(
+                calls.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "YOLO never asks"
+            );
+            decision
+        };
+        assert_eq!(
+            run(&["git", "push", "--force", "origin"]),
+            (Approval::Deny, true)
+        );
+        assert_eq!(run(&["make", "all"]), (Approval::AllowOnce, false));
+        assert_eq!(run(&["cargo", "test"]), (Approval::AllowOnce, false));
+        assert_eq!(
+            policy.yolo_decision(&shell_action(&["git", "push", "--force"])),
+            PolicyAction::Deny
+        );
+        assert_eq!(
+            policy.yolo_decision(&shell_action(&["ls"])),
+            PolicyAction::Allow
+        );
     }
 
     #[test]

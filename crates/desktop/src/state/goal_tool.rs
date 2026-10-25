@@ -43,7 +43,7 @@ impl ToolRuntime for GoalTool {
             risk: RiskLevel::Write,
         };
         let decision = if self.run.mode == ApprovalMode::Yolo {
-            PolicyAction::Allow
+            self.run.policy.yolo_decision(&action)
         } else {
             self.run.policy.decision(&action)
         };

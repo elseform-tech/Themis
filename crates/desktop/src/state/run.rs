@@ -229,7 +229,11 @@ impl AppState {
         // The sandbox is captured once per run like the rest of the
         // configuration. YOLO gets the open plan: no walls but the protected
         // folders, and no escalation prompt.
-        let sandbox = self.sandbox_plan(&snapshot.work_root, &run_configuration.sandbox, yolo);
+        let sandbox = self.sandbox_plan(
+            &snapshot.work_root,
+            &run_configuration.sandbox,
+            yolo.then_some(snapshot.yolo_sandbox),
+        );
         let _ = self.inner.diagnostics.append_with_level(
             "sandbox",
             "run_plan",
@@ -256,6 +260,11 @@ impl AppState {
         store
             .materialize(&snapshot.plugins, &snapshot.work_root)
             .map_err(|e| e.to_string())?;
+        let startup_rules = if yolo {
+            run_configuration.approval.yolo()
+        } else {
+            run_configuration.approval.clone()
+        };
         let mut hooks = Vec::new();
         let mut setup_events = Vec::new();
         let mut tool_labels = std::collections::HashMap::new();
@@ -276,7 +285,8 @@ impl AppState {
                             plugin,
                             name,
                             approvals.clone(),
-                            (!yolo).then_some(&run_configuration.approval),
+                            // YOLO keeps only the deny rules you wrote.
+                            Some(&startup_rules),
                         ),
                     )
                     .await

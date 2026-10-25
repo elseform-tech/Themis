@@ -715,12 +715,20 @@ async fn cli_write_without_append_runs_once() {
     serving.abort();
 }
 
-/// On macOS an agent's command cannot use the Keychain, and the agent is told why.
+/// On macOS an agent's command cannot use the Keychain when the configuration says so,
+/// and the agent is told why; a written `allow_keychain: false` holds even in YOLO
+/// (which otherwise opens the Keychain).
 #[cfg(target_os = "macos")]
 #[tokio::test(flavor = "multi_thread")]
 async fn cli_keeps_agent_commands_out_of_the_keychain() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(project.path().join(".themis")).unwrap();
+    std::fs::write(
+        project.path().join(".themis/config.jsonc"),
+        r#"{"sandbox":{"allow_keychain":false}}"#,
+    )
+    .unwrap();
     let provider = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(|request: &Request| {

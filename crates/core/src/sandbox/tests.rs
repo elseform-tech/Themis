@@ -19,7 +19,7 @@ fn plan_with(
             project_root: root,
             app_data: Some(app_data),
             home: Some(home),
-            open: false,
+            open: None,
         },
         enforcement,
         "test".into(),
@@ -552,7 +552,7 @@ proptest! {
         let root = std::env::temp_dir();
         let home = root.join("themis-no-home");
         let plan = SandboxPlan::with_enforcement(
-            PlanInputs { config: &SandboxConfig::default(), project_root: &root, app_data: None, home: Some(&home), open: false },
+            PlanInputs { config: &SandboxConfig::default(), project_root: &root, app_data: None, home: Some(&home), open: None },
             Enforcement::Active(Backend::Seatbelt),
             "test".into(),
         );
@@ -867,7 +867,7 @@ fn open_plan(enforcement: Enforcement, config: &SandboxConfig, fx: &Fixture) -> 
             project_root: &fx.root,
             app_data: Some(&fx.app_data),
             home: Some(&fx.home),
-            open: true,
+            open: Some(YoloSandbox::default()),
         },
         enforcement,
         "test".into(),
@@ -938,6 +938,27 @@ fn the_open_plan_writes_everywhere_but_the_protected_folders() {
         .is_err());
     assert!(guard.check_write(&fx.outside.join("x.txt")).is_ok());
     assert!(plan.status().secret_paths.is_empty() && plan.status().open);
+    // Blocks a person wrote hold: YOLO removes Themis' default walls, not theirs.
+    let written = SandboxPlan::with_enforcement(
+        PlanInputs {
+            config: &blocked,
+            project_root: &fx.root,
+            app_data: Some(&fx.app_data),
+            home: Some(&fx.home),
+            open: Some(YoloSandbox {
+                network_written: true,
+                keychain_written: true,
+            }),
+        },
+        Enforcement::Active(Backend::Seatbelt),
+        "test".into(),
+    );
+    assert_eq!(written.network(), NetworkPolicy::Block);
+    assert!(!written.allow_keychain());
+    assert!(
+        written.secrets().is_empty(),
+        "secret locations stay readable"
+    );
 }
 
 /// The open plan on the real backend: writes outside the project and reads of secret
