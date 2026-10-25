@@ -269,12 +269,22 @@ fn loose(line: &str) -> String {
 
 /// Where the hunk's old side (context and removals) starts in `old`, at or after `from`:
 /// the exact match nearest the declared start, else the only whitespace-insensitive
-/// match. `None` when it is absent or (loosely) ambiguous.
-fn locate(old: &[String], from: usize, wanted: &[&str], declared: usize) -> Option<usize> {
+/// match. Otherwise the whitespace-insensitive matches: none when the lines are absent,
+/// several when they are ambiguous.
+fn locate(
+    old: &[String],
+    from: usize,
+    wanted: &[&str],
+    declared: usize,
+) -> Result<usize, Vec<usize>> {
     if wanted.is_empty() {
-        return (declared >= from && declared <= old.len()).then_some(declared);
+        return (declared >= from && declared <= old.len())
+            .then_some(declared)
+            .ok_or_else(Vec::new);
     }
-    let last = old.len().checked_sub(wanted.len())?;
+    let Some(last) = old.len().checked_sub(wanted.len()) else {
+        return Err(Vec::new());
+    };
     let positions = |same: &dyn Fn(&str, &str) -> bool| {
         (from..=last)
             .filter(|&at| {
@@ -287,12 +297,23 @@ fn locate(old: &[String], from: usize, wanted: &[&str], declared: usize) -> Opti
     };
     let exact = positions(&|a, b| a == b);
     if let Some(&best) = exact.iter().min_by_key(|&&at| at.abs_diff(declared)) {
-        return Some(best);
+        return Ok(best);
     }
     match positions(&|a, b| loose(a) == loose(b)).as_slice() {
-        [only] => Some(*only),
-        _ => None,
+        [only] => Ok(*only),
+        loose => Err(loose.to_vec()),
     }
+}
+
+/// `count` lines of `old` from line `from` (0-based), numbered, for an error message.
+fn numbered(old: &[String], from: usize, count: usize) -> String {
+    old.iter()
+        .enumerate()
+        .skip(from)
+        .take(count)
+        .map(|(n, line)| format!("{:>4}| {line}", n + 1))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(super) fn apply_hunks(
@@ -317,20 +338,31 @@ pub(super) fn apply_hunks(
         } else {
             hunk.old_start.saturating_sub(1)
         };
-        let Some(start) = locate(old, cursor, &wanted, declared) else {
-            let from = declared.min(old.len()).saturating_sub(2);
-            let near: Vec<String> = old
-                .iter()
-                .enumerate()
-                .skip(from)
-                .take(wanted.len().max(1) + 4)
-                .map(|(n, line)| format!("{:>4}| {line}", n + 1))
-                .collect();
-            anyhow::bail!(
-                "patch does not apply to '{file}': context mismatch near line {}: these lines were not found in the file. The file there reads:\n{}\nCopy context lines exactly from the file (read it first if unsure).",
-                declared + 1,
-                near.join("\n")
-            );
+        let start = match locate(old, cursor, &wanted, declared) {
+            Ok(start) => start,
+            Err(places) if places.len() > 1 => {
+                // The first few places are shown; the line numbers name them all.
+                let shown: Vec<String> = places
+                    .iter()
+                    .take(3)
+                    .map(|&at| numbered(old, at.saturating_sub(1), wanted.len() + 2))
+                    .collect();
+                let starts: Vec<String> = places.iter().map(|at| (at + 1).to_string()).collect();
+                anyhow::bail!(
+                    "patch does not apply to '{file}': ambiguous context: these lines match {} places in the file once spacing is ignored (starting at lines {}) and none exactly. The file there reads:\n{}\nCopy the lines exactly from the file, spacing included, or add context lines so they match one place.",
+                    places.len(),
+                    starts.join(", "),
+                    shown.join("\n    ...\n")
+                );
+            }
+            Err(_) => {
+                let from = declared.min(old.len()).saturating_sub(2);
+                anyhow::bail!(
+                    "patch does not apply to '{file}': context mismatch near line {}: these lines were not found in the file. The file there reads:\n{}\nCopy context lines exactly from the file (read it first if unsure).",
+                    declared + 1,
+                    numbered(old, from, wanted.len().max(1) + 4)
+                );
+            }
         };
         out.extend_from_slice(&old[cursor..start]);
         cursor = start;
