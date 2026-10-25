@@ -52,6 +52,8 @@ describe("ThreadComposer", () => {
     view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"yolo"}} />);
     expect(screen.getByText("YOLO",{selector:"summary span"})).toHaveClass("is-yolo");
     expect(screen.getByText(/No approvals, no sandbox: the agent can change anything on this computer\. Only Themis settings are protected\./)).toBeInTheDocument();
+    view.rerender(<ThreadComposer {...view.props} thread={{...thread,approval_mode:"yolo"}} yoloKeeps={["network blocked","2 deny rules"]} />);
+    expect(screen.getByText(/Only Themis settings are protected; still applies: network blocked, 2 deny rules\./)).toBeInTheDocument();
     view.rerender(<ThreadComposer {...view.props} />);
     expect(screen.getByText("Custom",{selector:"summary span"})).not.toHaveClass("is-yolo");
   });

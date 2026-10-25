@@ -553,6 +553,10 @@ export interface SandboxStatus {
   configured_writable_paths: string[];
   protected_paths: string[];
   secret_paths: string[];
+  /** YOLO's open plan: writable everywhere except Themis' own settings. */
+  open?: boolean;
+  /** Whether commands may use the macOS Keychain. */
+  allow_keychain?: boolean;
   backends: SandboxBackendInfo[];
   covers: string[];
   not_covered: string[];

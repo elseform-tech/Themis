@@ -234,14 +234,20 @@ Hooks and MCP initialization instructions do not grant permissions.
 YOLO means no approval prompts and no sandbox walls but one. It bypasses harness
 approval, the core file-tool root restriction, the Git subcommand allowlist, and
 skill tool filtering, and its commands run under an *open* sandbox plan: they
-may write anywhere, read the secret locations (`~/.ssh`, `~/.aws`, ...), use the
-network and the Keychain, whatever `sandbox.network`, `writable_paths` or
-`allow_keychain` say. The one wall left: neither commands nor file tools can
+may write anywhere, read the secret locations (`~/.ssh`, `~/.aws`, ...), and use
+the network and the Keychain. YOLO removes Themis' default walls, never the ones
+a configuration wrote: a `sandbox.network: "block"` or `allow_keychain: false`
+set in the user file, the project's `.themis/config.jsonc` or a run override
+still holds, and so does every approval `deny` rule (the built-in rules include
+none); `ask` rules and the default action allow, since YOLO never asks. The
+composer's shield names what still applies ("still applies: network blocked, 2
+deny rules"). The one wall left: neither commands nor file tools can
 write the app-data folder or the project's `.themis/` folder, so an agent cannot
 change its own rules, grants or settings; such a write fails with a short note
 and is never escalated. Under Landlock (Linux without bubblewrap) the project's
 `.themis/` cannot be carved out of a writable tree, so there only the file tools
-protect it; the app-data folder stays protected on every backend. With
+protect it; the app-data folder stays protected on every backend, and Settings ›
+Permissions suggests installing bubblewrap there. With
 `sandbox.enabled: false`, or no usable backend, commands are not confined at all.
 YOLO runs also get a short caution in their system prompt: no destructive or
 irreversible actions the person did not ask for (deleting data outside the task,

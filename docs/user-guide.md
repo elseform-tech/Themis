@@ -206,7 +206,9 @@ approval prompts and no sandbox: it bypasses harness approval and tool
 restrictions, including the filesystem root and Git allowlist, and its commands
 may write anywhere, read secret folders and use the network. Only Themis' own
 settings (its app data and the project's `.themis/` folder) stay read-only, and
-the agent is told to avoid destructive actions you did not ask for. The shield
+the agent is told to avoid destructive actions you did not ask for. Blocks you
+wrote still hold: a `deny` rule, `sandbox.network: "block"` and
+`allow_keychain: false`; the shield's panel lists them. The shield
 shows **YOLO** in the warning colour. Mode and
 configuration changes apply to the next run; active runs keep their captured
 policy. See [configuration](configuration.md) for examples and

@@ -36,6 +36,8 @@ interface ThreadComposerProps {
   onOpenSettings: () => void;
   permissionSaving?: boolean;
   onApprovalModeChange?: (mode: "custom" | "yolo") => void;
+  /** Blocks the configuration wrote that YOLO keeps (network, Keychain, deny rules). */
+  yoloKeeps?: string[];
   budget?: ContextBudget;
   /** Project directory and current Git branch shown beside the composer controls. */
   location?: { name: string; root: string; branch: string | null };
@@ -68,6 +70,7 @@ export function ThreadComposer({
   onOpenSettings,
   permissionSaving = false,
   onApprovalModeChange,
+  yoloKeeps,
   budget,
   compacting = false,
   hero = false,
@@ -153,7 +156,7 @@ export function ThreadComposer({
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 3 4 6.5V12c0 4.5 8 9 8 9s8-4.5 8-9V6.5Z" /></svg>
               <span className={`themis-composer-label${thread.approval_mode === "yolo" ? " is-yolo" : ""}`}>{permissionSaving ? "Saving…" : thread.approval_mode === "yolo" ? "YOLO" : "Custom"}</span>
             </summary>
-            <div className="themis-permissions-panel"><p>{thread.approval_mode === "yolo" ? "No approvals, no sandbox: the agent can change anything on this computer. Only Themis settings are protected." : "Apply your rules and ask for tool approvals."} Changes apply to the next run.</p>
+            <div className="themis-permissions-panel"><p>{thread.approval_mode === "yolo" ? `No approvals, no sandbox: the agent can change anything on this computer. Only Themis settings are protected${yoloKeeps?.length ? `; still applies: ${yoloKeeps.join(", ")}` : ""}.` : "Apply your rules and ask for tool approvals."} Changes apply to the next run.</p>
               <label><select aria-label="Approval mode" onKeyDown={event => { if (!event.nativeEvent.isComposing && isModeInitial(event.nativeEvent)) event.preventDefault(); }} value={thread.approval_mode ?? "custom"} disabled={permissionSaving} onChange={event => onApprovalModeChange?.(event.target.value as "custom" | "yolo")}><option value="yolo">YOLO</option><option value="custom">Custom</option></select></label>
             </div>
           </details>
