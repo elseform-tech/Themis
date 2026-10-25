@@ -58,6 +58,13 @@ impl AppState {
         used.entry(self.go_secret_name().await)
             .or_default()
             .insert(0, "OpenCode Go".to_owned());
+        // The secrets of the providers in runtime.jsonc (Settings › Models).
+        for provider in self.user_providers() {
+            let entry = used.entry(provider.secret_name().to_owned()).or_default();
+            if !entry.contains(&provider.name) {
+                entry.push(provider.name.clone());
+            }
+        }
         for name in self.saved_key_names() {
             used.entry(name).or_default();
         }

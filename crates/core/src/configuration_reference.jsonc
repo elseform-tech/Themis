@@ -102,6 +102,32 @@
   // They guide; they never grant permissions.
   "instructions": [],
 
+  // ─── MODEL PROVIDERS (listed in Settings › Models) ────────────────────────────────────
+  // OpenCode Go is built in. Add OpenAI-compatible providers (Chat Completions) here; only
+  // this file can add them. Chats name their models as "<id>/<model>". At most 16.
+  //   "id"        1–32 lowercase letters, digits, - or _ ("go" is OpenCode Go's).
+  //   "name"      shown in Settings › Models.
+  //   "base_url"  the API root; requests go to <base_url>/chat/completions. https, or http
+  //               for localhost only.
+  //   "secret"    the Settings › Secrets secret with the key, as "${NAME}" (never the key).
+  //   "models"    optional; leave out to read the provider's <base_url>/models list. Each:
+  //               "id", and optional "context_tokens", "output_tokens" and "price"
+  //               ({ "input_per_mtok", "cached_input_per_mtok", "output_per_mtok" }, US$).
+  "providers": [
+    // { "id": "local", "name": "Local models", "base_url": "http://127.0.0.1:8080/v1",
+    //   "secret": "${LOCAL_KEY}",
+    //   "models": [{ "id": "qwen3-coder", "context_tokens": 131072, "output_tokens": 16384,
+    //                "price": { "input_per_mtok": 0.2, "output_per_mtok": 0.8 } }] },
+  ],
+  // Per-model overrides, keyed by the model's id or "<provider>/<id>" (that one wins). Each
+  // optional: "context_tokens" and "output_tokens" cap the model's limits (never raise
+  // them); "reasoning_effort" is the effort when a chat chose none ("none", "minimal",
+  // "low", "medium", "high", "xhigh" or "max", one the model offers); "thinking" true or
+  // false, for models with a thinking switch. A project may set these too.
+  "models": {
+    // "glm-5.3": { "context_tokens": 128000, "thinking": false },
+  },
+
   // ─── RUN LIMITS (leave out to use Settings › Advanced) ────────────────────────────────
   // "context_token_budget": "auto",   // "auto" = the model's window (up to 200,000),
   //                                   // or a cap of 2,000–1,000,000 tokens
@@ -131,7 +157,7 @@
     "max_stages": 32,                        // 1–128 stages for one document
     "summary_max_tokens": 8192,              // 256–16,384 summary output
     "document_context_token_budget": 200000, // 24,000–1,000,000 document input
-    // "summary_model": "gpt-5.6-luna",      // or "longcat-2.5-preview-free", "gpt-6-luna"
+    // "summary_model": "gpt-5.6-luna",      // any model a connected provider offers
     // "prompt_file": "my-summary-guidance.md", // extra summary guidance, 32 KiB at most
   },
 }

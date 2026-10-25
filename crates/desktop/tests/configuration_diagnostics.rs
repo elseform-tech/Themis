@@ -49,7 +49,14 @@ fn documented_configuration_examples_use_the_runtime_resolver() {
         .skip(1)
         .map(|block| block.split("```").next().unwrap())
         .collect();
-    assert_eq!(examples.len(), 2);
+    assert_eq!(examples.len(), 3);
+    // The model providers example is a valid user file.
+    let providers = themis_core::configuration::resolve(Some(examples[2]), None, None).unwrap();
+    assert_eq!(providers.config.providers[0].secret_name(), "LOCAL_KEY");
+    assert_eq!(
+        providers.config.models["glm-5.3"].context_tokens,
+        Some(128000)
+    );
     let resolved =
         themis_core::configuration::resolve(Some(examples[0]), Some(examples[1]), None).unwrap();
     assert_eq!(

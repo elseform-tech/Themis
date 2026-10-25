@@ -35,15 +35,21 @@ impl AppState {
         provider: ProviderKind,
         model: Option<String>,
     ) -> Result<ThreadInfo, String> {
-        if provider != ProviderKind::Go {
-            return Err("Only OpenCode Go is supported".to_owned());
-        }
         let root = canonical_project_dir(&project_root)?;
         let settings = self.inner.settings.get().await;
         let saved_default = settings.default_model;
         let model = match model.filter(|name| !name.trim().is_empty()) {
             // A model chosen for this thread stands; a run on it reports if it is gone.
             Some(chosen) if chosen != saved_default && chosen != GO_DEFAULT_MODEL => chosen,
+            // A default from a provider in runtime.jsonc stands (a run reports if it is gone).
+            Some(chosen)
+                if self
+                    .user_providers()
+                    .iter()
+                    .any(|provider| chosen.starts_with(&format!("{}/", provider.id))) =>
+            {
+                chosen
+            }
             // The saved or built-in default may have been retired by Go since it was saved.
             chosen => usable_model(
                 &self.inner.go_catalog.read().await,
@@ -484,7 +490,6 @@ impl AppState {
                 runtime_configuration: runtime_configuration.clone(),
                 work_root: record.project_root.clone(),
                 is_git: record.is_git,
-                provider: record.provider,
                 model: record.model.clone(),
                 skills: resolved,
                 plugins,

@@ -23,6 +23,7 @@ inside the normal suites, on every platform, with reproducible shrinking.
 | Sandbox | Seatbelt profiles never contain path text (paths travel as `-D` parameters); output scanning for denials never panics and yields bounded substrings; project layers never widen the sandbox; deny-rule flag matching only widens exact prefixes | `crates/core/src/sandbox/tests.rs`, `crates/core/src/configuration.rs` |
 | Web pages and search | Any response body and content type never panics page extraction; any SearXNG body never panics, keeps only unique http(s) results within the requested count | `crates/core/src/tools/web.rs` |
 | Browser | Any protocol message or accessibility tree never panics; snapshots stay within budget, refs stay stable and password values are masked; key names parse or are refused | `crates/core/src/browser/` |
+| Model providers | Any `providers` block resolves or fails cleanly, never with a reserved id, literal key or non-https remote URL; any `/models` body keeps unique, usable ids that came from it | `crates/core/src/configuration/providers.rs`, `crates/core/src/providers/tests.rs` |
 | Web state | Any event stream keeps running state consistent and attaches edited files to the right reply; prompt tokens rebuild exactly | `web/src/state/reducer.property.test.ts` |
 
 ## Fuzz targets (nightly CI)
@@ -47,6 +48,7 @@ internal parsers through the off-by-default `fuzzing` feature of
 | `web_page` | Arbitrary bytes as a `fetch_url` response body under several content types and charsets |
 | `browser_snapshot` | Arbitrary bytes as a browser protocol message and as an accessibility tree: never panics, the outline stays within its budget and a password field's value never appears |
 | `searxng_results` | Arbitrary bytes as a SearXNG JSON response: results stay unique http(s) URLs within the requested count |
+| `provider_models` | Arbitrary bytes as a configured provider's `/models` response and as the `providers` block of a user `runtime.jsonc`: never panics, kept ids are unique and usable, no resolved provider has a reserved id or a literal key |
 | `shell_wrapped` | Shell argv, often behind `sh -c`/`sudo`/`env`/`eval`/`cmd /c`: reading wrapped commands never panics, stays bounded and yields no empty commands |
 
 ```sh

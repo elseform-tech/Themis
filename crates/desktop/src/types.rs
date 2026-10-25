@@ -8,13 +8,20 @@ use serde::{Deserialize, Serialize};
 use themis_core::runtime::ApprovalDecision as CoreApprovalDecision;
 use themis_core::runtime::RunEvent;
 
-/// Supported LLM backends (`ProviderKind` in types.ts).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// The model provider family (`ProviderKind` in types.ts): OpenCode Go, plus the
+/// OpenAI-compatible providers from `providers` in runtime.jsonc, whose models a chat names
+/// as `<provider>/<model>`. Files from older versions may name a retired provider; it reads
+/// as `go` (the settings store also drops a default model saved with one).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     Go,
-    #[serde(other)]
-    Legacy,
+}
+
+impl<'de> Deserialize<'de> for ProviderKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|_| Self::Go)
+    }
 }
 
 impl ProviderKind {
@@ -23,7 +30,6 @@ impl ProviderKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Go => "go",
-            Self::Legacy => "legacy",
         }
     }
 }
@@ -1450,9 +1456,10 @@ mod tests {
             serde_json::from_value::<ProviderKind>(json!("go")).unwrap(),
             ProviderKind::Go
         );
+        // A retired provider in an older file reads as Go.
         assert_eq!(
             serde_json::from_value::<ProviderKind>(json!("retired-provider")).unwrap(),
-            ProviderKind::Legacy
+            ProviderKind::Go
         );
     }
 

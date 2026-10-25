@@ -98,22 +98,24 @@ impl SettingsStore {
     }
 
     pub(crate) fn load_with_projects_root(path: PathBuf, projects_root: PathBuf) -> Self {
-        let mut settings: Settings = std::fs::read_to_string(&path)
+        let saved: Option<serde_json::Value> = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            .and_then(|value| {
-                let cap = legacy_context_cap(&value);
-                let mut settings: Settings = serde_json::from_value(value).ok()?;
-                if let Some(cap) = cap {
-                    settings.context_token_cap = cap;
-                }
-                Some(settings)
-            })
+            .and_then(|text| serde_json::from_str(&text).ok());
+        // A default model saved with a retired provider means nothing to OpenCode Go.
+        let retired_provider = saved
+            .as_ref()
+            .and_then(|value| value.get("default_provider")?.as_str())
+            .is_some_and(|provider| provider != crate::types::ProviderKind::Go.as_str());
+        let cap = saved.as_ref().and_then(legacy_context_cap);
+        let mut settings: Settings = saved
+            .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default();
+        if let Some(cap) = cap {
+            settings.context_token_cap = cap;
+        }
         settings.theme = ThemeMode::Dark;
         settings.projects_directory = projects_root.to_string_lossy().into_owned();
-        if settings.default_provider == crate::types::ProviderKind::Legacy {
-            settings.default_provider = crate::types::ProviderKind::Go;
+        if retired_provider {
             settings.default_model.clear();
         }
         Self {

@@ -18,9 +18,7 @@ use themis_core::goal::{self as core_goal, Failure, Verdict};
 use super::chat_grants::safe_chat_id;
 use super::AppState;
 use crate::sink::EventSink;
-use crate::types::{
-    Goal, GoalNoteKind, GoalStatus, ProviderKind, ThreadEvent, ThreadEventEnvelope,
-};
+use crate::types::{Goal, GoalNoteKind, GoalStatus, ThreadEvent, ThreadEventEnvelope};
 
 /// Directory name under the app data directory.
 pub(super) const GOALS_DIR: &str = "goals";
@@ -634,9 +632,8 @@ impl AppState {
             self.turn_evidence(&thread_id, goal.checked_seq);
         let checked_goal = goal.started_at;
         let verdict = match self.goal_check_config(&thread_id).await {
-            Ok(config) => {
+            Ok((config, catalog)) => {
                 // The same per-model routes and limits real runs use.
-                let catalog = self.inner.go_catalog.read().await.clone();
                 themis_core::providers::with_catalog_limits(
                     &catalog,
                     core_goal::check_with_config(&config, &goal.text, &answer, &evidence),
@@ -955,11 +952,18 @@ impl AppState {
         (evidence, changed, through)
     }
 
-    /// The provider for the goal check: the chat's current model.
+    /// The provider for the goal check (the chat's current model, from OpenCode Go or a
+    /// provider in runtime.jsonc) and the catalog its routes and limits come from.
     async fn goal_check_config(
         &self,
         thread_id: &str,
-    ) -> Result<themis_core::providers::ProviderConfig, String> {
+    ) -> Result<
+        (
+            themis_core::providers::ProviderConfig,
+            Vec<themis_core::providers::GoModel>,
+        ),
+        String,
+    > {
         let model = self
             .inner
             .threads
@@ -968,24 +972,14 @@ impl AppState {
             .get(thread_id)
             .map(|record| record.model.clone())
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))?;
-        let key = self.api_key_for(ProviderKind::Go).await?;
-        let mut config = themis_core::providers::ProviderConfig::new(
-            themis_core::providers::ProviderKind::Go,
-            key,
-        );
-        if !model.trim().is_empty() {
-            config = config.with_model(model);
-        }
-        if let Some(url) = self
-            .inner
-            .go_base_url_override
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-        {
-            config = config.with_base_url(url);
-        }
-        Ok(config)
+        let mut runtime = self.runtime_configuration(None, None)?.config;
+        // The check is one short request on the chat's model; it writes no summary.
+        runtime.compaction.summary_model = None;
+        let config = self
+            .provider_config_for(&runtime, &model, thread_id)
+            .await?;
+        let catalog = self.run_catalog(&runtime, &[model.as_str()]).await;
+        Ok((config, catalog))
     }
 
     /// On start: goals that were running carry on (the cut-off turn is

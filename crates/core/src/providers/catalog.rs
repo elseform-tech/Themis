@@ -9,8 +9,45 @@
 use super::*;
 
 tokio::task_local! { pub(super) static MODEL_LIMITS: HashMap<String, (Option<usize>, Option<usize>)>; }
-tokio::task_local! { pub(super) static MODEL_THINKING: HashMap<String, (bool, Vec<String>)>; }
-tokio::task_local! { static MODEL_ROUTES: HashMap<String, (Protocol, Option<String>)>; }
+tokio::task_local! { pub(super) static MODEL_THINKING: HashMap<String, Thinking>; }
+tokio::task_local! { static MODEL_ROUTES: HashMap<String, Route>; }
+
+/// How a loaded model is called: its protocol, its endpoint (`None`: Go's default for the
+/// protocol), and the configured provider serving it (`None`: OpenCode Go).
+#[derive(Clone)]
+struct Route {
+    protocol: Protocol,
+    endpoint: Option<String>,
+    provider: Option<String>,
+}
+
+/// A loaded model's thinking options: the catalog's switch and efforts, and the person's
+/// `models` override (default effort, thinking on or off).
+#[derive(Debug, Clone, Default)]
+pub(super) struct Thinking {
+    toggle: bool,
+    efforts: Vec<String>,
+    default_effort: Option<String>,
+    enabled: Option<bool>,
+}
+
+/// The thinking table [`with_catalog_limits`] scopes for `models`.
+pub(super) fn thinking_table(models: &[GoModel]) -> HashMap<String, Thinking> {
+    models
+        .iter()
+        .map(|m| {
+            (
+                m.id.clone(),
+                Thinking {
+                    toggle: m.thinking_toggle,
+                    efforts: m.effort_levels.clone(),
+                    default_effort: m.default_effort.clone(),
+                    enabled: m.thinking,
+                },
+            )
+        })
+        .collect()
+}
 
 /// Root of Go's per-protocol endpoints (docs: opencode.ai/docs/go/#endpoints).
 const GO_INFERENCE_ROOT: &str = "https://opencode.ai/inference/go";
@@ -97,11 +134,20 @@ pub(crate) fn route(model: &str) -> (Protocol, String) {
         .flatten();
     let protocol = known
         .as_ref()
-        .map_or_else(|| Protocol::guess(model), |(protocol, _)| *protocol);
+        .map_or_else(|| Protocol::guess(model), |route| route.protocol);
     let endpoint = known
-        .and_then(|(_, endpoint)| endpoint)
+        .and_then(|route| route.endpoint)
         .unwrap_or_else(|| protocol.default_endpoint());
     (protocol, endpoint)
+}
+
+/// The configured provider serving `model` in the loaded catalogs (`None`: OpenCode Go or
+/// not loaded).
+pub(crate) fn provider_of(model: &str) -> Option<String> {
+    MODEL_ROUTES
+        .try_with(|routes| routes.get(model).and_then(|route| route.provider.clone()))
+        .ok()
+        .flatten()
 }
 
 /// Output tokens a reply may use from the start when the model has room: a thinking model's
@@ -141,14 +187,20 @@ pub async fn with_catalog_limits<F: std::future::Future>(
                 .map(|m| (m.id.clone(), (m.context_tokens, m.output_tokens)))
                 .collect(),
             MODEL_THINKING.scope(
-                models
-                    .iter()
-                    .map(|m| (m.id.clone(), (m.thinking_toggle, m.effort_levels.clone())))
-                    .collect(),
+                thinking_table(models),
                 MODEL_ROUTES.scope(
                     models
                         .iter()
-                        .map(|m| (m.id.clone(), (m.protocol(), m.endpoint.clone())))
+                        .map(|m| {
+                            (
+                                m.id.clone(),
+                                Route {
+                                    protocol: m.protocol(),
+                                    endpoint: m.endpoint.clone(),
+                                    provider: m.provider.clone(),
+                                },
+                            )
+                        })
                         .collect(),
                     future,
                 ),
@@ -158,26 +210,35 @@ pub async fn with_catalog_limits<F: std::future::Future>(
 }
 
 /// How a request turns thinking on when the person chose no effort: the catalog's switch
-/// when the model has one, else a default effort (`medium`, else `high`). Claude takes
-/// adaptive thinking with an effort. Models not in the loaded catalog keep their default.
+/// when the model has one, else a default effort (the `models` override's, else `medium`,
+/// else `high`). Claude takes adaptive thinking with an effort. A `models` override with
+/// `thinking: false` turns a model's switch off instead. Models not in the loaded catalog
+/// keep their default.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct ThinkingDefault {
     pub(crate) switch_on: bool,
-    pub(crate) effort: Option<&'static str>,
+    /// The person turned the model's thinking switch off.
+    pub(crate) switch_off: bool,
+    pub(crate) effort: Option<String>,
 }
 
 pub(crate) fn thinking_default(model: &str) -> ThinkingDefault {
     MODEL_THINKING
         .try_with(|models| {
-            let Some((toggle, efforts)) = models.get(model) else {
+            let Some(thinking) = models.get(model) else {
                 return ThinkingDefault::default();
             };
-            let effort = ["medium", "high"]
-                .into_iter()
-                .find(|level| efforts.iter().any(|known| known == level));
+            let off = thinking.toggle && thinking.enabled == Some(false);
+            let effort = thinking.default_effort.clone().or_else(|| {
+                ["medium", "high"]
+                    .into_iter()
+                    .find(|level| thinking.efforts.iter().any(|known| known == level))
+                    .map(str::to_owned)
+            });
             ThinkingDefault {
-                switch_on: *toggle,
-                effort,
+                switch_on: thinking.toggle && !off,
+                switch_off: off,
+                effort: effort.filter(|_| !off),
             }
         })
         .unwrap_or_default()
@@ -189,13 +250,15 @@ pub(crate) fn thinking_default(model: &str) -> ThinkingDefault {
 pub(crate) fn summary_effort(model: &str) -> &'static str {
     MODEL_THINKING
         .try_with(|models| {
-            let Some((_, efforts)) = models.get(model).filter(|(_, efforts)| !efforts.is_empty())
+            let Some(thinking) = models
+                .get(model)
+                .filter(|thinking| !thinking.efforts.is_empty())
             else {
                 return "none";
             };
             ["none", "minimal", "low"]
                 .into_iter()
-                .find(|level| efforts.iter().any(|known| known == level))
+                .find(|level| thinking.efforts.iter().any(|known| known == level))
                 .unwrap_or("none")
         })
         .unwrap_or("none")
@@ -205,25 +268,31 @@ pub(crate) fn summary_effort(model: &str) -> &'static str {
 /// turned off reliably.
 const SUMMARY_FALLBACK_MODEL: &str = "longcat-2.5-preview-free";
 
-pub(crate) fn summary_model(model: &str) -> &str {
+/// The model that writes summaries for a chat on `model`: the configured
+/// `compaction.summary_model`, else (automatic routing) Go's no-thinking summarizer for a Go
+/// model whose thinking cannot be turned off, else the model itself. A model from a
+/// configured provider summarizes with itself: the Go summarizer needs another key.
+pub(crate) fn summary_model(model: &str) -> String {
+    if let Some(configured) = crate::runtime::compaction_config().summary_model {
+        return configured;
+    }
     // A loaded catalog without the fallback model means Go retired it: summarize with the
     // model itself rather than call a model that no longer exists.
     let fallback_listed = MODEL_ROUTES
         .try_with(|routes| {
             routes
                 .get(SUMMARY_FALLBACK_MODEL)
-                .is_some_and(|(protocol, _)| *protocol != Protocol::Unsupported)
+                .is_some_and(|route| route.protocol != Protocol::Unsupported)
         })
         .unwrap_or(true);
-    if let Some(configured) = crate::runtime::compaction_config().summary_model {
-        configured.as_str()
-    } else if model.starts_with("longcat-2.5-")
+    if model.starts_with("longcat-2.5-")
         || matches!(model, "gpt-5.6-luna" | "gpt-6-luna")
         || !fallback_listed
+        || provider_of(model).is_some()
     {
-        model
+        model.to_owned()
     } else {
-        SUMMARY_FALLBACK_MODEL
+        SUMMARY_FALLBACK_MODEL.to_owned()
     }
 }
 
@@ -231,7 +300,7 @@ pub(crate) fn summary_context_limit(model: &str) -> Option<usize> {
     MODEL_LIMITS
         .try_with(|limits| {
             limits
-                .get(summary_model(model))
+                .get(&summary_model(model))
                 .and_then(|limit| limit.0)
                 .unwrap_or(24_000)
         })
@@ -262,7 +331,7 @@ struct WireModelList {
 }
 
 /// Live Go model with its protocol and effort choices from the OpenCode Go catalog.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct GoModel {
     pub id: String,
     pub effort_levels: Vec<String>,
@@ -283,6 +352,19 @@ pub struct GoModel {
     /// Why the model cannot be used, when Themis does not speak its protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
+    /// The configured provider (`providers` in runtime.jsonc) serving the model; `None`
+    /// for OpenCode Go. Its `id` is then `<provider>/<model>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// The price the provider definition gives, in US dollars per million tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<crate::configuration::ModelPrice>,
+    /// The `models` override's default effort, when the model offers it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+    /// The `models` override's thinking on or off, when the model has a thinking switch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<bool>,
 }
 
 impl GoModel {
@@ -405,6 +487,7 @@ pub(super) fn join_go_catalog(ids: Vec<String>, catalog: CatalogRoot) -> Vec<GoM
                 protocol,
                 endpoint,
                 unavailable_reason,
+                ..GoModel::default()
             }
         })
         .collect()
@@ -458,6 +541,186 @@ pub async fn refresh_go_models(base_url: &str, api_key: &str) -> Result<Vec<Stri
     let parsed: WireModelList = serde_json::from_str(&body)
         .with_context(|| format!("failed to parse Go models response: {body}"))?;
     Ok(parsed.data.into_iter().map(|entry| entry.id).collect())
+}
+
+/// The most bytes of a `/models` response Themis reads from a configured provider.
+const MODEL_LIST_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// The model ids in an OpenAI-shaped `/models` body (`{data: [{id, ...}]}`), which comes from
+/// the network: entries without a usable id are skipped, repeats dropped, and at most
+/// [`crate::configuration`]'s per-provider limit kept. Errors name no body text.
+pub fn parse_model_ids(body: &str) -> Result<Vec<String>> {
+    let value: serde_json::Value =
+        serde_json::from_str(body).context("the models list is not JSON")?;
+    let entries = value
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .context("the models list has no data array")?;
+    let mut seen = std::collections::HashSet::new();
+    Ok(entries
+        .iter()
+        .filter_map(|entry| entry.get("id")?.as_str())
+        .filter(|id| crate::configuration::valid_model_id(id))
+        .filter(|id| seen.insert(id.to_string()))
+        .take(crate::configuration::MAX_PROVIDER_MODELS)
+        .map(str::to_owned)
+        .collect())
+}
+
+/// A configured provider's `/models` answered with this HTTP status (401 or 403: the key was
+/// refused).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelListStatus(pub u16);
+
+impl std::fmt::Display for ModelListStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the provider's models list answered HTTP {}", self.0)
+    }
+}
+
+impl std::error::Error for ModelListStatus {}
+
+/// A configured provider's model list: `GET {base_url}/models` with its key. Errors carry the
+/// HTTP status only ([`ModelListStatus`]), never the provider's body.
+pub async fn refresh_provider_models(base_url: &str, api_key: &str) -> Result<Vec<String>> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let response = http_client_with(std::time::Duration::from_secs(30))
+        .get(&url)
+        .bearer_auth(api_key)
+        .header("User-Agent", themis_user_agent())
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "could not reach the provider{}",
+                if error.is_timeout() {
+                    " (timed out)"
+                } else {
+                    ""
+                }
+            )
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(ModelListStatus(status.as_u16()).into());
+    }
+    let body = response
+        .bytes()
+        .await
+        .context("could not read the provider's models list")?;
+    ensure_bounded(body.len())?;
+    parse_model_ids(&String::from_utf8_lossy(&body))
+}
+
+fn ensure_bounded(length: usize) -> Result<()> {
+    if length > MODEL_LIST_MAX_BYTES {
+        bail!("the provider's models list is larger than 4 MiB");
+    }
+    Ok(())
+}
+
+/// The catalog entries for a configured provider: its declared models, else the ids its
+/// `/models` list gave (`listed`). Ids are qualified as `<provider>/<model>`.
+pub fn provider_models(
+    provider: &crate::configuration::ProviderDefinition,
+    listed: &[String],
+) -> Vec<GoModel> {
+    let entry = |id: &str| GoModel {
+        id: provider.qualified(id),
+        protocol: Some(Protocol::ChatCompletions),
+        provider: Some(provider.id.clone()),
+        ..GoModel::default()
+    };
+    match &provider.models {
+        Some(models) => models
+            .iter()
+            .map(|model| GoModel {
+                context_tokens: model.context_tokens,
+                output_tokens: model.output_tokens,
+                price: model.price,
+                ..entry(&model.id)
+            })
+            .collect(),
+        None => listed.iter().map(|id| entry(id)).collect(),
+    }
+}
+
+/// The provider id and that provider's own id for a catalog entry (`go` for OpenCode Go).
+fn override_key(model: &GoModel) -> (&str, &str) {
+    match &model.provider {
+        Some(provider) => (
+            provider.as_str(),
+            model
+                .id
+                .strip_prefix(provider.as_str())
+                .and_then(|rest| rest.strip_prefix('/'))
+                .unwrap_or(&model.id),
+        ),
+        None => (crate::configuration::GO_PROVIDER_ID, model.id.as_str()),
+    }
+}
+
+/// `models` with the person's `models` overrides applied: the context and output caps
+/// lower the limits (an unknown limit takes the cap), a default effort applies when the
+/// model offers it (any for a configured provider, whose efforts Themis cannot see), and
+/// thinking on or off applies when the model has a thinking switch.
+pub fn apply_model_overrides(
+    models: &[GoModel],
+    overrides: &std::collections::BTreeMap<String, crate::configuration::ModelOverride>,
+) -> Vec<GoModel> {
+    let cap = |limit: Option<usize>, cap: Option<usize>| match (limit, cap) {
+        (Some(limit), Some(cap)) => Some(limit.min(cap)),
+        (limit, cap) => limit.or(cap),
+    };
+    models
+        .iter()
+        .map(|model| {
+            let (provider, id) = override_key(model);
+            let Some(entry) = crate::configuration::model_override(overrides, provider, id) else {
+                return model.clone();
+            };
+            let effort_offered =
+                |effort: &String| model.provider.is_some() || model.effort_levels.contains(effort);
+            GoModel {
+                context_tokens: cap(model.context_tokens, entry.context_tokens),
+                output_tokens: cap(model.output_tokens, entry.output_tokens),
+                default_effort: entry.reasoning_effort.filter(effort_offered),
+                thinking: entry.thinking.filter(|_| model.thinking_toggle),
+                ..model.clone()
+            }
+        })
+        .collect()
+}
+
+/// Refuses a run on `model` when its `models` override asks for what the loaded catalog
+/// says the model cannot do: an effort it does not offer, or thinking without a switch.
+/// Models the catalog does not describe are not checked.
+pub fn check_model_override(
+    models: &[GoModel],
+    model: &str,
+    overrides: &std::collections::BTreeMap<String, crate::configuration::ModelOverride>,
+) -> std::result::Result<(), String> {
+    let Some(entry) = models.iter().find(|entry| entry.id == model) else {
+        return Ok(());
+    };
+    let (provider, id) = override_key(entry);
+    let Some(wanted) = crate::configuration::model_override(overrides, provider, id) else {
+        return Ok(());
+    };
+    if let Some(effort) = &wanted.reasoning_effort {
+        if entry.provider.is_none() && !entry.effort_levels.contains(effort) {
+            return Err(format!(
+                "runtime configuration: models sets reasoning_effort '{effort}', which model '{model}' does not offer"
+            ));
+        }
+    }
+    if wanted.thinking.is_some() && !entry.thinking_toggle {
+        return Err(format!(
+            "runtime configuration: models sets thinking for model '{model}', which has no thinking switch"
+        ));
+    }
+    Ok(())
 }
 
 /// What OpenCode Go says about an API key.

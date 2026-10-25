@@ -1,0 +1,17 @@
+{
+  "name": "behavior-no-redo-chain",
+  "kind": "behavior",
+  "description": "The data format and reference values were read and recorded before the first of five compactions; resuming should not read them again.",
+  "suites": [
+    "behavior"
+  ],
+  "records": 124,
+  "chunks": [
+    34,
+    56,
+    78,
+    100,
+    124
+  ],
+  "next_action": "Write src/astro/ephemeris.js and tests/ephemeris.test.js."
+}

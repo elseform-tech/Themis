@@ -75,7 +75,7 @@ macOS errors expose a numeric Keychain status and fixed guidance; other platform
 use fixed error text, without credential bytes or raw credential-store errors.
 The OpenCode Go key is the Settings › Secrets secret named by the app setting
 `go_secret` (default `OPENCODE_KEY`; letters, digits and `_`, up to 128; set in Settings ›
-Models › Connections), stored as the credential entry `key:<name>`. Its value is the saved
+Models › Providers), stored as the credential entry `key:<name>`. Its value is the saved
 secret, else the environment variable of that name. For `OPENCODE_KEY`, an entry saved
 under the old name `go` is copied once when nothing is saved yet, never read again
 after, and cleared when the secret is removed. A valid stored key keeps precedence. No authentication is
@@ -220,7 +220,9 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.retry_limit` | 0–2; default 2 (up to three attempts per failed stage) |
 | `compaction.document_context_token_budget` | Internal full-document preparation input budget, 24,000–1,000,000; default 200,000; clamped to the routed summary model capacity, with conservative 24,000 when unknown. Does not change ordinary context capacity. |
 | `compaction.summary_max_tokens` | Initial summary-output ceiling, 256–16,384; default 8,192. Retries may use up to twice the effective initial allowance, subject to capacity. |
-| `compaction.summary_model` | Optional `longcat-2.5-preview-free`, `gpt-5.6-luna`, or `gpt-6-luna`; omitted/null keeps automatic routing. Only internal summaries change; the configured model must be present in the captured Go catalog. |
+| `compaction.summary_model` | Optional model id (1–256 printable bytes, no spaces): any model a connected provider offers, `<provider>/<id>` for one from `providers`; omitted/null keeps automatic routing. Only internal summaries change. A run fails before it starts when the model is not in the captured catalogs (OpenCode Go's and the configured providers'); a model on another provider than the chat's is called with that provider's key. |
+| `providers` | User file only; at most 16 OpenAI-compatible providers. See [Model providers](#model-providers-and-per-model-overrides) |
+| `models` | At most 256 per-model overrides keyed by model id or `<provider>/<id>`; any layer. See [Model providers](#model-providers-and-per-model-overrides) |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
 | `approval.rules` | At most 256 ordered rules `{tool, action, risk?, command?}`; `command` is an argv-prefix array (see Composer permissions) |
 | `sandbox.enabled` | Boolean, default `true`; only the user file (or no file) can turn it off |
@@ -297,6 +299,69 @@ approval mode change affects subsequent runs, not tasks already started. See
 [sandbox.md](sandbox.md#background-shell-tasks) for behavior and lifetime, and
 `get_thread_tasks` (`background_tasks`), `get_background_task_log` and
 `stop_background_task` for the shared-server API.
+
+## Model providers and per-model overrides
+
+OpenCode Go is built in. `providers` in the **user** `runtime.jsonc` adds
+OpenAI-compatible providers (Chat Completions); a project file or run override
+that names `providers` fails validation, since each request carries your key.
+Arrays replace earlier arrays, so the list is the user file's. Provenance reports
+`providers` as `user`.
+
+```jsonc
+{
+  "providers": [
+    { "id": "local", "name": "Local models", "base_url": "http://127.0.0.1:8080/v1",
+      "secret": "${LOCAL_KEY}",
+      "models": [{ "id": "qwen3-coder", "context_tokens": 131072, "output_tokens": 16384,
+                   "price": { "input_per_mtok": 0.2, "cached_input_per_mtok": 0.05,
+                              "output_per_mtok": 0.8 } }] }
+  ],
+  "models": {
+    "glm-5.3": { "context_tokens": 128000, "thinking": false },
+    "local/qwen3-coder": { "reasoning_effort": "low" }
+  }
+}
+```
+
+| Field | Range/default |
+| --- | --- |
+| `providers[].id` | 1–32 lowercase letters, digits, `-`, `_`, starting with a letter or digit; unique; `go` and `opencode-go` are reserved. A chat names the provider's model `<id>/<model>` |
+| `providers[].name` | 1–64 printable characters, shown in Settings › Models |
+| `providers[].base_url` | The API root, at most 1,024 bytes; `https`, or `http` only for `localhost`, `127.0.0.1` or `[::1]`; no credentials, query or fragment. Requests go to `<base_url>/chat/completions` and `<base_url>/models` |
+| `providers[].secret` | A Settings › Secrets name written `${NAME}` (letters, digits, `_`, up to 128); its value is the saved secret, else the environment variable of that name. A literal key fails validation |
+| `providers[].models` | Optional, at most 512 `{id, context_tokens?, output_tokens?, price?}` with unique ids (1–256 printable bytes, no spaces). Left out, Themis reads `GET <base_url>/models` (OpenAI-shaped `{"data":[{"id":…}]}`, at most 4 MiB; unusable or repeated ids are skipped and at most 512 kept) with the key and keeps the list until Settings › Models checks again |
+| `…models[].context_tokens` | 1,000–10,000,000; the model's window. An unknown window (as for models read from `/models`) starts at the 128,000-token guess and is learned from the provider's context-length error (see [Context budget](#context-budget)); give one with this field or `models.<provider>/<id>.context_tokens` |
+| `…models[].output_tokens` | 256–1,000,000; caps every reply's `max_tokens` |
+| `…models[].price` | `input_per_mtok`, optional `cached_input_per_mtok`, `output_per_mtok`: US dollars per million tokens, 0–10,000. Carried on the model list for usage reporting; no request uses it |
+| `models.<id>.context_tokens` | 1,000–10,000,000; caps the model's window (the lower of the two; an unknown window takes the cap). Applied through the model capacity a run captures, so the context budget is at most this |
+| `models.<id>.output_tokens` | 256–1,000,000; caps the model's output limit, never raises it |
+| `models.<id>.reasoning_effort` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`: the effort when the chat chose none. An OpenCode Go model must offer it (a run on that model fails otherwise); a configured provider's model receives it as `reasoning_effort` |
+| `models.<id>.thinking` | `true` or `false`, for a model whose catalog lists a thinking switch: `false` sends thinking disabled instead of turning it on. A run on a model without a switch fails |
+
+`models` keys may be a bare id (`glm-5.3`, or `qwen3-coder` for every provider
+offering it) or provider-qualified (`go/glm-5.3`, `local/qwen3-coder`); for each
+field the qualified entry wins. Objects merge by field across layers, so a
+project may lower a cap or set an effort for its runs. Only the run's own model
+is checked against its catalog.
+
+Configured providers speak Chat Completions only, without OpenCode's session
+header or thinking fields. Their models get no automatic summary routing: a
+chat on one summarizes with its own model unless `compaction.summary_model`
+names another. Settings › Models lists each provider with its secret and status:
+Connected (`/models` answered), Key set (models listed in the file, `/models`
+unavailable), Key rejected (401/403), Couldn't reach it, or Not set (no value).
+Settings › Secrets lists the secret with the provider's name among its users.
+Each check logs `providers`/`provider_checked` with the provider id, result,
+model count and duration only; keys and provider response bodies are never logged,
+and errors from `/models` carry the HTTP status, not the body.
+
+Shared API: `list_model_providers` returns `[{id, name, secret, status, models}]`
+(`status`: `works`, `unchecked`, `rejected`, `unavailable`, `missing`);
+`list_go_models` returns OpenCode Go's models followed by every configured
+provider's (each with `provider`, and `price` when the file gives one). With
+configured providers, an OpenCode Go failure leaves Go's models out instead of
+failing the call.
 
 ## Composer permissions
 

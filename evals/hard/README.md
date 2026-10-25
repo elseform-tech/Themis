@@ -22,6 +22,8 @@ python3 -m evals.hard run --job sheet-long --memory normal --model glm-5.3-flash
 python3 -m evals.hard run --job codebase --memory normal --model glm-5.3-flash --out /tmp/code.json
 # Runtime A/B with the tool-eval runner, here without the spec check:
 python3 -m evals.hard run --via runner --nudges-off=spec_check --out /tmp/off.json
+# Context budgets side by side (above 256000 needs --via runner until the app accepts more):
+python3 -m evals.hard run --via runner --job sheet-long --budgets 64000,200000,1000000 --out /tmp/b.json
 # Side by side, with pass rate, stages, calls per pass and the checkpoint measures:
 python3 -m evals.hard compare before=/tmp/off.json after=/tmp/glm.json
 ```
