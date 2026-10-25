@@ -489,6 +489,9 @@ class GraderTests(unittest.TestCase):
                                "so everything was already read", "model"),
                  ("read_file", "tool 'read_file' failed: Absolute paths are not allowed inside root-scoped tools: /x",
                   "model"),
+                 # From the round after goals stopped giving up: a non-web URL for the browser.
+                 ("browser_open", "tool 'browser_open' failed: browser_open: only http and https URLs are supported, "
+                                  "not about:", "model"),
                  ("web_search", "web_search: the moon is in the way", "unclassified")]
         for tool, text, cause in cases:
             self.assertEqual(tool_causes.classify(tool, text)[0], cause, text)
