@@ -475,6 +475,14 @@ impl AppState {
                 },
             )));
         }
+        // Every checkpoint request carries the chat's first message (empty when unreadable).
+        let first_request = self
+            .inner
+            .transcript
+            .first_user_request(thread_id)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         let steer_inbox = self
             .inner
             .steer_inboxes
@@ -672,7 +680,7 @@ impl AppState {
                                                 }
                                                 // Boxed: the run's future is large, and the
                                                 // steer scope must not copy it on the stack.
-                                                themis_core::runtime::with_steer_inbox(steer_inbox, Box::pin(run_task_with_evidence(
+                                                themis_core::runtime::with_first_request(first_request, themis_core::runtime::with_steer_inbox(steer_inbox, Box::pin(run_task_with_evidence(
                                                 llm,
                                                 if yolo {
                                                     tools
@@ -689,7 +697,7 @@ impl AppState {
                                                 stopped,
                                                 skill_catalog,
                                                 Some(evidence_directory),
-                                            ))).await
+                                            )))).await
                                             }))
                                         },
                                     ),

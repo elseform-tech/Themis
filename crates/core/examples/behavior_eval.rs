@@ -116,7 +116,17 @@ async fn main() -> anyhow::Result<()> {
         context_token_budget: budget,
         recent_messages: recent,
     };
-    let outcome = compact_chunks(&llm, &transcript, &ends, policy, evidence.path()).await?;
+    // `--first-request off` compacts as before the chat's first message reached every checkpoint.
+    let first = if arg("--first-request").as_deref() == Some("off") {
+        String::new()
+    } else {
+        themis_core::runtime::eval::first_user_request(&transcript)
+    };
+    let outcome = themis_core::runtime::with_first_request(
+        first,
+        compact_chunks(&llm, &transcript, &ends, policy, evidence.path()),
+    )
+    .await?;
     let base = history_from_messages(&outcome.messages);
     // The grader checks which recorded facts survived, since re-reading a lost one is fine.
     let checkpoint = outcome
@@ -160,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
         turns.push(entry);
     }
     let report = json!({
-        "case": meta["name"], "model": model, "budget": budget, "anchors": if old_anchors {"old"} else {"new"},
+        "case": meta["name"], "model": model, "budget": budget, "anchors": if old_anchors {"old"} else {"new"}, "first_request": arg("--first-request").as_deref() != Some("off"),
         "valid": outcome.valid, "chunks": outcome.chunks, "turns": turns, "checkpoint": checkpoint,
     });
     println!("{}", serde_json::to_string_pretty(&report)?);

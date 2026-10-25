@@ -80,6 +80,9 @@ pub const COMPACTION_CHECKPOINT: &str =
 /// User message of a checkpoint request; `{{previous}}`, `{{label}}`, `{{notes}}`, `{{current_request}}`.
 pub const SUMMARY_CHECKPOINT_REQUEST: &str =
     include_str!("../builtins/prompts/summary-checkpoint-request.md");
+/// Section appended to a checkpoint request with the chat's first user message; `{{first_request}}`.
+pub const SUMMARY_FIRST_REQUEST: &str =
+    include_str!("../builtins/prompts/summary-first-request.md");
 /// Heading before the user-configured `compaction.prompt` guidance.
 pub const SUMMARY_CONFIGURED_GUIDANCE: &str =
     include_str!("../builtins/prompts/summary-configured-guidance.md");
