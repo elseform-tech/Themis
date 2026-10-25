@@ -12,9 +12,11 @@ import os
 import random
 import subprocess
 import sys
+import tempfile
 
 from evals.kit import app
 from evals.kit import spend as spend_kit
+from evals.kit.env import isolated_env, keychain_visible
 
 from . import trend
 from .generate import DEFAULT_FILLER_CHARS, DEFAULT_ITEMS
@@ -74,6 +76,11 @@ def cmd_run(args):
     if not ok:
         print(f"preflight: {reason}", file=sys.stderr)
         return 2
+    with tempfile.TemporaryDirectory(prefix="soak-keychain-") as scratch:
+        if keychain_visible(isolated_env(scratch)):
+            print("refusing to run: a Themis Keychain entry is visible from the scratch HOME, so the "
+                  "app could use a real key instead of OPENCODE_KEY", file=sys.stderr)
+            return 2
     binary = args.themis or app.build_app()
     options = {"model": args.model, "items": args.items, "filler_chars": args.filler_chars,
                "max_turns": args.max_turns, "timeout": args.timeout, "idle_timeout": args.idle_timeout,

@@ -163,3 +163,26 @@ CLI = ("import sys, time; m = sys.argv[4]; "
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class KeychainGuard(unittest.TestCase):
+    def test_a_found_entry_blocks_and_an_absent_one_does_not(self):
+        from unittest import mock
+
+        from evals.kit import env as env_kit
+        with mock.patch.object(env_kit.sys, "platform", "darwin"), \
+                mock.patch.object(env_kit.shutil, "which", return_value="/usr/bin/security"):
+            for code, visible in ((0, True), (44, False)):
+                with mock.patch.object(env_kit.subprocess, "run",
+                                       return_value=mock.Mock(returncode=code)) as run:
+                    self.assertEqual(env_kit.keychain_visible({"HOME": "/scratch"}), visible)
+                    self.assertNotIn("-w", run.call_args.args[0])  # never asks for the secret
+                    self.assertEqual(run.call_args.kwargs["env"], {"HOME": "/scratch"})
+
+    def test_a_scratch_home_hides_the_login_keychain_here(self):
+        import tempfile
+
+        from evals.kit.env import isolated_env, keychain_visible
+        with tempfile.TemporaryDirectory() as scratch:
+            self.assertFalse(keychain_visible(isolated_env(scratch)))

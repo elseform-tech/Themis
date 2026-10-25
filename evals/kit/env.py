@@ -6,6 +6,7 @@ depend on a suite that is due to be removed.
 
 import os
 import shutil
+import subprocess
 import sys
 
 # Only these reach the app and the agent's commands, besides the scratch HOME/TMP folders.
@@ -23,6 +24,21 @@ def isolated_env(workdir):
     env.update(HOME=home, USERPROFILE=home, APPDATA=home, LOCALAPPDATA=home, XDG_DATA_HOME=home,
                XDG_CONFIG_HOME=home, TMPDIR=tmp, TEMP=tmp, TMP=tmp)
     return env
+
+
+# The app's Keychain service (`KEYCHAIN_SERVICE` in crates/desktop/src/secrets.rs).
+KEYCHAIN_SERVICE = "ai.themis.desktop"
+
+
+def keychain_visible(env):
+    """True when a Themis Keychain entry can be found under `env` (macOS only). The app reads the
+    Keychain before `OPENCODE_KEY`, and only the scratch HOME hides the real login keychain, so a
+    run must not start when this is true. Only existence is checked, never the secret."""
+    if sys.platform != "darwin" or not shutil.which("security"):
+        return False
+    found = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE],
+                           env=env, capture_output=True, check=False)
+    return found.returncode == 0
 
 
 def sandbox_wrapper(runner, workdir, mode):
