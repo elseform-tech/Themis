@@ -7,10 +7,9 @@ file contents, logs and prose are generated filler. Fixtures contain no personal
 data. Run this after editing a scenario and commit the regenerated files.
 """
 
-import json
 import os
 
-from .fixturekit import Transcript, finish, ident, prose, python_module, rust_module
+from .fixturekit import Transcript, finish, ident, python_module, rust_module
 
 FUNCS = 9
 CASES = os.path.join(os.path.dirname(__file__), "cases")
@@ -690,82 +689,11 @@ def behavior_no_redo_chain():
                    "The data format and reference values were read and recorded before the first of five compactions; resuming should not read them again.")
 
 
-# ------------------------------------------------------------------- midturn
-# A whole task from an empty conversation with a small budget, so the run compacts while it
-# works (`python3 -m evals.compaction midturn`, graded by redo.py). Only the project is fixed.
-
-def vsop_file(rng, body, code):
-    lines = []
-    for variable in (1, 2, 3):
-        for power in range(3):
-            terms = 30
-            lines.append(f" VSOP87 VERSION D4    {body:<9} VARIABLE {variable} (LBR)       *T**{power}"
-                         f"    {terms:3d} TERMS    HELIOCENTRIC DYNAMICAL ECLIPTIC AND EQUINOX OF THE DATE")
-            for index in range(1, terms + 1):
-                ints = "".join(f"{rng.randint(-4, 4):3d}" for _ in range(12))
-                a = rng.uniform(1e-9, 1.0) if index > 1 else rng.uniform(0.5, 2.0)
-                b = rng.uniform(0, 6.283185307)
-                c = 0.0 if index == 1 else rng.uniform(100, 80000)
-                head = f" {code}{variable}{power}{index:5d}{ints}"
-                lines.append(f"{head:<79}{a:18.11f}{b:14.11f}{c:20.11f}")
-    return "\n".join(lines) + "\n"
-
-
-def midturn_ephemeris():
-    import random
-    rng = random.Random(90)
-    case_dir = os.path.join(CASES, "midturn-ephemeris")
-    files = {
-        "README.md": "# Planetarium ephemeris\n\nWrite three files, plain JavaScript ES modules, no dependencies:\n\n"
-                     "1. `src/astro/vsop87.js`: `parseVsop87(text)` returns `{L: [[A,B,C],...] per power, B: ..., R: ...}` "
-                     "and `evaluate(series, T)`; the file format is described in `docs/vsop87.txt`.\n"
-                     "2. `src/astro/ephemeris.js`: `planetRaDec(earthText, planetText, jdTT)` returns geocentric "
-                     "apparent `{ra, dec}` in degrees, using `src/astro/time.js` for time arguments.\n"
-                     "3. `tests/ephemeris.test.js` (node:test) comparing Mars with `data/horizons_reference.json` "
-                     "within 1 arcminute, in the style of `tests/time.test.js`.\n",
-        "docs/vsop87.txt": "VSOP87 data files\n=================\n\n"
-                           "Each file holds series for one body. A series starts with a header line:\n"
-                           "  col 2-7 'VSOP87', col 42 the variable (1=L, 2=B, 3=R for version D),\n"
-                           "  col 60 the power k of T, col 61-67 the number of terms.\n"
-                           "Each term line has fixed columns:\n"
-                           "  col 2-5 body and version code, col 6 variable, col 7 power, col 8-12 index,\n"
-                           "  col 13-48 twelve multipliers of the planetary arguments (unused here),\n"
-                           "  col 80-97 A amplitude (au or rad), col 98-111 B phase (rad),\n"
-                           "  col 112-131 C frequency (rad per Julian millennium).\n"
-                           "A variable is sum over k of T^k * sum(A * cos(B + C*T)), with\n"
-                           "T = (JDE - 2451545.0) / 365250 in Julian millennia (TT).\n"
-                           "Version D gives heliocentric L, B (rad) and R (au) for the ecliptic and equinox of date.\n"
-                           "Precision: truncated series as shipped give about 1 arcsecond for 1900-2100.\n" + prose(rng, 40),
-        "data/vsop87/VSOP87D.ear": vsop_file(rng, "EARTH", "4310"),
-        "data/vsop87/VSOP87D.mar": vsop_file(rng, "MARS", "4410"),
-        "data/horizons_reference.json": json.dumps({"jd_tt": 2461333.375, "mars": {"ra_deg": 213.47121, "dec_deg": -12.80233}}) + "\n",
-        "src/astro/time.js": "// Time arguments shared by the astro modules.\nexport const J2000 = 2451545.0;\n"
-                             "export function julianMillennia(jdTT) { return (jdTT - J2000) / 365250; }\n"
-                             "export function julianCenturies(jdTT) { return (jdTT - J2000) / 36525; }\n"
-                             "export function meanObliquity(T) { /* T in centuries; degrees */ return 23.439291111 - 0.0130041667 * T; }\n",
-        "tests/time.test.js": "import test from 'node:test';\nimport assert from 'node:assert/strict';\n"
-                              "import { julianMillennia } from '../src/astro/time.js';\n"
-                              "test('J2000 is zero', () => assert.equal(julianMillennia(2451545.0), 0));\n",
-        "package.json": json.dumps({"name": "planetarium", "type": "module", "scripts": {"test": "node --test tests/*.test.js"}}) + "\n",
-    }
-    for relative, text in files.items():
-        path = os.path.join(case_dir, "project", relative)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(text)
-    with open(os.path.join(case_dir, "task.json"), "w", encoding="utf-8") as handle:
-        json.dump({"name": "midturn-ephemeris", "suites": ["midturn"],
-                   "task": "Implement what README.md asks for. The shell is unavailable in this session; use the file tools only. Say when you are done.",
-                   "outputs": ["src/astro/vsop87.js", "src/astro/ephemeris.js", "tests/ephemeris.test.js"]},
-                  handle, indent=2)
-        handle.write("\n")
-
-
 def main():
     for build in (coding_rate_limiter, coding_csv_migration, coding_rust_parser, parked_trip_bugfix,
                   parked_budget_recipe, superseded_deploy_plan, constraints_api_design, narrative_lighthouse,
                   behavior_greeting, behavior_unrelated, behavior_topic_return, behavior_continue,
-                  behavior_no_redo, behavior_no_redo_chain, midturn_ephemeris):
+                  behavior_no_redo, behavior_no_redo_chain):
         build()
 
 

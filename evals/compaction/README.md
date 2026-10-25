@@ -124,22 +124,6 @@ branch) and parked-case reruns, plus `behavior-main-c34da50` and `behavior-simpl
 the current grader (probe request errors excluded), so compare them with each other rather than
 with the 2026-10-13/14 files. See `docs/verification/simplify-compaction-2026-10-15.md`.
 
-## Mid-turn re-read evals
-
-`python3 -m evals.compaction midturn --trials 4 --model M [--budget auto|N] [--turns 40] [--effort max]`
-runs a whole task from an empty conversation (`redo_eval` example, feature `eval`): the case's
-`project/` is copied into a temporary folder, the task in `task.json` runs with every file tool
-allowed and `shell`/`git` denied. The budget defaults to `auto`, as in the app: the model's window
-from the live catalog, at most 200k (128k when the catalog does not list the model). The case's
-project is about 20k tokens, so it compacts only under a small explicit budget (the recorded
-results below used 24k); real long tasks run at the model's budget. The live catalog's output limits apply, as in the app. `redo.py` counts a re-read when the
-same slice of a file (path, offset, limit, find) is read again after a checkpoint without the
-file having been written since; reads of the run's own saved outputs (`.themis/`) count apart.
-Reported: checkpoints, calls, reads, `rereads_after_checkpoint`, `reread_share` (re-reads over
-reads after the first checkpoint), `repeated_reads` (no checkpoint in between) and
-`outputs_written` (of the files `task.json` lists), `finished` (all of them written), input,
-cached, output and reasoning tokens, and `duration_s`.
-
 ## Recorded results (2026-10-20)
 
 `results/2026-10-20-behavior-*` test a checkpoint-envelope nudge ("when resuming, start from its
@@ -158,7 +142,8 @@ adds the clause (branch `codex/checkpoint-nudge`, not merged).
   reproduce the live re-research either. The live runs differed in compacting mid-turn at a
   100k budget, with downloaded copies outside the project, so the re-reads there may have been
   for detail (exact column offsets) that a checkpoint does not keep.
-- `midturn-*` (case `midturn-ephemeris`, 24k budget, 40 model turns, 4 trials per arm; one run
+- `midturn-*` (case `midturn-ephemeris`, removed with the `midturn` command on 2026-10-25: the goal
+  soak in `evals/soak` now measures re-reads after checkpoints; 24k budget, 40 model turns, 4 trials per arm; one run
   per arm timed out and is excluded): main averaged 11 checkpoints, 30 re-reads and a re-read
   share of 0.75; the nudge 7, 19 and 0.67, with wide spread (n = 3). No run in either arm wrote
   any of the three files: each read whole data files at 8,000 characters a page, filled the
