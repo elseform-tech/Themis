@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { QueuedMessage } from "../lib/types";
+import { ANSWER_MARKER, type QueuedMessage } from "../lib/types";
 import "./GoalBar.css";
 
 interface QueueStackProps {
@@ -56,7 +56,7 @@ export function QueueStack({ queue, running, onSteer, onHold, onSave, onRemove }
             ) : (
               <>
                 <span className="themis-queue-text" title={message.text}>
-                  {message.text || "Attached files"}
+                  {message.text.startsWith(ANSWER_MARKER) ? "Your answer to the agent's question" : message.text || "Attached files"}
                   {message.attachments.length > 0 && <small> · {message.attachments.length} file{message.attachments.length === 1 ? "" : "s"}</small>}
                 </span>
                 {message.note && (

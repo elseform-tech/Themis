@@ -327,7 +327,28 @@ export type ThreadEvent =
   | { kind: 'user_message'; text: string; attachments?: string[] }
   | { kind: 'queue_changed'; queue: QueuedMessage[] }
   | { kind: 'goal_changed'; goal: Goal | null }
-  | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string };
+  | { kind: 'goal_note'; outcome: GoalNoteKind; reason: string }
+  /** The agent asked the user a question, or updated one still open (same id). */
+  | { kind: 'question_asked'; question: Question }
+  | { kind: 'question_answered'; id: string; answer: string };
+
+/** A question the agent asked without stopping its work. */
+export interface Question {
+  id: string;
+  run_id: string;
+  question: string;
+  choices?: string[];
+  /** What the agent works on until the answer comes. */
+  assumption?: string;
+  /** Nothing more could be done without the answer. */
+  blocking: boolean;
+  topic?: string;
+  asked_at: number;
+  answer?: string;
+}
+
+/** Starts the message that delivers an answer to the agent (shown as the answered box instead). */
+export const ANSWER_MARKER = "[Answer to your question — from the user]";
 
 /** A message waiting for the chat's current run to end. */
 export interface QueuedMessage {
@@ -474,6 +495,8 @@ export interface PersistedMessage {
   goalTurn?: number;
   /** What the goal check concluded after a turn. */
   goalNote?: { outcome: GoalNoteKind; reason: string };
+  /** A question the agent asked the user. */
+  question?: Question;
 }
 
 export type HistoryItem =

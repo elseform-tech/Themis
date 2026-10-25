@@ -5,7 +5,9 @@ import { PromptText } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { describeError, toast, useActiveProject, useApp } from "../state/store";
 import { browserOpenUrl } from "../lib/browser";
-import type { ChangedFile } from "../lib/types";
+import { ANSWER_MARKER, type ChangedFile, type Question } from "../lib/types";
+import { answerQuestion } from "../lib/tauri";
+import { QuestionBox } from "./QuestionBox";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResponseBody, ResponseLinks } from "../components/ResponseBody";
 import "./GoalBar.css";
@@ -99,6 +101,7 @@ export function ThreadConversation({
             skills={skills} plugins={plugins}
             activeRunId={activeRunId}
             elapsed={elapsed}
+            latestId={stream === "" ? messages[messages.length - 1]?.id : undefined}
           />
         ))
       )}
@@ -138,6 +141,7 @@ function ConversationRow({
   elapsed,
   skills,
   plugins,
+  latestId,
 }: {
   row: ConversationRow;
   threadId: string;
@@ -145,7 +149,12 @@ function ConversationRow({
   elapsed: number;
   skills: PromptSkill[];
   plugins: PromptPlugin[];
+  /** The newest row in the chat, while nothing is streaming. */
+  latestId: string | undefined;
 }) {
+  if (row.kind === "message" && row.message.question) {
+    return <QuestionRow threadId={threadId} question={row.message.question} latest={row.message.id === latestId || row.message.question.blocking} />;
+  }
   if (row.kind === "message") return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
   if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
 
@@ -262,8 +271,17 @@ export function GoalNote({ note }: { note: NonNullable<ChatMessage["goalNote"]> 
   );
 }
 
+function QuestionRow({ threadId, question, latest }: { threadId: string; question: Question; latest: boolean }) {
+  const { dispatch } = useApp();
+  return <QuestionBox question={question} latest={latest} onAnswer={async answer => {
+    try { await answerQuestion(threadId, question.id, answer); } catch (error) { toast(dispatch, `Could not send the answer: ${describeError(error)}`, "danger"); throw error; }
+  }} />;
+}
+
 function Message({ message, threadId, activeRunId, skills, plugins }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
   if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
+  // The answered question box already shows the answer the agent was sent.
+  if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
   // A goal turn starts with a runtime message: a divider, not a bubble from the user.
   if (message.goalTurn !== undefined) return <div className="themis-goal-turn" role="separator" aria-label={`Goal turn ${message.goalTurn}`}>Turn {message.goalTurn}</div>;
   if (message.goalNote) return <GoalNote note={message.goalNote} />;

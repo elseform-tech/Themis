@@ -14,6 +14,7 @@ import { ThreadConversation } from "./ThreadConversation";
 import { ThreadHeader } from "./ThreadHeader";
 import { GoalBar } from "./GoalBar";
 import { QueueStack } from "./QueueStack";
+import { OpenQuestions } from "./QuestionBox";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { useProjectWorkspace } from "./useProjectWorkspace";
@@ -293,6 +294,10 @@ export function ThreadView() {
       compacting={compacting}
       location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null }}
       top={<>
+        <OpenQuestions ids={messages
+          // Shown in full already: the newest row and a blocking question.
+          .filter((message, index) => message.question && message.question.answer === undefined && !message.question.blocking && index < messages.length - 1)
+          .map(message => message.question!.id)} />
         {goal && <GoalBar goal={goal}
           onEdit={async text => { try { await editGoal(thread.id, text); } catch (error) { toast(dispatch, `Could not save the goal: ${describeError(error)}`, "danger"); throw error; } }}
           onPause={() => void pauseGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))}

@@ -91,8 +91,10 @@ A new agent tool, `ask_user`, available in every chat (approval-free like
   on: <assumption>".
 - Collapses to a single row "Open question · <question>" when the run takes its
   next step or ends. Expanding it shows the full box again.
-- The goal bar (goal mode) and the chat header show a small count of open
-  questions; clicking it scrolls to the oldest.
+- Above the composer, in goal mode and normal chats alike, a small "N open
+  questions" button counts the questions not already shown in full and
+  scrolls to the oldest. (Built as one place instead of the goal bar plus the
+  chat header: one fact, one place.)
 - Answered: the box shows the answer and stays collapsed, read-only.
 - Follows DESIGN.md "Only what earns its place": no extra labels or controls.
 
@@ -150,9 +152,10 @@ A new agent tool, `ask_user`, available in every chat (approval-free like
 
 - **Source of truth:** `questions/<chat id>.json` holds question state; the
   transcript records new `question_asked` / `question_answered` events for
-  display. If the file is damaged, it is ignored (diagnostic) and the
-  transcript events rebuild it. The new events add no parsed-back markers to
-  existing ones.
+  display. If the file is damaged, it is ignored (diagnostic), like the queue
+  and goal files; the chat still shows the boxes from its history. (Built that
+  way; rebuilding the file from the transcript was dropped as not worth its
+  code.) The new events add no parsed-back markers to existing ones.
 - **Delivery never loses an answer:** the answer is saved as pending first.
   If a run is going, it goes into that run's steer inbox under the queue lock
   (the same handoff steers use). Otherwise, or if the run ends before reading
