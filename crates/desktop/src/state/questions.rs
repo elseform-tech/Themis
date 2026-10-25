@@ -30,6 +30,8 @@ const MAX_ASSUMPTION_CHARS: usize = 1_000;
 const MAX_CHOICES: usize = 4;
 const MAX_CHOICE_CHARS: usize = 200;
 const MAX_TOPIC_CHARS: usize = 80;
+/// A reason is one short line, so the options stay quick to scan.
+const MAX_REASON_CHARS: usize = 160;
 const MAX_ANSWER_CHARS: usize = 10_000;
 
 /// Starts the message that delivers answers; the goal supervisor reads it back
@@ -44,6 +46,10 @@ pub(super) struct NewQuestion {
     /// The agent's recommended answer (`recommended`), which it works on until the
     /// answer comes: one of the choices, or a suggestion when there are none.
     pub assumption: Option<String>,
+    /// One short line per answer on its tradeoff (`why` on a choice), and why the
+    /// recommendation is recommended (the top-level `why`).
+    pub reasons: Vec<(String, String)>,
+    pub why: Option<String>,
     pub blocking: bool,
     pub topic: Option<String>,
 }
@@ -188,6 +194,28 @@ impl AppState {
             .map(|text| bounded(&text, MAX_ASSUMPTION_CHARS))
             .filter(|text| !text.is_empty());
         let (choices, assumption) = shape_choices(choices, assumption);
+        // Reasons only for answers on offer; the recommendation's own `why` wins.
+        let offered = |answer: &str| {
+            choices.iter().any(|c| c == answer) || assumption.as_deref() == Some(answer)
+        };
+        let mut reasons = std::collections::BTreeMap::new();
+        for (answer, why) in asked.reasons {
+            let (answer, why) = (
+                bounded(&answer, MAX_CHOICE_CHARS),
+                bounded(&why, MAX_REASON_CHARS),
+            );
+            if offered(&answer) && !why.is_empty() {
+                reasons.insert(answer, why);
+            }
+        }
+        if let (Some(answer), Some(why)) = (
+            &assumption,
+            asked.why.map(|why| bounded(&why, MAX_REASON_CHARS)),
+        ) {
+            if !why.is_empty() {
+                reasons.insert(answer.clone(), why);
+            }
+        }
         let _guard = self
             .inner
             .question_lock
@@ -204,6 +232,7 @@ impl AppState {
                 question.question = text;
                 question.choices = choices;
                 question.assumption = assumption;
+                question.reasons = reasons;
                 question.blocking = asked.blocking;
                 question.topic = topic.or(question.topic.take());
                 question.run_id = run_id.to_owned();
@@ -219,6 +248,7 @@ impl AppState {
                     question: text,
                     choices,
                     assumption,
+                    reasons,
                     blocking: asked.blocking,
                     topic,
                     asked_at: now_ms(),

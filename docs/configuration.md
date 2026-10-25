@@ -475,8 +475,10 @@ minutes) are fixed, not runtime configuration. App server commands:
 (also through `themis call`).
 **Questions.** The agent's `ask_user` tool (no approval prompt, like `set_goal`; a deny rule
 for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.json` (app data):
-`[{"id","run_id","question","choices","assumption","blocking","topic","asked_at","answer"}]`
-(`assumption` holds the tool's `recommended` answer, which the agent works on until answered),
+`[{"id","run_id","question","choices","assumption","reasons","blocking","topic","asked_at","answer"}]`
+(`assumption` holds the tool's `recommended` answer, which the agent works on until answered;
+`reasons` maps an answer to its one-line tradeoff, at most 160 characters, the recommended one's
+from the tool's `why`, which a non-blocking question must give),
 at most 8 open at once (the tool then tells the agent to keep working on its assumption) and
 100 kept (the oldest answered go first); a question is at most 1,000 characters, with 2 to 4
 choices of 200 (the recommended one first; a single choice becomes the suggestion), and an

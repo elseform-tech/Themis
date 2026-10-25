@@ -80,8 +80,11 @@ export function QuestionBox({ question, onAnswer }: QuestionBoxProps) {
           <div className="themis-question-choices">
             {options.map(option => (
               <button key={option} type="button" className="themis-question-choice" disabled={sending} onClick={() => void send(option)}>
-                <span>{option}</span>
-                {option === question.assumption && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}</small>}
+                <span className="themis-question-choice-head">
+                  <span>{option}</span>
+                  {option === question.assumption && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}</small>}
+                </span>
+                {question.reasons?.[option] && <small className="themis-question-reason">{question.reasons[option]}</small>}
               </button>
             ))}
           </div>

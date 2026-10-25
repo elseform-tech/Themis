@@ -36,17 +36,31 @@ fn error(message: impl ToString) -> ToolCallError {
 /// The question as the model sent it.
 fn parse(args: &Value) -> NewQuestion {
     let text = |key: &str| args[key].as_str().map(str::to_owned);
+    let choices: Vec<(String, Option<String>)> = args["choices"]
+        .as_array()
+        .map(|choices| {
+            choices
+                .iter()
+                .filter_map(|choice| match choice {
+                    Value::String(answer) => Some((answer.clone(), None)),
+                    Value::Object(_) => Some((
+                        choice["answer"].as_str()?.to_owned(),
+                        choice["why"].as_str().map(str::to_owned),
+                    )),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     NewQuestion {
         question: text("question").unwrap_or_default(),
-        choices: args["choices"]
-            .as_array()
-            .map(|choices| {
-                choices
-                    .iter()
-                    .filter_map(|choice| choice.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        // A choice is its answer, or `{"answer", "why"}` with a one-line tradeoff.
+        choices: choices.iter().map(|(answer, _)| answer.clone()).collect(),
+        reasons: choices
+            .into_iter()
+            .filter_map(|(answer, why)| Some((answer, why?)))
+            .collect(),
+        why: text("why"),
         // `assumption` was the name before `recommended`; either is read.
         assumption: text("recommended").or_else(|| text("assumption")),
         // A question the agent can recommend an answer to never stops the work: it works
@@ -63,15 +77,26 @@ fn parse(args: &Value) -> NewQuestion {
 impl ToolRuntime for QuestionTool {
     async fn execute(&self, args: Value) -> Result<Value, ToolCallError> {
         let asked = parse(&args);
-        if !asked.blocking
-            && asked
-                .assumption
+        if !asked.blocking {
+            let Some(recommended) = asked.assumption.as_deref().filter(|a| !a.trim().is_empty())
+            else {
+                return Err(error(
+                    "ask_user needs `recommended`: your recommended answer (one of the choices, or your suggestion), which you work on until the user answers (or set `blocking` when nothing more can be done without the answer)",
+                ));
+            };
+            let explained = asked
+                .why
                 .as_deref()
-                .is_none_or(|a| a.trim().is_empty())
-        {
-            return Err(error(
-                "ask_user needs `recommended`: your recommended answer (one of the choices, or your suggestion), which you work on until the user answers (or set `blocking` when nothing more can be done without the answer)",
-            ));
+                .is_some_and(|why| !why.trim().is_empty())
+                || asked
+                    .reasons
+                    .iter()
+                    .any(|(answer, why)| answer == recommended && !why.trim().is_empty());
+            if !explained {
+                return Err(error(
+                    "ask_user needs `why`: one short line on why you recommend that answer",
+                ));
+            }
         }
         let action = ToolAction {
             display: None,
@@ -136,8 +161,9 @@ impl ToolT for QuestionTool {
     fn args_schema(&self) -> Value {
         json!({"type":"object","properties":{
             "question":{"type":"string","description":"One question to the user."},
-            "choices":{"type":"array","items":{"type":"string"},"minItems":2,"maxItems":4,"description":"2 to 4 answers to pick from, when the answer is one of a few options; include your recommended one."},
+            "choices":{"type":"array","minItems":2,"maxItems":4,"items":{"type":"object","properties":{"answer":{"type":"string"},"why":{"type":"string","description":"One short line on its tradeoff."}},"required":["answer"]},"description":"2 to 4 answers to pick from, when the answer is one of a few options; include your recommended one."},
             "recommended":{"type":"string","description":"Your recommended answer: one of the choices, or your suggestion when there are none. You work on it until the user answers."},
+            "why":{"type":"string","description":"One short line on why you recommend that answer."},
             "blocking":{"type":"boolean","description":"True only when you cannot recommend any answer and nothing more can be done without it: the run ends and waits. Ignored when `recommended` is given."},
             "topic":{"type":"string","description":"A short key; asking again with an open topic updates that question."}
         },"required":["question"],"additionalProperties":false})
@@ -167,6 +193,16 @@ mod tests {
             &json!({"question": "Which analytics?", "choices": ["Product", "Web"], "recommended": "Product", "blocking": true}),
         );
         assert!(!recommended.blocking);
+        // A choice may carry a one-line tradeoff; the recommendation its own `why`.
+        let explained = parse(
+            &json!({"question": "Which analytics?", "choices": [{"answer": "Plausible", "why": "no cookies"}, "PostHog"], "recommended": "Plausible", "why": "simplest"}),
+        );
+        assert_eq!(explained.choices, ["Plausible", "PostHog"]);
+        assert_eq!(
+            explained.reasons,
+            [("Plausible".to_owned(), "no cookies".to_owned())]
+        );
+        assert_eq!(explained.why.as_deref(), Some("simplest"));
         // The older name still reads.
         assert_eq!(
             parse(&json!({"question": "Q", "assumption": "A"}))

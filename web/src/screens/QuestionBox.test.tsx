@@ -24,6 +24,12 @@ describe("QuestionBox", () => {
     await waitFor(() => expect(answer).toHaveBeenCalledWith("Tabs"));
   });
 
+  it("shows each option's one-line reason under it", () => {
+    render(<QuestionBox question={question({ choices: ["Spaces", "Tabs"], reasons: { Spaces: "matches the existing files", Tabs: "smaller diffs" } })} onAnswer={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /^Spaces/ })).toHaveTextContent("matches the existing files");
+    expect(screen.getByRole("button", { name: /^Tabs/ })).toHaveTextContent("smaller diffs");
+  });
+
   it("offers an open question's suggestion as one answer, beside a written one", async () => {
     const answer = vi.fn().mockResolvedValue(undefined);
     render(<QuestionBox question={question({ question: "What is the app called?", choices: [], assumption: "Pebble" })} onAnswer={answer} />);

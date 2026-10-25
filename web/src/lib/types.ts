@@ -338,8 +338,10 @@ export interface Question {
   run_id: string;
   question: string;
   choices?: string[];
-  /** What the agent works on until the answer comes. */
+  /** The agent's recommended answer (one of the choices, or its suggestion), which it works on meanwhile. */
   assumption?: string;
+  /** One short line per answer on its tradeoff; the recommended one's says why. */
+  reasons?: Record<string, string>;
   /** Nothing more could be done without the answer. */
   blocking: boolean;
   topic?: string;

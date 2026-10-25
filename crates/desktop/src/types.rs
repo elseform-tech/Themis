@@ -278,9 +278,14 @@ pub struct Question {
     pub question: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<String>,
-    /// What the agent works on until the answer comes.
+    /// The agent's recommended answer (one of the choices, or its suggestion),
+    /// which it works on until the answer comes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assumption: Option<String>,
+    /// One short line per answer on its tradeoff, by answer; the recommended
+    /// one's says why it is recommended.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub reasons: std::collections::BTreeMap<String, String>,
     /// Nothing more could be done without the answer: the run ended on it.
     #[serde(default)]
     pub blocking: bool,

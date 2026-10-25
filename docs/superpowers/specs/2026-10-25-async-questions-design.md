@@ -93,7 +93,10 @@ A new agent tool, `ask_user`, available in every chat (approval-free like
   line (a choice can be a long sentence) with the recommended one first and
   marked **Recommended**, or, for an open question, one **Suggested** answer.
   The agent works on that answer until the person picks or writes another; a
-  text field is always there. (The tool argument is `recommended`; it replaced
+  text field is always there. Each option carries one short muted line on its
+  tradeoff, and the recommendation one on why (required); at most 4 options
+  and one line each, so the box never turns into a wall of choices (owner:
+  reasons "as long it does not introduce options paralyze"). (The tool argument is `recommended`; it replaced
   the separate "Working on" line, one fact in one place.)
 - Collapses to a single row "Open question · <question>" after five minutes
   without an answer; a blocking question never collapses. Expanding it shows

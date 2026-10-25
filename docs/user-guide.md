@@ -92,7 +92,8 @@ levels are listed.
 When the agent needs your input, it asks without stopping its work. The
 question shows in the chat with 2–4 options, one per line, its recommended one
 marked **Recommended**, or, for an open question such as a name, its
-**Suggested** answer. The agent carries on with that answer until you click
+**Suggested** answer. Each option has one short line on its tradeoff, and the
+recommended one says why. The agent carries on with that answer until you click
 another option or write your own.
 
 - The question stays open until you answer it. After five minutes without an
