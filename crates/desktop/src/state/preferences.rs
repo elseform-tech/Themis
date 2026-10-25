@@ -153,7 +153,7 @@ fn read_secret_named(
             return Ok(Some(legacy));
         }
     }
-    Ok(std::env::var(name).ok().filter(nonblank))
+    Ok(secrets.environment(name))
 }
 
 /// Forgets the secret `name` (for `OPENCODE_KEY`, also a copy under its old entry).
