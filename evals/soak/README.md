@@ -13,7 +13,16 @@ look. Nothing is pass or fail. Only the offline self-tests run automatically (in
 python3 -m unittest evals.kit.test_kit evals.soak.test_harness
 ```
 
-## The job (`items-v2`)
+## The job (`items-v3`)
+
+**Tools are limited (Custom approval rules in the run's `runtime.jsonc`, decided 2026-10-25).** In the
+`items-v2` pilots the agent learned the generator's sentence templates with Python scripts and
+finished 120 memos in 2–5 goal turns with 1–2 checkpoints, so the soak stressed nothing. The run
+now allows only `read_file`, `list_dir`, `write_file`, `apply_patch`, `recall`, `set_goal`, `git`
+and the one command `python3 check.py`; everything else (other commands, scripts, `search_file`)
+is denied by default, so no approval ever waits. `FORMAT.md` tells the agent so. A denial of an
+allowed tool is graded as ours; any other denial is the model reaching past the rules.
+
 
 `generate.py` writes a project, deterministic per (seed, items). The first pilot (`items-v1`,
 `key: value` sources) was finished in 2 goal turns by one Python script that parsed every file,

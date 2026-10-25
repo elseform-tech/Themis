@@ -469,7 +469,15 @@ class GraderTests(unittest.TestCase):
                  ("web_search", "web_search: the moon is in the way", "unclassified")]
         for tool, text, cause in cases:
             self.assertEqual(tool_causes.classify(tool, text)[0], cause, text)
-        self.assertEqual(tool_causes.classify("write_file", "approval denied for 'write_file'", mode="custom")[0], "unclassified")
+        # Custom mode (the soak's rules): denying an allowed tool or the check command is ours;
+        # denying anything else is the model reaching past the rules.
+        denied = "approval denied for '{}': call `{}` with {} The action was refused."
+        custom = [("write_file", denied.format("write_file", "write_file", '{"file_path":"out/a.md"}'), "ours"),
+                  ("shell", denied.format("shell", "shell", '{"command":"python3","args":["check.py"],"cwd":""}'), "ours"),
+                  ("shell", denied.format("shell", "shell", '{"command":"sh","args":["-c","python3 x.py"]}'), "model"),
+                  ("search_file", denied.format("search_file", "search_file", '{"pattern":"owner"}'), "model")]
+        for tool, text, cause in custom:
+            self.assertEqual(tool_causes.classify(tool, text, mode="custom")[0], cause, text)
 
 
 # --- trend --------------------------------------------------------------------------------------

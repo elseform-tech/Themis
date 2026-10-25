@@ -19,3 +19,5 @@ total: <sum of all counts>
 ```
 
 `python3 check.py` checks the structure of these files and the total; it does not check the other values.
+
+In this project, read each memo with `read_file` and write each file with `write_file` (or edit it with `apply_patch`). The only command that runs is `python3 check.py`; other commands, scripts and searches are blocked.

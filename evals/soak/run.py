@@ -1,7 +1,7 @@
 """Runs one soak through the real app, exactly as a person's goal runs, and records its trace.
 
 A scratch HOME and data folder (no Keychain, no real app data), a generated git project, the
-budget in the data folder's `runtime.jsonc`, YOLO approvals, then through the `themis` CLI:
+budget and the soak's Custom approval rules in the data folder's `runtime.jsonc`, then through the `themis` CLI:
 the rules as an ordinary first message, `/goal ...` with `send_message`, events from
 `themis watch`, the goal's status from `get_goal`, the follow-up queued with `enqueue_message`
 once half the items are written, the recall questions after `reached`, and the saved
@@ -27,6 +27,7 @@ from evals.kit.env import isolated_env
 from evals.kit.errors import classify_error, is_infrastructure
 
 from .generate import checker_text, generate, material_tokens, messages
+from .tool_causes import APPROVAL
 
 TERMINAL = ("finished", "failed", "incomplete")
 STOPPED_GOAL = {"reached": "reached", "stuck": "stuck", "waiting": "waiting", "quota": "infrastructure",
@@ -156,9 +157,9 @@ class Soak:
         script = messages(spec)
         git.init(self.project)
         with open(os.path.join(self.data, "runtime.jsonc"), "w", encoding="utf-8") as handle:
-            json.dump({"schema_version": 1, "context_token_budget": self.budget}, handle)
+            json.dump({"schema_version": 1, "context_token_budget": self.budget, "approval": APPROVAL}, handle)
         trace = {"spec": spec, "budget": self.budget, "seed": self.seed, "model": self.options["model"],
-                 "mode": "yolo", "material_tokens": material_tokens(self.project), "events": [],
+                 "mode": "custom", "material_tokens": material_tokens(self.project), "events": [],
                  "goal_polls": [], "saved_checkpoints": [], "goal_text": script["goal"][len("/goal"):].strip(),
                  "followup": None, "recall": [], "end": None, "final": {}}
         self.thread, self.watch = None, None
@@ -193,7 +194,7 @@ class Soak:
             self.thread = json.loads(created.stdout)["id"]
         except (ValueError, KeyError, TypeError):
             return {"reason": "infrastructure", "detail": f"thread create: {(created.stderr or created.stdout)[-200:]}"}
-        _value, error = self.call("set_thread_approval_mode", {"threadId": self.thread, "mode": "yolo"})
+        _value, error = self.call("set_thread_approval_mode", {"threadId": self.thread, "mode": "custom"})
         if error:
             return {"reason": "infrastructure", "detail": f"approval mode: {error}"}
         self.watch = Watch(self.binary, self.data, self.env, self.thread, self.on_event)

@@ -15,6 +15,17 @@ runtime's `execute_call`.
 
 import re
 
+# Custom-mode rules for the soak (decided 2026-10-25): every item must be read and written
+# one at a time, so scripts, searches and other commands are denied. Only `python3 check.py`
+# runs as a command. The default is deny, so nothing ever waits for an approval nobody answers.
+ALLOWED_TOOLS = ("read_file", "list_dir", "write_file", "apply_patch", "recall", "set_goal", "git")
+CHECK_COMMAND = ["python3", "check.py"]
+APPROVAL = {
+    "default": "deny",
+    "rules": [{"tool": "shell", "command": CHECK_COMMAND, "action": "allow"}]
+             + [{"tool": tool, "action": "allow"} for tool in ALLOWED_TOOLS],
+}
+
 # Checked first: these are our faults whatever the tool.
 OURS = (
     ("internal", r"execution task failed|worker failed|failed to wait for|panicked|internal error"
@@ -49,6 +60,10 @@ def classify(tool, output, mode="yolo"):
     text = (output or "").strip()
     if _MISSING_FACT.match(text):
         return "ours", "error_without_fact"
+    if mode == "custom" and re.search(r"^\W*(?:tool '[^']+' failed: )?approval denied for '", text):
+        # The soak's rules allow these; anything else denied is the model reaching past them.
+        allowed = tool in ALLOWED_TOOLS or (tool == "shell" and _runs_check(text))
+        return ("ours", "approval_refused") if allowed else ("model", "denied_by_rule")
     for code, pattern in OURS:
         if code == "approval_refused" and mode != "yolo":
             continue
@@ -60,6 +75,11 @@ def classify(tool, output, mode="yolo"):
     if tool == "shell" and re.search(r"Traceback|Error|error:", text):
         return "model", "command_failed"
     return "unclassified", "unknown"
+
+
+def _runs_check(text):
+    """Whether a denied shell call was exactly the allowed check command."""
+    return re.search(r'"command"\s*:\s*"python3"\s*,\s*"args"\s*:\s*\[\s*"check\.py"\s*\]', text) is not None
 
 
 def sample(output, limit=120):

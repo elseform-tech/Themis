@@ -28,7 +28,7 @@ import os
 import random
 import re
 
-JOB = "items-v2"
+JOB = "items-v3"
 DEFAULT_ITEMS = 120
 DEFAULT_FILLER_CHARS = 6000
 HERE = os.path.dirname(os.path.abspath(__file__))
