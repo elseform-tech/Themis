@@ -211,7 +211,11 @@ Its default policy allows reads and asks before other tools. A matching deny
 rule rejects the action; a matching allow rule proceeds. Projects can add
 restrictions but cannot grant access.
 
-When a rule asks, the dialog shows the tool, summary, and risk:
+When a rule asks, an **Approval needed** box appears in that chat, below the work
+it interrupts, like a question from the agent. Only that action waits: the chat
+stays readable and open questions stay answerable. Another chat that waits for
+you shows **Needs approval** in the sidebar. The box shows the tool, summary,
+and risk, with one choice per line:
 
 - **Allow once (1)** — allow this call only.
 - **Allow in this chat (2)** — allow the same command family (for example `cargo test`
@@ -226,7 +230,7 @@ chat grants. Grants live in the chat's own file, `chat_grants/<chat id>.json` in
 folder; to undo one, remove its entry (or delete the file) or start a new chat. Enabling an MCP
 connection is the permission to start it, so no start prompt appears.
 
-Approval timeouts deny pending requests and remove the dialog with a short note. Reopening the app restores requests still pending in the running backend. With no explicit approval
+Approval timeouts deny pending requests and remove the box with a short note. Reopening the app restores requests still pending in the running backend. With no explicit approval
 configuration, **Ask before read tools** still controls reads. **YOLO** means no
 approval prompts: it bypasses harness approval and tool restrictions, including
 the filesystem root and Git allowlist, but the sandbox still applies. Mode and

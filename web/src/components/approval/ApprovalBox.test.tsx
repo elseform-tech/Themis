@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ApprovalRequest } from "../../lib/types";
-import { ApprovalDialog, displayToken } from "./ApprovalDialog";
+import { ApprovalBox, displayToken } from "./ApprovalBox";
 
 const REQUEST: ApprovalRequest = {
   thread_id: "t1",
@@ -13,14 +13,14 @@ const REQUEST: ApprovalRequest = {
 
 function setup(request: ApprovalRequest = REQUEST) {
   const onDecide = vi.fn();
-  render(<ApprovalDialog request={request} open onDecide={onDecide} />);
+  render(<ApprovalBox request={request} open onDecide={onDecide} />);
   return { onDecide };
 }
 
-describe("ApprovalDialog", () => {
+describe("ApprovalBox", () => {
   it("names an MCP tool by server and tool, not its wire id", () => {
     const tool = "mcp_fb67fe144f6fc34f56444b8d_list_allowed_directories";
-    render(<ApprovalDialog request={{ ...REQUEST, tool, summary: `call \`${tool}\` with {}` }} label="files · list_allowed_directories" open onDecide={() => {}} />);
+    render(<ApprovalBox request={{ ...REQUEST, tool, summary: `call \`${tool}\` with {}` }} label="files · list_allowed_directories" open onDecide={() => {}} />);
     expect(screen.getAllByText(/files · list allowed directories/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/fb67fe/)).toBeNull();
   });
@@ -114,10 +114,10 @@ describe("ApprovalDialog", () => {
     // fresh onDecide, which restarted the 500 ms pause, so 1/2/3 never decided.
     vi.useFakeTimers({ toFake: ["Date"] });
     const decided = vi.fn();
-    const { rerender } = render(<ApprovalDialog request={REQUEST} open onDecide={decision => decided(decision)} />);
+    const { rerender } = render(<ApprovalBox request={REQUEST} open onDecide={decision => decided(decision)} />);
     for (let tick = 0; tick < 6; tick += 1) {
       vi.advanceTimersByTime(200);
-      rerender(<ApprovalDialog request={REQUEST} open onDecide={decision => decided(decision)} />);
+      rerender(<ApprovalBox request={REQUEST} open onDecide={decision => decided(decision)} />);
     }
     fireEvent.keyDown(document, { key: "3" });
     expect(decided).toHaveBeenCalledWith("deny");
@@ -133,23 +133,29 @@ describe("ApprovalDialog", () => {
     expect(document.body).toHaveTextContent("saves Downloads for files.example.com");
   });
 
-  it("maps Escape to deny", () => {
+  it("sits in the chat instead of covering it, and only an explicit choice decides", () => {
     const { onDecide } = setup();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("region", { name: "Approval needed" })).toBeInTheDocument();
+    // Escape closes panels elsewhere in the app; it never denies.
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(onDecide).toHaveBeenCalledWith("deny");
+    fireEvent.mouseDown(document.body);
+    expect(onDecide).not.toHaveBeenCalled();
   });
 
-  it("ignores a click outside the dialog: only an explicit choice decides", () => {
-    const { onDecide } = setup();
-    const overlay = document.querySelector(".themis-dialog-overlay")!;
-    fireEvent.mouseDown(overlay);
+  it("leaves the digits to the first waiting approval only", () => {
+    vi.useFakeTimers();
+    const onDecide = vi.fn();
+    render(<ApprovalBox request={REQUEST} open shortcuts={false} onDecide={onDecide} />);
+    vi.advanceTimersByTime(600);
+    fireEvent.keyDown(document, { key: "1" });
     expect(onDecide).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it("renders nothing when closed", () => {
     const onDecide = vi.fn();
-    render(<ApprovalDialog request={REQUEST} open={false} onDecide={onDecide} />);
+    render(<ApprovalBox request={REQUEST} open={false} onDecide={onDecide} />);
     expect(screen.queryByText("shell.exec")).not.toBeInTheDocument();
   });
 });
@@ -332,7 +338,7 @@ describe("command display", () => {
       grant_scope: { argv, covers_further_args: false },
       command: { argv, cwd: "/repo", sandbox_blocked: "writing to /Users/me/x is blocked\u202E: only the project is writable" },
     });
-    expect(screen.getByRole("dialog", { name: "Run outside the sandbox?" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Run outside the sandbox?" })).toBeInTheDocument();
     expect(screen.getByText("shell (outside the sandbox)")).toBeInTheDocument();
     expect(screen.getByText(/The sandbox blocked it/)).toHaveTextContent("writing to /Users/me/x is blocked⟨U+202E⟩: only the project is writable. Outside the sandbox");
     expect(screen.getByText(/run outside the sandbox in later runs of this chat/)).toBeInTheDocument();

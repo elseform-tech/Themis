@@ -6,14 +6,15 @@ import { singleKeyShortcutAllowed } from "../../lib/keyboard";
 import { SafeText, TokenChip, TokenList } from "./CommandTokens";
 import { Badge, type BadgeTone } from "../primitives/Badge";
 import { Button } from "../primitives/Button";
-import { Dialog } from "../primitives/Dialog";
-import "./ApprovalDialog.css";
+import "./ApprovalBox.css";
 
-export interface ApprovalDialogProps {
+export interface ApprovalBoxProps {
   request: ApprovalRequest;
   /** A readable name for an MCP tool, shown instead of its opaque wire id. */
   label?: string;
   open: boolean;
+  /** Whether 1/2/3 decide this one (the first waiting in the chat); default true. */
+  shortcuts?: boolean;
   onDecide: (decision: ApprovalDecision) => void;
 }
 
@@ -71,7 +72,10 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
 
 const SHORTCUT_DELAY_MS = 500;
 
-export function ApprovalDialog({ request, label, open, onDecide }: ApprovalDialogProps) {
+/** An action waiting for the person's decision, inline in its chat below the work it
+ *  interrupts, like a question from the agent. Only that action waits; nothing else is
+ *  covered, so the chat stays readable and questions stay answerable meanwhile. */
+export function ApprovalBox({ request, label, open, shortcuts = true, onDecide }: ApprovalBoxProps) {
   const grantable = request.grantable !== false;
   const outside = request.tool === UNSANDBOXED_TOOL;
   const blocked = request.command?.sandbox_blocked;
@@ -82,8 +86,8 @@ export function ApprovalDialog({ request, label, open, onDecide }: ApprovalDialo
   useEffect(() => { decide.current = onDecide; }, [onDecide]);
   const approvalId = request.approval_id;
   useEffect(() => {
-    if (!open) return;
-    // Keys typed just before the dialog appeared (for example digits in the composer) must not decide it.
+    if (!open || !shortcuts) return;
+    // Keys typed just before the box appeared (for example digits in the composer) must not decide it.
     const openedAt = Date.now();
     function onKeyDown(event: KeyboardEvent) {
       if (event.repeat || Date.now() - openedAt < SHORTCUT_DELAY_MS) return;
@@ -93,8 +97,8 @@ export function ApprovalDialog({ request, label, open, onDecide }: ApprovalDialo
       // cannot be allowed for the chat offer only 1 and 3, so a held 2 never denies.
       const decision = event.key === "1" ? "once" : event.key === "2" && grantable ? "chat" : event.key === "3" ? "deny" : null;
       if (decision === null) return;
-      // The dialog closes on this keydown and focus returns to the composer before the
-      // character is inserted, so the digit would land in the next message.
+      // The box goes away on this keydown; without this the digit would land in
+      // whatever field takes the focus next.
       event.preventDefault();
       decide.current(decision);
     }
@@ -102,18 +106,15 @@ export function ApprovalDialog({ request, label, open, onDecide }: ApprovalDialo
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, grantable, approvalId]);
+  }, [open, shortcuts, grantable, approvalId]);
 
+  if (!open) return null;
+  const title = outside ? "Run outside the sandbox?" : "Approval needed";
   return (
-    <Dialog
-      open={open}
-      // A stray click elsewhere must not decide for the person: only a button, its number
-      // key or Escape (an explicit Deny) does.
-      closeOnOutsideClick={false}
-      title={outside ? "Run outside the sandbox?" : "Approval required"}
-      onClose={() => onDecide("deny")}
-    >
+    <section className="themis-approval-box" aria-label={title}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" /></svg>
       <div className="themis-approval">
+        <p className="themis-approval-title">{title}</p>
         <div className="themis-approval-row">
           <span className="themis-approval-tool">{outside ? "shell (outside the sandbox)" : request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : toolDisplayName(request.tool, label)}</span>
           <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
@@ -141,6 +142,6 @@ export function ApprovalDialog({ request, label, open, onDecide }: ApprovalDialo
           </Button>
         </div>
       </div>
-    </Dialog>
+    </section>
   );
 }

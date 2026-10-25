@@ -425,7 +425,7 @@ or the same server after its plugin revision changes, asks again. Web and browse
 keyed by site: one grant on a browser action covers every browser action on that host, and a
 `fetch_url` or `web_search` grant covers that tool on that host.
 
-**Chat grants.** The approval dialog offers **Allow once**, **Allow in this chat** and
+**Chat grants.** The approval box offers **Allow once**, **Allow in this chat** and
 **Deny**. *Allow in this chat* runs the action now and saves the grant to the chat's own
 file, `chat_grants/<chat id>.json` in the app data directory (beside `threads.json`). Format:
 `{"version":1,"grants":[{"tool":"shell","command":["cargo","test"],"risk":"execute"}, {"tool":"mcp","server":"<16 hex>","risk":"network"}]}`;

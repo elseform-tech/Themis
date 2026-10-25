@@ -8,6 +8,9 @@ import { browserOpenUrl } from "../lib/browser";
 import { ANSWER_MARKER, type ChangedFile, type Question } from "../lib/types";
 import { answerQuestion } from "../lib/tauri";
 import { QuestionBox } from "./QuestionBox";
+import { ApprovalBox } from "../components";
+import { approveAction } from "../lib/tauri";
+import type { ApprovalDecision, ApprovalRequest } from "../lib/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResponseBody, ResponseLinks } from "../components/ResponseBody";
 import "./GoalBar.css";
@@ -53,7 +56,8 @@ export function ThreadConversation({
   const [viewing, setViewing] = useState<number | null>(null);
   const openMedia = useCallback((path: string) => { const index = media.findIndex(file => file.path === path); if (index >= 0) setViewing(index); }, [media]);
   const gallery = useMemo(() => ({ threadId, items: media, open: openMedia }), [threadId, media, openMedia]);
-  const { dispatch } = useApp();
+  const { state, dispatch } = useApp();
+  const approvals = useMemo(() => state.approvals.filter(approval => approval.thread_id === threadId), [state.approvals, threadId]);
   // Links in replies open in this chat's browser, shown in the Workspace Browser tab.
   const openLink = useCallback((url: string) => {
     dispatch({ type: "ui/diff-panel", open: true, tab: "browser" });
@@ -104,6 +108,9 @@ export function ThreadConversation({
           />
         ))
       )}
+      {approvals.map((request, index) => (
+        <ApprovalRow key={request.approval_id} request={request} first={index === 0} traces={traces} />
+      ))}
       {stream !== "" && (
         <div className="themis-thread-msg themis-thread-msg--assistant themis-thread-msg--live">
           <ResponseBody text={stream} streaming />
@@ -265,6 +272,23 @@ export function GoalNote({ note }: { note: NonNullable<ChatMessage["goalNote"]> 
       <span>{GOAL_NOTE_TITLE[note.outcome] && <><strong>{GOAL_NOTE_TITLE[note.outcome]}</strong> </>}{note.reason}</span>
     </div>
   );
+}
+
+/** An action of this chat waiting for a decision; only the first answers to 1/2/3. */
+function ApprovalRow({ request, first, traces }: { request: ApprovalRequest; first: boolean; traces: ToolTraceEntry[] }) {
+  const { dispatch } = useApp();
+  async function decide(decision: ApprovalDecision) {
+    try {
+      await approveAction(request.thread_id, request.approval_id, decision);
+      dispatch({ type: "approval/dequeued", approvalId: request.approval_id });
+    } catch (error: unknown) {
+      toast(dispatch, `Approval failed: ${describeError(error)}`, "danger");
+    }
+  }
+  return <ApprovalBox request={request} open shortcuts={first}
+    // An MCP tool's readable name ("files · read text file"), as the step list shows it.
+    label={[...traces].reverse().find(entry => entry.tool === request.tool && entry.label)?.label}
+    onDecide={decision => void decide(decision)} />;
 }
 
 function QuestionRow({ threadId, question }: { threadId: string; question: Question }) {
