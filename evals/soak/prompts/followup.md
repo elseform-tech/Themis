@@ -1,0 +1,1 @@
+A change for all items: write the status in upper case from now on (for example `- status: ACTIVE`), in every `out/<name>.md` and in `out/INDEX.md`. Update the files already written, and use it for the rest.

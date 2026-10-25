@@ -1,0 +1,1 @@
+/goal For every source file in `src/`, write `out/<name>.md` as `FORMAT.md` describes, then write `out/INDEX.md` as `FORMAT.md` describes, run `python3 check.py` until it passes, and commit the work with git.

@@ -1,0 +1,1 @@
+Answer from memory, without using any tools: how many items have the status `retired`? Reply with just the number.
