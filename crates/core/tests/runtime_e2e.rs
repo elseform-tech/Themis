@@ -2589,3 +2589,293 @@ async fn unknown_window_learns_the_stated_limit_from_a_context_length_error() {
     assert_eq!(learned_limit(MODEL), Some(30_000));
     assert_eq!(checkpoints(&events), 1, "the shrunk budget compacts once");
 }
+
+/// apply_patch end to end through a run: a valid patch applies once, a patch whose
+/// lines match two places only loosely is refused with an error that says so (and the
+/// file is untouched), and the model's corrected patch then applies.
+#[tokio::test]
+async fn apply_patch_through_the_runtime() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+
+    const VALID: &str = "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,1 +1,2 @@\n title\n+added once\n";
+    // Three spaces: matches "alpha  beta" (line 3) and "alpha beta" (line 5) only loosely.
+    const AMBIGUOUS: &str =
+        "--- a/notes.txt\n+++ b/notes.txt\n@@ -3,1 +3,1 @@\n-alpha   beta\n+gamma\n";
+    const FIXED: &str = "--- a/notes.txt\n+++ b/notes.txt\n@@ -5,1 +5,1 @@\n-alpha beta\n+gamma\n";
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = request.body_json().unwrap();
+            let last = body["messages"].as_array().unwrap().last().unwrap().clone();
+            let patch = |id: &str, patch: &str| {
+                ResponseTemplate::new(200).set_body_json(common::tool_call_body(
+                    id,
+                    "apply_patch",
+                    json!({ "patch": patch }),
+                ))
+            };
+            match (last["role"].as_str(), last["tool_call_id"].as_str()) {
+                (Some("tool"), Some("valid")) => patch("ambiguous", AMBIGUOUS),
+                (Some("tool"), Some("ambiguous")) => patch("fixed", FIXED),
+                (Some("tool"), _) => {
+                    ResponseTemplate::new(200).set_body_json(common::final_text_body("patched"))
+                }
+                // The spec check after file changes, or any later prompt: finish.
+                _ if body.to_string().contains("tool_call_id") => {
+                    ResponseTemplate::new(200).set_body_json(common::final_text_body("patched"))
+                }
+                _ => patch("valid", VALID),
+            }
+        })
+        .mount(&server)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    let file = project.path().join("notes.txt");
+    std::fs::write(
+        &file,
+        "title\nintro\nalpha  beta\nmiddle\nalpha beta\nend\n",
+    )
+    .unwrap();
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+    let answer = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Edit notes.txt with apply_patch".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 8,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer, "patched");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "title\nadded once\nintro\nalpha  beta\nmiddle\ngamma\nend\n",
+        "the valid patch applied once, the refused one changed nothing, the fix applied"
+    );
+    let events = common::drain(&mut rx).await;
+    let finished: Vec<(bool, String)> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::ToolCallFinished { tool, ok, output } if tool == "apply_patch" => {
+                Some((*ok, output.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        finished.iter().map(|(ok, _)| *ok).collect::<Vec<_>>(),
+        [true, false, true],
+        "{finished:?}"
+    );
+    // What the model was told about the refused patch: it names the problem (two loose
+    // matches, not a missing line), says nothing changed, and shows where.
+    let requests = server.received_requests().await.unwrap();
+    let refusal = requests
+        .iter()
+        .find_map(|request| {
+            let body: serde_json::Value = request.body_json().unwrap();
+            let last = body["messages"].as_array()?.last()?.clone();
+            (last["tool_call_id"] == "ambiguous").then(|| last["content"].to_string())
+        })
+        .expect("the refusal reached the model");
+    assert!(refusal.contains("ambiguous"), "{refusal}");
+    assert!(refusal.contains("No files were changed"), "{refusal}");
+    assert!(refusal.contains("alpha  beta"), "{refusal}");
+}
+
+/// A request too large to sit beside any checkpoint fails the run with that reason,
+/// leaves the originals on disk and the working context unchanged, and the next run in
+/// the same conversation (the long request now history a checkpoint can summarize)
+/// still works. Seen live on 2026-10-18.
+#[tokio::test]
+async fn checkpoint_cannot_fit_fails_clearly() {
+    use themis_core::runtime::{ConversationRole, ConversationTurn};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = request.body_json().unwrap();
+            let messages = body["messages"].as_array().unwrap();
+            if messages[0]["content"]
+                .as_str()
+                .is_some_and(|text| text.contains("You summarize agent context"))
+            {
+                return ResponseTemplate::new(200).set_body_json(common::final_text_body(
+                    "Goal/constraints: MARKER-CANNOT-FIT review. Unresolved work: read the parts. Next action: read the next part.",
+                ));
+            }
+            let last = messages.last().unwrap();
+            let reads = messages.iter().filter(|m| m["role"] == "tool").count();
+            if last["role"] == "tool" && reads < 4 {
+                return ResponseTemplate::new(200).set_body_json(common::tool_call_body(
+                    &format!("read-{reads}"),
+                    "read_file",
+                    json!({"file_path": format!("part-{reads}.txt")}),
+                ));
+            }
+            if last["role"] == "tool"
+                || last["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("Continue"))
+            {
+                return ResponseTemplate::new(200)
+                    .set_body_json(common::final_text_body("Continued."));
+            }
+            ResponseTemplate::new(200).set_body_json(common::tool_call_body(
+                "read-first",
+                "read_file",
+                json!({"file_path": "part-0.txt"}),
+            ))
+        })
+        .mount(&server)
+        .await;
+    let project = tempfile::tempdir().unwrap();
+    for index in 0..4 {
+        std::fs::write(
+            project.path().join(format!("part-{index}.txt")),
+            format!("part {index} line about the review; ").repeat(120),
+        )
+        .unwrap();
+    }
+    let evidence = project.path().join(".themis/context/cannot-fit");
+    std::fs::create_dir_all(&evidence).unwrap();
+    // About 16k tokens: most of the 24k budget.
+    let task = format!(
+        "Task MARKER-CANNOT-FIT: review every part file. {}",
+        "Requirement detail for the review, stated at length; ".repeat(1200)
+    );
+    let policy = RunPolicy {
+        total_turns: 8,
+        context_token_budget: 24_000,
+        recent_messages: 4,
+    };
+    let run = |task: String, history: Vec<ConversationTurn>| {
+        let server = server.uri();
+        let project = project.path().to_owned();
+        let evidence = evidence.clone();
+        async move {
+            let llm = resolve(
+                &ProviderConfig::new(ProviderKind::Go, "test-key")
+                    .with_model("test-model")
+                    .with_base_url(server),
+            )
+            .await
+            .unwrap();
+            let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+            let (tx, mut rx) = tokio::sync::mpsc::channel(2048);
+            let result = themis_core::runtime::run_task_with_evidence(
+                llm,
+                boxed_tools(&project, approvals.clone()).unwrap(),
+                task,
+                history,
+                approvals,
+                policy,
+                tx,
+                Arc::new(AtomicBool::new(false)),
+                String::new(),
+                Some(evidence),
+            )
+            .await;
+            (result, common::drain(&mut rx).await)
+        }
+    };
+    // The long request takes most of the budget. The first checkpoint still fits beside
+    // it; after the next read, no checkpoint can.
+    let (result, events) = run(task.clone(), vec![]).await;
+    let error = result.expect_err("the checkpoint cannot fit").to_string();
+    assert!(
+        error.starts_with("Context checkpoint failed: checkpoint and active request exceed the context budget; original conversation preserved"),
+        "{error}"
+    );
+    assert!(error.contains("working context unchanged"), "{error}");
+    assert!(error.contains("Originals saved on disk"), "{error}");
+    let failed: Vec<&String> = events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::Failed { error } => Some(error),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failed, [&error], "one failure, with the same reason");
+    let compacting = events
+        .iter()
+        .filter(|event| matches!(event, RunEvent::ContextCompacting))
+        .count();
+    assert_eq!(
+        compacting, 2,
+        "a checkpoint that fits, then one that cannot"
+    );
+    let last_attempt = events
+        .iter()
+        .rposition(|event| matches!(event, RunEvent::ContextCompacting))
+        .unwrap();
+    assert!(
+        !events[last_attempt..]
+            .iter()
+            .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })),
+        "the failed checkpoint installs nothing"
+    );
+    // The working progress is published, and the originals (the request and the read
+    // done since the first checkpoint) are on disk.
+    assert!(events[last_attempt..]
+        .iter()
+        .any(|event| matches!(event, RunEvent::ContextSuspended { .. })));
+    let archived: String = std::fs::read_dir(&evidence)
+        .unwrap()
+        .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap_or_default())
+        .collect();
+    assert!(
+        archived.contains("MARKER-CANNOT-FIT"),
+        "originals stay on disk"
+    );
+    assert!(archived.contains("part 1 line about the review"));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RunEvent::ToolCallStarted { summary, .. } if summary.contains("part-2.txt"))),
+        "nothing runs after the failure");
+
+    // The next run in the same conversation, with the history the app keeps: the long
+    // request and the suspended progress.
+    let progress = events
+        .iter()
+        .find_map(|event| match event {
+            RunEvent::ContextSuspended { progress } => Some(progress.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let history = vec![
+        ConversationTurn {
+            role: ConversationRole::User,
+            text: task,
+        },
+        ConversationTurn {
+            role: ConversationRole::Assistant,
+            text: progress,
+        },
+    ];
+    let (next, events) = run("Continue the review.".into(), history).await;
+    assert_eq!(next.unwrap(), "Continued.");
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RunEvent::Failed { .. })));
+}

@@ -4589,7 +4589,11 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("context mismatch") && error.contains("   1| a  b"),
+            error.contains("ambiguous context")
+                && error.contains("match 2 places")
+                && error.contains("starting at lines 1, 3")
+                && error.contains("   1| a  b")
+                && error.contains("   3| a b"),
             "{error}"
         );
         assert_eq!(
