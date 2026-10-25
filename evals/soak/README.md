@@ -117,8 +117,8 @@ flagged).
 
 | Area | Measure | Kind | Meaning |
 | --- | --- | --- | --- |
-| goal | `goal_continuation_breaks` | harness | A `not_yet` goal note with no goal turn after it (unless a cap ended the run right there). |
-| goal | `turns_after_reached` | harness | Goal turns that started after the `reached` note (recall messages do not count). |
+| goal | `goal_continuation_breaks` | harness | The goal stayed running with no turn starting until the idle timeout (`not_continuing`); a cap that cuts a turn short is not a break. Goals never stop for lack of progress, so a run ends reached, waiting, at a cap, or broken. |
+| goal | `turns_after_reached` | harness | Goal turns that started after the goal's status became `reached` (the app's one short turn telling the user, and recall messages, do not count). |
 | goal | `goal_changed` | harness | `get_goal` polls, while the goal ran, that found no goal or a different text. |
 | goal | `reached` | model | 1 when the goal was reached within the caps. |
 | goal | `goal_turns` | reported | Goal turns started. |

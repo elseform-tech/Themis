@@ -84,6 +84,14 @@ def is_goal_turn(text):
     return (text or "").startswith(GOAL_TURN_MARKER) or (text or "").lstrip().startswith("/goal")
 
 
+# The app's own turn after the check finds the goal reached: the agent tells the user.
+REACHED_TURN = "A separate check found the goal reached"
+
+
+def is_reached_turn(text):
+    return (text or "").startswith(GOAL_TURN_MARKER) and REACHED_TURN in text
+
+
 def runs(trace):
     """Runs in start order: {run_id, text, start, events, end}. Events with no run (goal and
     queue changes) are left out."""
@@ -113,20 +121,16 @@ def _flat(trace):
 
 def goal_measures(trace):
     events = _flat(trace)
-    goal_runs = [run for run in runs(trace) if is_goal_turn(run["text"])]
+    goal_runs = [run for run in runs(trace) if is_goal_turn(run["text"]) and not is_reached_turn(run["text"])]
     turn_starts = [run["start"] for run in goal_runs]
     end_reason = (trace.get("end") or {}).get("reason")
-    notes = [(index, event) for index, _run, event in events if event.get("kind") == "goal_note"]
-    breaks = 0
-    for position, (index, event) in enumerate(notes):
-        if event.get("outcome") != "not_yet":
-            continue
-        later_turn = any(start > index for start in turn_starts)
-        # The run's last note may be cut short by a cap or a stop: that is not a break.
-        last = position == len(notes) - 1
-        if not later_turn and not (last and end_reason in CAP_ENDS):
-            breaks += 1
-    reached_at = next((index for index, event in notes if event.get("outcome") == "reached"), None)
+    # The app posts no note per check any more: a goal that stops continuing shows as the
+    # runner's idle end (a cap that cuts the last turn short is not a break).
+    breaks = int(end_reason == "not_continuing")
+    # Reached when the goal's status says so (older traces: the "reached" note).
+    reached_at = next((index for index, _run, event in events
+                       if (event.get("kind") == "goal_changed" and (event.get("goal") or {}).get("status") == "reached")
+                       or (event.get("kind") == "goal_note" and event.get("outcome") == "reached")), None)
     after_reached = 0 if reached_at is None else sum(start > reached_at for start in turn_starts)
     goal_text = trace.get("goal_text") or ""
     # Counted from the first poll that saw the goal: a poll racing the /goal send is not a change.

@@ -85,9 +85,11 @@ class TraceBuilder:
             if turn == len(active):
                 self.tool(run, "shell", "call `shell` with python3 check.py", output="OK")
                 files["out/INDEX.md"] = gen.index_text(self.spec)
-                self.emit(run, "goal_note", outcome="reached", reason="check passes")
-            else:
-                self.emit(run, "goal_note", outcome="not_yet", reason="more items")
+                self.emit("", "goal_changed", goal={"text": self.goal_text, "status": "reached"})
+                # The app's own short turn: the agent tells the user the goal is reached.
+                self.emit("gr", "user_message", text=f"{GOAL_TURN_MARKER} Turn {turn + 1}. Goal: {self.goal_text}\n"
+                                                     "A separate check found the goal reached: check passes")
+                self.emit("gr", "finished", result="I've reached the goal: check.py passes.")
         recall = []
         for number, question in enumerate(self.messages["recall"]):
             run = f"a{number}"
@@ -324,8 +326,8 @@ class GraderTests(unittest.TestCase):
 
     def test_goal_not_continuing(self):
         trace = clean()
-        cut = next(i for i, item in enumerate(trace["events"]) if item["event"].get("outcome") == "not_yet")
-        trace["events"] = trace["events"][:cut + 1]
+        cut = next(i for i, item in enumerate(trace["events"]) if item["run_id"] == "g2")
+        trace["events"] = trace["events"][:cut]
         trace["end"] = {"reason": "not_continuing", "detail": "the goal runs but no turn started"}
         measures, _details = grade(trace, trace["spec"])
         self.assertEqual(measures["goal_continuation_breaks"], 1)
@@ -338,12 +340,12 @@ class GraderTests(unittest.TestCase):
 
     def test_extra_turn_after_reached(self):
         trace = clean()
-        reached = next(i for i, item in enumerate(trace["events"]) if item["event"].get("outcome") == "reached")
+        told = max(i for i, item in enumerate(trace["events"]) if item["run_id"] == "gr")
         extra = {"t": 0, "run_id": "g99", "event": {"kind": "user_message", "text": f"{GOAL_TURN_MARKER}\nTurn 99"}}
-        trace["events"].insert(reached + 1, extra)
+        trace["events"].insert(told + 1, extra)
         measures, _details = grade(trace, trace["spec"])
         self.assertEqual(harness_flags(measures), {"turns_after_reached"})
-        # Recall questions sent after reached are not goal turns.
+        # Neither the app's reached turn nor recall questions sent after it are goal turns.
         self.assertEqual(grade(clean(), clean()["spec"])[0]["turns_after_reached"], 0)
 
     def test_failed_checkpoint(self):
