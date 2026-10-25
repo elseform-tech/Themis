@@ -992,7 +992,7 @@ impl AppState {
         // blocked check is never escalated (the scheduler asks nobody).
         let sandbox = self
             .runtime_configuration(Some(&root), None)
-            .map(|resolved| self.sandbox_plan(&root, &resolved.config.sandbox))
+            .map(|resolved| self.sandbox_plan(&root, &resolved.config.sandbox, false))
             .map_err(CheckError::Failed)?;
         let out = themis_core::tools::run_check_command(
             argv.to_vec(),

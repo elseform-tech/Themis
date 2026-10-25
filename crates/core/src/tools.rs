@@ -4872,6 +4872,7 @@ mod tests {
                 project_root: &env.root,
                 app_data: Some(&env.app),
                 home: Some(&env.home),
+                open: false,
             }))
         }
 
@@ -5199,6 +5200,7 @@ mod tests {
                     project_root: &env.root,
                     app_data: Some(&env.app),
                     home: Some(&env.home),
+                    open: false,
                 },
                 |_| Availability::no("missing for this test"),
             ));
@@ -5230,6 +5232,7 @@ mod tests {
                     project_root: &env.root,
                     app_data: Some(&env.app),
                     home: Some(&env.home),
+                    open: false,
                 },
                 |_| Availability::no("missing for this test"),
             ));
@@ -5250,6 +5253,7 @@ mod tests {
                     project_root: &env.root,
                     app_data: Some(&env.app),
                     home: Some(&env.home),
+                    open: false,
                 },
                 |_| Availability::no("not needed for in-process guards"),
             ));

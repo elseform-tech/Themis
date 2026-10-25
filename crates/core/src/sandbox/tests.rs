@@ -19,6 +19,7 @@ fn plan_with(
             project_root: root,
             app_data: Some(app_data),
             home: Some(home),
+            open: false,
         },
         enforcement,
         "test".into(),
@@ -551,7 +552,7 @@ proptest! {
         let root = std::env::temp_dir();
         let home = root.join("themis-no-home");
         let plan = SandboxPlan::with_enforcement(
-            PlanInputs { config: &SandboxConfig::default(), project_root: &root, app_data: None, home: Some(&home) },
+            PlanInputs { config: &SandboxConfig::default(), project_root: &root, app_data: None, home: Some(&home), open: false },
             Enforcement::Active(Backend::Seatbelt),
             "test".into(),
         );
@@ -857,4 +858,155 @@ fn seatbelt_keeps_a_real_command_out_of_the_keychain() {
         "/usr/bin/security list-keychains",
     );
     assert!(ok, "allowed: {output}");
+}
+
+fn open_plan(enforcement: Enforcement, config: &SandboxConfig, fx: &Fixture) -> SandboxPlan {
+    SandboxPlan::with_enforcement(
+        PlanInputs {
+            config,
+            project_root: &fx.root,
+            app_data: Some(&fx.app_data),
+            home: Some(&fx.home),
+            open: true,
+        },
+        enforcement,
+        "test".into(),
+    )
+}
+
+/// YOLO's plan: writable everywhere, no secret locations, network and Keychain on
+/// whatever the configuration says; only the app data and `.themis/` stay read-only.
+#[test]
+fn the_open_plan_writes_everywhere_but_the_protected_folders() {
+    let fx = fixture();
+    let blocked = config(r#"{"network":"block","allow_keychain":false}"#);
+    let plan = open_plan(Enforcement::Active(Backend::Seatbelt), &blocked, &fx);
+    assert!(plan.open());
+    assert_eq!(plan.writable()[0], PathBuf::from("/"));
+    assert!(plan.secrets().is_empty());
+    assert_eq!(plan.network(), NetworkPolicy::Allow);
+    assert!(plan.allow_keychain());
+    assert_eq!(
+        plan.protected(),
+        [fx.app_data.clone(), fx.root.join(".themis")]
+    );
+    let (profile, params) = seatbelt::profile(&plan);
+    assert!(params
+        .iter()
+        .any(|(name, path)| name == "WRITABLE_0" && path == "/"));
+    assert!(
+        profile.contains("(deny file-write*\n  (subpath (param \"PROTECTED_0\"))"),
+        "{profile}"
+    );
+    assert!(
+        !profile.contains("SECRET")
+            && !profile.contains("network-outbound")
+            && !profile.contains("mach-lookup"),
+        "{profile}"
+    );
+    let args: Vec<String> = bubblewrap::arguments(&plan)
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let bind_root = args
+        .windows(3)
+        .position(|w| w == ["--bind", "/", "/"])
+        .expect("/ is writable");
+    let app = fx.app_data.display().to_string();
+    let protect = args
+        .windows(3)
+        .position(|w| w[0] == "--ro-bind" && w[1] == app)
+        .expect("app data read-only");
+    assert!(
+        protect > bind_root,
+        "the protected folders are bound read-only over /"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--unshare-net" || a == "--tmpfs"),
+        "{args:?}"
+    );
+    let guard = plan.file_guard(true).unwrap();
+    assert!(
+        guard.check_read(&fx.home.join(".ssh/id_test")).is_ok(),
+        "reads stay open"
+    );
+    assert!(guard
+        .check_write(&fx.app_data.join("runtime.jsonc"))
+        .is_err());
+    assert!(guard
+        .check_write(&fx.root.join(".themis/config.jsonc"))
+        .is_err());
+    assert!(guard.check_write(&fx.outside.join("x.txt")).is_ok());
+    assert!(plan.status().secret_paths.is_empty() && plan.status().open);
+}
+
+/// The open plan on the real backend: writes outside the project and reads of secret
+/// locations work, the app data stays read-only (and `.themis/` too, except under
+/// Landlock, which cannot carve it out; the file tools cover it there).
+#[cfg(unix)]
+fn check_real_open(backend: Backend) {
+    let state = availability(backend);
+    if !state.available {
+        eprintln!(
+            "skipping {} open-plan test: {}",
+            backend.label(),
+            state.detail
+        );
+        return;
+    }
+    let fx = fixture();
+    std::fs::create_dir_all(fx.root.join(".themis")).unwrap();
+    let plan = open_plan(
+        Enforcement::Active(backend),
+        &config(r#"{"network":"block"}"#),
+        &fx,
+    );
+    let outside = fx.outside.join("x.txt");
+    let (ok, output) = run(
+        &plan,
+        &fx.root,
+        &format!("echo x > '{}'", outside.display()),
+    );
+    assert!(
+        ok && outside.exists(),
+        "writes outside the project work: {output}"
+    );
+    let secret = fx.home.join(".ssh/id_test");
+    let (ok, output) = run(&plan, &fx.root, &format!("cat '{}'", secret.display()));
+    assert!(
+        ok && output.contains("secret"),
+        "secret locations are readable: {output}"
+    );
+    let config_file = fx.app_data.join("runtime.jsonc");
+    let (ok, output) = run(
+        &plan,
+        &fx.root,
+        &format!("echo '{{\"x\":1}}' > '{}'", config_file.display()),
+    );
+    assert!(!ok, "{output}");
+    assert_eq!(std::fs::read_to_string(&config_file).unwrap(), "{}");
+    assert!(plan.denial(ok, &output, &fx.root).is_some(), "{output}");
+    if backend != Backend::Landlock {
+        let local = fx.root.join(".themis/config.jsonc");
+        let (ok, output) = run(&plan, &fx.root, &format!("echo x > '{}'", local.display()));
+        assert!(!ok && !local.exists(), "{output}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn seatbelt_open_plan_on_a_real_command() {
+    check_real_open(Backend::Seatbelt);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn bubblewrap_open_plan_on_a_real_command() {
+    check_real_open(Backend::Bubblewrap);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn landlock_open_plan_on_a_real_command() {
+    check_real_open(Backend::Landlock);
 }

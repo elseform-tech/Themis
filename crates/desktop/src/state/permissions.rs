@@ -23,8 +23,14 @@ impl AppState {
     }
 
     /// The sandbox commands of a run (or a watch check) in `root` use under
-    /// `config`, protecting this app's data folder.
-    pub(crate) fn sandbox_plan(&self, root: &Path, config: &SandboxConfig) -> Arc<SandboxPlan> {
+    /// `config`, protecting this app's data folder. `open` (YOLO) leaves only the
+    /// protected folders read-only.
+    pub(crate) fn sandbox_plan(
+        &self,
+        root: &Path,
+        config: &SandboxConfig,
+        open: bool,
+    ) -> Arc<SandboxPlan> {
         let home = self
             .inner
             .sandbox_home
@@ -37,6 +43,7 @@ impl AppState {
             project_root: root,
             app_data: Some(&app_data),
             home: home.as_deref(),
+            open,
         };
         let unavailable = self
             .inner
@@ -148,8 +155,15 @@ impl AppState {
                 let placeholder = PathBuf::from("<project>");
                 let plan_root = project.as_deref().unwrap_or(&placeholder);
                 let mut status = serde_json::to_value(
-                    self.sandbox_plan(plan_root, &resolved.config.sandbox)
-                        .status(),
+                    // A YOLO chat's commands use the open plan.
+                    self.sandbox_plan(
+                        plan_root,
+                        &resolved.config.sandbox,
+                        thread
+                            .as_ref()
+                            .is_some_and(|(mode, _)| *mode == ApprovalMode::Yolo),
+                    )
+                    .status(),
                 )
                 .map_err(|e| e.to_string())?;
                 status["sources"] = json!({
