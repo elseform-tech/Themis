@@ -23,6 +23,11 @@ describe("QuestionBox", () => {
     await waitFor(() => expect(answer).toHaveBeenCalledWith("Tabs"));
   });
 
+  it("says nothing about working on an assumption for a blocking question", () => {
+    render(<QuestionBox question={question({ blocking: true, assumption: "Nothing until you answer" })} latest onAnswer={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Question from the agent" })).not.toHaveTextContent("Working on");
+  });
+
   it("sends a written answer, and not an empty one", async () => {
     const answer = vi.fn().mockResolvedValue(undefined);
     render(<QuestionBox question={question({ choices: [] })} latest onAnswer={answer} />);

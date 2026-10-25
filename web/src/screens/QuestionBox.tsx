@@ -54,7 +54,8 @@ export function QuestionBox({ question, latest, onAnswer }: QuestionBoxProps) {
       <QuestionMark />
       <div className="themis-question-body">
         <p className="themis-question-text">{question.question}</p>
-        {question.assumption && <p className="themis-question-assumption">Working on: {question.assumption}</p>}
+        {/* A blocking question has nothing to work on until the answer comes. */}
+        {question.assumption && !question.blocking && <p className="themis-question-assumption">Working on: {question.assumption}</p>}
         {!!question.choices?.length && (
           <div className="themis-question-choices">
             {question.choices.map(choice => (
