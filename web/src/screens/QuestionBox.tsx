@@ -1,11 +1,28 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Question } from "../lib/types";
 import "./QuestionBox.css";
 
+/** How long an unanswered question stays open in full before it shrinks to one line. */
+export const QUESTION_OPEN_MS = 5 * 60 * 1000;
+
+/** Whether an unanswered question shows as one line by now: never while it blocks the work. */
+export function questionCollapsed(question: Question, now: number): boolean {
+  return !question.blocking && now - question.asked_at >= QUESTION_OPEN_MS;
+}
+
+/** The current time, updated when `at` (a time in the future, if any) arrives. */
+function useNowAt(at: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (at === undefined || at <= now) return;
+    const timer = window.setTimeout(() => setNow(Date.now()), at - now + 50);
+    return () => window.clearTimeout(timer);
+  }, [at, now]);
+  return now;
+}
+
 interface QuestionBoxProps {
   question: Question;
-  /** Nothing came after it yet: the agent has not moved on, so it shows in full. */
-  latest: boolean;
   onAnswer: (answer: string) => Promise<void>;
 }
 
@@ -17,10 +34,12 @@ function QuestionMark() {
   );
 }
 
-/** A question the agent asked without stopping its work. Open while the agent has not
- *  moved on; then one line to expand and answer later. Answered: one quiet line. */
-export function QuestionBox({ question, latest, onAnswer }: QuestionBoxProps) {
+/** A question the agent asked without stopping its work. Open in full until it is
+ *  answered or [`QUESTION_OPEN_MS`] passes; then one line that opens again to answer
+ *  later. Answered: one quiet line with the answer. */
+export function QuestionBox({ question, onAnswer }: QuestionBoxProps) {
   const [opened, setOpened] = useState(false);
+  const now = useNowAt(question.answer === undefined && !question.blocking ? question.asked_at + QUESTION_OPEN_MS : undefined);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const anchor = `themis-question-${question.id}`;
@@ -40,7 +59,7 @@ export function QuestionBox({ question, latest, onAnswer }: QuestionBoxProps) {
     try { await onAnswer(answer.trim()); setDraft(""); } catch { /* the caller says why */ } finally { setSending(false); }
   }
 
-  if (!latest && !opened) {
+  if (questionCollapsed(question, now) && !opened) {
     return (
       <button id={anchor} type="button" className="themis-question is-collapsed" onClick={() => setOpened(true)}>
         <QuestionMark />
@@ -76,8 +95,12 @@ export function QuestionBox({ question, latest, onAnswer }: QuestionBoxProps) {
   );
 }
 
-/** How many questions wait in this chat without being on screen in full; jumps to the oldest. */
-export function OpenQuestions({ ids }: { ids: string[] }) {
+/** How many unanswered questions in this chat have shrunk to one line; jumps to the oldest. */
+export function OpenQuestions({ questions }: { questions: Question[] }) {
+  const open = questions.filter(question => question.answer === undefined);
+  const next = open.filter(question => !question.blocking).map(question => question.asked_at + QUESTION_OPEN_MS).filter(at => at > Date.now());
+  const now = useNowAt(next.length ? Math.min(...next) : undefined);
+  const ids = open.filter(question => questionCollapsed(question, now)).map(question => question.id);
   if (ids.length === 0) return null;
   return (
     <button type="button" className="themis-open-questions" onClick={() => document.getElementById(`themis-question-${ids[0]}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>

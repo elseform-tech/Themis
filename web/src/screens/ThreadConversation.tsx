@@ -101,7 +101,6 @@ export function ThreadConversation({
             skills={skills} plugins={plugins}
             activeRunId={activeRunId}
             elapsed={elapsed}
-            latestId={stream === "" ? messages[messages.length - 1]?.id : undefined}
           />
         ))
       )}
@@ -141,7 +140,6 @@ function ConversationRow({
   elapsed,
   skills,
   plugins,
-  latestId,
 }: {
   row: ConversationRow;
   threadId: string;
@@ -149,11 +147,9 @@ function ConversationRow({
   elapsed: number;
   skills: PromptSkill[];
   plugins: PromptPlugin[];
-  /** The newest row in the chat, while nothing is streaming. */
-  latestId: string | undefined;
 }) {
   if (row.kind === "message" && row.message.question) {
-    return <QuestionRow threadId={threadId} question={row.message.question} latest={row.message.id === latestId || row.message.question.blocking} />;
+    return <QuestionRow threadId={threadId} question={row.message.question} />;
   }
   if (row.kind === "message") return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
   if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
@@ -271,9 +267,9 @@ export function GoalNote({ note }: { note: NonNullable<ChatMessage["goalNote"]> 
   );
 }
 
-function QuestionRow({ threadId, question, latest }: { threadId: string; question: Question; latest: boolean }) {
+function QuestionRow({ threadId, question }: { threadId: string; question: Question }) {
   const { dispatch } = useApp();
-  return <QuestionBox question={question} latest={latest} onAnswer={async answer => {
+  return <QuestionBox question={question} onAnswer={async answer => {
     try { await answerQuestion(threadId, question.id, answer); } catch (error) { toast(dispatch, `Could not send the answer: ${describeError(error)}`, "danger"); throw error; }
   }} />;
 }

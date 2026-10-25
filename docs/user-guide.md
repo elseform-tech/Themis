@@ -90,18 +90,19 @@ levels are listed.
 ### Questions from the agent
 
 When the agent needs your input, it asks without stopping its work. The
-question shows in the chat with any choices it offers and what it is
-**Working on** until you answer, and the agent carries on with that
+question shows in the chat with any choices it offers (one per line) and what
+it is **Working on** until you answer, and the agent carries on with that
 assumption.
 
-- Once the agent moves on, the question shrinks to one **Open question** line;
-  click it to answer whenever you like. Above the composer, **N open
-  questions** jumps to the oldest one.
+- The question stays open until you answer it. After five minutes without an
+  answer it shrinks to one **Open question** line; click it to answer whenever
+  you like. Above the composer, **N open questions** counts those and jumps to
+  the oldest one.
 - Your answer reaches the agent right away when it is working (read before its
   next step), or goes out as the next message when it is not. If the answer
   differs from what it assumed, it fixes that work first.
 - Only a question the agent marks as blocking (nothing more can be done
-  without it) ends its turn; it stays open in full until you answer, and in
+  without it) ends its turn; it never shrinks, and in
   goal mode the goal waits for that answer only.
 - A goal can be reached with questions still open: the agent's message says
   which ones and what it assumed. Questions stay with the chat across restarts;

@@ -1,21 +1,21 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ANSWER_MARKER, type Question } from "../lib/types";
 import { initialState, reducer } from "../state/reducer";
-import { OpenQuestions, QuestionBox } from "./QuestionBox";
+import { OpenQuestions, QUESTION_OPEN_MS, QuestionBox } from "./QuestionBox";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 const question = (overrides: Partial<Question> = {}): Question => ({
   id: "q1", run_id: "r1", question: "Tabs or spaces?", choices: ["Tabs", "Spaces"], assumption: "Spaces",
-  blocking: false, asked_at: 0, ...overrides,
+  blocking: false, asked_at: Date.now(), ...overrides,
 });
 
 describe("QuestionBox", () => {
   it("shows the question, the assumption and the choices while the agent has not moved on", async () => {
     const answer = vi.fn().mockResolvedValue(undefined);
-    render(<QuestionBox question={question()} latest onAnswer={answer} />);
+    render(<QuestionBox question={question()} onAnswer={answer} />);
     const box = screen.getByRole("region", { name: "Question from the agent" });
     expect(box).toHaveTextContent("Tabs or spaces?");
     expect(box).toHaveTextContent("Working on: Spaces");
@@ -24,13 +24,13 @@ describe("QuestionBox", () => {
   });
 
   it("says nothing about working on an assumption for a blocking question", () => {
-    render(<QuestionBox question={question({ blocking: true, assumption: "Nothing until you answer" })} latest onAnswer={vi.fn()} />);
+    render(<QuestionBox question={question({ blocking: true, assumption: "Nothing until you answer" })} onAnswer={vi.fn()} />);
     expect(screen.getByRole("region", { name: "Question from the agent" })).not.toHaveTextContent("Working on");
   });
 
   it("sends a written answer, and not an empty one", async () => {
     const answer = vi.fn().mockResolvedValue(undefined);
-    render(<QuestionBox question={question({ choices: [] })} latest onAnswer={answer} />);
+    render(<QuestionBox question={question({ choices: [] })} onAnswer={answer} />);
     const send = screen.getByRole("button", { name: "Send answer" });
     expect(send).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Your answer"), { target: { value: "  Two spaces  " } });
@@ -38,24 +38,38 @@ describe("QuestionBox", () => {
     await waitFor(() => expect(answer).toHaveBeenCalledWith("Two spaces"));
   });
 
-  it("collapses to one line once the agent moved on, and opens again to answer later", () => {
-    render(<QuestionBox question={question()} latest={false} onAnswer={vi.fn()} />);
-    const line = screen.getByRole("button", { name: /Open question/ });
+  it("stays open until answered, and shrinks to one line only after a while without an answer", () => {
+    vi.useFakeTimers();
+    render(<QuestionBox question={question()} onAnswer={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Question from the agent" })).toBeInTheDocument();
+    act(() => { vi.advanceTimersByTime(QUESTION_OPEN_MS + 100); });
     expect(screen.queryByRole("region", { name: "Question from the agent" })).not.toBeInTheDocument();
-    fireEvent.click(line);
+    fireEvent.click(screen.getByRole("button", { name: /Open question/ }));
     expect(screen.getByRole("region", { name: "Question from the agent" })).toBeInTheDocument();
   });
 
+  it("keeps a blocking question open however long it waits", () => {
+    render(<QuestionBox question={question({ blocking: true, asked_at: Date.now() - 10 * QUESTION_OPEN_MS })} onAnswer={vi.fn()} />);
+    expect(screen.getByRole("region", { name: "Question from the agent" })).toBeInTheDocument();
+  });
+
+  it("lists choices one per line, so a long choice reads in full", () => {
+    const long = "Use the existing PostgreSQL instance and migrate the SQLite data during the next release window";
+    render(<QuestionBox question={question({ choices: [long, "Keep SQLite"] })} onAnswer={vi.fn()} />);
+    expect(screen.getByRole("button", { name: long })).toHaveClass("themis-question-choice");
+  });
+
   it("shows an answered question as one quiet line with its answer", () => {
-    render(<QuestionBox question={question({ answer: "Tabs" })} latest onAnswer={vi.fn()} />);
+    render(<QuestionBox question={question({ answer: "Tabs" })} onAnswer={vi.fn()} />);
     expect(screen.getByRole("note")).toHaveTextContent("Tabs or spaces? — Tabs");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
-  it("counts open questions and says nothing when there are none", () => {
-    const { container, rerender } = render(<OpenQuestions ids={[]} />);
+  it("counts the open questions that have shrunk, and nothing else", () => {
+    const old = Date.now() - 2 * QUESTION_OPEN_MS;
+    const { container, rerender } = render(<OpenQuestions questions={[question()]} />);
     expect(container).toBeEmptyDOMElement();
-    rerender(<OpenQuestions ids={["a", "b"]} />);
+    rerender(<OpenQuestions questions={[question({ id: "a", asked_at: old }), question({ id: "b", asked_at: old }), question({ id: "c", asked_at: old, answer: "Tabs" }), question({ id: "d", asked_at: old, blocking: true })]} />);
     expect(screen.getByRole("button", { name: "2 open questions" })).toBeInTheDocument();
   });
 });

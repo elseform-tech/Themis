@@ -28,9 +28,10 @@ goal to proceed further".
 2. The question shows as a **box inline in the conversation**: the question,
    optional choices, a free-text answer, and the assumption the agent is
    working on.
-3. **Unanswered boxes collapse** once the agent moves on (its next step, or the
-   end of the turn) into a one-line "Open question" row. The person can expand
-   and answer it at any time later, in the same chat.
+3. **Unanswered boxes stay open until answered**, and collapse into a one-line
+   "Open question" row only after five minutes without an answer (owner's
+   correction, 2026-10-25: shown first, hidden only after an answer or when
+   time runs out). The person can expand and answer it at any time later.
 4. An answer **reaches the agent at once if a run is going** (like a steer),
    otherwise it starts the next turn (normal chat) or rides on the next goal
    turn (goal mode). The agent then revisits work done on a wrong assumption.
@@ -87,12 +88,14 @@ A new agent tool, `ask_user`, available in every chat (approval-free like
 ### The box
 
 - Inline at the point it was asked, styled as a question, not as an error or a
-  goal note. Shows the question, choices as buttons, a text field, and "Working
-  on: <assumption>".
-- Collapses to a single row "Open question · <question>" when the run takes its
-  next step or ends. Expanding it shows the full box again.
+  goal note. Shows the question, choices as full-width buttons one per line (a
+  choice can be a long sentence), a text field, and "Working on: <assumption>"
+  (not for a blocking question).
+- Collapses to a single row "Open question · <question>" after five minutes
+  without an answer; a blocking question never collapses. Expanding it shows
+  the full box again.
 - Above the composer, in goal mode and normal chats alike, a small "N open
-  questions" button counts the questions not already shown in full and
+  questions" button counts the collapsed unanswered questions and
   scrolls to the oldest. (Built as one place instead of the goal bar plus the
   chat header: one fact, one place.)
 - Answered: the box shows the answer and stays collapsed, read-only.
