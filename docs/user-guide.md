@@ -102,8 +102,8 @@ another option or write your own.
 - Your answer reaches the agent right away when it is working (read before its
   next step), or goes out as the next message when it is not. If the answer
   differs from what it assumed, it fixes that work first.
-- Only a question the agent marks as blocking (nothing more can be done
-  without it) ends its turn; it never shrinks, and in
+- Only a question the agent cannot recommend any answer to, and that blocks all
+  further work (the name of your own key, say), ends its turn; it never shrinks, and in
   goal mode the goal waits for that answer only.
 - A goal can be reached with questions still open: the agent's message says
   which ones and what it recommended. Questions stay with the chat across restarts;

@@ -49,7 +49,12 @@ fn parse(args: &Value) -> NewQuestion {
             .unwrap_or_default(),
         // `assumption` was the name before `recommended`; either is read.
         assumption: text("recommended").or_else(|| text("assumption")),
-        blocking: args["blocking"].as_bool().unwrap_or(false),
+        // A question the agent can recommend an answer to never stops the work: it works
+        // on that answer meanwhile. Only one it cannot answer at all may block.
+        blocking: args["blocking"].as_bool().unwrap_or(false)
+            && text("recommended")
+                .or_else(|| text("assumption"))
+                .is_none_or(|answer| answer.trim().is_empty()),
         topic: text("topic"),
     }
 }
@@ -133,7 +138,7 @@ impl ToolT for QuestionTool {
             "question":{"type":"string","description":"One question to the user."},
             "choices":{"type":"array","items":{"type":"string"},"minItems":2,"maxItems":4,"description":"2 to 4 answers to pick from, when the answer is one of a few options; include your recommended one."},
             "recommended":{"type":"string","description":"Your recommended answer: one of the choices, or your suggestion when there are none. You work on it until the user answers."},
-            "blocking":{"type":"boolean","description":"True only when nothing more can be done without the answer: the run ends and waits."},
+            "blocking":{"type":"boolean","description":"True only when you cannot recommend any answer and nothing more can be done without it: the run ends and waits. Ignored when `recommended` is given."},
             "topic":{"type":"string","description":"A short key; asking again with an open topic updates that question."}
         },"required":["question"],"additionalProperties":false})
     }
@@ -157,6 +162,11 @@ mod tests {
         assert!(!asked.blocking);
         assert_eq!(asked.topic.as_deref(), Some("indent"));
         assert!(parse(&json!({"question": "Key?", "blocking": true})).blocking);
+        // With a recommendation it does not block, whatever the model asked for.
+        let recommended = parse(
+            &json!({"question": "Which analytics?", "choices": ["Product", "Web"], "recommended": "Product", "blocking": true}),
+        );
+        assert!(!recommended.blocking);
         // The older name still reads.
         assert_eq!(
             parse(&json!({"question": "Q", "assumption": "A"}))
