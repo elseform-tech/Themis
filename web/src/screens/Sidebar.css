@@ -16,6 +16,20 @@
 .themis-sidebar-rail .themis-tooltip::after { top: 50%; bottom: auto; left: calc(100% + 8px); transform: translateY(-50%); }
 .themis-rail-footer { display: flex; flex-direction: column; gap: 4px; margin-top: auto; }
 
+/* Settings: its section list replaces rail and dock as one column; folded, it is icon-only like the rail. */
+.themis-settings-nav { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; height: 100%; padding: 14px 10px; overflow-x: hidden; overflow-y: auto; }
+.themis-settings-nav .themis-tooltip { display: block; }
+.themis-settings-nav .themis-tooltip::after { top: 50%; bottom: auto; left: calc(100% + 8px); transform: translateY(-50%); }
+.themis-sidebar-slot:not(.is-collapsed) .themis-settings-nav .themis-tooltip::after { display: none; }
+.themis-settings-nav .themis-sidebar-row > svg { flex: 0 0 18px; width: 18px; height: 18px; color: var(--themis-nav-icon); }
+.themis-settings-nav .themis-sidebar-row--active { background: var(--themis-raised); }
+.themis-settings-nav .themis-sidebar-row--active > svg { color: var(--themis-accent); }
+.themis-settings-nav .themis-settings-back { margin-bottom: 10px; }
+.themis-sidebar-slot.is-collapsed .themis-settings-nav .themis-sidebar-row { justify-content: center; width: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
+.themis-sidebar-slot.is-collapsed .themis-settings-nav .themis-sidebar-name { display: none; }
+/* Folded, the list is short like the rail and lets its tooltips show beside it. */
+.themis-sidebar-slot.is-collapsed .themis-settings-nav { overflow: visible; }
+
 /* Dock. */
 .themis-brand { display: flex; align-items: center; min-height: 60px; padding: 8px 20px; color: var(--themis-text); }
 .themis-wordmark { display: inline-flex; align-items: center; font-size: 1.35rem; font-weight: 600; letter-spacing: -.4px; white-space: nowrap; background: linear-gradient(110deg, var(--themis-text) 25%, var(--themis-gradient-2) 50%, var(--themis-text) 75%); background-size: 240% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; animation: themis-wordmark-glint 3s ease 1; }

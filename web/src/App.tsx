@@ -97,7 +97,7 @@ function Shell() {
     <div className={`themis-shell ${isTauri() && /Mac/.test(navigator.platform) ? "themis-shell--mac" : ""}`}>
         <header className="themis-nav" data-tauri-drag-region>
           <div className="themis-nav-context">
-            {state.mainView !== "settings" && <Button id="sidebar-toggle" variant="ghost" size="small" aria-label={collapsed ? "Show sidebar" : "Collapse sidebar"} aria-controls="themis-sidebar" aria-expanded={!collapsed} onClick={toggleSidebar}><SidebarIcon name="panel" /></Button>}
+            <Button id="sidebar-toggle" variant="ghost" size="small" aria-label={collapsed ? "Show sidebar" : "Collapse sidebar"} aria-controls="themis-sidebar" aria-expanded={!collapsed} onClick={toggleSidebar}><SidebarIcon name="panel" /></Button>
             <span>{state.mainView === "thread" ? (state.projects.find(p => p.root === state.activeProjectRoot)?.name ?? "Workspace") : ({ skills: "Integrations", automations: "Automations", settings: "Settings", queue: "Review queue" }[state.mainView])}</span>
           </div>
           {isTauri() && <ResourceMeter />}

@@ -199,6 +199,7 @@ export type AppAction =
   | { type: "toast/push"; toast: ToastItem }
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView; settings?: { section: string; key?: string } }
+  | { type: "ui/settings-section"; section: string }
   | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: "tasks" | "browser" }
   | { type: "browser/opens-workspace"; value: boolean }
   | { type: "ui/tab-request-consumed" }
