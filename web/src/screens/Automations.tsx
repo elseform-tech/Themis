@@ -86,19 +86,22 @@ export function Automations() {
   const effortLevels = selectedModel?.effort_levels ?? [];
   const { skills: promptSkills, error: promptSkillsError } = usePromptSkills(dialog.mode === "closed" ? state.activeProjectRoot : dialog.form.projectRoot);
 
+  // Models load without an OpenCode Go key too: providers from runtime.jsonc have their own.
+  const goKey = state.secretStatus.go;
   useEffect(() => {
-    if (targetMode !== "new" || !state.secretStatus.go) return;
+    if (targetMode !== "new") return;
     let active = true;
     setModelsLoading(true); setModelsError(""); setModels([]);
     void listGoModels().then(models => {
       if (active) setModels(models);
     }).catch((error: unknown) => {
-      if (active) setModelsError(describeError(error));
+      // Without any key the model menu already says how to get models; no second message.
+      if (active && goKey) setModelsError(describeError(error));
     }).finally(() => {
       if (active) setModelsLoading(false);
     });
     return () => { active = false; };
-  }, [targetMode, state.secretStatus.go, modelRefresh]);
+  }, [targetMode, goKey, modelRefresh]);
 
   function openCreate() {
     setSaveError(null);
@@ -373,8 +376,8 @@ export function Automations() {
               </div>}
             </div>
             <label className="themis-automations-field">Model
-              <span className="themis-automations-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={selectedModel ? dialog.form.model : ""} disabled={saving || modelsLoading || !goUsable(state) || models.length === 0} onChange={event => patchForm({ model: event.target.value, effort: "" })}>
-                <option value="" disabled>{modelsLoading ? "Loading models…" : !state.secretStatus.go ? "Connect OpenCode Go to load models" : !goUsable(state) ? "OpenCode Go rejected the key" : models.length === 0 ? "No models available" : selectedModel ? "Choose a model" : `Current model unavailable: ${dialog.form.model || "default"}`}</option>
+              <span className="themis-automations-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={selectedModel ? dialog.form.model : ""} disabled={saving || modelsLoading || models.length === 0} onChange={event => patchForm({ model: event.target.value, effort: "" })}>
+                <option value="" disabled>{modelsLoading ? "Loading models…" : models.length === 0 ? (!state.secretStatus.go ? "Connect OpenCode Go or add a provider to load models" : !goUsable(state) ? "OpenCode Go rejected the key" : "No models available") : selectedModel ? "Choose a model" : `Current model unavailable: ${dialog.form.model || "default"}`}</option>
                 {models.map(model => <option key={model.id} value={model.id} disabled={!!model.unavailable_reason} title={model.unavailable_reason ?? undefined}>{modelLabel(model)}</option>)}
               </select></span>
             </label>
@@ -384,7 +387,7 @@ export function Automations() {
               <span className="themis-automations-hint">Default → {effortLevels[effortLevels.length - 1] ?? "No catalog levels"}</span>
             </div>
             {modelsError && <p className="themis-automations-error" role="alert">{modelsError}</p>}
-            <Button variant="ghost" size="small" disabled={saving || modelsLoading || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button>
+            <Button variant="ghost" size="small" disabled={saving || modelsLoading} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button>
 
             </>}
 
