@@ -217,7 +217,7 @@ describe("Workspace journey", () => {
     vi.mocked(bridge.sendMessage).mockImplementationOnce(() => new Promise(resolve => { sent = resolve; }));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Send"})));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Settings"})));
-    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Home"})));
+    await act(async () => fireEvent.click(screen.getByRole("button", {name: "Back to app"})));
     await act(async () => fireEvent.click(screen.getByRole("button", {name: /^Attachment test/})));
     vi.mocked(bridge.attachFiles).mockResolvedValueOnce([{name:"next.txt",path:"/tmp/fixed-themis/.themis/attachments/next.txt",size:2}]);
     await act(async () => fireEvent.click(screen.getByRole("button", {name: "Attach files"})));
@@ -301,7 +301,7 @@ describe("Workspace journey", () => {
     expect(screen.queryByLabelText("New projects")).toBeNull();
     expect(screen.queryByText("/tmp/fixed-themis")).toBeNull();
     expect(screen.getByText(settings.projects_directory)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
     fireEvent.click(screen.getByRole("button", { name: "New project" }));
     expect(screen.queryByText("Change location")).toBeNull();
     expect(screen.queryByLabelText("Parent folder")).toBeNull();
@@ -639,11 +639,41 @@ describe("Workspace journey", () => {
     fireEvent.click(within(rail).getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
     expect(screen.queryByLabelText("Reveal the collapsed sidebar on hover")).not.toBeInTheDocument();
-    expect(sidebar).toHaveAttribute("inert");
-    expect(screen.queryByRole("button", { name: "Show sidebar" })).toBeNull();
+    // Settings keeps the folded state, and the header toggle stays where it was.
+    expect(document.querySelector(".themis-sidebar-slot")).toHaveClass("is-collapsed");
+    expect(screen.getByRole("button", { name: "Show sidebar" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
     fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
-    expect(sidebar).not.toHaveAttribute("inert");
+    expect(document.getElementById("themis-sidebar")).not.toHaveAttribute("inert");
+  });
+  it("gives Settings the whole sidebar: no rail, one way back, and the same header toggle", async () => {
+    await mount();
+    const slot = document.querySelector<HTMLElement>(".themis-sidebar-slot")!;
+    const width = slot.style.getPropertyValue("--themis-sidebar-width");
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    // One column at the sidebar's width: the rail and the chats panel are gone.
+    expect(screen.queryByRole("navigation", { name: "Utilities" })).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Workspace navigation" })).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    expect(slot).toContainElement(nav);
+    expect(nav.id).toBe("themis-sidebar");
+    expect(slot).not.toHaveClass("is-collapsed");
+    expect(slot.style.getPropertyValue("--themis-sidebar-width")).toBe(width);
+    expect(screen.getAllByRole("button", { name: /^(Back to app|Home)$/ }).map(button => button.getAttribute("aria-label"))).toEqual(["Back to app"]);
+    expect(within(nav).getByRole("button", { name: "General" })).toHaveFocus();
+    // The header toggle folds the Settings list to icons, which keep their names.
+    const toggle = screen.getByRole("button", { name: "Collapse sidebar" });
+    expect(toggle).toHaveAttribute("aria-controls", "themis-sidebar");
+    fireEvent.click(toggle);
+    expect(slot).toHaveClass("is-collapsed");
+    fireEvent.click(within(nav).getByRole("button", { name: "Advanced" }));
+    expect(document.querySelector(".themis-settings-pane-title")).toHaveTextContent("Advanced");
+    expect(within(nav).getByRole("button", { name: "Advanced" })).toHaveAttribute("aria-current", "page");
+    fireEvent.click(screen.getByRole("button", { name: "Show sidebar" }));
+    expect(slot).not.toHaveClass("is-collapsed");
+    fireEvent.click(within(nav).getByRole("button", { name: "Back to app" }));
+    expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Home" })).toHaveFocus();
   });
   it("previews appearance without saving and reverts failed writes", async () => {
     await mount(); fireEvent.click(screen.getByRole("button", { name: "Settings" }));
@@ -666,7 +696,7 @@ describe("Workspace journey", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Apply" })));
     expect(bridge.updateSettings).toHaveBeenLastCalledWith({ theme: "dark", theme_palette: "ink", font_family: "serif", text_size: 13 });
     fireEvent.click(screen.getByRole("button", { name: "Forest" }));
-    fireEvent.click(screen.getByRole("button", { name: "Integrations" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
     expect(document.documentElement.dataset.palette).toBe("ink");
   });
   it("shows budget-driven compaction settings without the legacy checkpoint interval", async () => {

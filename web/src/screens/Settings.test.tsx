@@ -4,14 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../state/reducer";
 import * as bridge from "../lib/tauri";
 import { SettingsScreen } from "./Settings";
+import { SettingsNav } from "./SettingsNav";
 
 const dispatch = vi.fn();
 const settings = { ...initialState.settings, go_secret: "OPENCODE_KEY" };
 let goKeyCheck: AppState["goKeyCheck"] = "works";
+/** The section the store holds; the sidebar's SettingsNav changes it, the pane shows it. */
+let focus: { section: string } = { section: "Models" };
 vi.mock("../state/store", async importOriginal => ({
   ...await importOriginal<typeof import("../state/store")>(),
   useApp: () => ({
-    state: { ...initialState, settings, settingsLoaded: true, secretStatus: { go: true }, goKeyCheck, settingsFocus: { section: "Models" }, activeProjectRoot: "/p" },
+    state: { ...initialState, settings, settingsLoaded: true, secretStatus: { go: true }, goKeyCheck, settingsFocus: focus, activeProjectRoot: "/p" },
     dispatch,
   }),
 }));
@@ -32,7 +35,7 @@ vi.mock("../lib/tauri", () => ({
 }));
 
 beforeEach(() => {
-  dispatch.mockClear(); goKeyCheck = "works";
+  dispatch.mockClear(); goKeyCheck = "works"; focus = { section: "Models" };
   vi.mocked(bridge.checkGoKey).mockClear(); vi.mocked(bridge.setSecret).mockClear(); vi.mocked(bridge.listGoModels).mockClear(); vi.mocked(bridge.listModelProviders).mockClear();
 });
 afterEach(cleanup);
@@ -128,9 +131,34 @@ describe("Settings › Models", () => {
   });
 
   it("names the section Secrets", async () => {
-    await act(async () => { render(<SettingsScreen />); });
+    await act(async () => { render(<SettingsNav />); });
     expect(screen.getByRole("button", { name: "Secrets" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Keys" })).toBeNull();
+  });
+});
+
+describe("Settings section list", () => {
+  it("is not part of the pane: the pane shows only the chosen section's name as its heading", async () => {
+    await act(async () => { render(<SettingsScreen />); });
+    expect(screen.queryByRole("navigation", { name: "Settings sections" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to app" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("Models");
+  });
+
+  it("lists Back to app once, then every section, and marks the chosen one", async () => {
+    await act(async () => { render(<SettingsNav />); });
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    expect(within(nav).getAllByRole("button").map(button => button.getAttribute("aria-label"))).toEqual(["Back to app", "General", "Appearance", "Models", "Usage", "Secrets", "Permissions", "Browser", "Web", "Advanced"]);
+    expect(within(nav).getByRole("button", { name: "Models" })).toHaveAttribute("aria-current", "page");
+    expect(within(nav).getByRole("button", { name: "General" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("switches the section through the store and goes back to the chat", async () => {
+    await act(async () => { render(<SettingsNav />); });
+    fireEvent.click(screen.getByRole("button", { name: "Browser" }));
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui/settings-section", section: "Browser" });
+    fireEvent.click(screen.getByRole("button", { name: "Back to app" }));
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui/view", view: "thread" });
   });
 });
 
@@ -144,12 +172,12 @@ describe("Settings › General › Notifications", () => {
   afterEach(() => { platform.mockRestore(); settings.goal_notifications = true; });
 
   async function openGeneral() {
-    await act(async () => { render(<SettingsScreen />); });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "General" })); });
+    focus = { section: "General" };
+    return await act(async () => render(<SettingsScreen />));
   }
 
   it("holds the sound, haptics and goal switches; Appearance no longer has them", async () => {
-    await openGeneral();
+    const { rerender } = await openGeneral();
     const group = screen.getByRole("region", { name: "Notifications" });
     expect(within(group).getAllByRole("checkbox").map(box => box.closest("label")?.textContent)).toEqual(["Sound when a reply finishes", "Haptics", "Notify when a goal finishes or pauses"]);
     expect(within(group).getByLabelText("Notify when a goal finishes or pauses")).toBeChecked();
@@ -157,7 +185,8 @@ describe("Settings › General › Notifications", () => {
     expect(bridge.notificationPermission).toHaveBeenCalledWith(false);
     expect(bridge.notificationPermission).not.toHaveBeenCalledWith(true);
     expect(within(group).queryByText(/System Settings/)).toBeNull();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Appearance" })); });
+    focus = { section: "Appearance" };
+    await act(async () => { rerender(<SettingsScreen />); });
     expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Feedback" })).toBeNull();
     expect(screen.queryByText("Sound when a reply finishes")).toBeNull();
@@ -199,8 +228,8 @@ describe("Settings › Advanced › Context tokens", () => {
   afterEach(() => { settings.context_token_cap = 0; vi.mocked(bridge.updateSettings).mockClear(); });
 
   async function openAdvanced() {
+    focus = { section: "Advanced" };
     await act(async () => { render(<SettingsScreen />); });
-    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
   }
 
   it("is Auto by default, with no number and no recent-messages control", async () => {

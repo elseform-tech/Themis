@@ -274,4 +274,12 @@ describe("phase 4 navigation", () => {
     s = reducer(s, { type: "ui/view", view: "automations" });
     expect(s.mainView).toBe("automations");
   });
+  it("keeps the Settings section in the store so the sidebar list and the pane agree", () => {
+    let s = reducer(initialState, { type: "ui/view", view: "settings", settings: { section: "Secrets", key: "GH_TOKEN" } });
+    s = reducer(s, { type: "ui/settings-section", section: "Web" });
+    expect(s.mainView).toBe("settings");
+    expect(s.settingsFocus).toEqual({ section: "Web" });
+    s = reducer(s, { type: "ui/view", view: "settings" });
+    expect(s.settingsFocus).toBeNull();
+  });
 });

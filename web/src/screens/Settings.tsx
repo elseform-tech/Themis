@@ -8,13 +8,12 @@ import { AppearanceSettings } from "./Appearance";
 import { PermissionsSettings } from "./PermissionsView";
 import { BrowserSettingsSection } from "./BrowserSettings";
 import { WebSettingsSection } from "./WebSettings";
-import { SidebarIcon } from "./Sidebar";
 import { SecretsSettings } from "./SecretsSettings";
 import { ModelsSettings } from "./ModelsSettings";
 import { UsageSettingsSection } from "./UsageSettings";
-import { ResetIcon, SectionIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
+import { ResetIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
+import { useSettingsSection } from "./SettingsNav";
 
-const SECTIONS = ["General", "Appearance", "Models", "Usage", "Secrets", "Permissions", "Browser", "Web", "Advanced"];
 /** Backend field names in validation messages, as the labels the person sees. */
 const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_cap", "Context tokens"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
 type NumberSetting = "max_total_turns" | "context_token_cap" | "concurrency_limit" | "approval_timeout_seconds";
@@ -108,7 +107,8 @@ export function SettingsScreen() {
   const { state, dispatch } = useApp();
   const [form, setForm] = useState<Settings>(state.settings);
   const [saving, setSaving] = useState(false);
-  const [section, setSection] = useState(state.settingsFocus?.section ?? "General");
+  // The section list lives in the sidebar (SettingsNav); the pane shows the chosen section.
+  const section = useSettingsSection();
   const [error, setError] = useState("");
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
@@ -116,6 +116,7 @@ export function SettingsScreen() {
   useEffect(() => {
     setForm(state.settings);
   }, [state.settings]);
+  useEffect(() => { setError(""); }, [section]);
 
   async function save(patch: Partial<Settings>) {
     if (saving) return false;
@@ -172,10 +173,6 @@ export function SettingsScreen() {
 
   return (
     <div className="themis-settings">
-      <nav className="themis-settings-nav" aria-label="Settings sections">
-        <button type="button" className="themis-settings-back" onClick={() => dispatch({ type: "ui/view", view: "thread" })}><SidebarIcon name="back" />Back to app</button>
-        {SECTIONS.map(label => <button key={label} type="button" aria-current={section === label ? "page" : undefined} onClick={() => { setSection(label); setError(""); }}><SectionIcon section={label} />{label}</button>)}
-      </nav>
       <div className="themis-settings-pane">
       <fieldset disabled={saving} className="themis-settings-fields">
       <h2 className="themis-settings-pane-title">{section}</h2>

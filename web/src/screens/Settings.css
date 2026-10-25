@@ -145,16 +145,9 @@
   font-family: ui-monospace, monospace;
   font-size: 0.8125rem;
 }
-/* Settings: its section list stands in the sidebar's place; each section's rows sit in quiet containers. */
-.themis-settings { display: grid; grid-template-columns: var(--themis-settings-nav, 220px) minmax(0, 1fr); height: 100%; min-height: 0; max-width: none; padding: 0; gap: 0; overflow: hidden; }
-.themis-settings-nav { display: flex; flex-direction: column; gap: 2px; padding: 16px 10px; background: var(--themis-sidebar-bg); border-right: 1px solid var(--themis-border-subtle); overflow-y: auto; }
-.themis-settings-nav button { display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-nav-text, var(--themis-text-2)); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer; }
-.themis-settings-nav button svg { flex: none; color: var(--themis-nav-icon, var(--themis-text-3)); }
-.themis-settings-nav button:hover { background: var(--themis-nav-hover-bg); color: var(--themis-text); }
-.themis-settings-nav button[aria-current] { background: var(--themis-nav-active-bg); color: var(--themis-text); }
-.themis-settings-nav .themis-settings-back { margin-bottom: 10px; color: var(--themis-text-2); }
-.themis-settings-nav .themis-settings-back .themis-sidebar-icon { width: 16px; height: 16px; }
-.themis-settings-pane { overflow-y: auto; padding: 28px 32px 56px; }
+/* Settings: its section list takes over the sidebar (.themis-settings-nav in Sidebar.css); each section's rows sit in quiet containers. */
+.themis-settings { display: flex; flex-direction: column; height: 100%; min-height: 0; max-width: none; padding: 0; gap: 0; overflow: hidden; }
+.themis-settings-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 28px 32px 56px; }
 .themis-settings-fields { border: 0; padding: 0; margin: 0 auto; max-width: 680px; display: grid; gap: 22px; min-width: 0; }
 .themis-settings-pane-title { margin: 0 0 2px; font-size: 1.25rem; font-weight: 500; }
 .themis-settings-group { display: grid; gap: 6px; min-width: 0; }
@@ -176,11 +169,7 @@
 .themis-settings-control .themis-settings-pair select { min-width: 0; }
 .themis-settings-number { width: 110px; padding: 6px 8px; border: 1px solid var(--themis-border); border-radius: 6px; background: transparent; color: var(--themis-text); font: inherit; text-align: right; }
 .themis-settings-key-head { display: inline-flex; align-items: center; gap: 10px; }
-@media (max-width: 760px) {
-  .themis-settings { grid-template-columns: 52px minmax(0, 1fr); }
-  .themis-settings-nav button { justify-content: center; padding: 8px; font-size: 0; }
-  .themis-settings-pane { padding: 20px 16px 40px; }
-}
+@media (max-width: 760px) { .themis-settings-pane { padding: 20px 16px 40px; } }
 .themis-settings-subtitle { margin: 0 0 4px; text-transform: none; letter-spacing: 0; color: var(--themis-text-2); font-size: .75rem; font-weight: 500; }
 .themis-settings-check { display: flex; align-items: center; justify-content: space-between; gap: 24px; font-size: .875rem; cursor: pointer; }
 .themis-settings-control { display: flex; align-items: center; justify-content: space-between; gap: 24px; font-size: .875rem; }
