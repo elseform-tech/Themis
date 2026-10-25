@@ -1,8 +1,8 @@
 # Live verification after a merge
 
 Automated tests use mock providers. After every merge to `main`, a live check confirms that the
-freshly built app works with real models: a sanity check that it starts and answers, and a quality
-check that agent behaviour has not regressed. It is a **benchmark audit**, reported separately from
+freshly built app works with real models: a sanity check that it starts and answers, and a long
+goal that shows whether goal mode, compaction and the tools still hold up. It is a **benchmark audit**, reported separately from
 the automated test inventory.
 
 Never use real app data or the real Keychain: every step below runs with its own HOME and data
@@ -33,25 +33,24 @@ write), then a follow-up that depends on the first answer. Check: both answers a
 approval prompt appears once per write, the activity list shows only public narration and tool
 calls, and the follow-up keeps the context. Quit the app.
 
-## 3. Long tasks through the real app
+## 3. The goal soak
 
 ```sh
-python3 -m evals.hard run --via app --model muse-spark-1.3-contributor --memory both
+python3 -m evals.soak run --model muse-spark-1.3-contributor
 ```
 
-`evals/hard` runs a three.js scene and a spreadsheet engine as real app chats (`themis` app server
-and CLI, YOLO approvals, the app's OS sandbox), with the app's memory and with a 32,000-token
-budget that forces checkpoints. See `evals/hard/README.md`.
-
-## 4. Short tasks
-
-```sh
-python3 -m evals.tools run --model muse-spark-1.3-contributor
-```
+`evals/soak` runs one long goal through the real app server and CLI: 120 prose memos (about 196k
+tokens) read and written one at a time under a 64k budget, so the run passes many checkpoints, a
+follow-up is queued midway, and three recall questions follow the goal. It tests our machinery,
+not the model's skill: goal turns continue, checkpoints succeed and keep the first message's rules,
+tools behave. Runs take 20–90 minutes and about $0.30–0.60, under a $1.50 per-run cap. The result
+is a trend against the last 5 runs of the same model, budget and job: a **breakage** flag on a
+harness measure is our bug; a **regression** flag on a model measure asks a person to look at the
+trace. Commit the run's `history.jsonl` line with the report. See `evals/soak/README.md`.
 
 ## Reporting and fixing
 
-Report each step with its exact command and result (pass rates, failures, lost runs and their
-reasons). Scan the scratch folders for saved reasoning or the key. A bug found here is fixed on
+Report each step with its exact command and result (the soak's flags, its end state, lost runs
+and their reasons). Scan the scratch folders for saved reasoning or the key. A bug found here is fixed on
 its own `codex/<task>` branch with a regression test (and a CLI end-to-end case for backend
 changes), then merged and verified the same way.
