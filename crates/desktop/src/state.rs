@@ -26,6 +26,7 @@ mod permissions;
 mod plugins;
 mod preferences;
 mod projects;
+mod providers;
 mod queue;
 mod reviews;
 mod run;
@@ -38,6 +39,7 @@ pub fn searxng_stop_for_test() {
 }
 mod skills;
 mod threads;
+mod usage;
 mod workspace;
 pub use browser::update_payload as browser_update_payload;
 /// Project path resolution, exposed for the `fuzz/` targets; not a stable API.
@@ -140,7 +142,6 @@ struct RunSnapshot {
     /// Tool sandbox root: the shared project checkout.
     work_root: PathBuf,
     is_git: bool,
-    provider: ProviderKind,
     model: String,
     /// Skills resolved from the thread's `skill_ids` (missing ids are
     /// skipped: every mutation keeps references consistent, so a miss only
@@ -225,6 +226,8 @@ struct AppStateInner {
     mcp: std::sync::Mutex<mcp::Connections>,
     settings: SettingsStore,
     transcript: TranscriptStore,
+    /// Token usage per completed model request (`usage.sqlite3`).
+    usage: Arc<crate::usage::UsageStore>,
     diagnostics: Arc<themis_core::diagnostics::DiagnosticLog>,
     secrets: Arc<dyn SecretStore>,
     go_base_url_override: std::sync::Mutex<Option<String>>,
@@ -233,6 +236,10 @@ struct AppStateInner {
     /// Test seam: every sandbox backend counts as missing.
     sandbox_backends_unavailable: AtomicBool,
     go_catalog: tokio::sync::RwLock<Vec<themis_core::providers::GoModel>>,
+    /// Model lists read from configured providers' `/models`, by provider id, with the
+    /// base URL they came from.
+    provider_catalogs:
+        tokio::sync::RwLock<HashMap<String, (String, Vec<themis_core::providers::GoModel>)>>,
     worktrees_root: PathBuf,
     registry_path: PathBuf,
     /// Per-chat approval grants (`chat_grants/<chat id>.json` in the app data dir).
@@ -462,6 +469,10 @@ impl AppState {
         let diagnostics = Arc::new(themis_core::diagnostics::DiagnosticLog::new(
             themis_core::diagnostics::directory_for(&app_dir),
         ));
+        let usage = Arc::new(crate::usage::UsageStore::open(
+            &app_dir.join("usage.sqlite3"),
+            Arc::clone(&diagnostics),
+        ));
         if let Ok(content) = std::fs::read_to_string(app_dir.join("runtime.jsonc")) {
             if let Ok(config) = themis_core::configuration::resolve(Some(&content), None, None) {
                 diagnostics.set_level(&config.config.logging.level);
@@ -478,12 +489,14 @@ impl AppState {
                 mcp: std::sync::Mutex::new(HashMap::new()),
                 settings: SettingsStore::load_with_projects_root(settings_path, projects_root),
                 transcript,
+                usage,
                 diagnostics,
                 secrets,
                 go_base_url_override: std::sync::Mutex::new(None),
                 sandbox_home: std::sync::Mutex::new(None),
                 sandbox_backends_unavailable: AtomicBool::new(false),
                 go_catalog: tokio::sync::RwLock::new(Vec::new()),
+                provider_catalogs: tokio::sync::RwLock::new(HashMap::new()),
                 worktrees_root,
                 registry_path,
                 chat_grants_dir: app_dir.join(chat_grants::CHAT_GRANTS_DIR),
@@ -736,9 +749,10 @@ impl AppState {
         themis_core::version().to_owned()
     }
 
-    /// Creates a thread on `project_root`.
-    /// Checks the Go connection and returns the current provider model catalog.
-    pub async fn list_go_models(&self) -> Result<Vec<themis_core::providers::GoModel>, String> {
+    /// Checks the Go connection and returns (and keeps) the current OpenCode Go catalog.
+    pub(super) async fn refresh_go_catalog(
+        &self,
+    ) -> Result<Vec<themis_core::providers::GoModel>, String> {
         let key = self.api_key_for(ProviderKind::Go).await?;
         let base_url = self
             .inner
@@ -765,7 +779,7 @@ impl AppState {
     async fn ensure_go_catalog(&self) -> Result<(), String> {
         let unloaded = self.inner.go_catalog.read().await.is_empty();
         if unloaded {
-            self.list_go_models().await?;
+            self.refresh_go_catalog().await?;
         }
         Ok(())
     }
@@ -1869,21 +1883,21 @@ mod tests {
         let updated = state
             .update_settings(SettingsPatch {
                 theme: Some(ThemeMode::Light),
-                max_turns: Some(7),
+                context_token_cap: Some(64_000),
                 ..SettingsPatch::default()
             })
             .await
             .expect("update");
         assert_eq!(updated.theme, ThemeMode::Dark);
-        assert_eq!(updated.max_turns, 7);
+        assert_eq!(updated.context_token_cap, 64_000);
         let bad = state
             .update_settings(SettingsPatch {
-                max_turns: Some(0),
+                context_token_cap: Some(10),
                 ..SettingsPatch::default()
             })
             .await
             .expect_err("validated");
-        assert!(bad.contains("max_turns"), "{bad}");
+        assert!(bad.contains("context_token_cap"), "{bad}");
     }
 
     #[tokio::test]

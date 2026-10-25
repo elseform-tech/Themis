@@ -40,12 +40,9 @@ pub const FONT_FAMILIES: &[&str] = &[
     "menlo",
 ];
 
-/// Inclusive bounds for `max_turns` updates.
-pub const MAX_TURNS_MIN: i64 = 1;
-/// Inclusive bounds for `max_turns` updates.
-pub const MAX_TURNS_MAX: i64 = 200;
-pub const CONTEXT_MESSAGES_MIN: i64 = 1;
-pub const CONTEXT_MESSAGES_MAX: i64 = 100;
+/// The context cap before Auto existed defaulted to this; a saved value equal
+/// to it migrates to Auto (which is the same budget at the current ceiling).
+pub const LEGACY_DEFAULT_CONTEXT_BUDGET: u64 = 200_000;
 pub const APPROVAL_TIMEOUT_MIN: i64 = 30;
 pub const APPROVAL_TIMEOUT_MAX: i64 = 600;
 
@@ -67,6 +64,29 @@ pub struct SettingsStore {
     current: tokio::sync::Mutex<Settings>,
 }
 
+/// Inclusive bounds of a numeric context cap.
+fn context_cap_bounds() -> (i64, i64) {
+    (
+        themis_core::configuration::MIN_CONTEXT_TOKENS as i64,
+        themis_core::context_window::MAX_CONTEXT_TOKENS as i64,
+    )
+}
+
+/// The context cap a settings file from before Auto implies, when it has no
+/// `context_token_cap` yet: its old `context_token_budget` default becomes
+/// Auto (`0`); any other saved number stays as a cap.
+fn legacy_context_cap(value: &serde_json::Value) -> Option<u32> {
+    if value.get("context_token_cap").is_some() {
+        return None;
+    }
+    let budget = value.get("context_token_budget")?.as_u64()?;
+    if budget == LEGACY_DEFAULT_CONTEXT_BUDGET {
+        return Some(0);
+    }
+    let (low, high) = context_cap_bounds();
+    u32::try_from(budget.clamp(low as u64, high as u64)).ok()
+}
+
 impl SettingsStore {
     /// Loads settings from `path`, falling back to defaults.
     #[must_use]
@@ -78,14 +98,24 @@ impl SettingsStore {
     }
 
     pub(crate) fn load_with_projects_root(path: PathBuf, projects_root: PathBuf) -> Self {
-        let mut settings: Settings = std::fs::read_to_string(&path)
+        let saved: Option<serde_json::Value> = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
+            .and_then(|text| serde_json::from_str(&text).ok());
+        // A default model saved with a retired provider means nothing to OpenCode Go.
+        let retired_provider = saved
+            .as_ref()
+            .and_then(|value| value.get("default_provider")?.as_str())
+            .is_some_and(|provider| provider != crate::types::ProviderKind::Go.as_str());
+        let cap = saved.as_ref().and_then(legacy_context_cap);
+        let mut settings: Settings = saved
+            .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default();
+        if let Some(cap) = cap {
+            settings.context_token_cap = cap;
+        }
         settings.theme = ThemeMode::Dark;
         settings.projects_directory = projects_root.to_string_lossy().into_owned();
-        if settings.default_provider == crate::types::ProviderKind::Legacy {
-            settings.default_provider = crate::types::ProviderKind::Go;
+        if retired_provider {
             settings.default_model.clear();
         }
         Self {
@@ -137,34 +167,20 @@ impl SettingsStore {
             if let Some(hover) = patch.sidebar_hover {
                 current.sidebar_hover = hover;
             }
-            if let Some(max_turns) = patch.max_turns {
-                if !(MAX_TURNS_MIN..=MAX_TURNS_MAX).contains(&max_turns) {
-                    return Err(format!(
-                        "max_turns must be between {MAX_TURNS_MIN} and {MAX_TURNS_MAX} \
-                         (got {max_turns})"
-                    ));
-                }
-                current.max_turns = u32::try_from(max_turns).map_err(|_| {
-                    format!("max_turns must be between {MAX_TURNS_MIN} and {MAX_TURNS_MAX}")
-                })?;
-            }
             if let Some(total) = patch.max_total_turns {
                 if !(1..=2000).contains(&total) {
                     return Err("max_total_turns must be between 1 and 2000".to_owned());
                 }
                 current.max_total_turns = total as u32;
             }
-            if let Some(budget) = patch.context_token_budget {
-                if !(2000..=256000).contains(&budget) {
-                    return Err("context_token_budget must be between 2000 and 256000".to_owned());
+            if let Some(cap) = patch.context_token_cap {
+                let (low, high) = context_cap_bounds();
+                if cap != 0 && !(low..=high).contains(&cap) {
+                    return Err(format!(
+                        "context_token_cap must be Auto or between {low} and {high}"
+                    ));
                 }
-                current.context_token_budget = budget as u32;
-            }
-            if let Some(count) = patch.context_messages {
-                if !(CONTEXT_MESSAGES_MIN..=CONTEXT_MESSAGES_MAX).contains(&count) {
-                    return Err(format!("context_messages must be between {CONTEXT_MESSAGES_MIN} and {CONTEXT_MESSAGES_MAX}"));
-                }
-                current.context_messages = count as u32;
+                current.context_token_cap = cap as u32;
             }
             if let Some(seconds) = patch.approval_timeout_seconds {
                 if !(APPROVAL_TIMEOUT_MIN..=APPROVAL_TIMEOUT_MAX).contains(&seconds) {
@@ -298,7 +314,6 @@ mod tests {
                 theme: Some(ThemeMode::Dark),
                 default_provider: Some(ProviderKind::Go),
                 default_model: Some("gpt-x".to_owned()),
-                max_turns: Some(42),
                 recent_roots: Some(vec!["/tmp/a".to_owned()]),
                 concurrency_limit: Some(5),
                 automations_enabled: Some(false),
@@ -313,7 +328,6 @@ mod tests {
         assert_eq!(updated.theme, ThemeMode::Dark);
         assert_eq!(updated.default_provider, ProviderKind::Go);
         assert_eq!(updated.default_model, "gpt-x");
-        assert_eq!(updated.max_turns, 42);
         assert_eq!(updated.recent_roots, vec!["/tmp/a".to_owned()]);
         assert_eq!(updated.concurrency_limit, 5);
         assert!(!updated.automations_enabled);
@@ -333,13 +347,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let store = SettingsStore::load(path.clone());
-        assert!(store
-            .update(SettingsPatch {
-                context_messages: Some(0),
-                ..Default::default()
-            })
-            .await
-            .is_err());
+        for bad in [1, 1999, 1_000_001, -5] {
+            let error = store
+                .update(SettingsPatch {
+                    context_token_cap: Some(bad),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert!(error.contains("context_token_cap"), "{error}");
+        }
         assert!(store
             .update(SettingsPatch {
                 approval_timeout_seconds: Some(0),
@@ -349,17 +366,58 @@ mod tests {
             .is_err());
         let saved = store
             .update(SettingsPatch {
-                context_messages: Some(24),
-                context_token_budget: Some(256000),
+                context_token_cap: Some(1_000_000),
                 approval_timeout_seconds: Some(90),
                 ..Default::default()
             })
             .await
             .unwrap();
-        assert_eq!(saved.context_messages, 24);
-        assert_eq!(saved.context_token_budget, 256000);
+        assert_eq!(saved.context_token_cap, 1_000_000);
         assert_eq!(saved.approval_timeout_seconds, 90);
-        assert_eq!(SettingsStore::load(path).get().await, saved);
+        assert_eq!(SettingsStore::load(path.clone()).get().await, saved);
+        let auto = store
+            .update(SettingsPatch {
+                context_token_cap: Some(0),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(auto.context_token_cap, 0);
+        assert_eq!(SettingsStore::load(path).get().await, auto);
+    }
+
+    #[test]
+    fn saved_context_budget_migrates_to_auto_or_a_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let load = |text: &str| {
+            let path = dir.path().join("settings.json");
+            std::fs::write(&path, text).unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            runtime.block_on(SettingsStore::load(path).get())
+        };
+        let base = r#""theme":"dark","default_provider":"go","default_model":"m""#;
+        // The old default (and an old file with no budget at all) is Auto.
+        assert_eq!(load(&format!("{{{base},\"max_turns\":20,\"context_token_budget\":200000,\"context_messages\":20}}")).context_token_cap, 0);
+        assert_eq!(load(&format!("{{{base}}}")).context_token_cap, 0);
+        // A deliberately different number stays a cap.
+        assert_eq!(
+            load(&format!("{{{base},\"context_token_budget\":64000}}")).context_token_cap,
+            64000
+        );
+        assert_eq!(
+            load(&format!("{{{base},\"context_token_budget\":256000}}")).context_token_cap,
+            256000
+        );
+        // Once the new field exists, the legacy one no longer applies.
+        assert_eq!(
+            load(&format!(
+                "{{{base},\"context_token_budget\":64000,\"context_token_cap\":0}}"
+            ))
+            .context_token_cap,
+            0
+        );
     }
 
     #[tokio::test]
@@ -418,34 +476,6 @@ mod tests {
                 .await
                 .expect("accepted");
             assert_eq!(ok.concurrency_limit, u32::try_from(good).expect("u32"));
-        }
-    }
-
-    #[tokio::test]
-    async fn max_turns_is_validated() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let store = SettingsStore::load(dir.path().join("settings.json"));
-        for bad in [0, -1, 201, 10_000] {
-            let err = store
-                .update(SettingsPatch {
-                    max_turns: Some(bad),
-                    ..SettingsPatch::default()
-                })
-                .await
-                .expect_err("rejected");
-            assert!(err.contains("max_turns"), "{err}");
-        }
-        // A rejected update leaves the previous value untouched.
-        assert_eq!(store.get().await.max_turns, 20);
-        for good in [1, 200] {
-            let ok = store
-                .update(SettingsPatch {
-                    max_turns: Some(good),
-                    ..SettingsPatch::default()
-                })
-                .await
-                .expect("accepted");
-            assert_eq!(ok.max_turns, u32::try_from(good).expect("u32"));
         }
     }
 }

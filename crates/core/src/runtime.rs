@@ -507,7 +507,7 @@ pub async fn run_task_with_evidence(
     skill_catalog: String,
     evidence_directory: Option<std::path::PathBuf>,
 ) -> anyhow::Result<String> {
-    let budget = effective_context_budget(policy.context_token_budget);
+    let budget = effective_context_budget(policy.context_token_budget, llm.model());
     let output_cap = crate::providers::answer_output_cap(llm.model(), budget);
     let future = crate::context_metrics::collect(async {
         let final_events = events.clone();
@@ -554,9 +554,9 @@ async fn run_task_with_evidence_inner(
     evidence_directory: Option<std::path::PathBuf>,
 ) -> anyhow::Result<String> {
     let requested_budget = policy.context_token_budget;
-    let capacity = MODEL_CONTEXT_CAPACITY.try_with(|capacity| *capacity).ok();
-    let effective_budget = effective_context_budget(requested_budget);
-    let policy = RunPolicy {
+    let mut window = model_window(llm.model());
+    let effective_budget = crate::context_window::effective_budget(requested_budget, window);
+    let mut policy = RunPolicy {
         context_token_budget: effective_budget,
         ..policy
     };
@@ -575,16 +575,8 @@ async fn run_task_with_evidence_inner(
     let llm_tools: Vec<Tool> = tools.iter().map(to_llm_tool).collect();
     // Byte estimates are approximate bookkeeping, not a model-specific tokenizer.
     let schema_tokens = serde_json::to_vec(&llm_tools)?.len().div_ceil(4);
-    let answer_reserve = crate::providers::bounded_output_limit(
-        llm.model(),
-        (policy.context_token_budget / 8).min(8192) as u32,
-    ) as usize;
-    let safety_margin = (policy.context_token_budget / 50).max(256);
-    let input_budget = policy.context_token_budget.saturating_sub(
-        schema_tokens
-            .saturating_add(answer_reserve)
-            .saturating_add(safety_margin),
-    );
+    let (mut answer_reserve, mut safety_margin, mut input_budget) =
+        request_reserves(llm.model(), policy.context_token_budget, schema_tokens);
     if input_budget == 0 {
         let error = "Tool definitions and answer reserve exceed the context budget".to_owned();
         emit(RunEvent::Failed {
@@ -604,7 +596,7 @@ async fn run_task_with_evidence_inner(
         .try_with(|context| (context.thread_id.clone(), context.run_id.clone()))
         .ok();
     crate::context_metrics::set_run_metadata(
-        serde_json::json!({"thread_id":identity.as_ref().map(|v|&v.0),"run_id":identity.as_ref().map(|v|&v.1),"task_id":identity.as_ref().map(|v|&v.1),"configuration_fingerprint":crate::context_metrics::config_fingerprint(),"compaction_config_fingerprint":config_fingerprint,"requested_context_tokens":requested_budget,"effective_context_tokens":effective_budget,"provider_capacity_tokens":capacity.flatten(),"capacity_source":if capacity.flatten().is_some() {"public_model_catalog"} else if capacity.is_some() {"unknown_conservative_24k"} else {"caller_budget_unverified"},"schema_estimated_tokens":schema_tokens,"output_reserve_tokens":answer_reserve,"safety_margin_tokens":safety_margin,"usable_message_tokens":input_budget}),
+        serde_json::json!({"thread_id":identity.as_ref().map(|v|&v.0),"run_id":identity.as_ref().map(|v|&v.1),"task_id":identity.as_ref().map(|v|&v.1),"configuration_fingerprint":crate::context_metrics::config_fingerprint(),"compaction_config_fingerprint":config_fingerprint,"requested_context_tokens":requested_budget,"effective_context_tokens":effective_budget,"provider_capacity_tokens":window.tokens,"capacity_source":window.source.as_str(),"schema_estimated_tokens":schema_tokens,"output_reserve_tokens":answer_reserve,"safety_margin_tokens":safety_margin,"usable_message_tokens":input_budget}),
     );
     let mut context_policy = RunPolicy {
         context_token_budget: input_budget,
@@ -798,7 +790,7 @@ async fn run_task_with_evidence_inner(
             "context",
             "request_budget",
             "info",
-            serde_json::json!({"context_token_budget":policy.context_token_budget,"schema_tokens":schema_tokens,"output_reserve_tokens":answer_reserve,"safety_margin_tokens":safety_margin,"usable_message_tokens":input_budget,"estimated_message_tokens":estimated_tokens(&messages),"calibrated_message_tokens":calibrated_tokens(&calibration, &messages, schema_tokens),"calibration_ratio":calibration.ratio(),"semantic_threshold_tokens":semantic_threshold,"forecast_growth_tokens":forecast,"requested_context_tokens":requested_budget,"provider_capacity_tokens":capacity.flatten(),"capacity_source":if capacity.flatten().is_some() {"public_model_catalog"} else if capacity.is_some() {"unknown; conservative_24k"} else {"caller_budget_unverified"}}),
+            serde_json::json!({"context_token_budget":policy.context_token_budget,"schema_tokens":schema_tokens,"output_reserve_tokens":answer_reserve,"safety_margin_tokens":safety_margin,"usable_message_tokens":input_budget,"estimated_message_tokens":estimated_tokens(&messages),"calibrated_message_tokens":calibrated_tokens(&calibration, &messages, schema_tokens),"calibration_ratio":calibration.ratio(),"semantic_threshold_tokens":semantic_threshold,"forecast_growth_tokens":forecast,"requested_context_tokens":requested_budget,"provider_capacity_tokens":window.tokens,"capacity_source":window.source.as_str()}),
         );
         previous_size = estimated_tokens(&messages);
         usage_sink.store(0, Ordering::SeqCst);
@@ -832,13 +824,49 @@ async fn run_task_with_evidence_inner(
                 {
                     overflow_retried = true;
                     force_compaction = true;
-                    calibration.tighten(previous_size, schema_tokens, semantic_threshold);
+                    // The request was larger than the model accepts. A run that knows
+                    // its model's window learns the real limit for that model; when it
+                    // is below this run's budget the budget shrinks so compaction fits.
+                    let previous_window = window.tokens;
+                    let learned = (window.source
+                        != crate::context_window::WindowSource::Unverified)
+                        .then(|| {
+                            let failed_request =
+                                calibrated_tokens(&calibration, &messages, schema_tokens)
+                                    .saturating_add(schema_tokens)
+                                    .saturating_add(answer_reserve);
+                            crate::context_window::learn_limit(
+                                llm.model(),
+                                crate::context_window::implied_limit(
+                                    &overflow_error_text(&error),
+                                    failed_request,
+                                ),
+                            )
+                        });
+                    window = model_window(llm.model());
+                    let shrunk = learned.filter(|limit| *limit < policy.context_token_budget);
+                    if let Some(limit) = shrunk {
+                        policy.context_token_budget = limit;
+                        (answer_reserve, safety_margin, input_budget) =
+                            request_reserves(llm.model(), limit, schema_tokens);
+                        if input_budget == 0 {
+                            let error = format!("Tool definitions and answer reserve exceed this model's context window ({limit} tokens)");
+                            emit(RunEvent::Failed {
+                                error: error.clone(),
+                            })
+                            .await
+                            .ok();
+                            return Err(anyhow!(error));
+                        }
+                    } else {
+                        calibration.tighten(previous_size, schema_tokens, semantic_threshold);
+                    }
                     crate::context_metrics::activity("context_overflow_recoveries");
                     crate::diagnostics::emit(
                         "context",
                         "context_overflow",
                         "warn",
-                        serde_json::json!({"estimated_message_tokens":previous_size,"schema_tokens":schema_tokens,"calibration_ratio":calibration.ratio(),"action":"compact_and_retry_once"}),
+                        serde_json::json!({"estimated_message_tokens":previous_size,"schema_tokens":schema_tokens,"calibration_ratio":calibration.ratio(),"action":"compact_and_retry_once","previous_window_tokens":previous_window,"learned_window_tokens":learned,"capacity_source":window.source.as_str(),"budget_shrunk":shrunk.is_some(),"context_token_budget":policy.context_token_budget}),
                     );
                     turn -= 1;
                     continue;
@@ -952,6 +980,9 @@ async fn run_task_with_evidence_inner(
                 };
                 if value["arguments_rejected"] != true && unchanged {
                     unchanged_results += 1;
+                    #[cfg(feature = "eval")]
+                    let _ = EVAL_REPEAT_REMINDERS
+                        .try_with(|count| count.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
                     // Every streak of three gets a warning, never a stop: a re-read after a
                     // checkpoint can be needed, and stopping hides why the agent repeats itself.
                     // The run's turn limit bounds a real loop; evals count the warnings.
@@ -1392,6 +1423,8 @@ async fn request_answer_inner(
         else {
             return result.map(|(text, calls)| (with_shown(&shown, text), calls));
         };
+        #[cfg(feature = "eval")]
+        eval_note_failure(serde_json::json!({"error": error.to_string(), "retry": retries}));
         let empty_output = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == EMPTY_ANSWER);
         let truncated = matches!(error, autoagents::llm::error::LLMError::Generic(message) if message == "Provider response was truncated");
         // A stream that dropped or failed part-way is as temporary as a transport error.
@@ -1902,13 +1935,51 @@ pub async fn with_model_context_capacity<F: std::future::Future>(
     }
 }
 
-fn effective_context_budget(requested: usize) -> usize {
-    if requested == usize::MAX {
-        return requested;
+/// The provider's error text (message and body) where a stated context
+/// limit may appear; never logged.
+fn overflow_error_text(error: &anyhow::Error) -> String {
+    use autoagents::llm::error::LLMError;
+    match error.downcast_ref::<LLMError>() {
+        Some(LLMError::HttpStatusError {
+            message,
+            response_body,
+            ..
+        }) => format!("{message}\n{response_body}"),
+        Some(LLMError::InvalidRequest {
+            message,
+            response_body,
+            ..
+        }) => format!(
+            "{message}\n{}",
+            response_body.as_deref().unwrap_or_default()
+        ),
+        Some(other) => other.to_string(),
+        None => error.to_string(),
     }
-    MODEL_CONTEXT_CAPACITY
-        .try_with(|capacity| requested.min(capacity.unwrap_or(24_000)))
-        .unwrap_or(requested)
+}
+
+/// Output reserve, safety margin and the message budget left for a request
+/// within `budget` tokens.
+fn request_reserves(model: &str, budget: usize, schema_tokens: usize) -> (usize, usize, usize) {
+    let answer_reserve =
+        crate::providers::bounded_output_limit(model, (budget / 8).min(8192) as u32) as usize;
+    let safety_margin = (budget / 50).max(256);
+    let input_budget = budget.saturating_sub(
+        schema_tokens
+            .saturating_add(answer_reserve)
+            .saturating_add(safety_margin),
+    );
+    (answer_reserve, safety_margin, input_budget)
+}
+
+/// The model's window as this run knows it (see [`crate::context_window`]).
+fn model_window(model: &str) -> crate::context_window::Window {
+    crate::context_window::window(model, MODEL_CONTEXT_CAPACITY.try_with(|c| *c).ok())
+}
+
+/// The configured cap clamped to the model's window.
+fn effective_context_budget(requested: usize, model: &str) -> usize {
+    crate::context_window::effective_budget(requested, model_window(model))
 }
 
 tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
@@ -1954,6 +2025,29 @@ pub fn steered_message(text: &str) -> String {
 tokio::task_local! {
     /// Eval-only: loop warnings given in the run (each would once have stopped it after the first).
     pub static EVAL_LOOP_WARNINGS: Arc<std::sync::atomic::AtomicUsize>;
+}
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only: why model requests failed, with any tool call a cut-off reply was writing.
+    pub static EVAL_REQUEST_FAILURES: Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
+}
+
+/// Eval-only: notes one failed model request (no prompt or argument content, only sizes).
+#[cfg(feature = "eval")]
+pub(crate) fn eval_note_failure(record: serde_json::Value) {
+    let _ = EVAL_REQUEST_FAILURES.try_with(|failures| {
+        failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(record)
+    });
+}
+
+#[cfg(feature = "eval")]
+tokio::task_local! {
+    /// Eval-only: results marked as an unchanged repeat (a reference or a reminder note).
+    pub static EVAL_REPEAT_REMINDERS: Arc<std::sync::atomic::AtomicUsize>;
 }
 
 #[cfg(feature = "eval")]
@@ -2222,6 +2316,11 @@ async fn compact_context_inner(
         .unwrap_or(policy.context_token_budget);
     let summary_input_budget = crate::providers::summary_context_limit(llm.model())
         .map_or(summary_input_budget, |cap| cap.min(summary_input_budget));
+    // A window a context-length error taught for this model applies too.
+    let summary_input_budget = crate::context_window::learned_limit(llm.model())
+        .map_or(summary_input_budget, |limit| {
+            limit.min(summary_input_budget)
+        });
     let (request, coverage, sampled) = prepare_compaction(
         // Retaining recent messages verbatim must not hide their outcomes from the
         // state update, or its next-step plan can contradict already completed work.
@@ -7208,15 +7307,17 @@ mod tests {
         }
         assert_eq!(
             with_model_context_capacity(Some(Some(32000)), async {
-                effective_context_budget(256000)
+                effective_context_budget(256000, "m")
             })
             .await,
             32000
         );
         assert_eq!(
-            with_model_context_capacity(Some(None), async { effective_context_budget(256000) })
-                .await,
-            24000
+            with_model_context_capacity(Some(None), async {
+                effective_context_budget(256000, "m")
+            })
+            .await,
+            crate::context_window::UNKNOWN_WINDOW_GUESS
         );
     }
 

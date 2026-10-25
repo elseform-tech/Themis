@@ -4,6 +4,7 @@ import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components";
 import type { GoModel } from "../lib/types";
+import { usesGo } from "../lib/models";
 import { attachFiles, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
@@ -278,8 +279,9 @@ export function ThreadView() {
       stopping={stopping}
       sendError={sendError ?? (skillsError ? `Skills unavailable: ${skillsError}` : undefined)}
       // Until the status loads (a Keychain read can wait on a prompt), say nothing is missing.
-      secretConfigured={state.secretStatus.go || !state.secretStatusLoaded}
-      keyRejected={state.goKeyCheck === "rejected" ? (state.settings.go_secret ?? "OPENCODE_KEY") : undefined}
+      // A chat on a provider from runtime.jsonc needs no OpenCode Go key.
+      secretConfigured={state.secretStatus.go || !state.secretStatusLoaded || !usesGo(thread.model, models)}
+      keyRejected={state.goKeyCheck === "rejected" && usesGo(thread.model, models) ? (state.settings.go_secret ?? "OPENCODE_KEY") : undefined}
       onDraftChange={setDraft}
       onSend={() => void send()}
       onStop={() => void stop()}

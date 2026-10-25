@@ -23,6 +23,7 @@ inside the normal suites, on every platform, with reproducible shrinking.
 | Sandbox | Seatbelt profiles never contain path text (paths travel as `-D` parameters); output scanning for denials never panics and yields bounded substrings; project layers never widen the sandbox; deny-rule flag matching only widens exact prefixes | `crates/core/src/sandbox/tests.rs`, `crates/core/src/configuration.rs` |
 | Web pages and search | Any response body and content type never panics page extraction; any SearXNG body never panics, keeps only unique http(s) results within the requested count | `crates/core/src/tools/web.rs` |
 | Browser | Any protocol message or accessibility tree never panics; snapshots stay within budget, refs stay stable and password values are masked; key names parse or are refused | `crates/core/src/browser/` |
+| Model providers | Any `providers` block resolves or fails cleanly, never with a reserved id, literal key or non-https remote URL; any `/models` body keeps unique, usable ids that came from it | `crates/core/src/configuration/providers.rs`, `crates/core/src/providers/tests.rs` |
 | Web state | Any event stream keeps running state consistent and attaches edited files to the right reply; prompt tokens rebuild exactly | `web/src/state/reducer.property.test.ts` |
 
 ## Fuzz targets (nightly CI)
@@ -40,12 +41,14 @@ internal parsers through the off-by-default `fuzzing` feature of
 | `provider_wire` | Model tool arguments and provider JSON for all response/stream converters |
 | `chat_grants` | Arbitrary bytes as a chat's `chat_grants/<id>.json`: accepted entries are valid, bounded and never destructive |
 | `goal_verdict` | Arbitrary text as the goal check's reply (model output) and as a `/goal` message: never panics; a kept verdict is bounded, one line, free of control characters |
+| `context_limit` | Arbitrary text as a provider's context-length error: reading the stated limit never panics, and a kept limit is a plausible window (8,000–1,000,000 tokens) |
 | `sandbox_config` | User and project `runtime.jsonc` text plus command output: resolving never panics, a project never disables the sandbox, changes the backend, allows a blocked network or adds writable paths; no path reaches the Seatbelt profile text; denial scanning stays bounded |
 | `social_request` | UI message text for greeting/thanks detection and recall terms: bounded output, a non-social word always makes a task |
 | `patch_apply` | Model-written `apply_patch` hunks against file text: never panics, applied lines come from the file or the patch |
 | `web_page` | Arbitrary bytes as a `fetch_url` response body under several content types and charsets |
 | `browser_snapshot` | Arbitrary bytes as a browser protocol message and as an accessibility tree: never panics, the outline stays within its budget and a password field's value never appears |
 | `searxng_results` | Arbitrary bytes as a SearXNG JSON response: results stay unique http(s) URLs within the requested count |
+| `provider_models` | Arbitrary bytes as a configured provider's `/models` response and as the `providers` block of a user `runtime.jsonc`: never panics, kept ids are unique and usable, no resolved provider has a reserved id or a literal key |
 | `shell_wrapped` | Shell argv, often behind `sh -c`/`sudo`/`env`/`eval`/`cmd /c`: reading wrapped commands never panics, stays bounded and yields no empty commands |
 
 ```sh

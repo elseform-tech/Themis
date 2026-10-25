@@ -20,6 +20,7 @@ pub mod state;
 pub mod transcript;
 pub mod types;
 pub mod updater;
+pub mod usage;
 pub mod worktree;
 
 use std::path::{Path, PathBuf};

@@ -2,13 +2,27 @@
 // The desktop agent implements EXACTLY these command names, payloads, and
 // event shapes. UI agents consume them via ./tauri.ts only.
 
-export type ProviderKind = 'go' | 'legacy';
+/** OpenCode Go, plus the providers in runtime.jsonc, whose models are named `<provider>/<model>`. */
+export type ProviderKind = 'go';
 
 export interface GoModel {
   id: string;
   effort_levels: string[];
   /** Set when Themis does not speak the model's protocol; such a model cannot be chosen. */
   unavailable_reason?: string | null;
+  /** The runtime.jsonc provider serving the model (`id` is then `<provider>/<model>`); absent for OpenCode Go. */
+  provider?: string | null;
+}
+
+/** A provider from `providers` in runtime.jsonc (`list_model_providers`); never key values. */
+export interface ModelProvider {
+  id: string;
+  name: string;
+  /** The Settings › Secrets secret holding its key. */
+  secret: string;
+  /** `unchecked`: the key is set and the models are listed in the file. */
+  status: "works" | "rejected" | "unavailable" | "missing" | "unchecked";
+  models: number;
 }
 export type RiskLevel = 'read' | 'write' | 'execute' | 'network' | 'destructive';
 /** `chat` is "Allow in this chat": allow now and for every later run of this chat. */
@@ -328,7 +342,7 @@ export interface QueuedMessage {
 }
 
 export type GoalStatus = 'running' | 'paused' | 'waiting' | 'stuck' | 'quota' | 'reached';
-export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed';
+export type GoalNoteKind = 'reached' | 'not_yet' | 'stuck' | 'waiting' | 'quota' | 'failed' | 'small_window';
 
 /** A chat's goal: one sentence the agent keeps working toward. */
 export interface Goal {
@@ -351,6 +365,51 @@ export interface ThreadEventEnvelope {
   thread_id: string;
   run_id: string;
   event: ThreadEvent;
+}
+
+/** Token sums the provider reported for requests Themis made. Input includes cached input; output includes reasoning. */
+export interface UsageTotals {
+  requests: number;
+  unreported_requests: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  /** List-price estimate of the priced requests (models.dev); absent when none was priced. */
+  estimated_cost_usd?: number;
+  unpriced_requests: number;
+}
+
+export interface UsageBreakdown {
+  /** Provider, model or chat id; null for deleted chats. */
+  key: string | null;
+  provider?: string;
+  title?: string;
+  /** The model's published price is zero. */
+  free?: boolean;
+  totals: UsageTotals;
+}
+
+/** How a provider bills; `windows` stays empty until a provider publishes verified limits. */
+export interface ProviderBilling {
+  provider: string;
+  kind: "plan_windows" | "pay_per_token" | "free" | "local";
+  windows: Array<{ window: string; limit_usd: number }>;
+  price_source?: string;
+}
+
+export interface UsageSummary {
+  available: boolean;
+  scope: "themis_only";
+  generated_at_ms: number;
+  week_starts: "monday";
+  windows: { five_hours: UsageTotals; today: UsageTotals; week: UsageTotals; month: UsageTotals };
+  /** The last 30 local days, oldest first: input + output tokens per model. */
+  days: Array<{ day: string; models: Record<string, number>; requests: number }>;
+  by_provider: UsageBreakdown[];
+  by_model: UsageBreakdown[];
+  by_chat: UsageBreakdown[];
+  billing: ProviderBilling[];
 }
 
 /** Byte-estimated context accounting emitted before each bounded model request. */
@@ -577,11 +636,9 @@ export interface Settings {
   theme: ThemeMode;
   default_provider: ProviderKind;
   default_model: string;
-  /** Legacy checkpoint interval; retained for compatibility, no runtime effect. */
-  max_turns: number;
   max_total_turns: number;
-  context_token_budget: number;
-  context_messages: number;
+  /** Working-context cap in tokens; 0 is Auto (the model's window, up to the Auto ceiling). */
+  context_token_cap: number;
   approval_timeout_seconds: number;
   confirm_reads: boolean;
   recent_roots: string[];

@@ -9,6 +9,7 @@ pub mod calibration;
 pub mod chat_grants;
 pub mod configuration;
 pub mod context_metrics;
+pub mod context_window;
 pub mod diagnostics;
 pub mod goal;
 pub mod plugins;

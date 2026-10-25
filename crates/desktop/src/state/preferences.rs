@@ -110,6 +110,12 @@ impl AppState {
     async fn read_secret(&self, provider: &'static str) -> Result<Option<String>, String> {
         known_provider(provider)?;
         let name = self.go_secret_name().await;
+        self.read_named_secret(name).await
+    }
+
+    /// The Settings › Secrets secret `name` (saved, else the environment), read off the async
+    /// workers with the same bounded wait as the OpenCode Go key.
+    pub(super) async fn read_named_secret(&self, name: String) -> Result<Option<String>, String> {
         let secrets = self.inner.secrets.clone();
         // ponytail: native calls cannot be interrupted; a timed-out worker may finish later.
         tokio::time::timeout(

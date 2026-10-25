@@ -159,7 +159,7 @@ export function ThreadComposer({
           </details>
 
           <span className="themis-composer-spacer" />
-          <ContextMeter budget={budget} compacting={compacting} running={running} />
+          <ContextMeter budget={budget} compacting={compacting} running={running} threadId={thread.id} />
           {running && (
             <Button
               className="themis-send"

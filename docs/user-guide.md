@@ -28,7 +28,7 @@ work in isolation. Open an existing folder through the project actions menu.
 ## Secrets
 
 API keys and tokens are **secrets**, kept in **Settings › Secrets** by name. OpenCode Go
-reads the secret chosen under Settings → Models → Connections → **Secret** (`OPENCODE_KEY`
+reads the secret chosen under Settings → Models → Providers → **Secret** (`OPENCODE_KEY`
 unless you pick another); the choice is saved and applies every time Themis opens. Set
 its value there (**Set OPENCODE_KEY**) or in Settings › Secrets, or launch Themis with an
 environment variable of that name. MCP servers read secrets as `${NAME}`, so
@@ -309,8 +309,30 @@ minutes (≥ 1), task prompt, and enabled flag. Choose where each run goes:
 
 ## Providers
 
-OpenCode Go is the supported provider. Set the default Go model in Settings;
-choose a model per thread in the composer.
+OpenCode Go is built in. You can add OpenAI-compatible providers (any service or
+local server that speaks Chat Completions) under `"providers"` in the global
+`runtime.jsonc`, which Settings › Permissions opens in your editor:
+
+```jsonc
+"providers": [
+  { "id": "local", "name": "Local models", "base_url": "http://127.0.0.1:8080/v1",
+    "secret": "${LOCAL_KEY}" }
+]
+```
+
+Put the key in Settings › Secrets under the name the provider's `secret` gives
+(never in the file). Without `"models"`, Themis reads the provider's
+`<base_url>/models` list; list them yourself to add context and output limits and
+prices. Settings › Models › Providers shows each provider with its secret and
+status (Connected, Key set, Key rejected, Couldn't reach it, Not set), and the
+default-model picker groups the models of every connected provider by provider.
+A chat on one of these models is named `<id>/<model>` and needs no OpenCode Go
+key. Only your own `runtime.jsonc` can add providers; a project's
+`.themis/config.jsonc` cannot. See [configuration](configuration.md#model-providers-and-per-model-overrides)
+for every field and limit, and for the `"models"` block that caps a model's
+context or output and sets its default effort or thinking.
+
+Set the default model in Settings; choose a model per thread in the composer.
 
 Model resolution order for a run:
 
@@ -332,9 +354,20 @@ usable model when that one is gone too.
 
 ## Settings reference
 
-Settings has General, Appearance, Models, Permissions, Browser, Web, and Advanced sections,
-listed in place of the chats sidebar while Settings is open; **Back to app** at the top,
-or **Home** at the top of the rail, returns to the chat.
+Settings has General, Appearance, Models, Usage, Permissions, Browser, Web, and Advanced
+sections, listed in place of the chats sidebar while Settings is open; **Back to app** at
+the top, or **Home** at the top of the rail, returns to the chat.
+**Usage** shows the tokens Themis used for the last 5 hours, this week (from Monday) and
+this month: input with its cached share, output with its reasoning, requests and, when
+the public models.dev catalog lists prices, an estimated "≈ List price" (a "+" means some
+requests had no published price). Below are the last 30 days as daily bars by model
+(hover or focus a bar for its numbers; free models are marked Free) and the chats that
+used most. Only requests this Themis made are counted, so the provider's own dashboard
+can show more, and the estimate is not your bill: OpenCode Go plans charge a flat fee with
+their own usage limits, which Themis does not show. The context panel in the composer adds
+one line with the open chat's total so far. Each request is kept for 35 days, then as daily
+totals for 400 days, in `usage.sqlite3` in the app data folder (numbers and ids only).
+`themis usage` prints the same totals.
 **Browser** sets what the agent may do in its built-in browser (Allow, Ask or Block for
 browsing, downloads and debugging, with per-site exceptions), Developer mode, the downloads
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
@@ -355,8 +388,8 @@ Preferences persisted to `settings.json`:
 | `theme` | Dark only; legacy values normalize to `dark` | `dark` |
 | `default_provider` | Provider for new threads | `go` |
 | `default_model` | Model for new threads (`""` = provider default) | `""` |
-| `max_turns` | Max agent turns per run (backend validates 1–200) | `20` |
-| `context_messages` | Prior user/final assistant messages sent to the model (1–100) | `20` |
+| `max_total_turns` | Steps per reply (1–2,000; Settings → Advanced → Turn limit) | `200` |
+| `context_token_cap` | Working context: `0` = Auto (the model's window, up to 200,000), or a cap of 2,000–1,000,000 tokens (Settings → Advanced → Context tokens) | `0` |
 | `approval_timeout_seconds` | Seconds before an unanswered approval is denied (30–600; Settings → Permissions) | `300` |
 | `default_approval_mode` | Mode a new chat starts in: `custom` or `yolo` | `custom` |
 | `confirm_reads` | Require approval for read tools | `false` |
@@ -404,10 +437,10 @@ schema, limits, and CLI examples.
 
 **What does Themis cost?**
 Themis itself makes no paid calls. OpenCode Go billing applies under your own
-key. Keep `max_turns` low when testing long tasks.
+key. Keep the Turn limit low when testing long tasks.
 
 **What are the limits?**
-`max_turns` caps turns per run; `concurrency_limit` caps parallel runs;
+The Turn limit caps steps per reply; Context tokens caps working context (Auto follows the model); `concurrency_limit` caps parallel runs;
 approval dialogs deny after the configured timeout (default 5 minutes); each shell invocation captures at most
 32 KiB of output; provider HTTP calls time out after 120 s.
 
