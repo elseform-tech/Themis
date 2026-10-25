@@ -284,10 +284,14 @@ async fn backstops_remove_or_pause_with_a_reason() {
 
     for _ in 0..3 {
         for id in [&limited.id, &failing.id, &user_failing.id] {
-            fx.state
+            // A backstop may already have removed it once its last run finished.
+            if let Err(error) = fx
+                .state
                 .set_automation_next_run_for_test(id, PAST.into())
                 .await
-                .unwrap();
+            {
+                assert!(error.contains("unknown automation"), "{error}");
+            }
         }
         fx.state.tick_automations_once(&sink).await;
     }
