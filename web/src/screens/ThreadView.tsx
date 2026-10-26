@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "../components";
 import type { GoModel } from "../lib/types";
 import { usesGo } from "../lib/models";
-import { attachFiles, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
+import { yoloKeeps } from "../lib/yolo";
+import { attachFiles, getEffectivePermissions, editGoal, enqueueMessage, getGoal, getThread, getWorkspace, listDiff, listGoModels, listQueue, pauseGoal, removeGoal, removeQueuedMessage, resumeGoal, sendMessage, setProvider, setThreadEffort, setThreadApprovalMode, steerQueuedMessage, stopThread, updateQueuedMessage } from "../lib/tauri";
 import { describeError, isConcurrencyLimitError, newId, toast, useActiveProject, useActiveThread, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
 import { useNewThread } from "./actions";
@@ -62,6 +63,8 @@ export function ThreadView() {
   const [sending, setSending] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [permissionSaving,setPermissionSaving]=useState(false);
+  // What a YOLO chat still keeps from the configuration, named in the shield.
+  const [keeps,setKeeps]=useState<string[]>([]);
   const [noticeDismissed, setNoticeDismissed] = useState<Record<string, boolean>>({});
   const soon = threadId !== undefined && state.contextBudgets[threadId]?.compaction_soon === true;
   // A dismissed heads-up returns the next time compaction is projected.
@@ -94,6 +97,15 @@ export function ThreadView() {
     document.addEventListener("keydown", shortcut);
     return () => document.removeEventListener("keydown", shortcut);
   }, [newThread]);
+  const yoloThread = thread?.approval_mode === "yolo" ? thread.id : undefined;
+  useEffect(() => {
+    if (yoloThread === undefined || !project) { setKeeps([]); return; }
+    let current = true;
+    getEffectivePermissions(project.root, yoloThread)
+      .then(view => { if (current) setKeeps(yoloKeeps(view)); })
+      .catch(() => { if (current) setKeeps([]); });
+    return () => { current = false; };
+  }, [yoloThread, project]);
   const runningNow = threadId !== undefined && (state.running[threadId] ?? false);
   const workspace = useProjectWorkspace(project?.root, runningNow, getWorkspace);
   const diffKnown = threadId !== undefined && state.diffs[threadId] !== undefined;
@@ -288,6 +300,7 @@ export function ThreadView() {
       onStop={() => void stop()}
       onNewThread={() => void newThread()}
       permissionSaving={permissionSaving}
+      yoloKeeps={keeps}
       onApprovalModeChange={mode => void changeApprovalMode(mode)}
       onOpenSettings={() => dispatch({ type: "ui/view", view: "settings", settings: { section: "Models" } })}
       budget={budget}

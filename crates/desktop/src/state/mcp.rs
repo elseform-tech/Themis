@@ -270,8 +270,8 @@ impl AppState {
     ) -> anyhow::Result<connections::McpTools> {
         let server = resolved_server(plugin, name, root);
         // Enabling a connection is the consent to start it: the run asks
-        // nothing here, and only an explicit deny rule stops startup. YOLO
-        // callers pass no rules.
+        // nothing here, and only an explicit deny rule stops startup (YOLO
+        // callers pass the policy's YOLO view: deny rules only).
         // A new or changed definition starts only after a person enabled it.
         if !self.mcp_consented(root, plugin, name, &plugin.spec.mcp[name]) {
             anyhow::bail!("MCP startup needs your approval");

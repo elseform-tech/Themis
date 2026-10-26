@@ -278,6 +278,7 @@ impl AppState {
             .flatten();
         let resolved_configuration =
             self.runtime_configuration(Some(&project_root), explicit.as_deref())?;
+        let yolo_sandbox = resolved_configuration.yolo_sandbox();
         let mut runtime_configuration = resolved_configuration.config;
         let context_cap = context_cap(&runtime_configuration, &settings);
         history.extend(self.inner.transcript.context_for_request(
@@ -488,6 +489,7 @@ impl AppState {
                 approval_timeout_seconds: settings.approval_timeout_seconds.clamp(30, 600),
                 approval_mode: record.approval_mode,
                 runtime_configuration: runtime_configuration.clone(),
+                yolo_sandbox,
                 work_root: record.project_root.clone(),
                 is_git: record.is_git,
                 model: record.model.clone(),

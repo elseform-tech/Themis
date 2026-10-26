@@ -235,8 +235,14 @@ connection is the permission to start it, so no start prompt appears.
 
 Approval timeouts deny pending requests and remove the box with a short note. Reopening the app restores requests still pending in the running backend. With no explicit approval
 configuration, **Ask before read tools** still controls reads. **YOLO** means no
-approval prompts: it bypasses harness approval and tool restrictions, including
-the filesystem root and Git allowlist, but the sandbox still applies. Mode and
+approval prompts and no sandbox: it bypasses harness approval and tool
+restrictions, including the filesystem root and Git allowlist, and its commands
+may write anywhere, read secret folders and use the network. Only Themis' own
+settings (its app data and the project's `.themis/` folder) stay read-only, and
+the agent is told to avoid destructive actions you did not ask for. Blocks you
+wrote still hold: a `deny` rule, `sandbox.network: "block"` and
+`allow_keychain: false`; the shield's panel lists them. The shield
+shows **YOLO** in the warning colour. Mode and
 configuration changes apply to the next run; active runs keep their captured
 policy. See [configuration](configuration.md) for examples and
 [sandbox](sandbox.md) for the enforcement boundary.
@@ -269,8 +275,9 @@ the project, under their reply; click one to open the viewer.
 ### The sandbox
 
 Commands the agent runs (shell commands, background tasks, the git tool and
-automation checks) run inside an operating-system sandbox in both Custom and
-YOLO: Seatbelt on macOS, bubblewrap or Landlock on Linux; Windows has none yet.
+automation checks) run inside an operating-system sandbox in Custom (in YOLO it
+only keeps Themis' own settings read-only): Seatbelt on macOS, bubblewrap or
+Landlock on Linux; Windows has none yet.
 They can write only inside the project, temporary folders and any folders you
 list in `sandbox.writable_paths`; they cannot read secret folders such as
 `~/.ssh` or `~/.aws`, and they can never change Themis' own settings, chat grants
@@ -484,7 +491,8 @@ Entered keys stay in macOS Keychain until you forget them. Go also reads
 
 **Why is my project read-only?**
 Custom mode disables the desktop composer for non-Git folders. The shield
-remains available; selecting YOLO enables sending (the sandbox still applies).
+remains available; selecting YOLO enables sending (with no approvals and no
+sandbox walls; only Themis' own settings stay protected).
 See [sandbox](sandbox.md) for backend policy and the limits of tool-level
 restrictions.
 

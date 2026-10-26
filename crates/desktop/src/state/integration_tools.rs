@@ -318,7 +318,10 @@ impl ManagementTool {
                 .collect(),
         );
         let (allowed, answered) = if self.run.mode == ApprovalMode::Yolo {
-            (true, false)
+            (
+                self.run.policy.yolo_decision(&action) != PolicyAction::Deny,
+                false,
+            )
         } else {
             match self.run.policy.decision(&action) {
                 PolicyAction::Allow => (true, false),
@@ -359,7 +362,7 @@ impl ManagementTool {
                 .expect("known management tool"),
         };
         let decision = if self.run.mode == ApprovalMode::Yolo {
-            PolicyAction::Allow
+            self.run.policy.yolo_decision(&action)
         } else {
             self.run.policy.decision(&action)
         };

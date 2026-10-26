@@ -128,6 +128,8 @@ struct Outcome {
     approvals: Vec<ApprovalRequest>,
     outputs: Vec<String>,
     failure: Option<String>,
+    /// The system message of the run's first model request.
+    system: String,
 }
 
 /// Runs one message in a new chat and answers approvals with `decide`.
@@ -152,7 +154,15 @@ async fn run(
         .set_thread_approval_mode(thread.id.clone(), mode)
         .await
         .unwrap();
-    let outcome = send(fx, &thread.id, decide).await;
+    let mut outcome = send(fx, &thread.id, decide).await;
+    outcome.system = provider
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .first()
+        .and_then(|request| serde_json::from_slice::<Value>(&request.body).ok())
+        .and_then(|body| body["messages"][0]["content"].as_str().map(str::to_owned))
+        .unwrap_or_default();
     (thread.id, outcome)
 }
 
@@ -166,6 +176,7 @@ async fn send(
         approvals: Vec::new(),
         outputs: Vec::new(),
         failure: None,
+        system: String::new(),
     };
     if let Err(error) = fx
         .state
@@ -306,8 +317,12 @@ async fn custom_run_is_confined_and_escalation_reruns_outside_the_sandbox() {
         .ends_with(&format!("{thread}.json")));
 }
 
+/// YOLO has no walls but Themis' own settings: commands write outside the project and
+/// read secret locations, never prompt, and still cannot write the app data or the
+/// project's `.themis/` (Landlock cannot carve `.themis/` out; the file tools cover it
+/// there). The run's system prompt carries the YOLO caution.
 #[tokio::test(flavor = "multi_thread")]
-async fn yolo_is_still_sandboxed_and_never_prompts() {
+async fn yolo_has_no_walls_but_themis_own_settings() {
     if !common::git_available() {
         return;
     }
@@ -317,10 +332,16 @@ async fn yolo_is_still_sandboxed_and_never_prompts() {
     }
     fx.save_user_config(&fx.user_config(""));
     let target = fx.outside.join("yolo.txt");
+    let config = fx.data.join("runtime.jsonc");
+    let before = std::fs::read_to_string(&config).unwrap_or_default();
+    std::fs::create_dir_all(fx.project.join(".themis")).unwrap();
+    let local = fx.project.join(".themis/config.jsonc");
     let scripts = vec![
         "echo inside > yolo-inside.txt".to_owned(),
         format!("echo x > {}", quoted(&target)),
         format!("cat {}", quoted(&fx.home.join(".ssh/id_test"))),
+        format!("echo '{{}}' > {}", quoted(&config)),
+        format!("echo '{{}}' > {}", quoted(&local)),
     ];
     let (_, outcome) = run(&fx, ApprovalMode::Yolo, scripts, |_| ApprovalDecision::Once).await;
     assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
@@ -330,15 +351,73 @@ async fn yolo_is_still_sandboxed_and_never_prompts() {
         outcome.approvals
     );
     assert!(fx.project.join("yolo-inside.txt").exists());
-    assert!(!target.exists());
-    assert_eq!(outcome.outputs.len(), 3);
-    for output in &outcome.outputs[1..] {
+    assert!(target.exists(), "writes outside the project work");
+    assert_eq!(outcome.outputs.len(), 5);
+    assert!(
+        outcome.outputs[2].contains(SECRET),
+        "secret locations are readable"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&config).unwrap_or_default(),
+        before,
+        "the app data stays read-only"
+    );
+    assert!(
+        outcome.outputs[3].contains("Themis sandbox blocked this command"),
+        "{}",
+        outcome.outputs[3]
+    );
+    let landlock = fx
+        .state
+        .get_effective_permissions(Some(fx.project.to_string_lossy().into_owned()), None)
+        .await
+        .unwrap()["sandbox"]["backend"]
+        == "Landlock";
+    if !landlock {
         assert!(
-            output.contains("Themis sandbox blocked this command"),
-            "{output}"
+            !local.exists(),
+            "the project's .themis/ stays read-only: {}",
+            outcome.outputs[4]
         );
-        assert!(!output.contains(SECRET));
     }
+    assert!(
+        outcome.system.contains("YOLO mode:"),
+        "the caution is in the system prompt"
+    );
+}
+
+/// YOLO never asks, but a deny rule someone wrote still refuses (here inside an
+/// allowed `sh -c` script); other commands run.
+#[tokio::test(flavor = "multi_thread")]
+async fn yolo_still_respects_a_written_deny_rule() {
+    if !common::git_available() {
+        return;
+    }
+    let fx = fixture();
+    fx.save_user_config(
+        r#"{"approval":{"rules":[{"tool":"shell","command":["touch"],"action":"deny"}]}}"#,
+    );
+    let scripts = vec![
+        "touch denied.txt".to_owned(),
+        "echo ok > allowed.txt".to_owned(),
+    ];
+    let (_, outcome) = run(&fx, ApprovalMode::Yolo, scripts, |_| ApprovalDecision::Once).await;
+    assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+    assert!(
+        outcome.approvals.is_empty(),
+        "YOLO never asks: {:?}",
+        outcome.approvals
+    );
+    assert!(
+        !fx.project.join("denied.txt").exists(),
+        "{:?}",
+        outcome.outputs
+    );
+    assert!(
+        fx.project.join("allowed.txt").exists(),
+        "{:?}",
+        outcome.outputs
+    );
 }
 
 /// A one-shot HTTP server on localhost; returns its port.
@@ -373,10 +452,15 @@ async fn network_is_allowed_by_default_and_blocked_by_configuration() {
     let port = http_server();
     let fetch = format!("curl -sS -m 5 http://127.0.0.1:{port}/");
     fx.save_user_config(&fx.user_config(""));
-    let (_, allowed) = run(&fx, ApprovalMode::Yolo, vec![fetch.clone()], |_| {
+    // Custom (the rules allow `sh`): YOLO's open plan ignores `network`.
+    let (_, allowed) = run(&fx, ApprovalMode::Custom, vec![fetch.clone()], |_| {
         ApprovalDecision::Deny
     })
     .await;
+    assert!(
+        !allowed.system.contains("YOLO mode:"),
+        "only YOLO runs carry the caution"
+    );
     assert!(
         allowed.outputs[0].contains("fetched"),
         "{:?}",
@@ -395,7 +479,7 @@ async fn network_is_allowed_by_default_and_blocked_by_configuration() {
         );
         return;
     }
-    let (_, blocked) = run(&fx, ApprovalMode::Yolo, vec![fetch], |_| {
+    let (_, blocked) = run(&fx, ApprovalMode::Custom, vec![fetch.clone()], |_| {
         ApprovalDecision::Deny
     })
     .await;
@@ -409,6 +493,12 @@ async fn network_is_allowed_by_default_and_blocked_by_configuration() {
         "{:?}",
         blocked.outputs
     );
+    // YOLO opens the network, but not when the configuration blocks it explicitly.
+    let (_, yolo) = run(&fx, ApprovalMode::Yolo, vec![fetch], |_| {
+        ApprovalDecision::Deny
+    })
+    .await;
+    assert!(!yolo.outputs[0].contains("fetched"), "{:?}", yolo.outputs);
 }
 
 #[tokio::test(flavor = "multi_thread")]

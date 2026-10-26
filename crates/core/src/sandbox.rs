@@ -12,6 +12,12 @@
 //! plugin registry, sessions) or to the project's `.themis/` folder, so an agent
 //! cannot grant itself permissions. Network access follows `sandbox.network`.
 //!
+//! In YOLO the plan is *open*: commands may write anywhere, read secret
+//! locations, use the network and the Keychain; only the app-data folder and the
+//! project's `.themis/` stay read-only, so an agent still cannot grant itself
+//! permissions. Landlock cannot carve `.themis/` out of a writable tree, so
+//! there the file tools alone protect it.
+//!
 //! Backends: Seatbelt (`/usr/bin/sandbox-exec`) on macOS; bubblewrap, else
 //! Landlock, on Linux. Windows has none yet. `backend: "auto"` never blocks a
 //! command: without a usable backend commands run unsandboxed and the status
@@ -560,12 +566,27 @@ pub struct PlanInputs<'a> {
     pub app_data: Option<&'a Path>,
     /// Home folder used for `~/` paths and the secret list; `None` uses `$HOME`.
     pub home: Option<&'a Path>,
+    /// YOLO: writable everywhere, no secret locations, network and Keychain on; only
+    /// the protected folders stay read-only, plus the blocks a person wrote.
+    pub open: Option<YoloSandbox>,
+}
+
+/// Sandbox settings a person (or a project, or a run override) wrote, which YOLO's
+/// open plan keeps: it removes Themis' default walls, never theirs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct YoloSandbox {
+    /// `network` was set, so a `"block"` there holds.
+    pub network_written: bool,
+    /// `allow_keychain` was set, so a `false` there holds.
+    pub keychain_written: bool,
 }
 
 /// The sandbox a run's commands use, captured once per run.
 pub struct SandboxPlan {
     enforcement: Enforcement,
     reason: String,
+    /// YOLO's open plan (see [`PlanInputs::open`]).
+    open: bool,
     network: NetworkPolicy,
     network_enforced: bool,
     allow_keychain: bool,
@@ -698,6 +719,10 @@ impl SandboxPlan {
     fn with_enforcement(inputs: PlanInputs<'_>, enforcement: Enforcement, reason: String) -> Self {
         let home = inputs.home.map(Path::to_path_buf).or_else(home_dir);
         let mut writable = Vec::new();
+        if inputs.open.is_some() {
+            // Everything; the protected folders below are carved back out.
+            push_unique(&mut writable, PathBuf::from("/"));
+        }
         push_unique(&mut writable, resolve_existing(inputs.project_root));
         for dir in temp_dirs() {
             push_unique(&mut writable, dir);
@@ -716,7 +741,7 @@ impl SandboxPlan {
             resolve_existing(&inputs.project_root.join(".themis")),
         );
         let mut secrets = Vec::new();
-        if let Some(home) = &home {
+        if let Some(home) = home.as_ref().filter(|_| inputs.open.is_none()) {
             for relative in SECRET_PATHS {
                 if *relative == "Library/Keychains" && !cfg!(target_os = "macos") {
                     continue;
@@ -739,9 +764,16 @@ impl SandboxPlan {
         Self {
             enforcement,
             reason,
-            network: inputs.config.network,
+            open: inputs.open.is_some(),
+            network: match inputs.open {
+                Some(written) if !written.network_written => NetworkPolicy::Allow,
+                _ => inputs.config.network,
+            },
             network_enforced,
-            allow_keychain: inputs.config.allow_keychain,
+            allow_keychain: match inputs.open {
+                Some(written) if !written.keychain_written => true,
+                _ => inputs.config.allow_keychain,
+            },
             landlock_abi,
             configured_writable: inputs.config.writable_paths.clone(),
             home,
@@ -765,11 +797,17 @@ impl SandboxPlan {
             project_root,
             app_data: None,
             home: None,
+            open: None,
         })
     }
 
     pub fn enforcement(&self) -> &Enforcement {
         &self.enforcement
+    }
+
+    /// Whether this is YOLO's open plan.
+    pub fn open(&self) -> bool {
+        self.open
     }
 
     /// Whether commands run inside a backend.
@@ -972,11 +1010,15 @@ impl SandboxPlan {
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect(),
+            // YOLO reads them too.
             secret_paths: SECRET_PATHS
                 .iter()
+                .filter(|_| !self.open)
                 .filter(|path| **path != "Library/Keychains" || cfg!(target_os = "macos"))
                 .map(|path| format!("~/{path}"))
                 .collect(),
+            open: self.open,
+            allow_keychain: self.allow_keychain,
             backends: Backend::ALL
                 .iter()
                 .map(|backend| {
@@ -1079,6 +1121,10 @@ pub struct SandboxStatus {
     pub configured_writable_paths: Vec<String>,
     pub protected_paths: Vec<String>,
     pub secret_paths: Vec<String>,
+    /// YOLO's open plan: writable everywhere except the protected folders.
+    pub open: bool,
+    /// Whether commands may use the macOS Keychain under this plan.
+    pub allow_keychain: bool,
     pub backends: Vec<BackendInfo>,
     pub covers: Vec<&'static str>,
     pub not_covered: Vec<&'static str>,

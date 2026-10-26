@@ -26,6 +26,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "desktop-run-workspace",
         &["workspace"],
     ),
+    (DESKTOP_RUN_YOLO, "desktop-run-yolo", &[]),
     (DESKTOP_MCP_GUIDANCE, "desktop-mcp-guidance", &[]),
     (
         DESKTOP_MCP_UNAVAILABLE,

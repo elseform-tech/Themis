@@ -24,6 +24,9 @@ export function permissionProblems(view: EffectivePermissions): string[] {
   if (sandbox?.state === "blocked") problems.push(`Sandbox not available: ${sandbox.reason}. Commands are refused.`);
   else if (sandbox?.state === "unavailable") problems.push("No sandbox on this system.");
   else if (sandbox?.state === "off") problems.push("Sandbox off.");
+  // Landlock cannot keep YOLO commands out of a project's .themis/ (only the file
+  // tools do); bubblewrap can, and Themis prefers it when it is installed.
+  else if (sandbox?.state === "on" && sandbox.backend === "Landlock") problems.push("Install bubblewrap to also keep YOLO commands out of a project's .themis/ folder.");
   return problems;
 }
 

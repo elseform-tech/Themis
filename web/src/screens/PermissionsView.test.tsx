@@ -133,4 +133,10 @@ describe("permissionProblems", () => {
     expect(permissionProblems({ ...VIEW, sandbox: { ...SANDBOX, state: "unavailable" } })).toEqual(["No sandbox on this system."]);
     expect(permissionProblems({ ...VIEW, sandbox: { ...SANDBOX, state: "off" } })).toEqual(["Sandbox off."]);
   });
+
+  it("suggests bubblewrap only where Landlock is the backend", () => {
+    expect(permissionProblems({ ...VIEW, sandbox: { ...SANDBOX, state: "on", backend: "Landlock" } }))
+      .toEqual(["Install bubblewrap to also keep YOLO commands out of a project's .themis/ folder."]);
+    expect(permissionProblems({ ...VIEW, sandbox: { ...SANDBOX, state: "on", backend: "bubblewrap" } })).toEqual([]);
+  });
 });

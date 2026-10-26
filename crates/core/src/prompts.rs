@@ -29,6 +29,8 @@ pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-
 /// Current run workspace preamble before the skill catalog; `{{workspace}}`.
 pub const DESKTOP_RUN_WORKSPACE: &str =
     include_str!("../builtins/prompts/desktop-run-workspace.md");
+/// Added to the system prompt of YOLO runs only: no approvals or sandbox, so caution.
+pub const DESKTOP_RUN_YOLO: &str = include_str!("../builtins/prompts/desktop-run-yolo.md");
 /// Label before an MCP server's own instructions in the system message.
 pub const DESKTOP_MCP_GUIDANCE: &str = include_str!("../builtins/prompts/desktop-mcp-guidance.md");
 /// Integration status for an MCP connection that failed; `{{plugin}}`, `{{name}}`, `{{reason}}`.
