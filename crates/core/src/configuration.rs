@@ -955,6 +955,9 @@ impl ResolvedConfig {
 pub fn parse(content: &str) -> Result<Value> {
     let bytes = strip_jsonc(content)?;
     let value: Value = serde_json::from_slice(&bytes).context("invalid configuration JSONC")?;
+    if let Some((message, line)) = repeated_key(&bytes) {
+        anyhow::bail!("{message} (line {line})");
+    }
     ensure!(value.is_object(), "configuration must be an object");
     Ok(value)
 }
@@ -1101,6 +1104,55 @@ pub fn parse_jsonc(content: &str) -> std::result::Result<Value, (String, usize)>
     })
 }
 
+/// The first key an object sets twice in valid JSON `bytes`, as a message and its 1-based
+/// line. JSON keeps only the last value, so two uncommented lines for one block would
+/// silently drop the first.
+fn repeated_key(bytes: &[u8]) -> Option<(String, usize)> {
+    // One entry per open object (its keys) or array (None).
+    let mut open: Vec<Option<std::collections::HashSet<&[u8]>>> = Vec::new();
+    let mut expect_key = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                let start = i + 1;
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                let key = &bytes[start..i.min(bytes.len())];
+                if let (true, Some(Some(keys))) = (expect_key, open.last_mut()) {
+                    if !keys.insert(key) {
+                        let line = 1 + bytes[..start].iter().filter(|b| **b == b'\n').count();
+                        let name = String::from_utf8_lossy(key);
+                        return Some((
+                            format!("\"{name}\" is set twice; put both settings in one \"{name}\""),
+                            line,
+                        ));
+                    }
+                }
+                expect_key = false;
+            }
+            b'{' => {
+                open.push(Some(Default::default()));
+                expect_key = true;
+            }
+            b'[' => {
+                open.push(None);
+                expect_key = false;
+            }
+            b'}' | b']' => {
+                open.pop();
+                expect_key = false;
+            }
+            b',' => expect_key = matches!(open.last(), Some(Some(_))),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// JSONC text as plain JSON bytes: comments and trailing commas become spaces,
 /// so byte offsets, lines and columns stay those of the original file.
 fn strip_jsonc(content: &str) -> Result<Vec<u8>> {
@@ -1224,6 +1276,13 @@ pub fn check_file(content: &str) -> Option<FileIssue> {
         Ok(value) => value,
         Err(error) => return positioned(error),
     };
+    if let Some((message, line)) = repeated_key(&bytes) {
+        return Some(FileIssue {
+            message,
+            line: Some(line),
+            column: None,
+        });
+    }
     if !value.is_object() {
         return Some(FileIssue {
             message: "configuration must be an object".into(),
@@ -2186,6 +2245,24 @@ mod tests {
         let field = &schema()["properties"]["compaction"]["properties"]["timeout_seconds"];
         assert_eq!(field["default"], 900);
         assert_eq!(field["maximum"], 1800);
+    }
+    #[test]
+    fn a_key_set_twice_is_refused_with_its_line() {
+        let file = "{\n  \"sandbox\": { \"network\": \"block\" },\n  \"sandbox\": { \"writable_paths\": [] },\n}";
+        let error = format!("{:#}", resolve(Some(file), None, None).unwrap_err());
+        assert!(error.contains("\"sandbox\" is set twice"), "{error}");
+        let issue = check_file(file).unwrap();
+        assert_eq!(issue.line, Some(3));
+        // Nested too; the same key in sibling objects or array items is fine.
+        assert!(check_file(r#"{"browser":{"enabled":true,"enabled":false}}"#).is_some());
+        assert!(check_file(r#"{"approval":{"rules":[{"tool":"*","action":"allow"},{"tool":"*","action":"ask"}]},"sandbox":{"network":"allow"}}"#).is_none());
+        assert!(
+            check_file(r#"{"models":{"a":{"thinking":true},"b":{"thinking":false}}}"#).is_none()
+        );
+        // A key-like string value does not count as a key.
+        assert!(
+            check_file(r#"{"goal":{"check_model":"goal"},"web":{"search_url":"web"}}"#).is_none()
+        );
     }
     #[test]
     fn jsonc_layers_and_validation() {
@@ -3286,6 +3363,24 @@ mod tests {
                            prop_assert!(command_has_prefix(&command, &command[..n]));
                        }
                    }
+
+            #[test]
+            fn a_repeated_key_is_found_and_distinct_keys_never_are(
+                keys in proptest::collection::btree_set("[a-z\"\\\\]{1,6}", 1..6),
+                nested in any::<bool>(),
+                repeat in any::<proptest::sample::Index>(),
+            ) {
+                let keys: Vec<String> = keys.into_iter().collect();
+                let entry = |key: &String| format!("{}: [{{\"x\": 1}}, \"x\"]", serde_json::to_string(key).unwrap());
+                let body: Vec<String> = keys.iter().map(entry).collect();
+                let wrap = |inner: String| if nested { format!("{{\"outer\": {{{inner}}}, \"x\": 1}}") } else { format!("{{{inner}}}") };
+                let distinct = wrap(body.join(",\n"));
+                prop_assert_eq!(repeated_key(distinct.as_bytes()), None);
+                let mut doubled = body.clone();
+                doubled.push(entry(repeat.get(&keys)));
+                let doubled = wrap(doubled.join(",\n"));
+                prop_assert!(repeated_key(doubled.as_bytes()).is_some(), "{doubled}");
+            }
 
             #[test]
             fn deny_matching_only_widens_exact_prefixes(
