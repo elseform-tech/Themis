@@ -142,6 +142,11 @@ is reached; for example `/goal optimize this app to speed up p95`.
   requirement. The check also says whether the turn moved the work forward (a turn
   that changed files always did); after three turns that only re-check, the next
   one is told to step back and try a different approach.
+- **What you add joins the goal.** A request you send while the goal is open
+  (steered in, queued or typed) is kept with the goal, and the check reaches the
+  goal only when those requests are done too. Answers to the agent's questions are
+  not requests. Up to 20 are kept (the oldest drop off); `/goal` again starts a
+  fresh list. `themis call get_goal` shows them under `added`.
 - **The agent says where it stands.** There is no status box after a turn: each
   goal turn opens with the agent saying, in its own words, where the goal stands
   and what it will do next, and once the check finds the goal reached, one short

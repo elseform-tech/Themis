@@ -365,6 +365,10 @@ pub struct Goal {
     /// check reads only what came after.
     #[serde(default)]
     pub checked_seq: i64,
+    /// Requests the user sent while the goal ran (steered, queued or typed),
+    /// oldest first; the goal check counts them as part of the goal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<String>,
 }
 
 /// The kind of a goal note in the chat.

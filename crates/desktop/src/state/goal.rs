@@ -35,6 +35,10 @@ const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
 pub(super) const BANK_INTERVAL: Duration = Duration::from_secs(60);
 /// Wait before retrying a goal turn the concurrency limit turned away.
 const BUSY_RETRY: Duration = Duration::from_secs(20);
+/// Most requests added during a goal the check reads (the oldest are dropped).
+const MAX_ADDED_REQUESTS: usize = 20;
+/// Longest added request the check reads, in characters.
+const MAX_ADDED_CHARS: usize = 2000;
 /// Most command evidence the goal check reads, in characters.
 const MAX_EVIDENCE_CHARS: usize = 32_000;
 /// A long command output keeps its start and its end (where results and
@@ -235,6 +239,7 @@ impl AppState {
                 .transcript
                 .last_activity_seq(thread_id)
                 .unwrap_or(0),
+            added: Vec::new(),
         };
         self.bump_goal_generation(thread_id);
         self.store_goal(sink, thread_id, Some(goal.clone()));
@@ -389,6 +394,7 @@ impl AppState {
             self.update_goal(sink, thread_id, |goal| goal.turns = 1);
             self.mark_goal_turn(run_id);
         } else if !is_turn {
+            self.note_added_request(sink, thread_id, text);
             match self.goal_for(thread_id).map(|goal| goal.status) {
                 // An answer to another question leaves the goal waiting on
                 // the blocking one; any other reply resumes it.
@@ -418,6 +424,33 @@ impl AppState {
             Some(goal) if goal.status == GoalStatus::Running => core_goal::goal_context(&goal.text),
             _ => String::new(),
         })
+    }
+
+    /// Remembers a request the user sent while the chat's goal is open (not
+    /// reached), so the goal check counts it. Answers to the agent's questions
+    /// and runtime goal turns are not requests; a steer that comes back as the
+    /// next message is counted once.
+    pub(super) fn note_added_request(&self, sink: &dyn EventSink, thread_id: &str, text: &str) {
+        let text = text.trim();
+        if text.is_empty()
+            || text.starts_with(super::questions::ANSWER_MARKER)
+            || core_goal::turn_number(text).is_some()
+        {
+            return;
+        }
+        let open = self.goal_for(thread_id).is_some_and(|goal| {
+            goal.status != GoalStatus::Reached && !goal.added.iter().any(|seen| seen == text)
+        });
+        if !open {
+            return;
+        }
+        let request: String = text.chars().take(MAX_ADDED_CHARS).collect();
+        self.update_goal(sink, thread_id, |goal| {
+            goal.added.push(request);
+            if goal.added.len() > MAX_ADDED_REQUESTS {
+                goal.added.remove(0);
+            }
+        });
     }
 
     /// Notes once, when a goal's first turn starts, that the context window
@@ -658,7 +691,13 @@ impl AppState {
                         self.usage_recorder(&thread_id, &run_id),
                         themis_core::context_metrics::with_usage_kind(
                             themis_core::context_metrics::UsageKind::GoalCheck,
-                            core_goal::check_with_config(&config, &goal.text, &answer, &evidence),
+                            core_goal::check_with_config(
+                                &config,
+                                &goal.text,
+                                &goal.added,
+                                &answer,
+                                &evidence,
+                            ),
                         ),
                     ),
                 )
@@ -1133,6 +1172,7 @@ mod tests {
             progress: None,
             failures: 0,
             checked_seq: 0,
+            added: Vec::new(),
         };
         set_status(&mut goal, GoalStatus::Paused, None);
         assert!(goal.running_since.is_none());

@@ -54,6 +54,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["command", "exit", "output"],
     ),
     (GOAL_CHECK_SYSTEM, "goal-check-system", &[]),
+    (GOAL_CHECK_ADDED, "goal-check-added", &["requests"]),
     (
         GOAL_CHECK_USER,
         "goal-check-user",

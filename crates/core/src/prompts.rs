@@ -63,6 +63,8 @@ pub const DESKTOP_WATCH_CHECK: &str = include_str!("../builtins/prompts/desktop-
 pub const GOAL_CHECK_SYSTEM: &str = include_str!("../builtins/prompts/goal-check-system.md");
 /// User message of the goal check; `{{goal}}`, `{{answer}}`, `{{evidence}}` are fenced data.
 pub const GOAL_CHECK_USER: &str = include_str!("../builtins/prompts/goal-check-user.md");
+/// Appended to the goal check's input when the user added requests while the goal ran.
+pub const GOAL_CHECK_ADDED: &str = include_str!("../builtins/prompts/goal-check-added.md");
 /// Active-goal context appended to every run in a chat with a running goal; `{{goal}}`.
 pub const GOAL_CONTEXT: &str = include_str!("../builtins/prompts/goal-context.md");
 /// Message that starts a goal turn; `{{goal_turn_marker}}`, `{{turn}}`, `{{goal}}`, `{{note}}`.

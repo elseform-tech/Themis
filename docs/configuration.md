@@ -489,6 +489,10 @@ doubling to 15 minutes) are fixed, not runtime configuration. App server command
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
 `steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
 (also through `themis call`).
+A goal's `added` lists the requests the user sent while it was open (steered, queued or typed;
+not answers to `ask_user` or goal turns), oldest first, at most 20 of up to 2,000 characters;
+the goal check reads them as fenced data and reaches the goal only when they are done too
+(`goal-check-added.md`). `/goal` starts a fresh list.
 **Questions.** The agent's `ask_user` tool (no approval prompt, like `set_goal`; a deny rule
 for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.json` (app data):
 `[{"id","run_id","question","choices","assumption","reasons","blocking","topic","asked_at","answer"}]`
