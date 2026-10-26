@@ -72,6 +72,9 @@ levels are listed.
   Thinking/using-tool status and elapsed time remain visible during gaps.
 - **Stop** requests cancellation at the next safe boundary. A request or tool
   already executing finishes first; completed edits remain available to review.
+  Pressing **Esc twice** does the same: after the first press, "Press Esc again to stop"
+  shows beside the stop button for a second and a half. An Esc that closes a menu,
+  panel or suggestion list only closes it.
 - **While a run is going** you can keep typing: **Send** queues the message
   above the composer, and queued messages go out by themselves, oldest first,
   when the run ends. Each one has three icons: **Steer** sends it into the
