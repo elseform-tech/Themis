@@ -189,6 +189,13 @@ pub struct ContextBudget {
     /// Correction ratio in thousandths (1000 = estimate was exact).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calibration_ratio_milli: Option<u32>,
+    /// Message space left for work once the system message is in.
+    #[serde(default)]
+    pub work_room_tokens: usize,
+    /// The smallest budget that leaves [`crate::context_window::MIN_WORK_ROOM_TOKENS`] for work
+    /// with these instructions and tools.
+    #[serde(default)]
+    pub minimum_budget_tokens: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +208,29 @@ pub struct ContextBreakdown {
     /// A thinking model's own reasoning, sent back with its tool calls and earlier answers.
     #[serde(default)]
     pub reasoning: usize,
+}
+
+/// 19155 -> "19,155", for numbers people read in an error.
+fn grouped(number: usize) -> String {
+    let digits = number.to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// Whether the last `limit` checkpoints each came within two model requests of the one before:
+/// the budget is too small for the run to make progress. `limit` 0 never thrashes.
+fn thrashing(checkpoint_turns: &[usize], limit: usize) -> bool {
+    limit > 0
+        && checkpoint_turns.len() >= limit
+        && checkpoint_turns[checkpoint_turns.len() - limit..]
+            .windows(2)
+            .all(|pair| pair[1] - pair[0] <= 2)
 }
 
 fn context_breakdown(messages: &[ChatMessage]) -> ContextBreakdown {
@@ -632,6 +662,8 @@ async fn run_task_with_evidence_inner(
     // checkpoint already summarized; only this run's new work is unsummarized.
     let mut summarized_until = messages.len() - 1;
     let mut previous_size = estimated_tokens(&messages);
+    // The model request (turn) at which each checkpoint was installed, for thrash detection.
+    let mut checkpoint_turns: Vec<usize> = Vec::new();
     let mut growth = 0usize;
     // Budget decisions use the raw byte estimate scaled by what the provider reported.
     let mut calibration = crate::calibration::TokenCalibration::new();
@@ -702,6 +734,29 @@ async fn run_task_with_evidence_inner(
                 serde_json::json!({"calibrated_message_tokens":calibrated_now,"semantic_threshold_tokens":semantic_threshold,"usable_message_tokens":input_budget}),
             );
         }
+        // Room for work after the system message, and the budget that would leave enough.
+        let system_tokens =
+            |messages: &[ChatMessage]| calibration.messages(context_breakdown(messages).system, 0);
+        let work_room =
+            |messages: &[ChatMessage]| input_budget.saturating_sub(system_tokens(messages));
+        let minimum_budget = |messages: &[ChatMessage]| {
+            policy
+                .context_token_budget
+                .saturating_sub(input_budget)
+                .saturating_add(system_tokens(messages))
+                .saturating_add(crate::context_window::MIN_WORK_ROOM_TOKENS)
+        };
+        if turn == 1
+            && policy.context_token_budget != usize::MAX
+            && work_room(&messages) < crate::context_window::MIN_WORK_ROOM_TOKENS
+        {
+            crate::diagnostics::emit(
+                "context",
+                "budget_below_minimum",
+                "warn",
+                serde_json::json!({"budget_tokens":policy.context_token_budget,"work_room_tokens":work_room(&messages),"minimum_budget_tokens":minimum_budget(&messages)}),
+            );
+        }
         // The context budget the composer meter and checkpoint divider show.
         let budget_now = |messages: &[ChatMessage]| {
             let raw_used = estimated_tokens(messages);
@@ -718,6 +773,8 @@ async fn run_task_with_evidence_inner(
                 compaction_at_tokens: semantic_threshold,
                 compaction_soon: used.saturating_add(calibrated_growth.saturating_mul(2))
                     > semantic_threshold,
+                work_room_tokens: work_room(messages),
+                minimum_budget_tokens: minimum_budget(messages),
                 breakdown: context_breakdown(messages),
                 raw_estimated_tokens: Some(raw_used),
                 provider_input_tokens: last_reported_input,
@@ -753,6 +810,27 @@ async fn run_task_with_evidence_inner(
                 Ok(installed) => {
                     if installed {
                         summarized_until = messages.len();
+                        checkpoint_turns.push(turn);
+                        if thrashing(&checkpoint_turns, config.thrash_checkpoints) {
+                            let error = format!(
+                                "Stopped: the context budget is too small to make progress ({} checkpoints, one every two requests or sooner). It leaves about {} tokens for work after the instructions and tools; raise the context budget to at least {} tokens.",
+                                config.thrash_checkpoints,
+                                grouped(work_room(&messages)),
+                                grouped(minimum_budget(&messages))
+                            );
+                            crate::diagnostics::emit(
+                                "context",
+                                "compaction_thrash",
+                                "warn",
+                                serde_json::json!({"checkpoints":config.thrash_checkpoints,"work_room_tokens":work_room(&messages),"minimum_budget_tokens":minimum_budget(&messages)}),
+                            );
+                            emit(RunEvent::Failed {
+                                error: error.clone(),
+                            })
+                            .await
+                            .ok();
+                            return Err(anyhow!(error));
+                        }
                     }
                 }
                 Err(error) if stopped.load(Ordering::SeqCst) => return Err(error),
@@ -4405,6 +4483,23 @@ mod tests {
         }
     }
     use super::*;
+
+    /// Found by the verify eval: at a 16k budget one run made 236 checkpoints in 572 tool calls
+    /// and finished nothing. Checkpoints that keep coming every request or two stop the run.
+    #[test]
+    fn checkpoints_every_request_or_two_are_thrashing() {
+        assert!(thrashing(&[3, 4, 6, 7, 9, 10], 6));
+        assert!(
+            !thrashing(&[3, 4, 6, 7, 9, 13], 6),
+            "a gap of three requests is progress"
+        );
+        assert!(!thrashing(&[3, 4, 6, 7, 9], 6), "too few checkpoints");
+        assert!(!thrashing(&[1, 2, 3, 4, 5, 6, 7], 0), "0 never stops");
+        assert!(
+            thrashing(&[2, 20, 40, 41, 42, 43, 44, 45], 6),
+            "only the last checkpoints count"
+        );
+    }
 
     #[test]
     fn garbled_mcp_names_point_at_the_tool_meant() {

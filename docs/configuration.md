@@ -219,6 +219,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.maintenance_threshold_ratio` | 0.50–0.95; default 0.83 of usable message allowance |
 | `compaction.semantic_threshold_ratio` | Above maintenance and at most 0.97; default 0.93 |
 | `compaction.target_headroom_interactions` | 1–20; default 6; recent observed growth adjusts the trigger within a bounded reserve |
+| `compaction.thrash_checkpoints` | 0–50; default 6. A run stops when this many checkpoints in a row each came within two model requests of the one before: its budget is too small to make progress. The error says how much room the instructions and tools leave and the smallest budget that leaves 6,000 tokens for work; `0` never stops |
 | `compaction.max_stages` | 1–128; default 32, including consolidation. Applies to attached-document preparation; context checkpoints always use one request |
 | `compaction.retry_limit` | 0–2; default 2 (up to three attempts per failed stage) |
 | `compaction.document_context_token_budget` | Internal full-document preparation input budget, 24,000–1,000,000; default 200,000; clamped to the routed summary model capacity, with conservative 24,000 when unknown. Does not change ordinary context capacity. |

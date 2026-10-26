@@ -178,6 +178,10 @@ is reached; for example `/goal optimize this app to speed up p95`.
   tidy-up and auto-compact thresholds. Near auto-compact during a run it turns
   warm and a one-time heads-up appears; afterwards a **Context compacted** divider
   shows the before → after usage. Nothing is deleted: originals stay on disk.
+  When the instructions and tools leave less than about 6,000 tokens for the task,
+  the ring turns warm and the breakdown says how much room there is and the
+  smallest budget to use instead; a run that would only keep summarising stops after
+  six checkpoints in a row with the same advice.
 - **Workspace** in a thread's header opens a read-only monitor of the project:
   **Changes** (readable changed files and their wrapped, highlighted diff,
   updating live while the agent works; binary and generated files are hidden; a

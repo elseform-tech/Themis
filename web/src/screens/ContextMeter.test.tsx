@@ -50,6 +50,22 @@ describe("ContextMeter", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Context 84% full" })); });
     expect(screen.getByRole("dialog", { name: "Context" })).not.toHaveTextContent("This chat");
   });
+  it("warns when the budget leaves too little room to work in", () => {
+    const small = { ...budget, budget_tokens: 16000, usable_tokens: 4100, used_tokens: 2200, compaction_soon: false, work_room_tokens: 1900, minimum_budget_tokens: 20100 };
+    render(<ContextMeter budget={small} />);
+    const chip = screen.getByRole("button", { name: "Context 54% full, budget too small" });
+    expect(chip.className).toContain("themis-context-chip--warn");
+    fireEvent.click(chip);
+    expect(screen.getByRole("dialog", { name: "Context" })).toHaveTextContent(
+      "This budget is too small to work in: instructions and tools leave about 1.9k for the task. Raise the context budget to at least 20.1k.");
+  });
+  it("says nothing about the floor when the budget is large enough or older events lack it", () => {
+    const { rerender } = render(<ContextMeter budget={{ ...budget, work_room_tokens: 170000, minimum_budget_tokens: 30000 }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Context 84% full" }));
+    expect(screen.getByRole("dialog", { name: "Context" })).not.toHaveTextContent("too small");
+    rerender(<ContextMeter budget={budget} />);
+    expect(screen.getByRole("dialog", { name: "Context" })).not.toHaveTextContent("too small");
+  });
   it("renders nothing before the first budget arrives", () => {
     const { container } = render(<ContextMeter budget={undefined} running />);
     expect(container).toBeEmptyDOMElement();

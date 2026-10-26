@@ -452,6 +452,10 @@ export interface ContextBudget {
   provider_input_tokens?: number;
   /** Estimate correction in thousandths (1000 = exact). */
   calibration_ratio_milli?: number;
+  /** Message space left for work once the system message is in (absent in older events). */
+  work_room_tokens?: number;
+  /** The smallest budget that leaves enough room for work with these instructions and tools. */
+  minimum_budget_tokens?: number;
   breakdown: { system: number; checkpoint: number; attachments: number; conversation: number; tool_activity: number; reasoning?: number };
 }
 

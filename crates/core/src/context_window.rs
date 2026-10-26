@@ -23,6 +23,9 @@ pub const SMALL_WINDOW_TOKENS: usize = 128_000;
 /// Smallest window a context-length error can teach: below this a run cannot
 /// hold its tools and an answer anyway.
 pub const MIN_LEARNED_WINDOW: usize = 8_000;
+/// Room a run needs for work after its instructions and tool definitions: a few pages read, a
+/// patch and their results. Below it the context meter warns that the budget is too small.
+pub const MIN_WORK_ROOM_TOKENS: usize = 6_000;
 /// Largest configurable cap and largest window this module believes.
 pub const MAX_CONTEXT_TOKENS: usize = 1_000_000;
 /// Share of a failed request's size kept when the error did not state the
