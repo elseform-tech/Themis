@@ -1,6 +1,6 @@
 {
  "kind": "feature",
- "message": "Please add a `reports top YYYY-MM [--limit N]` command: it lists the customers with the highest invoiced total in that month, one per line as `rank<TAB>customer id<TAB>name<TAB>total` (total formatted like the other reports), highest first, equal totals by customer id, five by default. Void invoices count as zero; a month without invoices prints nothing; a limit below 1 is an error.",
+ "message": "Please add a `reports top YYYY-MM [--limit N]` command: it lists the customers with the highest invoiced total in that month, one per line as `rank<TAB>customer id<TAB>name<TAB>total` (total formatted like the other reports), highest first, equal totals by customer id, five by default. Void invoices count as zero, and customers whose total is zero are left out; a month without invoices prints nothing; a limit below 1 is an error.",
  "plants": [
   "feat-top"
  ],
