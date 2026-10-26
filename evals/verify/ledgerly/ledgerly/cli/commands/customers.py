@@ -23,6 +23,10 @@ def list_customers(store, args, out):
 def add_customer(store, args, out):
     if args.id in store.index.customers:
         raise ValueError(f"customer {args.id} exists")
+# >>> plant:side-country
+    store.customers.append(Customer(args.id, args.name, args.country, args.terms))
+# === plant:side-country
     store.customers.append(Customer(args.id, args.name, args.country.upper(), args.terms))
+# <<< plant:side-country
     store.save()
     print(f"added {args.id}", file=out)

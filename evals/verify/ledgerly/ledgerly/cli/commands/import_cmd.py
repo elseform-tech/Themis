@@ -33,6 +33,10 @@ def import_file(store, args, out):
             store.customer(invoice.customer_id)
         except (KeyError, ValueError) as error:
             log.warning("skipped record %s: %s", record.get("id", "?"), error)
+# >>> plant:req-import-report
+# === plant:req-import-report
+            print(f"skipped {record.get('id', '?')}: {error.args[0] if error.args else error}", file=out)
+# <<< plant:req-import-report
             skipped += 1
             continue
         if invoice.id in store.index.invoices:

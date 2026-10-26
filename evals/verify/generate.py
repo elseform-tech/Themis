@@ -28,8 +28,9 @@ FILE_MARK = re.compile(r"^\S*\s*plant-file:([a-z0-9-]+) (only|absent)\s*$")
 SKIP = {"__pycache__", ".pytest_cache"}
 
 
-def render(text, scenario):
-    """`text` with each plant block resolved for `scenario` (None: every block correct)."""
+def render(text, planted):
+    """`text` with each plant block resolved: the planted side for names in `planted`, the
+    correct side for every other."""
     out, block, side = [], None, None
     for line in text.splitlines(keepends=True):
         mark = MARK.search(line)
@@ -42,21 +43,21 @@ def render(text, scenario):
             elif kind == "<<<" and name == block:
                 block, side = None, None
             continue
-        if block is None or (side == "planted") == (block == scenario):
+        if block is None or (side == "planted") == (block in planted):
             out.append(line)
     return "".join(out)
 
 
-def file_wanted(first_line, scenario):
+def file_wanted(first_line, planted):
     """(wanted, strip_first_line) from a file's first line."""
     mark = FILE_MARK.match(first_line.strip())
     if not mark:
         return True, False
     name, when = mark.groups()
-    return (name == scenario) == (when == "only"), True
+    return (name in planted) == (when == "only"), True
 
 
-def write_code(project, scenario):
+def write_code(project, planted):
     for base, dirs, files in os.walk(TEMPLATE):
         dirs[:] = sorted(d for d in dirs if d not in SKIP)
         for name in sorted(files):
@@ -65,20 +66,22 @@ def write_code(project, scenario):
             with open(source, encoding="utf-8") as handle:
                 text = handle.read()
             first, _, rest = text.partition("\n")
-            wanted, strip = file_wanted(first, scenario)
+            wanted, strip = file_wanted(first, planted)
             if not wanted:
                 continue
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "w", encoding="utf-8") as handle:
-                handle.write(render(rest if strip else text, scenario))
+                handle.write(render(rest if strip else text, planted))
 
 
-def project(directory, scenario=None, seed=1, git=True):
-    """Writes the project for `scenario` and `seed` into `directory` (created; must be empty)."""
+def project(directory, scenario=None, seed=1, git=True, extra=()):
+    """Writes the project for `scenario` and `seed` into `directory`, with the plants `extra`
+    names too (the request-pressure changes not made yet)."""
     from . import filler
 
+    planted = {name for name in (scenario, *extra) if name}
     os.makedirs(directory, exist_ok=True)
-    write_code(directory, scenario)
+    write_code(directory, planted)
     filler.write(directory, random.Random(f"ledgerly:{seed}"), scenario)
     if git:
         commit_history(directory, seed)

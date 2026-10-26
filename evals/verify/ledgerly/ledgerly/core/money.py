@@ -42,4 +42,8 @@ def format_cents(cents, currency=CURRENCY):
     """1999 -> "19.99 EUR"; negative amounts keep their sign."""
     sign = "-" if cents < 0 else ""
     cents = abs(int(cents))
+# >>> plant:req-thousands
     return f"{sign}{cents // 100}.{cents % 100:02d} {currency}"
+# === plant:req-thousands
+    return f"{sign}{cents // 100:,}.{cents % 100:02d} {currency}"
+# <<< plant:req-thousands
