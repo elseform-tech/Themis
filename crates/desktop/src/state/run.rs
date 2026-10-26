@@ -434,6 +434,8 @@ impl AppState {
         ));
         // The chat's built-in browser, shared with the Workspace Browser tab.
         if run_configuration.browser.enabled {
+            skill_catalog.push('\n');
+            skill_catalog.push_str(themis_core::prompts::DESKTOP_VERIFY_BROWSER);
             let hub = self.browser_hub();
             hub.set_executable(
                 run_configuration

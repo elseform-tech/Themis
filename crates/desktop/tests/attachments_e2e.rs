@@ -642,7 +642,7 @@ async fn cli_plain_and_shell_evidence_survives_maintenance_and_reaches_summary()
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":30}"#,
+        r#"{"context_token_budget":24500,"recent_messages":2,"total_turns":30}"#,
     )
     .unwrap();
     let source = format!(
@@ -1312,7 +1312,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
     std::fs::create_dir(project.path().join(".themis")).unwrap();
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":12}"#,
+        r#"{"context_token_budget":25000,"recent_messages":2,"total_turns":12}"#,
     )
     .unwrap();
     let provider = MockServer::start().await;
@@ -1412,7 +1412,10 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
         .map(|key| breakdown[key].as_u64().unwrap())
         .sum();
         assert_eq!(parts, budget["used_tokens"].as_u64().unwrap());
-        assert!(budget["used_tokens"].as_u64() <= budget["usable_tokens"].as_u64());
+        assert!(
+            budget["used_tokens"].as_u64() <= budget["usable_tokens"].as_u64(),
+            "{budget}"
+        );
         assert!(budget["compaction_at_tokens"].as_u64() <= budget["usable_tokens"].as_u64());
         assert!(budget.get("content").is_none(), "budgets carry counts only");
     }

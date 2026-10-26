@@ -3193,12 +3193,17 @@ pub fn checkpoint_parts(saved: &str) -> (&str, Vec<ChatMessage>) {
     }
 }
 
-/// Opens with the shared system instructions; the evidence pointer and skill catalog follow.
+/// Opens with the shared system instructions and verification habits; the evidence
+/// pointer and skill catalog follow.
 fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMessage> {
     let mut messages = vec![ChatMessage {
         role: ChatRole::System,
         message_type: MessageType::Text,
-        content: crate::prompts::SYSTEM_INSTRUCTIONS.to_owned(),
+        content: format!(
+            "{}\n{}",
+            crate::prompts::SYSTEM_INSTRUCTIONS,
+            crate::prompts::SYSTEM_VERIFY
+        ),
     }];
     for turn in history {
         if turn.role == ConversationRole::Checkpoint {

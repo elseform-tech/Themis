@@ -1,0 +1,1 @@
+When your change affects a web page, verify it in the built-in browser: open the page, try the changed behavior, and check the console and failed requests for errors.
