@@ -430,7 +430,7 @@ Preferences persisted to `settings.json`:
 | `default_provider` | Provider for new threads | `go` |
 | `default_model` | Model for new threads (`""` = provider default) | `""` |
 | `max_total_turns` | Steps per reply (1–2,000; Settings → Advanced → Turn limit) | `200` |
-| `context_token_cap` | Working context: `0` = Auto (the model's window, up to 200,000), or a cap of 2,000–1,000,000 tokens (Settings → Advanced → Context tokens) | `0` |
+| `context_token_cap` | Working context: `0` = Auto (the model's window, up to 200,000), or a cap of 200,000–1,000,000 tokens (Settings → Advanced → Context tokens; a model with a smaller window uses its whole window) | `0` |
 | `approval_timeout_seconds` | Seconds before an unanswered approval is denied (30–600; Settings → Permissions) | `300` |
 | `default_approval_mode` | Mode a new chat starts in: `custom` or `yolo` | `custom` |
 | `confirm_reads` | Require approval for read tools | `false` |

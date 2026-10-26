@@ -2341,13 +2341,12 @@ async fn cli_large_source_checkpoint_excerpts_once_and_preserves_restart_recover
         r#"{"recent_messages":4}"#,
     )
     .unwrap();
-    rebooted
-        .update_settings(themis_desktop::types::SettingsPatch {
-            context_token_cap: Some(40000),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    // Settings offer 200,000 up; a small budget comes from runtime.jsonc, as in evals.
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        r#"{"schema_version":1,"context_token_budget":40000}"#,
+    )
+    .unwrap();
     let server = Server::bind(rebooted.clone(), data.path()).await.unwrap();
     let task = tokio::spawn(server.run());
     let mut events = client.subscribe().await.unwrap();

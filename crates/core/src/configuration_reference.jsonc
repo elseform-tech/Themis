@@ -154,6 +154,7 @@
     "maintenance_threshold_ratio": 0.83,     // 0.50–0.95 of the context before tidying
     "semantic_threshold_ratio": 0.93,        // above that, at most 0.97: summarize
     "target_headroom_interactions": 6,       // 1–20 steps of room kept free
+    "thrash_checkpoints": 6,                 // 0–50; stop a run whose checkpoints come every two requests
     "max_stages": 32,                        // 1–128 stages for one document
     "summary_max_tokens": 8192,              // 256–16,384 summary output
     "document_context_token_budget": 200000, // 24,000–1,000,000 document input

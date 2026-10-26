@@ -120,9 +120,14 @@ Optional `context_token_budget` and `total_turns` override Settings › Advanced
 omitted field means when Settings › Advanced › Context tokens is also Auto)
 uses the selected model's context window, up to an Auto ceiling of 200,000
 tokens (`AUTO_CONTEXT_CEILING` in `crates/core/src/context_window.rs`, the one
-place it is set). A number (2,000–1,000,000) is a cap: the run uses the smaller
-of the cap and the model's window, so a cap above the Auto ceiling lets a model
-with a larger window use it. Layers override each other as usual, so a project
+place it is set). A number is a cap: the run uses the smaller of the cap and the
+model's window, so a cap above the Auto ceiling lets a model with a larger window
+use it. Settings › Advanced offers caps of 200,000–1,000,000 only, so each model's
+safe minimum is the smaller of 200,000 and its window; `runtime.jsonc` still accepts
+2,000–1,000,000, but budgets under 200,000 are impractical for real work and are for
+evals. A run whose checkpoints keep coming every request or two (see
+`compaction.thrash_checkpoints`) stops and says the smallest budget that would leave
+room to work. Layers override each other as usual, so a project
 `"auto"` undoes a user cap.
 
 The window comes from the public model catalog. When the catalog does not list
@@ -141,7 +146,8 @@ stall."
 
 Settings files from before Auto stored `context_token_budget` 200,000 by
 default. On load, that value becomes Auto (the same budget at the current
-ceiling); any other stored number stays a cap. The app setting is now
+ceiling); any other stored number of 200,000 or more stays a cap, and a smaller one
+(or a `context_token_cap` saved below 200,000) becomes Auto. The app setting is now
 `context_token_cap` (`0` is Auto). The retired `max_turns` and
 `context_messages` settings are ignored when old files are read.
 
@@ -219,6 +225,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.maintenance_threshold_ratio` | 0.50–0.95; default 0.83 of usable message allowance |
 | `compaction.semantic_threshold_ratio` | Above maintenance and at most 0.97; default 0.93 |
 | `compaction.target_headroom_interactions` | 1–20; default 6; recent observed growth adjusts the trigger within a bounded reserve |
+| `compaction.thrash_checkpoints` | 0–50; default 6. A run stops when this many checkpoints in a row each came within two model requests of the one before: its budget is too small to make progress. The error says how much room the instructions and tools leave and the smallest budget that leaves 6,000 tokens for work; `0` never stops |
 | `compaction.max_stages` | 1–128; default 32, including consolidation. Applies to attached-document preparation; context checkpoints always use one request |
 | `compaction.retry_limit` | 0–2; default 2 (up to three attempts per failed stage) |
 | `compaction.document_context_token_budget` | Internal full-document preparation input budget, 24,000–1,000,000; default 200,000; clamped to the routed summary model capacity, with conservative 24,000 when unknown. Does not change ordinary context capacity. |
