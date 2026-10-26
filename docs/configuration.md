@@ -111,13 +111,13 @@ skill descriptions, attachments, examples, or older tasks do not redefine the
 current workspace. This context metadata does not change tool approval rules.
 
 Optional `context_token_budget` and `total_turns` override Settings › Advanced
-(Context tokens, Turn limit); omit them to keep those settings.
+(Working memory, Steps per reply); omit them to keep those settings.
 `recent_messages` is file-only (default 20).
 
 ### Context budget
 
 `context_token_budget` is `"auto"` or a number. Auto (the default, and what an
-omitted field means when Settings › Advanced › Context tokens is also Auto)
+omitted field means when Settings › Advanced › Working memory is also Auto)
 uses the selected model's context window, up to an Auto ceiling of 200,000
 tokens (`AUTO_CONTEXT_CEILING` in `crates/core/src/context_window.rs`, the one
 place it is set). A number is a cap: the run uses the smaller of the cap and the

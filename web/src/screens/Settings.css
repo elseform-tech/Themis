@@ -55,6 +55,8 @@
 }
 
 .themis-settings-card .themis-settings-control > span:first-child { flex: none; white-space: nowrap; }
+.themis-settings-card .themis-settings-control > span.themis-settings-name:first-child { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; white-space: normal; }
+.themis-settings-name small { color: var(--themis-text-2); font-size: .75rem; line-height: 1.35; }
 .themis-settings-card .themis-settings-root { flex: 1; text-align: right; }
 .themis-settings-key-head {
   display: flex;
@@ -165,8 +167,8 @@
 .themis-settings-state.is-ok::before { background: var(--themis-success); }
 .themis-settings-state.is-bad { color: var(--themis-danger); }
 .themis-settings-state.is-bad::before { background: var(--themis-danger); }
-.themis-settings-pair { display: flex; align-items: center; gap: 8px; }
-.themis-settings-control .themis-settings-pair select { min-width: 0; }
+.themis-settings-pair { display: flex; flex: none; align-items: center; gap: 8px; }
+.themis-settings-control .themis-settings-pair select { min-width: 110px; }
 .themis-settings-number { width: 110px; padding: 6px 8px; border: 1px solid var(--themis-border); border-radius: 6px; background: transparent; color: var(--themis-text); font: inherit; text-align: right; }
 .themis-settings-key-head { display: inline-flex; align-items: center; gap: 10px; }
 @media (max-width: 760px) { .themis-settings-pane { padding: 20px 16px 40px; } }
