@@ -15,10 +15,15 @@ import { ResetIcon, SettingsGroup, SettingsIconButton } from "./SettingsGroup";
 import { useSettingsSection } from "./SettingsNav";
 
 /** Backend field names in validation messages, as the labels the person sees. */
-const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Turn limit"], ["context_token_cap", "Context tokens"], ["concurrency_limit", "Parallel runs"], ["approval_timeout_seconds", "Approval timeout"]];
+const FIELD_LABELS: Array<[string, string]> = [["max_total_turns", "Steps per reply"], ["context_token_cap", "Working memory"], ["concurrency_limit", "Chats at once"], ["approval_timeout_seconds", "Approval timeout"]];
 type NumberSetting = "max_total_turns" | "context_token_cap" | "concurrency_limit" | "approval_timeout_seconds";
 /** The cap Custom starts from: the Auto ceiling, so switching changes nothing until edited. */
 const CUSTOM_CONTEXT_START = 200000;
+
+/** A setting's name with one line on what it does. */
+function SettingName({ name, hint }: { name: string; hint: string }) {
+  return <span className="themis-settings-name">{name}<small>{hint}</small></span>;
+}
 
 /** Pure rendering of one update status (null = never checked). */
 export function UpdateStatusView({ status }: { status: UpdateStatus | null }) {
@@ -155,16 +160,17 @@ export function SettingsScreen() {
 
   const numberInput = (key: NumberSetting, label: string, min: number, max: number) =>
     <input className="themis-settings-number" aria-label={label} type="number" min={min} max={max} value={form[key]} onChange={event => setForm(f => ({ ...f, [key]: Number(event.target.value) }))} onBlur={() => { if (form[key] !== state.settings[key]) void save({ [key]: form[key] }); }} />;
-  const number = (key: NumberSetting, label: string, min: number, max: number) => <label className="themis-settings-control">{label}
+  const number = (key: NumberSetting, label: string, min: number, max: number, hint?: string) => <label className="themis-settings-control">
+    {hint ? <SettingName name={label} hint={hint} /> : label}
     {numberInput(key, label, min, max)}
   </label>;
   // Auto (0) follows the model's context window; Custom caps it.
   const customContext = state.settings.context_token_cap !== 0;
   const contextTokens = <div className="themis-settings-control">
-    <span title="Auto uses the model's context window">Context tokens</span>
+    <SettingName name="Working memory" hint="Auto fits each model, up to 200k tokens" />
     <span className="themis-settings-pair">
-      {customContext && numberInput("context_token_cap", "Context token cap", 2000, 1000000)}
-      <select aria-label="Context tokens" value={customContext ? "custom" : "auto"} onChange={event => void save({ context_token_cap: event.target.value === "auto" ? 0 : CUSTOM_CONTEXT_START })}>
+      {customContext && numberInput("context_token_cap", "Working memory tokens", CUSTOM_CONTEXT_START, 1000000)}
+      <select aria-label="Working memory" value={customContext ? "custom" : "auto"} onChange={event => void save({ context_token_cap: event.target.value === "auto" ? 0 : CUSTOM_CONTEXT_START })}>
         <option value="auto">Auto</option>
         <option value="custom">Custom</option>
       </select>
@@ -192,9 +198,9 @@ export function SettingsScreen() {
       {section === "Browser" && <BrowserSettingsSection />}
       {section === "Web" && <WebSettingsSection />}
       {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
-        {number("max_total_turns", "Turn limit", 1, 2000)}
+        {number("max_total_turns", "Steps per reply", 1, 2000, "Tool calls and answers per reply")}
         {contextTokens}
-        {number("concurrency_limit", "Parallel runs", 1, 16)}
+        {number("concurrency_limit", "Chats at once", 1, 16, "Others wait their turn")}
       </SettingsGroup>}
       </fieldset>
       </div>

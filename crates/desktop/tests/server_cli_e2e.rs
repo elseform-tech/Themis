@@ -903,15 +903,13 @@ async fn cli_stop_releases_stalled_compaction_and_restores_chat() {
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let state = AppState::new_for_test(data.path().join("settings.json"));
-    state
-        .update_settings(themis_desktop::types::SettingsPatch {
-            // Leave room for tool schemas (they grow with each built-in tool); the
-            // oversized active request still triggers compaction.
-            context_token_cap: Some(12000),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    // Leave room for tool schemas (they grow with each built-in tool); the oversized active
+    // request still triggers compaction. A budget this small comes from runtime.jsonc.
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        r#"{"schema_version":1,"context_token_budget":12000}"#,
+    )
+    .unwrap();
     let provider = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":"Late checkpoint"},"finish_reason":"stop"}]})))

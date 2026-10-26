@@ -464,6 +464,9 @@ pub struct CompactionConfig {
     pub maintenance_threshold_ratio: f64,
     pub semantic_threshold_ratio: f64,
     pub target_headroom_interactions: usize,
+    /// Consecutive checkpoints, each within two model requests of the last, after which a run
+    /// stops as unable to make progress in its budget; 0 never stops.
+    pub thrash_checkpoints: usize,
     pub max_stages: usize,
     pub retry_limit: u8,
     /// Legacy: accepted so older files still load; has no effect on stage
@@ -493,6 +496,7 @@ impl Default for CompactionConfig {
             maintenance_threshold_ratio: 0.83,
             semantic_threshold_ratio: 0.93,
             target_headroom_interactions: 6,
+            thrash_checkpoints: 6,
             max_stages: 32,
             retry_limit: 2,
             section_max_tokens: 4096,
@@ -1444,6 +1448,10 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
         "compaction.target_headroom_interactions must be 1..20"
     );
     ensure!(
+        compaction.thrash_checkpoints <= 50,
+        "compaction.thrash_checkpoints must be 0..50"
+    );
+    ensure!(
         (1..=128).contains(&compaction.max_stages),
         "compaction.max_stages must be 1..128"
     );
@@ -1658,6 +1666,7 @@ fn base_schema() -> Value {
                 "maintenance_threshold_ratio":{"type":"number","minimum":0.5,"maximum":0.95,"default":0.83},
                 "semantic_threshold_ratio":{"type":"number","exclusiveMinimum":0.5,"maximum":0.97,"default":0.93},
                 "target_headroom_interactions":{"type":"integer","minimum":1,"maximum":20,"default":6},
+                "thrash_checkpoints":{"type":"integer","minimum":0,"maximum":50,"default":6},
                 "max_stages":{"type":"integer","minimum":1,"maximum":128,"default":32},
                 "retry_limit":{"type":"integer","minimum":0,"maximum":2,"default":2},
                 "section_max_tokens":{"type":"integer","minimum":256,"maximum":16384,"deprecated":true},

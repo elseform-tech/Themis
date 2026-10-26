@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
 import type { ThreadInfo } from "../lib/types";
@@ -92,18 +92,40 @@ describe("ThreadComposer", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
   });
-  it("requires consecutive Escape presses within 500ms and ignores held-key repeats",()=>{
+  it("requires consecutive Escape presses within 1.5s and ignores held-key repeats",()=>{
     const now=vi.spyOn(Date,"now").mockReturnValue(1000);
     const {onStop}=composer(true);
     fireEvent.keyDown(window,{key:"Escape"});
     fireEvent.keyDown(window,{key:"Escape",repeat:true});
     expect(onStop).not.toHaveBeenCalled();
-    now.mockReturnValue(1600);
+    now.mockReturnValue(2600);
     fireEvent.keyDown(window,{key:"Escape"});
     expect(onStop).not.toHaveBeenCalled();
     fireEvent.keyDown(window,{key:"ArrowDown"});
     fireEvent.keyDown(window,{key:"Escape"});
     expect(onStop).not.toHaveBeenCalled();
+    fireEvent.keyDown(window,{key:"Escape"});
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+  it("shows a hint after the first Escape and hides it when the window passes",()=>{
+    vi.useFakeTimers();
+    try {
+      composer(true);
+      expect(screen.queryByText("Press Esc again to stop")).toBeNull();
+      act(()=>{fireEvent.keyDown(window,{key:"Escape"});});
+      expect(screen.getByText("Press Esc again to stop")).toHaveAttribute("role","status");
+      act(()=>{vi.advanceTimersByTime(1600);});
+      expect(screen.queryByText("Press Esc again to stop")).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+  it("never counts an Escape that closes a menu or panel toward stopping",()=>{
+    const {onStop}=composer(true);
+    const panel=document.createElement("div");panel.setAttribute("role","dialog");document.body.appendChild(panel);
+    fireEvent.keyDown(window,{key:"Escape"});
+    panel.remove();
+    fireEvent.keyDown(window,{key:"Escape"});
+    expect(onStop).not.toHaveBeenCalled();
+    expect(screen.getByText("Press Esc again to stop")).toBeInTheDocument();
     fireEvent.keyDown(window,{key:"Escape"});
     expect(onStop).toHaveBeenCalledTimes(1);
   });
@@ -125,7 +147,7 @@ describe("ThreadComposer", () => {
     fireEvent.keyDown(window,{key:"Escape"});fireEvent.keyDown(window,{key:"Escape"});
     expect(latestStop).toHaveBeenCalledTimes(1);
   });
-  it.each(["@","/"])("dismisses %s autocomplete first and stops on the second Escape",value=>{
+  it.each(["@","/"])("dismisses %s autocomplete first, then Escape twice stops",value=>{
     const {onStop,onSend}=composer(true,value,false);
     const input=screen.getByRole("textbox",{name:"Message"});
     const range=document.createRange();range.selectNodeContents(input);range.collapse(false);
@@ -133,6 +155,9 @@ describe("ThreadComposer", () => {
     fireEvent.focus(input);expect(screen.getByRole("listbox")).toBeInTheDocument();
     fireEvent.keyDown(input,{key:"Escape"});
     expect(screen.queryByRole("listbox")).toBeNull();expect(onStop).not.toHaveBeenCalled();
+    // The Escape that closed the list was for the list; two more stop the run.
+    fireEvent.keyDown(input,{key:"Escape"});
+    expect(onStop).not.toHaveBeenCalled();
     fireEvent.keyDown(input,{key:"Escape"});
     expect(onStop).toHaveBeenCalledTimes(1);expect(onSend).not.toHaveBeenCalled();
   });
