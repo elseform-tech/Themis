@@ -31,9 +31,10 @@ fn built_in() -> &'static Mutex<BuiltIn> {
     BUILT_IN.get_or_init(Default::default)
 }
 
-/// Where the bundled runtime is: `THEMIS_SEARXNG_DIR` (development: point it at
-/// crates/desktop/searxng-runtime), or the app's resources (macOS `Contents/Resources/searxng`,
-/// Windows beside the executable, Linux under its lib folder).
+/// Where the bundled runtime is: `THEMIS_SEARXNG_DIR`, the app's resources (macOS
+/// `Contents/Resources/searxng`, Windows beside the executable, Linux under its lib folder), or,
+/// in debug builds only, crates/desktop/searxng-runtime once `scripts/bundle-searxng.mjs` has
+/// packed it, so local builds search like the shipped app.
 pub fn runtime_dir() -> Option<PathBuf> {
     let has_python = |dir: &Path| python(dir).is_file();
     if let Some(dir) = std::env::var_os("THEMIS_SEARXNG_DIR").map(PathBuf::from) {
@@ -41,13 +42,21 @@ pub fn runtime_dir() -> Option<PathBuf> {
     }
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
-    let candidates = [
+    let mut candidates = vec![
         exe_dir.join("../Resources/searxng"),
         exe_dir.join("searxng"),
         exe_dir.join("../lib/ThemisCode/searxng"),
         exe_dir.join("../lib/themis-code/searxng"),
     ];
+    if cfg!(debug_assertions) {
+        candidates.push(development_runtime());
+    }
     candidates.into_iter().find(|dir| has_python(dir))
+}
+
+/// The runtime `scripts/bundle-searxng.mjs` packs in this source tree.
+fn development_runtime() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("searxng-runtime")
 }
 
 fn python(dir: &Path) -> PathBuf {
@@ -237,6 +246,18 @@ pub fn stop() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Local builds find the runtime the bundle script packs in the source tree; a release
+    /// build only ever looks at its own resources.
+    #[test]
+    fn debug_builds_look_in_the_source_tree() {
+        assert!(development_runtime().ends_with("crates/desktop/searxng-runtime"));
+        if std::env::var_os("THEMIS_SEARXNG_DIR").is_none()
+            && python(&development_runtime()).is_file()
+        {
+            assert_eq!(runtime_dir(), Some(development_runtime()));
+        }
+    }
 
     #[test]
     fn settings_bind_locally_with_json_on() {

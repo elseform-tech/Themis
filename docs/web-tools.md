@@ -30,7 +30,9 @@ pinned SearXNG (`scripts/bundle-searxng.mjs`, about 155 MB installed, 50 MB of t
 release builds add it with `tauri build --config tauri.searxng.conf.json`),
 started in the background with the app server on a private `127.0.0.1` port and stopped with
 it (a watchdog stops it too if the app is killed). Its settings, secret and log are in the
-app-data `searxng/` folder; nothing is installed system-wide. Settings › Web shows it as
+app-data `searxng/` folder; nothing is installed system-wide. Local debug builds use it too
+once `node scripts/bundle-searxng.mjs` has packed it into `crates/desktop/searxng-runtime/`
+(gitignored); `THEMIS_SEARXNG_DIR` still overrides where it is looked for. Settings › Web shows it as
 **Built-in** with its live status. This is macOS and Linux only: SearXNG does not run on Windows
 (it needs the Unix `pwd` module), so Windows builds ship without it and Settings › Web shows
 "Not set · web_search is off" until you enter a server's address (such as the Docker one below).
