@@ -1312,7 +1312,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
     std::fs::create_dir(project.path().join(".themis")).unwrap();
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":12}"#,
+        r#"{"context_token_budget":25000,"recent_messages":2,"total_turns":12}"#,
     )
     .unwrap();
     let provider = MockServer::start().await;
@@ -1327,7 +1327,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
         let index = observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // Fresh shell output stays protected until a checkpoint summarizes it,
         // so two bounded batches force exactly one checkpoint.
-        let shell = |id: String, fill: char| json!({"id":id,"type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",format!("print('{fill}'*9000)")],"cwd":""}).to_string()}});
+        let shell = |id: String, fill: char| json!({"id":id,"type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",format!("print('{fill}'*11000)")],"cwd":""}).to_string()}});
         if index == 0 {
             let offered = body["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "notes");
             assert!(!offered, "the notes tool is retired");
