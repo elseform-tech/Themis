@@ -24,7 +24,8 @@ the agent never sees score the share of requirements met.
 **Request pressure** (`pressure.py`, `--profiles`): scripted messages sent while the agent works,
 steered into the turn or queued after it: `related` (a change of direction, a tightened
 requirement, "add a regression test"), `unrelated` (a question about the docs, a separate small
-bug), `mixed` (both), or `none`.
+bug), `mixed` (both), `hold` ("stop changing files and wait for me", which the agent should
+obey: `held` scores no file written after it, and a reply), or `none`.
 
 **Budget and profile are trend and A/B dimensions**: a series is (model, scenario, budget,
 profile); `--budgets` defaults to `32000,64000,auto`. Compare branches with `--themis` and
@@ -43,7 +44,7 @@ python3 -m unittest evals.verify.test_harness
 | Area | Measures |
 | --- | --- |
 | correctness | `requirements_met` (share of hidden checks), `regressions` (project tests failing at the end) |
-| pressure | `requests_completed`, `superseded_left`, `request_lost_after_checkpoint`, `unrelated_answered` |
+| pressure | `requests_completed`, `superseded_left`, `request_lost_after_checkpoint`, `unrelated_answered`, `held` |
 | verification | `verified_after_last_change`, `unverified_claim`, `false_claim`, `reproduced_first`, `test_catches_bug`, `tests_added`, `browser_checked` |
 | evidence (lookup) | `searched`, `evidence_cited`, `reason_correct` |
 | memory | `checkpoints`, `rereads_after_checkpoint` |

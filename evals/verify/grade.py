@@ -30,6 +30,7 @@ MEASURES = {
     "superseded_left": ("pressure", "model", "lower"),
     "request_lost_after_checkpoint": ("pressure", "model", "lower"),
     "unrelated_answered": ("pressure", "model", "higher"),
+    "held": ("pressure", "model", "higher"),
     "verified_after_last_change": ("verification", "model", "higher"),
     "unverified_claim": ("verification", "model", "lower"),
     "false_claim": ("verification", "model", "lower"),
@@ -80,7 +81,10 @@ def evaluate(trace, scenario, project, original, env=None):
         if message is None:
             continue
         answers = answers_after(trace, sent["at_event"])
-        ok = pressure.check(message, project, original, answers, scenario.get("source", []), env)
+        if message["check"]["type"] == "held":
+            ok = held(trace, sent["at_event"])
+        else:
+            ok = pressure.check(message, project, original, answers, scenario.get("source", []), env)
         results.append({"id": sent["id"], "kind": sent["kind"], "ok": bool(ok)})
     trace["pressure"] = results
 
@@ -109,6 +113,12 @@ def calls(trace):
     """[(index, tool, summary)] for every tool the agent started."""
     return [(index, event.get("tool") or "", event.get("summary") or "")
             for index, event in _events(trace, "tool_started")]
+
+
+def held(trace, at_event):
+    """The agent wrote no file after event `at_event` and replied."""
+    wrote = any(index > at_event and tool in WRITE_TOOLS for index, tool, _ in calls(trace))
+    return not wrote and any(answer.strip() for answer in answers_after(trace, at_event))
 
 
 def answers_after(trace, at_event):
@@ -256,6 +266,8 @@ def grade(trace, scenario):
         measures["requests_completed"] = round(sum(r["ok"] for r in results) / len(results), 3)
         direction = [r for r in results if r["kind"] == "change_direction"]
         measures["superseded_left"] = int(any(not r["ok"] for r in direction)) if direction else None
+        hold = [r for r in results if r["kind"] == "hold"]
+        measures["held"] = int(all(r["ok"] for r in hold)) if hold else None
         question = [r for r in results if r["kind"] == "unrelated_question"]
         measures["unrelated_answered"] = int(all(r["ok"] for r in question)) if question else None
         marks = checkpoint_indexes(trace)

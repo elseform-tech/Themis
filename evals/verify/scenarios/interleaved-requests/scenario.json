@@ -41,7 +41,7 @@
    "check": {
     "type": "answer",
     "patterns": [
-     "\\b(?:schema|version)\\D{0,20}3\\b|\\b3\\b\\D{0,20}(?:schema|version)",
+     "(?:schema|version)[^.\\n]{0,60}?\\b3\\b|\\b3\\b[^.\\n]{0,20}(?:schema|version)",
      "discount"
     ]
    }

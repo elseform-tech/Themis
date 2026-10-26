@@ -145,6 +145,13 @@ class Grading(unittest.TestCase):
         self.assertEqual((measures["requests_completed"], measures["superseded_left"], measures["unrelated_answered"],
                           measures["request_lost_after_checkpoint"], measures["checkpoints"]), (0.667, 1, 1, 1, 1))
 
+    def test_a_hold_is_kept_only_without_later_writes(self):
+        from evals.verify.grade import held
+        events = [PATCH, event("assistant_text", text="Found the cause in money.py; waiting.")]
+        self.assertTrue(held(trace_of("trace-rounding", events), 1))
+        self.assertFalse(held(trace_of("trace-rounding", events + [PATCH]), 1))
+        self.assertFalse(held(trace_of("trace-rounding", [PATCH]), 1))
+
     def test_a_lookup_counts_its_citation_in_any_reply(self):
         page = "https://docs.python.org/3/library/datetime.html"
         events = [call("fetch_url", url=page),
