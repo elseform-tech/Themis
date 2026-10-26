@@ -160,4 +160,9 @@
     // "summary_model": "gpt-5.6-luna",      // any model a connected provider offers
     // "prompt_file": "my-summary-guidance.md", // extra summary guidance, 32 KiB at most
   },
+
+  // ─── GOALS ───────────────────────────────────────────────────────────────────────────
+  "goal": {
+    // "check_model": "glm-5.3",             // checks each goal turn; absent: the chat's model
+  },
 }

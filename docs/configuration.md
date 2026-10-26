@@ -222,6 +222,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `compaction.document_context_token_budget` | Internal full-document preparation input budget, 24,000–1,000,000; default 200,000; clamped to the routed summary model capacity, with conservative 24,000 when unknown. Does not change ordinary context capacity. |
 | `compaction.summary_max_tokens` | Initial summary-output ceiling, 256–16,384; default 8,192. Retries may use up to twice the effective initial allowance, subject to capacity. |
 | `compaction.summary_model` | Optional model id (1–256 printable bytes, no spaces): any model a connected provider offers, `<provider>/<id>` for one from `providers`; omitted/null keeps automatic routing. Only internal summaries change. A run fails before it starts when the model is not in the captured catalogs (OpenCode Go's and the configured providers'); a model on another provider than the chat's is called with that provider's key. |
+| `goal.check_model` | Optional model id, as `compaction.summary_model`: the model that checks each goal turn; omitted/null checks with the chat's own model. File only (no Settings control); any layer, so a project may choose its own. A model on another provider than the chat's is called with that provider's key. |
 | `providers` | User file only; at most 16 OpenAI-compatible providers. See [Model providers](#model-providers-and-per-model-overrides) |
 | `models` | At most 256 per-model overrides keyed by model id or `<provider>/<id>`; any layer. See [Model providers](#model-providers-and-per-model-overrides) |
 | `compaction.prompt_file` | Optional UTF-8 Markdown, at most 32 KiB |
@@ -341,8 +342,12 @@ Arrays replace earlier arrays, so the list is the user file's. Provenance report
 | `models.<id>.thinking` | `true` or `false`, for a model whose catalog lists a thinking switch: `false` sends thinking disabled instead of turning it on. A run on a model without a switch fails |
 
 `models` keys may be a bare id (`glm-5.3`, or `qwen3-coder` for every provider
-offering it) or provider-qualified (`go/glm-5.3`, `local/qwen3-coder`); for each
-field the qualified entry wins. Objects merge by field across layers, so a
+offering it: a bare key applies to that id from every provider) or
+provider-qualified (`go/glm-5.3`, `local/qwen3-coder`); for each field the
+qualified entry wins. A prefix must name a provider in `providers` (or `go`
+for OpenCode Go in a `models` key): `lcoal/qwen3-coder` is refused rather than
+read as an OpenCode Go model, and so is a `compaction.summary_model` or
+`goal.check_model` whose prefix names no provider (a bare id is OpenCode Go). Objects merge by field across layers, so a
 project may lower a cap or set an effort for its runs. Only the run's own model
 is checked against its catalog.
 
@@ -462,14 +467,15 @@ the commands and file changes recorded since `checked_seq` (the history position
 check read through), in pages of 2,000 items, keeping the newest 32,000 characters of command
 output; an output longer than 6,000 characters keeps its first 2,000 and last 4,000 with a
 clipped marker, and the check asks for a compact proof (a count, a grep) rather than a whole file.
-A check that fails does not move it. A goal never stops on its own: after three
+A check that fails does not move it. The check runs on `goal.check_model`, else the chat's
+model. A goal never stops on its own: after three
 turns without progress (a turn that changed files always counts as progress) the next turn
 is told to try a different approach, failed turns retry with backoff however often they fail,
 and `stuck` remains only for goals saved by earlier versions. When the check finds the goal
 reached, one short unchecked turn has the agent tell the user; the check's verdicts post no
-`goal_note` (only the small-window, quota and failed-turn notes remain). The goal check, the
-stall nudge, quota retries (every 15 minutes) and error backoff (30 s doubling to 15
-minutes) are fixed, not runtime configuration. App server commands:
+`goal_note` (only the small-window, quota and failed-turn notes remain). Apart from its model,
+the goal check, the stall nudge, quota retries (every 15 minutes) and error backoff (30 s
+doubling to 15 minutes) are fixed, not runtime configuration. App server commands:
 `list_queue`, `enqueue_message`, `update_queued_message`, `remove_queued_message`,
 `steer_queued_message`, `get_goal`, `set_goal`, `edit_goal`, `pause_goal`, `resume_goal`, `remove_goal`
 (also through `themis call`).
