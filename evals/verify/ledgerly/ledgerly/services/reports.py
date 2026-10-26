@@ -49,6 +49,18 @@ def to_csv(store, month, rates=None):
     return "\n".join(rows) + "\n"
 
 
+# >>> plant:feat-top
+# === plant:feat-top
+def top_customers(store, month, limit=5, rates=None):
+    """[(customer, total_cents)] for the customers with the highest invoiced total in `month`
+    (void invoices count as zero), highest first; equal totals by customer id."""
+    totals = monthly_summary(store, month, rates)["by_customer"]
+    ranked = sorted(((store.customer(cid), cents) for cid, cents in totals.items() if cents > 0),
+                    key=lambda pair: (-pair[1], pair[0].id))
+    return ranked[:limit]
+
+
+# <<< plant:feat-top
 def describe(summary):
     """A short text version of a monthly summary for the CLI."""
     lines = [f"{summary['month']}: {summary['invoices']} invoices, total {money.format_cents(summary['total_cents'])}",

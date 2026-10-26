@@ -17,7 +17,7 @@ from .__main__ import ab_table, arms, record_of, report, series_key
 from .grade import MEASURES, grade, rereads_after_checkpoint
 from .run import active_run
 
-ALL_PLANTS = ("req-thousands", "req-import-report", "side-country")
+ALL_PLANTS = ("req-thousands", "req-import-report", "side-country", "side-overdue-sort", "feat-top")
 
 
 def event(kind, run_id="r1", **fields):
@@ -65,7 +65,8 @@ class Checks(unittest.TestCase):
             for name in scenarios.names():
                 with self.subTest(scenario=name):
                     scenario = scenarios.load(name)
-                    planted = generate.project(os.path.join(scratch, name), name, 6, git=False)
+                    planted = generate.project(os.path.join(scratch, name), None, 6, git=False,
+                                               extra=scenario["plants"])
                     before = scenarios.run_hidden(scenario, planted)
                     after = scenarios.run_hidden(scenario, reference)
                     self.assertLess(before["passed"], before["total"])
@@ -74,8 +75,8 @@ class Checks(unittest.TestCase):
     def test_pressure_checks_fail_as_planted_and_pass_on_the_reference(self):
         with tempfile.TemporaryDirectory() as scratch:
             reference = generate.project(os.path.join(scratch, "reference"), None, 6, git=False)
-            for name in ("trace-rounding", "run-to-see"):
-                planted = generate.project(os.path.join(scratch, name), name, 6, git=False,
+            for name in ("trace-rounding", "run-to-see", "interleaved-requests"):
+                planted = generate.project(os.path.join(scratch, name), None, 6, git=False,
                                            extra=pressure.plants(name, "mixed"))
                 sources = scenarios.load(name)["source"]
                 for message in pressure.messages(name, "mixed"):
@@ -83,7 +84,7 @@ class Checks(unittest.TestCase):
                         continue
                     with self.subTest(scenario=name, message=message["id"]):
                         self.assertTrue(pressure.check(message, reference, planted, [], sources))
-                        if message["kind"] != "change_direction" or name == "run-to-see":
+                        if message["kind"] not in ("change_direction", "resume") or name == "run-to-see":
                             self.assertFalse(pressure.check(message, planted, planted, [], sources))
 
     def test_a_regression_test_is_told_apart_from_the_given_tests(self):

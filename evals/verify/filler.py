@@ -18,7 +18,7 @@ TRICKY_PRICES = ["19.99", "4.35", "0.29", "1.15", "2.85", "3.29", "8.95", "0.57"
 PLAIN_PRICES = ["2.50", "12.00", "29.99", "1.25", "5.00", "7.50", "9.90", "15.00", "0.50"]
 
 
-def write(project, rng, scenario):
+def write(project, rng, planted):
     os.makedirs(os.path.join(project, "data"), exist_ok=True)
     os.makedirs(os.path.join(project, "logs"), exist_ok=True)
     os.makedirs(os.path.join(project, "docs", "decisions"), exist_ok=True)
@@ -29,7 +29,7 @@ def write(project, rng, scenario):
         handle.write("country,percent\nDE,19\nFR,20\nNL,21\nAT,20\n")
     with open(os.path.join(project, "logs", "app.log"), "w", encoding="utf-8") as handle:
         handle.write(_log(rng, customers))
-    for name, text in docs(rng, scenario).items():
+    for name, text in docs(rng, planted).items():
         with open(os.path.join(project, name), "w", encoding="utf-8") as handle:
             handle.write(text)
 
@@ -126,11 +126,12 @@ def _log(rng, customers):
     return "\n".join(lines) + "\n"
 
 
-def docs(rng, scenario):
-    split = scenario != "refactor-split-billing"
+def docs(rng, planted):
+    split = "refactor-split-billing" not in planted
     services = ("`invoicing.py` (issue, void) and `payments.py` (payments, balances, overdue, aging)"
                 if split else "`billing.py` (issuing, voiding, payments, balances, overdue, aging)")
-    codes = scenario != "feature-discount-codes"
+    codes = "feature-discount-codes" not in planted
+    top = "feat-top" not in planted
     team = rng.sample(["Ana", "Bo", "Chidi", "Dana", "Eli", "Femi", "Gus"], 3)
     out = {
         "README.md": f"""# Ledgerly
@@ -196,7 +197,10 @@ documents step by step when they are loaded. See decision 0004.
 | `invoices create --customer ID --item SKU:QTY[:PRICE] ...` | issue an invoice (prices in euros) |
 | `invoices pay ID AMOUNT` / `invoices void ID` / `invoices show ID` | payments, voids, details |
 | `reports monthly YYYY-MM [--csv]` / `reports overdue` / `reports aging` | reports |
-| `stock show SKU` / `stock restock SKU QTY` | stock |
+"""
+        + ("""| `reports top YYYY-MM [--limit N]` | the customers with the highest invoiced total in a month |
+""" if top else "")
+        + """| `stock show SKU` / `stock restock SKU QTY` | stock |
 | `import FILE` | invoices exported by the old till |
 """
         + ("""

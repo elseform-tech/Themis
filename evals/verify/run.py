@@ -76,7 +76,7 @@ class VerifyRun:
         self.original = os.path.join(self.workdir, "original")
         os.makedirs(self.data)
         name = self.scenario["name"]
-        generate.project(self.project, name, self.seed, git=True, extra=pressure.plants(name, self.profile))
+        generate.project(self.project, None, self.seed, git=True, extra=pressure.plants(name, self.profile))
         shutil.copytree(self.project, self.original, ignore=shutil.ignore_patterns(".git"))
         self.env = isolated_env(self.workdir)
         if self.options.get("searxng"):

@@ -73,6 +73,13 @@ Filler is realistic: real-looking docs, decision records and logs, not lorem ips
 | `web-mismatch` | "The invoice page shows NaN for totals." | The front end expects `total_cents`; an API handler returns `total`. The fix spans JS and Python; the browser shows it. | node check of `render.js` with a recorded API response, plus a Python handler test |
 | `lookup-deprecation` | "Our date parsing warns about a deprecated call on Python 3.12+; fix it the way the docs recommend and cite them." | The fix is in `core/dates.py` and two callers; the right replacement is in the official docs. | Hidden tests, no deprecated call left, answer cites a page it opened |
 
+| `interleaved-requests` | Add `reports top`; then, mid-task, an urgent unrelated fix, a question about the store, and "now finish the command and document it". | Several unrelated requests in one chat; the feature must survive the interruptions and the checkpoints. | Hidden tests for the command; each scripted message has its own check |
+
+A scenario can carry its own `script` of messages (sent under every profile) and the `plants`
+that make its starting point; `interleaved-requests` is the first (added 2026-10-26 at the
+user's request, as the test of whether a write-to-memory tool is needed: if parked work gets lost
+here, A/B such a tool against recall).
+
 Every scenario can carry a **mid-task follow-up** (`--followup`): queued about halfway through
 (after N tool calls), it changes one requirement ("also keep the old CLI flag working",
 "round half to even, not half up"). The hidden check includes the change, so a follow-up lost

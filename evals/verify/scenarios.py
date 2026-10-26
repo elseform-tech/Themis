@@ -4,7 +4,9 @@ seeded Ledgerly).
 
 scenario.json: `kind` (bug, feature, refactor, web or lookup), `message` (the user's request),
 `source` (files the change belongs in), `tests` (the project's test folder), `hidden_command`
-(run in a copy of the finished project with the hidden checks under `_hidden/`), and for lookups
+(run in a copy of the finished project with the hidden checks under `_hidden/`), optionally
+`plants` (the plants that make its starting point; its own name by default) and `script` (its
+own extra messages, sent under every pressure profile; see pressure.py), and for lookups
 `answer_patterns` and `evidence_hosts`.
 """
 
@@ -31,6 +33,8 @@ def load(name):
         scenario = json.load(handle)
     scenario["name"] = name
     scenario["hidden"] = os.path.join(SCENARIOS, name, "hidden")
+    # The plants that make the scenario's starting point; by default its own name.
+    scenario.setdefault("plants", [name])
     return scenario
 
 

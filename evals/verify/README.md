@@ -18,6 +18,7 @@ the agent never sees score the share of requirements met.
 | `run-to-see` | the import drops some invoices | the code looks right; only running it on the sample data shows why |
 | `web-mismatch` | the page shows NaN | the API and the page disagree on field names |
 | `lookup-deprecation` | fix a deprecation as the docs say, cite them | an aware/naive datetime trap in stored data |
+| `interleaved-requests` | add `reports top`, then an urgent unrelated fix, a question, and "now finish it" | the feature must survive interruptions and checkpoints; each step is checked |
 
 **Request pressure** (`pressure.py`, `--profiles`): scripted messages sent while the agent works,
 steered into the turn or queued after it: `related` (a change of direction, a tightened

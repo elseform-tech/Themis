@@ -82,7 +82,7 @@ def project(directory, scenario=None, seed=1, git=True, extra=()):
     planted = {name for name in (scenario, *extra) if name}
     os.makedirs(directory, exist_ok=True)
     write_code(directory, planted)
-    filler.write(directory, random.Random(f"ledgerly:{seed}"), scenario)
+    filler.write(directory, random.Random(f"ledgerly:{seed}"), planted)
     if git:
         commit_history(directory, seed)
     return directory

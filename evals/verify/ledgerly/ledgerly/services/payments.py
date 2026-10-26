@@ -38,7 +38,11 @@ def overdue(store, now=None):
     """Open invoices past their due date, oldest first."""
     late = [invoice for invoice in store.invoices
             if invoice.status == "open" and dates.is_overdue(due_date(store, invoice), now)]
+# >>> plant:side-overdue-sort
+    return sorted(late, key=lambda invoice: invoice.issued, reverse=True)
+# === plant:side-overdue-sort
     return sorted(late, key=lambda invoice: invoice.issued)
+# <<< plant:side-overdue-sort
 
 
 def aging(store, now=None):

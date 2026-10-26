@@ -68,9 +68,10 @@ RELATED = {
 
 
 def messages(scenario, profile):
+    """The scenario's own script, then the profile's messages, in the order they are due."""
     if profile not in PROFILES:
         raise ValueError(f"unknown pressure profile {profile!r}")
-    chosen = []
+    chosen = list(scenarios.load(scenario).get("script", []))
     if profile in ("related", "mixed"):
         chosen += RELATED.get(scenario, [])
     if profile in ("unrelated", "mixed"):
@@ -79,7 +80,9 @@ def messages(scenario, profile):
 
 
 def plants(scenario, profile):
-    return tuple(message["plant"] for message in messages(scenario, profile) if message.get("plant"))
+    """Every plant a run needs: the scenario's starting point and its messages' changes not made yet."""
+    own = scenarios.load(scenario)["plants"]
+    return tuple(own) + tuple(message["plant"] for message in messages(scenario, profile) if message.get("plant"))
 
 
 def check(message, project, original, answers, sources, env=None):
