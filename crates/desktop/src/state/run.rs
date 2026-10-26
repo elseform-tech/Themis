@@ -411,7 +411,10 @@ impl AppState {
         );
         // fetch_url always; web_search through your SearXNG, or the one built into Themis.
         let mut web = run_configuration.web.clone();
-        if web.search_url.is_none() && super::searxng::runtime_dir().is_some() {
+        if web.search_url.is_none()
+            && self.inner.built_in_search
+            && super::searxng::runtime_dir().is_some()
+        {
             match super::searxng::url(&self.app_data_dir()).await {
                 Ok(url) => web.search_url = Some(url),
                 Err(error) => {
