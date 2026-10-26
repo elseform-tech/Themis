@@ -1,0 +1,17 @@
+{
+ "kind": "bug",
+ "message": "A customer's invoice came out too high. Two lines: 1250 cents x 2 and 500 cents x 1, with a 10% discount and 20% tax. We expected 3240 cents but `total_due` returns 3300. Please fix it.",
+ "source": [
+  "billing/invoice.py"
+ ],
+ "tests": "tests",
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ]
+}
