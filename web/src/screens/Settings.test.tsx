@@ -198,6 +198,8 @@ describe("Settings › General › Notifications", () => {
     await act(async () => { fireEvent.click(screen.getByLabelText("Notify when a goal finishes or pauses")); });
     expect(bridge.updateSettings).toHaveBeenCalledWith({ goal_notifications: false });
     expect(bridge.notificationPermission).not.toHaveBeenCalledWith(true);
+    // A preference that applies at once says only that it is saved.
+    expect(screen.getByRole("status")).toHaveTextContent(/^Saved$/);
   });
 
   it("asks for permission when turned on and hints once when it is refused", async () => {
@@ -255,6 +257,18 @@ describe("Settings › Advanced › Working memory", () => {
     expect(bridge.updateSettings).toHaveBeenLastCalledWith({ context_token_cap: 0 });
   });
 
+  it("says a change is saved and when it applies, then clears the note", async () => {
+    vi.useFakeTimers();
+    try {
+      await openAdvanced();
+      expect(screen.getByRole("status")).toHaveTextContent("");
+      await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Working memory" }), { target: { value: "custom" } }); });
+      expect(screen.getByRole("status")).toHaveTextContent("Saved · applies from each chat's next message");
+      await act(async () => { vi.advanceTimersByTime(3000); });
+      expect(screen.getByRole("status")).toHaveTextContent("");
+    } finally { vi.useRealTimers(); }
+  });
+
   it("names the field in a rejected cap's error", async () => {
     settings.context_token_cap = 300000;
     vi.mocked(bridge.updateSettings).mockRejectedValueOnce("context_token_cap must be Auto or between 200000 and 1000000");
@@ -263,5 +277,6 @@ describe("Settings › Advanced › Working memory", () => {
     fireEvent.change(cap, { target: { value: "10" } });
     await act(async () => { fireEvent.blur(cap); });
     expect(screen.getByRole("alert")).toHaveTextContent("Working memory must be Auto or between 200000 and 1000000");
+    expect(screen.getByRole("status")).toHaveTextContent("");
   });
 });

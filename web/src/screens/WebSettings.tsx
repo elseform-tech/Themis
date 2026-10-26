@@ -20,7 +20,7 @@ function statusText(status: SearchServerStatus) {
 }
 
 /** Settings › Web: the SearXNG server web_search asks, and whether it answers. */
-export function WebSettingsSection() {
+export function WebSettingsSection({ onSaved }: { onSaved?: () => void } = {}) {
   const [saved, setSaved] = useState<string | null | undefined>(undefined);
   const [builtIn, setBuiltIn] = useState(false);
   const [draft, setDraft] = useState("");
@@ -47,6 +47,7 @@ export function WebSettingsSection() {
       const web = await updateWebSettings(draft.trim());
       setSaved(web.search_url);
       setStatus(null);
+      onSaved?.();
       if (web.search_url || builtIn) void check();
     } catch (reason) { setError(describeError(reason)); }
   };

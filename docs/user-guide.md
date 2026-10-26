@@ -86,7 +86,8 @@ levels are listed.
   the next message. A message that cannot be sent (a bare `/goal`, a broken
   project configuration) stays in the queue marked **Needs an edit**, with the
   reason as its tooltip and in the chat; edit it (or save it unchanged) to send
-  it again. Queued messages survive a restart.
+  it again. Queued messages survive a restart. A chat holds at most 50 queued
+  messages of up to 100,000 characters each.
 - **Changing the model or effort during a run** applies from the next turn:
   the running turn finishes on the model it started with.
 
@@ -419,6 +420,9 @@ It saves to the `browser` block of your `runtime.jsonc`.
 **General › Notifications** holds **Sound when a reply finishes**, **Haptics** (macOS) and
 **Notify when a goal finishes or pauses** (macOS; see [Goals](#goals)).
 Ordinary preferences save on change; text inputs save when focus leaves the field.
+After each save the pane heading shows **Saved** for a few seconds; in Models, Permissions,
+Browser, Web and Advanced it adds *applies from each chat's next message*, because a reply
+already running keeps the settings it started with. Nothing needs a restart.
 Errors appear inline, and rejected changes leave the previous preferences intact.
 Permissions sets the mode new chats start in (Custom or YOLO; each chat can still switch in
 its composer) and the approval timeout, lists your Custom rules from `runtime.jsonc`
