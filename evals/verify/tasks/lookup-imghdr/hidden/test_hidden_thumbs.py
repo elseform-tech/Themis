@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SAMPLES = {
@@ -18,7 +19,8 @@ def load():
 
 
 def test_imports_on_this_python():
-    assert "imghdr" not in (ROOT / "tools" / "thumbs.py").read_text()
+    # A comment may name imghdr; an import may not.
+    assert not re.search(r"^\s*(?:import|from)\s+imghdr\b", (ROOT / "tools" / "thumbs.py").read_text(), re.M)
     load()
 
 
