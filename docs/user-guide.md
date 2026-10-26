@@ -425,6 +425,15 @@ its composer) and the approval timeout, lists your Custom rules from `runtime.js
 read-only (first match wins, then the default for anything else), and shows whether that
 file was read, with **Open with** to edit it.
 
+**Your `runtime.jsonc`.** A new file is short: common settings grouped by purpose, each a
+whole line starting with `// "` under a plain note. Delete the `//` to turn one on and edit
+its value; plain `//` notes are never settings. Every option, its allowed values and its
+default are explained in `runtime.reference.jsonc` beside it, which Themis keeps current
+and never reads. A key may appear only once (two `"sandbox"` lines are refused with the
+line number; put both settings in one block). There is nothing to restart: each chat reads
+the file when its next message starts, and a reply already running keeps the settings it
+began with. Settings › Permissions shows whether the file was read and any problem in it.
+
 Preferences persisted to `settings.json`:
 
 | Key | Meaning | Default |

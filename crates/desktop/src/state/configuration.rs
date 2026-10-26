@@ -85,8 +85,9 @@ impl AppState {
         Ok(resolved)
     }
 
-    /// The global `runtime.jsonc`, created with [`runtime_config_starter`]
-    /// when it does not exist yet. An existing file is never touched.
+    /// The global `runtime.jsonc`, created with [`runtime_config_starter`] when it does not
+    /// exist yet (or still sets nothing), and the reference beside it. A file with any
+    /// setting in it is never touched.
     pub fn ensure_runtime_config(&self) -> Result<PathBuf, String> {
         let path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
         if let Some(parent) = path.parent() {
@@ -103,8 +104,28 @@ impl AppState {
                 file.write_all(runtime_config_starter().as_bytes())
                     .map_err(|e| format!("write '{}': {e}", path.display()))?;
             }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                // The old long starter, still all comments, becomes the current one; any
+                // other file (a setting or only someone's own notes in it) is never touched.
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    if text.starts_with(OLD_STARTER_HEADER) && sets_nothing(&text) {
+                        // Kept once beside it, in case a commented line held a note.
+                        let _ = std::fs::write(path.with_file_name(PREVIOUS_STARTER), &text);
+                        std::fs::write(&path, runtime_config_starter())
+                            .map_err(|e| format!("write '{}': {e}", path.display()))?;
+                    }
+                }
+            }
             Err(error) => return Err(format!("create '{}': {error}", path.display())),
+        }
+        // The reference is rewritten every time, so it always matches this version.
+        if let Some(parent) = path.parent() {
+            let reference = parent.join(REFERENCE_FILE);
+            if std::fs::read_to_string(&reference).ok().as_deref() != Some(configuration::REFERENCE)
+            {
+                std::fs::write(&reference, configuration::REFERENCE)
+                    .map_err(|e| format!("write '{}': {e}", reference.display()))?;
+            }
         }
         Ok(path)
     }
@@ -383,99 +404,128 @@ impl AppState {
     }
 }
 
-/// Ready-made settings in a new `runtime.jsonc`, commented out: `(what it does, the setting)`.
-/// Uncomment one approval preset at a time (a later "approval" replaces an earlier one).
-pub const RUNTIME_CONFIG_PRESETS: [(&str, &str); 5] = [
+/// The settings a new `runtime.jsonc` offers, each one line and commented out, by section:
+/// `(section, [(what it does, the setting)])`. Every option and its meaning is in the
+/// reference written beside it ([`REFERENCE_FILE`]).
+pub const RUNTIME_CONFIG_PRESETS: [(&str, &[(&str, &str)]); 6] = [
     (
-        "Approval: reads run, everything else asks (what Themis does without a file)",
-        r#""approval": {
-  "default": "ask",
-  "rules": [
-    { "tool": "*", "risk": "read", "action": "allow" }
-  ]
-},"#,
+        "Approvals (Custom mode); use one line",
+        &[
+            (
+                "Reads run, everything else asks (the default)",
+                r#""approval": { "default": "ask", "rules": [{ "tool": "*", "risk": "read", "action": "allow" }] },"#,
+            ),
+            (
+                "Also run tests without asking, never push",
+                r#""approval": { "default": "ask", "rules": [{ "tool": "*", "risk": "read", "action": "allow" }, { "tool": "shell", "command": ["cargo", "test"], "action": "allow" }, { "tool": "shell", "command": ["npm", "test"], "action": "allow" }, { "tool": "shell", "command": ["git", "push"], "action": "deny" }] },"#,
+            ),
+            (
+                "Read-only: refuse anything that writes, runs or browses",
+                r#""approval": { "default": "deny", "rules": [{ "tool": "*", "risk": "read", "action": "allow" }] },"#,
+            ),
+        ],
     ),
     (
-        "Approval: also run tests and builds without asking, and never push",
-        r#""approval": {
-  "default": "ask",
-  "rules": [
-    { "tool": "*", "risk": "read", "action": "allow" },
-    { "tool": "shell", "command": ["cargo", "test"], "action": "allow" },
-    { "tool": "shell", "command": ["npm", "test"], "action": "allow" },
-    { "tool": "shell", "command": ["git", "push"], "action": "deny" },
-    { "tool": "*", "risk": "destructive", "action": "deny" }
-  ]
-},"#,
+        "Sandbox",
+        &[
+            (
+                "Commands get no network",
+                r#""sandbox": { "network": "block" },"#,
+            ),
+            (
+                "Commands may also write here",
+                r#""sandbox": { "writable_paths": ["~/.cargo"] },"#,
+            ),
+        ],
     ),
     (
-        "Approval: read-only, refuse anything that writes, runs or browses",
-        r#""approval": {
-  "default": "deny",
-  "rules": [
-    { "tool": "*", "risk": "read", "action": "allow" }
-  ]
-},"#,
+        "Browser and web",
+        &[
+            ("No built-in browser", r#""browser": { "enabled": false },"#),
+            (
+                "Ask before the agent opens a site",
+                r#""browser": { "permissions": { "browsing": "ask", "downloads": "ask", "debugging": "block" } },"#,
+            ),
+            (
+                "Use your own SearXNG for web search",
+                r#""web": { "search_url": "http://127.0.0.1:8888" },"#,
+            ),
+        ],
     ),
     (
-        "Sandbox: commands get no network",
-        r#""sandbox": { "network": "block" },"#,
+        "Working memory and steps (instead of Settings › Advanced)",
+        &[
+            (
+                "Working memory in tokens; under 200,000 is for evals",
+                r#""context_token_budget": 300000,"#,
+            ),
+            ("Steps per reply", r#""total_turns": 400,"#),
+        ],
     ),
     (
-        "Browser: ask before the agent opens any site (local apps stay allowed)",
-        r#""browser": { "permissions": { "browsing": "ask", "downloads": "ask", "debugging": "block" } },"#,
+        "Models",
+        &[
+            (
+                "Check goal turns with a cheaper model",
+                r#""goal": { "check_model": "glm-5.3" },"#,
+            ),
+            (
+                "Write checkpoint summaries with another model",
+                r#""compaction": { "summary_model": "glm-5.3" },"#,
+            ),
+        ],
+    ),
+    (
+        "Logs",
+        &[(
+            "More detail in the logs",
+            r#""logging": { "level": "debug" },"#,
+        )],
     ),
 ];
 
-/// A new `runtime.jsonc`: every setting from [`configuration::REFERENCE`] with its
-/// explanation, allowed values and default, then [`RUNTIME_CONFIG_PRESETS`]. Every setting
-/// is commented out, so the file changes nothing until someone uncomments a line.
-pub fn runtime_config_starter() -> String {
-    starter_from(configuration::REFERENCE)
-}
+/// The full reference Themis writes beside `runtime.jsonc` and never reads.
+pub const REFERENCE_FILE: &str = "runtime.reference.jsonc";
 
-fn starter_from(reference: &str) -> String {
+/// The first line of the long starter Themis wrote before; only such a file is upgraded.
+const OLD_STARTER_HEADER: &str =
+    "// Themis settings for every project (JSON with // comments and trailing commas).";
+
+/// Where an older starter that set nothing is kept when the current one replaces it.
+pub const PREVIOUS_STARTER: &str = "runtime.previous.jsonc";
+
+/// A new `runtime.jsonc`: one-line settings, each commented out under a note, so the file
+/// changes nothing until a line is uncommented.
+pub fn runtime_config_starter() -> String {
     let mut text = String::from(
-        "// Themis settings for every project (JSON with // comments and trailing commas).\n\
+        "// Your Themis settings, for every project.\n\
          //\n\
-         // Every setting is below, commented out and showing its default. To change one, remove\n\
-         // the // in front of it (and in front of the block it sits in, such as \"approval\": {\n\
-         // and its closing }), then edit the value. Ready-made presets are at the end; use only\n\
-         // one approval preset. Lists replace the default list instead of adding to it.\n\
-         // Changes apply from each chat's next message; a project's .themis/config.jsonc can\n\
-         // only make things stricter. Settings › Permissions shows whether this file is valid.\n\
-         {\n",
+         // Lines starting with // \" are settings: delete the // to use one, then edit its value.\n\
+         // Every option and what it does: runtime.reference.jsonc, next to this file.\n\
+         // Changes apply from each chat's next message. Settings › Permissions shows problems.\n\
+         {\n  \"schema_version\": 1,\n",
     );
-    // Between the reference's opening `{` and closing `}` lines (either line ending: a
-    // Windows checkout may embed the file with CRLF).
-    let lines: Vec<&str> = reference.lines().collect();
-    let open = lines
-        .iter()
-        .position(|line| line.trim() == "{")
-        .unwrap_or(0);
-    let close = lines
-        .iter()
-        .rposition(|line| line.trim() == "}")
-        .unwrap_or(lines.len());
-    for line in lines.get(open + 1..close).unwrap_or_default() {
-        let setting = line.trim_start();
-        let indent = &line[..line.len() - setting.len()];
-        if setting.is_empty() || setting.starts_with("//") {
-            text.push_str(line);
-        } else {
-            text.push_str(&format!("{indent}// {setting}"));
-        }
-        text.push('\n');
-    }
-    text.push_str("\n  // ─── PRESETS ─────────────────────────────────────────────────────────────────────\n");
-    for (title, setting) in RUNTIME_CONFIG_PRESETS {
-        text.push_str(&format!("\n  // {title}\n"));
-        for line in setting.lines() {
-            text.push_str(&format!("  // {line}\n"));
+    for (section, settings) in RUNTIME_CONFIG_PRESETS {
+        text.push_str(&format!("\n  // ── {section}\n"));
+        for (note, setting) in settings.iter() {
+            text.push_str(&format!("  //   {note}\n  // {setting}\n"));
         }
     }
     text.push_str("}\n");
     text
+}
+
+/// Whether `text` sets nothing: only comments, blank lines, braces and the schema version,
+/// as a starter written by any version is. Such a file can be replaced without losing a
+/// setting.
+fn sets_nothing(text: &str) -> bool {
+    text.lines().map(str::trim).all(|line| {
+        line.is_empty()
+            || line.starts_with("//")
+            || line == "{"
+            || line == "}"
+            || line.trim_end_matches(',') == "\"schema_version\": 1"
+    })
 }
 
 /// Refusal when the file's browser settings changed under an open Settings page.
@@ -505,39 +555,46 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             runtime_config_starter()
         );
-        // The starter is valid and every setting in it is commented out.
+        // The full reference sits beside it, as this version knows it.
+        assert_eq!(
+            std::fs::read_to_string(temporary.path().join(REFERENCE_FILE)).unwrap(),
+            configuration::REFERENCE
+        );
+        // The starter is valid and sets nothing.
         let starter = state.runtime_configuration(None, None).unwrap();
         let defaults = configuration::resolve(None, None, None).unwrap();
         assert_eq!(
             serde_json::to_value(&starter.config).unwrap(),
             serde_json::to_value(&defaults.config).unwrap()
         );
-        // Each preset, uncommented on its own, is a valid setting.
-        for (title, setting) in RUNTIME_CONFIG_PRESETS {
-            let file = format!("{{{}}}", setting.trim_end_matches(','));
-            configuration::resolve(Some(&file), None, None)
-                .unwrap_or_else(|e| panic!("preset '{title}' is invalid: {e:#}"));
-        }
-        // A Windows checkout embeds the reference with CRLF: the same starter comes out.
-        assert_eq!(
-            starter_from(
-                &configuration::REFERENCE
-                    .replace("\r\n", "\n")
-                    .replace('\n', "\r\n")
-            ),
-            runtime_config_starter()
-        );
-        // Every setting of the reference is in the file, commented out.
+        // Each one-line setting, uncommented on its own, is valid; settings start with // "
+        // and notes never do.
         let text = runtime_config_starter();
-        for line in configuration::REFERENCE.lines().map(str::trim) {
-            if let Some(field) = line.strip_prefix('"').and_then(|l| l.split('"').next()) {
+        for (section, settings) in RUNTIME_CONFIG_PRESETS {
+            for (note, setting) in settings.iter() {
+                assert!(!setting.contains('\n'), "'{note}' is more than one line");
                 assert!(
-                    text.contains(&format!("// \"{field}\"")),
-                    "'{field}' is missing from the starter"
+                    text.contains(&format!("  // {setting}\n")),
+                    "'{note}' is missing"
                 );
+                let file = format!("{{{}}}", setting.trim_end_matches(','));
+                configuration::resolve(Some(&file), None, None)
+                    .unwrap_or_else(|e| panic!("{section}: '{note}' is invalid: {e:#}"));
             }
         }
-        // Settings › Browser and Web still write their blocks into it, comments kept.
+        for line in text
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("//"))
+        {
+            let comment = line.trim_start_matches("//").trim_start();
+            let is_setting = comment.starts_with('"');
+            assert!(
+                is_setting || !comment.contains("\": "),
+                "a note reads like a setting: {line}"
+            );
+        }
+        // Settings › Browser and Web still write their blocks into it, notes kept.
         state
             .update_user_browser_config(|browser| {
                 browser.enabled = false;
@@ -545,7 +602,7 @@ mod tests {
             })
             .unwrap();
         let written = std::fs::read_to_string(&path).unwrap();
-        assert!(written.contains("// ─── PRESETS"));
+        assert!(written.contains("// ── Sandbox"));
         assert!(
             !state
                 .runtime_configuration(None, None)
@@ -554,11 +611,33 @@ mod tests {
                 .browser
                 .enabled
         );
-        std::fs::write(&path, runtime_config_starter()).unwrap();
-        // An existing file, even an invalid one, is left exactly as it is.
+        // A file with a setting in it is left exactly as it is, even an invalid one.
+        state.ensure_runtime_config().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), written);
         std::fs::write(&path, "{ my edits").unwrap();
         state.ensure_runtime_config().unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ my edits");
+        // An older starter nobody changed (all comments) becomes the current one.
+        std::fs::write(
+            &path,
+            format!("{OLD_STARTER_HEADER}\n{{\n  // \"approval\": {{\n    // \"default\": \"ask\",\n  // }},\n}}\n"),
+        )
+        .unwrap();
+        state.ensure_runtime_config().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            runtime_config_starter()
+        );
+        assert!(
+            std::fs::read_to_string(temporary.path().join(PREVIOUS_STARTER))
+                .unwrap()
+                .starts_with(OLD_STARTER_HEADER)
+        );
+        // A file of someone's own notes, setting nothing, stays as it is.
+        let notes = "{\n  // my notes\n  \"schema_version\": 1\n}\n";
+        std::fs::write(&path, notes).unwrap();
+        state.ensure_runtime_config().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), notes);
     }
     #[test]
     fn project_level_does_not_change_global_logger_when_user_saves() {

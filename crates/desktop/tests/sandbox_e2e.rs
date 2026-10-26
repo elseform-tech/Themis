@@ -698,7 +698,14 @@ async fn cli_ensure_runtime_config_writes_the_starter_once() {
     let printed: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(printed, json!(path.display().to_string()));
     let starter = std::fs::read_to_string(&path).unwrap();
-    assert!(starter.contains("// \"sandbox\": {"), "{starter}");
+    assert!(
+        starter.contains("  // \"sandbox\": { \"network\": \"block\" },\n"),
+        "{starter}"
+    );
+    // Every option is explained in the reference beside it, not in the file itself.
+    let reference = std::fs::read_to_string(fx.data.join("runtime.reference.jsonc")).unwrap();
+    assert!(reference.contains("\"thrash_checkpoints\""));
+    assert!(starter.lines().count() < 50, "{starter}");
     let view = fx
         .state
         .get_effective_permissions(None, None)

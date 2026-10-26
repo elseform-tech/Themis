@@ -15,7 +15,7 @@ QA builds with a different app identifier have separate data directories.
 
 | Location | Purpose | Scope |
 | --- | --- | --- |
-| App-data `runtime.jsonc` | Runtime defaults, Custom approval rules, OS sandbox, logging, discovery. A new file lists every setting commented out, with its explanation, allowed values and default (from `crates/core/src/configuration_reference.jsonc`; a test keeps it complete and equal to the defaults), then commented-out presets (approval variants, no-network sandbox, ask-before-browsing). Uncomment to use; Settings › Browser and Web add their blocks without removing the comments. An existing file is never rewritten | User, across projects |
+| App-data `runtime.jsonc` | Runtime defaults, Custom approval rules, OS sandbox, logging, discovery. A new file is short: common settings grouped by purpose, each one whole line commented out under a short note (`// "…` lines are settings, other comments are notes), so deleting `//` turns one on. Every option, its allowed values and default are in `runtime.reference.jsonc` beside it (from `crates/core/src/configuration_reference.jsonc`, which a test keeps complete and equal to the defaults); Themis rewrites that file when it differs and never reads it. Settings › Browser and Web add their blocks without removing the comments. A file with any setting in it is never rewritten; an older starter that sets nothing is replaced by the current one and kept once as `runtime.previous.jsonc` | User, across projects |
 | Project `.themis/config.jsonc` | Project runtime overrides and additional approval and sandbox restrictions | Selected project/run root |
 | App-data `settings.json` | Existing desktop preferences and legacy run defaults | User |
 | App-data `compatibility-cache/` | Derived marketplace scan progress and validated package snapshots | User; refreshed explicitly |
@@ -96,7 +96,8 @@ active configuration file. Project imports use the project integration store.
 
 Resolution order is built-in defaults → user → project → explicit run override.
 Objects merge by field; arrays replace previous arrays. Unknown fields,
-unsupported schema versions, invalid types, and out-of-range values fail.
+unsupported schema versions, invalid types, out-of-range values, and a key set
+twice in one object (JSON would silently keep only the last) fail, naming the line.
 Configuration files are limited to 1 MiB. JSONC accepts `//` and `/* */` comments
 and trailing commas. `$schema` is optional editor metadata; `schema_version` is 1.
 
@@ -609,8 +610,8 @@ the source of each sandbox field) and `chat` (the chat's grants and the grants
 file path). `themis permissions [PROJECT] [--thread ID] [--json]` prints it (the
 current directory when neither is given); Settings → Permissions uses only its
 global problems. `ensure_runtime_config` returns the global `runtime.jsonc` path,
-first writing a starter with every setting commented out when the file does not
-exist (never changing an existing file); `open_runtime_config` does the same and
+first writing the starter when the file does not exist or still sets nothing
+(never changing a file with a setting in it) and refreshing `runtime.reference.jsonc`; `open_runtime_config` does the same and
 opens that file as plain text in the system text editor. `get_runtime_configuration` also
 returns `rule_sources` beside the resolved configuration.
 
