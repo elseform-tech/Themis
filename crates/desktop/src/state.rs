@@ -225,6 +225,12 @@ struct AppStateInner {
     default_project_init: tokio::sync::Mutex<()>,
     /// Where deleted projects are moved (the user Trash; a temp folder in tests).
     trash_dir: PathBuf,
+    /// The home folder personal skills are discovered in (`~/.agents`, `~/.codex`, `~/.claude`);
+    /// none in tests, so they behave the same on every machine.
+    personal_home: Option<PathBuf>,
+    /// Whether runs may use the SearXNG built into Themis; off in tests, which must not depend on
+    /// a runtime packed on the developer's machine.
+    built_in_search: bool,
     threads: tokio::sync::RwLock<HashMap<String, ThreadRecord>>,
     pending: PendingMap,
     mcp: std::sync::Mutex<mcp::Connections>,
@@ -311,6 +317,29 @@ struct AppStateInner {
     /// `true` when the run was admitted but failed to start (its end step then
     /// handles it, so the sender must not). The sender removes its entry.
     server_sends: std::sync::Mutex<HashMap<String, queue::ServerSend>>,
+}
+
+/// What the app takes from the machine it runs on: personal skills from the home folder and the
+/// SearXNG packed with Themis. Tests take nothing, so they behave the same on every machine.
+pub(crate) struct Machine {
+    personal_home: Option<PathBuf>,
+    built_in_search: bool,
+}
+
+impl Machine {
+    fn real() -> Self {
+        Self {
+            personal_home: themis_core::sandbox::home_dir(),
+            built_in_search: true,
+        }
+    }
+
+    pub(crate) fn none() -> Self {
+        Self {
+            personal_home: None,
+            built_in_search: false,
+        }
+    }
 }
 
 /// Shared application state (cheap to clone; everything lives behind one `Arc`).
@@ -401,6 +430,7 @@ impl AppState {
                 || app_dir.join("trash"),
                 |home| PathBuf::from(home).join(".Trash"),
             ),
+            Machine::real(),
         );
         Self::spawn_automation_scheduler(state.clone());
         state.inner.browsers.allow_engine_download();
@@ -431,6 +461,7 @@ impl AppState {
             secrets,
             app_dir.join("projects"),
             app_dir.join("trash"),
+            Machine::none(),
         )
     }
 
@@ -450,6 +481,7 @@ impl AppState {
             Arc::new(MemoryStore::new()),
             app_dir.join("projects"),
             app_dir.join("trash"),
+            Machine::none(),
         )
     }
 
@@ -460,6 +492,7 @@ impl AppState {
         secrets: Arc<dyn SecretStore>,
         projects_root: PathBuf,
         trash_dir: PathBuf,
+        machine: Machine,
     ) -> Self {
         let app_dir = settings_app_dir(&settings_path);
         // MCP sign-ins (OAuth tokens) live beside the other secrets: the Keychain in the app.
@@ -493,6 +526,8 @@ impl AppState {
                 projects: tokio::sync::RwLock::new(HashMap::new()),
                 default_project_init: tokio::sync::Mutex::new(()),
                 trash_dir,
+                personal_home: machine.personal_home,
+                built_in_search: machine.built_in_search,
                 threads: tokio::sync::RwLock::new(threads),
                 pending: PendingMap::default(),
                 mcp: std::sync::Mutex::new(HashMap::new()),

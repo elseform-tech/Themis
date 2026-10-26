@@ -39,6 +39,17 @@ fn assert_current_project(body: &Value, root: &Path) {
         workspace,
         vec![json!({"project_root": root.canonicalize().unwrap()})]
     );
+    // The verification habits reach the provider request: the shared piece, and the browser
+    // one because this run has the built-in browser.
+    let system: String = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "system")
+        .map(|message| message["content"].as_str().unwrap())
+        .collect();
+    assert!(system.contains(themis_core::prompts::SYSTEM_VERIFY));
+    assert!(system.contains(themis_core::prompts::DESKTOP_VERIFY_BROWSER));
 }
 
 #[test]

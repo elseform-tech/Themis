@@ -418,3 +418,45 @@ async fn a_blocking_question_ends_the_run_and_the_goal_waits_for_that_answer_onl
         .contains("Which license? (assuming: MIT)"));
     app.serving.abort();
 }
+
+/// In YOLO a deny rule for `ask_user` still holds, as for every other tool: the
+/// question is not asked and the run goes on.
+#[tokio::test(flavor = "multi_thread")]
+async fn yolo_keeps_a_deny_rule_for_ask_user() {
+    let app = app(|body| {
+        if last_user(body).1 == 0 {
+            tools(&[(
+                "q",
+                "ask_user",
+                json!({"question": "Tabs?", "recommended": "Spaces", "why": "usual"}),
+            )])
+        } else {
+            reply("Went on without asking.")
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    std::fs::write(
+        data.join("runtime.jsonc"),
+        r#"{"approval":{"rules":[{"tool":"ask_user","action":"deny"}]}}"#,
+    )
+    .unwrap();
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "set_thread_approval_mode",
+            json!({"threadId": thread, "mode": "yolo"}),
+        );
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "format the file"}),
+        );
+        until("the run never finished", || !running(&data, &thread));
+        let questions = call(&data, "list_questions", json!({"threadId": thread}));
+        assert_eq!(questions, json!([]), "{questions}");
+    })
+    .await
+    .unwrap();
+    app.serving.abort();
+}

@@ -105,8 +105,9 @@ impl ToolRuntime for QuestionTool {
             summary: "ask_user".to_owned(),
             risk: RiskLevel::Read,
         };
+        // YOLO keeps a deny rule someone wrote, like every other tool.
         let decision = if self.run.mode == ApprovalMode::Yolo {
-            PolicyAction::Allow
+            self.run.policy.yolo_decision(&action)
         } else {
             self.run.policy.decision(&action)
         };

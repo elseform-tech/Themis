@@ -11,6 +11,8 @@
 // System message of every ordinary run.
 /// Shared instructions that open the system message of every ordinary run.
 pub const SYSTEM_INSTRUCTIONS: &str = include_str!("../builtins/prompts/system-instructions.md");
+/// Verification habits, after [`SYSTEM_INSTRUCTIONS`].
+pub const SYSTEM_VERIFY: &str = include_str!("../builtins/prompts/system-verify.md");
 /// Task-ledger sentence appended to the system message when originals are saved.
 pub const SYSTEM_TASK_LEDGER: &str = include_str!("../builtins/prompts/system-task-ledger.md");
 /// Evidence pointer when the `recall` tool is offered; `{{directory}}`, `{{caution}}`.
@@ -31,6 +33,9 @@ pub const DESKTOP_RUN_WORKSPACE: &str =
     include_str!("../builtins/prompts/desktop-run-workspace.md");
 /// Added to the system prompt of YOLO runs only: no approvals or sandbox, so caution.
 pub const DESKTOP_RUN_YOLO: &str = include_str!("../builtins/prompts/desktop-run-yolo.md");
+/// Browser verification habit, for runs with the built-in browser.
+pub const DESKTOP_VERIFY_BROWSER: &str =
+    include_str!("../builtins/prompts/desktop-verify-browser.md");
 /// Label before an MCP server's own instructions in the system message.
 pub const DESKTOP_MCP_GUIDANCE: &str = include_str!("../builtins/prompts/desktop-mcp-guidance.md");
 /// Integration status for an MCP connection that failed; `{{plugin}}`, `{{name}}`, `{{reason}}`.

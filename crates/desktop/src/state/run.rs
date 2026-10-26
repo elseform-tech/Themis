@@ -411,7 +411,10 @@ impl AppState {
         );
         // fetch_url always; web_search through your SearXNG, or the one built into Themis.
         let mut web = run_configuration.web.clone();
-        if web.search_url.is_none() && super::searxng::runtime_dir().is_some() {
+        if web.search_url.is_none()
+            && self.inner.built_in_search
+            && super::searxng::runtime_dir().is_some()
+        {
             match super::searxng::url(&self.app_data_dir()).await {
                 Ok(url) => web.search_url = Some(url),
                 Err(error) => {
@@ -431,6 +434,8 @@ impl AppState {
         ));
         // The chat's built-in browser, shared with the Workspace Browser tab.
         if run_configuration.browser.enabled {
+            skill_catalog.push('\n');
+            skill_catalog.push_str(themis_core::prompts::DESKTOP_VERIFY_BROWSER);
             let hub = self.browser_hub();
             hub.set_executable(
                 run_configuration

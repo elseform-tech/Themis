@@ -201,6 +201,7 @@ mod tests {
             Arc::new(UnavailableReadStore),
             dir.path().join("projects"),
             dir.path().join("trash"),
+            crate::state::Machine::none(),
         );
         let (sink, _) = crate::sink::ChannelSink::channel();
         let result = crate::server::dispatch(
@@ -249,6 +250,7 @@ mod tests {
             Arc::new(SlowReadStore(std::time::Duration::from_secs(31))),
             dir.path().join("projects"),
             dir.path().join("trash"),
+            crate::state::Machine::none(),
         );
         let (sink, _) = crate::sink::ChannelSink::channel();
         let result = crate::server::dispatch(
@@ -275,6 +277,7 @@ mod tests {
             Arc::new(SlowReadStore(std::time::Duration::from_millis(150))),
             dir.path().join("projects"),
             dir.path().join("trash"),
+            crate::state::Machine::none(),
         );
         for status in [true, false] {
             let lookup = tokio::spawn({
@@ -307,6 +310,7 @@ mod tests {
             Arc::new(SlowReadStore(std::time::Duration::from_millis(150))),
             dir.path().join("projects"),
             dir.path().join("trash"),
+            crate::state::Machine::none(),
         );
         let project = dir.path().join("project");
         std::fs::create_dir(&project).unwrap();
