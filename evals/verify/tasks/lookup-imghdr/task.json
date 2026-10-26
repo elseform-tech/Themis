@@ -1,0 +1,25 @@
+{
+ "kind": "lookup",
+ "message": "tools/thumbs.py fails at its import on our Python (3.13 and later). Find out why from the official Python documentation, fix the script without adding a dependency (we only need PNG, JPEG and GIF), and tell me which documentation page you used.",
+ "source": [
+  "tools/thumbs.py"
+ ],
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ],
+ "answer_patterns": [
+  "PEP\\s*594",
+  "removed in (?:Python )?3\\.13",
+  "dead batter"
+ ],
+ "evidence_hosts": [
+  "docs.python.org",
+  "peps.python.org"
+ ]
+}

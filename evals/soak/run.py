@@ -23,70 +23,15 @@ import time
 
 from evals.kit import app, git
 from evals.kit import spend as spend_kit
+from evals.kit.app import Watch
 from evals.kit.env import isolated_env
 from evals.kit.errors import classify_error, is_infrastructure
 
 from .generate import checker_text, generate, material_tokens, messages
 from .tool_causes import APPROVAL
 
-TERMINAL = ("finished", "failed", "incomplete")
 STOPPED_GOAL = {"reached": "reached", "stuck": "stuck", "waiting": "waiting", "quota": "infrastructure",
                 "paused": "failed"}
-
-
-class Watch:
-    """`themis watch` for one chat: every thread event in arrival order, with its time."""
-
-    def __init__(self, binary, data, env, thread, on_event=None):
-        self.started = time.monotonic()
-        self.events, self.thread, self.on_event = [], thread, on_event
-        self.last = time.monotonic()
-        self.lock = threading.Lock()
-        self.process = subprocess.Popen([binary, "--data-dir", data, "watch"], stdout=subprocess.PIPE,
-                                        stderr=subprocess.DEVNULL, text=True, env=env, start_new_session=True)
-        self.reader = threading.Thread(target=self._read, daemon=True)
-        self.reader.start()
-
-    def _read(self):
-        for line in self.process.stdout:
-            try:
-                frame = json.loads(line)
-            except ValueError:
-                continue
-            if frame.get("name") != "thread-event":
-                continue
-            payload = frame.get("payload") or {}
-            if payload.get("thread_id") != self.thread or not isinstance(payload.get("event"), dict):
-                continue
-            item = {"t": round(time.monotonic() - self.started, 2), "run_id": payload.get("run_id") or "",
-                    "event": payload["event"]}
-            with self.lock:
-                self.events.append(item)
-                # The app repeats the goal every minute while it runs: that tick is not activity.
-                if payload["event"].get("kind") != "goal_changed":
-                    self.last = time.monotonic()
-            if self.on_event:
-                self.on_event(item)
-
-    def alive(self):
-        return self.process.poll() is None
-
-    def snapshot(self):
-        with self.lock:
-            return list(self.events)
-
-    def run_end(self, run_id):
-        with self.lock:
-            return next((item["event"] for item in self.events
-                         if item["run_id"] == run_id and item["event"].get("kind") in TERMINAL), None)
-
-    def stop(self):
-        app.kill(self.process)
-        try:
-            self.process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            pass
-        self.reader.join(timeout=5)
 
 
 class Soak:

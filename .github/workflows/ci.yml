@@ -56,8 +56,9 @@ jobs:
           python-version: "3.13"
       - name: Compaction eval harness (offline end-to-end)
         run: python -m unittest evals.compaction.test_harness
-      - name: Goal soak eval harness and shared eval kit (offline - generator, graders, trend, stand-in CLI)
-        run: python -m unittest evals.kit.test_kit evals.soak.test_harness
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Eval harnesses and shared eval kit (offline - generators, graders, trend, stand-in CLI)
+        run: python -m unittest evals.kit.test_kit evals.soak.test_harness evals.verify.test_harness
 
   rust-coverage:
     runs-on: ubuntu-latest

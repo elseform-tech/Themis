@@ -1,0 +1,13 @@
+{
+ "kind": "web",
+ "message": "On our errands page (index.html), the \"Clear completed\" button does nothing. Please fix it.",
+ "source": [
+  "app.js",
+  "index.html"
+ ],
+ "hidden_command": [
+  "node",
+  "_hidden/check.js",
+  "."
+ ]
+}
