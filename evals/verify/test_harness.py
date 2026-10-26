@@ -145,6 +145,14 @@ class Grading(unittest.TestCase):
         self.assertEqual((measures["requests_completed"], measures["superseded_left"], measures["unrelated_answered"],
                           measures["request_lost_after_checkpoint"], measures["checkpoints"]), (0.667, 1, 1, 1, 1))
 
+    def test_a_lookup_counts_its_citation_in_any_reply(self):
+        page = "https://docs.python.org/3/library/datetime.html"
+        events = [call("fetch_url", url=page),
+                  event("finished", result=f"Use datetime.now(timezone.utc), as {page} recommends."),
+                  event("finished", result="Done: countries are upper case now.")]
+        measures, _details = grade(trace_of("lookup-deprecation", events), scenarios.load("lookup-deprecation"))
+        self.assertEqual((measures["searched"], measures["evidence_cited"], measures["reason_correct"]), (1, 1, 1))
+
     def test_rereads_count_only_after_a_checkpoint(self):
         read = call("read_file", file_path="ledgerly/core/money.py")
         trace = {"events": [read, read, event("context_checkpoint"), read, call("read_file", file_path="README.md")]}

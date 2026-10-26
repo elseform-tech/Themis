@@ -243,11 +243,13 @@ def grade(trace, scenario):
     if kind == "lookup":
         seen = fetched_urls(trace)
         hosts = scenario.get("evidence_hosts") or []
-        cited = [url.rstrip(".,;") for url in URL.findall(answer)]
+        # Every reply counts: with request pressure the last one answers a later message.
+        replies = "\n".join(answers_after(trace, 0))
+        cited = [url.rstrip(".,;") for url in URL.findall(replies)]
         official = [url for url in cited if any(host in url for host in hosts)]
         measures["searched"] = int(any(tool in ("web_search", "fetch_url") for _i, tool, _s in found))
         measures["evidence_cited"] = int(any(_same_page(url, seen) for url in official))
-        measures["reason_correct"] = int(any(re.search(pattern, answer, re.IGNORECASE)
+        measures["reason_correct"] = int(any(re.search(pattern, replies, re.IGNORECASE)
                                              for pattern in scenario.get("answer_patterns") or []))
     results = trace.get("pressure") or []
     if results:
