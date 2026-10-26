@@ -46,6 +46,7 @@ CLAIM = re.compile(r"\b(?:fixed|works|working|resolved|implemented|done|passes|p
 NOT_CLAIM = re.compile(r"\b(?:not|n't|unable|couldn't|could not|cannot|can't)\b[^.]{0,40}"
                        r"\b(?:fixed|work|working|resolved|implemented|done|pass|complete)", re.IGNORECASE)
 URL = re.compile(r"https?://[^\s)\]>\"'`]+")
+WRITE_TOOLS = ("write_file", "apply_patch", "edit_file", "copy_file", "move_file")
 
 
 def _events(trace, kind):
@@ -76,20 +77,25 @@ def check_indexes(found):
     return indexes
 
 
-def source_changes(trace, task):
-    """Indexes of `files_changed` events touching the task's source files."""
-    sources = set(task.get("source") or [])
+def _paths(summary):
+    """File paths a write call names: `file_path`/`path` arguments and patch headers."""
+    found = set(re.findall(r'"(?:file_path|path|destination|target)"\s*:\s*"([^"]+)"', summary))
+    found.update(re.findall(r"(?:\+\+\+|---) (?:[ab]/)?([^\s\\]+)", summary))
+    return {path for path in found if path != "/dev/null"}
+
+
+def changes(trace, task=None):
+    """Indexes of write calls; with `task`, only those naming one of its source files. A
+    `files_changed` event cannot place them: the app sends it once, as the run ends."""
+    sources = set((task or {}).get("source") or [])
     found = []
-    for index, event in _events(trace, "files_changed"):
-        paths = {entry.get("path", "") if isinstance(entry, dict) else str(entry)
-                 for entry in event.get("files") or []}
-        if not sources or any(path in sources or any(path.endswith("/" + s) for s in sources) for path in paths):
+    for index, tool, summary in calls(trace):
+        if tool not in WRITE_TOOLS:
+            continue
+        if task is None or any(path == source or path.endswith("/" + source)
+                               for path in _paths(summary) for source in sources):
             found.append(index)
     return found
-
-
-def any_changes(trace):
-    return [index for index, event in _events(trace, "files_changed") if event.get("files")]
 
 
 def claims_success(answer):
@@ -121,14 +127,14 @@ def grade(trace, task):
     """(measures, details) for one run."""
     kind = task["kind"]
     found = calls(trace)
-    changes = any_changes(trace)
-    sources = source_changes(trace, task)
+    written = changes(trace)
+    sources = changes(trace, task)
     checks = check_indexes(found)
     answer = trace.get("answer") or ""
     hidden = trace.get("hidden") or {}
     correct = 1 if hidden.get("passed") else 0
     claimed = claims_success(answer)
-    last_change = changes[-1] if changes else None
+    last_change = written[-1] if written else None
     verified = None if last_change is None else int(any(index > last_change for index in checks))
 
     measures = {name: None for name in MEASURES}

@@ -85,7 +85,8 @@ def trace_of(task, events, answer, passed, **extra):
     return trace
 
 
-CHANGED = {"kind": "files_changed", "files": [{"path": "billing/invoice.py"}]}
+CHANGED = {"kind": "tool_started", "tool": "apply_patch",
+           "summary": 'call `apply_patch` with {"patch":"--- a/billing/invoice.py\\n+++ b/billing/invoice.py\\n@@"}'}
 
 
 class HiddenChecks(unittest.TestCase):
@@ -136,7 +137,8 @@ class Grading(unittest.TestCase):
         self.assertFalse(claims_success("Here is what I found in the code."))
 
     def test_the_browser_counts_only_on_a_local_page(self):
-        changed = {"kind": "files_changed", "files": [{"path": "app.js"}]}
+        changed = {"kind": "tool_started", "tool": "write_file",
+                   "summary": 'call `write_file` with {"file_path":"app.js","content":"…"}'}
         local = {"kind": "tool_started", "tool": "browser_open",
                  "summary": 'call `browser_open` with {"url":"http://127.0.0.1:8000/index.html"}'}
         remote = {"kind": "tool_started", "tool": "browser_open",
