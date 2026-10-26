@@ -5,8 +5,9 @@ use std::collections::BTreeSet;
 impl PluginStore {
     pub fn discovered_plugins(&self) -> anyhow::Result<Vec<Plugin>> {
         let mut plugins = Vec::new();
-        if let Some(home) = std::env::var_os("HOME") {
-            discover_scope(self, "global", Path::new(&home), &mut plugins)?;
+        // USERPROFILE on Windows, HOME elsewhere (`sandbox::home_dir`): Windows rarely sets HOME.
+        if let Some(home) = &self.home {
+            discover_scope(self, "global", home, &mut plugins)?;
         }
         if let Some(project) = &self.project {
             discover_scope(self, "local", project, &mut plugins)?;
@@ -183,6 +184,32 @@ fn scan_skills(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Personal skills come from the home the store was given (USERPROFILE on Windows, where
+    /// HOME is usually unset), and a store given none discovers none.
+    #[test]
+    fn personal_skills_come_from_the_given_home() {
+        let global = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let skill = home.path().join(".claude/skills/notes");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: notes\ndescription: Take notes.\n---\nWrite them down.",
+        )
+        .unwrap();
+        let personal = |home: Option<PathBuf>| {
+            PluginStore::new(global.path().into(), None)
+                .with_home(home)
+                .discovered_plugins()
+                .unwrap()
+                .into_iter()
+                .filter(|plugin| plugin.scope == "global")
+                .count()
+        };
+        assert_eq!(personal(Some(home.path().into())), 1);
+        assert_eq!(personal(None), 0);
+    }
     #[test]
     fn configured_skill_paths_replace_local_defaults() {
         let global = tempfile::tempdir().unwrap();

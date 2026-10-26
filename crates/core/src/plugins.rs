@@ -120,6 +120,8 @@ pub struct PluginStore {
     skill_paths: Vec<String>,
     pub global: PathBuf,
     pub project: Option<PathBuf>,
+    /// Where personal skills are discovered (`~/.agents/skills` and the rest).
+    home: Option<PathBuf>,
 }
 
 impl PluginStore {
@@ -128,7 +130,15 @@ impl PluginStore {
             global,
             project,
             skill_paths: crate::configuration::SkillConfig::default().paths,
+            home: crate::sandbox::home_dir(),
         }
+    }
+
+    /// The home folder personal skills are discovered in; `None` discovers none.
+    #[must_use]
+    pub fn with_home(mut self, home: Option<PathBuf>) -> Self {
+        self.home = home;
+        self
     }
     /// Override project-local skill directories; global discovery retains conventional roots.
     pub fn with_skill_paths(mut self, paths: Vec<String>) -> anyhow::Result<Self> {

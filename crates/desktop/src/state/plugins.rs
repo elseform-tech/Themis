@@ -12,7 +12,8 @@ impl AppState {
                 .unwrap_or(Path::new("."))
                 .into(),
             project,
-        );
+        )
+        .with_home(self.inner.personal_home.clone());
         match config {
             Some(config) => store
                 .clone()
