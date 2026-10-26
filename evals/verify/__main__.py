@@ -62,11 +62,20 @@ def record_of(trace, measures, details, options):
             "measures": measures, "details": details}
 
 
+DEFAULT_BUDGETS = [32000, 64000, "auto"]
+
+
+def budgets_for(name, budgets):
+    """`budgets` when given, else the scenario's own (`budgets` in scenario.json), else the default."""
+    return budgets or scenarios.load(name).get("budgets") or DEFAULT_BUDGETS
+
+
 def arms(names, budgets, profiles, seeds):
     """(scenario, budget, profile, seed), seed by seed, the rest in a shuffled order per seed."""
     out = []
     for seed in seeds:
-        order = [(name, budget, profile) for name in names for budget in budgets for profile in profiles]
+        order = [(name, budget, profile) for name in names for budget in budgets_for(name, budgets)
+                 for profile in profiles]
         random.Random(f"verify-order:{seed}").shuffle(order)
         out += [(name, budget, profile, seed) for name, budget, profile in order]
     return out
@@ -225,9 +234,9 @@ def main(argv=None):
     run = commands.add_parser("run", help="run the scenarios live through the app (spends money)")
     run.add_argument("--model", default=spend_kit.DEFAULT_MODEL)
     run.add_argument("--scenarios", default=scenarios.names(), type=lambda text: text.split(","))
-    run.add_argument("--budgets", default=[32000, 64000, "auto"],
-                     type=lambda text: [parse_budget(b) for b in text.split(",")],
-                     help="comma-separated context budgets (tokens or auto); default 32000,64000,auto")
+    run.add_argument("--budgets", default=None, type=lambda text: [parse_budget(b) for b in text.split(",")],
+                     help="comma-separated context budgets (tokens or auto); default: the scenario's own, "
+                          "else 32000,64000,auto")
     run.add_argument("--profiles", default=["none"], type=lambda text: text.split(","),
                      help=f"pressure profiles: {', '.join(pressure.PROFILES)} (default none)")
     run.add_argument("--seeds", default=[1], type=lambda text: [int(s) for s in text.split(",")])

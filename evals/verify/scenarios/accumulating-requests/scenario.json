@@ -1,0 +1,125 @@
+{
+ "kind": "feature",
+ "message": "Please add a `customers show ID` command that prints the customer's id and name on the first line, then their country, payment terms and email, one per line. An unknown id is an error.",
+ "plants": [
+  "feat-cshow",
+  "req-cshow-balance",
+  "req-cshow-noemail",
+  "req-cshow-terms",
+  "side-stock-name",
+  "side-country",
+  "side-overdue-sort"
+ ],
+ "budgets": [
+  16000,
+  32000
+ ],
+ "source": [
+  "ledgerly/cli/commands/customers.py"
+ ],
+ "tests": "tests",
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ],
+ "script": [
+  {
+   "id": "balance",
+   "kind": "added_requirement",
+   "after_calls": 6,
+   "mode": "queue",
+   "text": "Also show how many open invoices the customer has and their outstanding balance.",
+   "check": {
+    "type": "pytest",
+    "file": "cshow_balance.py"
+   },
+   "plant": "req-cshow-balance"
+  },
+  {
+   "id": "no-email",
+   "kind": "added_requirement",
+   "after_calls": 10,
+   "mode": "steer",
+   "text": "And when a customer has no email, print \"no email\" instead of an empty line.",
+   "check": {
+    "type": "pytest",
+    "file": "cshow_noemail.py"
+   },
+   "plant": "req-cshow-noemail"
+  },
+  {
+   "id": "country",
+   "kind": "unrelated_fix",
+   "after_calls": 14,
+   "mode": "queue",
+   "text": "Separate thing: `customers add` stores the country exactly as typed (\"nl\"); it should store it upper case.",
+   "check": {
+    "type": "pytest",
+    "file": "side_country.py"
+   },
+   "plant": "side-country"
+  },
+  {
+   "id": "stock-name",
+   "kind": "unrelated_fix",
+   "after_calls": 18,
+   "mode": "queue",
+   "text": "Also, `stock show SKU` should print the product's name after the SKU.",
+   "check": {
+    "type": "pytest",
+    "file": "stock_name.py"
+   },
+   "plant": "side-stock-name"
+  },
+  {
+   "id": "terms",
+   "kind": "change_direction",
+   "after_calls": 22,
+   "mode": "steer",
+   "text": "Change of plan for `customers show`: payment terms should read like \"30 days\", not \"30d\".",
+   "check": {
+    "type": "pytest",
+    "file": "cshow_terms.py"
+   },
+   "plant": "req-cshow-terms"
+  },
+  {
+   "id": "add-test",
+   "kind": "add_tests",
+   "after_calls": 26,
+   "mode": "queue",
+   "text": "Please add a test for `customers show` to tests/.",
+   "check": {
+    "type": "tests_catch"
+   }
+  },
+  {
+   "id": "overdue",
+   "kind": "unrelated_fix",
+   "after_calls": 30,
+   "mode": "queue",
+   "text": "One more unrelated fix: `reports overdue` lists the newest invoices first; it must list the oldest first.",
+   "check": {
+    "type": "pytest",
+    "file": "overdue_order.py"
+   },
+   "plant": "side-overdue-sort"
+  },
+  {
+   "id": "docs",
+   "kind": "wrap_up",
+   "after_calls": 34,
+   "mode": "queue",
+   "text": "Finally, please update docs/CLI.md for everything you changed today.",
+   "check": {
+    "type": "pytest",
+    "file": "docs_today.py"
+   }
+  }
+ ]
+}

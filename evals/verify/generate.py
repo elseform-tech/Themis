@@ -30,20 +30,21 @@ SKIP = {"__pycache__", ".pytest_cache"}
 
 def render(text, planted):
     """`text` with each plant block resolved: the planted side for names in `planted`, the
-    correct side for every other."""
-    out, block, side = [], None, None
+    correct side for every other. Blocks may nest; a line is kept when every block around it
+    keeps its side."""
+    out, stack = [], []  # [name, side]
     for line in text.splitlines(keepends=True):
         mark = MARK.search(line)
         if mark:
             kind, name = mark.groups()
             if kind == ">>>":
-                block, side = name, "planted"
-            elif kind == "===" and name == block:
-                side = "correct"
-            elif kind == "<<<" and name == block:
-                block, side = None, None
+                stack.append([name, "planted"])
+            elif kind == "===" and stack and stack[-1][0] == name:
+                stack[-1][1] = "correct"
+            elif kind == "<<<" and stack and stack[-1][0] == name:
+                stack.pop()
             continue
-        if block is None or (side == "planted") == (block in planted):
+        if all((side == "planted") == (name in planted) for name, side in stack):
             out.append(line)
     return "".join(out)
 

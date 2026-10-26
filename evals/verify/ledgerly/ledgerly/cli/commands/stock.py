@@ -17,7 +17,12 @@ def register(groups):
 
 def show_stock(store, args, out):
     on_hand, reserved, available = inventory.show(store, args.sku)
+# >>> plant:side-stock-name
     print(f"{args.sku}\ton hand {on_hand}\treserved {reserved}\tavailable {available}", file=out)
+# === plant:side-stock-name
+    name = store.product(args.sku).name
+    print(f"{args.sku}\t{name}\ton hand {on_hand}\treserved {reserved}\tavailable {available}", file=out)
+# <<< plant:side-stock-name
 
 
 def restock_stock(store, args, out):

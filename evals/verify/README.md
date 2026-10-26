@@ -19,6 +19,7 @@ the agent never sees score the share of requirements met.
 | `web-mismatch` | the page shows NaN | the API and the page disagree on field names |
 | `lookup-deprecation` | fix a deprecation as the docs say, cite them | an aware/naive datetime trap in stored data |
 | `interleaved-requests` | add `reports top`, then an urgent unrelated fix, a question, and "now finish it" | the feature must survive interruptions and checkpoints; each step is checked |
+| `accumulating-requests` | `customers show`, then eight more requests piling up (added requirements, a change of direction, unrelated fixes, a test, "update the docs for everything today"); 16k and 32k by default | early requests must still be done at the end, under heavy compaction |
 
 **Request pressure** (`pressure.py`, `--profiles`): scripted messages sent while the agent works,
 steered into the turn or queued after it: `related` (a change of direction, a tightened

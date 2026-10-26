@@ -132,6 +132,7 @@ def docs(rng, planted):
                 if split else "`billing.py` (issuing, voiding, payments, balances, overdue, aging)")
     codes = "feature-discount-codes" not in planted
     top = "feat-top" not in planted
+    cshow = "feat-cshow" not in planted
     team = rng.sample(["Ana", "Bo", "Chidi", "Dana", "Eli", "Femi", "Gus"], 3)
     out = {
         "README.md": f"""# Ledgerly
@@ -194,7 +195,10 @@ documents step by step when they are loaded. See decision 0004.
 | Command | What it does |
 | --- | --- |
 | `customers list` / `customers add ID NAME [--country DE] [--terms 14]` | customers |
-| `invoices create --customer ID --item SKU:QTY[:PRICE] ...` | issue an invoice (prices in euros) |
+"""
+        + ("""| `customers show ID` | a customer's details, open invoices and outstanding balance |
+""" if cshow else "")
+        + """| `invoices create --customer ID --item SKU:QTY[:PRICE] ...` | issue an invoice (prices in euros) |
 | `invoices pay ID AMOUNT` / `invoices void ID` / `invoices show ID` | payments, voids, details |
 | `reports monthly YYYY-MM [--csv]` / `reports overdue` / `reports aging` | reports |
 """

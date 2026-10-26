@@ -17,7 +17,8 @@ from .__main__ import ab_table, arms, record_of, report, series_key
 from .grade import MEASURES, grade, rereads_after_checkpoint
 from .run import active_run
 
-ALL_PLANTS = ("req-thousands", "req-import-report", "side-country", "side-overdue-sort", "feat-top")
+ALL_PLANTS = ("req-thousands", "req-import-report", "side-country", "side-overdue-sort", "feat-top", "feat-cshow",
+              "req-cshow-balance", "req-cshow-noemail", "req-cshow-terms", "side-stock-name")
 
 
 def event(kind, run_id="r1", **fields):
@@ -33,6 +34,10 @@ class Generator(unittest.TestCase):
         text = "a\n# >>> plant:x\nbad\n# === plant:x\ngood\n# <<< plant:x\nz\n"
         self.assertEqual(generate.render(text, {"x"}), "a\nbad\nz\n")
         self.assertEqual(generate.render(text, set()), "a\ngood\nz\n")
+        nested = "# >>> plant:f\n# === plant:f\nf1\n# >>> plant:r\nold\n# === plant:r\nnew\n# <<< plant:r\n# <<< plant:f\n"
+        self.assertEqual(generate.render(nested, set()), "f1\nnew\n")
+        self.assertEqual(generate.render(nested, {"r"}), "f1\nold\n")
+        self.assertEqual(generate.render(nested, {"f", "r"}), "")
         self.assertEqual(generate.file_wanted("# plant-file:x only", {"x"}), (True, True))
         self.assertEqual(generate.file_wanted("# plant-file:x absent", {"x"}), (False, True))
 
@@ -75,7 +80,7 @@ class Checks(unittest.TestCase):
     def test_pressure_checks_fail_as_planted_and_pass_on_the_reference(self):
         with tempfile.TemporaryDirectory() as scratch:
             reference = generate.project(os.path.join(scratch, "reference"), None, 6, git=False)
-            for name in ("trace-rounding", "run-to-see", "interleaved-requests"):
+            for name in ("trace-rounding", "run-to-see", "interleaved-requests", "accumulating-requests"):
                 planted = generate.project(os.path.join(scratch, name), None, 6, git=False,
                                            extra=pressure.plants(name, "mixed"))
                 sources = scenarios.load(name)["source"]
@@ -84,7 +89,7 @@ class Checks(unittest.TestCase):
                         continue
                     with self.subTest(scenario=name, message=message["id"]):
                         self.assertTrue(pressure.check(message, reference, planted, [], sources))
-                        if message["kind"] not in ("change_direction", "resume") or name == "run-to-see":
+                        if message["kind"] not in ("change_direction", "resume", "wrap_up") or name == "run-to-see":
                             self.assertFalse(pressure.check(message, planted, planted, [], sources))
 
     def test_a_regression_test_is_told_apart_from_the_given_tests(self):
@@ -168,9 +173,12 @@ class Reporting(unittest.TestCase):
         self.assertIn("| requirements_met | 0.5 | 1 |", table)
 
     def test_arms_cover_every_combination(self):
-        chosen = arms(["a", "b"], [32000, "auto"], ["none", "mixed"], [1, 2])
+        chosen = arms(["trace-rounding", "web-mismatch"], [32000, "auto"], ["none", "mixed"], [1, 2])
         self.assertEqual(len(chosen), 16)
         self.assertEqual(len(set(chosen)), 16)
+        own = arms(["accumulating-requests", "trace-rounding"], None, ["none"], [1])
+        self.assertEqual(sorted(str(b) for name, b, _p, _s in own if name == "accumulating-requests"), ["16000", "32000"])
+        self.assertEqual(len([1 for name, *_ in own if name == "trace-rounding"]), 3)
 
 
 if __name__ == "__main__":
