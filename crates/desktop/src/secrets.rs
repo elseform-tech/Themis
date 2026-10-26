@@ -210,6 +210,13 @@ pub trait SecretStore: Send + Sync {
     fn set(&self, provider: &str, value: &str) -> Result<(), String>;
     /// Deletes the secret for `provider`; missing secrets are a no-op success.
     fn clear(&self, provider: &str) -> Result<(), String>;
+    /// The environment variable `name`, the fallback for a key nothing saved. The
+    /// in-memory test store sees none, so a developer's real key never reaches a test.
+    fn environment(&self, name: &str) -> Option<String> {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    }
 }
 
 /// Session-only credentials with an OpenCode Go environment fallback.
@@ -292,11 +299,28 @@ impl SecretStore for MemoryStore {
             .remove(provider);
         Ok(())
     }
+    fn environment(&self, _name: &str) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A developer's real key in the environment never reaches a test's store; the
+    /// app's stores fall back to the environment as before.
+    #[test]
+    fn the_test_store_ignores_the_environment() {
+        let name = "THEMIS_TEST_ENVIRONMENT_KEY_4711";
+        std::env::set_var(name, "from-the-environment");
+        assert_eq!(MemoryStore::new().environment(name), None);
+        assert_eq!(
+            SessionStore::new().environment(name).as_deref(),
+            Some("from-the-environment")
+        );
+        std::env::remove_var(name);
+    }
 
     #[test]
     fn credential_fallback_preserves_errors_unless_a_valid_key_is_available() {

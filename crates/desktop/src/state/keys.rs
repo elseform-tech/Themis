@@ -87,7 +87,7 @@ impl AppState {
                     .secrets
                     .stored(&keys::store_key(&name))
                     .is_ok_and(|value| value.is_some());
-                let environment = !saved && std::env::var_os(&name).is_some_and(|v| !v.is_empty());
+                let environment = !saved && self.inner.secrets.environment(&name).is_some();
                 json!({"name": name, "saved": saved, "environment": environment, "used_by": used_by})
             })
             .collect::<Vec<_>>()))
