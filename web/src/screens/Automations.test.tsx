@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../state/reducer";
 import { Automations } from "./Automations";
@@ -12,6 +12,7 @@ vi.mock("../lib/tauri", () => ({ createAutomation: vi.fn(), createProject: vi.fn
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(api.listGoModels).mockResolvedValue([]);
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) });
   mocks.state = { ...initialState, activeThreadId: "chat-1", activeProjectRoot: "/repo", automations: [
@@ -61,6 +62,26 @@ describe("Automation navigation", () => {
     fireEvent.change(search, { target: { value: "" } });
     expect(screen.getByText("Morning review")).toBeInTheDocument();
     expect(screen.getByText("Inbox cleanup")).toBeInTheDocument();
+  });
+
+  it("offers a configured provider's models without an OpenCode Go key", async () => {
+    mocks.state = { ...mocks.state, activeThreadId: null, secretStatus: { ...mocks.state.secretStatus, go: false } };
+    vi.mocked(api.listGoModels).mockResolvedValue([{ id: "local/qwen3-coder", name: "Qwen3 Coder" } as never]);
+    render(<Automations />);
+    fireEvent.click(screen.getByRole("button", { name: "+ New automation" }));
+    const model = within(screen.getByRole("dialog", { name: "New automation" })).getByRole("combobox", { name: "Model" });
+    await waitFor(() => expect(model).toBeEnabled());
+    expect(within(model).getByRole("option", { name: "local/qwen3-coder" })).toBeInTheDocument();
+  });
+
+  it("says once how to get models when there is no key and no provider", async () => {
+    mocks.state = { ...mocks.state, activeThreadId: null, secretStatus: { ...mocks.state.secretStatus, go: false } };
+    vi.mocked(api.listGoModels).mockRejectedValue("no API key stored for provider 'go'");
+    render(<Automations />);
+    fireEvent.click(screen.getByRole("button", { name: "+ New automation" }));
+    const dialog = screen.getByRole("dialog", { name: "New automation" });
+    await waitFor(() => expect(within(dialog).getByRole("option", { name: "Connect OpenCode Go or add a provider to load models" })).toBeInTheDocument());
+    expect(within(dialog).queryByText(/no API key stored/)).toBeNull();
   });
 
   it("keeps direct editing available without a selected chat", () => {

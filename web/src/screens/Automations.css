@@ -165,6 +165,10 @@
 .themis-automations-search { width: 100%; box-sizing: border-box; min-height: 40px; padding: 0 16px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-surface); color: var(--themis-text); font: inherit; font-size: .875rem; }
 .themis-automations-search:focus { outline: 1px solid var(--themis-border); }
 .themis-automations-destination { margin: 0; font-size: .8125rem; line-height: 1.5; color: var(--themis-text-2); overflow-wrap: anywhere; }
-.themis-automations-schedule input, .themis-automations-schedule select { min-height: 2.5rem; box-sizing: border-box; }
-.themis-automations-schedule input, .themis-automations-schedule select { height: 2.5rem; }
-.themis-automations-schedule select { appearance: none; padding-right: 2rem; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%239da1ad' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right .5rem center; }
+/* Every label in the dialog reads the same, the shared Input's included. */
+.themis-automations-dialog .themis-input-label { font-size: inherit; font-weight: inherit; color: inherit; }
+/* Every field in the dialog has one height and one border, boxed or select alike. */
+.themis-automations-dialog select,
+.themis-automations-dialog input[type="time"],
+.themis-automations-dialog .themis-input { height: 2.5rem; min-height: 2.5rem; box-sizing: border-box; padding: 0 .625rem; border: 1px solid var(--themis-border); border-radius: 6px; background-color: var(--themis-surface); }
+.themis-automations-dialog select { appearance: none; padding-right: 2rem; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%239da1ad' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right .5rem center; }

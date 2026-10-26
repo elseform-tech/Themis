@@ -3,8 +3,6 @@ import { promptParts } from "../lib/prompt";
 import { PromptInput } from "../components/PromptInput";
 import { usePromptSkills } from "../lib/usePromptSkills";
 import { useEffect, useState } from "react";
-import opencodeLogoDark from "../assets/opencode-logo-dark.svg";
-import opencodeLogoLight from "../assets/opencode-logo-light.svg";
 import {
   Button,
   Dialog,
@@ -86,19 +84,22 @@ export function Automations() {
   const effortLevels = selectedModel?.effort_levels ?? [];
   const { skills: promptSkills, error: promptSkillsError } = usePromptSkills(dialog.mode === "closed" ? state.activeProjectRoot : dialog.form.projectRoot);
 
+  // Models load without an OpenCode Go key too: providers from runtime.jsonc have their own.
+  const goKey = state.secretStatus.go;
   useEffect(() => {
-    if (targetMode !== "new" || !state.secretStatus.go) return;
+    if (targetMode !== "new") return;
     let active = true;
     setModelsLoading(true); setModelsError(""); setModels([]);
     void listGoModels().then(models => {
       if (active) setModels(models);
     }).catch((error: unknown) => {
-      if (active) setModelsError(describeError(error));
+      // Without any key the model menu already says how to get models; no second message.
+      if (active && goKey) setModelsError(describeError(error));
     }).finally(() => {
       if (active) setModelsLoading(false);
     });
     return () => { active = false; };
-  }, [targetMode, state.secretStatus.go, modelRefresh]);
+  }, [targetMode, goKey, modelRefresh]);
 
   function openCreate() {
     setSaveError(null);
@@ -320,14 +321,14 @@ export function Automations() {
             </div>
             <p className="themis-automations-destination" role="note">
               {dialog.form.targetMode === "continue" ? `Continue ${selectedThread?.thread.title ?? "a thread — choose one in Advanced"}` : `New thread in ${state.projects.find(project => project.root === dialog.form.projectRoot)?.name ?? "a project — choose one in Advanced"}`}
-              {" · "}{dialog.form.timezone}{" · "}{dialog.form.enabled ? "Enabled" : "Paused"}
+              {" · "}{dialog.form.timezone}{dialog.form.enabled ? "" : " · Paused"}
             </p>
             <details className="themis-automations-advanced" open={dialog.form.repeat === "interval" || (!dialog.form.targetThreadId && !dialog.form.projectRoot) || undefined}>
               <summary>Advanced</summary>
               <div className="themis-automations-advanced-fields">
             <Input
               id="themis-automation-name"
-              label="Name (optional)"
+              label="Name"
               placeholder="From instructions"
               value={dialog.form.name}
               disabled={saving}
@@ -357,13 +358,13 @@ export function Automations() {
               {selectedThread && <p className="themis-automations-hint">{selectedThread.project.name} · {selectedThread.thread.model} · {selectedThread.thread.reasoning_effort || "Default effort"}</p>}
             </> : <>
             <div className="themis-automations-field">
-              <label className="themis-automations-label" htmlFor="themis-automation-project">Project for new threads</label>
+              <label className="themis-automations-label" htmlFor="themis-automation-project">Project</label>
               <div className="themis-automations-project-row">
                 <select id="themis-automation-project" value={state.projects.some(project => project.root === dialog.form.projectRoot) ? dialog.form.projectRoot : ""} disabled={saving || creatingProject} onChange={event => patchForm({ projectRoot: event.target.value })}>
                   <option value="" disabled>{dialog.form.projectRoot ? "Current project unavailable — choose a project" : "Choose a project"}</option>
-                  {state.projects.map(project => <option key={project.root} value={project.root}>{project.name} · {project.root}</option>)}
+                  {state.projects.map(project => <option key={project.root} value={project.root} title={project.root}>{project.name}</option>)}
                 </select>
-                <Button variant="ghost" size="small" disabled={saving || creatingProject} onClick={() => { setNewProjectName(""); setProjectError(""); }}>New project…</Button>
+                <Button variant="ghost" size="small" disabled={saving || creatingProject} onClick={() => { setNewProjectName(""); setProjectError(""); }}>New…</Button>
               </div>
               {newProjectName !== null && <div className="themis-automations-project-create">
                 <Input id="themis-automation-project-name" label="New project name" value={newProjectName} disabled={creatingProject} onChange={event => setNewProjectName(event.target.value)} />
@@ -373,29 +374,30 @@ export function Automations() {
               </div>}
             </div>
             <label className="themis-automations-field">Model
-              <span className="themis-automations-model-picker"><span className="themis-provider-logo" role="img" aria-label="OpenCode Go"><img className="themis-provider-logo-dark" src={opencodeLogoDark} alt="" /><img className="themis-provider-logo-light" src={opencodeLogoLight} alt="" /></span><select aria-label="Model" value={selectedModel ? dialog.form.model : ""} disabled={saving || modelsLoading || !goUsable(state) || models.length === 0} onChange={event => patchForm({ model: event.target.value, effort: "" })}>
-                <option value="" disabled>{modelsLoading ? "Loading models…" : !state.secretStatus.go ? "Connect OpenCode Go to load models" : !goUsable(state) ? "OpenCode Go rejected the key" : models.length === 0 ? "No models available" : selectedModel ? "Choose a model" : `Current model unavailable: ${dialog.form.model || "default"}`}</option>
+              <span className="themis-automations-model-picker"><select aria-label="Model" value={selectedModel ? dialog.form.model : ""} disabled={saving || modelsLoading || models.length === 0} onChange={event => patchForm({ model: event.target.value, effort: "" })}>
+                <option value="" disabled>{modelsLoading ? "Loading models…" : models.length === 0 ? (!state.secretStatus.go ? "Connect OpenCode Go or add a provider to load models" : !goUsable(state) ? "OpenCode Go rejected the key" : "No models available") : selectedModel ? "Choose a model" : `Current model unavailable: ${dialog.form.model || "default"}`}</option>
                 {models.map(model => <option key={model.id} value={model.id} disabled={!!model.unavailable_reason} title={model.unavailable_reason ?? undefined}>{modelLabel(model)}</option>)}
-              </select></span>
+              </select>
+              <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="Refresh models" aria-label="Refresh models" disabled={saving || modelsLoading} onClick={() => setModelRefresh(value => value + 1)}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v7h-7" /></svg>
+              </button></span>
             </label>
-            <div className="themis-automations-field">
+            {effortLevels.length > 0 && <div className="themis-automations-field">
               <label htmlFor="themis-automation-effort">Reasoning effort · {dialog.form.effort || "Default"}</label>
               <input id="themis-automation-effort" aria-label="Reasoning effort" type="range" min="0" max={Math.max(1, effortLevels.length)} step="1" value={Math.max(0, ["", ...effortLevels].indexOf(dialog.form.effort))} disabled={saving || modelsLoading || !goUsable(state) || effortLevels.length === 0} aria-valuetext={dialog.form.effort || "Default"} onChange={event => patchForm({ effort: ["", ...effortLevels][Number(event.target.value)] ?? "" })} />
-              <span className="themis-automations-hint">Default → {effortLevels[effortLevels.length - 1] ?? "No catalog levels"}</span>
-            </div>
+            </div>}
             {modelsError && <p className="themis-automations-error" role="alert">{modelsError}</p>}
-            <Button variant="ghost" size="small" disabled={saving || modelsLoading || !state.secretStatus.go} onClick={() => setModelRefresh(value => value + 1)}>Refresh models</Button>
 
             </>}
 
-                {dialog.form.repeat === "interval" ? <Input id="themis-automation-interval" label="Interval (minutes)" type="number" min={1} value={dialog.form.intervalMinsRaw} disabled={saving} onChange={event => patchForm({ intervalMinsRaw: event.target.value })} /> : <>
+                {dialog.form.repeat === "interval" ? <Input id="themis-automation-interval" label="Interval (minutes)" type="number" min={1} value={dialog.form.intervalMinsRaw} disabled={saving} onChange={event => patchForm({ intervalMinsRaw: event.target.value })} /> : <div className="themis-automations-schedule">
                   <Input id="themis-automation-timezone" label="Time zone" value={dialog.form.timezone} placeholder="Europe/Berlin" disabled={saving} onChange={event => patchForm({ timezone: event.target.value })} />
                   {dialog.form.repeat === "weekly" && <label className="themis-automations-field">Day
                     <select aria-label="Day" value={dialog.form.weekday} disabled={saving} onChange={event => patchForm({ weekday: Number(event.target.value) })}>
                       {weekdays.map((day, index) => <option key={day} value={index}>{day}</option>)}
                     </select>
                   </label>}
-                </>}
+                </div>}
                 <label className="themis-automations-check"><input type="checkbox" checked={dialog.form.enabled} disabled={saving} onChange={event => patchForm({ enabled: event.target.checked })} />Enabled</label>
               </div>
             </details>
