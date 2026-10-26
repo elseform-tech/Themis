@@ -650,6 +650,9 @@ async fn run_task_with_evidence_inner(
     // Whether this run changed files, and whether its spec check was already sent.
     let mut changed_files = false;
     let mut spec_checked = false;
+    // Steered messages this run read, for the check before it ends.
+    let mut steered: Vec<String> = Vec::new();
+    let mut steers_checked = false;
     let config = compaction_config();
     // Prior turns arrive as text or as checkpoint-retained messages that a
     // checkpoint already summarized; only this run's new work is unsummarized.
@@ -676,6 +679,7 @@ async fn run_task_with_evidence_inner(
                 message_type: MessageType::Text,
                 content: steered_message(&text),
             });
+            steered.push(text.clone());
             events.send(RunEvent::Steered { text }).await.ok();
         }
         // Compaction and maintenance compare raw estimates, so hand them the equivalent raw budget.
@@ -966,6 +970,31 @@ async fn run_task_with_evidence_inner(
             continue;
         }
         if calls.is_empty() {
+            // A run that read two or more steered messages is shown them once before it ends:
+            // with several arriving mid-task, agents answered the latest and dropped earlier ones
+            // (verify eval, interleaved-requests at 32k: 3 of 3 runs).
+            if steered.len() >= 2 && !steers_checked && !nudge_off("steers_check") {
+                steers_checked = true;
+                crate::context_metrics::activity("steers_checks");
+                let answer = text.clone().unwrap_or_default();
+                if !answer.trim().is_empty() {
+                    events
+                        .send(RunEvent::AssistantText("\n\n".into()))
+                        .await
+                        .ok();
+                }
+                messages.push(ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::Text,
+                    content: answer,
+                });
+                messages.push(ChatMessage {
+                    role: ChatRole::User,
+                    message_type: MessageType::Text,
+                    content: steers_check(&steered),
+                });
+                continue;
+            }
             // A run that changed files checks its work against the request once before it
             // ends: agents report success when their own tests pass, though those cover only
             // what they remembered to test.
@@ -2131,10 +2160,26 @@ pub fn steered_message(text: &str) -> String {
     format!("{}\n{text}", crate::prompts::RUNTIME_STEERED)
 }
 
+/// The check before a run that read several steered messages ends: each
+/// message numbered, on one line each.
+fn steers_check(steered: &[String]) -> String {
+    let listed = steered
+        .iter()
+        .enumerate()
+        .map(|(index, text)| format!("{}. {}", index + 1, text.replace('\n', " ")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    crate::prompts::fill(
+        crate::prompts::RUNTIME_STEERS_CHECK,
+        &[("messages", &listed)],
+    )
+}
+
 #[cfg(feature = "eval")]
 tokio::task_local! {
     /// Eval-only ablation: runtime nudges switched off (`loop_warning`,
-    /// `repeat_receipt`, `spec_check`), to measure whether each one earns its place.
+    /// `repeat_receipt`, `spec_check`, `steers_check`), to measure whether each one earns
+    /// its place.
     pub static EVAL_NUDGES_OFF: Arc<Vec<String>>;
 }
 
@@ -5388,7 +5433,10 @@ mod tests {
     #[tokio::test]
     async fn steered_messages_reach_the_next_model_request() {
         use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
-        async fn run(first_calls_tool: bool) -> (String, Vec<serde_json::Value>, Vec<RunEvent>) {
+        async fn run(
+            first_calls_tool: bool,
+            steers: &'static [&'static str],
+        ) -> (String, Vec<serde_json::Value>, Vec<RunEvent>) {
             let server = MockServer::start().await;
             let inbox: SteerInbox = Arc::default();
             let pushed = Arc::new(AtomicBool::new(false));
@@ -5402,8 +5450,9 @@ mod tests {
                     // The user steers while the first request is in flight.
                     if !server_pushed.swap(true, Ordering::SeqCst) {
                         let mut queue = server_inbox.lock().unwrap();
-                        queue.push_back("Use tabs.".into());
-                        queue.push_back("And keep it short.".into());
+                        for text in steers {
+                            queue.push_back((*text).into());
+                        }
                     }
                     let reply = if steered {
                         serde_json::json!({"content":"Adjusted."})
@@ -5467,10 +5516,31 @@ mod tests {
                 .collect();
             (answer, bodies, events)
         }
+        // One steer: no check before the run ends.
+        let (answer, bodies, _) = run(true, &["Use tabs."]).await;
+        assert_eq!(answer, "Adjusted.");
+        assert_eq!(bodies.len(), 2);
         for first_calls_tool in [true, false] {
-            let (answer, bodies, events) = run(first_calls_tool).await;
+            let (answer, bodies, events) =
+                run(first_calls_tool, &["Use tabs.", "And keep it short."]).await;
             assert_eq!(answer, "Adjusted.");
-            assert_eq!(bodies.len(), 2);
+            // Two steers: once, before the run ends, the model is shown both again.
+            assert_eq!(bodies.len(), 3);
+            let last = bodies[2]["messages"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone();
+            assert_eq!(last["role"], "user");
+            assert_eq!(
+                last["content"],
+                steers_check(&["Use tabs.".into(), "And keep it short.".into()])
+            );
+            assert!(last["content"]
+                .as_str()
+                .unwrap()
+                .contains("\n1. Use tabs.\n2. And keep it short.\n"));
             let messages = bodies[1]["messages"].as_array().unwrap();
             let steered: Vec<_> = messages
                 .iter()

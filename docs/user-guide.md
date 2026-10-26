@@ -82,7 +82,8 @@ levels are listed.
   a message with attached files waits for the next turn instead), **Edit**
   changes it while it waits (it is skipped while you edit), and **Remove**
   takes it out of the queue. A steered message shows in the chat as
-  *Steered in during the run*. A steer the run never got to read is sent as
+  *Steered in during the run*; when you steer in two or more, the agent is reminded
+  of all of them before it finishes. A steer the run never got to read is sent as
   the next message. A message that cannot be sent (a bare `/goal`, a broken
   project configuration) stays in the queue marked **Needs an edit**, with the
   reason as its tooltip and in the chat; edit it (or save it unchanged) to send
