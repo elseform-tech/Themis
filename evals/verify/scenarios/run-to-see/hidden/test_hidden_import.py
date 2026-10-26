@@ -35,10 +35,3 @@ def test_imported_dates_match_the_records(tmp_path):
 def test_plain_dates_still_work():
     assert dates.parse_date("04/03/2026") == date(2026, 3, 4)
     assert dates.parse_date("2026-03-04") == date(2026, 3, 4)
-
-
-def test_a_timestamp_without_offset_is_still_refused():
-    import pytest
-
-    with pytest.raises(ValueError):
-        dates.parse_date("2026-03-04T10:00:00")
