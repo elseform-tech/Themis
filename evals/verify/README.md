@@ -1,7 +1,8 @@
 # Verification eval
 
 Does the agent check its own work, and is the work right? Four small tasks run through the real
-app (YOLO mode, isolated HOME and data folder, never the real app data or Keychain), each graded
+app (Custom mode with an allowlist and the OS sandbox on, isolated HOME and data folder, never the
+real app data or Keychain), each graded
 by a hidden check the agent never sees:
 
 | Task | Kind | The agent is asked to | Hidden check |

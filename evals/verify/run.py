@@ -1,8 +1,8 @@
 """Runs one verification task through the real app, as a person's chat runs, and records its trace.
 
 A scratch HOME and data folder (no Keychain, no real app data) and a git project copied from the
-task; then through the `themis` CLI: a chat in YOLO mode (no approval prompts to answer), the
-task's message with `send_message`, events from `themis watch` until the run ends. The finished
+task; then through the `themis` CLI: a chat in Custom mode with `APPROVAL` (the OS sandbox stays
+on, so commands write only inside the project; nothing waits for an approval), the task's message with `send_message`, events from `themis watch` until the run ends. The finished
 project is graded by the task's hidden check, which the agent never sees.
 
 Spend is metered live from `context_usage` events and the app's usage ledger; a run past its cost
@@ -22,6 +22,17 @@ from evals.kit.app import Watch
 from evals.kit.env import isolated_env
 
 from . import tasks
+
+# Custom-mode rules: enough to read, change, test and look things up, nothing outside the
+# sandbox. The default is deny, so no approval ever waits for a person who is not there.
+APPROVAL = {
+    "default": "deny",
+    "rules": [{"tool": "shell_unsandboxed", "action": "deny"},
+              {"tool": "*", "risk": "read", "action": "allow"}]
+             + [{"tool": "shell", "command": [program], "action": "allow"} for program in ("python3", "node")]
+             + [{"tool": tool, "action": "allow"}
+                for tool in ("write_file", "apply_patch", "git", "web_search", "fetch_url", "browser_*")],
+}
 
 
 class VerifyRun:
@@ -63,7 +74,7 @@ class VerifyRun:
             self.env["THEMIS_SEARXNG_DIR"] = self.options["searxng"]
         git.init(self.project)
         with open(os.path.join(self.data, "runtime.jsonc"), "w", encoding="utf-8") as handle:
-            handle.write('{"schema_version": 1}\n')
+            json.dump({"schema_version": 1, "approval": APPROVAL}, handle)
         trace = {"task": self.task["name"], "kind": self.task["kind"], "rep": self.rep,
                  "model": self.options["model"], "events": [], "answer": "", "end": None,
                  "tests_before": tasks.test_count(self.project, self.task.get("tests"))}
@@ -104,7 +115,7 @@ class VerifyRun:
             self.thread = json.loads(created.stdout)["id"]
         except (ValueError, KeyError, TypeError):
             return {"reason": "infrastructure", "detail": f"thread create: {(created.stderr or created.stdout)[-200:]}"}
-        _value, error = self.call("set_thread_approval_mode", {"threadId": self.thread, "mode": "yolo"})
+        _value, error = self.call("set_thread_approval_mode", {"threadId": self.thread, "mode": "custom"})
         if error:
             return {"reason": "infrastructure", "detail": f"approval mode: {error}"}
         self.watch = Watch(self.binary, self.data, self.env, self.thread, self.on_event)
