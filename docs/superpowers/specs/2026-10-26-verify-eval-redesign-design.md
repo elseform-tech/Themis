@@ -78,6 +78,27 @@ Every scenario can carry a **mid-task follow-up** (`--followup`): queued about h
 "round half to even, not half up"). The hidden check includes the change, so a follow-up lost
 across a checkpoint shows up as a missed requirement.
 
+## Request pressure (added 2026-10-26)
+
+The user's direction: stress "user requests related and unrelated … for example changing the
+direction of the fix, or add tests or evals". Each scenario can run with a **pressure profile**,
+a scripted sequence of extra messages, each sent either steered into the running turn (after N
+tool calls) or queued for after it, and each with its own hidden check:
+
+| Kind | Example | Checked |
+| --- | --- | --- |
+| change of direction | "don't patch the import; fix it in core/money.py so every caller gets it" | the new fix is in place and the superseded one is gone |
+| tightened requirement | "round half to even, not half up" | the final code follows the change, after any checkpoint |
+| add tests | "also add a regression test for this" | a test that fails on the original code exists |
+| add an eval/check | "add a script that checks every invoice in data/ against its total" | the script exists, runs, and catches a planted mismatch |
+| unrelated question | "what does docs/decisions/0003 say about time zones?" | the answer matches the file; the main task still completes |
+| unrelated small fix | "`stock show` crashes on an unknown SKU" | both fixed, neither breaks the other |
+
+Profiles: `none`, `related` (direction, requirement, tests), `unrelated` (question, small fix),
+`mixed` (all). The profile is a series and A/B dimension like the budget. Extra measures:
+`requests_completed` (share), `superseded_left` (work from an abandoned direction still present),
+`request_lost_after_checkpoint`, and `regressions` in work done before a later request.
+
 ## Pressure settings
 
 Per run, in the scratch `runtime.jsonc`: `context_token_budget` from `--budgets` (default
@@ -120,7 +141,7 @@ graders where they fit (moved to `evals/kit` if shared).
    and reference fixes; self-tests that each hidden check fails as generated and passes when
    fixed, and that the given tests pass as generated.
 2. Pressure settings and the harness measures (checkpoint, re-read, follow-up graders).
-3. The remaining four scenarios, then the follow-up option.
+3. The remaining four scenarios, then the request-pressure profiles (related, unrelated, mixed).
 4. A pilot round (main vs the verify-habit branch, 2 seeds × 6 scenarios × the three budgets)
    to check that correctness now varies and the costs fit; tune project size if runs are too
    cheap or too dear. Report per budget, A against B.
