@@ -18,7 +18,7 @@ const ACCESS: SiteAccess[] = ["allow", "ask", "block"];
 const label = (access: SiteAccess) => access[0].toUpperCase() + access.slice(1);
 
 /** Settings › Browser: what the agent may do in its built-in browser, Codex-style. */
-export function BrowserSettingsSection() {
+export function BrowserSettingsSection({ onSaved }: { onSaved?: () => void } = {}) {
   const { state, dispatch } = useApp();
   const [view, setView] = useState<BrowserSettingsView | null>(null);
   const [error, setError] = useState("");
@@ -41,6 +41,7 @@ export function BrowserSettingsSection() {
       const saved = await updateBrowserSettings(changes, view.revision);
       setView(current => current && { ...current, ...saved });
       dispatch({ type: "browser/opens-workspace", value: saved.settings.open_workspace });
+      onSaved?.();
     } catch (reason) {
       setError(describeError(reason));
       // The message sits at the top of a long page; say it where the person is looking too.

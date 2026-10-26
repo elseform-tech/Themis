@@ -108,6 +108,10 @@ function NotificationSettings({ form, save }: { form: Settings; save: (patch: Pa
   </SettingsGroup>;
 }
 
+const SAVED_NOTE_MS = 3000;
+/** Sections whose settings change what agents do; the rest apply at once. */
+const RUN_SECTIONS = new Set(["Models", "Permissions", "Browser", "Web", "Advanced"]);
+
 export function SettingsScreen() {
   const { state, dispatch } = useApp();
   const [form, setForm] = useState<Settings>(state.settings);
@@ -121,7 +125,15 @@ export function SettingsScreen() {
   useEffect(() => {
     setForm(state.settings);
   }, [state.settings]);
-  useEffect(() => { setError(""); }, [section]);
+  // "Saved" after each change; where it changes what agents do, also when that takes effect.
+  const [savedNote, setSavedNote] = useState("");
+  useEffect(() => { setError(""); setSavedNote(""); }, [section]);
+  useEffect(() => {
+    if (!savedNote) return;
+    const timer = window.setTimeout(() => setSavedNote(""), SAVED_NOTE_MS);
+    return () => window.clearTimeout(timer);
+  }, [savedNote]);
+  const flashSaved = () => setSavedNote(RUN_SECTIONS.has(section) ? "Saved · applies from each chat's next message" : "Saved");
 
   async function save(patch: Partial<Settings>) {
     if (saving) return false;
@@ -129,6 +141,7 @@ export function SettingsScreen() {
     try {
       const settings = await updateSettings(patch);
       dispatch({ type: "settings/patched", settings });
+      flashSaved();
       return true;
     } catch (error: unknown) {
       setError(FIELD_LABELS.reduce((text, [field, label]) => text.replace(field, label), describeError(error)));
@@ -181,7 +194,10 @@ export function SettingsScreen() {
     <div className="themis-settings">
       <div className="themis-settings-pane">
       <fieldset disabled={saving} className="themis-settings-fields">
-      <h2 className="themis-settings-pane-title">{section}</h2>
+      <div className="themis-settings-pane-head">
+        <h2 className="themis-settings-pane-title">{section}</h2>
+        <span role="status" className="themis-settings-saved">{savedNote}</span>
+      </div>
       {error && <p role="alert" className="themis-form-error">{error}</p>}
       {section === "General" && <SettingsGroup>
         <div className="themis-settings-control"><span>Projects folder</span><span className="themis-settings-root" title={state.settings.projects_directory}>{state.settings.projects_directory}</span></div>
@@ -195,9 +211,9 @@ export function SettingsScreen() {
       {section === "Usage" && <UsageSettingsSection />}
       {section === "Permissions" && <PermissionsSettings editor={state.settings.config_editor ?? ""} onEditor={editor => void save({ config_editor: editor })} prefs={{ default_approval_mode: state.settings.default_approval_mode, approval_timeout_seconds: state.settings.approval_timeout_seconds }} onPrefs={patch => void save(patch)} />}
       {section === "Secrets" && <SecretsSettings focusKey={state.settingsFocus?.key} />}
-      {section === "Browser" && <BrowserSettingsSection />}
-      {section === "Web" && <WebSettingsSection />}
-      {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
+      {section === "Browser" && <BrowserSettingsSection onSaved={flashSaved} />}
+      {section === "Web" && <WebSettingsSection onSaved={flashSaved} />}
+      {section === "Advanced" && <SettingsGroup title="Run limits" action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
         {number("max_total_turns", "Steps per reply", 1, 2000, "Tool calls and answers per reply")}
         {contextTokens}
         {number("concurrency_limit", "Chats at once", 1, 16, "Others wait their turn")}
