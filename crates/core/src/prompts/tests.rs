@@ -8,6 +8,7 @@ use super::*;
 /// Every prompt constant, its file stem and the placeholders it is filled with.
 const ALL: &[(&str, &str, &[&str])] = &[
     (SYSTEM_INSTRUCTIONS, "system-instructions", &[]),
+    (SYSTEM_VERIFY, "system-verify", &[]),
     (SYSTEM_TASK_LEDGER, "system-task-ledger", &[]),
     (
         SYSTEM_EVIDENCE_RECALL,
@@ -27,6 +28,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &["workspace"],
     ),
     (DESKTOP_RUN_YOLO, "desktop-run-yolo", &[]),
+    (DESKTOP_VERIFY_BROWSER, "desktop-verify-browser", &[]),
     (DESKTOP_MCP_GUIDANCE, "desktop-mcp-guidance", &[]),
     (
         DESKTOP_MCP_UNAVAILABLE,
