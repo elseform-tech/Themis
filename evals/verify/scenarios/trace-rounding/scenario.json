@@ -1,0 +1,17 @@
+{
+ "kind": "bug",
+ "message": "Some invoices come out a cent short. In the March report an imported till line priced 19.99 shows as 19.98, and a customer who paid 8.95 was recorded as paying 8.94. Please find and fix the cause so amounts are right everywhere they come in.",
+ "source": [
+  "ledgerly/core/money.py"
+ ],
+ "tests": "tests",
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ]
+}

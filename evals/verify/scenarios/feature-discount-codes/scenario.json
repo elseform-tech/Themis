@@ -1,0 +1,24 @@
+{
+ "kind": "feature",
+ "message": "Please add discount codes to Ledgerly:\n1. `invoices create` takes `--code CODE`, and the invoice keeps the code (stored upper case).\n2. Stores saved before this change still load (schema migration); existing invoices have no code.\n3. Codes WELCOME10 (10%), LOYAL15 (15%) and BULK5 (5%) come off the subtotal before tax, case-insensitively.\n4. An unknown code is an error and creates nothing.\n5. The monthly CSV export gets `discount` and `code` columns.\n6. docs/CLI.md documents the option and the codes.",
+ "source": [
+  "ledgerly/models/invoice.py",
+  "ledgerly/storage/migrations.py",
+  "ledgerly/services/discounts.py",
+  "ledgerly/services/pricing.py",
+  "ledgerly/services/invoicing.py",
+  "ledgerly/cli/commands/invoices.py",
+  "ledgerly/services/reports.py",
+  "docs/CLI.md"
+ ],
+ "tests": "tests",
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ]
+}

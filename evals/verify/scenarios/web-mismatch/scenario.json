@@ -1,0 +1,18 @@
+{
+ "kind": "web",
+ "message": "The invoice page (python3 -m ledgerly.api.routes --store data/demo_store.json, then the web page) shows NaN for every total and balance. Please fix it.",
+ "source": [
+  "ledgerly/api/handlers.py",
+  "web/render.js"
+ ],
+ "tests": "tests",
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ]
+}

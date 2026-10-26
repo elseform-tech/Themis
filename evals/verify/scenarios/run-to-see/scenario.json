@@ -1,0 +1,17 @@
+{
+ "kind": "bug",
+ "message": "Importing data/sample_invoices.json into our store (data/demo_store.json) drops some invoices without telling us which. Please make the import take every record in that file.",
+ "source": [
+  "ledgerly/core/dates.py"
+ ],
+ "tests": "tests",
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ]
+}
