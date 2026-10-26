@@ -1412,7 +1412,10 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
         .map(|key| breakdown[key].as_u64().unwrap())
         .sum();
         assert_eq!(parts, budget["used_tokens"].as_u64().unwrap());
-        assert!(budget["used_tokens"].as_u64() <= budget["usable_tokens"].as_u64());
+        assert!(
+            budget["used_tokens"].as_u64() <= budget["usable_tokens"].as_u64(),
+            "{budget}"
+        );
         assert!(budget["compaction_at_tokens"].as_u64() <= budget["usable_tokens"].as_u64());
         assert!(budget.get("content").is_none(), "budgets carry counts only");
     }
