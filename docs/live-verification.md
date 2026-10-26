@@ -48,6 +48,26 @@ is a trend against the last 5 runs of the same model, budget and job: a **breaka
 harness measure is our bug; a **regression** flag on a model measure asks a person to look at the
 trace. Commit the run's `history.jsonl` line with the report. See `evals/soak/README.md`.
 
+## 4. The verification eval
+
+```sh
+node scripts/bundle-searxng.mjs --if-missing
+python3 -m evals.verify run --model muse-spark-1.3-contributor --profiles none,mixed
+```
+
+`evals/verify` gives each run a generated Ledgerly project (about 100 files, too big for the
+context) and a realistic request whose cause is away from its symptom; hidden checks score the
+share of requirements met. The `mixed` profile adds messages mid-task (a change of direction, a
+tightened requirement, "add a test", an unrelated question and fix), and two scenarios pile up
+requests in one chat. Budgets are 32k, 64k and auto (16k and 32k for `accumulating-requests`). It
+reads verification habits (a check after the last change, unchecked or false claims, a bug
+reproduced first, a regression test), evidence for lookups, and harness health (checkpoints,
+re-reads after them, our tool errors). Runs take 2–6 minutes and about $0.01–0.04 each. The result
+is a trend per model, scenario, budget and profile; compare a branch with `--themis`, `--label`
+and `python3 -m evals.verify ab`. Before trusting a consistent partial score, open the kept project
+and check the failing hidden test asks only for what the request and docs state. See
+`evals/verify/README.md`.
+
 ## Reporting and fixing
 
 Report each step with its exact command and result (the soak's flags, its end state, lost runs

@@ -1,0 +1,61 @@
+{
+ "kind": "feature",
+ "message": "Please add a `reports top YYYY-MM [--limit N]` command: it lists the customers with the highest invoiced total in that month, one per line as `rank<TAB>customer id<TAB>name<TAB>total` (total formatted like the other reports), highest first, equal totals by customer id, five by default. Void invoices count as zero, and customers whose total is zero are left out; a month without invoices prints nothing; a limit below 1 is an error.",
+ "plants": [
+  "feat-top"
+ ],
+ "source": [
+  "ledgerly/services/reports.py",
+  "ledgerly/cli/commands/reports.py",
+  "docs/CLI.md"
+ ],
+ "tests": "tests",
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ],
+ "script": [
+  {
+   "id": "urgent-fix",
+   "kind": "unrelated_fix",
+   "after_calls": 8,
+   "mode": "queue",
+   "plant": "side-overdue-sort",
+   "text": "Urgent, separate from the report: `reports overdue` lists the newest invoices first; it must list the oldest first. Please fix that now.",
+   "check": {
+    "type": "pytest",
+    "file": "overdue_order.py"
+   }
+  },
+  {
+   "id": "schema-question",
+   "kind": "unrelated_question",
+   "after_calls": 14,
+   "mode": "steer",
+   "text": "Before you go on, a quick question: which schema version does the store use now, and what did the latest migration add?",
+   "check": {
+    "type": "answer",
+    "patterns": [
+     "(?:schema|version)[^.\\n]{0,60}?\\b3\\b|\\b3\\b[^.\\n]{0,20}(?:schema|version)",
+     "discount"
+    ]
+   }
+  },
+  {
+   "id": "resume",
+   "kind": "resume",
+   "after_calls": 20,
+   "mode": "queue",
+   "text": "Thanks. Now please finish the top-customers command, and document it in docs/CLI.md.",
+   "check": {
+    "type": "pytest",
+    "file": "top_documented.py"
+   }
+  }
+ ]
+}

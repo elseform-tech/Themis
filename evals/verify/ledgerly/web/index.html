@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ledgerly · Invoices</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Invoices</h1>
+    <label>Show
+      <select id="status-filter">
+        <option value="">all</option>
+        <option value="open">open</option>
+        <option value="paid">paid</option>
+        <option value="void">void</option>
+      </select>
+    </label>
+  </header>
+  <table>
+    <thead><tr><th>Invoice</th><th>Customer</th><th>Issued</th><th>Status</th><th class="num">Total</th><th class="num">Balance</th></tr></thead>
+    <tbody id="invoice-rows"></tbody>
+    <tfoot><tr><td colspan="4">Total outstanding</td><td></td><td class="num" id="outstanding"></td></tr></tfoot>
+  </table>
+  <p id="error" hidden></p>
+  <script src="render.js"></script>
+  <script src="api.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

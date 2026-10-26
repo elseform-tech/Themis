@@ -1,0 +1,18 @@
+{
+ "kind": "refactor",
+ "message": "ledgerly/services/billing.py has grown too big. Split it into ledgerly/services/invoicing.py (issue_invoice, void_invoice) and ledgerly/services/payments.py (balance, record_payment, due_date, overdue, aging), delete billing.py, and update every import, the tests and the docs. Behaviour must not change.",
+ "source": [
+  "ledgerly/services/invoicing.py",
+  "ledgerly/services/payments.py"
+ ],
+ "tests": "tests",
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ]
+}

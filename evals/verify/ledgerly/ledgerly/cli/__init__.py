@@ -1,0 +1,1 @@
+"""The `ledgerly` command line."""

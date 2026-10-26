@@ -1,0 +1,7 @@
+body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; color: #222; }
+header { display: flex; justify-content: space-between; align-items: baseline; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: .4rem .6rem; border-bottom: 1px solid #ddd; text-align: left; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.status-paid { color: #2a7; } .status-void { color: #999; text-decoration: line-through; }
+#error { color: #b33; }

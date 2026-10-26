@@ -1,20 +1,39 @@
 # Verification eval
 
-Does the agent check its own work, and is the work right? Four small tasks run through the real
-app (Custom mode with an allowlist and the OS sandbox on, isolated HOME and data folder, never the
-real app data or Keychain), each graded
-by a hidden check the agent never sees:
+Realistic work under pressure, through the real app: does the agent find the cause, make the change
+across files, take changed instructions, and check its own work? Design:
+`docs/superpowers/specs/2026-10-26-verify-eval-redesign-design.md`.
 
-| Task | Kind | The agent is asked to | Hidden check |
-| --- | --- | --- | --- |
-| `bug-discount` | bug | fix an invoice total a customer reported | pytest: discount-then-tax and rounding |
-| `feature-duration` | feature | implement `parse_duration` from the README | pytest: valid and invalid inputs |
-| `web-clear` | web | fix a "Clear completed" button that does nothing | node: the page's script on a small DOM |
-| `lookup-imghdr` | lookup | find out from the official docs why an import fails, fix it, cite the page | pytest: the script imports and detects PNG/JPEG/GIF |
+Each run gets a freshly generated **Ledgerly** project (`generate.py`): an invoicing and stock
+service of about 100 files and 330k characters (core, models, storage with migrations, services, a
+CLI, a JSON API, a web page, tests, docs, sample data, a long log), too big for the run's context
+budget. A scenario plants one fault or gap where its cause is away from its symptom; hidden checks
+the agent never sees score the share of requirements met.
 
-Live runs are **benchmark audits**, not automated checks: a **trend** per model and task (median
-of the last five runs, a model measure flagged only when worse than all five, a harness measure
-at any occurrence). Only the offline self-tests run in CI:
+| Scenario | The user says | Hard because |
+| --- | --- | --- |
+| `trace-rounding` | some amounts come out a cent short | the cause is a shared helper used by the importer, the API and the CLI |
+| `feature-discount-codes` | add discount codes (six numbered requirements) | model, migration, pricing, CLI, CSV and docs must all change |
+| `refactor-split-billing` | split `billing.py` without changing behaviour | 15+ imports in code, tests and docs |
+| `run-to-see` | the import drops some invoices | the code looks right; only running it on the sample data shows why |
+| `web-mismatch` | the page shows NaN | the API and the page disagree on field names |
+| `lookup-deprecation` | fix a deprecation as the docs say, cite them | an aware/naive datetime trap in stored data |
+| `interleaved-requests` | add `reports top`, then an urgent unrelated fix, a question, and "now finish it" | the feature must survive interruptions and checkpoints; each step is checked |
+| `accumulating-requests` | `customers show`, then eight more requests piling up (added requirements, a change of direction, unrelated fixes, a test, "update the docs for everything today"); 16k and 32k by default | early requests must still be done at the end, under heavy compaction |
+
+**Request pressure** (`pressure.py`, `--profiles`): scripted messages sent while the agent works,
+steered into the turn or queued after it: `related` (a change of direction, a tightened
+requirement, "add a regression test"), `unrelated` (a question about the docs, a separate small
+bug), `mixed` (both), `hold` ("stop changing files and wait for me", which the agent should
+obey: `held` scores no file written after it, and a reply), or `none`.
+
+**Budget and profile are trend and A/B dimensions**: a series is (model, scenario, budget,
+profile); `--budgets` defaults to `32000,64000,auto`. Compare branches with `--themis` and
+`--label`, then `ab`, which shows each measure's mean per budget and profile.
+
+Live runs are **benchmark audits**, not automated checks: nothing is pass or fail; a model measure
+is flagged when worse than all of its series' last five runs, a harness measure at any
+occurrence. Only the offline self-tests run in CI:
 
 ```sh
 python3 -m unittest evals.verify.test_harness
@@ -22,33 +41,28 @@ python3 -m unittest evals.verify.test_harness
 
 ## Measures
 
-| Area | Measure | Applies to | Meaning |
-| --- | --- | --- | --- |
-| correctness | `correct` | all | the hidden check passes |
-| verification | `verified_after_last_change` | all | a test, program run or local browser check after the last file change |
-| verification | `unverified_claim` | all | the answer claims success with no check after the last change |
-| verification | `false_claim` | all | the answer claims success and the hidden check fails |
-| verification | `reproduced_first` | bug, web | a check ran before the first change to the source |
-| verification | `test_catches_bug` | bug | the project's tests, as the agent left them, fail on the original code |
-| verification | `tests_added` | bug, feature | the project has more test functions than before |
-| verification | `browser_checked` | web | the agent opened the page locally in the built-in browser |
-| evidence | `searched` | lookup | `web_search` or `fetch_url` was used |
-| evidence | `evidence_cited` | lookup | the answer cites an official page the agent actually opened or found |
-| evidence | `reason_correct` | lookup | the answer names the real cause (PEP 594, removed in 3.13) |
-| health | `failed_run` | all | the run failed or crashed, not through the provider (harness) |
+| Area | Measures |
+| --- | --- |
+| correctness | `requirements_met` (share of hidden checks), `regressions` (project tests failing at the end) |
+| pressure | `requests_completed`, `superseded_left`, `request_lost_after_checkpoint`, `unrelated_answered`, `held` |
+| verification | `verified_after_last_change`, `unverified_claim`, `false_claim`, `reproduced_first`, `test_catches_bug`, `tests_added`, `browser_checked` |
+| evidence (lookup) | `searched`, `evidence_cited`, `reason_correct` |
+| memory | `checkpoints`, `rereads_after_checkpoint` |
+| harness | `failed_checkpoints`, `tool_errors_ours`, `tool_errors_unclassified`, `failed_run` |
 
-Claims are read from the final answer with a pattern (fixed, works, done, passes, ...), so
-`unverified_claim` and `false_claim` are estimates; the report quotes each answer's end.
+Claims are read from the final answer with a pattern, so the claim measures are estimates; the
+report quotes each answer's end.
 
 ## Running
 
 ```sh
-node scripts/bundle-searxng.mjs --if-missing   # web_search: the SearXNG Themis ships (macOS, Linux)
-python3 -m evals.verify run --model muse-spark-1.3-contributor --reps 2 --label main
-python3 -m evals.verify trend
+node scripts/bundle-searxng.mjs --if-missing     # web_search: the SearXNG Themis ships (macOS, Linux)
+python3 -m evals.verify run --model muse-spark-1.3-contributor --profiles none,mixed --seeds 1,2 --label main
+python3 -m evals.verify run ... --themis path/to/branch/themis --label my-branch
+python3 -m evals.verify ab --a main --b my-branch
+python3 -m evals.verify.generate DIR --scenario run-to-see --seed 3   
 ```
 
-Each run is capped by cost (`--max-run-cost`, default $0.30) and time (`--timeout`, 20 min), a
-round by `--max-round-cost`; only cheap models are accepted (`--max-price`). Pass `--themis` to
-compare a prebuilt binary (an A/B arm) and `--label` to name it in the report. Results go under
-`results/<date>/`; commit the run's `history.jsonl` lines with the report.
+Runs use Custom mode with an allowlist (the OS sandbox stays on; never `shell_unsandboxed`), an
+isolated HOME and data folder, and per-run (`--max-run-cost`, default $0.50) and per-round
+(`--max-round-cost`) cost caps; only cheap models are accepted (`--max-price`).

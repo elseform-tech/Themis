@@ -1,8 +1,9 @@
 [tool.ruff]
 target-version = "py310"
 line-length = 100
-# Third-party copies kept as published (Python's configparser, for the codebase eval task).
-extend-exclude = ["evals/hard/vendor", "evals/hard/reference/iniconf"]
+# Third-party copies kept as published, and the verify eval's Ledgerly template (it holds both sides
+# of every planted fault; generated projects are compiled by evals.verify.test_harness).
+extend-exclude = ["evals/hard/vendor", "evals/hard/reference/iniconf", "evals/verify/ledgerly"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "PIE810"]

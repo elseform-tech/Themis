@@ -1,0 +1,24 @@
+{
+ "kind": "lookup",
+ "message": "Running our tests prints DeprecationWarning about datetime.utcnow() on Python 3.12 and later. Fix it the way the official Python documentation recommends, make sure nothing else breaks (old stores must keep working), and tell me which documentation page you used.",
+ "source": [
+  "ledgerly/core/dates.py"
+ ],
+ "tests": "tests",
+ "answer_patterns": [
+  "datetime\\.now\\(\\s*(?:tz\\s*=\\s*)?(?:datetime\\.)?(?:timezone\\.utc|UTC)",
+  "\\baware\\b"
+ ],
+ "evidence_hosts": [
+  "docs.python.org"
+ ],
+ "hidden_command": [
+  "python3",
+  "-m",
+  "pytest",
+  "-q",
+  "-p",
+  "no:cacheprovider",
+  "_hidden"
+ ]
+}
