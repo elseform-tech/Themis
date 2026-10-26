@@ -642,7 +642,7 @@ async fn cli_plain_and_shell_evidence_survives_maintenance_and_reaches_summary()
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         project.path().join(".themis/config.jsonc"),
-        r#"{"context_token_budget":24000,"recent_messages":2,"total_turns":30}"#,
+        r#"{"context_token_budget":24500,"recent_messages":2,"total_turns":30}"#,
     )
     .unwrap();
     let source = format!(
@@ -1327,7 +1327,7 @@ async fn cli_checkpoint_keeps_the_goal_and_budget_events_reach_clients() {
         let index = observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // Fresh shell output stays protected until a checkpoint summarizes it,
         // so two bounded batches force exactly one checkpoint.
-        let shell = |id: String, fill: char| json!({"id":id,"type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",format!("print('{fill}'*11000)")],"cwd":""}).to_string()}});
+        let shell = |id: String, fill: char| json!({"id":id,"type":"function","function":{"name":"shell","arguments":json!({"command":"python3","args":["-c",format!("print('{fill}'*10000)")],"cwd":""}).to_string()}});
         if index == 0 {
             let offered = body["tools"].as_array().unwrap().iter().any(|tool| tool["function"]["name"] == "notes");
             assert!(!offered, "the notes tool is retired");
