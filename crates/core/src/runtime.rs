@@ -3006,7 +3006,10 @@ fn summary_retry_reason(error: &autoagents::llm::error::LLMError) -> Option<&'st
         LLMError::Generic(message) => match message.as_str() {
             "Provider response was truncated" => Some("output_truncated"),
             "Provider response failed or was incomplete" => Some("response_incomplete"),
-            "Summarizer returned empty text" => Some("empty_output"),
+            // The providers' own word for an empty reply, and the summarizer's.
+            "Summarizer returned empty text" | "Provider returned no text or tools" => {
+                Some("empty_output")
+            }
             "Summarizer returned malformed checkpoint" => Some("malformed_output"),
             "Summarizer request timed out" => Some("request_timeout"),
             _ => error.is_retryable().then_some("transient_provider_error"),
@@ -3475,6 +3478,28 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod tests {
+    /// Found by the goal soak: a provider's empty reply to a summary request ("no text
+    /// or tools") failed the checkpoint at once; a retry, with twice the output
+    /// allowance, gives a model that spent its budget on reasoning another chance.
+    #[test]
+    fn an_empty_provider_reply_to_a_summary_is_retried() {
+        use autoagents::llm::error::LLMError;
+        assert_eq!(
+            summary_retry_reason(&LLMError::Generic(
+                "Provider returned no text or tools".into()
+            )),
+            Some("empty_output")
+        );
+        assert_eq!(
+            summary_retry_reason(&LLMError::Generic("Summarizer returned empty text".into())),
+            Some("empty_output")
+        );
+        assert_eq!(
+            summary_retry_reason(&LLMError::Generic("something else".into())),
+            None
+        );
+    }
+
     /// Found by the scripted goal soak: a checkpoint during a goal turn's spec
     /// check kept the check as the active request and summarized the goal turn
     /// away, so later requests lost the goal.
