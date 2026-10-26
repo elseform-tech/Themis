@@ -1,6 +1,6 @@
 import { AttachmentPreview } from "./AttachmentPreview";
 import { PromptInput, type PromptCommand } from "../components/PromptInput";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Attachment } from "../lib/tauri";
 import type { PromptPlugin, PromptSkill } from "../lib/prompt";
 import { Button } from "../components/primitives/Button";
@@ -48,6 +48,14 @@ interface ThreadComposerProps {
   top?: ReactNode;
 }
 
+/** How long after a first Esc a second one stops the run (and the hint shows). */
+const ESC_STOP_WINDOW_MS = 1500;
+
+/** An open menu, popover, panel or dialog that an Esc would close instead. */
+function openLayer(): boolean {
+  return document.querySelector('details[data-popover][open], [role="dialog"], [role="menu"], [role="listbox"]') !== null;
+}
+
 export function ThreadComposer({
   thread,
   draft,
@@ -79,22 +87,34 @@ export function ThreadComposer({
 }: ThreadComposerProps) {
   const stopAction = useRef(onStop);
   stopAction.current = onStop;
+  // Esc twice stops the run; after the first press a hint says so until the window closes.
+  const [escArmed, setEscArmed] = useState(false);
   useEffect(() => {
-    if (!running || stopping) return;
+    if (!running || stopping) { setEscArmed(false); return; }
     let firstEscape: number | null = null;
     let requested = false;
+    let hint: ReturnType<typeof setTimeout> | undefined;
+    const disarm = () => { firstEscape = null; clearTimeout(hint); setEscArmed(false); };
     function stopShortcut(event: KeyboardEvent) {
       if (event.isComposing || event.repeat || requested) return;
-      if (event.key !== "Escape") { firstEscape = null; return; }
+      if (event.key !== "Escape") { disarm(); return; }
+      // An Esc that closes a menu, popover or panel is for that, never half of a stop.
+      if (openLayer()) { disarm(); return; }
       const now = Date.now();
-      if (firstEscape !== null && now - firstEscape <= 500) {
+      if (firstEscape !== null && now - firstEscape <= ESC_STOP_WINDOW_MS) {
         event.preventDefault();
         requested = true;
+        disarm();
         stopAction.current();
-      } else firstEscape = now;
+      } else {
+        firstEscape = now;
+        setEscArmed(true);
+        clearTimeout(hint);
+        hint = setTimeout(disarm, ESC_STOP_WINDOW_MS);
+      }
     }
     window.addEventListener("keydown", stopShortcut, true);
-    return () => window.removeEventListener("keydown", stopShortcut, true);
+    return () => { clearTimeout(hint); window.removeEventListener("keydown", stopShortcut, true); };
   }, [running, stopping, thread.id]);
   // A click on the box's padding or quiet areas focuses the text area; real controls keep their own behaviour.
   function focusEditorFromBox(event: React.MouseEvent<HTMLDivElement>) {
@@ -163,6 +183,7 @@ export function ThreadComposer({
 
           <span className="themis-composer-spacer" />
           <ContextMeter budget={budget} compacting={compacting} running={running} threadId={thread.id} />
+          {running && escArmed && !stopping && <span className="themis-esc-hint" role="status">Press Esc again to stop</span>}
           {running && (
             <Button
               className="themis-send"
