@@ -189,13 +189,6 @@ pub struct ContextBudget {
     /// Correction ratio in thousandths (1000 = estimate was exact).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calibration_ratio_milli: Option<u32>,
-    /// Message space left for work once the system message is in.
-    #[serde(default)]
-    pub work_room_tokens: usize,
-    /// The smallest budget that leaves [`crate::context_window::MIN_WORK_ROOM_TOKENS`] for work
-    /// with these instructions and tools.
-    #[serde(default)]
-    pub minimum_budget_tokens: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -773,8 +766,6 @@ async fn run_task_with_evidence_inner(
                 compaction_at_tokens: semantic_threshold,
                 compaction_soon: used.saturating_add(calibrated_growth.saturating_mul(2))
                     > semantic_threshold,
-                work_room_tokens: work_room(messages),
-                minimum_budget_tokens: minimum_budget(messages),
                 breakdown: context_breakdown(messages),
                 raw_estimated_tokens: Some(raw_used),
                 provider_input_tokens: last_reported_input,

@@ -120,9 +120,14 @@ Optional `context_token_budget` and `total_turns` override Settings › Advanced
 omitted field means when Settings › Advanced › Context tokens is also Auto)
 uses the selected model's context window, up to an Auto ceiling of 200,000
 tokens (`AUTO_CONTEXT_CEILING` in `crates/core/src/context_window.rs`, the one
-place it is set). A number (2,000–1,000,000) is a cap: the run uses the smaller
-of the cap and the model's window, so a cap above the Auto ceiling lets a model
-with a larger window use it. Layers override each other as usual, so a project
+place it is set). A number is a cap: the run uses the smaller of the cap and the
+model's window, so a cap above the Auto ceiling lets a model with a larger window
+use it. Settings › Advanced offers caps of 200,000–1,000,000 only, so each model's
+safe minimum is the smaller of 200,000 and its window; `runtime.jsonc` still accepts
+2,000–1,000,000, but budgets under 200,000 are impractical for real work and are for
+evals. A run whose checkpoints keep coming every request or two (see
+`compaction.thrash_checkpoints`) stops and says the smallest budget that would leave
+room to work. Layers override each other as usual, so a project
 `"auto"` undoes a user cap.
 
 The window comes from the public model catalog. When the catalog does not list
@@ -141,7 +146,8 @@ stall."
 
 Settings files from before Auto stored `context_token_budget` 200,000 by
 default. On load, that value becomes Auto (the same budget at the current
-ceiling); any other stored number stays a cap. The app setting is now
+ceiling); any other stored number of 200,000 or more stays a cap, and a smaller one
+(or a `context_token_cap` saved below 200,000) becomes Auto. The app setting is now
 `context_token_cap` (`0` is Auto). The retired `max_turns` and
 `context_messages` settings are ignored when old files are read.
 

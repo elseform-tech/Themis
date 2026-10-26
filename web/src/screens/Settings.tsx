@@ -163,7 +163,7 @@ export function SettingsScreen() {
   const contextTokens = <div className="themis-settings-control">
     <span title="Auto uses the model's context window">Context tokens</span>
     <span className="themis-settings-pair">
-      {customContext && numberInput("context_token_cap", "Context token cap", 2000, 1000000)}
+      {customContext && numberInput("context_token_cap", "Context token cap", CUSTOM_CONTEXT_START, 1000000)}
       <select aria-label="Context tokens" value={customContext ? "custom" : "auto"} onChange={event => void save({ context_token_cap: event.target.value === "auto" ? 0 : CUSTOM_CONTEXT_START })}>
         <option value="auto">Auto</option>
         <option value="custom">Custom</option>

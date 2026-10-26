@@ -1,7 +1,7 @@
-//! A budget too small for the work: the meter's budget events say how much room is left for work
-//! and the smallest budget that would do, and a run whose checkpoints come every request or two
-//! stops with that advice instead of summarizing forever. Found by the verify eval: at 16k one run
-//! made 236 checkpoints in 572 tool calls and finished nothing.
+//! A budget too small for the work (only possible from runtime.jsonc, for evals: Settings offer
+//! 200,000 up): a run whose checkpoints come every request or two stops with advice instead of
+//! summarizing forever. Found by the verify eval: at 16k one run made 236 checkpoints in 572 tool
+//! calls and finished nothing.
 
 use serde_json::{json, Value};
 use std::{
@@ -143,14 +143,12 @@ async fn a_budget_too_small_for_the_work_stops_with_advice() {
         "{error}"
     );
     assert_eq!(checkpoints, 6, "it stops at the sixth close checkpoint");
-    let first = &budgets[0];
-    let room = first["work_room_tokens"].as_u64().unwrap();
-    let minimum = first["minimum_budget_tokens"].as_u64().unwrap();
-    assert!(room < 6000, "{first}");
-    assert!(minimum > 16000, "{first}");
-    assert_eq!(
-        minimum - first["budget_tokens"].as_u64().unwrap(),
-        6000 - room,
-        "the minimum is what makes the room 6,000 tokens: {first}"
-    );
+    // The advice names the room left and a budget that would leave enough, in grouped digits.
+    let numbers: Vec<u64> = error
+        .split(|c: char| !c.is_ascii_digit() && c != ',')
+        .filter_map(|word| word.replace(',', "").parse().ok())
+        .collect();
+    let (room, minimum) = (numbers[numbers.len() - 2], numbers[numbers.len() - 1]);
+    assert!(room < 6000 && minimum > 16000, "{error}");
+    assert!(!budgets.is_empty());
 }

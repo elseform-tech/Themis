@@ -37,9 +37,7 @@ export function ContextMeter({ budget, compacting = false, running = false, thre
   const percent = usedPercent(budget);
   // The projection only matters while a run can still reach the threshold.
   const soon = budget.compaction_soon && running && !compacting;
-  // Instructions and tools leave too little for work: runs would only summarise.
-  const tooSmall = (budget.minimum_budget_tokens ?? 0) > budget.budget_tokens;
-  const tone = compacting || soon || tooSmall ? "warn" : "quiet";
+  const tone = compacting || soon ? "warn" : "quiet";
   const share = (tokens: number) => `${budget.usable_tokens > 0 ? Math.min(100, tokens / budget.usable_tokens * 100) : 0}%`;
   const at = (tokens: number) => Math.min(100, Math.round(tokens / Math.max(1, budget.usable_tokens) * 100));
   const label = compacting ? "Compacting…" : soon ? `${percent}% · compacting soon` : `${percent}%`;
@@ -48,7 +46,7 @@ export function ContextMeter({ budget, compacting = false, running = false, thre
   return (
     <div className="themis-context" ref={root}>
       <button type="button" className={`themis-context-chip themis-context-chip--${tone}`} aria-expanded={open}
-        aria-label={`Context ${percent}% full${soon ? ", close to auto-compact" : ""}${tooSmall ? ", budget too small" : ""}`} onClick={() => setOpen(value => !value)}>
+        aria-label={`Context ${percent}% full${soon ? ", close to auto-compact" : ""}`} onClick={() => setOpen(value => !value)}>
         <svg width="20" height="20" viewBox="0 0 36 36" aria-hidden="true">
           <circle cx="18" cy="18" r="14" fill="none" stroke="var(--themis-border)" strokeWidth="5" />
           <circle className={compacting ? "themis-context-spin" : undefined} cx="18" cy="18" r="14" fill="none" strokeWidth="5" strokeLinecap="round"
@@ -74,7 +72,6 @@ export function ContextMeter({ budget, compacting = false, running = false, thre
           </ul>
           {chatUsage && chatUsage.requests > 0 && <p className="themis-context-note" title="Tokens the provider reported for this chat's requests, from Themis only">This chat so far: {compactTokens(chatUsage.input_tokens)} in · {compactTokens(chatUsage.output_tokens)} out · {chatUsage.requests} request{chatUsage.requests === 1 ? "" : "s"}</p>}
           <p className="themis-context-note">Held outside the bar: {formatTokens(budget.tool_definition_tokens)} tool definitions · {formatTokens(budget.output_reserve_tokens)} reply · {formatTokens(budget.safety_margin_tokens)} safety margin. Estimates (bytes ÷ 4).</p>
-          {tooSmall && <p className="themis-context-warn">This budget is too small to work in: instructions and tools leave about {formatTokens(budget.work_room_tokens ?? 0)} for the task. Raise the context budget to at least {formatTokens(budget.minimum_budget_tokens ?? 0)}.</p>}
           {soon && <p className="themis-context-warn">Close to auto-compact. Themis will summarise older work into a checkpoint and task ledger; every original stays on disk.</p>}
         </div>
       )}

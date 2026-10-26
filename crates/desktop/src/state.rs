@@ -1930,13 +1930,13 @@ mod tests {
         let updated = state
             .update_settings(SettingsPatch {
                 theme: Some(ThemeMode::Light),
-                context_token_cap: Some(64_000),
+                context_token_cap: Some(300_000),
                 ..SettingsPatch::default()
             })
             .await
             .expect("update");
         assert_eq!(updated.theme, ThemeMode::Dark);
-        assert_eq!(updated.context_token_cap, 64_000);
+        assert_eq!(updated.context_token_cap, 300_000);
         let bad = state
             .update_settings(SettingsPatch {
                 context_token_cap: Some(10),

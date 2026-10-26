@@ -65,9 +65,11 @@ pub struct SettingsStore {
 }
 
 /// Inclusive bounds of a numeric context cap.
+/// The caps Settings offer: 200,000 up (each model is clamped to its window, so a smaller
+/// model gets its whole window). Smaller budgets are for evals, in `runtime.jsonc`.
 fn context_cap_bounds() -> (i64, i64) {
     (
-        themis_core::configuration::MIN_CONTEXT_TOKENS as i64,
+        themis_core::context_window::MIN_SETTINGS_CONTEXT_CAP as i64,
         themis_core::context_window::MAX_CONTEXT_TOKENS as i64,
     )
 }
@@ -83,8 +85,8 @@ fn legacy_context_cap(value: &serde_json::Value) -> Option<u32> {
     if budget == LEGACY_DEFAULT_CONTEXT_BUDGET {
         return Some(0);
     }
-    let (low, high) = context_cap_bounds();
-    u32::try_from(budget.clamp(low as u64, high as u64)).ok()
+    let (_low, high) = context_cap_bounds();
+    u32::try_from(budget.min(high as u64)).ok()
 }
 
 impl SettingsStore {
@@ -112,6 +114,11 @@ impl SettingsStore {
             .unwrap_or_default();
         if let Some(cap) = cap {
             settings.context_token_cap = cap;
+        }
+        // A cap saved before the 200,000 floor (or a legacy budget below it) becomes Auto.
+        let (low, _high) = context_cap_bounds();
+        if settings.context_token_cap != 0 && i64::from(settings.context_token_cap) < low {
+            settings.context_token_cap = 0;
         }
         settings.theme = ThemeMode::Dark;
         settings.projects_directory = projects_root.to_string_lossy().into_owned();
@@ -347,7 +354,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let store = SettingsStore::load(path.clone());
-        for bad in [1, 1999, 1_000_001, -5] {
+        for bad in [1, 1999, 64_000, 199_999, 1_000_001, -5] {
             let error = store
                 .update(SettingsPatch {
                     context_token_cap: Some(bad),
@@ -401,10 +408,14 @@ mod tests {
         // The old default (and an old file with no budget at all) is Auto.
         assert_eq!(load(&format!("{{{base},\"max_turns\":20,\"context_token_budget\":200000,\"context_messages\":20}}")).context_token_cap, 0);
         assert_eq!(load(&format!("{{{base}}}")).context_token_cap, 0);
-        // A deliberately different number stays a cap.
+        // A deliberately different number stays a cap, from the 200,000 floor up; below it is Auto.
         assert_eq!(
             load(&format!("{{{base},\"context_token_budget\":64000}}")).context_token_cap,
-            64000
+            0
+        );
+        assert_eq!(
+            load(&format!("{{{base},\"context_token_cap\":64000}}")).context_token_cap,
+            0
         );
         assert_eq!(
             load(&format!("{{{base},\"context_token_budget\":256000}}")).context_token_cap,

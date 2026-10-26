@@ -1268,15 +1268,14 @@ async fn a_goal_with_a_small_context_window_warns_once() {
         })
         .mount(&server)
         .await;
-    let (state, _data, _project, thread) = chat(&server).await;
-    // The test endpoint reports no window, so the configured cap is the window.
-    state
-        .update_settings(themis_desktop::types::SettingsPatch {
-            context_token_cap: Some(64_000),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    let (state, data, _project, thread) = chat(&server).await;
+    // The test endpoint reports no window, so the budget is the window. Settings offer 200,000
+    // up; a small budget comes from runtime.jsonc, as in evals.
+    std::fs::write(
+        data.path().join("runtime.jsonc"),
+        r#"{"schema_version":1,"context_token_budget":64000}"#,
+    )
+    .unwrap();
     let (sink, mut rx) = ChannelSink::channel();
     let sink = Arc::new(sink);
     state

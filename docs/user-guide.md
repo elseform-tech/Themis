@@ -178,10 +178,6 @@ is reached; for example `/goal optimize this app to speed up p95`.
   tidy-up and auto-compact thresholds. Near auto-compact during a run it turns
   warm and a one-time heads-up appears; afterwards a **Context compacted** divider
   shows the before → after usage. Nothing is deleted: originals stay on disk.
-  When the instructions and tools leave less than about 6,000 tokens for the task,
-  the ring turns warm and the breakdown says how much room there is and the
-  smallest budget to use instead; a run that would only keep summarising stops after
-  six checkpoints in a row with the same advice.
 - **Workspace** in a thread's header opens a read-only monitor of the project:
   **Changes** (readable changed files and their wrapped, highlighted diff,
   updating live while the agent works; binary and generated files are hidden; a
@@ -434,7 +430,7 @@ Preferences persisted to `settings.json`:
 | `default_provider` | Provider for new threads | `go` |
 | `default_model` | Model for new threads (`""` = provider default) | `""` |
 | `max_total_turns` | Steps per reply (1–2,000; Settings → Advanced → Turn limit) | `200` |
-| `context_token_cap` | Working context: `0` = Auto (the model's window, up to 200,000), or a cap of 2,000–1,000,000 tokens (Settings → Advanced → Context tokens) | `0` |
+| `context_token_cap` | Working context: `0` = Auto (the model's window, up to 200,000), or a cap of 200,000–1,000,000 tokens (Settings → Advanced → Context tokens; a model with a smaller window uses its whole window) | `0` |
 | `approval_timeout_seconds` | Seconds before an unanswered approval is denied (30–600; Settings → Permissions) | `300` |
 | `default_approval_mode` | Mode a new chat starts in: `custom` or `yolo` | `custom` |
 | `confirm_reads` | Require approval for read tools | `false` |

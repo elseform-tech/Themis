@@ -242,10 +242,11 @@ describe("Settings › Advanced › Context tokens", () => {
   });
 
   it("shows a custom cap, saves an edited number, and goes back to Auto", async () => {
-    settings.context_token_cap = 64000;
+    settings.context_token_cap = 300000;
     await openAdvanced();
     const cap = screen.getByLabelText("Context token cap");
-    expect(cap).toHaveValue(64000);
+    expect(cap).toHaveValue(300000);
+    expect(cap).toHaveAttribute("min", "200000");
     expect(cap).toHaveAttribute("max", "1000000");
     fireEvent.change(cap, { target: { value: "500000" } });
     await act(async () => { fireEvent.blur(cap); });
@@ -255,12 +256,12 @@ describe("Settings › Advanced › Context tokens", () => {
   });
 
   it("names the field in a rejected cap's error", async () => {
-    settings.context_token_cap = 64000;
-    vi.mocked(bridge.updateSettings).mockRejectedValueOnce("context_token_cap must be Auto or between 2000 and 1000000");
+    settings.context_token_cap = 300000;
+    vi.mocked(bridge.updateSettings).mockRejectedValueOnce("context_token_cap must be Auto or between 200000 and 1000000");
     await openAdvanced();
     const cap = screen.getByLabelText("Context token cap");
     fireEvent.change(cap, { target: { value: "10" } });
     await act(async () => { fireEvent.blur(cap); });
-    expect(screen.getByRole("alert")).toHaveTextContent("Context tokens must be Auto or between 2000 and 1000000");
+    expect(screen.getByRole("alert")).toHaveTextContent("Context tokens must be Auto or between 200000 and 1000000");
   });
 });

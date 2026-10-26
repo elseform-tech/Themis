@@ -553,16 +553,16 @@ async fn cli_context_budget_is_auto_or_a_cap_in_settings_and_files() {
     let project = tempfile::tempdir().unwrap();
     std::fs::write(
         directory.path().join("settings.json"),
-        r#"{"theme":"dark","default_provider":"go","default_model":"m","max_turns":20,"context_token_budget":64000,"context_messages":12}"#,
+        r#"{"theme":"dark","default_provider":"go","default_model":"m","max_turns":20,"context_token_budget":300000,"context_messages":12}"#,
     )
     .unwrap();
     let state = AppState::new_for_test(directory.path().join("settings.json"));
     let server = Server::bind(state.clone(), directory.path()).await.unwrap();
     let host = tokio::spawn(server.run());
     let root = project.path().to_str().unwrap();
-    // A deliberately chosen old budget stays a cap; retired fields are gone.
+    // A deliberately chosen old budget (200,000 or more) stays a cap; retired fields are gone.
     let settings = cli(directory.path(), "get_settings", Value::Null);
-    assert_eq!(settings["context_token_cap"], 64000);
+    assert_eq!(settings["context_token_cap"], 300000);
     assert!(settings.get("max_turns").is_none());
     assert!(settings.get("context_messages").is_none());
     let auto = cli(
