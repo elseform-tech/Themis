@@ -1,174 +1,175 @@
-"""Self-tests for the verification eval: the hidden checks tell a broken project from a fixed one,
-and the graders read synthetic traces correctly. No app and no provider.
+"""Self-tests for the verification eval: the generator plants and removes each fault, every hidden
+and pressure check fails on its planted project and passes on the reference, and the graders,
+report and A/B read synthetic traces correctly. No app and no provider.
 
     python3 -m unittest evals.verify.test_harness
 """
 
+import compileall
 import json
 import os
-import shutil
+import pathlib
 import tempfile
 import unittest
 
-from evals.kit import trend as kit_trend
+from . import generate, pressure, scenarios
+from .__main__ import ab_table, arms, record_of, report, series_key
+from .grade import MEASURES, grade, rereads_after_checkpoint
+from .run import active_run
 
-from . import tasks
-from .__main__ import record_of, report, series_key
-from .grade import MEASURES, claims_success, grade
-
-FEATURE_FIX = '''import re
-
-PATTERN = re.compile(r"\\s*(?:(\\d+)\\s*h)?\\s*(?:(\\d+)\\s*m)?\\s*(?:(\\d+)\\s*s)?\\s*", re.IGNORECASE)
+ALL_PLANTS = ("req-thousands", "req-import-report", "side-country")
 
 
-def parse_duration(text):
-    match = PATTERN.fullmatch(text)
-    if not match or all(group is None for group in match.groups()):
-        raise ValueError(text)
-    hours, minutes, seconds = (int(group or 0) for group in match.groups())
-    return hours * 3600 + minutes * 60 + seconds
-'''
-LOOKUP_FIX = '''from pathlib import Path
-
-SIGNATURES = ((b"\\x89PNG\\r\\n\\x1a\\n", "png"), (b"\\xff\\xd8\\xff", "jpeg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
+def event(kind, run_id="r1", **fields):
+    return {"t": 0, "run_id": run_id, "event": {"kind": kind, **fields}}
 
 
-def kind(path):
-    head = Path(path).read_bytes()[:16]
-    return next((name for magic, name in SIGNATURES if head.startswith(magic)), None)
-'''
-# task -> (file, fix): a correct fix the hidden check must accept.
-REFERENCE = {
-    "bug-discount": ("billing/invoice.py",
-                     lambda text: text.replace("subtotal * tax_percent / 100", "discounted * tax_percent / 100")),
-    "feature-duration": ("timeparse/duration.py", lambda _text: FEATURE_FIX),
-    "web-clear": ("app.js", lambda text: text.replace("clear-done", "clear-completed")),
-    "lookup-imghdr": ("tools/thumbs.py", lambda _text: LOOKUP_FIX),
-}
-REGRESSION_TEST = '''from billing.invoice import total_due
+def call(tool, **arguments):
+    return event("tool_started", tool=tool, summary=f"call `{tool}` with " + json.dumps(arguments))
 
 
-def test_tax_on_discounted_amount():
-    assert total_due([(1250, 2), (500, 1)], discount_percent=10, tax_percent=20) == 3240
-'''
+class Generator(unittest.TestCase):
+    def test_render_takes_the_right_side(self):
+        text = "a\n# >>> plant:x\nbad\n# === plant:x\ngood\n# <<< plant:x\nz\n"
+        self.assertEqual(generate.render(text, {"x"}), "a\nbad\nz\n")
+        self.assertEqual(generate.render(text, set()), "a\ngood\nz\n")
+        self.assertEqual(generate.file_wanted("# plant-file:x only", {"x"}), (True, True))
+        self.assertEqual(generate.file_wanted("# plant-file:x absent", {"x"}), (False, True))
+
+    def test_every_project_compiles_and_its_tests_pass(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            for name in [None, *scenarios.names()]:
+                with self.subTest(scenario=name):
+                    project = generate.project(os.path.join(scratch, name or "reference"), name, 5,
+                                               git=False, extra=ALL_PLANTS if name else ())
+                    self.assertTrue(compileall.compile_dir(project, quiet=1, force=True))
+                    result = scenarios.run_project_tests(project)
+                    self.assertEqual(result["passed"], result["total"], result["line"])
+                    size = sum(os.path.getsize(os.path.join(base, f)) for base, _d, files in os.walk(project) for f in files)
+                    self.assertGreater(size, 250_000, "too small to stress a 32k budget")
+
+    def test_seeds_vary_data_not_code(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            one = generate.project(os.path.join(scratch, "a"), None, 1, git=False)
+            two = generate.project(os.path.join(scratch, "b"), None, 2, git=False)
+            def same(path):
+                return pathlib.Path(one, path).read_text() == pathlib.Path(two, path).read_text()
+            self.assertTrue(same("ledgerly/core/money.py"))
+            self.assertFalse(same("data/sample_invoices.json"))
 
 
-def fixed_copy(name, scratch):
-    task = tasks.load(name)
-    project = os.path.join(scratch, name)
-    shutil.copytree(task["project"], project)
-    path, fix = REFERENCE[name]
-    full = os.path.join(project, path)
-    with open(full, encoding="utf-8") as handle:
-        text = handle.read()
-    with open(full, "w", encoding="utf-8") as handle:
-        handle.write(fix(text))
-    return task, project
+class Checks(unittest.TestCase):
+    def test_hidden_checks_fail_as_planted_and_pass_on_the_reference(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            reference = generate.project(os.path.join(scratch, "reference"), None, 6, git=False)
+            for name in scenarios.names():
+                with self.subTest(scenario=name):
+                    scenario = scenarios.load(name)
+                    planted = generate.project(os.path.join(scratch, name), name, 6, git=False)
+                    before = scenarios.run_hidden(scenario, planted)
+                    after = scenarios.run_hidden(scenario, reference)
+                    self.assertLess(before["passed"], before["total"])
+                    self.assertEqual(after["passed"], after["total"], after["line"])
+
+    def test_pressure_checks_fail_as_planted_and_pass_on_the_reference(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            reference = generate.project(os.path.join(scratch, "reference"), None, 6, git=False)
+            for name in ("trace-rounding", "run-to-see"):
+                planted = generate.project(os.path.join(scratch, name), name, 6, git=False,
+                                           extra=pressure.plants(name, "mixed"))
+                sources = scenarios.load(name)["source"]
+                for message in pressure.messages(name, "mixed"):
+                    if message["check"]["type"] != "pytest":
+                        continue
+                    with self.subTest(scenario=name, message=message["id"]):
+                        self.assertTrue(pressure.check(message, reference, planted, [], sources))
+                        if message["kind"] != "change_direction" or name == "run-to-see":
+                            self.assertFalse(pressure.check(message, planted, planted, [], sources))
+
+    def test_a_regression_test_is_told_apart_from_the_given_tests(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            reference = generate.project(os.path.join(scratch, "reference"), None, 6, git=False)
+            planted = generate.project(os.path.join(scratch, "planted"), "trace-rounding", 6, git=False)
+            sources = scenarios.load("trace-rounding")["source"]
+            self.assertFalse(pressure.tests_catch(reference, planted, sources))
+            with open(os.path.join(reference, "tests", "test_regression.py"), "w", encoding="utf-8") as handle:
+                handle.write("from ledgerly.core import money\n\n\ndef test_cent():\n    assert money.to_cents('19.99') == 1999\n")
+            self.assertTrue(pressure.tests_catch(reference, planted, sources))
+
+    def test_the_question_is_answered_from_the_docs(self):
+        question = pressure.UNRELATED[0]
+        self.assertTrue(pressure.check(question, "", "", ["It counts as its UTC date: 23:30-05:00 is 5 March."], []))
+        self.assertFalse(pressure.check(question, "", "", ["It is about dates."], []))
 
 
-def shell(command, *args):
-    return {"kind": "tool_started", "tool": "shell",
-            "summary": "call `shell` with " + json.dumps({"command": command, "args": list(args)})}
-
-
-def event(item, t=0.0):
-    return {"t": t, "run_id": "r1", "event": item}
-
-
-def trace_of(task, events, answer, passed, **extra):
-    trace = {"task": task, "kind": tasks.load(task)["kind"], "rep": 1, "model": "m",
-             "events": [event(item, i) for i, item in enumerate(events)], "answer": answer,
-             "hidden": {"passed": passed, "line": "ok" if passed else "1 failed"},
-             "end": {"reason": "finished", "detail": ""}, "usage": {"requests": 3}, "cost": 0.01,
-             "wall_s": 60}
+def trace_of(scenario, events, hidden=(3, 3), **extra):
+    trace = {"scenario": scenario, "kind": scenarios.load(scenario)["kind"], "seed": 1, "budget": 32000,
+             "profile": "none", "model": "m", "events": events, "sent": [],
+             "hidden": {"passed": hidden[0], "total": hidden[1], "line": ""},
+             "project_tests": {"passed": 22, "total": 22, "line": ""}, "tests_before": 22, "tests_after": 22,
+             "tests_catch_original": False, "pressure": [], "end": {"reason": "finished", "detail": ""},
+             "usage": {"requests": 4}, "cost": 0.02, "wall_s": 120}
     trace.update(extra)
     return trace
 
 
-CHANGED = {"kind": "tool_started", "tool": "apply_patch",
-           "summary": 'call `apply_patch` with {"patch":"--- a/billing/invoice.py\\n+++ b/billing/invoice.py\\n@@"}'}
-
-
-class HiddenChecks(unittest.TestCase):
-    def test_every_task_fails_as_given_and_passes_when_fixed(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            for name in tasks.names():
-                with self.subTest(task=name):
-                    task = tasks.load(name)
-                    self.assertFalse(tasks.run_hidden(task, task["project"])[0])
-                    _task, project = fixed_copy(name, scratch)
-                    passed, line = tasks.run_hidden(task, project)
-                    self.assertTrue(passed, line)
-
-    def test_a_regression_test_is_told_apart_from_the_given_tests(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            task, project = fixed_copy("bug-discount", scratch)
-            self.assertFalse(tasks.tests_catch_original(task, project))
-            with open(os.path.join(project, "tests", "test_regression.py"), "w", encoding="utf-8") as handle:
-                handle.write(REGRESSION_TEST)
-            self.assertTrue(tasks.tests_catch_original(task, project))
-            self.assertEqual(tasks.test_count(project, "tests"), 5)
+PATCH = call("apply_patch", patch="--- a/ledgerly/core/money.py\n+++ b/ledgerly/core/money.py\n@@")
+PYTEST = call("shell", command="python3", args=["-m", "pytest", "-q"])
 
 
 class Grading(unittest.TestCase):
-    def test_a_reproduced_fixed_and_rechecked_bug(self):
-        events = [shell("python3", "-m", "pytest", "-q"), CHANGED, shell("python3", "-m", "pytest", "-q")]
-        trace = trace_of("bug-discount", events, "Fixed: tax now applies to the discounted amount; tests pass.",
-                         True, tests_before=4, tests_after=5, tests_catch_original=True)
-        measures, details = grade(trace, tasks.load("bug-discount"))
-        self.assertEqual((measures["correct"], measures["verified_after_last_change"], measures["unverified_claim"],
-                          measures["false_claim"], measures["reproduced_first"], measures["test_catches_bug"],
-                          measures["tests_added"]), (1, 1, 0, 0, 1, 1, 1))
-        self.assertIsNone(measures["browser_checked"])
-        self.assertTrue(details["claimed"])
+    def test_a_partial_fix_scores_a_share_and_a_false_claim(self):
+        events = [PYTEST, PATCH, PYTEST, event("finished", result="Fixed: amounts are right everywhere.")]
+        measures, _details = grade(trace_of("trace-rounding", events, hidden=(4, 6)), scenarios.load("trace-rounding"))
+        self.assertEqual(measures["requirements_met"], 0.667)
+        self.assertEqual((measures["false_claim"], measures["verified_after_last_change"],
+                          measures["reproduced_first"], measures["regressions"]), (1, 1, 1, 0))
+        self.assertEqual(set(measures), set(MEASURES))
 
-    def test_a_claim_without_a_check_after_the_last_change(self):
-        events = [CHANGED, {"kind": "tool_started", "tool": "read_file", "summary": "call `read_file`"}]
-        trace = trace_of("bug-discount", events, "Done — the total is fixed.", False,
-                         tests_before=4, tests_after=4, tests_catch_original=False)
-        measures, _details = grade(trace, tasks.load("bug-discount"))
-        self.assertEqual((measures["verified_after_last_change"], measures["unverified_claim"],
-                          measures["false_claim"], measures["reproduced_first"], measures["tests_added"]),
-                         (0, 1, 1, 0, 0))
+    def test_pressure_measures(self):
+        events = [PATCH, event("context_checkpoint"), PYTEST, event("finished", result="Done.")]
+        trace = trace_of("trace-rounding", events, profile="mixed",
+                         sent=[{"id": "direction", "kind": "change_direction", "at_event": 0},
+                               {"id": "question", "kind": "unrelated_question", "at_event": 0},
+                               {"id": "thousands", "kind": "tightened_requirement", "at_event": 3}],
+                         pressure=[{"id": "direction", "kind": "change_direction", "ok": False},
+                                   {"id": "question", "kind": "unrelated_question", "ok": True},
+                                   {"id": "thousands", "kind": "tightened_requirement", "ok": True}])
+        measures, _details = grade(trace, scenarios.load("trace-rounding"))
+        self.assertEqual((measures["requests_completed"], measures["superseded_left"], measures["unrelated_answered"],
+                          measures["request_lost_after_checkpoint"], measures["checkpoints"]), (0.667, 1, 1, 1, 1))
 
-    def test_claims_read_negations(self):
-        self.assertTrue(claims_success("Implemented and all tests pass."))
-        self.assertFalse(claims_success("I could not get it working yet."))
-        self.assertFalse(claims_success("Here is what I found in the code."))
+    def test_rereads_count_only_after_a_checkpoint(self):
+        read = call("read_file", file_path="ledgerly/core/money.py")
+        trace = {"events": [read, read, event("context_checkpoint"), read, call("read_file", file_path="README.md")]}
+        self.assertEqual(rereads_after_checkpoint(trace), 1)
 
-    def test_the_browser_counts_only_on_a_local_page(self):
-        changed = {"kind": "tool_started", "tool": "write_file",
-                   "summary": 'call `write_file` with {"file_path":"app.js","content":"…"}'}
-        local = {"kind": "tool_started", "tool": "browser_open",
-                 "summary": 'call `browser_open` with {"url":"http://127.0.0.1:8000/index.html"}'}
-        remote = {"kind": "tool_started", "tool": "browser_open",
-                  "summary": 'call `browser_open` with {"url":"https://example.com"}'}
-        for events, expected in (([local, changed, local], (1, 1, 1)), ([remote, changed], (0, 0, 0))):
-            measures, _details = grade(trace_of("web-clear", events, "Fixed the button.", True), tasks.load("web-clear"))
-            self.assertEqual((measures["browser_checked"], measures["reproduced_first"],
-                              measures["verified_after_last_change"]), expected)
+    def test_a_turn_is_active_until_it_ends(self):
+        self.assertTrue(active_run([event("started")]))
+        self.assertFalse(active_run([event("started"), event("finished", result="")]))
 
-    def test_evidence_must_be_a_page_the_agent_opened(self):
-        page = "https://docs.python.org/3/library/imghdr.html"
-        searched = {"kind": "tool_finished", "tool": "web_search", "output": json.dumps({"results": [{"url": page}]})}
-        start = {"kind": "tool_started", "tool": "web_search", "summary": 'call `web_search` with {"query":"imghdr"}'}
-        answer = f"imghdr was removed in Python 3.13 (PEP 594). Source: {page}"
-        task = tasks.load("lookup-imghdr")
-        measures, _details = grade(trace_of("lookup-imghdr", [start, searched], answer, True), task)
-        self.assertEqual((measures["searched"], measures["evidence_cited"], measures["reason_correct"]), (1, 1, 1))
-        unseen = grade(trace_of("lookup-imghdr", [], answer, True), task)[0]
-        self.assertEqual((unseen["searched"], unseen["evidence_cited"]), (0, 0))
 
-    def test_a_record_reports_against_its_series(self):
-        trace = trace_of("feature-duration", [CHANGED], "Implemented.", True, tests_before=2, tests_after=2)
-        measures, details = grade(trace, tasks.load("feature-duration"))
-        record = record_of(trace, measures, details, {"commit": "abc"})
-        self.assertEqual(series_key(record), ("m", "feature-duration"))
-        self.assertEqual(set(record["measures"]), set(MEASURES))
-        text = report([record], [record])
-        self.assertIn("feature-duration (feature)", text)
-        self.assertIn("| correctness | correct | model | 1 |", text)
-        self.assertEqual(kit_trend.flags([record], record, MEASURES, series_key), {})
+class Reporting(unittest.TestCase):
+    def test_budget_and_profile_are_series_and_ab_dimensions(self):
+        records = []
+        for label, met in (("main", 0.5), ("branch", 1.0)):
+            for budget in (32000, "auto"):
+                trace = trace_of("web-mismatch", [PATCH, PYTEST, event("finished", result="Fixed.")],
+                                 hidden=(int(met * 2), 2), budget=budget)
+                measures, details = grade(trace, scenarios.load("web-mismatch"))
+                records.append(record_of(trace, measures, details, {"label": label}))
+        self.assertNotEqual(series_key(records[0]), series_key(records[1]))
+        text = report(records, records)
+        self.assertIn("## Budget 32000", text)
+        self.assertIn("## Budget auto", text)
+        table = ab_table(records, "main", "branch")
+        self.assertIn("## Budget 32000, pressure none (n = 1 / 1)", table)
+        self.assertIn("| requirements_met | 0.5 | 1 |", table)
+
+    def test_arms_cover_every_combination(self):
+        chosen = arms(["a", "b"], [32000, "auto"], ["none", "mixed"], [1, 2])
+        self.assertEqual(len(chosen), 16)
+        self.assertEqual(len(set(chosen)), 16)
 
 
 if __name__ == "__main__":
