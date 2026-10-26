@@ -167,7 +167,7 @@ export function SettingsScreen() {
   // Auto (0) follows the model's context window; Custom caps it.
   const customContext = state.settings.context_token_cap !== 0;
   const contextTokens = <div className="themis-settings-control">
-    <SettingName name="Working memory" hint="How much of the chat the model keeps in view. Auto uses the model's whole window, up to 200,000 tokens." />
+    <SettingName name="Working memory" hint="Auto fits each model, up to 200k tokens" />
     <span className="themis-settings-pair">
       {customContext && numberInput("context_token_cap", "Working memory tokens", CUSTOM_CONTEXT_START, 1000000)}
       <select aria-label="Working memory" value={customContext ? "custom" : "auto"} onChange={event => void save({ context_token_cap: event.target.value === "auto" ? 0 : CUSTOM_CONTEXT_START })}>
@@ -198,9 +198,9 @@ export function SettingsScreen() {
       {section === "Browser" && <BrowserSettingsSection />}
       {section === "Web" && <WebSettingsSection />}
       {section === "Advanced" && <SettingsGroup title="Run limits" hint="Limits apply to new runs." action={<SettingsIconButton label="Reset limits" onClick={() => void save({ max_total_turns: 200, context_token_cap: 0, concurrency_limit: 3 })}><ResetIcon /></SettingsIconButton>}>
-        {number("max_total_turns", "Steps per reply", 1, 2000, "The most steps one reply may take; each tool call or answer is a step.")}
+        {number("max_total_turns", "Steps per reply", 1, 2000, "Tool calls and answers per reply")}
         {contextTokens}
-        {number("concurrency_limit", "Chats at once", 1, 16, "How many chats can work at the same time; others wait their turn.")}
+        {number("concurrency_limit", "Chats at once", 1, 16, "Others wait their turn")}
       </SettingsGroup>}
       </fieldset>
       </div>
