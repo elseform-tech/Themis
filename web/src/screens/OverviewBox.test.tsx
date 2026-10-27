@@ -52,6 +52,7 @@ describe("chat overview box", () => {
     render(<OverviewBox threadId="t1" overview={overview} onOpenMedia={openMedia} />);
     // The browser shows as a live preview: small frames, the page left at its size.
     const { browserPreview } = await import("../lib/browser");
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
     expect(browserPreview).toHaveBeenCalledWith("t1", 440);
     const preview = screen.getByRole("button", { name: "Browser: Notes, the agent is using it. Opens the Browser tab" });
     act(() => {
@@ -76,6 +77,22 @@ describe("chat overview box", () => {
     // An artifact opens in the chat's media viewer.
     fireEvent.click(screen.getByRole("button", { name: /^Artifacts: 1/ }));
     expect(openMedia).toHaveBeenCalledWith("/data/shot.png");
+  });
+
+  it("asks for the preview again when no frame arrives (Workspace's stop can land after its start)", async () => {
+    const { result } = renderHook(() => useOverview("t1", media));
+    await act(async () => {});
+    const { browserPreview } = await import("../lib/browser");
+    vi.mocked(browserPreview).mockClear();
+    vi.useFakeTimers();
+    try {
+      render(<OverviewBox threadId="t1" overview={result.current} onOpenMedia={() => {}} />);
+      expect(browserPreview).not.toHaveBeenCalled();
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(browserPreview).toHaveBeenCalledTimes(1);
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(browserPreview).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
   });
 
   it("folds to its icons and remembers it", async () => {

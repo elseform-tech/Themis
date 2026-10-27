@@ -85,6 +85,8 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
 
 /** Frame width asked for: the box is about 200 px wide, so two device pixels per CSS pixel. */
 const PREVIEW_FRAME_WIDTH = 440;
+const PREVIEW_START_DELAY_MS = 250;
+const PREVIEW_RETRY_MS = 2000;
 
 /** A live, scaled-down view of the chat's browser. The page keeps its own size; only the
  *  frames are smaller, so the agent's page is never resized by the preview. */
@@ -93,13 +95,18 @@ function BrowserPreview({ threadId, label, agent, onOpen }: { threadId: string; 
   const [activity, setActivity] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
+    let framed = false;
     const stop = browserStream(threadId, update => {
       if (!live) return;
-      if (update.kind === "frame") setFrame(`data:image/jpeg;base64,${update.data}`);
+      if (update.kind === "frame") { framed = true; setFrame(`data:image/jpeg;base64,${update.data}`); }
       else setActivity(update.state.controller === "agent" ? update.state.activity : null);
     });
-    void browserPreview(threadId, PREVIEW_FRAME_WIDTH).catch(() => undefined);
-    return () => { live = false; stop(); void browserScreencastStop(threadId).catch(() => undefined); };
+    const start = () => { if (live) void browserPreview(threadId, PREVIEW_FRAME_WIDTH).catch(() => undefined); };
+    // Closing Workspace stops its stream as this box appears, and that stop can land after
+    // this start: start a moment later, and once more if no frame has come.
+    const first = window.setTimeout(start, PREVIEW_START_DELAY_MS);
+    const again = window.setTimeout(() => { if (!framed) start(); }, PREVIEW_RETRY_MS);
+    return () => { live = false; window.clearTimeout(first); window.clearTimeout(again); stop(); void browserScreencastStop(threadId).catch(() => undefined); };
   }, [threadId]);
   return (
     <button type="button" className="themis-overview-preview" aria-label={`Browser: ${label}${agent ? ", the agent is using it" : ""}. Opens the Browser tab`} onClick={onOpen}>
