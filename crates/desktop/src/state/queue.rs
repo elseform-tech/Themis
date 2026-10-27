@@ -250,7 +250,7 @@ impl AppState {
         // Under the queue lock: closing the inbox takes the same lock, so the
         // message lands either in a live inbox or back in the queue, never in
         // an inbox that was already closed.
-        self.edit_queue(sink.as_ref(), &thread_id, |queue| {
+        let steered = self.edit_queue(sink.as_ref(), &thread_id, |queue| {
             let index = queue
                 .iter()
                 .position(|message| message.id == message_id)
@@ -270,9 +270,10 @@ impl AppState {
             inbox
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .push_back(text);
-            Ok(())
+                .push_back(text.clone());
+            Ok(text)
         })?;
+        self.note_added_request(sink.as_ref(), &thread_id, &steered);
         let _ = self.inner.diagnostics.append(
             "queue",
             "steered",

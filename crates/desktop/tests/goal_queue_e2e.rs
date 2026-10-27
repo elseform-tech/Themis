@@ -1306,3 +1306,75 @@ async fn a_goal_with_a_small_context_window_warns_once() {
     assert_eq!(state.goal_for(&thread).unwrap().turns, 2);
     settle(&state, &thread).await;
 }
+
+/// A request steered in while a goal runs is part of the goal: the goal keeps
+/// it and the goal check is shown it. A goal turn and an answer to the
+/// agent's question are not requests.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_steered_into_a_goal_reaches_the_goal_check() {
+    let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
+    let checks = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&checks);
+    let agent_calls = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::clone(&agent_calls);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                seen.lock().unwrap().push(body);
+                return reply(r#"{"verdict":"reached","reason":"The report and the CSV export are done.","progress":"","progressed":true}"#);
+            }
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                held.wait();
+                reply("Report written.")
+            } else {
+                reply("Report written and exported as CSV.")
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal Write the monthly report.".into(),
+        )
+        .await
+        .unwrap();
+    let steer = state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "Also export CSV.".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    state
+        .steer_queued_message(sink.clone(), thread.clone(), steer.id)
+        .await
+        .unwrap();
+    gate.open();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.added, ["Also export CSV."]);
+    let checks = distinct(checks.lock().unwrap().clone());
+    let input = checks[0]["messages"][1]["content"].as_str().unwrap();
+    assert!(
+        input.contains("Requests the user added while this goal ran."),
+        "{input}"
+    );
+    assert!(input.contains("1. Also export CSV."), "{input}");
+    assert!(
+        !input.contains("[Goal"),
+        "a goal turn is not a request: {input}"
+    );
+    settle(&state, &thread).await;
+}

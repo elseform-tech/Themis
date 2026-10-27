@@ -391,3 +391,80 @@ async fn the_goal_check_uses_goal_check_model_and_turns_use_the_chats_model() {
     settle(&state, &thread.id).await;
     task.abort();
 }
+
+/// Through the CLI: a request steered in while a goal runs is kept on the goal
+/// (`get_goal` shows it under `added`) and shown to the goal check.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_a_steer_during_a_goal_is_added_to_it() {
+    let llm = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            if is_check(request) {
+                reply(r#"{"verdict":"reached","reason":"Title and license line are there.","progress":""}"#)
+            } else {
+                held.wait();
+                reply("Added a title and a license line.")
+            }
+        })
+        .mount(&llm)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(llm.uri()));
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap();
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let data_dir = data.path().to_owned();
+    let thread_id = thread.id.clone();
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data_dir,
+            "send_message",
+            json!({"threadId": thread_id, "text": "/goal give the README a title"}),
+        );
+        let queued = call(
+            &data_dir,
+            "enqueue_message",
+            json!({"threadId": thread_id, "text": "also add a license line"}),
+        );
+        call(
+            &data_dir,
+            "steer_queued_message",
+            json!({"threadId": thread_id, "messageId": queued["id"]}),
+        );
+        let goal = call(&data_dir, "get_goal", json!({"threadId": thread_id}));
+        assert_eq!(goal["added"], json!(["also add a license line"]), "{goal}");
+        gate.open();
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while call(&data_dir, "get_goal", json!({"threadId": thread_id}))["status"] != "reached" {
+            assert!(std::time::Instant::now() < deadline, "goal never reached");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    })
+    .await
+    .unwrap();
+    let requests = llm.received_requests().await.unwrap();
+    let check = requests
+        .iter()
+        .find(|request| is_check(request))
+        .map(|request| request.body_json::<Value>().unwrap())
+        .unwrap();
+    let input = check["messages"][1]["content"].as_str().unwrap();
+    assert!(input.contains("1. also add a license line"), "{input}");
+    task.abort();
+    settle(&state, &thread.id).await;
+}
