@@ -21,3 +21,6 @@ __pycache__/
 
 # Built by scripts/bundle-searxng.mjs, shipped as a Tauri resource
 crates/desktop/searxng-runtime/
+
+# Screenshots and page dumps from browser-tool sessions
+.playwright-mcp/
