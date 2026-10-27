@@ -167,6 +167,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (RUNTIME_HANDOFF, "runtime-handoff", &[]),
     (RUNTIME_STEERED, "runtime-steered", &[]),
+    (RUNTIME_STEERS_CHECK, "runtime-steers-check", &["messages"]),
     (
         RUNTIME_BATCH_NOT_RUN,
         "runtime-batch-not-run",
@@ -544,6 +545,7 @@ fn runtime_notes_are_byte_identical() {
 fn runtime_note_markers_stay_at_the_start() {
     assert!(RUNTIME_SPEC_CHECK.starts_with("[Runtime check, not from the user]"));
     assert!(RUNTIME_STEERED.starts_with("[The user sent this while you were working"));
+    assert!(RUNTIME_STEERS_CHECK.starts_with("[Runtime check, not from the user]"));
     assert!(RUNTIME_LOOP_WARNING.starts_with("Loop warning"));
 }
 
