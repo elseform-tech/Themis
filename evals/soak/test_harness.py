@@ -501,6 +501,9 @@ class GraderTests(unittest.TestCase):
         custom = [("write_file", denied.format("write_file", "write_file", '{"file_path":"out/a.md"}'), "ours"),
                   ("shell", denied.format("shell", "shell", '{"command":"python3","args":["check.py"],"cwd":""}'), "ours"),
                   ("shell", denied.format("shell", "shell", '{"command":"sh","args":["-c","python3 x.py"]}'), "model"),
+                  # grep that prints only names or counts is allowed; one that prints contents is not.
+                  ("shell", denied.format("shell", "shell", '{"command":"grep","args":["-rL","^- since:","out"]}'), "ours"),
+                  ("shell", denied.format("shell", "shell", '{"command":"grep","args":["-r","owner","src"]}'), "model"),
                   ("search_file", denied.format("search_file", "search_file", '{"pattern":"owner"}'), "model")]
         for tool, text, cause in custom:
             summary = "call `{}` with {}".format(tool, text.split(" with ", 1)[1].rsplit(" The action", 1)[0])
@@ -514,6 +517,8 @@ class GraderTests(unittest.TestCase):
         for summary, cause in (('call `shell` with {"command":"sh","args":["-c","echo SRC=$(ls src | wc', "model"),
                                ('call `shell` with {"command":"python3","args":["-c","import os,subpro', "model"),
                                ('call `shell` with {"command":"python3","args":["check.py"', "unclassified"),
+                               ('call `shell` with {"command":"grep","args":["-c"', "unclassified"),
+                               ('call `shell` with {"command":"grep","args":["-n","x', "model"),
                                ('call `shell` with {"command":"pyth', "unclassified"),
                                ('call `shell` with {"args":["x"],"command":"sh', "unclassified")):
             self.assertEqual(tool_causes.classify("shell", shell_denied, mode="custom", summary=summary)[0], cause,
