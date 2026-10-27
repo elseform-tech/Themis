@@ -605,7 +605,7 @@ impl Default for BrowserConfig {
             site_restrictions: Vec::new(),
             show_secrets: false,
             downloads_directory: None,
-            open_workspace: true,
+            open_workspace: false,
         }
     }
 }
@@ -1714,7 +1714,7 @@ fn base_schema() -> Value {
                 }}},
                 "show_secrets":{"type":"boolean","default":false},
                 "downloads_directory":{"type":"string","maxLength":1024,"description":"Absolute folder for downloads; user file only"},
-                "open_workspace":{"type":"boolean","default":true}
+                "open_workspace":{"type":"boolean","default":false}
             }},
             "compaction":{"type":"object","additionalProperties":false,"properties":{
                 "timeout_seconds":{"type":"integer","minimum":1,"maximum":1800,"default":900},
@@ -1950,7 +1950,8 @@ mod tests {
     #[test]
     fn browser_permissions_default_and_projects_may_only_tighten() {
         let resolved = resolve(None, None, None).unwrap().config.browser;
-        assert!(resolved.developer_mode && resolved.open_workspace && !resolved.show_secrets);
+        // Workspace stays closed when the agent browses; the overview box previews it.
+        assert!(resolved.developer_mode && !resolved.open_workspace && !resolved.show_secrets);
         assert_eq!(resolved.permissions.debugging, SiteAccess::Block);
         assert_eq!(resolved.site_exceptions.len(), STARTER_BLOCKED_SITES.len());
         // The user's list replaces the starter list, so entries can be removed.
@@ -1980,7 +1981,7 @@ mod tests {
             r#"{"browser":{"developer_mode":true}}"#,
             r#"{"browser":{"show_secrets":true}}"#,
             r#"{"browser":{"downloads_directory":"/tmp"}}"#,
-            r#"{"browser":{"open_workspace":false}}"#,
+            r#"{"browser":{"open_workspace":true}}"#,
             r#"{"browser":{"site_restrictions":[]}}"#,
         ] {
             assert!(resolve(Some(user), Some(loosen), None).is_err(), "{loosen}");

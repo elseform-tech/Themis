@@ -1052,6 +1052,11 @@ async fn dispatch_command(
                 )
                 .await
         ),
+        "browser_preview" => done!(
+            state
+                .browser_preview(&arg::<String>(&args, "threadId")?, arg(&args, "width")?)
+                .await
+        ),
         "browser_screencast_stop" => {
             done!(
                 state

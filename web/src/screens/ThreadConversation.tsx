@@ -139,7 +139,7 @@ export function ThreadConversation({
       )}
       <div ref={endRef} />
     </div>
-    {overview && <OverviewBox overview={overview} onOpenMedia={openMedia} />}
+    {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}
     {viewing !== null && media[viewing] && <MediaViewer threadId={threadId} items={media} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
     </ResponseLinks.Provider>
     </MediaGallery.Provider>

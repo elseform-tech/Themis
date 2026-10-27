@@ -29,6 +29,19 @@
 .themis-overview.is-collapsed .themis-overview-row { justify-content: center; padding: 0; gap: 0; position: relative; }
 .themis-overview.is-collapsed .themis-overview-value, .themis-overview.is-collapsed .themis-overview-meta { display: none; }
 .themis-overview.is-collapsed .themis-overview-dot { position: absolute; top: 7px; right: 8px; }
+/* The live browser preview stands in for the Browser row; folded or narrow, the row's icon shows instead. */
+.themis-overview-preview {
+  position: relative; display: block; width: 100%; margin: 2px 0 6px; padding: 0; overflow: hidden;
+  border: 1px solid var(--themis-border); border-radius: 10px; background: var(--themis-canvas); cursor: pointer;
+}
+.themis-overview-preview img { display: block; width: 100%; height: auto; }
+.themis-overview-preview-empty { display: block; height: 110px; }
+.themis-overview-preview-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
+  background: color-mix(in srgb, var(--themis-sidebar-bg) 92%, transparent); color: var(--themis-text-2); font-size: .6875rem; text-align: left;
+}
+.themis-overview-preview:hover { border-color: var(--themis-accent); }
+.themis-overview-preview + .themis-overview-browser-row { display: none; }
 .themis-overview-glyph { flex: none; width: 16px; height: 16px; color: var(--themis-text-3); }
 .themis-overview-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .themis-overview-meta { flex: none; color: var(--themis-text-3); font-size: .75rem; }
@@ -53,6 +66,8 @@
   .themis-overview-row { justify-content: center; padding: 0; gap: 0; position: relative; }
   .themis-overview-value, .themis-overview-meta { display: none; }
   .themis-overview-dot { position: absolute; top: 7px; right: 8px; }
+  .themis-overview-preview { display: none; }
+  .themis-overview-preview + .themis-overview-browser-row { display: flex; }
   /* A container query styles only what is inside the chat, so the room is set on the column itself. */
   .themis-thread.has-overview .themis-thread-stream, .themis-thread.has-overview .themis-thread-composer { --themis-overview-room: 80px; }
 }

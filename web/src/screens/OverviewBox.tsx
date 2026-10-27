@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { browserState, type BrowserState } from "../lib/browser";
+import { browserPreview, browserScreencastStop, browserState, browserStream, type BrowserState } from "../lib/browser";
 import { getUsageSummary } from "../lib/tauri";
 import type { AttachedMedia, DiffState } from "../lib/types";
 import type { ChatMessage, WorkspaceTab } from "../state/reducer";
@@ -13,7 +13,7 @@ const COLLAPSED_KEY = "overviewCollapsed";
 export interface Overview {
   changes: { files: number; added: number; removed: number } | null;
   tasks: { running: number; attention: number; queued: number } | null;
-  browser: { label: string; agent: boolean } | null;
+  browser: { label: string; agent: boolean; activity: string | null } | null;
   media: AttachedMedia[];
   cost: { usd?: number; free: boolean } | null;
   /** Something to show: the box (and the room the chat leaves for it) appears only then. */
@@ -73,7 +73,7 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   const tasks = counts.running + counts.attention + queued > 0 ? { running: counts.running, attention: counts.attention, queued } : null;
   const changes = diffTotals(state.diffs[threadId]);
   const media = messages.flatMap(message => message.media ?? []);
-  const shownBrowser = browser?.open && browser.url !== "about:blank" ? { label: browserLabel(browser), agent: browser.controller === "agent" } : null;
+  const shownBrowser = browser?.open && browser.url !== "about:blank" ? { label: browserLabel(browser), agent: browser.controller === "agent", activity: browser.activity } : null;
   const shownCost = cost && (cost.free || (cost.usd ?? 0) > 0) ? cost : null;
   const setCollapsed = (value: boolean) => { setCollapsedState(value); writeSession(COLLAPSED_KEY, value); };
   return {
@@ -83,13 +83,42 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   };
 }
 
+/** Frame width asked for: the box is about 200 px wide, so two device pixels per CSS pixel. */
+const PREVIEW_FRAME_WIDTH = 440;
+
+/** A live, scaled-down view of the chat's browser. The page keeps its own size; only the
+ *  frames are smaller, so the agent's page is never resized by the preview. */
+function BrowserPreview({ threadId, label, agent, onOpen }: { threadId: string; label: string; agent: boolean; onOpen: () => void }) {
+  const [frame, setFrame] = useState<string | null>(null);
+  const [activity, setActivity] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    const stop = browserStream(threadId, update => {
+      if (!live) return;
+      if (update.kind === "frame") setFrame(`data:image/jpeg;base64,${update.data}`);
+      else setActivity(update.state.controller === "agent" ? update.state.activity : null);
+    });
+    void browserPreview(threadId, PREVIEW_FRAME_WIDTH).catch(() => undefined);
+    return () => { live = false; stop(); void browserScreencastStop(threadId).catch(() => undefined); };
+  }, [threadId]);
+  return (
+    <button type="button" className="themis-overview-preview" aria-label={`Browser: ${label}${agent ? ", the agent is using it" : ""}. Opens the Browser tab`} onClick={onOpen}>
+      {frame ? <img src={frame} alt="" /> : <span className="themis-overview-preview-empty" aria-hidden="true" />}
+      <span className="themis-overview-preview-bar">
+        {agent && <span className="themis-overview-dot" aria-hidden="true" />}
+        <span className="themis-overview-value">{activity ? `Agent is ${activity}` : label}</span>
+      </span>
+    </button>
+  );
+}
+
 function formatUsd(usd: number): string {
   return usd < 0.01 ? "< $0.01" : `$${usd.toFixed(2)}`;
 }
 
 /** A compact summary of the chat's workspace over the top right of the chat. Every row opens
  *  the Workspace on its tab; the Workspace's own button and Close bring this box back. */
-export function OverviewBox({ overview, onOpenMedia }: { overview: Overview; onOpenMedia: (path: string) => void }) {
+export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: string; overview: Overview; onOpenMedia: (path: string) => void }) {
   const { dispatch } = useApp();
   const { changes, tasks, browser, media, cost, collapsed, setCollapsed } = overview;
   const open = (tab?: WorkspaceTab) => dispatch({ type: "ui/diff-panel", open: true, ...(tab ? { tab } : {}) });
@@ -104,8 +133,9 @@ export function OverviewBox({ overview, onOpenMedia }: { overview: Overview; onO
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">{/* Folding moves it toward the edge it sits on; unfolding back out. */}<path d={collapsed ? "m15 6-6 6 6 6" : "m9 6 6 6-6 6"} /></svg>
         </button>
       </div>
+      {browser && !collapsed && <BrowserPreview threadId={threadId} label={browser.label} agent={browser.agent} onOpen={() => open("browser")} />}
       {browser && (
-        <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Browser" aria-label={`Browser: ${browser.label}${browser.agent ? ", the agent is using it" : ""}`} onClick={() => open("browser")}>
+        <button type="button" className="themis-overview-row themis-overview-browser-row themis-icon-tip" data-tooltip="Browser" aria-label={`Browser: ${browser.label}${browser.agent ? ", the agent is using it" : ""}`} onClick={() => open("browser")}>
           <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>
           <span className="themis-overview-value">{browser.label}</span>
           {browser.agent && <span className="themis-overview-dot" aria-hidden="true" />}

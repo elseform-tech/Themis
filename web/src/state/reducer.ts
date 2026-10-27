@@ -242,7 +242,7 @@ export const initialState: AppState = {
   threadsByProject: {},
   activeProjectRoot: null,
   activeThreadId: null,
-  browserOpensWorkspace: true,
+  browserOpensWorkspace: false,
   mainView: "thread",
   settingsFocus: null,
   messages: {},

@@ -250,7 +250,7 @@ combined, and do not grant permissions. There is no implicit instruction globbin
 | `browser.site_exceptions` | Up to 500 `{ "site": "example.com", "browsing"?, "downloads"?, "debugging"? }`: a lowercase host covering its subdomains, most specific wins. Default: the starter blocks. A project's exceptions may only block, and they add to yours instead of replacing them (an exception to "arrays replace") |
 | `browser.show_secrets` | Boolean, default `false`: show cookie values, auth headers and token-like values to the agent; projects may only set `false` |
 | `browser.downloads_directory` | Optional absolute folder for downloads; user file only. Unset: the system Downloads folder |
-| `browser.open_workspace` | Boolean, default `true`: open Workspace on the Browser tab when the agent starts browsing; user file only |
+| `browser.open_workspace` | Boolean, default `false`: open Workspace on the Browser tab when the agent starts browsing (otherwise the chat's overview box shows a live preview); user file only |
 
 `prompt_file` supplements the built-in compaction guidance; it does not replace
 the compaction algorithm. It resolves within the directory of the configuration

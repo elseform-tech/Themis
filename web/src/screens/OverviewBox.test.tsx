@@ -11,7 +11,11 @@ vi.mock("../state/store", async importOriginal => ({
   ...await importOriginal<typeof import("../state/store")>(),
   useApp: () => ({ state: appState, dispatch }),
 }));
+let streamUpdate: ((update: unknown) => void) | null = null;
 vi.mock("../lib/browser", () => ({
+  browserStream: vi.fn((_thread: string, onUpdate: (update: unknown) => void) => { streamUpdate = onUpdate; return () => { streamUpdate = null; }; }),
+  browserPreview: vi.fn(async () => undefined),
+  browserScreencastStop: vi.fn(async () => undefined),
   browserState: vi.fn(async () => ({ open: true, tabs: [], current: 0, url: "http://localhost:5173/notes", title: "Notes", can_go_back: false, can_go_forward: false, controller: "agent", activity: null, console_errors: 0, loading: false, muted: true })),
 }));
 vi.mock("../lib/tauri", () => ({
@@ -45,15 +49,24 @@ describe("chat overview box", () => {
     const overview = result.current;
     expect(overview.visible).toBe(true);
     const openMedia = vi.fn();
-    render(<OverviewBox overview={overview} onOpenMedia={openMedia} />);
-    expect(screen.getByRole("button", { name: "Browser: Notes, the agent is using it" })).toBeInTheDocument();
+    render(<OverviewBox threadId="t1" overview={overview} onOpenMedia={openMedia} />);
+    // The browser shows as a live preview: small frames, the page left at its size.
+    const { browserPreview } = await import("../lib/browser");
+    expect(browserPreview).toHaveBeenCalledWith("t1", 440);
+    const preview = screen.getByRole("button", { name: "Browser: Notes, the agent is using it. Opens the Browser tab" });
+    act(() => {
+      streamUpdate?.({ kind: "frame", data: "AAAA", width: 440, height: 275 });
+      streamUpdate?.({ kind: "state", state: { controller: "agent", activity: "clicking “Save”" } });
+    });
+    expect(preview.querySelector("img")).toHaveAttribute("src", "data:image/jpeg;base64,AAAA");
+    expect(preview).toHaveTextContent("Agent is clicking “Save”");
     expect(screen.getByRole("button", { name: "Changes: 2 files, 3 added and 1 removed lines" })).toHaveTextContent("2 files+3 −1");
     expect(screen.getByRole("button", { name: "Tasks: 1 queued" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cost of this chat: $0.02. Opens Settings › Usage" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^Changes/ }));
     expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "changes" });
-    fireEvent.click(screen.getByRole("button", { name: /^Browser/ }));
+    fireEvent.click(preview);
     expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "browser" });
     fireEvent.click(screen.getByRole("button", { name: /^Tasks/ }));
     expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "tasks" });
@@ -71,7 +84,7 @@ describe("chat overview box", () => {
     act(() => result.current.setCollapsed(true));
     rerender();
     expect(result.current.collapsed).toBe(true);
-    render(<OverviewBox overview={result.current} onOpenMedia={() => {}} />);
+    render(<OverviewBox threadId="t1" overview={result.current} onOpenMedia={() => {}} />);
     expect(screen.getByRole("region", { name: "Chat overview" })).toHaveClass("is-collapsed");
     expect(screen.getByRole("button", { name: "Show overview details" })).toHaveAttribute("aria-expanded", "false");
     expect(localStorage.getItem("themis:overviewCollapsed")).toBe("true");
