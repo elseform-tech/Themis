@@ -101,7 +101,7 @@ export function OverviewBox({ overview, onOpenMedia }: { overview: Overview; onO
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 4v16" /></svg>
         </button>
         <button type="button" className="themis-overview-icon themis-icon-tip" data-tooltip={collapsed ? "Show details" : "Icons only"} aria-label={collapsed ? "Show overview details" : "Show only icons"} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d={collapsed ? "m9 6 6 6-6 6" : "m15 6-6 6 6 6"} /></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">{/* Folding moves it toward the edge it sits on; unfolding back out. */}<path d={collapsed ? "m15 6-6 6 6 6" : "m9 6 6 6-6 6"} /></svg>
         </button>
       </div>
       {browser && (
