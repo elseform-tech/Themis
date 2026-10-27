@@ -475,6 +475,25 @@ async fn cli_reads_and_saves_browser_settings_and_manages_browsing_data() {
             editors["editors"][0],
             json!({"id": "", "name": "Text editor"})
         );
+        // There is no command that opens an arbitrary path with the OS handler: one
+        // existed, unused, and could launch apps or run scripts anywhere.
+        let gone = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+            .arg("--data-dir")
+            .arg(&dir)
+            .args([
+                "call",
+                "open_in_editor",
+                &json!({"path": "/System/Applications/Calculator.app", "line": null}).to_string(),
+            ])
+            .env_remove("OPENCODE_KEY")
+            .output()
+            .expect("CLI");
+        assert!(!gone.status.success());
+        assert!(
+            String::from_utf8_lossy(&gone.stderr).contains("unknown server method 'open_in_editor'"),
+            "{}",
+            String::from_utf8_lossy(&gone.stderr)
+        );
         let chosen = call(
             &dir,
             "update_settings",
