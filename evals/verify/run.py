@@ -40,6 +40,18 @@ APPROVAL = {
                              "git", "web_search", "fetch_url", "browser_*")],
 }
 
+# The `limited` tool set: the same rules after refusing every way to look beyond the project
+# (web, browser), the archive and questions, so a run shows what those tools add. Rules are
+# checked in order, so these refusals come first.
+LIMITED_TOOLS = ("web_search", "fetch_url", "browser_*", "recall", "ask_user")
+
+
+def approval(tools):
+    """The Custom-mode rules for a tool set: `full` (default) or `limited`."""
+    if tools == "limited":
+        return {**APPROVAL, "rules": [{"tool": tool, "action": "deny"} for tool in LIMITED_TOOLS] + APPROVAL["rules"]}
+    return APPROVAL
+
 
 class VerifyRun:
     """One run: `options` holds model, timeout, max_run_cost, keep, searxng (a packed SearXNG
@@ -83,9 +95,11 @@ class VerifyRun:
         if self.options.get("searxng"):
             self.env["THEMIS_SEARXNG_DIR"] = self.options["searxng"]
         with open(os.path.join(self.data, "runtime.jsonc"), "w", encoding="utf-8") as handle:
-            json.dump({"schema_version": 1, "context_token_budget": self.budget, "approval": APPROVAL}, handle)
+            json.dump({"schema_version": 1, "context_token_budget": self.budget,
+                       "approval": approval(self.options.get("tools", "full"))}, handle)
         trace = {"scenario": name, "kind": self.scenario["kind"], "seed": self.seed, "budget": self.budget,
-                 "profile": self.profile, "model": self.options["model"], "events": [], "sent": [], "end": None}
+                 "profile": self.profile, "model": self.options["model"], "effort": self.options.get("effort") or "",
+                 "tools": self.options.get("tools", "full"), "events": [], "sent": [], "end": None}
         self.thread, self.watch = None, None
         try:
             trace["end"] = self._drive(trace, started)
@@ -124,6 +138,10 @@ class VerifyRun:
         _value, error = self.call("set_thread_approval_mode", {"threadId": self.thread, "mode": "custom"})
         if error:
             return {"reason": "infrastructure", "detail": f"approval mode: {error}"}
+        if self.options.get("effort"):
+            _value, error = self.call("set_thread_effort", {"threadId": self.thread, "effort": self.options["effort"]})
+            if error:
+                return {"reason": "infrastructure", "detail": f"reasoning effort: {error}"}
         self.watch = Watch(self.binary, self.data, self.env, self.thread, self.on_event)
         time.sleep(2)  # let the subscription start before the run
         handle, error = self.call("send_message", {"threadId": self.thread, "text": self.scenario["message"]})

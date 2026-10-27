@@ -157,7 +157,8 @@ def cmd_run(args):
     if not searxng:
         print("note: no packed SearXNG (node scripts/bundle-searxng.mjs); web_search is off", file=sys.stderr)
     options = {"model": args.model, "timeout": args.timeout, "max_run_cost": args.max_run_cost,
-               "keep": args.keep, "searxng": searxng, "commit": commit(), "label": args.label or ""}
+               "keep": args.keep, "searxng": searxng, "commit": commit(), "label": args.label or "",
+               "effort": args.effort or "", "tools": args.tools}
     history = kit_trend.load(args.history)
     os.makedirs(args.out, exist_ok=True)
     records = []
@@ -250,6 +251,9 @@ def main(argv=None):
     run.add_argument("--themis", help="a prebuilt themis CLI (default: build this checkout)")
     run.add_argument("--searxng", help="a packed SearXNG folder (default: crates/desktop/searxng-runtime if present)")
     run.add_argument("--label", help="a name for this arm (a branch) for the report and `ab`")
+    run.add_argument("--effort", help="the chat's reasoning effort, one of the model's levels (default: the model's own)")
+    run.add_argument("--tools", choices=("full", "limited"), default="full",
+                     help="limited refuses web search, fetch, browser, recall and ask_user")
     run.add_argument("--history", default=HISTORY)
     run.add_argument("--out", default=os.path.join(RESULTS, datetime.date.today().isoformat()))
     run.add_argument("--keep", help="copy each run's scratch folders here")
