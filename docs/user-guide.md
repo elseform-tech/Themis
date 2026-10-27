@@ -63,12 +63,12 @@ levels are listed.
   Open the model pill at the top of the thread to choose a Go model and, when
   that model offers effort levels, the effort slider. A new chat shows a greeting,
   a centred composer and starter suggestions. The composer's **+** menu attaches
-  files or inserts `/` (skill) and `@` (plugin). Run activity collapses into
-  **Show thinking** chips; completed replies offer **Copy**. Tool calls appear inline
-  in the conversation with a chevron, expandable input/output and completion status.
-  Public text streams as it arrives. Related updates and tool calls sit inside
-  milestone groups; the current group opens while completed groups collapse.
-  Expand a group, then a tool call, to inspect its input and output.
+  files or inserts `/` (skill) and `@` (plugin). The agent's short progress
+  sentences stay in the conversation, styled like its answers; the tool calls between two
+  of them fold into one **N tool calls** row, open while one of them runs. Expand
+  it, then a tool call, to inspect its input and output. Completed replies offer
+  **Copy** beside the model and the run's duration. Public text streams as it
+  arrives; the model's private reasoning is never shown.
   Thinking/using-tool status and elapsed time remain visible during gaps.
 - **Stop** requests cancellation at the next safe boundary. A request or tool
   already executing finishes first; completed edits remain available to review.
@@ -81,8 +81,9 @@ levels are listed.
   running run now (the agent reads it before its next step, without stopping;
   a message with attached files waits for the next turn instead), **Edit**
   changes it while it waits (it is skipped while you edit), and **Remove**
-  takes it out of the queue. A steered message shows in the chat as
-  *Steered in during the run*; when you steer in two or more, the agent is reminded
+  takes it out of the queue. A steered message shows in the chat where the agent
+  read it, and the agent says in one short sentence how it will handle it before
+  carrying on; when you steer in two or more, the agent is reminded
   of all of them before it finishes. A steer the run never got to read is sent as
   the next message. A message that cannot be sent (a bare `/goal`, a broken
   project configuration) stays in the queue marked **Needs an edit**, with the
