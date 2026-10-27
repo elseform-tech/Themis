@@ -1007,7 +1007,7 @@ const fn default_text_size() -> u32 {
 }
 
 const fn default_completion_sound() -> bool {
-    true
+    false
 }
 
 const fn default_goal_notifications() -> bool {
@@ -1594,7 +1594,7 @@ mod tests {
         assert!(settings.recent_roots.is_empty());
         assert_eq!(settings.concurrency_limit, 3);
         assert!(settings.automations_enabled);
-        assert!(settings.completion_sound);
+        assert!(!settings.completion_sound);
         assert!(!settings.completion_haptic);
         assert!(!settings.onboarded);
         assert_eq!(
@@ -1615,7 +1615,7 @@ mod tests {
                 "recent_roots": [],
                 "concurrency_limit": 3,
                 "automations_enabled": true,
-                "completion_sound": true,
+                "completion_sound": false,
                 "completion_haptic": false,
                 "goal_notifications": true,
                 "config_editor": "",
@@ -1654,7 +1654,10 @@ mod tests {
         assert!(legacy.recent_roots.is_empty());
         assert_eq!(legacy.concurrency_limit, 3);
         assert!(legacy.automations_enabled);
-        assert!(legacy.completion_sound);
+        assert!(
+            !legacy.completion_sound,
+            "a file without the field keeps the sound off"
+        );
         assert!(!legacy.completion_haptic);
         assert!(legacy.goal_notifications);
         assert!(!legacy.onboarded);

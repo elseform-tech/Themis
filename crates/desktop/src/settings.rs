@@ -324,7 +324,7 @@ mod tests {
                 recent_roots: Some(vec!["/tmp/a".to_owned()]),
                 concurrency_limit: Some(5),
                 automations_enabled: Some(false),
-                completion_sound: Some(false),
+                completion_sound: Some(true),
                 completion_haptic: Some(true),
                 goal_notifications: Some(false),
                 onboarded: Some(true),
@@ -338,7 +338,7 @@ mod tests {
         assert_eq!(updated.recent_roots, vec!["/tmp/a".to_owned()]);
         assert_eq!(updated.concurrency_limit, 5);
         assert!(!updated.automations_enabled);
-        assert!(!updated.completion_sound);
+        assert!(updated.completion_sound);
         assert!(updated.completion_haptic);
         assert!(!updated.goal_notifications);
         assert!(updated.onboarded);
@@ -457,7 +457,7 @@ mod tests {
         assert!(settings.recent_roots.is_empty());
         assert_eq!(settings.concurrency_limit, 3);
         assert!(settings.automations_enabled);
-        assert!(settings.completion_sound);
+        assert!(!settings.completion_sound);
         assert!(!settings.completion_haptic);
         assert!(settings.goal_notifications);
         assert!(!settings.onboarded);

@@ -385,7 +385,8 @@ describe("Workspace journey", () => {
       state: "running", destination: {}, resume: vi.fn(),
       decodeAudioData: vi.fn(async () => buffer), createBufferSource: () => source,
     })));
-    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root] });
+    // The sound is off by default; this person turned it on.
+    vi.mocked(bridge.getSettings).mockResolvedValue({ ...settings, recent_roots: [root], completion_sound: true });
     vi.mocked(bridge.openProject).mockResolvedValue({ root, name: "Sound project", is_git: true });
     vi.mocked(bridge.listThreads).mockImplementation(async root => root === "/tmp/fixed-themis" ? [] : [thread]);
     vi.mocked(bridge.getThread).mockResolvedValue(thread);

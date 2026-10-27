@@ -223,7 +223,7 @@ export const DEFAULT_SETTINGS: Settings = {
   recent_roots: [],
   concurrency_limit: 3,
   automations_enabled: true,
-  completion_sound: true,
+  completion_sound: false,
   completion_haptic: false,
   goal_notifications: true,
   onboarded: false,
