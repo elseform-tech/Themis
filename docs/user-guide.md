@@ -132,7 +132,8 @@ is reached; for example `/goal optimize this app to speed up p95`.
   **Pause** (after this turn) or **Resume**, **Remove** (the current turn finishes;
   no further turns or checks), and **Show/Hide** for the full sentence. In a narrow
   chat the sentence sits on its own line below the icons.
-- **After each turn** a separate check (on the chat's model, or the one
+- **After each turn** (a goal turn, or the run of a message you sent while the
+  goal is open) a separate check (on the chat's model, or the one
   `goal.check_model` names in runtime.jsonc), with a fresh context, reads the goal, the
   turn's answer and the commands it ran, and decides: reached or not yet (the next
   turn starts by itself, told why). With a number in
@@ -151,8 +152,9 @@ is reached; for example `/goal optimize this app to speed up p95`.
   fresh list. `themis call get_goal` shows them under `added`.
 - **The agent says where it stands.** There is no status box after a turn: each
   goal turn opens with the agent saying, in its own words, where the goal stands
-  and what it will do next, and once the check finds the goal reached, one short
-  turn has the agent tell you so and what shows it.
+  and what it will do next. Once the check finds the goal reached, one short
+  turn has the agent tell you so and what shows it, unless the answer it checked
+  already said so (and no question of the agent's is still open).
 - **It keeps going and never gives up.** There is no time, turn, cost or stall
   limit. Your messages are handled first, then the goal continues. Failed turns are
   retried with growing waits (up to 15 minutes) however often they fail; **Stop**
@@ -173,7 +175,9 @@ is reached; for example `/goal optimize this app to speed up p95`.
 - A goal never grants permissions: approvals and the sandbox apply as usual, and
   while an approval waits the goal waits too. A reached goal leaves the composer;
   the agent's message saying so stays in the conversation. Sending a new message after a goal
-  is reached clears it; `/goal` again replaces the current goal.
+  is reached clears it; `/goal` again replaces the current goal. When the agent
+  rewords an open goal (for example to fold in what you added), the goal goes on:
+  its elapsed time, turn count and added requests carry over.
 - **⌘/Ctrl+B** collapses or pins the sidebar. Hovering at the left edge reveals
   an overlay after 300 ms. It closes 700 ms after leaving, unless focus is inside.
   Hover reveal can be disabled in Appearance. A visible button always reopens it.

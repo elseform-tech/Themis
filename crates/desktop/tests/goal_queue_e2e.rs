@@ -843,11 +843,18 @@ async fn a_running_goal_resumes_when_the_app_starts_again() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
     let server = MockServer::start().await;
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
     Mock::given(method("POST"))
-        .respond_with(|request: &Request| {
+        .respond_with(move |request: &Request| {
             let body = body(request);
             if is_check(&body) {
-                return reply(r#"{"verdict":"reached","reason":"All green."}"#);
+                // The run that set the goal is checked too; it did no work yet.
+                return if seen_checks.fetch_add(1, Ordering::SeqCst) == 0 {
+                    reply(r#"{"verdict":"not_yet","reason":"No test has run yet."}"#)
+                } else {
+                    reply(r#"{"verdict":"reached","reason":"All green."}"#)
+                };
             }
             let used_tool = body["messages"]
                 .as_array()
@@ -872,6 +879,122 @@ async fn the_agent_sets_a_goal_with_its_tool_and_turns_follow() {
     assert_eq!(
         goal.turns, 1,
         "the agent's own run set it; one goal turn followed"
+    );
+    assert_eq!(checks.load(Ordering::SeqCst), 2);
+    settle(&state, &thread).await;
+}
+
+/// Found in a live run: a message's run finished the goal and said so, yet
+/// only goal turns were checked, so a turn redid the verification and another
+/// announced the goal reached: three messages saying the same thing. Every run
+/// is checked now, and an answer that already tells the user needs no
+/// announcement.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_run_that_finishes_the_goal_is_checked_and_nothing_repeats_it() {
+    let server = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
+    let checks = Arc::new(AtomicUsize::new(0));
+    let seen_checks = Arc::clone(&checks);
+    let agent_calls = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::clone(&agent_calls);
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                seen_checks.fetch_add(1, Ordering::SeqCst);
+                return reply(r#"{"verdict":"reached","reason":"PASS4 shows four lines.","progressed":true,"told_user":true}"#);
+            }
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                held.wait();
+                reply("Wrote three lines.")
+            } else {
+                reply("Added yellow; PASS4 shows all four lines, so the goal is done.")
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    let sink: Arc<dyn themis_desktop::sink::EventSink> = Arc::new(sink);
+    state
+        .send_message(
+            sink.clone(),
+            thread.clone(),
+            "/goal colors.txt lists the colors".into(),
+        )
+        .await
+        .unwrap();
+    state
+        .enqueue_message(
+            sink.clone(),
+            thread.clone(),
+            "Also add yellow.".into(),
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+    gate.open();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    settle(&state, &thread).await;
+    assert_eq!(checks.load(Ordering::SeqCst), 1);
+    let bodies = distinct(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(body)
+            .collect(),
+    );
+    let turns: Vec<&Value> = bodies.iter().filter(|body| !is_check(body)).collect();
+    assert_eq!(turns.len(), 2, "no goal turn and no announcement followed");
+    assert!(!turns.iter().any(|body| mentions(body, "[Goal — runtime")));
+    assert_eq!(state.goal_for(&thread).unwrap().turns, 1);
+}
+
+/// Found in a live run: the agent reworded the goal with `set_goal` and its
+/// elapsed time and turn count started again from zero.
+#[tokio::test(flavor = "multi_thread")]
+async fn rewording_an_open_goal_keeps_its_time_and_turns() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(|request: &Request| {
+            let body = body(request);
+            if is_check(&body) {
+                return reply(r#"{"verdict":"reached","reason":"Four lines.","told_user":true}"#);
+            }
+            let used_tool = body["messages"]
+                .as_array()
+                .is_some_and(|messages| messages.iter().any(|m| m["role"] == "tool"));
+            if used_tool {
+                reply("Goal reworded to four lines; the file has them.")
+            } else {
+                std::thread::sleep(Duration::from_millis(600));
+                ResponseTemplate::new(200).set_body_json(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"g","type":"function","function":{"name":"set_goal","arguments":"{\"goal\":\"colors.txt has four lines\"}"}}]},"finish_reason":"tool_calls"}]}))
+            }
+        })
+        .mount(&server)
+        .await;
+    let (state, _data, _project, thread) = chat(&server).await;
+    let (sink, _rx) = ChannelSink::channel();
+    state
+        .send_message(
+            Arc::new(sink),
+            thread.clone(),
+            "/goal colors.txt has three lines".into(),
+        )
+        .await
+        .unwrap();
+    goal_until(&state, &thread, |status| status == GoalStatus::Reached).await;
+    let goal = state.goal_for(&thread).unwrap();
+    assert_eq!(goal.text, "colors.txt has four lines");
+    assert_eq!(goal.turns, 1, "the /goal run stays turn 1");
+    assert!(
+        goal.active_ms >= 550,
+        "time before the rewording is kept: {} ms",
+        goal.active_ms
     );
     settle(&state, &thread).await;
 }

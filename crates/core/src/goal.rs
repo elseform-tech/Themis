@@ -93,6 +93,10 @@ pub struct GoalVerdict {
     /// re-checking or re-measuring is not progress. Used to notice stalls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progressed: Option<bool>,
+    /// Whether the final answer already tells the user the goal is done, so
+    /// no separate turn needs to say it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub told_user: Option<bool>,
 }
 
 /// Reads the first JSON object with a known `verdict` in the checker's reply.
@@ -108,6 +112,8 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
         progress: Option<serde_json::Value>,
         #[serde(default)]
         progressed: Option<serde_json::Value>,
+        #[serde(default)]
+        told_user: Option<serde_json::Value>,
     }
     for (start, _) in reply.match_indices('{') {
         let mut values = serde_json::Deserializer::from_str(&reply[start..]).into_iter::<Raw>();
@@ -126,6 +132,7 @@ pub fn parse_verdict(reply: &str) -> Option<GoalVerdict> {
                 .map(|text| one_line(&text, MAX_PROGRESS_CHARS))
                 .filter(|text| !text.is_empty()),
             progressed: raw.progressed.and_then(|value| value.as_bool()),
+            told_user: raw.told_user.and_then(|value| value.as_bool()),
         });
     }
     None
@@ -237,9 +244,10 @@ pub fn turn_message(turn: u32, goal: &str, note: &str) -> String {
 }
 
 /// The message that has the agent tell the user the goal is reached, as turn
-/// `turn`; `reason` is the check's.
-pub fn reached_message(turn: u32, goal: &str, reason: &str) -> String {
-    crate::prompts::fill(
+/// `turn`; `reason` is the check's, followed by the open questions, if any,
+/// which the agent is then asked to name.
+pub fn reached_message(turn: u32, goal: &str, reason: &str, open_questions: bool) -> String {
+    let message = crate::prompts::fill(
         crate::prompts::GOAL_REACHED_TURN,
         &[
             ("goal_turn_marker", GOAL_TURN_MARKER),
@@ -247,7 +255,12 @@ pub fn reached_message(turn: u32, goal: &str, reason: &str) -> String {
             ("goal", goal),
             ("reason", reason),
         ],
-    )
+    );
+    if open_questions {
+        format!("{message} {}", crate::prompts::GOAL_REACHED_OPEN_QUESTIONS)
+    } else {
+        message
+    }
 }
 
 /// The turn number in a goal-turn message, if `text` is one.
@@ -332,6 +345,32 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
+    fn told_user_is_read_and_anything_but_a_boolean_is_ignored() {
+        let told =
+            parse_verdict(r#"{"verdict":"reached","reason":"PASS","told_user":true}"#).unwrap();
+        assert_eq!(told.told_user, Some(true));
+        let odd =
+            parse_verdict(r#"{"verdict":"reached","reason":"PASS","told_user":"yes"}"#).unwrap();
+        assert_eq!(odd.told_user, None);
+    }
+
+    #[test]
+    fn open_questions_are_named_only_when_there_are_some() {
+        let plain = reached_message(3, "four lines", "PASS4", false);
+        assert!(!plain.contains("open question"), "{plain}");
+        let open = reached_message(
+            3,
+            "four lines",
+            "PASS4\nOpen questions you asked the user: 1. Which?",
+            true,
+        );
+        assert!(
+            open.ends_with(crate::prompts::GOAL_REACHED_OPEN_QUESTIONS),
+            "{open}"
+        );
+    }
+
+    #[test]
     fn verdicts_are_read_from_prose_and_fences() {
         let reply = "Here is my answer:\n```json\n{\"verdict\":\"not_yet\",\"reason\":\"p95 is 238 ms;\\n /api/report is slow.\",\"progress\":\"p95 238 ms\"}\n```";
         assert_eq!(
@@ -341,6 +380,7 @@ mod tests {
                 reason: "p95 is 238 ms; /api/report is slow.".into(),
                 progress: Some("p95 238 ms".into()),
                 progressed: None,
+                told_user: None,
             })
         );
         let reply = r#"{"note":1} then {"verdict":"reached","reason":"done","progress":184}"#;
@@ -374,7 +414,7 @@ mod tests {
         let text = turn_message(24, "speed up p95", "p95 still 238 ms");
         assert_eq!(turn_number(&text), Some(24));
         assert_eq!(
-            turn_number(&reached_message(25, "speed up p95", "p95 is 180 ms")),
+            turn_number(&reached_message(25, "speed up p95", "p95 is 180 ms", false)),
             Some(25)
         );
         assert_eq!(turn_number("Turn 3 of mine"), None);
@@ -446,7 +486,7 @@ mod tests {
         #[test]
         fn a_serialized_verdict_parses_back(reason in "[a-zA-Z0-9 .;]{0,80}", progress in "[a-z0-9 ]{1,20}", kind in 0usize..4, prose in "[a-z \n]{0,40}") {
             let verdict = [Verdict::Reached, Verdict::NotYet, Verdict::Unreachable, Verdict::NeedsUser][kind];
-            let expected = GoalVerdict { verdict, reason: one_line(&reason, MAX_REASON_CHARS), progress: Some(one_line(&progress, MAX_PROGRESS_CHARS)).filter(|text| !text.is_empty()), progressed: Some(kind % 2 == 0) };
+            let expected = GoalVerdict { verdict, reason: one_line(&reason, MAX_REASON_CHARS), progress: Some(one_line(&progress, MAX_PROGRESS_CHARS)).filter(|text| !text.is_empty()), progressed: Some(kind % 2 == 0), told_user: None };
             let reply = format!("{prose}{}{prose}", serde_json::to_string(&expected).unwrap());
             prop_assert_eq!(parse_verdict(&reply), Some(expected));
         }
