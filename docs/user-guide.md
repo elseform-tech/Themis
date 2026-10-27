@@ -459,7 +459,7 @@ Preferences persisted to `settings.json`:
 | `recent_roots` | Recently opened projects, most recent first (max 10, managed automatically) | `[]` |
 | `concurrency_limit` | Max parallel runs across all threads (1–16); sends past the limit are rejected | `3` |
 | `automations_enabled` | Global automation kill-switch | `true` |
-| `completion_sound` | Play a click when a reply you started finishes | `true` |
+| `completion_sound` | Play a click when a reply you started finishes | `false` |
 | `completion_haptic` | Trackpad feedback when a reply you started finishes (macOS) | `false` |
 | `goal_notifications` | Desktop notification when a goal is reached or pauses while Themis is in the background (macOS) | `true` |
 | `projects_directory` | Fixed parent folder for new projects | `~/ThemisOS/Projects` |
