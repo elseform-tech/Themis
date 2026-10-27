@@ -486,17 +486,19 @@ describe("Workspace journey", () => {
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_finished", tool: "read_file", ok: true, output: "ORBIT-17" } });
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "finished", result: "Verified." } });
     });
-    const activitySummary = screen.getByText("Show thinking").closest("summary")!;
-    expect(activitySummary).toHaveTextContent(/1 tool call · 12s elapsed/);
-    expect(activitySummary).not.toHaveTextContent("milestone");
-    const activities = activitySummary.parentElement as HTMLDetailsElement;
-    expect(activities.open).toBe(false);
-    fireEvent.click(activitySummary);
-    expect(activities.open).toBe(true);
-    expect(screen.getByText("I will read the file.")).toBeInTheDocument();
+    // The progress sentence stays on screen; the tool call folds into one row.
+    expect(screen.queryByText("Show thinking")).toBeNull();
+    expect(screen.getByText("I will read the file.")).toBeVisible();
     expect(screen.queryByText("Inspect current files")).toBeNull();
+    const toolSummary = screen.getByText("1 tool call").closest("summary")!;
+    const tools = toolSummary.parentElement as HTMLDetailsElement;
+    expect(tools.open).toBe(false);
+    fireEvent.click(toolSummary);
+    expect(tools.open).toBe(true);
     expect(screen.getByText("read file")).toBeInTheDocument();
     expect(screen.getByText("ORBIT-17")).toBeInTheDocument();
+    // The run's duration sits with the final answer's model.
+    expect(screen.getByText("Verified.").closest(".themis-thread-msg")!.querySelector(".themis-response-model")).toHaveTextContent(/· 12s$/);
     expect(screen.queryByText("Task progress")).toBeNull();
     await act(async () => {
       receive({ thread_id: "thread1", run_id: "r2", event: { kind: "started", task: "follow up", max_turns: 3 } });
@@ -505,6 +507,10 @@ describe("Workspace journey", () => {
     });
     expect(screen.getByText("Verified.").closest(".themis-thread-msg")).not.toHaveClass("themis-thread-msg--action-waiting");
     expect(screen.getByText("I will check one more thing.").closest(".themis-thread-msg")).toHaveClass("themis-thread-msg--action-waiting");
+    // A steered message is a plain bubble in place; no label repeats where it came from.
+    await act(async () => receive({ thread_id: "thread1", run_id: "r2", event: { kind: "steered", text: "Use tabs." } }));
+    expect(screen.getByText("Use tabs.")).toBeInTheDocument();
+    expect(screen.queryByText(/Steered in/)).toBeNull();
     vi.mocked(bridge.createThread).mockResolvedValueOnce({ ...updated, id: "thread2" });
     await act(async () => fireEvent.keyDown(document, { key: "O", ctrlKey: true, shiftKey: true }));
     expect(bridge.createThread).toHaveBeenCalledTimes(2);

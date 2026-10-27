@@ -109,7 +109,7 @@ export function ThreadConversation({
             threadId={threadId}
             skills={skills} plugins={plugins}
             activeRunId={activeRunId}
-            elapsed={elapsed}
+            runDurations={runDurations}
           />
         ))
       )}
@@ -150,42 +150,59 @@ function ConversationRow({
   row,
   threadId,
   activeRunId,
-  elapsed,
+  runDurations,
   skills,
   plugins,
 }: {
   row: ConversationRow;
   threadId: string;
   activeRunId: string | undefined;
-  elapsed: number;
+  runDurations: Record<string, number>;
   skills: PromptSkill[];
   plugins: PromptPlugin[];
 }) {
   if (row.kind === "message" && row.message.question) {
     return <QuestionRow threadId={threadId} question={row.message.question} />;
   }
-  if (row.kind === "message") return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
+  if (row.kind === "message") {
+    const durationMs = row.message.final && row.message.runId ? runDurations[row.message.runId] : undefined;
+    return <Message threadId={threadId} message={row.message} activeRunId={activeRunId} durationMs={durationMs} skills={skills} plugins={plugins} />;
+  }
   if (row.kind === "milestone") return <Milestone row={row} activeRunId={activeRunId} skills={skills} plugins={plugins} />;
 
-  const durationMs = row.active ? elapsed * 1000 : row.durationMs;
-  const durationSeconds = durationMs === undefined ? undefined : Math.floor(durationMs / 1000);
-  const durationLabel = durationSeconds === undefined ? "" : durationSeconds < 60
-    ? `${durationSeconds}s elapsed`
-    : `${Math.floor(durationSeconds / 60)}m${durationSeconds % 60 === 0 ? "" : ` ${durationSeconds % 60}s`} elapsed`;
-
+  // The agent's progress sentences stay on screen; each stretch of tool calls
+  // between them folds into one quiet row.
+  const parts: ({ kind: "text"; message: ChatMessage; active: boolean } | { kind: "tools"; messages: ChatMessage[]; active: boolean })[] = [];
+  for (const item of row.items) {
+    for (const message of item.items) {
+      const last = parts[parts.length - 1];
+      if (message.tool && last?.kind === "tools") last.messages.push(message);
+      else if (message.tool) parts.push({ kind: "tools", messages: [message], active: item.active });
+      else parts.push({ kind: "text", message, active: item.active });
+    }
+  }
   return (
-    <details className="themis-run-bucket" open={row.active || undefined}>
+    <div className="themis-run-activity">
+      {parts.map(part => part.kind === "text"
+        ? <Message key={part.message.id} message={part.message} activeRunId={part.active ? activeRunId : undefined} skills={skills} plugins={plugins} />
+        : <ToolGroup key={part.messages[0]!.id} messages={part.messages} activeRunId={row.active ? activeRunId : undefined} skills={skills} plugins={plugins} />)}
+    </div>
+  );
+}
+
+/** Consecutive tool calls as one folded row; open while one of them runs. */
+function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatMessage[]; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
+  const running = activeRunId !== undefined && messages.some(message => message.tool?.ok === undefined);
+  const failed = messages.filter(message => message.tool?.ok === false).length;
+  return (
+    <details className="themis-tool-group" open={running || undefined}>
       <summary>
         <span className="themis-tool-chevron" aria-hidden="true">›</span>
-        <span>Show thinking</span>
-        <span className="themis-run-meta">
-          {row.toolCount} tool call{row.toolCount === 1 ? "" : "s"}{durationLabel && ` · ${durationLabel}`}
-        </span>
+        <span>{messages.length} tool call{messages.length === 1 ? "" : "s"}</span>
+        {failed > 0 && <span className="themis-run-meta">{failed} failed</span>}
       </summary>
-      <div className="themis-run-bucket-body">
-        {row.items.flatMap(item => item.items.map(message => (
-          <Message key={message.id} message={message} activeRunId={item.active ? activeRunId : undefined} skills={skills} plugins={plugins} />
-        )))}
+      <div className="themis-tool-group-body">
+        {messages.map(message => <Message key={message.id} message={message} activeRunId={activeRunId} skills={skills} plugins={plugins} />)}
       </div>
     </details>
   );
@@ -304,7 +321,13 @@ function QuestionRow({ threadId, question }: { threadId: string; question: Quest
   }} />;
 }
 
-function Message({ message, threadId, activeRunId, skills, plugins }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
+/** `12s` or `2m 32s`. */
+function formatRunDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60 === 0 ? "" : ` ${seconds % 60}s`}`;
+}
+
+function Message({ message, threadId, activeRunId, durationMs, skills, plugins }: { message: ChatMessage; threadId?: string; activeRunId: string | undefined; durationMs?: number; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
   if (message.checkpoint) return <CheckpointDivider checkpoint={message.checkpoint} />;
   // The answered question box already shows the answer the agent was sent.
   if (message.role === "user" && message.text.startsWith(ANSWER_MARKER)) return null;
@@ -352,14 +375,11 @@ function Message({ message, threadId, activeRunId, skills, plugins }: { message:
           {!!message.changedFiles?.length && <EditedFiles files={message.changedFiles} />}
           {(message.final || !message.runId) && <div className="themis-response-actions">
             <CopyButton text={message.text} />
-            <small className="themis-response-model">{message.interrupted === "stopped" ? "Stopped by you" : message.interrupted === "failed" ? "Interrupted by an error" : message.model ?? "Model not recorded"}</small>
+            <small className="themis-response-model">{message.interrupted === "stopped" ? "Stopped by you" : message.interrupted === "failed" ? "Interrupted by an error" : message.model ?? "Model not recorded"}{durationMs !== undefined && ` · ${formatRunDuration(durationMs)}`}</small>
           </div>}
         </>
       ) : (
         <>
-          {message.steered && <span className="themis-steered-label">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 12h12M12 6l6 6-6 6" /></svg>Steered in during the run
-          </span>}
           <p className="themis-thread-text"><PromptText value={text} skills={skills} plugins={plugins} /></p>
         </>
       )}

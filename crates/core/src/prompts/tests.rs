@@ -533,7 +533,7 @@ fn runtime_notes_are_byte_identical() {
     );
     assert_eq!(RUNTIME_HANDOFF, "Without using tools, write a concise, natural response to the user. Say what you completed, what remains, and the concrete next steps. Do not claim unfinished work is done. Do not mention turns, limits, checkpoints, or internal mechanics.");
     let text = "Use tabs {{x}}.";
-    assert_eq!(format!("{RUNTIME_STEERED}\n{text}"), format!("[The user sent this while you were working; take it into account from here on]\n{text}"));
+    assert_eq!(format!("{RUNTIME_STEERED}\n{text}"), format!("[The user sent this while you were working; take it into account from here on. Start your next reply with one short sentence telling them how you will handle it, sent with the tool calls that continue the work]\n{text}"));
     let (calls, runnable) = (5, 2);
     assert_eq!(
         fill(RUNTIME_BATCH_NOT_RUN, &[("calls", &calls.to_string()), ("runnable", &runnable.to_string())]),

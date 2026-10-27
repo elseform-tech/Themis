@@ -1,1 +1,1 @@
-[The user sent this while you were working; take it into account from here on]
+[The user sent this while you were working; take it into account from here on. Start your next reply with one short sentence telling them how you will handle it, sent with the tool calls that continue the work]

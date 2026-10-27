@@ -77,8 +77,7 @@
 }
 .themis-queue-input:focus { outline: 2px solid color-mix(in srgb, var(--themis-accent) 55%, transparent); outline-offset: 0; }
 
-/* Conversation: steered messages, goal turn dividers and goal notes. */
-.themis-steered-label { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-bottom: 4px; font-size: .75rem; color: var(--themis-text-2); }
+/* Conversation: goal turn dividers and goal notes. */
 .themis-goal-turn { display: flex; align-items: center; gap: 10px; margin: 4px 0; font-size: .75rem; color: var(--themis-text-2); }
 .themis-goal-turn::before, .themis-goal-turn::after { content: ""; flex: 1; height: 1px; background: var(--themis-border-subtle); }
 .themis-goal-note {
