@@ -48,6 +48,8 @@ export const browserState = (threadId: string) => invoke<BrowserState>("browser_
 export const browserScreencast = (threadId: string, width: number, height: number, scale: number) =>
   invoke<void>("browser_screencast", { threadId, width: Math.round(width), height: Math.round(height), scale });
 export const browserScreencastStop = (threadId: string) => invoke<void>("browser_screencast_stop", { threadId });
+/** Small frames for the chat's preview; the page keeps its size. */
+export const browserPreview = (threadId: string, width: number) => invoke<void>("browser_preview", { threadId, width: Math.round(width) });
 export const browserInput = (threadId: string, input: BrowserInput) => invoke<void>("browser_input", { threadId, input });
 export const browserOpenUrl = (threadId: string, address: string) => invoke<void>("browser_open_url", { threadId, address });
 export const browserSetMuted = (threadId: string, muted: boolean) => invoke<void>("browser_set_muted", { threadId, muted });

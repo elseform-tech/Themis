@@ -192,6 +192,14 @@ is reached; for example `/goal optimize this app to speed up p95`.
   tidy-up and auto-compact thresholds. Near auto-compact during a run it turns
   warm and a one-time heads-up appears; afterwards a **Context compacted** divider
   shows the before → after usage. Nothing is deleted: originals stay on disk.
+- **The overview box** sits over the top right of a chat while Workspace is closed:
+  a live preview of the chat's browser (the page keeps its size; only the preview is
+  small), one row each for changed files (+/− lines), tasks and
+  queued messages, the latest artifact, and the chat's cost, as icons with short
+  values (hover a row for its name). Click a row to open Workspace on that tab,
+  or the Workspace icon to open it as you left it; closing Workspace brings the
+  box back. The chevron folds it to icons only, as does a narrow chat. Rows with
+  nothing to show are left out, and a chat with nothing to show has no box.
 - **Workspace** in a thread's header opens a read-only monitor of the project:
   **Changes** (readable changed files and their wrapped, highlighted diff,
   updating live while the agent works; binary and generated files are hidden; a
@@ -271,9 +279,11 @@ Page text and results are treated as untrusted. See [web tools](web-tools.md).
 
 Agents can also drive a built-in browser (its own headless Chromium engine, downloaded
 the first time it is used, or a Chrome, Chromium or Edge you choose in Settings › Browser,
-with its own profile per project). **Workspace → Browser** opens by itself when the
-agent starts using it in a run, so you can watch it: the
-line above the page says what the agent is doing. You can click, type or enter an
+with its own profile per project). While the agent browses, the chat's overview box
+shows a live preview of the page with what the agent is doing; click it to open
+**Workspace → Browser**, where the line above the page says the same. (To have
+Workspace open by itself instead, turn on **Open Workspace when the agent starts
+browsing** in Settings › Browser.) You can click, type or enter an
 address at the same time; the agent keeps working. The speaker button turns the
 page's sound on (it starts off). **DevTools** opens Chrome's
 DevTools for the page. Browser actions ask per site, like page reads. Start a

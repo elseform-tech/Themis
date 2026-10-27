@@ -17,6 +17,7 @@ import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
 import { groupConversation, toolDisplayName, type ConversationRow } from "./conversation";
+import { OverviewBox, type Overview } from "./OverviewBox";
 
 interface ThreadConversationProps {
   threadId: string;
@@ -30,6 +31,8 @@ interface ThreadConversationProps {
   runStartedAt: number | undefined;
   compacting: boolean;
   traces: ToolTraceEntry[];
+  /** The chat overview box, when it shows. */
+  overview?: Overview;
 }
 
 export function ThreadConversation({
@@ -44,6 +47,7 @@ export function ThreadConversation({
   runStartedAt,
   compacting,
   traces,
+  overview,
 }: ThreadConversationProps) {
   const project = useActiveProject();
   const { skills, plugins } = usePromptSkills(project?.root, running);
@@ -135,6 +139,7 @@ export function ThreadConversation({
       )}
       <div ref={endRef} />
     </div>
+    {overview && <OverviewBox threadId={threadId} overview={overview} onOpenMedia={openMedia} />}
     {viewing !== null && media[viewing] && <MediaViewer threadId={threadId} items={media} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
     </ResponseLinks.Provider>
     </MediaGallery.Provider>

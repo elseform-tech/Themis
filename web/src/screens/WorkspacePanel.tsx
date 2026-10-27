@@ -5,12 +5,13 @@ import type { DirEntry, FileView, WorkspaceInfo } from "../lib/types";
 import { getWorkspace, listDiff, listProjectDir, readProjectFile } from "../lib/tauri";
 import { describeError, useApp } from "../state/store";
 import { readSession, writeSession } from "../state/session";
+import type { WorkspaceTab } from "../state/reducer";
 import { BrowserView } from "./BrowserView";
 import { TasksView } from "./TasksView";
 import { countTasks } from "./threadTasks";
 import "./WorkspacePanel.css";
 
-type Tab = "changes" | "files" | "branches" | "pulls" | "tasks" | "browser";
+type Tab = WorkspaceTab;
 const TABS: Array<[Tab, string]> = [["changes", "Changes"], ["files", "Files"], ["branches", "Branches"], ["pulls", "Pull requests"], ["tasks", "Tasks"], ["browser", "Browser"]];
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 1600;

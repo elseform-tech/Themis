@@ -232,7 +232,8 @@ describe("thread lifecycle events", () => {
   it("shows the Browser tab once when the agent starts using the browser", () => {
     const live = (s: AppState, event: ThreadEventEnvelope["event"], threadId = THREAD.id) =>
       reducer(s, { type: "thread/event", envelope: envelope(event, threadId) });
-    let s = live(withThread(), { kind: "started", task: "check the page", max_turns: 20 });
+    // Only with Settings › Browser › "Open Workspace when the agent starts browsing" on (off by default).
+    let s = live({ ...withThread(), browserOpensWorkspace: true }, { kind: "started", task: "check the page", max_turns: 20 });
     s = live(s, { kind: "tool_started", tool: "read_file", summary: "a.ts" });
     expect(s.diffPanelOpen).toBe(false);
     s = live(s, { kind: "tool_started", tool: "browser_open", summary: "open" });

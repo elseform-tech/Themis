@@ -84,7 +84,7 @@
     // Absolute folder for downloads; leave out for the system Downloads folder.
     // "downloads_directory": "/Users/you/Downloads",
     // Open Workspace on the Browser tab when the agent starts browsing.
-    "open_workspace": true,
+    "open_workspace": false,
   },
 
   // ─── WEB SEARCH (also in Settings › Web) ──────────────────────────────────────────────

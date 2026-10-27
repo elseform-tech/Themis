@@ -1,0 +1,73 @@
+/* The chat overview: a compact box over the top right of the chat (canvas board "C · Floating box").
+   The chat's reading column moves left to leave it room. */
+
+.themis-thread { container: themis-thread / inline-size; }
+
+.themis-overview {
+  --themis-overview-width: 220px;
+  position: absolute; top: 60px; right: 16px; z-index: 3;
+  width: var(--themis-overview-width); box-sizing: border-box;
+  display: flex; flex-direction: column;
+  padding: 4px 8px 4px; border: 1px solid var(--themis-border); border-radius: 14px;
+  background: var(--themis-surface); box-shadow: 0 8px 24px rgb(0 0 0 / .25);
+}
+.themis-overview.is-collapsed { --themis-overview-width: 48px; padding: 4px; }
+.themis-overview-head { display: flex; justify-content: flex-end; gap: 2px; }
+.themis-overview.is-collapsed .themis-overview-head { flex-direction: column; align-items: center; }
+.themis-overview-icon {
+  display: grid; place-items: center; width: 28px; height: 28px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-2); cursor: pointer;
+}
+.themis-overview-icon:hover { background: var(--themis-raised); color: var(--themis-text); }
+
+.themis-overview-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 0 4px;
+  border: 0; border-top: 1px solid var(--themis-border-subtle); background: transparent;
+  color: var(--themis-text); font: inherit; font-size: .8125rem; text-align: left; cursor: pointer;
+}
+.themis-overview-row:hover { color: var(--themis-accent-hover); }
+.themis-overview.is-collapsed .themis-overview-row { justify-content: center; padding: 0; gap: 0; position: relative; }
+.themis-overview.is-collapsed .themis-overview-value, .themis-overview.is-collapsed .themis-overview-meta { display: none; }
+.themis-overview.is-collapsed .themis-overview-dot { position: absolute; top: 7px; right: 8px; }
+/* The live browser preview stands in for the Browser row; folded or narrow, the row's icon shows instead. */
+.themis-overview-preview {
+  position: relative; display: block; width: 100%; margin: 2px 0 6px; padding: 0; overflow: hidden;
+  border: 1px solid var(--themis-border); border-radius: 10px; background: var(--themis-canvas); cursor: pointer;
+}
+.themis-overview-preview img { display: block; width: 100%; height: auto; }
+.themis-overview-preview-empty { display: block; height: 110px; }
+.themis-overview-preview-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
+  background: color-mix(in srgb, var(--themis-sidebar-bg) 92%, transparent); color: var(--themis-text-2); font-size: .6875rem; text-align: left;
+}
+.themis-overview-preview:hover { border-color: var(--themis-accent); }
+.themis-overview-preview + .themis-overview-browser-row { display: none; }
+.themis-overview-glyph { flex: none; width: 16px; height: 16px; color: var(--themis-text-3); }
+.themis-overview-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.themis-overview-meta { flex: none; color: var(--themis-text-3); font-size: .75rem; }
+.themis-overview-meta .is-added { color: var(--themis-success); }
+.themis-overview-meta .is-removed { color: var(--themis-danger); }
+.themis-overview-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--themis-accent); }
+.themis-overview-dot.is-attention { background: var(--themis-warning); }
+/* Rows sit at the right edge: their tooltips open to the left. */
+.themis-overview .themis-icon-tip::after { left: auto; right: 0; transform: none; }
+
+/* The reading column and the composer move left of the box. */
+.themis-thread.has-overview { --themis-overview-room: 252px; }
+.themis-thread.has-overview.overview-collapsed { --themis-overview-room: 80px; }
+.themis-thread.has-overview .themis-thread-stream { padding-left: max(20px, calc((100% - 740px - var(--themis-overview-room)) / 2)); padding-right: max(20px, calc((100% - 740px - var(--themis-overview-room)) / 2 + var(--themis-overview-room))); }
+.themis-thread.has-overview .themis-thread-composer { margin-left: max(20px, calc((100% - 740px - var(--themis-overview-room)) / 2)); margin-right: auto; width: min(calc(100% - 40px - var(--themis-overview-room)), 740px); }
+
+/* In a narrow chat the box keeps only its icons. */
+@container themis-thread (max-width: 760px) {
+  .themis-overview { --themis-overview-width: 48px; padding: 4px; }
+  .themis-overview-head { flex-direction: column; align-items: center; }
+  .themis-overview-head .themis-overview-icon:last-child { display: none; }
+  .themis-overview-row { justify-content: center; padding: 0; gap: 0; position: relative; }
+  .themis-overview-value, .themis-overview-meta { display: none; }
+  .themis-overview-dot { position: absolute; top: 7px; right: 8px; }
+  .themis-overview-preview { display: none; }
+  .themis-overview-preview + .themis-overview-browser-row { display: flex; }
+  /* A container query styles only what is inside the chat, so the room is set on the column itself. */
+  .themis-thread.has-overview .themis-thread-stream, .themis-thread.has-overview .themis-thread-composer { --themis-overview-room: 80px; }
+}

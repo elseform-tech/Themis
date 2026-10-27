@@ -118,6 +118,14 @@ impl AppState {
             .await
     }
 
+    /// Streams small frames for the chat's preview, leaving the page's size alone.
+    pub async fn browser_preview(&self, thread_id: &str, width: u32) -> Result<(), String> {
+        self.chat_browser(thread_id)
+            .await?
+            .start_preview(width)
+            .await
+    }
+
     pub async fn browser_screencast_stop(&self, thread_id: &str) -> Result<(), String> {
         if let Some(chat) = self.inner.browsers.existing(thread_id) {
             chat.stop_screencast().await;

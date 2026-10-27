@@ -272,6 +272,7 @@ impl BrowserHub {
                 updates,
                 screencast: Mutex::new(None),
                 ui_stream: AtomicBool::new(false),
+                preview_width: Mutex::new(None),
                 recording: Mutex::new(None),
                 viewport: Mutex::new(Viewport::default()),
                 muted: AtomicBool::new(true),
@@ -471,6 +472,22 @@ struct Viewport {
     scale: f64,
 }
 
+/// The largest frame the screencast sends: the page's full size for the
+/// Browser tab, or `preview` wide (same aspect) for the chat's small preview.
+fn frame_size(viewport: Viewport, preview: Option<u32>) -> (u32, u32) {
+    match preview {
+        Some(width) => (
+            width,
+            (u64::from(width) * u64::from(viewport.height) / u64::from(viewport.width.max(1)))
+                as u32,
+        ),
+        None => (
+            (f64::from(viewport.width) * viewport.scale) as u32,
+            (f64::from(viewport.height) * viewport.scale) as u32,
+        ),
+    }
+}
+
 impl Default for Viewport {
     fn default() -> Self {
         Self {
@@ -492,6 +509,9 @@ pub struct ChatBrowser {
     screencast: Mutex<Option<String>>,
     /// The Workspace view is showing the stream (frames go to it).
     ui_stream: AtomicBool,
+    /// The stream feeds the chat's small preview: frames at most this wide,
+    /// the page left at its own size. `None` while the Browser tab streams.
+    preview_width: Mutex<Option<u32>>,
     recording: Mutex<Option<Recording>>,
     viewport: Mutex<Viewport>,
     /// The Workspace speaker is off (the default): pages play no sound.
@@ -1921,7 +1941,19 @@ impl ChatBrowser {
         scale: f64,
     ) -> Result<(), String> {
         self.ui_stream.store(true, Ordering::SeqCst);
+        *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.run_screencast(width, height, scale).await
+    }
+
+    /// Streams small frames for the chat's preview without resizing the page:
+    /// the agent keeps the viewport it had, only the frames are scaled down.
+    pub async fn start_preview(&self, max_width: u32) -> Result<(), String> {
+        self.ui_stream.store(true, Ordering::SeqCst);
+        *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(max_width.clamp(160, 1280));
+        let viewport = *self.viewport.lock().unwrap_or_else(|e| e.into_inner());
+        self.run_screencast(viewport.width, viewport.height, viewport.scale)
+            .await
     }
 
     /// Starts (or moves) the protocol screencast to the current tab.
@@ -1964,10 +1996,14 @@ impl ChatBrowser {
                 .await;
         }
         STREAM_STARTS.fetch_add(1, Ordering::Relaxed);
+        let (max_width, max_height) = frame_size(
+            viewport,
+            *self.preview_width.lock().unwrap_or_else(|e| e.into_inner()),
+        );
         cdp.call(
             Some(&session_id),
             "Page.startScreencast",
-            json!({"format": "jpeg", "quality": 85, "maxWidth": (f64::from(viewport.width) * viewport.scale) as u32, "maxHeight": (f64::from(viewport.height) * viewport.scale) as u32, "everyNthFrame": 1}),
+            json!({"format": "jpeg", "quality": 85, "maxWidth": max_width, "maxHeight": max_height, "everyNthFrame": 1}),
         )
         .await?;
         Ok(())
@@ -2523,6 +2559,17 @@ async fn password_fields(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_preview_scales_frames_down_and_keeps_the_page_size() {
+        let page = super::Viewport {
+            width: 1280,
+            height: 800,
+            scale: 2.0,
+        };
+        assert_eq!(super::frame_size(page, None), (2560, 1600));
+        assert_eq!(super::frame_size(page, Some(440)), (440, 275));
+    }
+
     use super::*;
 
     #[test]
