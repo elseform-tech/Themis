@@ -18,14 +18,18 @@ import re
 
 # Custom-mode rules for the soak (decided 2026-10-25): every item must be read and written
 # one at a time, so scripts, searches and other commands are denied. Only `python3 check.py`
-# runs as a command. The default is deny, so nothing ever waits for an approval nobody answers.
+# runs as a command, plus `grep` that prints only file names or counts (never contents), so a
+# goal check that asks for compact proof of a change to every file can get it (2026-10-27).
+# The default is deny, so nothing ever waits for an approval nobody answers.
 ALLOWED_TOOLS = ("read_file", "list_dir", "write_file", "apply_patch", "recall", "set_goal", "git")
 CHECK_COMMAND = ["python3", "check.py"]
+COUNT_COMMANDS = (["grep", "-L"], ["grep", "-c"], ["grep", "-rL"], ["grep", "-rc"])
 APPROVAL = {
     "default": "deny",
     # Running outside the sandbox is refused outright, never left asking an absent person.
     "rules": [{"tool": "shell_unsandboxed", "action": "deny"},
               {"tool": "shell", "command": CHECK_COMMAND, "action": "allow"}]
+             + [{"tool": "shell", "command": prefix, "action": "allow"} for prefix in COUNT_COMMANDS]
              + [{"tool": tool, "action": "allow"} for tool in ALLOWED_TOOLS],
 }
 
@@ -75,7 +79,7 @@ def classify(tool, output, mode="yolo", summary=""):
                 if _differs_from_check(summary):
                     return "model", "denied_by_rule"
                 return "unclassified", "unparsed_shell_call"
-            allowed = argv == CHECK_COMMAND
+            allowed = argv == CHECK_COMMAND or any(argv[:2] == prefix for prefix in COUNT_COMMANDS)
         else:
             allowed = tool in ALLOWED_TOOLS
         return ("ours", "approval_refused") if allowed else ("model", "denied_by_rule")
@@ -122,9 +126,10 @@ def _differs_from_check(summary):
     if not match:
         return False
     command, first = (json.loads(f'"{part}"') if part is not None else None for part in match.groups())
-    if command != CHECK_COMMAND[0]:
+    allowed = [CHECK_COMMAND, *COUNT_COMMANDS]
+    if all(command != prefix[0] for prefix in allowed):
         return True
-    return first is not None and first != CHECK_COMMAND[1]
+    return first is not None and all([command, first] != prefix for prefix in allowed)
 
 
 # The files `run.protect` makes read-only.

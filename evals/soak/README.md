@@ -19,8 +19,10 @@ python3 -m unittest evals.kit.test_kit evals.soak.test_harness
 `items-v2` pilots the agent learned the generator's sentence templates with Python scripts and
 finished 120 memos in 2–5 goal turns with 1–2 checkpoints, so the soak stressed nothing. The run
 now allows only `read_file`, `list_dir`, `write_file`, `apply_patch`, `recall`, `set_goal`, `git`
-and the one command `python3 check.py`; everything else (other commands, scripts, `search_file`)
-is denied by default, so no approval ever waits. `FORMAT.md` tells the agent so. A denial of an
+the command `python3 check.py`, and `grep -L`/`-c`/`-rL`/`-rc`, which print only file names or counts
+(added 2026-10-27 so a goal check asking for compact proof of a change to every file can get it;
+no file contents, so items are still read one at a time); everything else (other commands, scripts,
+`search_file`) is denied by default, so no approval ever waits. `FORMAT.md` tells the agent so. A denial of an
 allowed tool is graded as ours; any other denial is the model reaching past the rules.
 
 
