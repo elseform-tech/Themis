@@ -468,3 +468,80 @@ async fn cli_a_steer_during_a_goal_is_added_to_it() {
     task.abort();
     settle(&state, &thread.id).await;
 }
+
+/// A queued message's run that finishes the goal is checked, and an answer
+/// that already says so gets no extra goal turn or announcement.
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_a_message_that_finishes_the_goal_is_not_repeated() {
+    let llm = MockServer::start().await;
+    let gate = Gate::default();
+    let held = gate.clone();
+    Mock::given(method("POST"))
+        .respond_with(move |request: &Request| {
+            if is_check(request) {
+                reply(r#"{"verdict":"reached","reason":"The title is there.","told_user":true}"#)
+            } else {
+                held.wait();
+                reply("Added the title; the goal is done.")
+            }
+        })
+        .mount(&llm)
+        .await;
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    state
+        .set_secret("go".into(), "synthetic-test-key".into())
+        .await
+        .unwrap();
+    state.set_go_base_url_override(Some(llm.uri()));
+    let thread = state
+        .create_thread(
+            project.path().to_string_lossy().into(),
+            ProviderKind::Go,
+            Some("test-model".into()),
+        )
+        .await
+        .unwrap();
+    let server = Server::bind(state.clone(), data.path()).await.unwrap();
+    let task = tokio::spawn(server.run());
+    let data_dir = data.path().to_owned();
+    let thread_id = thread.id.clone();
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data_dir,
+            "send_message",
+            json!({"threadId": thread_id, "text": "/goal give the README a title"}),
+        );
+        call(
+            &data_dir,
+            "enqueue_message",
+            json!({"threadId": thread_id, "text": "use the title Ledgerly"}),
+        );
+        gate.open();
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while call(&data_dir, "get_goal", json!({"threadId": thread_id}))["status"] != "reached" {
+            assert!(std::time::Instant::now() < deadline, "goal never reached");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    })
+    .await
+    .unwrap();
+    settle(&state, &thread.id).await;
+    let requests = llm.received_requests().await.unwrap();
+    let mut agent: Vec<Value> = requests
+        .iter()
+        .filter(|request| !is_check(request))
+        .map(|request| request.body_json::<Value>().unwrap())
+        .collect();
+    agent.dedup();
+    assert_eq!(
+        agent.len(),
+        2,
+        "the /goal run and the message, nothing after"
+    );
+    assert!(!agent
+        .iter()
+        .any(|body| body.to_string().contains("[Goal — runtime")));
+    task.abort();
+}

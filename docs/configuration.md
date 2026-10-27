@@ -481,8 +481,11 @@ A check that fails does not move it. The check runs on `goal.check_model`, else 
 model. A goal never stops on its own: after three
 turns without progress (a turn that changed files always counts as progress) the next turn
 is told to try a different approach, failed turns retry with backoff however often they fail,
-and `stuck` remains only for goals saved by earlier versions. When the check finds the goal
-reached, one short unchecked turn has the agent tell the user; the check's verdicts post no
+and `stuck` remains only for goals saved by earlier versions. Every run that ends while the
+goal runs is checked, a message's run as well as a goal turn. When the check finds the goal
+reached, one short unchecked turn has the agent tell the user, unless the check's `told_user`
+says the checked answer already did and no question is open; that turn's message asks the
+agent to name open questions only when there are some (`goal-reached-open-questions.md`); the check's verdicts post no
 `goal_note` (only the small-window, quota and failed-turn notes remain). Apart from its model,
 the goal check, the stall nudge, quota retries (every 15 minutes) and error backoff (30 s
 doubling to 15 minutes) are fixed, not runtime configuration. App server commands:
@@ -492,7 +495,8 @@ doubling to 15 minutes) are fixed, not runtime configuration. App server command
 A goal's `added` lists the requests the user sent while it was open (steered, queued or typed;
 not answers to `ask_user` or goal turns), oldest first, at most 20 of up to 2,000 characters;
 the goal check reads them as fenced data and reaches the goal only when they are done too
-(`goal-check-added.md`). `/goal` starts a fresh list.
+(`goal-check-added.md`). `/goal` starts a fresh list. `set_goal` on an open (not reached) goal keeps its `active_ms`,
+`turns` and `added`.
 **Questions.** The agent's `ask_user` tool (no approval prompt, like `set_goal`; a deny rule
 for `ask_user` still wins) stores a chat's questions in `questions/<chat id>.json` (app data):
 `[{"id","run_id","question","choices","assumption","reasons","blocking","topic","asked_at","answer"}]`

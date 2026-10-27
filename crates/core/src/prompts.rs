@@ -72,6 +72,8 @@ pub const GOAL_TURN: &str = include_str!("../builtins/prompts/goal-turn.md");
 /// Message that tells the user a checked goal is reached; `{{goal_turn_marker}}`,
 /// `{{turn}}`, `{{goal}}`, `{{reason}}`.
 pub const GOAL_REACHED_TURN: &str = include_str!("../builtins/prompts/goal-reached-turn.md");
+pub const GOAL_REACHED_OPEN_QUESTIONS: &str =
+    include_str!("../builtins/prompts/goal-reached-open-questions.md");
 /// Goal-turn note after turns without progress; `{{turns}}`.
 pub const GOAL_NOTE_STALLED: &str = include_str!("../builtins/prompts/goal-note-stalled.md");
 /// Goal-turn note after the user resumes a goal saved as stuck (older versions).

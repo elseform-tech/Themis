@@ -256,7 +256,24 @@ impl AppState {
     ) -> Result<Goal, String> {
         let running = self.require_thread(&thread_id).await?;
         let text = core_goal::normalize_goal(&text).ok_or("Describe the goal in one sentence")?;
-        let goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
+        let previous = self
+            .goal_for(&thread_id)
+            .filter(|goal| goal.status != GoalStatus::Reached);
+        let mut goal = self.begin_goal(sink.as_ref(), &thread_id, &text);
+        // Rewording an open goal continues it: its time, turn count and the
+        // requests added to it carry over.
+        if let Some(previous) = previous {
+            let stretch = previous.running_since.map_or(0, |since| {
+                u64::try_from(now_ms().saturating_sub(since)).unwrap_or(0)
+            });
+            if let Some(updated) = self.update_goal(sink.as_ref(), &thread_id, |goal| {
+                goal.active_ms = previous.active_ms.saturating_add(stretch);
+                goal.turns = previous.turns;
+                goal.added = previous.added;
+            }) {
+                goal = updated;
+            }
+        }
         if !running {
             self.start_goal_turn(
                 sink,
@@ -637,8 +654,9 @@ impl AppState {
         run_id: String,
         terminal: ThreadEvent,
     ) {
-        let was_turn = self
-            .inner
+        // Every run is checked, not only goal turns: a message's run that
+        // finished the goal would otherwise be followed by a turn redoing it.
+        self.inner
             .goal_turn_runs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -667,16 +685,6 @@ impl AppState {
             self.update_goal(sink.as_ref(), &thread_id, |goal| {
                 set_status(goal, GoalStatus::Waiting, Some(question.question.clone()));
             });
-            return;
-        }
-        if !was_turn {
-            // The run answered the user (or set the goal): no check, just continue.
-            self.start_goal_turn(
-                sink,
-                thread_id,
-                "The user's message was handled; continue toward the goal.".into(),
-            )
-            .await;
             return;
         }
         let (evidence, changed_files, through_seq) =
@@ -735,6 +743,7 @@ impl AppState {
                     reason: reason.into(),
                     progress: None,
                     progressed: None,
+                    told_user: None,
                 }
             }
         };
@@ -773,6 +782,11 @@ impl AppState {
                 }) else {
                     return;
                 };
+                // An answer that already says so needs no second message,
+                // unless open questions still have to be named.
+                if verdict.told_user == Some(true) && self.open_questions(&thread_id).is_empty() {
+                    return;
+                }
                 self.announce_reached(sink, &thread_id, &goal, &verdict.reason)
                     .await;
             }
@@ -849,8 +863,17 @@ impl AppState {
         goal: &Goal,
         reason: &str,
     ) {
-        let reason = self.with_open_questions(thread_id, reason.to_owned());
-        let text = core_goal::reached_message(goal.turns.saturating_add(1), &goal.text, &reason);
+        let open = self.open_questions_note(thread_id);
+        let reason = match &open {
+            Some(open) => format!("{reason}\n{open}"),
+            None => reason.to_owned(),
+        };
+        let text = core_goal::reached_message(
+            goal.turns.saturating_add(1),
+            &goal.text,
+            &reason,
+            open.is_some(),
+        );
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, _) = self
             .send_from_server(sink, thread_id, text, &run_id, None, Vec::new())
