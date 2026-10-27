@@ -135,7 +135,7 @@ export interface AppState {
   /** A file to show in the Workspace changes view, e.g. from an edited-files list. */
   diffFocus: { path: string; at: number } | null;
   /** Asks the open (or next opened) Workspace panel to show a tab. */
-  workspaceTabRequest: { tab: "tasks" | "browser"; at: number } | null;
+  workspaceTabRequest: { tab: WorkspaceTab; at: number } | null;
   /** Each chat's built-in browser: who drives it and any recording (live only). */
   browsers: Record<string, { controller: string; recording?: BrowserRecording; at: number }>;
   /** Per-chat task feed behind the header indicator and the Tasks tab. */
@@ -147,6 +147,9 @@ export interface AppState {
   paletteOpen: boolean;
   projectDialogOpen: boolean;
 }
+
+/** The Workspace panel's views. */
+export type WorkspaceTab = "changes" | "files" | "branches" | "pulls" | "tasks" | "browser";
 
 export type AppAction =
   | { type: "mcp/status"; connections: McpConnections }
@@ -200,7 +203,7 @@ export type AppAction =
   | { type: "toast/dismiss"; id: string }
   | { type: "ui/view"; view: MainView; settings?: { section: string; key?: string } }
   | { type: "ui/settings-section"; section: string }
-  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: "tasks" | "browser" }
+  | { type: "ui/diff-panel"; open: boolean; focus?: string; tab?: WorkspaceTab }
   | { type: "browser/opens-workspace"; value: boolean }
   | { type: "ui/tab-request-consumed" }
   | { type: "tasks/loaded"; threadId: string; tasks: ThreadTasks }

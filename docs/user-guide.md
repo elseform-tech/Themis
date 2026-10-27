@@ -192,6 +192,13 @@ is reached; for example `/goal optimize this app to speed up p95`.
   tidy-up and auto-compact thresholds. Near auto-compact during a run it turns
   warm and a one-time heads-up appears; afterwards a **Context compacted** divider
   shows the before → after usage. Nothing is deleted: originals stay on disk.
+- **The overview box** sits over the top right of a chat while Workspace is closed:
+  one row each for the chat's browser page, changed files (+/− lines), tasks and
+  queued messages, the latest artifact, and the chat's cost, as icons with short
+  values (hover a row for its name). Click a row to open Workspace on that tab,
+  or the Workspace icon to open it as you left it; closing Workspace brings the
+  box back. The chevron folds it to icons only, as does a narrow chat. Rows with
+  nothing to show are left out, and a chat with nothing to show has no box.
 - **Workspace** in a thread's header opens a read-only monitor of the project:
   **Changes** (readable changed files and their wrapped, highlighted diff,
   updating live while the agent works; binary and generated files are hidden; a
