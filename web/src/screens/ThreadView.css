@@ -70,10 +70,8 @@
 .themis-response-action:hover { color: var(--themis-text); }
 .themis-response-model { color: var(--themis-text-3); font-size: .75rem; }
 
-/* Run activity: the agent's progress sentences stay visible; tool calls fold into quiet rows. */
+/* Run activity: the agent's progress sentences read like its answers; tool calls fold into quiet rows. */
 .themis-run-activity { display: flex; flex-direction: column; gap: 8px; }
-.themis-run-activity > .themis-thread-msg .themis-response { font-size: .875rem; }
-.themis-run-activity > .themis-thread-msg .themis-response > p { color: var(--themis-text-2); }
 .themis-milestone, .themis-tool-group { font-size: .8125rem; }
 .themis-tool-group > summary { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; color: var(--themis-text-3); cursor: pointer; list-style: none; }
 .themis-tool-group > summary:hover { color: var(--themis-text); }

@@ -64,7 +64,7 @@ levels are listed.
   that model offers effort levels, the effort slider. A new chat shows a greeting,
   a centred composer and starter suggestions. The composer's **+** menu attaches
   files or inserts `/` (skill) and `@` (plugin). The agent's short progress
-  sentences stay in the conversation, in quieter text; the tool calls between two
+  sentences stay in the conversation, styled like its answers; the tool calls between two
   of them fold into one **N tool calls** row, open while one of them runs. Expand
   it, then a tool call, to inspect its input and output. Completed replies offer
   **Copy** beside the model and the run's duration. Public text streams as it
