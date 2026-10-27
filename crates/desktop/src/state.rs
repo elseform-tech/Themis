@@ -897,19 +897,6 @@ impl AppState {
             .map_err(|_| format!("approval '{approval_id}' already expired"))?;
         Ok(())
     }
-
-    /// Opens `path` in the OS default editor (best-effort; the platform
-    /// openers take no line argument, so `_line` is accepted and ignored).
-    pub async fn open_in_editor(&self, path: String, _line: Option<u32>) -> Result<(), String> {
-        if path.trim().is_empty() {
-            return Err("path must not be empty".to_owned());
-        }
-        let target = PathBuf::from(path);
-        if !target.exists() {
-            return Err(format!("path '{}' does not exist", target.display()));
-        }
-        spawn_opener(&target)
-    }
 }
 
 fn thread_info(record: &ThreadRecord, transcript: &TranscriptStore) -> Result<ThreadInfo, String> {
@@ -1292,42 +1279,6 @@ pub(crate) fn spawn_opener_url(url: &str) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("failed to open the browser: {e}"))
-}
-
-#[cfg(target_os = "macos")]
-fn spawn_opener(target: &Path) -> Result<(), String> {
-    std::process::Command::new("open")
-        .arg(target)
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("failed to open '{}': {err}", target.display()))
-}
-
-#[cfg(target_os = "linux")]
-fn spawn_opener(target: &Path) -> Result<(), String> {
-    std::process::Command::new("xdg-open")
-        .arg(target)
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("failed to open '{}': {err}", target.display()))
-}
-
-#[cfg(target_os = "windows")]
-fn spawn_opener(target: &Path) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/C", "start", ""])
-        .arg(target)
-        .spawn()
-        .map(|_| ())
-        .map_err(|err| format!("failed to open '{}': {err}", target.display()))
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn spawn_opener(target: &Path) -> Result<(), String> {
-    Err(format!(
-        "opening '{}' is not supported on this platform",
-        target.display()
-    ))
 }
 
 #[cfg(test)]
@@ -1971,19 +1922,6 @@ mod tests {
         assert!(!json.contains("sk-test"));
         state.clear_secret("go".to_owned()).await.expect("clear");
         assert!(!state.get_secret_status().await.unwrap().go);
-    }
-
-    #[tokio::test]
-    async fn open_in_editor_validates_paths() {
-        let (state, dir) = test_state();
-        assert!(state.open_in_editor(String::new(), None).await.is_err());
-        assert!(state
-            .open_in_editor(
-                dir.path().join("missing").to_string_lossy().into_owned(),
-                Some(3),
-            )
-            .await
-            .is_err());
     }
 
     #[tokio::test]

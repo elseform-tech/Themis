@@ -227,10 +227,6 @@ export function setThreadEffort(threadId: string, effort: string): Promise<Threa
   return invoke('set_thread_effort', { threadId, effort: effort || null });
 }
 
-export function openInEditor(path: string, line?: number): Promise<void> {
-  return invoke('open_in_editor', { path, line: line ?? null });
-}
-
 export function getThread(threadId: string): Promise<ThreadInfo> {
   return invoke('get_thread', { threadId });
 }

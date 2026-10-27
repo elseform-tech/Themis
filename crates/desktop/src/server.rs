@@ -999,11 +999,6 @@ async fn dispatch_command(
         )),
         "remove_key" => done!(state.remove_key(&arg::<String>(&args, "name")?)),
         "list_editors" => output!(json!({"editors": crate::state::editors::installed_editors()})),
-        "open_in_editor" => done!(
-            state
-                .open_in_editor(arg(&args, "path")?, arg(&args, "line")?)
-                .await
-        ),
         "record_notification" => done!(state.record_notification(arg(&args, "record")?)),
         "get_settings" => output!(state.get_settings().await),
         "update_settings" => output!(
