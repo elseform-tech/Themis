@@ -15,6 +15,9 @@ export interface ApprovalBoxProps {
   label?: string;
   open: boolean;
   onDecide: (decision: ApprovalDecision) => void;
+  /** What waits behind this request, such as "1 question next". */
+  next?: string;
+  onFold?: () => void;
 }
 
 const RISK_TONE: Record<RiskLevel, BadgeTone> = {
@@ -71,10 +74,10 @@ export function GrantHint({ request }: { request: ApprovalRequest }) {
 
 const SHORTCUT_DELAY_MS = 500;
 
-/** An action waiting for the person's decision, inline in its chat below the work it
- *  interrupts, like a question from the agent. Only that action waits; nothing else is
- *  covered, so the chat stays readable and questions stay answerable meanwhile. */
-export function ApprovalBox({ request, label, open, onDecide }: ApprovalBoxProps) {
+/** An action waiting for the person's decision, on the composer of its chat (canvas
+ *  board D). Only that action waits; the chat stays readable meanwhile. Once decided it
+ *  goes away and leaves nothing in the chat. */
+export function ApprovalBox({ request, label, open, onDecide, next, onFold }: ApprovalBoxProps) {
   const grantable = request.grantable !== false;
   const outside = request.tool === UNSANDBOXED_TOOL;
   const blocked = request.command?.sandbox_blocked;
@@ -102,13 +105,19 @@ export function ApprovalBox({ request, label, open, onDecide }: ApprovalBoxProps
   const title = outside ? "Run outside the sandbox?" : "Approval needed";
   return (
     <section className="themis-approval-box" aria-label={title} onKeyDown={onKeyDown}>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" /></svg>
-      <div className="themis-approval">
+      <div className="themis-approval-head">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" /></svg>
         <p className="themis-approval-title">{title}</p>
-        <div className="themis-approval-row">
-          <span className="themis-approval-tool">{outside ? "shell (outside the sandbox)" : request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : toolDisplayName(request.tool, label)}</span>
-          <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
-        </div>
+        <span className="themis-approval-tool">{outside ? "shell (outside the sandbox)" : request.tool.startsWith("manage_integrations_") ? "Manage integrations" : request.tool.startsWith("mcp_start_") ? "Connect MCP" : toolDisplayName(request.tool, label)}</span>
+        <Badge tone={RISK_TONE[request.risk]}>{request.risk}</Badge>
+        {next && <span className="themis-approval-next">{next}</span>}
+        {onFold && (
+          <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="Fold to icons" aria-label="Fold to icons" onClick={onFold}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+          </button>
+        )}
+      </div>
+      <div className="themis-approval">
         {request.command
           ? <p className="themis-approval-summary">
               Run <TokenList argv={request.command.argv} />
@@ -117,7 +126,6 @@ export function ApprovalBox({ request, label, open, onDecide }: ApprovalBoxProps
             </p>
           : <p className="themis-approval-summary">{request.tool.startsWith("mcp_") ? request.summary.split(request.tool).join(toolDisplayName(request.tool, label)) : request.summary}</p>}
         {outside && <p className="themis-approval-summary">The sandbox blocked it{blocked ? <>: <SafeText text={blocked} />.</> : "."} Outside the sandbox it can write anywhere you can, read secret folders and use the network.</p>}
-        <p className="themis-thread-hint"><GrantHint request={request} /></p>
         <div className="themis-approval-actions">
           <Button variant="primary" onClick={() => onDecide("once")}>
             Allow once (1)
@@ -131,6 +139,7 @@ export function ApprovalBox({ request, label, open, onDecide }: ApprovalBoxProps
             Deny (3)
           </Button>
         </div>
+        <p className="themis-thread-hint themis-approval-hint"><GrantHint request={request} /></p>
       </div>
     </section>
   );

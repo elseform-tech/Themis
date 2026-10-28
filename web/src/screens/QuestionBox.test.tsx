@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ANSWER_MARKER, type Question } from "../lib/types";
 import { initialState, reducer } from "../state/reducer";
-import { OpenQuestions, QUESTION_OPEN_MS, QuestionBox } from "./QuestionBox";
+import { composerQueue, QUESTION_OPEN_MS, questionOnComposer } from "../state/composerSlot";
+import { QuestionBox, QuestionNote } from "./QuestionBox";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
@@ -40,29 +41,24 @@ describe("QuestionBox", () => {
     await waitFor(() => expect(answer).toHaveBeenCalledWith("Pebble"));
   });
 
-  it("sends a written answer, and not an empty one", async () => {
+  it("sends a written answer, offering Skip until something is written", async () => {
     const answer = vi.fn().mockResolvedValue(undefined);
-    render(<QuestionBox question={question({ choices: [] })} onAnswer={answer} />);
-    const send = screen.getByRole("button", { name: "Send answer" });
-    expect(send).toBeDisabled();
+    const skip = vi.fn();
+    render(<QuestionBox question={question({ choices: [] })} onAnswer={answer} onSkip={skip} />);
+    expect(screen.queryByRole("button", { name: "Send answer" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(skip).toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Your answer"), { target: { value: "  Two spaces  " } });
-    fireEvent.click(send);
+    expect(screen.queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
     await waitFor(() => expect(answer).toHaveBeenCalledWith("Two spaces"));
   });
 
-  it("stays open until answered, and shrinks to one line only after a while without an answer", () => {
-    vi.useFakeTimers();
-    render(<QuestionBox question={question()} onAnswer={vi.fn()} />);
-    expect(screen.getByRole("region", { name: "Question from the agent" })).toBeInTheDocument();
-    act(() => { vi.advanceTimersByTime(QUESTION_OPEN_MS + 100); });
-    expect(screen.queryByRole("region", { name: "Question from the agent" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Open question/ }));
-    expect(screen.getByRole("region", { name: "Question from the agent" })).toBeInTheDocument();
-  });
-
-  it("keeps a blocking question open however long it waits", () => {
-    render(<QuestionBox question={question({ blocking: true, asked_at: Date.now() - 10 * QUESTION_OPEN_MS })} onAnswer={vi.fn()} />);
-    expect(screen.getByRole("region", { name: "Question from the agent" })).toBeInTheDocument();
+  it("offers no Skip for a blocking question: the work waits for it", () => {
+    render(<QuestionBox question={question({ blocking: true })} onAnswer={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Spaces/ })).toHaveTextContent("Recommended");
+    expect(screen.getByRole("button", { name: /^Spaces/ })).not.toHaveTextContent("working on this");
   });
 
   it("lists choices one per line, so a long choice reads in full", () => {
@@ -70,19 +66,50 @@ describe("QuestionBox", () => {
     render(<QuestionBox question={question({ choices: [long, "Keep SQLite"] })} onAnswer={vi.fn()} />);
     expect(screen.getByRole("button", { name: long })).toHaveClass("themis-question-choice");
   });
+});
 
-  it("shows an answered question as one quiet line with its answer", () => {
-    render(<QuestionBox question={question({ answer: "Tabs" })} onAnswer={vi.fn()} />);
+describe("a question in its turn", () => {
+  it("is one quiet line with its answer once answered", () => {
+    render(<QuestionNote question={question({ answer: "Tabs" })} onComposer={false} onOpen={vi.fn()} />);
     expect(screen.getByRole("note")).toHaveTextContent("Tabs or spaces? — Tabs");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
-  it("counts the open questions that have shrunk, and nothing else", () => {
-    const old = Date.now() - 2 * QUESTION_OPEN_MS;
-    const { container, rerender } = render(<OpenQuestions questions={[question()]} />);
+  it("shows nothing while the question is on the composer, and a line that brings it back after", () => {
+    const open = vi.fn();
+    const { container, rerender } = render(<QuestionNote question={question()} onComposer onOpen={open} />);
     expect(container).toBeEmptyDOMElement();
-    rerender(<OpenQuestions questions={[question({ id: "a", asked_at: old }), question({ id: "b", asked_at: old }), question({ id: "c", asked_at: old, answer: "Tabs" }), question({ id: "d", asked_at: old, blocking: true })]} />);
-    expect(screen.getByRole("button", { name: "2 open questions" })).toBeInTheDocument();
+    rerender(<QuestionNote question={question()} onComposer={false} onOpen={open} />);
+    fireEvent.click(screen.getByRole("button", { name: /Open question · Tabs or spaces\?/ }));
+    expect(open).toHaveBeenCalled();
+  });
+});
+
+describe("what the composer shows", () => {
+  const approval = (id: string) => ({ approval_id: id, thread_id: "t1", tool: "shell", summary: "run", risk: "execute" as const });
+  const none = new Map();
+
+  it("puts approvals before questions, oldest question first, and counts the rest", () => {
+    const now = Date.now();
+    const newer = question({ id: "new", asked_at: now - 10 });
+    const older = question({ id: "old", asked_at: now - 20 });
+    const first = composerQueue([approval("a1"), approval("a2")] as never, [newer, older], none, now);
+    expect(first.current).toEqual({ kind: "approval", request: approval("a1") });
+    expect(first.waiting).toEqual({ approvals: 1, questions: 2 });
+    const next = composerQueue([], [newer, older], none, now);
+    expect(next.current).toEqual({ kind: "question", question: older });
+    expect(next.waiting).toEqual({ approvals: 0, questions: 1 });
+    expect(composerQueue([], [question({ answer: "Tabs" })], none, now).current).toBeNull();
+  });
+
+  it("moves a question back into its turn when skipped or after a while, but never a blocking one", () => {
+    const now = Date.now();
+    expect(questionOnComposer(question(), none, now)).toBe(true);
+    expect(questionOnComposer(question(), new Map([["q1", "turn"]]), now)).toBe(false);
+    expect(questionOnComposer(question({ asked_at: now - QUESTION_OPEN_MS - 1 }), none, now)).toBe(false);
+    // Opened again from its turn, it stays until answered.
+    expect(questionOnComposer(question({ asked_at: now - 10 * QUESTION_OPEN_MS }), new Map([["q1", "composer"]]), now)).toBe(true);
+    expect(questionOnComposer(question({ blocking: true, asked_at: now - 10 * QUESTION_OPEN_MS }), new Map([["q1", "turn"]]), now)).toBe(true);
   });
 });
 
