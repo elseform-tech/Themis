@@ -109,7 +109,7 @@ another option or write your own.
   answer) also moves it back into its turn as an **Open question** line; click
   that line to put it on the composer again and answer whenever you like.
 - **Fold to icons** (the chevron) turns the goal, the approval and the questions
-  into one row of small pills: the goal's checklist progress, the waiting
+  into one row of small pills: the goal, the waiting
   command, the number of questions. Click any pill to unfold. The fold is
   remembered.
 - Your answer reaches the agent right away when it is working (read before its
@@ -133,7 +133,7 @@ is reached; for example `/goal optimize this app to speed up p95`.
   plain words, the agent may ask once whether to make it a goal; if you agree, it
   sets the goal itself.
 - **The goal row** at the top of the composer shows the sentence (click it to
-  read it in full), the checklist and the goal's total elapsed
+  read it in full) and the goal's total elapsed
   time across all its turns (time spent paused, waiting or with Themis closed does
   not count). Its icons are
   **Edit** (applies from the next turn; the current turn keeps running),

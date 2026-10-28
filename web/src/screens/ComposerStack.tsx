@@ -5,7 +5,7 @@ import type { ApprovalDecision, ApprovalRequest, Goal, Question } from "../lib/t
 import { composerQueue, placeQuestion, QUESTION_OPEN_MS, readFolded, usePlacements, writeFolded } from "../state/composerSlot";
 import type { ToolTraceEntry } from "../state/reducer";
 import { describeError, toast, useApp } from "../state/store";
-import { checklistCounts, GoalBar } from "./GoalBar";
+import { GoalBar } from "./GoalBar";
 import { QuestionBox, QuestionMark, useNowAt } from "./QuestionBox";
 
 interface ComposerStackProps {
@@ -60,16 +60,15 @@ export function ComposerStack({ threadId, goal, approvals, questions, traces, on
   if (!shownGoal && !current) return null;
 
   if (folded) {
-    const checklist = checklistCounts(shownGoal);
     const questionCount = waiting.questions + (current?.kind === "question" ? 1 : 0);
     const approval = current?.kind === "approval" ? current.request : null;
     const approvalPreview = approval ? approval.command?.argv.join(" ") ?? approval.tool : "";
     return (
       <div className="themis-composer-pills" role="group" aria-label="Goal, approvals and questions, folded">
         {shownGoal && (
-          <button type="button" className="themis-composer-pill" aria-label={`Goal: ${shownGoal.text}${checklist ? `, ${checklist.done} of ${checklist.total} done` : ""}. Unfold`} onClick={() => setFolded(false)}>
+          <button type="button" className="themis-composer-pill" aria-label={`Goal: ${shownGoal.text}. Unfold`} onClick={() => setFolded(false)}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /></svg>
-            <span className="themis-composer-pill-text">{checklist ? `${checklist.done}/${checklist.total}` : shownGoal.text}</span>
+            <span className="themis-composer-pill-text">{shownGoal.text}</span>
           </button>
         )}
         {approval && (

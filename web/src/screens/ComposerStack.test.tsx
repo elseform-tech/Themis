@@ -16,7 +16,7 @@ vi.mock("../lib/tauri", () => ({
 
 const approval: ApprovalRequest = { approval_id: "a1", thread_id: "t1", tool: "shell", summary: "run", risk: "execute", command: { argv: ["python3", "check.py"] } } as ApprovalRequest;
 const question: Question = { id: "q1", run_id: "r1", question: "Retired items in INDEX.md only?", choices: ["INDEX.md only", "Own file too"], assumption: "INDEX.md only", blocking: false, asked_at: Date.now() };
-const goal: Goal = { text: "Write every memo", status: "running", started_at: 0, active_ms: 0, turns: 2, stalls: 0, failures: 0, checklist: [{ text: "a", done: true, proof: "p" }, { text: "b", done: false }] };
+const goal: Goal = { text: "Write every memo", status: "running", started_at: 0, active_ms: 0, turns: 2, stalls: 0, failures: 0 };
 
 function stack(props: { approvals?: ApprovalRequest[]; questions?: Question[]; goal?: Goal | null }) {
   return <ComposerStack threadId="t1" goal={props.goal ?? null} approvals={props.approvals ?? []} questions={props.questions ?? []} traces={[]}
@@ -52,10 +52,10 @@ describe("composer stack", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("folds to pills that show the goal's progress, the waiting command and the questions, and remembers it", () => {
+  it("folds to pills that show the goal, the waiting command and the questions, and remembers it", () => {
     render(stack({ goal, approvals: [approval], questions: [{ ...question, id: "fold" }] }));
     fireEvent.click(screen.getByRole("button", { name: "Fold to icons" }));
-    expect(screen.getByRole("button", { name: "Goal: Write every memo, 1 of 2 done. Unfold" })).toHaveTextContent("1/2");
+    expect(screen.getByRole("button", { name: "Goal: Write every memo. Unfold" })).toHaveTextContent("Write every memo");
     expect(screen.getByRole("button", { name: "Approval waiting: python3 check.py. Unfold" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 question waiting. Unfold" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Approval needed" })).not.toBeInTheDocument();

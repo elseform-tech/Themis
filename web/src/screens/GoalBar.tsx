@@ -43,7 +43,7 @@ interface GoalBarProps {
 }
 
 /** The chat's unfinished goal as one row of the composer: its sentence (click to read it
- *  in full), checklist, elapsed time, and icons for edit and pause/resume, with remove
+ *  in full), elapsed time, and icons for edit and pause/resume, with remove
  *  under "more". */
 export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: GoalBarProps) {
   const [now, setNow] = useState(() => Date.now());
