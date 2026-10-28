@@ -86,6 +86,7 @@ starts a new series.
 ```sh
 python3 -m evals.soak run --model muse-spark-1.3-contributor            # one post-merge run
 python3 -m evals.soak run --budgets 24000,64000,auto --seeds 1,2,3        # the Auto-ceiling round
+python3 -m evals.soak run --model beam-free --effort max                  # a free model, thinking hardest
 python3 -m evals.soak report evals/soak/results/DATE/soak-24000-1-1.json  # regrade a saved trace
 python3 -m evals.soak trend                                               # latest run per series
 ```

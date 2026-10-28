@@ -107,6 +107,7 @@ class Soak:
         with open(os.path.join(self.data, "runtime.jsonc"), "w", encoding="utf-8") as handle:
             json.dump({"schema_version": 1, "context_token_budget": self.budget, "approval": APPROVAL}, handle)
         trace = {"spec": spec, "budget": self.budget, "seed": self.seed, "model": self.options["model"],
+                 "effort": self.options.get("effort") or "",
                  "mode": "custom", "material_tokens": material_tokens(self.project), "events": [],
                  "goal_polls": [], "saved_checkpoints": [], "goal_text": script["goal"][len("/goal"):].strip(),
                  "followup": None, "recall": [], "end": None, "final": {}}
@@ -145,6 +146,10 @@ class Soak:
         _value, error = self.call("set_thread_approval_mode", {"threadId": self.thread, "mode": "custom"})
         if error:
             return {"reason": "infrastructure", "detail": f"approval mode: {error}"}
+        if self.options.get("effort"):
+            _value, error = self.call("set_thread_effort", {"threadId": self.thread, "effort": self.options["effort"]})
+            if error:
+                return {"reason": "infrastructure", "detail": f"reasoning effort: {error}"}
         self.watch = Watch(self.binary, self.data, self.env, self.thread, self.on_event)
         time.sleep(self.options.get("subscribe_s", 2))  # let the subscription start before the first run
         deadline = started + self.options["timeout"]
