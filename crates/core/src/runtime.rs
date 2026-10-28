@@ -653,6 +653,9 @@ async fn run_task_with_evidence_inner(
     // Whether the run has used tools, and whether it was already asked for its summary.
     let mut used_tools = false;
     let mut summary_asked = false;
+    // What the run already told the user before a runtime check or note sent it back
+    // without a tool call: the final answer continues it instead of repeating it.
+    let mut answered = String::new();
     // Steered messages this run read, for the check before it ends.
     let mut steered: Vec<String> = Vec::new();
     let mut steers_checked = false;
@@ -980,6 +983,7 @@ async fn run_task_with_evidence_inner(
                 steers_checked = true;
                 crate::context_metrics::activity("steers_checks");
                 let answer = text.clone().unwrap_or_default();
+                answered = joined(&answered, &answer);
                 if !answer.trim().is_empty() {
                     events
                         .send(RunEvent::AssistantText("\n\n".into()))
@@ -1005,6 +1009,7 @@ async fn run_task_with_evidence_inner(
                 spec_checked = true;
                 crate::context_metrics::activity("spec_checks");
                 let answer = text.unwrap_or_default();
+                answered = joined(&answered, &answer);
                 // The checked answer starts a new paragraph after the one already shown.
                 if !answer.trim().is_empty() {
                     events
@@ -1035,6 +1040,7 @@ async fn run_task_with_evidence_inner(
                 && !nudge_off("turn_summary")
             {
                 summary_asked = true;
+                // The progress line is not part of the answer: the chat keeps it as one.
                 crate::context_metrics::activity("turn_summary_requests");
                 events
                     .send(RunEvent::AssistantText("\n\n".into()))
@@ -1052,7 +1058,7 @@ async fn run_task_with_evidence_inner(
                 });
                 continue;
             }
-            let result = text.unwrap_or_default();
+            let result = joined(&answered, &text.unwrap_or_default());
             emit(RunEvent::Finished {
                 result: result.clone(),
             })
@@ -1062,6 +1068,8 @@ async fn run_task_with_evidence_inner(
         }
 
         used_tools = true;
+        // A tool call starts new work: an earlier answer is no longer the turn's answer.
+        answered.clear();
         let mut results = execute_tool_calls(
             &tools,
             &caching,
@@ -1876,6 +1884,19 @@ fn with_shown(shown: &str, text: Option<String>) -> Option<String> {
 const EMPTY_ANSWER_NOTE: &str = crate::prompts::RUNTIME_EMPTY_ANSWER;
 
 const TURN_SUMMARY: &str = crate::prompts::RUNTIME_TURN_SUMMARY;
+
+/// `earlier` and `later` as one answer, a blank line between; either may be empty. When
+/// one already holds the other (a model repeating itself), the fuller one is the answer.
+fn joined(earlier: &str, later: &str) -> String {
+    let (before, after) = (earlier.trim(), later.trim());
+    if before.is_empty() || after.contains(before) {
+        later.to_owned()
+    } else if after.is_empty() || before.contains(after) {
+        earlier.to_owned()
+    } else {
+        format!("{}\n\n{}", earlier.trim_end(), later.trim_start())
+    }
+}
 
 /// Longest final answer still read as a progress line rather than a summary, in characters.
 const PROGRESS_LINE_CHARS: usize = 120;
@@ -5421,7 +5442,8 @@ mod tests {
                 .count()
         };
         let (answer, bodies) = run(Vec::new(), true).await;
-        assert_eq!(answer, "Verified: a.txt holds 1.");
+        // The checked answer continues the first one; the chat shows both, once.
+        assert_eq!(answer, "Done.\n\nVerified: a.txt holds 1.");
         assert_eq!((bodies.len(), checks(&bodies)), (3, 1));
         // The answer before the check stays in the conversation the model sees.
         let checked = bodies[2]["messages"].as_array().unwrap();
@@ -5522,6 +5544,7 @@ mod tests {
                 .count()
         };
         let (answer, bodies) = run(Vec::new(), true, "Continuing.").await;
+        // The progress line is not part of the answer; the chat keeps it as a progress line.
         assert!(answer.starts_with("I listed the project"), "{answer}");
         assert_eq!((bodies.len(), asked(&bodies)), (3, 1));
         // The progress line stays in what the model sees.
@@ -5540,6 +5563,9 @@ mod tests {
             (answer.as_str(), bodies.len(), asked(&bodies)),
             ("Continuing.", 2, 0)
         );
+        assert_eq!(joined("Done.", "Done."), "Done.");
+        assert_eq!(joined("Done.", "Done. Verified."), "Done. Verified.");
+        assert_eq!(joined("Done.", "Verified."), "Done.\n\nVerified.");
         assert!(
             progress_line(" Moving on to the next batch. ")
                 && !progress_line("Done.\nAll checks pass.")
@@ -5721,6 +5747,7 @@ mod tests {
         for first_calls_tool in [true, false] {
             let (answer, bodies, events) =
                 run(first_calls_tool, &["Use tabs.", "And keep it short."]).await;
+            // The same answer before and after the check is shown once.
             assert_eq!(answer, ADJUSTED);
             // Two steers: once, before the run ends, the model is shown both again.
             assert_eq!(bodies.len(), 3);

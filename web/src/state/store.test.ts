@@ -92,6 +92,22 @@ describe("thread lifecycle events", () => {
     expect(restored.runDurations).toEqual({});
   });
 
+  it("keeps an answer streamed before the final one as a progress line, so nothing flashes and vanishes", () => {
+    const texts = (s: AppState) => (s.messages[THREAD.id] ?? []).map(message => [message.text, message.final === true]);
+    let s = applyThreadEvent(withThread(), envelope({ kind: "started", task: "work", max_turns: 5 }));
+    // The first answer, then the spec check's verified one, with no tool call between.
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "The second line is beta." }));
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "\n\n" }));
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "Verified: the second line is beta." }));
+    s = applyThreadEvent(s, envelope({ kind: "finished", result: "Verified: the second line is beta." }));
+    expect(texts(s).slice(-2)).toEqual([["The second line is beta.", false], ["Verified: the second line is beta.", true]]);
+    // An ordinary answer is not split.
+    s = applyThreadEvent(s, envelope({ kind: "started", task: "again", max_turns: 5 }));
+    s = applyThreadEvent(s, envelope({ kind: "assistant_text", text: "Done." }));
+    s = applyThreadEvent(s, envelope({ kind: "finished", result: "Done." }));
+    expect(texts(s).slice(-2)).toEqual([["Verified: the second line is beta.", true], ["Done.", true]]);
+  });
+
   it("shows compaction only while a checkpoint is being written", () => {
     let s = withThread();
     s = applyThreadEvent(s, envelope({ kind: "started", task: "work", max_turns: 10 }));
