@@ -1388,14 +1388,17 @@ async fn thinking_is_on_by_default_for_answers_but_not_for_summaries() {
         body("claude-test", Some("high"), false)["output_config"],
         json!({"effort":"high"})
     );
-    // Summaries keep thinking off.
+    // Summaries keep thinking off: with the switch where the model has one, else at its
+    // lowest effort; a model with neither gets no thinking field (Go rejects unknown ones).
     assert_eq!(
         body("longcat-test", None, true)["thinking"],
         json!({"type":"disabled"})
     );
-    assert!(body("deepseek-test", None, true)
-        .get("reasoning_effort")
-        .is_none());
+    let deepseek = body("deepseek-test", None, true);
+    assert!(deepseek.get("thinking").is_none(), "{deepseek}");
+    assert_eq!(deepseek["reasoning_effort"], "low");
+    let plain = body("plain-test", None, true);
+    assert!(plain.get("thinking").is_none() && plain.get("reasoning_effort").is_none());
 }
 
 #[tokio::test]
