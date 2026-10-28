@@ -13,9 +13,8 @@ import { useNewThread } from "./actions";
 import { ThreadComposer } from "./ThreadComposer";
 import { ThreadConversation } from "./ThreadConversation";
 import { ThreadHeader } from "./ThreadHeader";
-import { GoalBar } from "./GoalBar";
+import { ComposerStack } from "./ComposerStack";
 import { QueueStack } from "./QueueStack";
-import { OpenQuestions } from "./QuestionBox";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { useOverview, useOverviewRoom } from "./OverviewBox";
@@ -266,6 +265,8 @@ export function ThreadView() {
   const budget = state.contextBudgets[thread.id];
   const goal = state.goals[thread.id] ?? null;
   const queue = state.queues[thread.id] ?? [];
+  const approvals = state.approvals.filter(approval => approval.thread_id === thread.id);
+  const questions = messages.flatMap(message => message.question ? [message.question] : []);
   const compacting = state.compacting[thread.id] ?? false;
   const diff = state.diffs[thread.id];
   const changedFiles = diff?.available ? diff.files.length : undefined;
@@ -313,12 +314,11 @@ export function ThreadView() {
       compacting={compacting}
       location={{ name: project.name, root: project.root, branch: workspace?.branch ?? null }}
       top={<>
-        <OpenQuestions questions={messages.flatMap(message => message.question ? [message.question] : [])} />
-        {goal && <GoalBar goal={goal}
-          onEdit={async text => { try { await editGoal(thread.id, text); } catch (error) { toast(dispatch, `Could not save the goal: ${describeError(error)}`, "danger"); throw error; } }}
-          onPause={() => void pauseGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))}
-          onResume={() => void resumeGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))}
-          onRemove={() => void removeGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))} />}
+        <ComposerStack threadId={thread.id} goal={goal} approvals={approvals} questions={questions} traces={trace}
+          onEditGoal={async text => { try { await editGoal(thread.id, text); } catch (error) { toast(dispatch, `Could not save the goal: ${describeError(error)}`, "danger"); throw error; } }}
+          onPauseGoal={() => void pauseGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))}
+          onResumeGoal={() => void resumeGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))}
+          onRemoveGoal={() => void removeGoal(thread.id).catch(error => toast(dispatch, describeError(error), "danger"))} />
         <QueueStack queue={queue} running={running}
           onSteer={id => void steerQueuedMessage(thread.id, id).catch(error => toast(dispatch, describeError(error), "danger"))}
           onHold={(id, held) => void updateQueuedMessage(thread.id, id, { held }).catch(() => {})}

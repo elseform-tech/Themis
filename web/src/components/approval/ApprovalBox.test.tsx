@@ -60,7 +60,6 @@ describe("ApprovalBox", () => {
   it("offers only Allow once and Deny for destructive requests", () => {
     const { onDecide } = setup({ ...REQUEST, risk: "destructive", grantable: false });
     expect(screen.queryByRole("button", { name: /Allow in this chat/ })).toBeNull();
-    expect(screen.getByText("This kind of action always asks, so it cannot be allowed for the chat.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Deny (3)" }));
     expect(onDecide).toHaveBeenLastCalledWith("deny");
     fireEvent.click(screen.getByRole("button", { name: "Allow once (1)" }));

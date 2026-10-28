@@ -38,15 +38,19 @@ interface GoalBarProps {
   onPause: () => void;
   onResume: () => void;
   onRemove: () => void;
+  /** Folds the composer's boxes to icons; absent when another box offers it. */
+  onFold?: () => void;
 }
 
-/** The chat's unfinished goal on top of the composer: its sentence, elapsed time, and
- *  icon controls for edit, pause/resume, remove and show/hide. */
-export function GoalBar({ goal, onEdit, onPause, onResume, onRemove }: GoalBarProps) {
+/** The chat's unfinished goal as one row of the composer: its sentence (click to read it
+ *  in full), elapsed time, and icons for edit and pause/resume, with remove
+ *  under "more". */
+export function GoalBar({ goal, onEdit, onPause, onResume, onRemove, onFold }: GoalBarProps) {
   const [now, setNow] = useState(() => Date.now());
   const [expanded, setExpanded] = useState(readExpanded);
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [menu, setMenu] = useState(false);
   const ticking = goal.status === "running" && goal.running_since !== undefined;
   useEffect(() => {
     if (!ticking) return;
@@ -96,7 +100,7 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove }: GoalBarPr
   return (
     <div role="region" aria-label="Goal" className={`themis-goal-bar${expanded ? " is-expanded" : ""}`} data-status={goal.status}>
       <GoalMark />
-      <p className="themis-goal-text" title={expanded ? undefined : goal.text}>{goal.text}</p>
+      <button type="button" className="themis-goal-text" aria-expanded={expanded} title={expanded ? "Show less" : goal.text} onClick={toggle}>{goal.text}</button>
       <span className="themis-goal-meta">
         {label && <span className="themis-goal-state">{label}</span>}
         <span className="themis-goal-elapsed themis-icon-tip" data-tooltip="Elapsed" tabIndex={0} aria-label={`Elapsed ${elapsed}`}>
@@ -106,25 +110,34 @@ export function GoalBar({ goal, onEdit, onPause, onResume, onRemove }: GoalBarPr
       </span>
       {editable && (
         <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="Edit goal" aria-label="Edit goal" onClick={() => setDraft(goal.text)}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16Z" /><path d="M13.5 6.5l4 4" /></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16Z" /><path d="M13.5 6.5l4 4" /></svg>
         </button>
       )}
       {goal.status === "running" && (
         <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="Pause after this turn" aria-label="Pause goal after this turn" onClick={onPause}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M9 6v12M15 6v12" /></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M9 6v12M15 6v12" /></svg>
         </button>
       )}
       {paused && (
         <button type="button" className="themis-goal-icon is-primary themis-icon-tip" data-tooltip="Resume" aria-label="Resume goal" onClick={onResume}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5v14l12-7Z" /></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5v14l12-7Z" /></svg>
         </button>
       )}
-      <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="Remove goal" aria-label="Remove goal" onClick={onRemove}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12h10l1-12M9 7V4h6v3" /></svg>
-      </button>
-      <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip={expanded ? "Hide goal" : "Show goal"} aria-label={expanded ? "Hide goal" : "Show goal"} aria-expanded={expanded} onClick={toggle}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d={expanded ? "m6 9 6 6 6-6" : "m6 15 6-6 6 6"} /></svg>
-      </button>
+      <span className="themis-goal-more">
+        <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="More" aria-label="More goal actions" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(open => !open)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
+        </button>
+        {menu && (
+          <span className="themis-goal-menu" role="menu" onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setMenu(false); } }}>
+            <button type="button" role="menuitem" autoFocus onClick={() => { setMenu(false); onRemove(); }} onBlur={event => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) setMenu(false); }}>Remove goal</button>
+          </span>
+        )}
+      </span>
+      {onFold && (
+        <button type="button" className="themis-goal-icon themis-icon-tip" data-tooltip="Fold to icons" aria-label="Fold to icons" onClick={onFold}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+        </button>
+      )}
     </div>
   );
 }

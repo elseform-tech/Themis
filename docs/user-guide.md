@@ -100,16 +100,22 @@ levels are listed.
 ### Questions from the agent
 
 When the agent needs your input, it asks without stopping its work. The
-question shows in the chat with 2–4 options, one per line, its recommended one
+question shows on the composer with 2–4 options, one per line, its recommended one
 marked **Recommended**, or, for an open question such as a name, its
 **Suggested** answer. Each option has one short line on its tradeoff, and the
 recommended one says why. The agent carries on with that answer until you click
 another option or write your own.
 
-- The question stays open until you answer it. After five minutes without an
-  answer it shrinks to one **Open question** line; click it to answer whenever
-  you like. Above the composer, **N open questions** counts those and jumps to
-  the oldest one.
+- **One box at a time.** The composer shows one approval or question at a time,
+  approvals first; what waits behind it is a count ("1 question next"). Once you
+  answer, the question leaves the composer and stays in its turn, where it was
+  asked, as one line with your answer. **Skip** (or five minutes without an
+  answer) also moves it back into its turn as an **Open question** line; click
+  that line to put it on the composer again and answer whenever you like.
+- **Fold to icons** (the chevron) turns the goal, the approval and the questions
+  into one row of small pills: the goal, the waiting
+  command, the number of questions. Click any pill to unfold. The fold is
+  remembered.
 - Your answer reaches the agent right away when it is working (read before its
   next step), or goes out as the next message when it is not. If the answer
   differs from what it assumed, it fixes that work first.
@@ -130,12 +136,13 @@ is reached; for example `/goal optimize this app to speed up p95`.
   and in the sent message. It starts right away. When you ask for an ongoing outcome in
   plain words, the agent may ask once whether to make it a goal; if you agree, it
   sets the goal itself.
-- **The goal bar** on the composer shows the sentence and the goal's total elapsed
+- **The goal row** at the top of the composer shows the sentence (click it to
+  read it in full) and the goal's total elapsed
   time across all its turns (time spent paused, waiting or with Themis closed does
   not count). Its icons are
   **Edit** (applies from the next turn; the current turn keeps running),
-  **Pause** (after this turn) or **Resume**, **Remove** (the current turn finishes;
-  no further turns or checks), and **Show/Hide** for the full sentence. In a narrow
+  **Pause** (after this turn) or **Resume**, and **More**, which holds **Remove**
+  (the current turn finishes; no further turns or checks). In a narrow
   chat the sentence sits on its own line below the icons.
 - **After each turn** (a goal turn, or the run of a message you sent while the
   goal is open) a separate check (on the chat's model, or the one
@@ -241,11 +248,12 @@ Its default policy allows reads and asks before other tools. A matching deny
 rule rejects the action; a matching allow rule proceeds. Projects can add
 restrictions but cannot grant access.
 
-When a rule asks, an **Approval needed** box appears in that chat, below the work
-it interrupts, like a question from the agent. Only that action waits: the chat
-stays readable and open questions stay answerable. Another chat that waits for
+When a rule asks, an **Approval needed** box appears on that chat's composer,
+before any question (see **Questions from the agent**). Only that action waits:
+the chat stays readable. Once you decide, the box goes away and leaves nothing in
+the chat (the call itself still shows in its step list). Another chat that waits for
 you shows **Needs approval** in the sidebar. The box shows the tool, summary,
-and risk, with one choice per line:
+and risk, with the choices in one row:
 
 - **Allow once (1)** — allow this call only.
 - **Allow in this chat (2)** — allow the same command family (for example `cargo test`
