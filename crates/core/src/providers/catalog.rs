@@ -244,6 +244,29 @@ pub(crate) fn thinking_default(model: &str) -> ThinkingDefault {
         .unwrap_or_default()
 }
 
+/// How a summary turns a Chat Completions model's thinking down: the `thinking` switch for a
+/// model whose catalog entry has one (or that the catalog does not describe), else its lowest
+/// listed effort, else nothing. Go rejects a `thinking` field the model does not take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SummaryThinking {
+    Switch,
+    Effort(&'static str),
+    Nothing,
+}
+
+pub(crate) fn summary_thinking(model: &str) -> SummaryThinking {
+    MODEL_THINKING
+        .try_with(|models| match models.get(model) {
+            None => SummaryThinking::Switch,
+            Some(thinking) if thinking.toggle => SummaryThinking::Switch,
+            Some(thinking) if !thinking.efforts.is_empty() => {
+                SummaryThinking::Effort(summary_effort(model))
+            }
+            Some(_) => SummaryThinking::Nothing,
+        })
+        .unwrap_or(SummaryThinking::Switch)
+}
+
 /// The lowest reasoning effort a summary may ask of a Responses model: `none` when the catalog
 /// lists it or does not describe the model, else its lowest of `minimal` and `low` (some
 /// models, such as muse-spark, reject `none`).
