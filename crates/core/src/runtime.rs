@@ -7653,7 +7653,7 @@ mod tests {
         assert!(matches!(messages[0].role, ChatRole::System));
         assert!(messages[0]
             .content
-            .contains("what you found or completed and what you are doing next"));
+            .contains("what you are doing now, or what you found and what comes next"));
         // Social messages get a reply in kind, not a recap of parked work.
         assert!(messages[0].content.contains(
             "do not recap, summarize or resume earlier or parked work unless the user asks about it"
