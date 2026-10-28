@@ -1,0 +1,1 @@
+[Runtime note, not from the user] You ended this turn with a short progress line. If work is left for this turn, continue it now. If the turn is done, end it by telling the user, in a few plain sentences in your own words, what this turn did and what comes next.

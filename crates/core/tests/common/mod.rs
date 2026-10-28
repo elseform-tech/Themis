@@ -14,6 +14,12 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// OpenAI-shaped final-text response body.
+/// A final answer that reads as the turn's summary (two lines), so the runtime does not ask
+/// for one; a short one-line answer after tool calls would be asked once more.
+pub fn summary(text: &str) -> String {
+    format!("{text}\nThat is everything this turn did.")
+}
+
 pub fn final_text_body(text: &str) -> Value {
     json!({
         "id": "chatcmpl-test",

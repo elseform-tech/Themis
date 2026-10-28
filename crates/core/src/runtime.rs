@@ -650,6 +650,9 @@ async fn run_task_with_evidence_inner(
     // Whether this run changed files, and whether its spec check was already sent.
     let mut changed_files = false;
     let mut spec_checked = false;
+    // Whether the run has used tools, and whether it was already asked for its summary.
+    let mut used_tools = false;
+    let mut summary_asked = false;
     // Steered messages this run read, for the check before it ends.
     let mut steered: Vec<String> = Vec::new();
     let mut steers_checked = false;
@@ -1021,6 +1024,34 @@ async fn run_task_with_evidence_inner(
                 });
                 continue;
             }
+            // A run that worked with tools ends with a message to the user. A short progress
+            // line ("Continuing through the ember files.") is not one: agents narrated a step
+            // and stopped (replays, 13 of 1,452 turns). Asked once, it continues or sums up.
+            if used_tools
+                && !summary_asked
+                // Only with a request to spare: the last one ends the run with what it has.
+                && turn < policy.total_turns
+                && progress_line(text.as_deref().unwrap_or_default())
+                && !nudge_off("turn_summary")
+            {
+                summary_asked = true;
+                crate::context_metrics::activity("turn_summary_requests");
+                events
+                    .send(RunEvent::AssistantText("\n\n".into()))
+                    .await
+                    .ok();
+                messages.push(ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::Text,
+                    content: text.unwrap_or_default(),
+                });
+                messages.push(ChatMessage {
+                    role: ChatRole::User,
+                    message_type: MessageType::Text,
+                    content: TURN_SUMMARY.to_owned(),
+                });
+                continue;
+            }
             let result = text.unwrap_or_default();
             emit(RunEvent::Finished {
                 result: result.clone(),
@@ -1030,6 +1061,7 @@ async fn run_task_with_evidence_inner(
             return Ok(result);
         }
 
+        used_tools = true;
         let mut results = execute_tool_calls(
             &tools,
             &caching,
@@ -1843,6 +1875,18 @@ fn with_shown(shown: &str, text: Option<String>) -> Option<String> {
 
 const EMPTY_ANSWER_NOTE: &str = crate::prompts::RUNTIME_EMPTY_ANSWER;
 
+const TURN_SUMMARY: &str = crate::prompts::RUNTIME_TURN_SUMMARY;
+
+/// Longest final answer still read as a progress line rather than a summary, in characters.
+const PROGRESS_LINE_CHARS: usize = 120;
+
+/// Whether a final answer is only a short progress line: one line, under
+/// [`PROGRESS_LINE_CHARS`]. A longer or multi-line answer is the turn's own summary.
+fn progress_line(text: &str) -> bool {
+    let text = text.trim();
+    !text.contains('\n') && text.chars().count() < PROGRESS_LINE_CHARS
+}
+
 const LOOP_WARNING: &str = crate::prompts::RUNTIME_LOOP_WARNING;
 
 /// Adds the loop warning to a repeated result without dropping its content.
@@ -2178,7 +2222,7 @@ fn steers_check(steered: &[String]) -> String {
 #[cfg(feature = "eval")]
 tokio::task_local! {
     /// Eval-only ablation: runtime nudges switched off (`loop_warning`,
-    /// `repeat_receipt`, `spec_check`, `steers_check`), to measure whether each one earns
+    /// `repeat_receipt`, `spec_check`, `steers_check`, `turn_summary`), to measure whether each one earns
     /// its place.
     pub static EVAL_NUDGES_OFF: Arc<Vec<String>>;
 }
@@ -2700,11 +2744,12 @@ fn calibration_sample(
 }
 
 /// Notes the runtime adds as user messages during a run; none is a new request.
-const RUNTIME_NOTES: [&str; 4] = [
+const RUNTIME_NOTES: [&str; 5] = [
     SPEC_CHECK,
     CUT_OFF_NOTE,
     SILENT_CUT_OFF_NOTE,
     EMPTY_ANSWER_NOTE,
+    TURN_SUMMARY,
 ];
 
 /// The request being worked on: the last user message that is not one of the
@@ -5317,7 +5362,8 @@ mod tests {
             };
             let answer = EVAL_NUDGES_OFF
                 .scope(
-                    Arc::new(nudges_off),
+                    // The turn-summary nudge has its own test.
+                    Arc::new([nudges_off, vec!["turn_summary".to_owned()]].concat()),
                     run_task_with_evidence(
                         llm,
                         tools,
@@ -5365,6 +5411,114 @@ mod tests {
         assert_eq!(
             (answer.as_str(), bodies.len(), checks(&bodies)),
             ("Done.", 2, 0)
+        );
+    }
+
+    /// A run that used tools and ends on a short progress line is asked once to continue or
+    /// sum up; a summary, a run without tools, or the eval switch leaves it alone.
+    #[cfg(feature = "eval")]
+    #[tokio::test]
+    async fn a_progress_line_ending_is_asked_once_for_the_turns_summary() {
+        use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+        async fn run(
+            nudges_off: Vec<String>,
+            tools: bool,
+            ending: &'static str,
+        ) -> (String, Vec<serde_json::Value>) {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(move |request: &Request| {
+                    let body: serde_json::Value = request.body_json().unwrap();
+                    let messages = body["messages"].as_array().unwrap();
+                    let last = messages.last().unwrap();
+                    let reply = if last["content"] == TURN_SUMMARY {
+                        serde_json::json!({"content":"I listed the project: it is empty, so there is nothing to change. Next: add the files you want."})
+                    } else if tools && !messages.iter().any(|message| message["role"] == "tool") {
+                        serde_json::json!({"content":"Looking.","tool_calls":[{"id":"l","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]})
+                    } else {
+                        serde_json::json!({"content":ending})
+                    };
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"choices":[{"message":reply,"finish_reason":"stop"}]}))
+                })
+                .mount(&server)
+                .await;
+            let llm = crate::providers::resolve(
+                &crate::providers::ProviderConfig::new(
+                    crate::providers::ProviderKind::Go,
+                    "synthetic",
+                )
+                .with_model("test-model")
+                .with_base_url(server.uri()),
+            )
+            .await
+            .unwrap();
+            let root = tempfile::tempdir().unwrap();
+            let tools =
+                crate::tools::boxed_tools(root.path(), Arc::new(crate::tools::AllowAllHook))
+                    .unwrap();
+            let (tx, _rx) = tokio::sync::mpsc::channel(256);
+            let policy = RunPolicy {
+                total_turns: 8,
+                context_token_budget: 24000,
+                recent_messages: 4,
+            };
+            let answer = EVAL_NUDGES_OFF
+                .scope(
+                    Arc::new(nudges_off),
+                    run_task_with_evidence(
+                        llm,
+                        tools,
+                        "Look at the project.".into(),
+                        vec![],
+                        Arc::new(crate::tools::AllowAllHook),
+                        policy,
+                        tx,
+                        Arc::new(AtomicBool::new(false)),
+                        String::new(),
+                        None,
+                    ),
+                )
+                .await
+                .unwrap();
+            let bodies = server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .map(|request| request.body_json().unwrap())
+                .collect();
+            (answer, bodies)
+        }
+        let asked = |bodies: &[serde_json::Value]| {
+            bodies
+                .iter()
+                .filter(|body| {
+                    body["messages"].as_array().unwrap().last().unwrap()["content"] == TURN_SUMMARY
+                })
+                .count()
+        };
+        let (answer, bodies) = run(Vec::new(), true, "Continuing.").await;
+        assert!(answer.starts_with("I listed the project"), "{answer}");
+        assert_eq!((bodies.len(), asked(&bodies)), (3, 1));
+        // The progress line stays in what the model sees.
+        let summed = bodies[2]["messages"].as_array().unwrap();
+        assert_eq!(summed[summed.len() - 2]["content"], "Continuing.");
+        let summary = "I listed the project and it is empty, so I changed nothing.\nNext: tell me which files to add.";
+        let (answer, bodies) = run(Vec::new(), true, summary).await;
+        assert_eq!(
+            (answer.as_str(), bodies.len(), asked(&bodies)),
+            (summary, 2, 0)
+        );
+        let (answer, bodies) = run(Vec::new(), false, "4").await;
+        assert_eq!((answer.as_str(), bodies.len(), asked(&bodies)), ("4", 1, 0));
+        let (answer, bodies) = run(vec!["turn_summary".into()], true, "Continuing.").await;
+        assert_eq!(
+            (answer.as_str(), bodies.len(), asked(&bodies)),
+            ("Continuing.", 2, 0)
+        );
+        assert!(
+            progress_line(" Moving on to the next batch. ")
+                && !progress_line("Done.\nAll checks pass.")
         );
     }
 
@@ -5430,6 +5584,9 @@ mod tests {
 
     /// A steered message reaches the model at the next request boundary, once, and in order;
     /// one that arrives while the model writes its final answer keeps the run going.
+    /// A final answer long enough to be the turn's summary.
+    const ADJUSTED: &str = "Adjusted the file to use tabs.\nNothing else changed.";
+
     #[tokio::test]
     async fn steered_messages_reach_the_next_model_request() {
         use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
@@ -5455,7 +5612,7 @@ mod tests {
                         }
                     }
                     let reply = if steered {
-                        serde_json::json!({"content":"Adjusted."})
+                        serde_json::json!({"content":ADJUSTED})
                     } else if first_calls_tool {
                         serde_json::json!({"content":"Looking.","tool_calls":[{"id":"l","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]})
                     } else {
@@ -5518,12 +5675,12 @@ mod tests {
         }
         // One steer: no check before the run ends.
         let (answer, bodies, _) = run(true, &["Use tabs."]).await;
-        assert_eq!(answer, "Adjusted.");
+        assert_eq!(answer, ADJUSTED);
         assert_eq!(bodies.len(), 2);
         for first_calls_tool in [true, false] {
             let (answer, bodies, events) =
                 run(first_calls_tool, &["Use tabs.", "And keep it short."]).await;
-            assert_eq!(answer, "Adjusted.");
+            assert_eq!(answer, ADJUSTED);
             // Two steers: once, before the run ends, the model is shown both again.
             assert_eq!(bodies.len(), 3);
             let last = bodies[2]["messages"]

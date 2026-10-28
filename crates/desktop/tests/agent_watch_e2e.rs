@@ -405,7 +405,10 @@ async fn scripted_agent(with_check: bool) -> MockServer {
                 .collect();
             let prompt = users.last().cloned().unwrap_or_default();
             let payload = if last["role"] == "tool" {
-                text("done")
+                // A real end-of-turn summary: a one-line "done" after tools is asked again.
+                text(
+                    "Set up the watch on status.txt.\nIt checks every 2 minutes and stops at DONE.",
+                )
             } else if let Some(start) = prompt.find("[Watch ") {
                 let id: String = prompt[start + 7..]
                     .chars()
