@@ -30,6 +30,12 @@
 .themis-approval-box .themis-approval-summary { font-size: .8125rem; }
 .themis-approval-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .themis-approval-actions > button { min-height: 30px; padding: 4px 12px; font-size: .8125rem; }
-.themis-approval-hint { margin: 0; font-size: .75rem; }
+.themis-approval-grant { position: relative; display: inline-flex; }
+.themis-approval-hint {
+  display: none; position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 60; width: max-content; max-width: 340px;
+  padding: 6px 10px; border: 1px solid var(--themis-border); border-radius: 8px; background: var(--themis-raised);
+  font-size: .75rem; line-height: 1.4; color: var(--themis-text-2);
+}
+.themis-approval-grant:hover .themis-approval-hint, .themis-approval-grant:focus-within .themis-approval-hint { display: block; }
 .themis-approval-token { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--themis-text); margin: 0 2px; overflow-wrap: anywhere; }
 .themis-approval-escape { color: var(--themis-warning); background: var(--themis-raised); border-radius: 3px; padding: 0 2px; font-weight: 600; }

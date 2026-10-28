@@ -131,15 +131,18 @@ export function ApprovalBox({ request, label, open, onDecide, next, onFold }: Ap
             Allow once (1)
           </Button>
           {grantable && (
-            <Button variant="ghost" onClick={() => onDecide("chat")}>
-              {request.grant_site?.tools === "browser" ? "Always allow on this site (2)" : "Allow in this chat (2)"}
-            </Button>
+            // What the grant covers shows only while this button is hovered or focused.
+            <span className="themis-approval-grant">
+              <Button variant="ghost" aria-describedby={`themis-grant-${request.approval_id}`} onClick={() => onDecide("chat")}>
+                {request.grant_site?.tools === "browser" ? "Always allow on this site (2)" : "Allow in this chat (2)"}
+              </Button>
+              <span id={`themis-grant-${request.approval_id}`} role="tooltip" className="themis-thread-hint themis-approval-hint"><GrantHint request={request} /></span>
+            </span>
           )}
           <Button variant="danger" onClick={() => onDecide("deny")}>
             Deny (3)
           </Button>
         </div>
-        <p className="themis-thread-hint themis-approval-hint"><GrantHint request={request} /></p>
       </div>
     </section>
   );

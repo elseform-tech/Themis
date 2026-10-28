@@ -62,7 +62,7 @@ export function QuestionBox({ question, onAnswer, onSkip, onFold }: QuestionBoxP
               <button key={option} type="button" className={`themis-question-choice${option === question.assumption ? " is-recommended" : ""}`} disabled={sending} onClick={() => void send(option)}>
                 <span className="themis-question-choice-head">
                   <span>{option}</span>
-                  {option === question.assumption && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}{question.blocking ? "" : " · working on this"}</small>}
+                  {option === question.assumption && <small className="themis-question-tag">{question.choices?.length ? "Recommended" : "Suggested"}</small>}
                 </span>
                 {question.reasons?.[option] && <small className="themis-question-reason">{question.reasons[option]}</small>}
               </button>

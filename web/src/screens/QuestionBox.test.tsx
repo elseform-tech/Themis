@@ -58,7 +58,6 @@ describe("QuestionBox", () => {
     render(<QuestionBox question={question({ blocking: true })} onAnswer={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Spaces/ })).toHaveTextContent("Recommended");
-    expect(screen.getByRole("button", { name: /^Spaces/ })).not.toHaveTextContent("working on this");
   });
 
   it("lists choices one per line, so a long choice reads in full", () => {

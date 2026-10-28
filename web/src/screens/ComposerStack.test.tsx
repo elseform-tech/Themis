@@ -43,7 +43,7 @@ describe("composer stack", () => {
     // Decided: the approval is gone and the question takes its place.
     rerender(stack({ goal, questions: [question] }));
     expect(screen.queryByRole("region", { name: "Approval needed" })).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Question from the agent" })).toHaveTextContent("Recommended · working on this");
+    expect(screen.getByRole("region", { name: "Question from the agent" })).toHaveTextContent("Recommended");
   });
 
   it("puts a skipped question back into its turn", () => {
