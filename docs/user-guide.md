@@ -63,10 +63,14 @@ levels are listed.
   Open the model pill at the top of the thread to choose a Go model and, when
   that model offers effort levels, the effort slider. A new chat shows a greeting,
   a centred composer and starter suggestions. The composer's **+** menu attaches
-  files or inserts `/` (skill) and `@` (plugin). The agent's short progress
+  files or inserts `/` (skill) and `@` (plugin). While a turn runs, the agent's short progress
   sentences stay in the conversation, styled like its answers; the tool calls between two
-  of them fold into one **N tool calls** row, open while one of them runs. Expand
-  it, then a tool call, to inspect its input and output. Completed replies offer
+  of them fold into one **N tool calls** row, open while one of them runs. Once the
+  turn ends, all of that folds into one **Worked 1m 15s · N tool calls** line above
+  the turn's final answer; expand it, then a tool call, to inspect its input and output.
+  Every turn that worked with tools ends with a message saying what it did: when the
+  agent stops on a short progress line instead ("Continuing through the files."), Themis
+  asks it once to continue or sum up. Completed replies offer
   **Copy** beside the model and the run's duration. Public text streams as it
   arrives; the model's private reasoning is never shown.
   Thinking/using-tool status and elapsed time remain visible during gaps.

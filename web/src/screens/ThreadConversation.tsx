@@ -181,12 +181,26 @@ function ConversationRow({
       else parts.push({ kind: "text", message, active: item.active });
     }
   }
-  return (
+  const activity = (
     <div className="themis-run-activity">
       {parts.map(part => part.kind === "text"
         ? <Message key={part.message.id} message={part.message} activeRunId={part.active ? activeRunId : undefined} skills={skills} plugins={plugins} />
         : <ToolGroup key={part.messages[0]!.id} messages={part.messages} activeRunId={row.active ? activeRunId : undefined} skills={skills} plugins={plugins} />)}
     </div>
+  );
+  // While the run works its thinking stays open; once it ends it folds into one line,
+  // and the turn's final answer below it is what stays on screen.
+  if (row.active) return activity;
+  const label = [row.durationMs === undefined ? "Worked" : `Worked ${formatRunDuration(row.durationMs)}`,
+    row.toolCount ? `${row.toolCount} tool call${row.toolCount === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+  return (
+    <details className="themis-tool-group themis-run-fold">
+      <summary>
+        <span className="themis-tool-chevron" aria-hidden="true">›</span>
+        <span>{label}</span>
+      </summary>
+      {activity}
+    </details>
   );
 }
 

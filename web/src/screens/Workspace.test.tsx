@@ -486,8 +486,14 @@ describe("Workspace journey", () => {
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "tool_finished", tool: "read_file", ok: true, output: "ORBIT-17" } });
       receive({ thread_id: "thread1", run_id: "r", event: { kind: "finished", result: "Verified." } });
     });
-    // The progress sentence stays on screen; the tool call folds into one row.
+    // Once the run ends its thinking folds into one line above the final answer.
     expect(screen.queryByText("Show thinking")).toBeNull();
+    expect(screen.getByText("Verified.")).toBeVisible();
+    const runSummary = screen.getByText("Worked 12s · 1 tool call").closest("summary")!;
+    const run = runSummary.parentElement as HTMLDetailsElement;
+    expect(run.open).toBe(false);
+    expect(screen.getByText("I will read the file.")).not.toBeVisible();
+    fireEvent.click(runSummary);
     expect(screen.getByText("I will read the file.")).toBeVisible();
     expect(screen.queryByText("Inspect current files")).toBeNull();
     const toolSummary = screen.getByText("1 tool call").closest("summary")!;

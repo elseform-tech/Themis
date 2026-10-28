@@ -78,6 +78,8 @@
 .themis-tool-group > summary::-webkit-details-marker, .themis-milestone > summary::-webkit-details-marker, .themis-tool-message summary::-webkit-details-marker { display: none; }
 .themis-run-meta { color: var(--themis-text-3); font-size: .75rem; }
 .themis-tool-group-body { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 4px 6px; padding-left: 14px; border-left: 1px solid var(--themis-border-subtle); }
+/* A finished run's thinking, folded above its final answer. */
+.themis-run-fold > .themis-run-activity { margin: 6px 0 4px 6px; padding-left: 14px; border-left: 1px solid var(--themis-border-subtle); }
 .themis-milestone > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; color: var(--themis-text-2); }
 .themis-milestone-body { display: flex; flex-direction: column; gap: 12px; padding: 12px 0 4px 20px; }
 .themis-milestone-body .themis-thread-text { font-size: .8125rem; color: var(--themis-text-2); }
