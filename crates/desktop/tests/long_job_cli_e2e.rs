@@ -243,9 +243,10 @@ async fn cli_spec_check_runs_once_after_a_change_and_no_notes_tool_is_offered() 
 
     let done = send(data.path(), &mut events, &id, "Set the version to 2.0.0").await;
     assert_eq!(done["kind"], "finished", "{done}");
+    // The answer before the check and what the check added are one answer.
     assert_eq!(
         done["result"].as_str().unwrap(),
-        "Checked: version.txt holds 2.0.0."
+        "Wrote the version.\n\nChecked: version.txt holds 2.0.0."
     );
     assert_eq!(
         std::fs::read_to_string(project.path().join("version.txt")).unwrap(),
