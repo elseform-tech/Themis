@@ -17,6 +17,7 @@ import "./GoalBar.css";
 import type { ChatMessage, ToolTraceEntry } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
 import { groupConversation, toolDisplayName, type ConversationRow } from "./conversation";
+import { describeTools } from "./toolActivity";
 import { OverviewBox, type Overview } from "./OverviewBox";
 
 interface ThreadConversationProps {
@@ -181,30 +182,17 @@ function ConversationRow({
       else parts.push({ kind: "text", message, active: item.active });
     }
   }
-  const activity = (
+  return (
     <div className="themis-run-activity">
       {parts.map(part => part.kind === "text"
         ? <Message key={part.message.id} message={part.message} activeRunId={part.active ? activeRunId : undefined} skills={skills} plugins={plugins} />
         : <ToolGroup key={part.messages[0]!.id} messages={part.messages} activeRunId={row.active ? activeRunId : undefined} skills={skills} plugins={plugins} />)}
     </div>
   );
-  // While the run works its thinking stays open; once it ends it folds into one line,
-  // and the turn's final answer below it is what stays on screen.
-  if (row.active) return activity;
-  const label = [row.durationMs === undefined ? "Worked" : `Worked ${formatRunDuration(row.durationMs)}`,
-    row.toolCount ? `${row.toolCount} tool call${row.toolCount === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
-  return (
-    <details className="themis-tool-group themis-run-fold">
-      <summary>
-        <span className="themis-tool-chevron" aria-hidden="true">›</span>
-        <span>{label}</span>
-      </summary>
-      {activity}
-    </details>
-  );
 }
 
-/** Consecutive tool calls as one folded row; open while one of them runs. */
+/** Consecutive tool calls as one folded row that says what they did ("Read 4 files ·
+ *  Ran python3 check.py"); open while one of them runs. */
 function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatMessage[]; activeRunId: string | undefined; skills: PromptSkill[]; plugins: PromptPlugin[] }) {
   const running = activeRunId !== undefined && messages.some(message => message.tool?.ok === undefined);
   const failed = messages.filter(message => message.tool?.ok === false).length;
@@ -212,7 +200,7 @@ function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatM
     <details className="themis-tool-group" open={running || undefined}>
       <summary>
         <span className="themis-tool-chevron" aria-hidden="true">›</span>
-        <span>{messages.length} tool call{messages.length === 1 ? "" : "s"}</span>
+        <span title={`${messages.length} tool call${messages.length === 1 ? "" : "s"}`}>{describeTools(messages)}</span>
         {failed > 0 && <span className="themis-run-meta">{failed} failed</span>}
       </summary>
       <div className="themis-tool-group-body">
