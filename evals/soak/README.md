@@ -18,7 +18,7 @@ python3 -m unittest evals.kit.test_kit evals.soak.test_harness
 **Tools are limited (Custom approval rules in the run's `runtime.jsonc`, decided 2026-10-25).** In the
 `items-v2` pilots the agent learned the generator's sentence templates with Python scripts and
 finished 120 memos in 2–5 goal turns with 1–2 checkpoints, so the soak stressed nothing. The run
-now allows only `read_file`, `list_dir`, `write_file`, `apply_patch`, `recall`, `set_goal`, `git`
+now allows only `read_file`, `list_dir`, `create_dir`, `write_file`, `apply_patch`, `recall`, `set_goal`, `goal_checklist`, `git`
 the command `python3 check.py`, and `grep -L`/`-c`/`-rL`/`-rc`, which print only file names or counts
 (added 2026-10-27 so a goal check asking for compact proof of a change to every file can get it;
 no file contents, so items are still read one at a time); everything else (other commands, scripts,
