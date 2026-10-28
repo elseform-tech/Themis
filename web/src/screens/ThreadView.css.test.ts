@@ -7,13 +7,13 @@ it("keeps completed replies static while a run is active", () => {
   expect(styles).toMatch(/\.themis-thread-msg--completed \.themis-response > p\s*\{[^}]*animation:\s*none[^}]*background:\s*none[^}]*color:\s*var\(--themis-text\)/s);
 });
 
-it("does not shimmer streamed replies when no tool is pending", () => {
-  expect(styles).toMatch(/\.themis-thread-msg--action-waiting \.themis-response > p/);
+it("never shimmers the agent's own text: progress lines read like its answers while their step runs", () => {
+  expect(styles).not.toMatch(/\.themis-thread-msg--action-waiting \.themis-response > p/);
   expect(styles).not.toMatch(/\.themis-thread-msg--live \.themis-response > p/);
 });
 
-it("keeps inline code readable inside shimmering progress notes", () => {
-  expect(styles).toMatch(/\.themis-thread-msg--action-waiting \.themis-response :not\(pre\) > code[^{]*\{[^}]*color:\s*var\(--themis-text\)/s);
+it("keeps inline code readable inside shimmering status text", () => {
+  expect(styles).toMatch(/\.themis-shimmer :not\(pre\) > code[^{]*\{[^}]*color:\s*var\(--themis-text\)/s);
 });
 
 it("compacts the composer's labels to icons when the chat is narrow", () => {

@@ -37,7 +37,7 @@ async fn forced_checkpoint_resumes_task_at_24k_200k_and_256k_without_replaying_w
             vec![discarded, common::tool_call_body(
                 "remaining", "write_file",
                 json!({"file_path":"progress.txt","content":"phase2\n","append":true}),
-            ), common::final_text_body("Task resumed and completed")],
+            ), common::final_text_body(&common::summary("Task resumed and completed"))],
             Some("Original task ORDERED-PHASES: phase1 already saved to progress.txt; append only phase2, preserve phase1, then finish."),
         ).await;
         let project = tempfile::tempdir().unwrap();
@@ -89,7 +89,7 @@ async fn forced_checkpoint_resumes_task_at_24k_200k_and_256k_without_replaying_w
         )
         .await
         .unwrap();
-        assert_eq!(answer, "Task resumed and completed");
+        assert_eq!(answer, common::summary("Task resumed and completed"));
         assert_eq!(
             std::fs::read_to_string(project.path().join("progress.txt")).unwrap(),
             "phase1\nphase2\n"
@@ -210,7 +210,9 @@ async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
                 json!({"file_path":"source.py","jsonl_record":1,"json_pointer":"/content"}),
             ),
             common::tool_call_body("plain-read", "read_file", json!({"file_path":"source.py"})),
-            common::final_text_body("Read the source after correcting the selector"),
+            common::final_text_body(&common::summary(
+                "Read the source after correcting the selector",
+            )),
         ],
     )
     .await;
@@ -245,7 +247,10 @@ async fn plain_source_read_recovers_from_jsonl_selectors_with_bounded_output() {
     )
     .await
     .unwrap();
-    assert_eq!(answer, "Read the source after correcting the selector");
+    assert_eq!(
+        answer,
+        common::summary("Read the source after correcting the selector")
+    );
     let events = common::drain(&mut rx).await;
     let results = events
         .iter()
@@ -368,13 +373,13 @@ async fn automatic_summary_retries_do_not_repeat_a_completed_write() {
             if summary_count.fetch_add(1, Ordering::SeqCst) < 2 {
                 return ResponseTemplate::new(503);
             }
-            return ResponseTemplate::new(200).set_body_json(common::final_text_body("Goal/constraints: finish. Confirmed findings: write saved. Completed changes/tests: appended once to receipt.txt. Unresolved work: report completion. Next action: answer without repeating the write."));
+            return ResponseTemplate::new(200).set_body_json(common::final_text_body(&common::summary("Goal/constraints: finish. Confirmed findings: write saved. Completed changes/tests: appended once to receipt.txt. Unresolved work: report completion. Next action: answer without repeating the write.")));
         }
         let response = if ordinary_count.fetch_add(1, Ordering::SeqCst) == 0 {
             let mut call = common::tool_call_body("append-once", "write_file", json!({"file_path":"receipt.txt","content":"once\n","append":true}));
             call["choices"][0]["message"]["content"] = "progress narration ".repeat(50).into();
             call
-        } else { common::final_text_body("Completed once") };
+        } else { common::final_text_body(&common::summary("Completed once")) };
         ResponseTemplate::new(200).set_body_json(response)
     }).mount(&server).await;
     let llm = resolve(
@@ -409,7 +414,7 @@ async fn automatic_summary_retries_do_not_repeat_a_completed_write() {
     )
     .await
     .unwrap();
-    assert_eq!(answer, "Completed once");
+    assert_eq!(answer, common::summary("Completed once"));
     assert_eq!(
         std::fs::read_to_string(project.path().join("receipt.txt")).unwrap(),
         "once\n"
@@ -775,7 +780,9 @@ async fn repeated_ordinary_reads_are_warned_each_streak_and_never_stopped() {
     let mut script = (0..8)
         .map(|i| common::tool_call_body(&format!("read-{i}"), "read_file", args.clone()))
         .collect::<Vec<_>>();
-    script.push(common::final_text_body("Repeated the same evidence"));
+    script.push(common::final_text_body(&common::summary(
+        "Repeated the same evidence",
+    )));
     common::mount_script(&server, script).await;
     let project = tempfile::tempdir().unwrap();
     let evidence = project.path().join(".themis/context/source");
@@ -812,7 +819,10 @@ async fn repeated_ordinary_reads_are_warned_each_streak_and_never_stopped() {
     )
     .await;
     // Repeats are warned, never stopped: the run finishes with the model's own answer.
-    assert_eq!(result.unwrap(), "Repeated the same evidence");
+    assert_eq!(
+        result.unwrap(),
+        common::summary("Repeated the same evidence")
+    );
     let events = common::drain(&mut rx).await;
     assert!(!events.iter().any(|e| matches!(e, RunEvent::Failed { .. })));
     let requests = server.received_requests().await.unwrap();
@@ -925,8 +935,8 @@ async fn context_within_budget_keeps_exact_tool_result() {
         &server,
         vec![
             common::tool_call_body("read_1", "read_file", json!({"file_path":"note.txt"})),
-            common::final_text_body("Answered from the original evidence"),
-            common::final_text_body("Answered after a lossy checkpoint"),
+            common::final_text_body(&common::summary("Answered from the original evidence")),
+            common::final_text_body(&common::summary("Answered after a lossy checkpoint")),
         ],
     )
     .await;
@@ -966,7 +976,10 @@ async fn context_within_budget_keeps_exact_tool_result() {
             .any(|event| matches!(event, RunEvent::ContextCheckpoint { .. })),
         "context within budget must not be summarized solely because a segment ended: {events:?}"
     );
-    assert_eq!(answer, "Answered from the original evidence");
+    assert_eq!(
+        answer,
+        common::summary("Answered from the original evidence")
+    );
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 2);
     let request: serde_json::Value = serde_json::from_slice(&requests[1].body).unwrap();
@@ -996,7 +1009,7 @@ async fn maintenance_continues_same_request_without_unnecessary_checkpoint() {
                     "progress narration ".repeat(2600).into();
                 call
             },
-            common::final_text_body("Done after checkpoint"),
+            common::final_text_body(&common::summary("Done after checkpoint")),
         ],
         Some("Read note.txt; answer the original request next."),
     )
@@ -1032,7 +1045,7 @@ async fn maintenance_continues_same_request_without_unnecessary_checkpoint() {
     )
     .await
     .unwrap();
-    assert_eq!(answer, "Done after checkpoint");
+    assert_eq!(answer, common::summary("Done after checkpoint"));
     let events = common::drain(&mut rx).await;
     assert!(
         !events
@@ -1831,11 +1844,13 @@ async fn bounded_file_read_prevents_compaction_and_keeps_completion() {
                     .is_some_and(|text| text.starts_with("CONVERSATION TO SUMMARIZE"))
             });
             let answer = if summary_request {
-                common::final_text_body("Read completed. Reply READY next; no implementation yet.")
+                common::final_text_body(&common::summary(
+                    "Read completed. Reply READY next; no implementation yet.",
+                ))
             } else if messages.len() == 2 {
                 common::tool_call_body("read_1", "read_file", json!({"file_path":"repository.txt"}))
             } else {
-                common::final_text_body("READY")
+                common::final_text_body(&common::summary("READY"))
             };
             ResponseTemplate::new(200).set_body_json(answer)
         })
@@ -1873,7 +1888,7 @@ async fn bounded_file_read_prevents_compaction_and_keeps_completion() {
     )
     .await
     .unwrap();
-    assert_eq!(answer, "READY");
+    assert_eq!(answer, common::summary("READY"));
     let requests = server.received_requests().await.unwrap();
     let final_request: serde_json::Value =
         serde_json::from_slice(&requests.last().unwrap().body).unwrap();
@@ -1982,7 +1997,7 @@ async fn calibration_run_turns(
                 "write_file",
                 json!({"file_path":"out.txt","content":"done\n","append":false}),
             ),
-            common::final_text_body("Calibration run finished"),
+            common::final_text_body(&common::summary("Calibration run finished")),
         ],
         Some("Original task CALIBRATE: write out.txt once, then finish."),
         usage_multiplier,
@@ -2074,7 +2089,10 @@ fn checkpoints(events: &[RunEvent]) -> usize {
 #[tokio::test]
 async fn provider_usage_above_the_estimate_compacts_earlier_than_the_raw_estimate() {
     let raw = calibration_run(None, 0).await;
-    assert_eq!(raw.result.as_deref().unwrap(), "Calibration run finished");
+    assert_eq!(
+        raw.result.unwrap(),
+        common::summary("Calibration run finished")
+    );
     assert_eq!(
         checkpoints(&raw.events),
         0,
@@ -2086,8 +2104,8 @@ async fn provider_usage_above_the_estimate_compacts_earlier_than_the_raw_estimat
 
     let calibrated = calibration_run(Some(3.0), 0).await;
     assert_eq!(
-        calibrated.result.as_deref().unwrap(),
-        "Calibration run finished"
+        calibrated.result.unwrap(),
+        common::summary("Calibration run finished")
     );
     assert_eq!(
         checkpoints(&calibrated.events),
@@ -2118,7 +2136,10 @@ async fn provider_usage_above_the_estimate_compacts_earlier_than_the_raw_estimat
 #[tokio::test]
 async fn context_overflow_compacts_once_and_retries_without_replaying_tools() {
     let run = calibration_run(None, 1).await;
-    assert_eq!(run.result.as_deref().unwrap(), "Calibration run finished");
+    assert_eq!(
+        run.result.unwrap(),
+        common::summary("Calibration run finished")
+    );
     assert_eq!(
         checkpoints(&run.events),
         1,
@@ -2223,7 +2244,8 @@ async fn shell_call_with_whole_command_line_self_corrects_from_the_error() {
                     json!({"command": program, "args": args}),
                 ))
             } else if text.contains("\"success\":true") || text.contains("success\": true") {
-                ResponseTemplate::new(200).set_body_json(common::final_text_body("done"))
+                ResponseTemplate::new(200)
+                    .set_body_json(common::final_text_body(&common::summary("done")))
             } else {
                 ResponseTemplate::new(200).set_body_json(common::tool_call_body(
                     "bad",
@@ -2260,7 +2282,7 @@ async fn shell_call_with_whole_command_line_self_corrects_from_the_error() {
     )
     .await
     .unwrap();
-    assert_eq!(answer, "done");
+    assert_eq!(answer, common::summary("done"));
     let events = common::drain(&mut rx).await;
     let finished: Vec<_> = events
         .iter()
