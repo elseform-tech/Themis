@@ -83,6 +83,17 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   };
 }
 
+/** Whether the chat keeps room for the overview box: from the first time the box shows in
+ *  `threadId` until the chat changes. The box comes and goes with runs; moving the whole
+ *  conversation each time was jumpy, and WebKit left the last message where it was. */
+export function useOverviewRoom(threadId: string, visible: boolean): boolean {
+  const [roomFor, setRoomFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (visible && threadId) setRoomFor(threadId);
+  }, [visible, threadId]);
+  return visible || (threadId !== "" && roomFor === threadId);
+}
+
 /** Frame width asked for: the box is about 200 px wide, so two device pixels per CSS pixel. */
 const PREVIEW_FRAME_WIDTH = 440;
 const PREVIEW_START_DELAY_MS = 250;

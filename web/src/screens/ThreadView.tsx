@@ -18,7 +18,7 @@ import { QueueStack } from "./QueueStack";
 import { OpenQuestions } from "./QuestionBox";
 import { CompactionNotice } from "./ContextMeter";
 import { WorkspacePanel } from "./WorkspacePanel";
-import { useOverview } from "./OverviewBox";
+import { useOverview, useOverviewRoom } from "./OverviewBox";
 import { useProjectWorkspace } from "./useProjectWorkspace";
 import { useThreadTasksSync } from "./threadTasks";
 import { skillToken } from "../lib/prompt";
@@ -83,6 +83,7 @@ export function ThreadView() {
   const running = thread === null ? false : (state.running[thread.id] ?? false);
   const messages = thread === null ? EMPTY_MESSAGES : (state.messages[thread.id] ?? EMPTY_MESSAGES);
   const overview = useOverview(thread?.id ?? "", messages);
+  const overviewRoom = useOverviewRoom(thread?.id ?? "", overview.visible);
   const stream = thread === null ? "" : (state.streams[thread.id] ?? "");
 
   const sendError = thread === null ? undefined : state.sendErrors[thread.id];
@@ -271,6 +272,7 @@ export function ThreadView() {
   const empty = messages.length === 0 && stream === "" && !running && !sending;
   // The overview box stands in for the Workspace while it is closed.
   const showOverview = overview.visible && !state.diffPanelOpen && !empty;
+  const keepOverviewRoom = !state.diffPanelOpen && !empty && overviewRoom;
   const showNotice = budget?.compaction_soon === true && !compacting && running && !noticeDismissed[thread.id];
   const starters = [
     ...promptSkills.filter(skill => !skill.retired).slice(0, 2).map(skill => ({ label: `/ ${skill.name}`, text: `${skillToken(skill.id)} ` })),
@@ -328,7 +330,7 @@ export function ThreadView() {
 
   return (
     <div className={`themis-thread-layout${state.diffPanelOpen ? " is-reviewing" : ""}`}>
-    <div className={`themis-thread${showOverview ? ` has-overview${overview.collapsed ? " overview-collapsed" : ""}` : ""}`}>
+    <div className={`themis-thread${keepOverviewRoom ? ` has-overview${overview.collapsed ? " overview-collapsed" : ""}` : ""}`}>
       <ThreadHeader
         thread={thread}
         models={models}
