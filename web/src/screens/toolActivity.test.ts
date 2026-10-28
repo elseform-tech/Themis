@@ -34,8 +34,8 @@ describe("tool rows say what the calls did", () => {
 
   it("describes only the calls that ran; failed ones are counted by the row", () => {
     expect(describeTools([call("read_filelist_dir", "x", undefined, false), call("read_file", "read `src/a.txt`", undefined, true)])).toBe("Read a.txt");
-    expect(describeTools([call("list_dirshell", "x", undefined, false)])).toBe("A tool call failed");
-    expect(describeTools([call("shell", "x", undefined, false), call("shell", "y", undefined, false)])).toBe("2 tool calls failed");
+    expect(describeTools([call("list_dirshell", "x", undefined, false)])).toBe("1 tool call");
+    expect(describeTools([call("shell", "x", undefined, false), call("shell", "y", undefined, false)])).toBe("2 tool calls");
   });
 
   it("keeps a long mix to three phrases and counts the rest", () => {

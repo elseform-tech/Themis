@@ -89,12 +89,12 @@ function phrase(kind: Kind, calls: { name: string; summary: string; label?: stri
 
 /** A stretch of tool calls in a few words, in the order they first ran: "Read 4 files ·
  *  Ran python3 check.py". At most three phrases; the rest is counted. Failed calls are
- *  left out (the row counts them); when every call failed, it says so. */
+ *  left out (the row counts them); when every call failed, only their number is left. */
 export function describeTools(messages: ChatMessage[]): string {
   const groups = new Map<Kind, { name: string; summary: string; label?: string }[]>();
   const calls = messages.filter(message => message.tool);
   if (calls.length && calls.every(message => message.tool!.ok === false)) {
-    return calls.length === 1 ? "A tool call failed" : `${calls.length} tool calls failed`;
+    return calls.length === 1 ? "1 tool call" : `${calls.length} tool calls`;
   }
   for (const message of calls) {
     if (!message.tool || message.tool.ok === false) continue;
