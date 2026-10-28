@@ -3,8 +3,8 @@ import type { ChatMessage } from "../state/reducer";
 import { describeTools } from "./toolActivity";
 
 let id = 0;
-const call = (name: string, summary: string, label?: string): ChatMessage =>
-  ({ id: `t${id++}`, role: "assistant", text: summary, tool: { name, ...(label ? { label } : {}) } });
+const call = (name: string, summary: string, label?: string, ok?: boolean): ChatMessage =>
+  ({ id: `t${id++}`, role: "assistant", text: summary, tool: { name, ...(label ? { label } : {}), ...(ok === undefined ? {} : { ok }) } });
 
 describe("tool rows say what the calls did", () => {
   it("names one file, counts several, and keeps the order the kinds first ran", () => {
@@ -30,6 +30,12 @@ describe("tool rows say what the calls did", () => {
     expect(describeTools([call("list_dir", "list `.`")])).toBe("Listed the project");
     expect(describeTools([call("read_file", "check.txt")])).toBe("Read a file");
     expect(describeTools([call("mcp_0123456789abcdef01234567_read_text", "x", "files · read text file")])).toBe("Used files · read text file");
+  });
+
+  it("describes only the calls that ran; failed ones are counted by the row", () => {
+    expect(describeTools([call("read_filelist_dir", "x", undefined, false), call("read_file", "read `src/a.txt`", undefined, true)])).toBe("Read a.txt");
+    expect(describeTools([call("list_dirshell", "x", undefined, false)])).toBe("A tool call failed");
+    expect(describeTools([call("shell", "x", undefined, false), call("shell", "y", undefined, false)])).toBe("2 tool calls failed");
   });
 
   it("keeps a long mix to three phrases and counts the rest", () => {
