@@ -15,7 +15,7 @@ import unittest
 from . import generate, pressure, scenarios
 from .__main__ import ab_table, arms, record_of, report, series_key
 from .grade import MEASURES, grade, rereads_after_checkpoint
-from .run import active_run
+from .run import APPROVAL, active_run, approval
 
 ALL_PLANTS = ("req-thousands", "req-import-report", "side-country", "side-overdue-sort", "feat-top", "feat-cshow",
               "req-cshow-balance", "req-cshow-noemail", "req-cshow-terms", "side-stock-name")
@@ -186,6 +186,16 @@ class Reporting(unittest.TestCase):
         table = ab_table(records, "main", "branch")
         self.assertIn("## Budget 32000, pressure none (n = 1 / 1)", table)
         self.assertIn("| requirements_met | 0.5 | 1 |", table)
+
+    def test_the_limited_tool_set_refuses_lookups_before_any_allow(self):
+        self.assertIs(approval("full"), APPROVAL)
+        limited = approval("limited")["rules"]
+        refused = [rule["tool"] for rule in limited if rule["action"] == "deny"][:5]
+        self.assertEqual(refused, ["web_search", "fetch_url", "browser_*", "recall", "ask_user"])
+        # Rules are checked in order: every refusal comes before the first allow.
+        first_allow = next(index for index, rule in enumerate(limited) if rule["action"] == "allow")
+        self.assertTrue(all(rule["action"] == "deny" for rule in limited[:first_allow]))
+        self.assertEqual(limited[len(refused):], APPROVAL["rules"])
 
     def test_arms_cover_every_combination(self):
         chosen = arms(["trace-rounding", "web-mismatch"], [32000, "auto"], ["none", "mixed"], [1, 2])

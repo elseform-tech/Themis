@@ -29,7 +29,9 @@ obey: `held` scores no file written after it, and a reply), or `none`.
 
 **Budget and profile are trend and A/B dimensions**: a series is (model, scenario, budget,
 profile); `--budgets` defaults to `32000,64000,auto`. Compare branches with `--themis` and
-`--label`, then `ab`, which shows each measure's mean per budget and profile.
+`--label`, then `ab`, which shows each measure's mean per budget and profile. `--effort LEVEL` sets the chat's reasoning effort (one of the model's levels) and `--tools limited`
+refuses web search, fetch, the browser, `recall` and `ask_user` (deny rules ahead of the usual ones),
+so an A/B can show what thinking harder or those tools add; both are kept in each trace.
 
 Live runs are **benchmark audits**, not automated checks: nothing is pass or fail; a model measure
 is flagged when worse than all of its series' last five runs, a harness measure at any

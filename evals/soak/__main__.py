@@ -85,7 +85,7 @@ def cmd_run(args):
     options = {"model": args.model, "items": args.items, "filler_chars": args.filler_chars,
                "max_turns": args.max_turns, "timeout": args.timeout, "idle_timeout": args.idle_timeout,
                "poll_s": 5, "grace_s": 30, "max_run_cost": args.max_run_cost, "keep": args.keep,
-               "commit": commit()}
+               "commit": commit(), "effort": args.effort or ""}
     round_spend = spend_kit.RoundSpend(price, args.max_round_cost, args.max_run_cost)
     history = trend.load(args.history)
     os.makedirs(args.out, exist_ok=True)
@@ -164,6 +164,7 @@ def main(argv=None):
     run.add_argument("--items", type=int, default=DEFAULT_ITEMS)
     run.add_argument("--filler-chars", type=int, default=DEFAULT_FILLER_CHARS)
     run.add_argument("--max-turns", type=int, default=80, help="goal turns before the run is capped")
+    run.add_argument("--effort", help="the chat's reasoning effort, one of the model's levels (default: the model's own)")
     run.add_argument("--timeout", type=int, default=7200, help="seconds before the run is capped")
     run.add_argument("--idle-timeout", type=int, default=300,
                      help="seconds with the goal running and no run going before it counts as not continuing")
