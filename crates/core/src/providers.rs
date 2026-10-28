@@ -319,6 +319,26 @@ pub struct CompatibleProvider {
 
 tokio::task_local! { pub static OUTPUT_LIMIT: u32; }
 
+/// Which call a streamed tool-call piece belongs to: its `index`, else (some providers,
+/// such as iceman-contributor-free on Go, stream each call whole with its own id and no
+/// index) a new call for a new id and the last call for a piece without one. Keying them
+/// all on 0 glued the calls into one unknown tool.
+fn streamed_call_index(
+    calls: &std::collections::BTreeMap<usize, ToolCall>,
+    call: &serde_json::Value,
+) -> usize {
+    if let Some(index) = call["index"].as_u64() {
+        return usize::try_from(index).unwrap_or(usize::MAX);
+    }
+    let Some((&last, entry)) = calls.iter().next_back() else {
+        return 0;
+    };
+    match call["id"].as_str().filter(|id| !id.is_empty()) {
+        Some(id) if !entry.id.is_empty() && entry.id != id => last.saturating_add(1),
+        _ => last,
+    }
+}
+
 struct ChatEventStream {
     response: reqwest::Response,
     buffer: Vec<u8>,
@@ -490,7 +510,7 @@ impl ChatEventStream {
     }
 
     fn merge_tool_call(&mut self, call: &serde_json::Value) {
-        let index = call["index"].as_u64().unwrap_or(0) as usize;
+        let index = streamed_call_index(&self.calls, call);
         let entry = self.calls.entry(index).or_insert_with(|| ToolCall {
             id: String::new(),
             call_type: "function".to_owned(),
@@ -500,7 +520,10 @@ impl ChatEventStream {
             },
         });
         if let Some(id) = call["id"].as_str() {
-            entry.id.push_str(id);
+            // A provider that repeats the id on every piece of the same call keeps one copy.
+            if entry.id != id {
+                entry.id.push_str(id);
+            }
         }
         if let Some(name) = call["function"]["name"].as_str() {
             entry.function.name.push_str(name);

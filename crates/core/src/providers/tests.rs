@@ -1195,6 +1195,77 @@ async fn streaming_keeps_public_text_and_assembles_tool_arguments() {
     );
 }
 
+proptest::proptest! {
+    /// Any sequence of tool-call pieces lands on calls in order, never more calls than
+    /// pieces, and a piece with an index always keeps it.
+    #[test]
+    fn streamed_call_indexes_are_bounded(pieces in proptest::collection::vec((proptest::option::of(0u64..4), proptest::option::of("[ab]{0,2}")), 0..12)) {
+        let mut calls = std::collections::BTreeMap::new();
+        for (index, id) in &pieces {
+            let mut call = json!({"function": {"name": "t", "arguments": ""}});
+            if let Some(index) = index { call["index"] = json!(index); }
+            if let Some(id) = id { call["id"] = json!(id); }
+            let at = super::streamed_call_index(&calls, &call);
+            if let Some(index) = index { proptest::prop_assert_eq!(at as u64, *index); }
+            let entry = calls.entry(at).or_insert_with(|| ToolCall { id: String::new(), call_type: "function".into(), function: autoagents::llm::FunctionCall { name: String::new(), arguments: String::new() } });
+            if let Some(id) = id { if entry.id != *id { entry.id.push_str(id); } }
+        }
+        proptest::prop_assert!(calls.len() <= pieces.len().max(1));
+    }
+}
+
+/// Calls streamed whole with their own ids and no `index` (iceman-contributor-free on Go)
+/// stay separate calls; a later piece without an id continues the last one.
+#[tokio::test]
+async fn streamed_calls_without_an_index_stay_separate() {
+    use futures_util::StreamExt;
+    let server = MockServer::start().await;
+    let events = [
+        json!({"choices":[{"delta":{"tool_calls":[{"id":"a","type":"function","function":{"name":"list_dir","arguments":"{\"directory_path\": \"src\"}"}}]},"finish_reason":null}]}),
+        json!({"choices":[{"delta":{"tool_calls":[{"id":"b","type":"function","function":{"name":"shell","arguments":"{\"command\":"}}]},"finish_reason":null}]}),
+        json!({"choices":[{"delta":{"tool_calls":[{"function":{"arguments":" \"ls\"}"}}]},"finish_reason":null}]}),
+        json!({"choices":[{"delta":{"tool_calls":[{"id":"b","function":{"arguments":""}}]},"finish_reason":"tool_calls"}]}),
+    ];
+    let body = events
+        .iter()
+        .map(|event| format!("data: {event}\r\n\r\n"))
+        .collect::<String>()
+        + "data: [DONE]\n\n";
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .mount(&server)
+        .await;
+    let provider = CompatibleProvider::go("test".into(), "mock".into(), Some(server.uri()), None);
+    let mut stream = provider
+        .chat_stream_with_tools(&[user_message("look")], None, None)
+        .await
+        .unwrap();
+    let mut calls = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        if let StreamChunk::ToolUseComplete { tool_call, .. } = chunk.unwrap() {
+            calls.push(tool_call);
+        }
+    }
+    let seen: Vec<(&str, &str, &str)> = calls
+        .iter()
+        .map(|call| {
+            (
+                call.id.as_str(),
+                call.function.name.as_str(),
+                call.function.arguments.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("a", "list_dir", "{\"directory_path\": \"src\"}"),
+            ("b", "shell", "{\"command\": \"ls\"}")
+        ]
+    );
+}
+
 #[tokio::test]
 async fn chat_reasoning_is_replayed_with_its_own_tool_calls_but_not_into_summaries() {
     use futures_util::StreamExt;
