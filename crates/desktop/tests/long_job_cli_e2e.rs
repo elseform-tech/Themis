@@ -121,7 +121,7 @@ async fn cli_long_job_survives_oversized_batches_and_one_loop_streak() {
             let tool_text = last["content"].as_str().unwrap_or_default();
             if task.contains("Read all items") {
                 if last["role"] == "tool" {
-                    return reply(json!({"content":"Read the first items; the rest come next."}));
+                    return reply(json!({"content":"Read the items that fit; five were not run."}));
                 }
                 let calls: Vec<Value> = (0..16)
                     .map(|n| read_call(&format!("b{n}"), &format!("item-{n}.txt")))

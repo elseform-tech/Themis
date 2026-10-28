@@ -1880,11 +1880,35 @@ const TURN_SUMMARY: &str = crate::prompts::RUNTIME_TURN_SUMMARY;
 /// Longest final answer still read as a progress line rather than a summary, in characters.
 const PROGRESS_LINE_CHARS: usize = 120;
 
+/// Words that say the work is still going ("continuing", "moving on", "next"): the
+/// progress lines agents stopped on (stuck-goal replays, 2026-10-28) all had one. A short
+/// finished answer ("Done.", "Verified: a.txt holds 1.") has none.
+const STILL_GOING: [&str; 14] = [
+    "continu",
+    "moving on",
+    "move on",
+    "next",
+    "nearing",
+    "pulling",
+    "proceed",
+    "let me",
+    "i'll",
+    "i will",
+    "going to",
+    "starting",
+    "working on",
+    "now checking",
+];
+
 /// Whether a final answer is only a short progress line: one line, under
-/// [`PROGRESS_LINE_CHARS`]. A longer or multi-line answer is the turn's own summary.
+/// [`PROGRESS_LINE_CHARS`], that says the work is still going. A longer, multi-line or
+/// finished answer is the turn's own summary.
 fn progress_line(text: &str) -> bool {
     let text = text.trim();
-    !text.contains('\n') && text.chars().count() < PROGRESS_LINE_CHARS
+    let lower = text.to_lowercase().replace('\u{2019}', "'");
+    !text.contains('\n')
+        && text.chars().count() < PROGRESS_LINE_CHARS
+        && STILL_GOING.iter().any(|word| lower.contains(word))
 }
 
 const LOOP_WARNING: &str = crate::prompts::RUNTIME_LOOP_WARNING;
@@ -5520,6 +5544,23 @@ mod tests {
             progress_line(" Moving on to the next batch. ")
                 && !progress_line("Done.\nAll checks pass.")
         );
+        // A short finished answer is a summary; a short line that says the work goes on is not.
+        for line in [
+            "Continuing through the ember files.",
+            "Silver-sorrel corrected — moving on to silver-zephyr.",
+            "That vole’s fixed — pulling the next memo.",
+            "I’ll check the rest now.",
+        ] {
+            assert!(progress_line(line), "{line}");
+        }
+        for line in [
+            "Done.",
+            "Verified: a.txt holds 1.",
+            "Done — count.txt now contains 60, verified with a PASS check.",
+            "4",
+        ] {
+            assert!(!progress_line(line), "{line}");
+        }
     }
 
     /// A blocking question ends the run after its tool batch, without another model request.
