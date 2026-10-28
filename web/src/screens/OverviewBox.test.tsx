@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState } from "../state/reducer";
 import type { ChatMessage } from "../state/reducer";
-import { diffTotals, OverviewBox, useOverview } from "./OverviewBox";
+import { diffTotals, OverviewBox, useOverview, useOverviewRoom } from "./OverviewBox";
 
 const dispatch = vi.fn();
 let appState: typeof initialState;
@@ -105,6 +105,18 @@ describe("chat overview box", () => {
     expect(screen.getByRole("region", { name: "Chat overview" })).toHaveClass("is-collapsed");
     expect(screen.getByRole("button", { name: "Show overview details" })).toHaveAttribute("aria-expanded", "false");
     expect(localStorage.getItem("themis:overviewCollapsed")).toBe("true");
+  });
+
+  it("keeps the chat's room once the box has shown, so the conversation does not jump when a run ends", () => {
+    const { result, rerender } = renderHook(({ thread, visible }) => useOverviewRoom(thread, visible), { initialProps: { thread: "t1", visible: false } });
+    expect(result.current).toBe(false);
+    rerender({ thread: "t1", visible: true });
+    expect(result.current).toBe(true);
+    rerender({ thread: "t1", visible: false });
+    expect(result.current).toBe(true);
+    // Another chat starts without it.
+    rerender({ thread: "t2", visible: false });
+    expect(result.current).toBe(false);
   });
 
   it("is hidden when the chat has nothing to show", async () => {
