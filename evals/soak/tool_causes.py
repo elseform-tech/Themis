@@ -21,7 +21,7 @@ import re
 # runs as a command, plus `grep` that prints only file names or counts (never contents), so a
 # goal check that asks for compact proof of a change to every file can get it (2026-10-27).
 # The default is deny, so nothing ever waits for an approval nobody answers.
-ALLOWED_TOOLS = ("read_file", "list_dir", "write_file", "apply_patch", "recall", "set_goal", "git")
+ALLOWED_TOOLS = ("read_file", "list_dir", "write_file", "apply_patch", "recall", "set_goal", "goal_checklist", "git")
 CHECK_COMMAND = ["python3", "check.py"]
 COUNT_COMMANDS = (["grep", "-L"], ["grep", "-c"], ["grep", "-rL"], ["grep", "-rc"])
 APPROVAL = {
