@@ -536,7 +536,14 @@ export function applyThreadEvent(
     }
     case "incomplete":
     case "finished": {
-      let next = appendMessage(state, threadId, {
+      // Text streamed before the final answer (an answer the runtime then had checked or
+      // continued, without a tool call between) stays as a progress line: dropping it made
+      // it flash on screen and vanish.
+      const streamed = (state.streams[threadId] ?? "").trim();
+      const result = event.result.trim();
+      const earlier = result && streamed !== result && streamed.endsWith(result) ? streamed.slice(0, -result.length).trim() : "";
+      let next = earlier ? appendMessage(state, threadId, { id: newId("msg"), role: "assistant", text: earlier, runId }) : state;
+      next = appendMessage(next, threadId, {
         id: newId("msg"),
         role: "assistant",
         text: event.result,
