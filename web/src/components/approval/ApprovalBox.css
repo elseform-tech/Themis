@@ -24,7 +24,8 @@
 .themis-approval-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .themis-approval-head > svg { flex: none; color: var(--themis-warning); }
 .themis-approval-head .themis-approval-tool { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8125rem; }
-.themis-approval-head .themis-goal-icon { width: 28px; height: 28px; margin: -4px -4px -4px 0; }
+.themis-approval-head .themis-goal-icon { width: 28px; height: 28px; margin: -4px -4px -4px auto; }
+.themis-approval-next + .themis-goal-icon { margin-left: 0; }
 .themis-approval-title { flex: none; margin: 0; font-size: .875rem; font-weight: 600; color: var(--themis-text); }
 .themis-approval-next { margin-left: auto; flex: none; font-size: .75rem; color: var(--themis-text-2); }
 .themis-approval-box .themis-approval-summary { font-size: .8125rem; }
