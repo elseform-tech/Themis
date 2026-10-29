@@ -537,15 +537,18 @@ describe("Integration browsing and lifecycle", () => {
     render(<Plugins />);
     await screen.findByRole("button", { name: "View docs" });
     fireEvent.click(screen.getByRole("button", { name: "Skills" }));
-    expect(screen.queryByRole("button", { name: "Discover" })).toBeNull();
+    // Skills has no catalog of its own: the page-level Discover is the plugin catalog.
+    expect(screen.getByRole("button", { name: "Discover" })).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(screen.getByRole("button", { name: "View Draft" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Read the sources before drafting.");
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     installed.push({ ...installed[0], spec: { ...installed[0].spec, name: "standalone", package_kind: "skill", skills: [{ ...installed[0].spec.skills[0], name: "Local review" }] } });
     await act(async () => window.dispatchEvent(new Event("themis-plugins-changed")));
     expect(screen.getByRole("button", { name: "View Local review" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Plugins" }));
-    expect(screen.getByRole("button", { name: "Discover" })).toBeInTheDocument();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
+    // Discover hides the installed kind tabs and opens the plugin catalog.
+    expect(screen.queryByRole("button", { name: "Skills" })).toBeNull();
+    expect(screen.getByRole("button", { name: "View public-docs" })).toBeVisible();
   });
   it.each(["Plugins", "Skills", "MCP", "Hooks"])("toggles %s with a switch and visible status", async category => {
     render(<Plugins />);

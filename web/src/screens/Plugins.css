@@ -133,3 +133,25 @@
 .themis-mcp-file-actions select { border: 0; border-bottom: 1px solid var(--themis-border); background: transparent; color: var(--themis-text); font: inherit; padding: 4px; }
 .themis-mcp-file-actions button { border: 0; background: transparent; color: var(--themis-accent); font: inherit; cursor: pointer; }
 .themis-integration-waiting { display: inline-flex; align-items: center; gap: .75rem; font-size: .8rem; color: var(--themis-text-2); }
+
+/* Board 21: header with the Discover / Installed switch, wide search, pill filters and cards. */
+.themis-integrations-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: .75rem; }
+.themis-integrations .themis-integrations-header h2 { margin: 0; }
+.themis-view-switch { display: flex; padding: 4px; border-radius: var(--themis-radius-pill); background: var(--themis-raised); }
+.themis-integrations .themis-view-switch button { min-height: 0; height: 34px; padding: 0 18px; border-radius: var(--themis-radius-pill); color: var(--themis-text-2); font-size: .8125rem; font-weight: 500; }
+.themis-integrations .themis-view-switch button[aria-pressed="true"] { background: var(--themis-text); color: var(--themis-canvas); }
+.themis-integration-filters { flex: 1; }
+.themis-integration-filters .themis-integrations-search { flex: 1 1 320px; width: auto; height: 40px; }
+.themis-integration-filters select { height: 40px; padding: 0 30px 0 16px; border-radius: var(--themis-radius-pill); border: 1px solid var(--themis-border); background-position: right 12px center; color: var(--themis-text); }
+.themis-integrations .themis-discover-groups button[aria-pressed="true"] { background: var(--themis-text); color: var(--themis-canvas); }
+.themis-integrations .themis-discover-groups button { height: 34px; padding: 0 14px; font-weight: 500; }
+.themis-integrations .themis-integration-cards > li { min-height: 0; gap: .6rem; background: transparent; border: 1px solid var(--themis-border-subtle); }
+.themis-card-heading > div { display: flex; flex-direction: column; min-width: 0; }
+.themis-integrations .themis-card-heading button.themis-integration-open { min-height: 0; padding: 0; font-weight: 600; }
+.themis-card-tile { flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; overflow: hidden; background: var(--themis-raised); }
+.themis-card-tile img { width: 26px; height: 26px; object-fit: contain; }
+.themis-card-monogram { --tile-hue: 40; background: light-dark(hsl(var(--tile-hue) 45% 88%), hsl(var(--tile-hue) 30% 30%)); color: light-dark(hsl(var(--tile-hue) 45% 26%), hsl(var(--tile-hue) 70% 88%)); font-weight: 600; }
+.themis-card-footer { flex-wrap: nowrap; }
+.themis-card-footer .themis-integration-capabilities { flex: 1; min-width: 0; margin: 0; }
+.themis-integrations .themis-card-footer button { flex-shrink: 0; min-height: 0; height: 36px; padding: 0 16px; border-radius: var(--themis-radius-pill); background: var(--themis-raised); text-decoration: none; font-weight: 500; }
+.themis-integrations .themis-card-footer button.themis-installed:disabled { opacity: 1; background: transparent; color: var(--themis-success); }

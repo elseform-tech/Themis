@@ -67,6 +67,17 @@ function PluginIcon({ plugin, fallback = "folder" }: { plugin: PluginSpec; fallb
   if (icon && failedIcon !== icon && plugin.files[icon]?.trim().startsWith("<svg")) return <img className="themis-origin-icon" src={`data:image/svg+xml,${encodeURIComponent(plugin.files[icon])}`} alt="" onError={() => setFailedIcon(icon)} />;
   return <Icon name={fallback} />;
 }
+/** A steady hue per name, so a plugin's letter tile keeps its colour. */
+const tileHue = (name: string) => [...name].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) % 360, 7);
+/** Card icon: the plugin's own image, else its initial on a tile coloured from its name. */
+function CardIcon({ spec, name }: { spec: PluginSpec; name: string }) {
+  const [failedIcon, setFailedIcon] = useState<string | null>(null);
+  const icon = spec.icon && failedIcon !== spec.icon ? spec.icon : undefined;
+  const svg = icon && spec.files[icon]?.trim().startsWith("<svg") ? spec.files[icon] : undefined;
+  const source = icon?.startsWith("https://") ? icon : svg ? `data:image/svg+xml,${encodeURIComponent(svg)}` : undefined;
+  if (source) return <span className="themis-card-tile"><img src={source} alt="" referrerPolicy="no-referrer" onError={() => setFailedIcon(icon ?? null)} /></span>;
+  return <span className="themis-card-tile themis-card-monogram" style={{ ["--tile-hue" as string]: tileHue(name) }} aria-hidden="true">{name.charAt(0).toUpperCase()}</span>;
+}
 function capabilitySummary(spec: PluginSpec) {
   return [[spec.skills.length, "skill"], [Object.keys(spec.mcp).length, "MCP connection"], [spec.hooks.length, "hook"]]
     .filter(([count]) => Number(count) > 0).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ");
@@ -317,10 +328,10 @@ export function Plugins() {
   const server = item?.kind === "mcp" ? item.plugin.spec.mcp[item.id] : undefined;
   const hook = item?.kind === "hook" ? item.plugin.spec.hooks.find(hook => hook.name === item.id) : undefined;
   return <div className="themis-integrations">
-    <h2>Integrations</h2>
-    <nav className="themis-integrations-tabs" aria-label="Integration categories">{categories.map(value => <button key={value} aria-pressed={category === value} onClick={() => { previewRequest.current++; catalogRequest.current++; setCategory(value); setPublicView(false); setPanel(null); setBusy(false); }}>{value}</button>)}</nav>
-    <div className="themis-integrations-toolbar"><div>{category === "Plugins" && <><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button><button aria-pressed={publicView} onClick={() => { setPublicView(true); if (category === "Plugins") void browse(); }}>Discover</button></>}</div><div className="themis-integration-filters">
-      <input className="themis-integrations-search" type="search" aria-label="Search integrations" placeholder="Search" value={search} onChange={event => setSearch(event.target.value)} />
+    <div className="themis-integrations-header"><h2>Integrations</h2><div className="themis-view-switch" aria-label="View"><button aria-pressed={publicView} onClick={() => { setCategory("Plugins"); setPublicView(true); void browse(); }}>Discover</button><button aria-pressed={!publicView} onClick={() => { previewRequest.current++; catalogRequest.current++; setPublicView(false); setPanel(null); setBusy(false); }}>Installed</button></div></div>
+    {!publicView && <nav className="themis-integrations-tabs" aria-label="Integration categories">{categories.map(value => <button key={value} aria-pressed={category === value} onClick={() => { previewRequest.current++; catalogRequest.current++; setCategory(value); setPublicView(false); setPanel(null); setBusy(false); }}>{value}</button>)}</nav>}
+    <div className="themis-integrations-toolbar"><div className="themis-integration-filters">
+      <input className="themis-integrations-search" type="search" aria-label="Search integrations" placeholder={publicView ? "Search plugins" : "Search"} value={search} onChange={event => setSearch(event.target.value)} />
       {publicView && category === "Plugins" && <div className="themis-marketplace-picker"><button aria-label="Add marketplace" title="Add marketplace" disabled={busy || mutating} onClick={() => { setMarketName(""); setMarketSource(""); setAddingMarket(true); }}><Icon name="plus" /></button></div>}
       <select aria-label="Status" value={publicView ? catalogStatus : installedStatus} onChange={event => publicView ? setCatalogStatus(event.target.value) : setInstalledStatus(event.target.value)}>
         {publicView ? <><option value="available">Compatible</option><option value="all">All statuses</option><option value="installed">Installed</option><option value="supported">Fully compatible</option><option value="partial">Partially supported</option><option value="unsupported">Unsupported</option><option value="failed">Check failed</option><option value="unchecked">Not checked</option></> : <><option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option></>}
@@ -333,11 +344,10 @@ export function Plugins() {
       {catalogLoading && !catalog.length ? <div className="themis-marketplace-loading"><KnightLoading variant={readCompanionPreferences().variant} status={scanProgress} progress={scanPercent} progressLabel="Marketplace compatibility" /></div> : !catalogRows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : "No plugins to show"} />}
       {groupCounts.length > 1 && <nav className="themis-discover-groups" aria-label="Groups">{[["All", sourceRows.length] as const, ...groupCounts].map(([name, count]) => <button key={name} aria-pressed={shownGroup === name} onClick={() => pickGroup(name)}>{name}<span>{count}</span></button>)}</nav>}
       <ul className="themis-integrations-list themis-integration-cards">{catalogRows.map(entry => <li key={entry.key} data-check={entry.name}>
-        <div className="themis-card-heading"><PluginIcon plugin={{ ...(checks[entry.key]?.spec ?? emptySpec()), icon: checks[entry.key]?.spec.icon ?? entry.icon }} /><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy || mutating} onClick={() => void preview(entry)}>{entry.name}</button></div>
-        <span className="themis-integration-source">{[publisher(entry), entry.market].filter(Boolean).join(" · ")}</span>{entry.description && <p className="themis-integration-description">{entry.description}</p>}
-        {checks[entry.key] && <p className="themis-integration-capabilities">{addsSummary(checks[entry.key].spec)}</p>}
+        <div className="themis-card-heading"><CardIcon spec={{ ...(checks[entry.key]?.spec ?? emptySpec()), icon: checks[entry.key]?.spec.icon ?? entry.icon }} name={entry.name} /><div><button className="themis-integration-name themis-integration-open" aria-label={`View ${entry.name}`} disabled={busy || mutating} onClick={() => void preview(entry)}>{entry.name}</button><span className="themis-integration-source">{[publisher(entry), entry.market].filter(Boolean).join(" · ")}</span></div></div>
+        {entry.description && <p className="themis-integration-description">{entry.description}</p>}
         {reason(entry.key)}
-        <div className="themis-card-footer">{badge(entry.key)}<button aria-live="polite" aria-busy={installing === entry.key} disabled={busy || mutating || !checks[entry.key] || catalogInstalled(entry) || checks[entry.key]?.report.status === "unsupported"} onClick={() => void preview(entry, true)}>{installing === entry.key ? <><span className="themis-install-spinner" aria-hidden="true" />Installing…</> : catalogInstalled(entry) ? "✓ Installed" : "Install"}</button></div>
+        <div className="themis-card-footer"><span className="themis-integration-capabilities">{checks[entry.key] ? addsSummary(checks[entry.key].spec) : badge(entry.key)}</span><button className={catalogInstalled(entry) ? "themis-installed" : undefined} aria-live="polite" aria-busy={installing === entry.key} disabled={busy || mutating || !checks[entry.key] || catalogInstalled(entry) || checks[entry.key]?.report.status === "unsupported"} onClick={() => void preview(entry, true)}>{installing === entry.key ? <><span className="themis-install-spinner" aria-hidden="true" />Installing…</> : catalogInstalled(entry) ? "✓ Installed" : "Install"}</button></div>
       </li>)}</ul>
     </> : <>
       {!rows.length && <EmptyState title={(search.trim() || originFilter !== "all" || (publicView ? catalogStatus !== "available" : installedStatus !== "all")) ? "No matching integrations" : `No ${category.toLowerCase()} installed`} />}
