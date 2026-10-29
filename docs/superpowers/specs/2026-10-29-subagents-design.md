@@ -25,7 +25,7 @@ short and has no hint lines.
 2. **One card in the chat** per batch of subagents, with one live row per subagent: its status,
    its job, a short status line, its tool calls and its time.
 3. **Workspace › Tasks shows one subagent in full:** its brief, a live transcript, its model,
-   permissions and cost, and Stop.
+   and permissions, and Stop. No cost is shown for subagents.
 4. **Subagents are read-only by default.** They may write only to the folders and files the main
    agent gives them, and no two subagents own the same path.
 5. **No subagent widens permissions.** Approvals appear on the main composer, named after the
@@ -72,7 +72,7 @@ short and has no hint lines.
   - As each subagent ends, its result is delivered to the main agent's steer inbox as a labelled
     note, read before the main agent's next model request.
   - The result is bounded at 8 KiB: the final answer, or what it had so far plus why it ended
-    (stopped, failed, denied, turn or cost limit).
+    (stopped, failed, denied, turn limit).
   - The full answer stays in the subagent's transcript.
 
 ### Lifecycle
@@ -99,9 +99,7 @@ short and has no hint lines.
   - `subagents.max_turns` model requests, default 40.
   - Its own context compaction, using the same checkpoint rules as the main agent.
   - Hitting a limit ends it with its partial result.
-- **Cost:** subagent usage counts toward the chat's cost row and Settings › Usage, attributed to
-  the chat. The model is `subagents.model`, or the chat's model when unset. It is validated with
-  the same provider-prefix check as `goal.check_model`.
+- **Usage:** subagent requests are recorded in Settings › Usage under the chat, like any other request. No cost appears in the chat, the card or Workspace (the chat cost row was removed in #146). The model is `subagents.model`, or the chat's model when unset, validated with the same provider-prefix check as `goal.check_model`.
 - **Storage:**
   - Transcripts are kept at `subagents/<subagent-id>.jsonl` in the chat's app data.
   - Deleting the chat deletes them.
@@ -152,7 +150,7 @@ short and has no hint lines.
 - **Events:**
   - Subagent events are a separate stream keyed by `subagent_id` and the parent run id:
     `SubagentStarted {name, brief, model, write_paths, profile}`, `SubagentStatus {text}` and
-    `SubagentEnded {status, summary, tool_calls, duration, cost}`.
+    `SubagentEnded {status, summary, tool_calls, duration}`.
   - The desktop saves them with the chat's run events.
   - Each subagent's own tool events go to its transcript, not to the chat.
 - **The status line:**
@@ -178,7 +176,7 @@ short and has no hint lines.
   - Subagents are listed as Running or Needs attention rows.
   - The detail view shows the brief, a live transcript in the chat's style (progress sentences
     and folded tool calls), the model, a permissions line ("Read only", or "Writes
-    crates/core/tests/", plus "Shell not confined" when that applies), tool calls, time and cost,
+    crates/core/tests/", plus "Shell not confined" when that applies), tool calls and time,
     and Stop.
 - **Approvals (board 27):** the composer approval box reads "Test gaps (subagent) wants to run a
   command".
@@ -282,7 +280,7 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
 
 1. **Read-only subagents:**
    - The four tools, async child runs with their own inboxes, the turn waiting for subagents.
-   - Limits, cost accounting, transcripts and restart handling.
+   - Limits, usage recording, transcripts and restart handling.
    - Events and the status field.
    - Tool hooks and the new hook events.
    - The chat card with Stop, the Tasks detail, the approval queue and grant scoping.
