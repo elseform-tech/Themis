@@ -3821,6 +3821,20 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_subagent_result_is_never_the_active_request() {
+        let user = |content: String| ChatMessage {
+            role: ChatRole::User,
+            message_type: MessageType::Text,
+            content,
+        };
+        let messages = vec![
+            user("Review the change".into()),
+            user(subagent_note("Do something else entirely")),
+        ];
+        assert_eq!(active_request_index(&messages), Some(0));
+    }
+
     /// Found by the goal soak: a provider's empty reply to a summary request ("no text
     /// or tools") failed the checkpoint at once; a retry, with twice the output
     /// allowance, gives a model that spent its budget on reasoning another chance.
