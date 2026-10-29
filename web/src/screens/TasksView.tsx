@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { EmptyState } from "../components";
 import { setAutomationEnabled, stopBackgroundTask, stopSubagent, stopThread } from "../lib/tauri";
 import type { SubagentEntry, ThreadTaskBackground } from "../lib/types";
@@ -8,7 +8,8 @@ import { BackgroundTaskRow } from "./BackgroundTaskRow";
 import { groupBackground } from "./backgroundTasks";
 import { TaskIcon } from "./TaskIcon";
 import { groupTasks, type TaskKind, type TaskRow } from "./threadTasks";
-import { modelNote, subagentLine, type SubagentState } from "./SubagentCard";
+import { clock, modelNote, SubagentLetter, subagentLine, type SubagentState } from "./SubagentCard";
+import { plainSnippet } from "../lib/plainText";
 import { SubagentDetail } from "./SubagentDetail";
 import { doneCount, doneGroups, subagentTasks, type SubagentTask } from "./taskSections";
 
@@ -38,6 +39,22 @@ export function TasksView({ threadId }: { threadId: string }) {
   const done = doneGroups(messages, subagents, groups.earlier, background.earlier);
   const doneTotal = doneCount(done);
   const setDoneOpen = (open: boolean) => { setDoneOpenState(open); writeSession(DONE_OPEN_KEY, open); };
+  // The reply's row (board 29): titled by the request, with what it waits for and how long.
+  const startedAt = state.runStartedAt[threadId];
+  const replyRunning = groups.running.some(row => row.key === "run");
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!replyRunning) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [replyRunning]);
+  const request = [...messages].reverse().find(row => row.role === "user")?.text ?? "";
+  const reply = (row: TaskRow): TaskRow => row.key !== "run" ? row : {
+    ...row,
+    name: plainSnippet(request, 60) || row.name,
+    tag: "Reply",
+    meta: [working.length ? `Waiting for ${working.length} ${working.length === 1 ? "subagent" : "subagents"}` : "Running now", startedAt === undefined ? "" : clock((now - startedAt) / 1000)].filter(Boolean).join(" · "),
+  };
 
   async function attempt(key: string, action: () => Promise<unknown>) {
     setBusy(key); setError("");
@@ -71,12 +88,14 @@ export function TasksView({ threadId }: { threadId: string }) {
       </li>
     );
   };
-  const subagentRow = ({ agent, state: agentState }: SubagentTask) => {
+  const subagentRow = ({ agent, state: agentState, index }: SubagentTask, nested = false) => {
     const icon = subagentIcon(agentState);
     const live = agentState === "running" || agentState === "approval";
     return (
       <li key={`subagent-${agent.id}`} className="themis-task-row">
-        <span className={`themis-task-row-icon themis-task-row-icon--${icon}`} aria-hidden="true"><TaskIcon kind={icon} /></span>
+        {nested
+          ? <SubagentLetter name={agent.name} index={index} working={agentState === "running"} />
+          : <span className={`themis-task-row-icon themis-task-row-icon--${icon}`} aria-hidden="true"><TaskIcon kind={icon} /></span>}
         <button type="button" className="themis-task-row-text themis-task-row-open" onClick={() => dispatch({ type: "ui/subagent-focus", id: agent.id })}>
           <span className="themis-workspace-list-title">{agent.name}<em>Subagent</em></span>
           <span className="themis-workspace-list-meta">{[modelNote(agent, chatModel), subagentLine(agent, agentState, state.approvals)].filter(Boolean).join(" · ")}</span>
@@ -102,7 +121,7 @@ export function TasksView({ threadId }: { threadId: string }) {
           <h3 className="themis-tasks-heading is-attention">Needs you</h3>
           <ul className="themis-workspace-list">
             {groups.attention.map(taskRow)}
-            {waiting.map(subagentRow)}
+            {waiting.map(task => subagentRow(task))}
             {background.attention.map(backgroundRow)}
           </ul>
         </section>
@@ -111,10 +130,10 @@ export function TasksView({ threadId }: { threadId: string }) {
         <section aria-label="Running">
           <h3 className="themis-tasks-heading">Running</h3>
           <ul className="themis-workspace-list">
-            {groups.running.map(taskRow)}
+            {groups.running.map(row => taskRow(reply(row)))}
             {working.length > 0 && (
               <li className="themis-task-children" aria-label="Subagents of this reply">
-                <ul className="themis-workspace-list">{working.map(subagentRow)}</ul>
+                <ul className="themis-workspace-list">{working.map(task => subagentRow(task, true))}</ul>
               </li>
             )}
             {background.running.map(backgroundRow)}
@@ -144,7 +163,7 @@ export function TasksView({ threadId }: { threadId: string }) {
                 </button>
                 {open && (
                   <ul className="themis-workspace-list">
-                    {group.subagents.map(subagentRow)}
+                    {group.subagents.map(task => subagentRow(task))}
                     {group.rows.map(taskRow)}
                     {group.background.map(backgroundRow)}
                   </ul>

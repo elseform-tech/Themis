@@ -63,7 +63,9 @@ describe("Tasks sections", () => {
     render(<TasksView threadId="t1" />);
     expect(screen.getByRole("region", { name: "Needs you" })).toHaveTextContent("Test gaps");
     const running = screen.getByRole("region", { name: "Running" });
-    expect(running).toHaveTextContent("Chat run");
+    // The reply is titled by its request and says what it waits for.
+    expect(running).toHaveTextContent("ReviewReply");
+    expect(running).toHaveTextContent("Waiting for 1 subagent");
     expect(within(within(running).getByRole("listitem", { name: "Subagents of this reply" })).getByText("Bug hunt")).toBeInTheDocument();
     // The finished one waits, folded, in Done.
     const fold = screen.getByRole("button", { name: "Done · 1" });

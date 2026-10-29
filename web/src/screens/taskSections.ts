@@ -13,6 +13,8 @@ export interface SubagentTask {
   agent: SubagentEntry;
   runLive: boolean;
   state: SubagentState;
+  /** Its place in its reply, for the letter circle's tone. */
+  index: number;
 }
 
 export interface DoneGroup {
@@ -38,9 +40,9 @@ export function clockLabel(iso: string | undefined, now: Date = new Date()): str
 
 /** Every subagent of the chat with its state; `activeRun` is the run still going. */
 export function subagentTasks(messages: ChatMessage[], activeRun: string | undefined, approvals: ApprovalRequest[]): SubagentTask[] {
-  return messages.flatMap(row => (row.subagents ?? []).map(agent => {
+  return messages.flatMap(row => (row.subagents ?? []).map((agent, index) => {
     const runLive = row.runId !== undefined && row.runId === activeRun;
-    return { agent, runLive, state: subagentState(agent, runLive, approvals) };
+    return { agent, runLive, state: subagentState(agent, runLive, approvals), index };
   }));
 }
 

@@ -78,7 +78,9 @@
 .themis-task-row-open:hover .themis-workspace-list-title { color: var(--themis-text); text-decoration: underline; text-underline-offset: 3px; }
 .themis-task-row-open:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; border-radius: 6px; }
 .themis-tasks-heading.is-attention { color: var(--themis-warning); }
-.themis-task-children { display: block; margin-left: 7px; padding-left: 17px; border-left: 1px solid var(--themis-border-subtle); list-style: none; }
+/* Tasks rows are spaced, not ruled (board 29); a reply's subagents hang under it on one rule. */
+.themis-tasks .themis-workspace-list li { border-bottom: 0; padding: 8px 0; }
+.themis-tasks .themis-workspace-list li.themis-task-children { display: block; margin-left: 7px; padding: 0 0 0 17px; border-left: 1px solid var(--themis-border-subtle); }
 .themis-tasks-done { border-top: 1px solid var(--themis-border-subtle); }
 .themis-tasks-fold {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 0; border: 0; background: transparent;
