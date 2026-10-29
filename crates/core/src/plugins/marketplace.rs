@@ -816,30 +816,7 @@ fn import_directory(
         }
         // Many catalog entries point at a whole repository (a library, an MCP server's
         // source). Keep only the plugin's own folders and the files its declarations name.
-        let mut keep: Vec<String> = COMPONENT_PATHS.iter().map(|path| (*path).into()).collect();
-        for field in ["skills", "mcpServers", "hooks"] {
-            for value in [Some(&manifest), entry]
-                .into_iter()
-                .flatten()
-                .filter_map(|source| source.get(field))
-            {
-                let texts = match value {
-                    Value::String(text) => vec![text.as_str()],
-                    Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
-                    _ => vec![],
-                };
-                keep.extend(
-                    texts
-                        .into_iter()
-                        .map(|text| {
-                            text.trim_start_matches("./")
-                                .trim_end_matches('/')
-                                .to_owned()
-                        })
-                        .filter(|path| safe_relative(path)),
-                );
-            }
-        }
+        let keep = component_paths(&manifest, entry);
         spec.files.clear();
         spec.executable_files.clear();
         spec.unsupported.clear();
@@ -987,13 +964,9 @@ fn declared_paths(
 ) -> Vec<String> {
     let mut paths = Vec::new();
     for value in values {
-        let texts = match value {
-            Value::String(text) => vec![text.as_str()],
-            Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
-            _ => {
-                unsupported.push(format!("Declared {label} paths must be text"));
-                continue;
-            }
+        let Some(texts) = declared_texts(value) else {
+            unsupported.push(format!("Declared {label} paths must be text"));
+            continue;
         };
         for text in texts {
             let path = text.trim_start_matches("./").trim_end_matches('/');
@@ -1014,6 +987,41 @@ fn declared_paths(
         }
     }
     paths
+}
+
+/// The text paths in a `skills`, `mcpServers` or `hooks` declaration; `None` when it is
+/// neither text nor a list.
+fn declared_texts(value: &Value) -> Option<Vec<&str>> {
+    match value {
+        Value::String(text) => Some(vec![text.as_str()]),
+        Value::Array(items) => Some(items.iter().filter_map(Value::as_str).collect()),
+        _ => None,
+    }
+}
+
+/// What to keep when a plugin folder is too large: its component folders and declared paths.
+fn component_paths(manifest: &Value, entry: Option<&Value>) -> Vec<String> {
+    let declared = ["skills", "mcpServers", "hooks"]
+        .into_iter()
+        .flat_map(|field| {
+            [Some(manifest), entry]
+                .into_iter()
+                .flatten()
+                .filter_map(move |source| source.get(field))
+        })
+        .filter_map(declared_texts)
+        .flatten()
+        .map(|text| {
+            text.trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_owned()
+        })
+        .filter(|path| safe_relative(path));
+    COMPONENT_PATHS
+        .iter()
+        .map(|path| (*path).to_owned())
+        .chain(declared)
+        .collect()
 }
 
 fn unique(paths: Vec<String>) -> Vec<String> {
