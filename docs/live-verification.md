@@ -1,14 +1,20 @@
 # Live verification after a merge
 
 Automated tests use mock providers. After every merge to `main`, a live check confirms that the
-freshly built app works with real models: a sanity check that it starts and answers, and a long
-goal that shows whether goal mode, compaction and the tools still hold up. It is a **benchmark audit**, reported separately from
-the automated test inventory.
+freshly built app works with real models. It is a **benchmark audit**, reported separately from
+the automated test inventory, and it comes in two tiers:
+
+- **Tier 1, every merge (about 15–20 minutes, watched):** the smoke check (step 2) and the
+  coverage rows the merged PR touched (step 3), driven in the real app while the person watches,
+  plus the goal soak and verification eval running unwatched (steps 5 and 6).
+- **Tier 2, the full tour (about 60–90 minutes, watched):** every row of the coverage table
+  (step 4). Run it weekly, before a release, or when asked.
 
 Never use real app data or the real Keychain: every step below runs with its own HOME and data
 folder, and the key comes from `OPENCODE_KEY` (the app falls back to it when no Keychain entry is
-found). Use free or cheap models (for example `muse-spark-1.3-contributor`, `mimo-v2.6-flash`,
-`qwen3.8-flash`, `glm-5.3-flash`, `deepseek-v4.1-flash`).
+found). Use free or cheap models (for example `beam-free` or `iceman-contributor-free`, else
+`muse-spark-1.3-contributor`, `mimo-v2.6-flash`, `qwen3.8-flash`, `glm-5.3-flash`,
+`deepseek-v4.1-flash`), at high effort where the model offers it.
 
 ## 1. Sync and build from `main`
 
@@ -19,21 +25,152 @@ cargo build -p themis-desktop --features tauri/custom-protocol   # desktop app w
 cargo build -p themis-desktop --bin themis                       # CLI and app server
 ```
 
-## 2. The desktop app, by hand
+## 2. Smoke check (every merge, about 5 minutes)
 
-Launch the fresh build with a scratch HOME (for desktop control, wrap the binary in a scratch
-`.app` with a test bundle identifier first):
+Wrap the fresh `target/debug/themis-desktop` in a scratch `.app` with a test bundle identifier
+(for example `ai.themis.desktop.livecheck`) and launch it with a scratch HOME:
 
 ```sh
-HOME=$(mktemp -d) target/debug/themis-desktop
+HOME=$(mktemp -d) ThemisLive.app/Contents/MacOS/themis-desktop
 ```
 
-In a new chat on a cheap thinking model, send a task that writes and reads a file (approve the
-write), then a follow-up that depends on the first answer. Check: both answers are right, the
-approval prompt appears once per write, the activity list shows only public narration and tool
-calls, and the follow-up keeps the context. Quit the app.
+1. In a new chat on a cheap thinking model, ask for a file to be written and read back. Check the
+   approval box appears once on the composer, disappears after Allow once, and the answer is
+   right and ends with a short summary.
+2. Ask a follow-up that depends on the first answer without reading files; it keeps the context.
+3. Open Settings (every section loads) and Workspace (every tab loads), then quit the app.
 
-## 3. The goal soak
+## 3. What the merge touched (every merge)
+
+Pick the rows of the coverage table below whose **Code** column matches a file the merged PR
+changed, and run their steps in the same scratch app. A PR that changes shared machinery
+(`crates/core/src/runtime.rs`, `providers.rs`, `crates/desktop/src/state/run.rs`, the composer
+or the thread reducer) also runs the goal backbone (step 4A). Report each row as passed, failed
+or skipped with the reason.
+
+## 4. The full tour (weekly, before a release, or on request)
+
+### A. One goal that uses every tool
+
+In a new project, set the scratch `runtime.jsonc` to `"context_token_budget": 32000` (it applies
+to the next run, which also checks configuration reload), start Custom mode, and send:
+
+> /goal Build a tiny `tour` Python package in this project and prove each step: create
+> `tour/slug.py` with `slug(text)` and a failing test in `tests/`, run the tests, fix it with a
+> patch, and commit on a new branch `tour`. Copy, move and delete a scratch file and make a
+> directory. Search the files for `slug`. Look up Python's `re.sub` documentation on the web and
+> quote one sentence with its URL. Serve the project with a background `python3 -m http.server`,
+> open it in the built-in browser, click into `tour/`, screenshot it and attach the screenshot.
+> Ask me which separator to use (`-` or `_`) before finishing. After any checkpoint, recall the
+> exact first failing test output. List my plugins, save a one-line skill named `tour-note`, and
+> create a daily automation for this chat that you then pause. Stop the server at the end.
+
+While it runs, do the **During the goal** rows: queue a message, steer one in, answer the
+question box, use an "Allow in this chat" grant, edit and pause then resume the goal, and finally
+stop one run with Esc twice. The goal must reach its end with every step proved, a progress line
+at each step and a summary at the end of every turn.
+
+### B. Every screen and setting
+
+Walk the remaining rows in table order: every Settings section (change a value, confirm it takes
+effect, put it back), Integrations, Automations, Review queue, Search, Help, the companion, and
+project and chat management.
+
+## Coverage table
+
+Every user-facing feature has a row. **ID** names it: `tool:` an agent tool, `settings:` a
+Settings section, `workspace:` a Workspace tab, `view:` a main view, `config:` a `runtime.jsonc`
+group, `feature:` anything else. The `live_coverage` test in `crates/desktop/tests` fails when a
+tool, Settings section, Workspace tab, main view or configuration group exists without a row, or
+a row names one that no longer exists, so **a PR that adds a feature adds its row**. **Tier**
+`smoke` rows run on every merge; `tour` rows run when the merge touches their **Code** or in the
+full tour.
+
+| ID | Tier | Code | Check |
+| --- | --- | --- | --- |
+| `tool:list_dir` | tour | `crates/core/src/tools.rs` | Goal lists the project. |
+| `tool:read_file` | smoke | `crates/core/src/tools.rs` | Smoke step 1 reads the file back. |
+| `tool:write_file` | smoke | `crates/core/src/tools.rs` | Smoke step 1 writes with one approval. |
+| `tool:copy_file` | tour | `crates/core/src/tools.rs` | Goal copies the scratch file. |
+| `tool:move_file` | tour | `crates/core/src/tools.rs` | Goal moves it. |
+| `tool:delete_file` | tour | `crates/core/src/tools.rs` | Goal deletes it; the approval names the path. |
+| `tool:create_dir` | tour | `crates/core/src/tools.rs` | Goal makes the directory. |
+| `tool:search_file` | tour | `crates/core/src/tools.rs` | Goal finds `slug`. |
+| `tool:shell` | tour | `crates/core/src/tools.rs`, `crates/core/src/sandbox.rs` | Goal runs the tests; the approval shows the argv. |
+| `tool:background_task` | tour | `crates/core/src/tools/background.rs` | The server runs in the background, shows in Workspace › Tasks and stops at the end. |
+| `tool:apply_patch` | tour | `crates/core/src/tools/patch.rs` | Goal fixes the test with a patch; Changes shows the diff. |
+| `tool:git` | tour | `crates/core/src/tools.rs` | Goal commits on `tour`; Branches lists it. |
+| `tool:recall` | tour | `crates/core/src/tools/recall.rs` | After a checkpoint, the first test output comes back exact. |
+| `tool:fetch_url` | tour | `crates/core/src/tools/web.rs` | Goal reads the `re.sub` page. |
+| `tool:web_search` | tour | `crates/core/src/tools/web.rs` | Goal finds the docs page through search. |
+| `tool:browser_open` | tour | `crates/core/src/browser` | The page opens; the overview box shows it live. |
+| `tool:browser_navigate` | tour | `crates/core/src/browser` | Goal navigates to the served page. |
+| `tool:browser_snapshot` | tour | `crates/core/src/browser` | Goal reads the page. |
+| `tool:browser_click` | tour | `crates/core/src/browser` | Goal clicks into `tour/`. |
+| `tool:browser_type` | tour | `crates/core/src/browser` | Ask the agent to type into the address or a search field. |
+| `tool:browser_select` | tour | `crates/core/src/browser` | Ask the agent to pick an option on a page with a select box. |
+| `tool:browser_press` | tour | `crates/core/src/browser` | Ask the agent to press Enter or Escape on a page. |
+| `tool:browser_scroll` | tour | `crates/core/src/browser` | Ask the agent to scroll a long page. |
+| `tool:browser_tabs` | tour | `crates/core/src/browser` | Ask the agent to list and switch tabs. |
+| `tool:browser_screenshot` | tour | `crates/core/src/browser` | Goal screenshots the page. |
+| `tool:browser_record` | tour | `crates/core/src/browser` | Ask for a short recording; it plays in the media viewer. |
+| `tool:browser_devtools` | tour | `crates/core/src/browser/tools/devtools.rs` | Only with Developer mode on: read the console. Off: the tool is not offered. |
+| `tool:set_goal` | tour | `crates/desktop/src/state/goal_tool.rs` | `/goal` sets the goal; the goal bar shows it. |
+| `tool:ask_user` | tour | `crates/desktop/src/state/question_tool.rs` | The separator question appears on the composer after any approval, answered inline. |
+| `tool:attach_file` | tour | `crates/desktop/src/state/media_tool.rs` | The screenshot is attached to the reply. |
+| `tool:list_plugins` | tour | `crates/desktop/src/state/integration_tools.rs` | Goal lists plugins. |
+| `tool:save_skill` | tour | `crates/desktop/src/state/integration_tools.rs` | `tour-note` appears in Integrations › Skills. |
+| `tool:manage_integrations` | tour | `crates/desktop/src/state/integration_tools.rs` | Ask the agent to disable then enable a plugin; Integrations agrees. |
+| `tool:manage_automations` | tour | `crates/desktop/src/state/integration_tools.rs`, `crates/desktop/src/state/automation.rs` | The daily automation appears paused in Automations and Tasks. |
+| `feature:goal` | tour | `crates/desktop/src/state/goal.rs`, `web/src/screens/GoalBar.tsx` | Edit, pause after this turn, resume and remove from the goal bar; the goal continues across turns and ends with one summary. |
+| `feature:checkpoints` | tour | `crates/core/src/runtime.rs`, `crates/core/src/runtime/maintenance.rs` | At 32k the goal passes a checkpoint; the context meter drops and the work carries on. |
+| `feature:queue-and-steer` | tour | `crates/desktop/src/state/queue.rs`, `web/src/screens/QueueStack.tsx` | Queue, edit and remove a message; steer one in and see it handled. |
+| `feature:approvals` | smoke | `web/src/components/approval`, `crates/desktop/src/state/chat_grants.rs` | Allow once, Allow in this chat (no prompt next time), Deny; keys 1–3 work. |
+| `feature:yolo` | tour | `web/src/lib/yolo.ts`, `crates/core/src/sandbox.rs` | Switch the shield to YOLO: no prompts; a deny rule still blocks. |
+| `feature:stop` | tour | `web/src/screens/ThreadComposer.tsx` | Esc twice stops the run with the hint shown first. |
+| `feature:turn-summary` | smoke | `crates/core/src/runtime.rs` | Every turn ends with a short natural summary; thinking folds only after the turn. |
+| `feature:model-picker` | smoke | `web/src/screens/ThreadHeader.tsx` | Change the model and effort; the next run uses them. |
+| `feature:attachments` | tour | `web/src/screens/AttachmentPreview.tsx`, `crates/desktop/src/state/attachments.rs` | Attach a file with +; the agent reads it. |
+| `feature:mentions` | tour | `web/src/components/PromptInput.tsx` | `/` lists skills, `@` lists plugins; the chosen one is used. |
+| `feature:overview-box` | tour | `web/src/screens/OverviewBox.tsx` | Shows changes, tasks and the live browser; its icon opens Workspace and back returns to the box. |
+| `feature:usage` | tour | `crates/desktop/src/usage.rs` | Tokens and cost under the reply match Settings › Usage. |
+| `feature:sound-and-notifications` | tour | `web/src/lib/completionSound.ts`, `crates/desktop/src/notifications.rs` | Sound off by default; switched on, it plays when a reply finishes. |
+| `feature:projects-and-chats` | tour | `web/src/screens/Sidebar.tsx` | Create, switch and rename a project; rename and remove a chat. |
+| `feature:search` | tour | `web/src/screens/Palette.tsx` | ⌘K finds a chat and a command. |
+| `feature:help` | tour | `web/src/screens/Sidebar.tsx` | Help opens the shortcuts. |
+| `feature:companion` | tour | `web/src/components/KnightCompanion.tsx` | The companion shows state notes and can be resized and moved. |
+| `feature:cli` | tour | `crates/desktop/src/cli.rs` | `themis status`, `themis thread list` and `themis doctor` work against the running app. |
+| `settings:General` | tour | `web/src/screens/Settings.tsx` | Toggle the reply sound; it takes effect on the next reply. |
+| `settings:Appearance` | tour | `web/src/screens/Appearance.tsx` | Preview, revert and apply a theme. |
+| `settings:Models` | tour | `web/src/screens/ModelsSettings.tsx` | Change the default model; a new chat uses it. |
+| `settings:Usage` | tour | `web/src/screens/UsageSettings.tsx` | Today's chats appear with their tokens. |
+| `settings:Secrets` | tour | `web/src/screens/SecretsSettings.tsx` | Add then remove a dummy secret. |
+| `settings:Permissions` | tour | `web/src/screens/PermissionsView.tsx` | The config file reads as valid; Open opens it; the default mode applies to a new chat. |
+| `settings:Browser` | tour | `web/src/screens/BrowserSettings.tsx` | Turn Developer mode on and off; `browser_devtools` follows. |
+| `settings:Web` | tour | `web/src/screens/WebSettings.tsx` | Check the search server. |
+| `settings:Advanced` | tour | `web/src/screens/Settings.tsx` | Lower Steps per reply; a long run stops at it; reset limits. |
+| `workspace:changes` | smoke | `web/src/screens/WorkspacePanel.tsx` | The goal's changes and diff appear live. |
+| `workspace:files` | tour | `web/src/screens/WorkspacePanel.tsx` | Browse to `tour/slug.py` and read it. |
+| `workspace:branches` | tour | `web/src/screens/WorkspacePanel.tsx` | Lists `tour`. |
+| `workspace:pulls` | tour | `web/src/screens/WorkspacePanel.tsx` | Shows PRs or the reason it cannot. |
+| `workspace:tasks` | tour | `web/src/screens/TasksView.tsx` | Shows the run and the server; Stop and Pause work. |
+| `workspace:browser` | tour | `web/src/screens/BrowserView.tsx` | Drive the page by hand while the agent uses it; Capture to message works. |
+| `view:skills` | tour | `web/src/screens/Skills.tsx`, `web/src/screens/Plugins.tsx` | Create, edit and delete a skill; install, enable and disable a catalog plugin. |
+| `view:automations` | tour | `web/src/screens/Automations.tsx` | Create, run now, pause and delete an automation. |
+| `view:queue` | tour | `web/src/screens/ReviewQueue.tsx` | Items appear and can be cleared. |
+| `config:approval` | tour | `crates/core/src/configuration.rs` | Add a deny rule; the tool is blocked in Custom and YOLO. |
+| `config:sandbox` | tour | `crates/core/src/sandbox.rs` | With `"network": "block"` a shell `curl` fails. |
+| `config:browser` | tour | `crates/core/src/configuration.rs` | Set by Settings › Browser; the file shows the change. |
+| `config:web` | tour | `crates/core/src/configuration.rs` | Set by Settings › Web; the file shows the change. |
+| `config:skills` | tour | `crates/core/src/skills.rs` | A skill under a configured path is found. |
+| `config:instructions` | tour | `crates/core/src/configuration.rs` | A listed file's rule is followed. |
+| `config:providers` | tour | `crates/core/src/providers.rs` | A configured provider lists in Settings › Models. |
+| `config:models` | tour | `crates/core/src/providers/catalog.rs` | A `reasoning_effort` override is the default effort. |
+| `config:logging` | tour | `crates/core/src/diagnostics.rs` | Diagnostics rotate under app data, with no prompts or keys. |
+| `config:compaction` | tour | `crates/core/src/runtime/maintenance.rs` | Settings here change the checkpoint and summary model. |
+| `config:goal` | tour | `crates/desktop/src/state/goal.rs` | `goal.check_model` is used for the goal check. |
+
+## 5. The goal soak (unwatched)
 
 ```sh
 python3 -m evals.soak run --model muse-spark-1.3-contributor
@@ -48,7 +185,7 @@ is a trend against the last 5 runs of the same model, budget and job: a **breaka
 harness measure is our bug; a **regression** flag on a model measure asks a person to look at the
 trace. Commit the run's `history.jsonl` line with the report. See `evals/soak/README.md`.
 
-## 4. The verification eval
+## 6. The verification eval (unwatched)
 
 ```sh
 node scripts/bundle-searxng.mjs --if-missing
@@ -70,7 +207,8 @@ and check the failing hidden test asks only for what the request and docs state.
 
 ## Reporting and fixing
 
-Report each step with its exact command and result (the soak's flags, its end state, lost runs
-and their reasons). Scan the scratch folders for saved reasoning or the key. A bug found here is fixed on
-its own `codex/<task>` branch with a regression test (and a CLI end-to-end case for backend
-changes), then merged and verified the same way.
+Report each step with its exact command and result: the smoke check, every row run (passed,
+failed or skipped and why), the soak's flags, end state, lost runs and their reasons, and the
+verification eval's trend. Scan the scratch folders for saved reasoning or the key. A bug found
+here is fixed on its own `codex/<task>` branch with a regression test (and a CLI end-to-end case
+for backend changes), then merged and verified the same way.
