@@ -49,15 +49,15 @@ export function SubagentSettingsSection({ onSaved }: { onSaved?: () => void } = 
           ))}
         </span>
       </div>
-      <label className="themis-settings-control">Subagent model<span className="themis-settings-model-picker">
-        <select aria-label="Subagent model" value={model} disabled={!settings.enabled} onChange={event => void patch({ model: event.target.value || null })}>
+      <label className="themis-settings-control">Default model<span className="themis-settings-model-picker">
+        <select aria-label="Default model" value={model} disabled={!settings.enabled} onChange={event => void patch({ model: event.target.value || null })}>
           <option value="">Chat model</option>
           {!known && <option value={model}>{model} (unavailable)</option>}
           {models.map(entry => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
         </select>
       </span></label>
       <div className="themis-settings-control">
-        <span id="subagents-others">Other models</span>
+        <span id="subagents-others">Allowed models</span>
         <span className="themis-subagent-models" role="group" aria-labelledby="subagents-others">
           {others.map(entry => (
             <span key={entry} className="themis-subagent-model">{entry}
@@ -68,7 +68,7 @@ export function SubagentSettingsSection({ onSaved }: { onSaved?: () => void } = 
           ))}
           {others.length < MAX_MODELS && (
             <span className="themis-settings-model-picker">
-              <select aria-label="Add a model" value="" disabled={!settings.enabled || addable.length === 0} onChange={event => { if (event.target.value) void patch({ models: [...others, event.target.value] }); }}>
+              <select aria-label="Add model" value="" disabled={!settings.enabled || addable.length === 0} onChange={event => { if (event.target.value) void patch({ models: [...others, event.target.value] }); }}>
                 <option value="">Add model</option>
                 {addable.map(entry => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
               </select>

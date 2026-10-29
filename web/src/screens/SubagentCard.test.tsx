@@ -165,15 +165,15 @@ describe("Settings › Subagents", () => {
     fireEvent.click(screen.getByRole("radio", { name: "5" }));
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ max_parallel: 5 }, "r1");
-    fireEvent.change(screen.getByRole("combobox", { name: "Subagent model" }), { target: { value: "beam-free" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Default model" }), { target: { value: "beam-free" } });
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ model: "beam-free" }, "r2");
-    fireEvent.change(screen.getByRole("combobox", { name: "Subagent model" }), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Default model" }), { target: { value: "" } });
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ model: null }, "r2");
     expect(saved).toHaveBeenCalledTimes(3);
-    // Other models: added from the list, at most three, removed one by one.
-    fireEvent.change(screen.getByRole("combobox", { name: "Add a model" }), { target: { value: "glm-5" } });
+    // Allowed models: added from the list, at most three, removed one by one.
+    fireEvent.change(screen.getByRole("combobox", { name: "Add model" }), { target: { value: "glm-5" } });
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ models: ["glm-5"] }, "r2");
     fireEvent.click(screen.getByRole("button", { name: "Remove glm-5" }));
