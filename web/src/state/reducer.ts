@@ -522,10 +522,10 @@ export function applyThreadEvent(
     case "subagent_started": {
       const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined, at: event.at };
       const rows = state.messages[threadId] ?? [];
-      const last = rows[rows.length - 1];
-      // Subagents started together share one card; a later spawn gets its own.
-      if (last?.subagents && last.runId === runId) {
-        const updated = [...rows.slice(0, -1), { ...last, subagents: [...last.subagents, entry] }];
+      // One stack per reply: every subagent the run starts joins the first one.
+      const index = rows.findIndex(row => row.subagents && row.runId === runId);
+      if (index >= 0) {
+        const updated = rows.map((row, at) => at === index ? { ...row, subagents: [...row.subagents!, entry] } : row);
         return { ...state, messages: { ...state.messages, [threadId]: updated } };
       }
       return appendMessage(state, threadId, { id: `subagents-${event.id}`, role: "system", text: "", runId, subagents: [entry] });
