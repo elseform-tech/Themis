@@ -9,8 +9,15 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// A file's text with `\n` line ends, whatever the checkout used.
+fn read_at(path: &Path) -> String {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+        .replace("\r\n", "\n")
+}
+
 fn read(path: &str) -> String {
-    std::fs::read_to_string(root().join(path)).unwrap_or_else(|error| panic!("{path}: {error}"))
+    read_at(&root().join(path))
 }
 
 /// Every `"..."` literal in `text`, in order.
@@ -62,7 +69,7 @@ fn tool_names() -> BTreeSet<String> {
         rust_sources(&root().join(directory), &mut sources);
     }
     for source in sources {
-        let text = std::fs::read_to_string(&source).unwrap();
+        let text = read_at(&source);
         // Stub tools in test modules are not offered.
         let text = text.split("#[cfg(test)]\nmod ").next().unwrap_or_default();
         // `#[tool(name = "...", ...)]`
