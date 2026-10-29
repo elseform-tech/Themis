@@ -429,3 +429,55 @@ async fn marketplace_check_counts_statuses_and_a_formerly_colliding_plugin_insta
     assert_eq!(installed["spec"]["skills"][0]["id"], "forms");
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_import_keeps_plain_values_and_reads_install_settings_as_keys() {
+    let data = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(Server::bind(state, data.path()).await.unwrap().run());
+    let config = project.path().join("mcp.json");
+    std::fs::write(
+        &config,
+        json!({"mcpServers": {
+            "bigquery": {"command": "npx", "args": ["-y", "@toolbox-sdk/server"], "env": {
+                "BIGQUERY_PROJECT": "${user_config.bigquery_project}",
+                "LOG_LEVEL": "ERROR",
+                "REGION": "${REGION:-us-central1}"
+            }},
+            "exa": {"type": "http", "url": "https://mcp.exa.ai/mcp?client=claude-code-plugin", "headers": {"x-exa-source": "claude-code-plugin"}}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let imported = cli(
+        data.path(),
+        &["mcp", "import", config.to_str().unwrap(), "values"],
+    );
+    let mcp = &imported["spec"]["mcp"];
+    assert_eq!(
+        mcp["bigquery"]["env"]["BIGQUERY_PROJECT"],
+        "BIGQUERY_PROJECT"
+    );
+    assert_eq!(mcp["bigquery"]["env_values"]["LOG_LEVEL"], "ERROR");
+    assert_eq!(mcp["bigquery"]["defaults"]["REGION"], "us-central1");
+    assert_eq!(
+        mcp["exa"]["header_values"]["x-exa-source"],
+        "claude-code-plugin"
+    );
+    // A literal credential is still refused through the CLI.
+    std::fs::write(
+        &config,
+        json!({"mcpServers": {"bad": {"command": "run", "env": {"API_KEY": "abc"}}}}).to_string(),
+    )
+    .unwrap();
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(data.path())
+        .args(["mcp", "import", config.to_str().unwrap(), "bad"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("literal values are unsupported"));
+    task.abort();
+}

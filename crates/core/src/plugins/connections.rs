@@ -34,6 +34,15 @@ pub struct McpServer {
     /// Extra HTTP headers, each `prefix${NAME}` (such as `Token ${API_KEY}`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
+    /// Plain, non-secret environment values (see `keys::safe_literal`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env_values: BTreeMap<String, String>,
+    /// Plain, non-secret HTTP headers (see `keys::safe_literal`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub header_values: BTreeMap<String, String>,
+    /// Values for keys that are not set (`${NAME:-default}`), never credentials.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub defaults: BTreeMap<String, String>,
     #[serde(default)]
     pub enabled: bool,
 }
@@ -46,17 +55,33 @@ impl McpServer {
             bail!("MCP command is empty");
         }
         if let Some(url) = &self.url {
-            let u = reqwest::Url::parse(url)?;
-            if !(u.scheme() == "https"
-                || (u.scheme() == "http"
-                    && matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))))
-                || !u.username().is_empty()
-                || u.password().is_some()
-                || u.query().is_some()
-                || u.fragment().is_some()
-            {
-                bail!("Use HTTPS (or localhost HTTP) without embedded credentials");
+            let names = super::keys::template_names(url);
+            if names.iter().any(|name| !super::keys::valid_name(name)) {
+                bail!("MCP URL references must be ${{NAME}}");
             }
+            // A URL that starts with a key (`${BASE}/mcp`) is checked once the key is known.
+            if !url.starts_with("${") {
+                check_url(&super::keys::fill(url, |_| "key".into()))?;
+            }
+        }
+        for (name, value) in self.env_values.iter().chain(&self.header_values) {
+            if !super::keys::safe_plugin_value(name, value) {
+                bail!("MCP value for '{name}' must reference a key as ${{NAME}}; literal values are unsupported");
+            }
+        }
+        for (name, value) in &self.defaults {
+            if !super::keys::valid_name(name) || !super::keys::safe_literal(name, value) {
+                bail!("MCP default for '{name}' must be a plain, non-secret value");
+            }
+        }
+        if self.env_values.keys().any(|name| {
+            self.env.contains_key(name)
+                || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        }) {
+            bail!("MCP environment names must be unique variable names");
+        }
+        if !self.header_values.is_empty() && self.url.is_none() {
+            bail!("Only remote MCP servers take headers");
         }
         if self
             .env
@@ -70,7 +95,11 @@ impl McpServer {
         if !self.headers.is_empty() && self.url.is_none() {
             bail!("Only remote MCP servers take headers");
         }
-        for (name, template) in &self.headers {
+        for (name, template) in self.headers.iter().chain(&self.header_values) {
+            let literal = self.header_values.contains_key(name);
+            if literal && self.headers.contains_key(name) {
+                bail!("Duplicate MCP header '{name}'");
+            }
             const RESERVED: [&str; 7] = [
                 "accept",
                 "content-type",
@@ -90,7 +119,9 @@ impl McpServer {
             {
                 bail!("Unsupported MCP header '{name}'");
             }
-            super::keys::header_template(template)?;
+            if !literal {
+                super::keys::header_template(template)?;
+            }
         }
         Ok(())
     }
@@ -101,10 +132,14 @@ impl McpServer {
             .headers
             .values()
             .filter_map(|t| super::keys::header_template(t).ok().map(|(_, n)| n));
-        for name in self
-            .env
-            .values()
-            .map(String::as_str)
+        let url = self
+            .url
+            .as_deref()
+            .map(super::keys::template_names)
+            .unwrap_or_default();
+        for name in url
+            .into_iter()
+            .chain(self.env.values().map(String::as_str))
             .chain(self.bearer_env.as_deref())
             .chain(headers)
         {
@@ -118,6 +153,25 @@ impl McpServer {
     pub fn has_credentials(&self) -> bool {
         self.bearer_env.is_some() || !self.headers.is_empty()
     }
+}
+/// A remote MCP address: HTTPS (or HTTP to this computer) with no user name, password or
+/// fragment. A query is allowed when every parameter is plain and none names a credential.
+fn check_url(url: &str) -> anyhow::Result<()> {
+    let u = reqwest::Url::parse(url)?;
+    let query_ok = u
+        .query_pairs()
+        .all(|(name, value)| super::keys::safe_literal(&name, &value));
+    if !(u.scheme() == "https"
+        || (u.scheme() == "http"
+            && matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))))
+        || !u.username().is_empty()
+        || u.password().is_some()
+        || !query_ok
+        || u.fragment().is_some()
+    {
+        bail!("Use HTTPS (or localhost HTTP) without embedded credentials");
+    }
+    Ok(())
 }
 enum Transport {
     Stdio {
@@ -173,7 +227,7 @@ impl Connection {
         let mut keys = BTreeMap::new();
         let mut missing = Vec::new();
         for name in server.key_names() {
-            match super::keys::value(&name) {
+            match super::keys::value(&name).or_else(|| server.defaults.get(&name).cloned()) {
                 Some(value) => {
                     keys.insert(name, value);
                 }
@@ -200,6 +254,9 @@ impl Connection {
             for (name, source) in &server.env {
                 c.env(name, &keys[source]);
             }
+            for (name, value) in &server.env_values {
+                c.env(name, value);
+            }
             #[cfg(unix)]
             c.process_group(0);
             let mut child = match c.spawn() {
@@ -225,7 +282,10 @@ impl Connection {
                 output,
             }
         } else {
-            let url = server.url.clone().context("Missing URL")?;
+            let url = super::keys::fill(server.url.as_deref().context("Missing URL")?, |name| {
+                keys[name].clone()
+            });
+            check_url(&url)?;
             let bearer = match &server.bearer_env {
                 Some(name) => Some(keys[name].clone()),
                 // A sign-in made in Integrations (OAuth), refreshed when it expires.
@@ -239,6 +299,12 @@ impl Connection {
                     let (prefix, name) = super::keys::header_template(template)?;
                     Ok((header.clone(), format!("{prefix}{}", keys[name])))
                 })
+                .chain(
+                    server
+                        .header_values
+                        .iter()
+                        .map(|(header, value)| Ok((header.clone(), value.clone()))),
+                )
                 .collect::<anyhow::Result<Vec<_>>>()?;
             Transport::Http {
                 client: reqwest::Client::builder()

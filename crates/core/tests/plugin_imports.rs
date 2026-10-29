@@ -207,7 +207,8 @@ fn imports_mcp_shapes_without_credentials_or_silent_options() {
         json!({"mcpServers":{"x":{"type":"sse","url":"https://example.com"}}}),
         json!({"mcpServers":{"x":{"url":"https://example.com","headers":{"Authorization":"Bearer literal-secret"}}}}),
         json!({"mcpServers":{"x":{"command":"node","env":{"TOKEN":"literal-secret"}}}}),
-        json!({"mcpServers":{"x":{"command":"node","timeout":9000}}}),
+        json!({"mcpServers":{"x":{"command":"node","retries":3}}}),
+        json!({"mcpServers":{"x":{"command":"node","cwd":"/tmp"}}}),
     ] {
         assert!(store
             .import_mcp_json("global", "invalid", &invalid.to_string())
@@ -218,6 +219,18 @@ fn imports_mcp_shapes_without_credentials_or_silent_options() {
         .unwrap()
         .iter()
         .any(|p| p.spec.name == "invalid"));
+    // Claude's timeout is accepted, never silently: the import says Themis's own applies.
+    let timed = store
+        .import_mcp_json(
+            "global",
+            "timed",
+            &json!({"mcpServers":{"x":{"command":"node","timeout":9000}}}).to_string(),
+        )
+        .unwrap();
+    assert_eq!(
+        timed.spec.notices,
+        ["MCP connection x: its timeout is not used; Themis's own timeouts apply"]
+    );
     let path = global.path().join("mcp.json");
     fs::write(
         &path,
