@@ -219,6 +219,20 @@ describe("composer focus and shortcuts", () => {
     fireEvent.click(summary);
     expect(details.open).toBe(false);
   });
+  it("leaves focus to the approval and question boxes stacked on top", () => {
+    // Seen live: a click on the approval box focused the text area, so 1–3 typed there.
+    const { props } = composer(false);
+    cleanup();
+    render(<ThreadComposer {...props} top={<>
+      <section className="themis-approval-box" tabIndex={-1}><p>Approval needed</p></section>
+      <section className="themis-question"><p>Which one?</p></section>
+    </>} />);
+    const editor = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.click(screen.getByText("Approval needed"));
+    expect(document.activeElement).not.toBe(editor);
+    fireEvent.click(screen.getByText("Which one?"));
+    expect(document.activeElement).not.toBe(editor);
+  });
   it("focuses the text area when the composer box is clicked outside a control", () => {
     composer(false);
     const editor = screen.getByRole("textbox", { name: "Message" });

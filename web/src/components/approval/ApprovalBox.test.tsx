@@ -145,6 +145,13 @@ describe("ApprovalBox", () => {
     expect(onDecide).not.toHaveBeenCalled();
   });
 
+  it("takes focus when clicked, so 1–3 decide right after a click", () => {
+    setup();
+    box().focus();
+    expect(document.activeElement).toBe(box());
+    expect(box()).toHaveAttribute("tabindex", "-1");
+  });
+
   it("ignores digits typed anywhere outside the box, such as after a missed click", () => {
     // Seen live: a click meant for a question's answer field missed, and the "3" in the
     // typed answer denied the waiting write.
