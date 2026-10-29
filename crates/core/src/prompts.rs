@@ -24,6 +24,8 @@ pub const SYSTEM_EVIDENCE_FILES: &str =
 /// Staleness and tool-restriction caution closing both evidence pointers.
 pub const SYSTEM_EVIDENCE_CAUTION: &str =
     include_str!("../builtins/prompts/system-evidence-caution.md");
+/// Opens the instructions of a skill imported from a Claude plugin command.
+pub const SKILL_COMMAND_NOTE: &str = include_str!("../builtins/prompts/skill-command-note.md");
 /// Skill catalog appended to the system message; `{{skills}}` is the metadata JSON.
 pub const SYSTEM_SKILL_CATALOG: &str = include_str!("../builtins/prompts/system-skill-catalog.md");
 

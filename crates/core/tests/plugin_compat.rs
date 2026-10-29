@@ -564,3 +564,62 @@ fn url_defaults_harmless_fields_and_install_settings() {
         .notices
         .contains(&"Install settings (userConfig) are entered in Settings › Secrets".to_string()));
 }
+
+#[test]
+fn commands_become_manual_skills_with_a_note() {
+    // Mirrors commit-commands: frontmatter, shell expansion and arguments.
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    manifest(
+        root,
+        json!({"name": "fixture", "commands": ["./extra/deploy.md"]}),
+    );
+    write(
+        root,
+        "commands/commit.md",
+        "---\nallowed-tools: Bash(git add:*)\ndescription: Create a git commit\nargument-hint: [message]\n---\n- Status: !`git status`\n- See @src/app.ts\nCommit with message $ARGUMENTS.",
+    );
+    write(
+        root,
+        "commands/git/clean.md",
+        "Remove branches that are gone.",
+    );
+    write(
+        root,
+        "extra/deploy.md",
+        "---\ndescription: Deploy\n---\nDeploy $1.",
+    );
+    write(root, "skills/commit/SKILL.md", &skill_md("commit"));
+    let preview = inspect(root);
+    assert_eq!(preview.report.status, "supported", "{:?}", preview.report);
+    assert_eq!(
+        skill_ids(&preview),
+        ["commit", "commit-command", "deploy", "git-clean"]
+    );
+    let skill = |id: &str| preview.spec.skills.iter().find(|s| s.id == id).unwrap();
+    let commit = skill("commit-command");
+    assert_eq!(commit.name, "commit");
+    assert_eq!(commit.description, "Create a git commit");
+    assert!(commit
+        .instructions
+        .starts_with(themis_core::prompts::SKILL_COMMAND_NOTE));
+    assert!(commit
+        .instructions
+        .ends_with("Commit with message $ARGUMENTS."));
+    assert_eq!(
+        skill("git-clean").description,
+        "Remove branches that are gone."
+    );
+    let mut manual = preview.spec.manual_skills.clone();
+    manual.sort();
+    assert_eq!(manual, ["commit-command", "deploy", "git-clean"]);
+    assert_eq!(
+        preview.spec.skill_paths["git-clean"],
+        "commands/git/clean.md"
+    );
+    assert!(!preview
+        .spec
+        .unsupported
+        .iter()
+        .any(|reason| reason.contains("commands")));
+}

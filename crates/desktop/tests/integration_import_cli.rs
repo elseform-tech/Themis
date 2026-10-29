@@ -481,3 +481,70 @@ async fn mcp_import_keeps_plain_values_and_reads_install_settings_as_keys() {
     assert!(String::from_utf8_lossy(&refused.stderr).contains("literal values are unsupported"));
     task.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn plugin_commands_install_as_manual_skills() {
+    let data = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let root = source.path();
+    std::fs::create_dir_all(root.join("tools/commands/git")).unwrap();
+    std::fs::write(
+        root.join("tools/commands/commit.md"),
+        "---\ndescription: Create a git commit\n---\nStatus: !`git status`\nCommit $ARGUMENTS.",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tools/commands/git/clean.md"),
+        "Remove gone branches.",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join(".claude-plugin")).unwrap();
+    std::fs::write(
+        root.join(".claude-plugin/marketplace.json"),
+        json!({"plugins":[{"name":"tools","source":"./tools"}]}).to_string(),
+    )
+    .unwrap();
+    let state = AppState::new_for_test(data.path().join("settings.json"));
+    let task = tokio::spawn(
+        Server::bind(state.clone(), data.path())
+            .await
+            .unwrap()
+            .run(),
+    );
+    cli(
+        data.path(),
+        &[
+            "plugin",
+            "marketplace",
+            "add",
+            "local",
+            root.to_str().unwrap(),
+        ],
+    );
+    let report = cli(data.path(), &["plugin", "marketplace", "check", "local"]);
+    assert_eq!(report["statuses"], json!({"supported": 1}), "{report}");
+    let installed = cli(data.path(), &["plugin", "install", "tools@local"]);
+    let skills = installed["spec"]["skills"].as_array().unwrap();
+    let ids: Vec<_> = skills
+        .iter()
+        .map(|skill| skill["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["commit", "git-clean"]);
+    assert_eq!(skills[0]["description"], "Create a git commit");
+    assert!(skills[0]["instructions"]
+        .as_str()
+        .unwrap()
+        .starts_with(themis_core::prompts::SKILL_COMMAND_NOTE));
+    assert_eq!(
+        installed["spec"]["manual_skills"],
+        json!(["commit", "git-clean"])
+    );
+    // Offered in the `/` menu like any manual skill.
+    assert!(state
+        .prompt_skills(None)
+        .await
+        .unwrap()
+        .iter()
+        .any(|skill| skill.name == "commit"));
+    task.abort();
+}
