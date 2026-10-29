@@ -46,7 +46,9 @@ function kindOf(name: string): Kind {
 }
 
 /** One phrase for the calls of one kind, naming the thing when there is one. */
-function phrase(kind: Kind, calls: { name: string; summary: string; label?: string }[]): string {
+/** `pending` when none of the calls has finished yet (one may be waiting for an approval):
+ *  edits and commands then read as under way, not done. */
+function phrase(kind: Kind, calls: { name: string; summary: string; label?: string }[], pending = false): string {
   const targets = calls.map(call => callTarget(call.summary));
   const one = calls.length === 1;
   const unique = (values: (string | undefined)[]) => [...new Set(values.filter((value): value is string => !!value))];
@@ -57,7 +59,8 @@ function phrase(kind: Kind, calls: { name: string; summary: string; label?: stri
     }
     case "edit": {
       const files = unique(targets.map(target => target.path));
-      return files.length === 1 ? `Edited ${base(files[0]!)}` : `Edited ${count(files.length || calls.length, "file", "files")}`;
+      const verb = pending ? "Editing" : "Edited";
+      return files.length === 1 ? `${verb} ${base(files[0]!)}` : `${verb} ${count(files.length || calls.length, "file", "files")}`;
     }
     case "list": {
       const dirs = unique(targets.map(target => target.path));
@@ -66,7 +69,8 @@ function phrase(kind: Kind, calls: { name: string; summary: string; label?: stri
     case "search": return one ? `Searched ${targets[0]!.path ? base(targets[0]!.path) : "the files"}` : `Searched ${calls.length} times`;
     case "run": {
       const commands = unique(targets.map(target => target.command));
-      return commands.length === 1 ? `Ran ${clip(commands[0]!)}` : `Ran ${count(calls.length, "command", "commands")}`;
+      const verb = pending ? "Running" : "Ran";
+      return commands.length === 1 ? `${verb} ${clip(commands[0]!)}` : `${verb} ${count(calls.length, "command", "commands")}`;
     }
     case "git": return one ? "Used git" : `Used git ${calls.length} times`;
     case "web": {
@@ -92,6 +96,7 @@ function phrase(kind: Kind, calls: { name: string; summary: string; label?: stri
  *  left out (the row counts them); when every call failed, only their number is left. */
 export function describeTools(messages: ChatMessage[]): string {
   const groups = new Map<Kind, { name: string; summary: string; label?: string }[]>();
+  const finished = new Set<Kind>();
   const calls = messages.filter(message => message.tool);
   if (calls.length && calls.every(message => message.tool!.ok === false)) {
     return calls.length === 1 ? "1 tool call" : `${calls.length} tool calls`;
@@ -101,9 +106,10 @@ export function describeTools(messages: ChatMessage[]): string {
     const kind = kindOf(message.tool.name);
     const group = groups.get(kind) ?? [];
     group.push({ name: message.tool.name, summary: message.text, ...(message.tool.label ? { label: message.tool.label } : {}) });
+    if (message.tool.ok !== undefined) finished.add(kind);
     groups.set(kind, group);
   }
-  const phrases = [...groups].map(([kind, calls]) => phrase(kind, calls));
+  const phrases = [...groups].map(([kind, calls]) => phrase(kind, calls, !finished.has(kind)));
   if (phrases.length <= 3) return phrases.join(" · ");
   return `${phrases.slice(0, 3).join(" · ")} · ${phrases.length - 3} more`;
 }
