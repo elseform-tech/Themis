@@ -125,7 +125,7 @@ full tour.
 | `feature:goal` | tour | `crates/desktop/src/state/goal.rs`, `web/src/screens/GoalBar.tsx` | Edit, pause after this turn, resume and remove from the goal bar; the goal continues across turns and ends with one summary. |
 | `feature:checkpoints` | tour | `crates/core/src/runtime.rs`, `crates/core/src/runtime/maintenance.rs` | At 32k the goal passes a checkpoint; the context meter drops and the work carries on. |
 | `feature:queue-and-steer` | tour | `crates/desktop/src/state/queue.rs`, `web/src/screens/QueueStack.tsx` | Queue, edit and remove a message; steer one in and see it handled. |
-| `feature:approvals` | smoke | `web/src/components/approval`, `crates/desktop/src/state/chat_grants.rs` | Allow once, Allow in this chat (no prompt next time), Deny; keys 1–3 work. |
+| `feature:approvals` | smoke | `web/src/components/approval`, `crates/desktop/src/state/chat_grants.rs` | Allow once, Allow in this chat (no prompt next time), Deny; after a click on the box, keys 1–3 decide (typed in the composer, they do not). |
 | `feature:yolo` | tour | `web/src/lib/yolo.ts`, `crates/core/src/sandbox.rs` | Switch the shield to YOLO: no prompts; a deny rule still blocks. |
 | `feature:stop` | tour | `web/src/screens/ThreadComposer.tsx` | Esc twice stops the run with the hint shown first. |
 | `feature:turn-summary` | smoke | `crates/core/src/runtime.rs` | Every turn ends with a short natural summary; thinking folds only after the turn. |
