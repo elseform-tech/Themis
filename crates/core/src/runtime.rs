@@ -688,6 +688,14 @@ async fn run_task_with_evidence_inner(
             steered.push(text.clone());
             events.send(RunEvent::Steered { text }).await.ok();
         }
+        // Results of subagents (and other notes) join at the same boundary.
+        for note in run_notes().map(|notes| notes.take()).unwrap_or_default() {
+            messages.push(ChatMessage {
+                role: ChatRole::User,
+                message_type: MessageType::Text,
+                content: note,
+            });
+        }
         // Compaction and maintenance compare raw estimates, so hand them the equivalent raw budget.
         context_policy.context_token_budget = calibration.raw_budget(input_budget, schema_tokens);
         let raw_size = estimated_tokens(&messages);
@@ -960,6 +968,28 @@ async fn run_task_with_evidence_inner(
         check_stopped(&stopped, &events).await?;
         // A message steered in while the model wrote its answer keeps the run
         // going: the answer stays, and the next request reads the message.
+        // An answer while subagents are still working keeps the run waiting for their results.
+        let notes = run_notes().filter(|notes| notes.waiting() || notes.pending() > 0);
+        if calls.is_empty() && !steer_waiting() {
+            if let Some(notes) = &notes {
+                let answer = text.clone().unwrap_or_default();
+                answered = joined(&answered, &answer);
+                if !answer.trim().is_empty() {
+                    events
+                        .send(RunEvent::AssistantText("\n\n".into()))
+                        .await
+                        .ok();
+                }
+                messages.push(ChatMessage {
+                    role: ChatRole::Assistant,
+                    message_type: MessageType::Text,
+                    content: answer,
+                });
+                wait_for_note(notes, &stopped).await;
+                check_stopped(&stopped, &events).await?;
+                continue;
+            }
+        }
         if calls.is_empty() && steer_waiting() {
             let answer = text.unwrap_or_default();
             if !answer.trim().is_empty() {
@@ -2170,6 +2200,75 @@ tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
 tokio::task_local! { static SHORT_REPLY_TURN: bool; }
 tokio::task_local! { static STEER_INBOX: SteerInbox; }
 tokio::task_local! { static SYSTEM_HEAD: String; }
+tokio::task_local! { static RUN_NOTES: Arc<RunNotes>; }
+
+/// Notes delivered to a running agent between steps by something it started and that ends
+/// later (subagent results). Unlike steered messages they are not the person's words.
+#[derive(Default)]
+pub struct RunNotes {
+    queue: Mutex<std::collections::VecDeque<String>>,
+    pending: std::sync::atomic::AtomicUsize,
+    arrived: tokio::sync::Notify,
+}
+
+impl RunNotes {
+    pub fn new() -> Arc<Self> {
+        Arc::default()
+    }
+    /// `count` more notes will arrive; the run waits for them before it ends.
+    pub fn expect(&self, count: usize) {
+        self.pending.fetch_add(count, Ordering::SeqCst);
+    }
+    /// Delivers one expected note.
+    pub fn deliver(&self, note: String) {
+        self.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back(note);
+        let _ = self
+            .pending
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+        self.arrived.notify_waiters();
+    }
+    /// Notes still expected.
+    pub fn pending(&self) -> usize {
+        self.pending.load(Ordering::SeqCst)
+    }
+    fn waiting(&self) -> bool {
+        !self
+            .queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+    }
+    fn take(&self) -> Vec<String> {
+        self.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+            .collect()
+    }
+}
+
+/// Runs `future` with `notes` as the run's note channel.
+pub async fn with_run_notes<F: std::future::Future>(notes: Arc<RunNotes>, future: F) -> F::Output {
+    RUN_NOTES.scope(notes, future).await
+}
+
+fn run_notes() -> Option<Arc<RunNotes>> {
+    RUN_NOTES.try_with(Arc::clone).ok()
+}
+
+/// Waits until a note arrives or the run is stopped.
+async fn wait_for_note(notes: &RunNotes, stopped: &AtomicBool) {
+    while !notes.waiting() && !stopped.load(Ordering::SeqCst) {
+        let arrived = notes.arrived.notified();
+        if notes.waiting() {
+            break;
+        }
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), arrived).await;
+    }
+}
 
 /// Runs `future` with `head` in place of the ordinary system instructions (subagent runs).
 pub async fn with_system_head<F: std::future::Future>(head: String, future: F) -> F::Output {
