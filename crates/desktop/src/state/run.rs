@@ -469,6 +469,7 @@ impl AppState {
             thread_id: thread_id.to_owned(),
             root: snapshot.work_root.clone(),
             approvals: approvals.clone(),
+            agent: None,
         };
         let skills = snapshot.skills;
 
