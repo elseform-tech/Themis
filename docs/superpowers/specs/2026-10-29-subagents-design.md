@@ -153,6 +153,24 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
 - `spawn_subagents_tool.md` (when to delegate: independent parts, read-heavy work, and not for
   single-file edits)
 
+## Hooks
+
+- `BeforeTool` and `AfterTool` fire for subagents' tool calls as well as the main agent's, so a
+  guard hook can't be bypassed by delegating. The payload gains `agent: {id, name}` (absent for
+  the main agent). A blocking `BeforeTool` hook blocks the subagent's call the same way, and the
+  subagent sees the denial like any other.
+- Two new canonical events, `SubagentStart` and `SubagentEnd`. They map Claude's `SubagentStart`
+  and `SubagentStop`, which are imported instead of skipped. The payload carries the subagent's
+  id, name and profile, and for `SubagentEnd` its status. It never carries the brief or the
+  result, in line with the rule against logging prompts and tool payloads.
+- `RunStart`, `RunEnd` and `BeforeCompaction` stay tied to the main run, so existing hooks don't
+  start firing once per subagent.
+- Hooks still never grant permissions.
+- Integrations › Installed › Hooks (mockup board 24) lists the two new events in run order between
+  "After a tool runs" and "Before context is compacted". Tool-event hook rows say "Main and
+  subagents".
+- `docs/plugins.md` lists the new events.
+
 ## Plugins
 
 - Importing `agents/*.md` creates agent profiles in the plugin's existing registry entry. The
@@ -163,7 +181,8 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
 
 ## Order of work
 
-1. Read-only agents: the tool, child runs, events and the status line, the chat card, the Tasks
+1. Read-only agents: the tool, child runs, events and the status line, tool hooks firing for
+   subagents plus the two new hook events, the chat card, the Tasks
    detail with Stop, named approvals, the overview row, the configuration, Settings › Subagents
    (without the writes row) and diagnostics.
 2. `write_paths`: overlap checks, the sandbox allow-list, the Changes author filter, and the
@@ -175,6 +194,8 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
 
 - Core: tests for `write_paths` overlap, escape, app-data and `.themis` rejection, plus a property
   test on the glob validator.
+- Hooks: a `BeforeTool` guard blocks a subagent's matching call, and `SubagentStart` and
+  `SubagentEnd` fire once per subagent with metadata-only payloads (shared server/CLI test).
 - Shared server/CLI end-to-end: a chat that spawns two read-only agents, one write-path agent,
   a denied approval, Stop on one agent, and a steer about an agent.
 - Web: tests for the chat card, the detail view, the overview row and the author filter. Then a
