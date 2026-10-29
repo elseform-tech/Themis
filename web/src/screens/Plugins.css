@@ -102,6 +102,13 @@
 .themis-compatibility-reason ul { padding: 0 .75rem .5rem 1.75rem; margin: 0; }
 .themis-compatibility-reason li + li { margin-top: .5rem; }
 .themis-installed-integrations .themis-compatibility-reason { grid-column: 2 / -1; }
+.themis-compatibility-notes { min-width: 0; margin: .25rem 0; font-size: .8rem; line-height: 1.6; color: var(--themis-text-2); overflow-wrap: anywhere; }
+.themis-integrations .themis-compatibility-notes summary { display: flex; align-items: center; gap: .5rem; list-style: none; color: inherit; font-size: inherit; min-height: 0; padding: .25rem .5rem; cursor: pointer; }
+.themis-compatibility-notes summary::-webkit-details-marker { display: none; }
+.themis-compatibility-notes summary::after { content: "⌄"; margin-left: auto; }
+.themis-compatibility-notes[open] summary::after { content: "⌃"; }
+.themis-compatibility-notes summary:focus-visible { outline: 2px solid var(--themis-accent); }
+.themis-compatibility-notes ul { padding: 0 .75rem .25rem 1.25rem; margin: 0; }
 .themis-filter-summary { display: flex; align-items: center; gap: 12px; padding-bottom: 6px; font-size: .75rem; color: var(--themis-text-2); }
 .themis-integrations .themis-filter-summary button { min-height: 0; padding: 2px 0; color: var(--themis-text-2); font-size: .75rem; }
 .themis-marketplace-loading { flex: 1; min-height: 260px; display: grid; place-items: center; }

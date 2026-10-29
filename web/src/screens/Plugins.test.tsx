@@ -182,10 +182,14 @@ describe("Integration browsing and lifecycle", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Discover" })));
     expect(screen.getByText("Useful review tools")).toBeVisible();
     expect(screen.getAllByRole("button", { name: "Install" })).toHaveLength(1);
+    const mixedCard = screen.getByRole("button", { name: "View mixed" }).closest("li")!;
+    expect(within(mixedCard).getByText(/Compatibility details/)).toHaveTextContent("Compatibility details (1)");
+    expect(mixedCard).not.toHaveTextContent("File too large");
     await act(async () => fireEvent.click(within(screen.getByRole("button", { name: "View mixed" }).closest("li")!).getByRole("button", { name: "Install" })));
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveTextContent("Partially supported");
     expect(dialog).toHaveTextContent("Language servers aren’t supported yet.");
+    expect(within(dialog).getByText("Notes (1)")).toBeVisible();
     expect(dialog).toHaveTextContent("File too large: docs/big.json");
     expect(within(dialog).getByRole("button", { name: "Install supported parts" })).toBeEnabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
