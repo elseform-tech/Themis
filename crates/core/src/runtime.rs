@@ -1580,7 +1580,7 @@ async fn request_answer_inner(
         if quota_used_up
             || retries >= answer_retry_limit(rate_limited, truncated)
             || (published && !truncated)
-            || (!error.is_retryable() && !empty_output && !truncated && !stream_dropped)
+            || (!transient(error) && !empty_output && !truncated && !stream_dropped)
         {
             return result;
         }
@@ -3204,6 +3204,12 @@ async fn summary_attempt(
     Ok(text)
 }
 
+/// Whether a provider error is worth retrying: the library's transient errors, plus HTTP 499,
+/// which OpenCode Go returns when its upstream endpoint is briefly unavailable.
+fn transient(error: &autoagents::llm::error::LLMError) -> bool {
+    error.is_retryable() || error.http_status_code() == Some(499)
+}
+
 fn summary_retry_reason(error: &autoagents::llm::error::LLMError) -> Option<&'static str> {
     use autoagents::llm::error::LLMError;
     match error {
@@ -3216,9 +3222,9 @@ fn summary_retry_reason(error: &autoagents::llm::error::LLMError) -> Option<&'st
             }
             "Summarizer returned malformed checkpoint" => Some("malformed_output"),
             "Summarizer request timed out" => Some("request_timeout"),
-            _ => error.is_retryable().then_some("transient_provider_error"),
+            _ => transient(error).then_some("transient_provider_error"),
         },
-        error if error.is_retryable() => Some("transient_provider_error"),
+        error if transient(error) => Some("transient_provider_error"),
         _ => None,
     }
 }
@@ -5846,7 +5852,13 @@ mod tests {
     #[tokio::test]
     async fn answer_deadline_and_stop_cancel_server_backoff_and_permanent_errors_do_not_retry() {
         use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
-        for (status, cancel) in [(503, false), (503, true), (401, false), (400, false)] {
+        for (status, cancel) in [
+            (503, false),
+            (499, false),
+            (503, true),
+            (401, false),
+            (400, false),
+        ] {
             let server = MockServer::start().await;
             Mock::given(method("POST"))
                 .respond_with(ResponseTemplate::new(status).insert_header("Retry-After", "45"))
@@ -5887,7 +5899,7 @@ mod tests {
             .await
             .unwrap();
             let error = result.unwrap_err();
-            if status == 503 && !cancel {
+            if matches!(status, 503 | 499) && !cancel {
                 assert!(error.to_string().contains("deadline exceeded"));
             }
             assert_eq!(server.received_requests().await.unwrap().len(), 1);
@@ -5966,6 +5978,8 @@ mod tests {
                 (429, true, 2),
                 (503, true, 2),
                 (503, false, 3),
+                (499, true, 2),
+                (499, false, 3),
                 (401, true, 1),
                 (400, true, 1),
             ] {

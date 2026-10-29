@@ -636,6 +636,49 @@ async fn shell_args_sent_as_a_json_string_run_as_the_list() {
 }
 
 #[tokio::test]
+async fn an_unavailable_upstream_499_is_retried_and_the_run_finishes() {
+    let server = MockServer::start().await;
+    // OpenCode Go's answer when its upstream endpoint is briefly unavailable.
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(wiremock::ResponseTemplate::new(499).set_body_json(json!({
+            "error": {"type": "server_error", "message": "Upstream request failed: Endpoint is unavailable."}
+        })))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    common::mount_script(&server, vec![common::final_text_body("Recovered")]).await;
+    let llm = resolve(
+        &ProviderConfig::new(ProviderKind::Go, "test-key")
+            .with_model("test-model")
+            .with_base_url(server.uri()),
+    )
+    .await
+    .unwrap();
+    let approvals: Arc<dyn ApprovalHook> = Arc::new(AllowAllHook);
+    let project = tempfile::tempdir().unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(128);
+    let result = run_task_with_policy(
+        llm,
+        boxed_tools(project.path(), approvals.clone()).unwrap(),
+        "Say hello".into(),
+        vec![],
+        approvals,
+        RunPolicy {
+            total_turns: 4,
+            context_token_budget: 200_000,
+            recent_messages: 20,
+        },
+        tx,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await;
+    assert!(result.is_ok(), "{result:?}");
+    assert!(has_finished(&common::drain(&mut rx).await));
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn oversized_tool_schema_is_rejected_before_provider_request() {
     #[derive(Debug)]
     struct HugeSchema;
