@@ -47,7 +47,9 @@ MODEL = (
     ("bad_arguments", r"argument '[^']+' is invalid|invalid arguments|invalid (?:type|value|JSON)"
                       r"|missing field|unknown field|must not be empty"
                       # a JSONL field asked of a file that has none; a cwd that is no directory
-                      r"|Selected JSONL field is missing|working directory '[^']*' is not a directory"),
+                      r"|Selected JSONL field is missing|working directory '[^']*' is not a directory"
+                      # a recall kind that does not exist; a required ask_user field left out
+                      r"|unknown kind '|needs `[a-z_]+`"),
     ("unknown_tool", r"unknown tool '"),
     ("missing_path", r"(?:no such file|not found|does not exist|cannot find).{0,80}['`\"/]"
                      r"|['`\"][^'`\"]+['`\"].{0,40}(?:no such file|not found|does not exist)"),
@@ -75,6 +77,10 @@ def classify(tool, output, mode="yolo", summary=""):
         # The soak's rules allow these; anything else denied is the model reaching past them.
         if tool == "shell":
             argv = _shell_argv(summary)
+            if argv is None and _STRING_ARGS.search(summary or ""):
+                # Themis reads a string holding a JSON list as that list before the summary,
+                # so a string left here was never a list (a script with raw line breaks, a pipe).
+                return "model", "bad_arguments"
             if argv is None:
                 if _differs_from_check(summary):
                     return "model", "denied_by_rule"
@@ -118,6 +124,9 @@ def _shell_argv(summary):
         return None
     return [arguments["command"], *rest]
 
+
+# A shell call whose `args` is a string, as its summary shows it.
+_STRING_ARGS = re.compile(r'^call `shell` with \{.*"args":"')
 
 # The complete leading strings of a summary cut short: `{"command":"…"` and `"args":["…"`.
 _STRING = r'"((?:[^"\\]|\\.)*)"'
