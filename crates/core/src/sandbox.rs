@@ -786,6 +786,33 @@ impl SandboxPlan {
         }
     }
 
+    /// The same plan for a read-only subagent: only the temporary folders stay writable, so
+    /// commands can read the project and run tools that write scratch files, but cannot
+    /// change the project. Network, secrets and protected folders are unchanged.
+    pub fn read_only(&self) -> Self {
+        let mut writable = Vec::new();
+        for dir in temp_dirs() {
+            push_unique(&mut writable, dir);
+        }
+        Self {
+            enforcement: self.enforcement.clone(),
+            reason: self.reason.clone(),
+            open: false,
+            network: self.network,
+            network_enforced: self.network_enforced,
+            allow_keychain: self.allow_keychain,
+            landlock_abi: self.landlock_abi,
+            configured_writable: Vec::new(),
+            home: self.home.clone(),
+            writable,
+            protected: self.protected.clone(),
+            has_app_data: self.has_app_data,
+            secrets: self.secrets.clone(),
+            #[cfg(target_os = "linux")]
+            landlock: OnceLock::new(),
+        }
+    }
+
     /// A plan that never sandboxes (the sandbox is off).
     pub fn disabled(project_root: &Path) -> Self {
         let config = SandboxConfig {

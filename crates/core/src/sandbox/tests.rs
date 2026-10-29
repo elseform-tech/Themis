@@ -255,6 +255,28 @@ fn plan_writable_protected_and_secret_lists() {
 }
 
 #[test]
+fn a_read_only_plan_keeps_walls_but_writes_only_temp_folders() {
+    let fx = fixture();
+    let configured = config(r#"{"writable_paths":["~/cache"]}"#);
+    let plan = plan_with(
+        Enforcement::Active(Backend::Seatbelt),
+        &configured,
+        &fx.root,
+        &fx.app_data,
+        &fx.home,
+    )
+    .read_only();
+    assert!(!plan.writable().contains(&fx.root));
+    assert!(!plan.writable().contains(&fx.home.join("cache")));
+    assert!(plan
+        .writable()
+        .contains(&resolve_existing(&std::env::temp_dir())));
+    assert_eq!(plan.protected()[0], fx.app_data);
+    assert!(plan.secrets().contains(&fx.home.join(".ssh")));
+    assert_eq!(plan.status().state, "on");
+}
+
+#[test]
 fn file_guard_protects_app_data_secrets_and_yolo_project_config() {
     let fx = fixture();
     let plan = plan_with(
