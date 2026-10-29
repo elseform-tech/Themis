@@ -252,7 +252,8 @@ impl AppState {
                     thread_id,
                 )),
                 cancel: Some(Arc::clone(&stopped)),
-                sandbox: Some(sandbox),
+                sandbox: Some(Arc::clone(&sandbox)),
+                no_escalation: false,
             },
         )
         .map_err(|err| format!("failed to build tools: {err:#}"))?;
