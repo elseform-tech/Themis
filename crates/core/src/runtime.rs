@@ -2169,6 +2169,12 @@ fn effective_context_budget(requested: usize, model: &str) -> usize {
 tokio::task_local! { pub static MODEL_CONTEXT_CAPACITY: Option<usize>; }
 tokio::task_local! { static SHORT_REPLY_TURN: bool; }
 tokio::task_local! { static STEER_INBOX: SteerInbox; }
+tokio::task_local! { static SYSTEM_HEAD: String; }
+
+/// Runs `future` with `head` in place of the ordinary system instructions (subagent runs).
+pub async fn with_system_head<F: std::future::Future>(head: String, future: F) -> F::Output {
+    SYSTEM_HEAD.scope(head, future).await
+}
 
 tokio::task_local! { static FIRST_REQUEST: String; }
 
@@ -3406,14 +3412,17 @@ pub fn checkpoint_parts(saved: &str) -> (&str, Vec<ChatMessage>) {
 /// Opens with the shared system instructions and verification habits; the evidence
 /// pointer and skill catalog follow.
 fn initial_messages(history: Vec<ConversationTurn>, task: String) -> Vec<ChatMessage> {
-    let mut messages = vec![ChatMessage {
-        role: ChatRole::System,
-        message_type: MessageType::Text,
-        content: format!(
+    let head = SYSTEM_HEAD.try_with(Clone::clone).unwrap_or_else(|_| {
+        format!(
             "{}\n{}",
             crate::prompts::SYSTEM_INSTRUCTIONS,
             crate::prompts::SYSTEM_VERIFY
-        ),
+        )
+    });
+    let mut messages = vec![ChatMessage {
+        role: ChatRole::System,
+        message_type: MessageType::Text,
+        content: head,
     }];
     for turn in history {
         if turn.role == ConversationRole::Checkpoint {

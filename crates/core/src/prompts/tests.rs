@@ -233,6 +233,18 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TOOL_BROWSER_UNTRUSTED, "tool-browser-untrusted", &[]),
     (TOOL_DEVTOOLS_PAUSED, "tool-devtools-paused", &[]),
     (TOOL_BACKGROUND_NEXT, "tool-background-next", &[]),
+    (SUBAGENT_SYSTEM, "subagent-system", &[]),
+    (SUBAGENT_READ_ONLY_NOTE, "subagent-read-only-note", &[]),
+    (SUBAGENT_STATUS_FIELD, "subagent-status-field", &[]),
+    (SPAWN_SUBAGENTS_TOOL, "spawn-subagents-tool", &[]),
+    (WAIT_SUBAGENTS_TOOL, "wait-subagents-tool", &[]),
+    (STEER_SUBAGENT_TOOL, "steer-subagent-tool", &[]),
+    (STOP_SUBAGENT_TOOL, "stop-subagent-tool", &[]),
+    (
+        SUBAGENT_RESULT_NOTE,
+        "subagent-result-note",
+        &["name", "id", "status", "result"],
+    ),
     (EVAL_ANSWER_PROBE, "eval-answer-probe", &["question"]),
     (
         EVAL_RECALL_TASK,
