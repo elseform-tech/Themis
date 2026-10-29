@@ -217,6 +217,8 @@ export type BackgroundTaskState = 'running' | 'exited' | 'stopped' | 'timed_out'
 /** One background shell task in the chat's task feed. */
 export interface ThreadTaskBackground {
   id: string;
+  /** The run that started it, when known. */
+  run_id?: string;
   command: string;
   cwd: string;
   state: BackgroundTaskState;

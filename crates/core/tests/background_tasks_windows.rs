@@ -37,6 +37,7 @@ fn stopping_a_background_task_kills_its_grandchild_on_windows() {
     let started = registry
         .start(StartSpec {
             thread_id: "t1".into(),
+            run_id: None,
             program: "cmd".into(),
             args: vec!["/c".into(), format!("ping -n {marker} 127.0.0.1")],
             workdir: dir.path().to_path_buf(),

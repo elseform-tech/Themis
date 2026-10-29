@@ -41,7 +41,9 @@ export function TasksView({ threadId }: { threadId: string }) {
   const setDoneOpen = (open: boolean) => { setDoneOpenState(open); writeSession(DONE_OPEN_KEY, open); };
   // The reply's row (board 29): titled by the request, with what it waits for and how long.
   const startedAt = state.runStartedAt[threadId];
-  const replyRunning = groups.running.some(row => row.key === "run");
+  // The live row (the chat's reply or a running automation) is the only one with Stop.
+  const liveIn = groups.attention.some(row => row.stop) ? "attention" : groups.running.some(row => row.stop) ? "running" : null;
+  const replyRunning = liveIn !== null;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!replyRunning) return;
@@ -49,11 +51,18 @@ export function TasksView({ threadId }: { threadId: string }) {
     return () => window.clearInterval(timer);
   }, [replyRunning]);
   const request = [...messages].reverse().find(row => row.role === "user")?.text ?? "";
-  const reply = (row: TaskRow): TaskRow => row.key !== "run" ? row : {
-    ...row,
-    name: plainSnippet(request, 60) || row.name,
-    tag: "Reply",
-    meta: [working.length ? `Waiting for ${working.length} ${working.length === 1 ? "subagent" : "subagents"}` : "Running now", startedAt === undefined ? "" : clock((now - startedAt) / 1000)].filter(Boolean).join(" · "),
+  const reply = (row: TaskRow): TaskRow => {
+    if (!row.stop) return row;
+    const chat = row.key === "run";
+    const doing = row.kind === "attention"
+      ? "Waiting for your approval"
+      : working.length ? `Waiting for ${working.length} ${working.length === 1 ? "subagent" : "subagents"}` : "Running now";
+    return {
+      ...row,
+      name: chat ? plainSnippet(request, 60) || row.name : row.name,
+      tag: chat ? "Reply" : row.tag,
+      meta: [doing, startedAt === undefined ? "" : clock((now - startedAt) / 1000)].filter(Boolean).join(" · "),
+    };
   };
 
   async function attempt(key: string, action: () => Promise<unknown>) {
@@ -107,9 +116,15 @@ export function TasksView({ threadId }: { threadId: string }) {
     );
   };
   const backgroundRow = (task: ThreadTaskBackground) => <BackgroundTaskRow key={`background-${task.id}`} threadId={threadId} task={task} busy={busy !== null} onStop={task => void stopBackground(task)} />;
+  // A reply's working subagents hang under it, in whichever section it is.
+  const children = working.length > 0 && (
+    <li className="themis-task-children" aria-label="Subagents of this reply">
+      <ul className="themis-workspace-list">{working.map(task => subagentRow(task, true))}</ul>
+    </li>
+  );
 
   const needsYou = groups.attention.length + waiting.length + background.attention.length;
-  const running = groups.running.length + working.length + background.running.length;
+  const running = groups.running.length + (liveIn === "attention" ? 0 : working.length) + background.running.length;
   const scheduled = groups.scheduled.length;
   const current = needsYou + running + scheduled;
   return (
@@ -120,7 +135,8 @@ export function TasksView({ threadId }: { threadId: string }) {
         <section aria-label="Needs you">
           <h3 className="themis-tasks-heading is-attention">Needs you</h3>
           <ul className="themis-workspace-list">
-            {groups.attention.map(taskRow)}
+            {groups.attention.map(row => taskRow(reply(row)))}
+            {liveIn === "attention" && children}
             {waiting.map(task => subagentRow(task))}
             {background.attention.map(backgroundRow)}
           </ul>
@@ -131,11 +147,8 @@ export function TasksView({ threadId }: { threadId: string }) {
           <h3 className="themis-tasks-heading">Running</h3>
           <ul className="themis-workspace-list">
             {groups.running.map(row => taskRow(reply(row)))}
-            {working.length > 0 && (
-              <li className="themis-task-children" aria-label="Subagents of this reply">
-                <ul className="themis-workspace-list">{working.map(task => subagentRow(task, true))}</ul>
-              </li>
-            )}
+            {liveIn === "running" && children}
+            {liveIn === null && working.map(task => subagentRow(task))}
             {background.running.map(backgroundRow)}
           </ul>
         </section>

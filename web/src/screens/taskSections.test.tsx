@@ -89,4 +89,36 @@ describe("Tasks sections", () => {
     fireEvent.click(screen.getByRole("button", { name: /Older request/ }));
     expect(screen.getByText("Old one")).toBeInTheDocument();
   });
+
+  it("keeps a reply waiting for approval titled by its request, with its subagents under it", () => {
+    const messages = request("r1", "Review the stats module", [agent("a1", { status: "running", name: "Bug hunt" })]);
+    appState = { ...initialState, messages: { t1: messages }, activeRunIds: { t1: "r1" }, tasks: { t1: feed({ run: { running: true, awaiting_approval: true } }) } };
+    render(<TasksView threadId="t1" />);
+    const needs = screen.getByRole("region", { name: "Needs you" });
+    expect(needs).toHaveTextContent("Review the stats moduleReply");
+    expect(needs).toHaveTextContent("Waiting for your approval");
+    expect(within(within(needs).getByRole("listitem", { name: "Subagents of this reply" })).getByText("Bug hunt")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Running" })).toBeNull();
+  });
+
+  it("gives a running automation the same waiting line, keeping its own name", () => {
+    const messages = request("r1", "Nightly check", [agent("a1", { status: "running", name: "Bug hunt" })]);
+    const automation = { id: "w1", name: "Nightly tests", enabled: true, origin: "user" as const, interval_mins: 60, next_run_at: "2030-01-01T02:00:00Z", last_run_at: null, run_count: 3, running: true };
+    appState = { ...initialState, messages: { t1: messages }, activeRunIds: { t1: "r1" }, tasks: { t1: feed({ run: { running: true, awaiting_approval: false }, automations: [automation] }) } };
+    render(<TasksView threadId="t1" />);
+    const running = screen.getByRole("region", { name: "Running" });
+    expect(running).toHaveTextContent("Nightly tests");
+    expect(running).toHaveTextContent("Waiting for 1 subagent");
+    expect(within(running).getByRole("listitem", { name: "Subagents of this reply" })).toHaveTextContent("Bug hunt");
+  });
+
+  it("puts a finished background task with the request that started it", () => {
+    const messages = request("r1", "Start the dev server", [agent("a1", { at: "2030-01-01T20:00:00Z" })]);
+    const task = { id: "bg1", run_id: "r1", command: "npm run dev", cwd: ".", state: "stopped" as const, exit_code: null, pid: 1, started_at: "2030-01-01T20:01:00Z", ended_at: "2030-01-01T20:05:00Z", timeout_secs: 0, last_lines: [], log_bytes: 0 };
+    const orphan = { ...task, id: "bg2", run_id: undefined, command: "sleep 9" };
+    const groups = doneGroups(messages, subagentTasks(messages, undefined, []), [], [task, orphan]);
+    expect(groups.find(group => group.key === "r1")!.background.map(item => item.command)).toEqual(["npm run dev"]);
+    expect(groups.find(group => group.key === "background")!.background.map(item => item.command)).toEqual(["sleep 9"]);
+  });
 });
+

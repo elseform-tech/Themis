@@ -250,10 +250,13 @@ impl AppState {
             Arc::clone(&approvals),
             themis_core::tools::ToolOptions {
                 yolo,
-                background: Some(themis_core::tools::background::BackgroundScope::new(
-                    self.background_registry(),
-                    thread_id,
-                )),
+                background: Some(
+                    themis_core::tools::background::BackgroundScope::new(
+                        self.background_registry(),
+                        thread_id,
+                    )
+                    .with_run(run_id),
+                ),
                 cancel: Some(Arc::clone(&stopped)),
                 sandbox: Some(Arc::clone(&sandbox)),
                 no_escalation: false,

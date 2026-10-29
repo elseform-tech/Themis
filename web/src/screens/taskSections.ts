@@ -48,33 +48,51 @@ export function subagentTasks(messages: ChatMessage[], activeRun: string | undef
 
 const working = (state: SubagentState) => state === "running" || state === "approval";
 
-/** Finished subagents by the request that started them, then finished automation runs and
- *  background tasks, newest first, at most [`DONE_REQUESTS`] groups. */
+/** Finished work by the request that started it (its subagents and background tasks), then
+ *  finished automation runs and background tasks with no known request, newest first, at
+ *  most [`DONE_REQUESTS`] groups. */
 export function doneGroups(messages: ChatMessage[], tasks: SubagentTask[], earlier: TaskRow[], background: ThreadTaskBackground[], now?: Date): DoneGroup[] {
-  const groups: DoneGroup[] = [];
-  let request = "";
-  for (const row of messages) {
-    if (row.role === "user") request = row.text;
-    if (!row.subagents) continue;
-    const finished = tasks.filter(task => !working(task.state) && row.subagents!.some(agent => agent.id === task.agent.id));
-    if (finished.length === 0) continue;
-    const at = row.subagents.map(agent => agent.at ?? "").sort().pop() ?? "";
-    const key = row.runId ?? row.id;
-    const existing = groups.find(group => group.key === key);
-    if (existing) {
-      existing.subagents.push(...finished);
-      if (at > existing.at) existing.at = at;
-      continue;
+  const requests = new Map<string, string>();
+  for (const row of messages) if (row.role === "user" && row.runId) requests.set(row.runId, row.text);
+  const byRun = new Map<string, DoneGroup>();
+  const group = (runId: string): DoneGroup => {
+    let found = byRun.get(runId);
+    if (!found) {
+      found = { key: runId, label: "", at: "", subagents: [], rows: [], background: [] };
+      byRun.set(runId, found);
     }
-    const time = clockLabel(at, now);
-    groups.push({ key, label: [time, plainSnippet(request, 60) || "Request"].filter(Boolean).join(" · "), at, subagents: finished, rows: [], background: [] });
+    return found;
+  };
+  const later = (current: string, at: string | undefined) => (at && at > current ? at : current);
+  for (const row of messages) {
+    if (!row.subagents || !row.runId) continue;
+    for (const task of tasks) {
+      if (working(task.state) || !row.subagents.some(agent => agent.id === task.agent.id)) continue;
+      const target = group(row.runId);
+      target.subagents.push(task);
+      target.at = later(target.at, task.agent.at);
+    }
   }
+  const unassigned: ThreadTaskBackground[] = [];
+  for (const task of background) {
+    if (task.run_id && requests.has(task.run_id)) {
+      const target = group(task.run_id);
+      target.background.push(task);
+      target.at = later(target.at, task.started_at);
+    } else {
+      unassigned.push(task);
+    }
+  }
+  const groups = [...byRun.values()].map(found => ({
+    ...found,
+    label: [clockLabel(found.at, now), plainSnippet(requests.get(found.key) ?? "", 60) || "Request"].filter(Boolean).join(" · "),
+  }));
   if (earlier.length) {
     groups.push({ key: "automations", label: "Automations", at: earlier[0]!.at ?? "", subagents: [], rows: earlier, background: [] });
   }
-  if (background.length) {
-    const at = background.map(task => task.ended_at ?? task.started_at).sort().pop() ?? "";
-    groups.push({ key: "background", label: "Background tasks", at, subagents: [], rows: [], background });
+  if (unassigned.length) {
+    const at = unassigned.map(task => task.ended_at ?? task.started_at).sort().pop() ?? "";
+    groups.push({ key: "background", label: "Background tasks", at, subagents: [], rows: [], background: unassigned });
   }
   return groups.sort((left, right) => right.at.localeCompare(left.at)).slice(0, DONE_REQUESTS);
 }

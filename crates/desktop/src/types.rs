@@ -911,6 +911,9 @@ pub struct ThreadTasks {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThreadTaskBackground {
     pub id: String,
+    /// The run that started it, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     /// One-line, length-bounded command.
     pub command: String,
     pub cwd: String,
