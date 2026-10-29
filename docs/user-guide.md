@@ -147,7 +147,7 @@ reported back.
   more wait their turn. Each has 40 model requests (`subagents.max_turns`).
   `subagents.model` picks a different model for them, and `subagents.enabled:
   false` turns them off; see [configuration](configuration.md).
-- **Watching them.** Subagents started together show as one card in the chat: each row says what that subagent is doing, or needs, with its tool calls and time; once all are done the card folds to one result line each. Click a row to open its steps in Workspace › Tasks, where **Stop** ends just that subagent. Settings › Subagents turns them off, sets how many run at once and picks their model.
+- **Watching them.** Subagents started together show in the chat as a small stack of lettered circles, each ringed while it works. Hover one for its name, or click it to open its steps in Workspace › Tasks, where **Stop** ends just that subagent; the chat overview shows how many run and whether one waits for your approval. Settings › Subagents turns them off, sets how many run at once and picks their model.
 - Each subagent's steps are saved beside the chat and removed with it. From the
   CLI, `themis call list_subagents '{"threadId": "…"}'` lists a chat's subagents.
 

@@ -79,23 +79,26 @@ describe("subagent card", () => {
     expect(clock(112)).toBe("1:52");
   });
 
-  it("lists running subagents with their counts and opens one in Workspace › Tasks", () => {
+  it("shows one letter circle per subagent, ringed while it works, opening it in Workspace › Tasks", () => {
     appState = { ...initialState, approvals: [approval({ subagent: { id: "a2", name: "Test gaps" } })] };
-    render(<SubagentCard runLive agents={[agent({ seconds: undefined }), agent({ id: "a2", name: "Test gaps", text: "" }), agent({ id: "a3", name: "Docs", status: "finished", result: "3 outdated passages", seconds: 48 })]} />);
-    expect(screen.getByText("3 subagents")).toBeInTheDocument();
-    expect(screen.getByText("1 done · 1 running · 1 needs approval · 0:48")).toBeInTheDocument();
-    expect(screen.getByText("Approval needed: cargo test")).toBeInTheDocument();
-    expect(screen.getAllByText("Read only")).toHaveLength(3);
-    fireEvent.click(screen.getByRole("button", { name: /Bug hunt/ }));
-    expect(dispatch).toHaveBeenCalledWith({ type: "ui/diff-panel", open: true, tab: "tasks", subagent: "a1" });
+    const { container } = render(<SubagentCard runLive agents={[agent(), agent({ id: "a2", name: "Test gaps" }), agent({ id: "a3", name: "Docs", status: "finished", result: "done", seconds: 48 })]} />);
+    const circles = screen.getAllByRole("button", { name: /opens it in Tasks/ });
+    expect(circles.map(circle => circle.textContent)).toEqual(["B", "T", "D"]);
+    expect(circles[0]).toHaveAttribute("title", "Bug hunt");
+    // Working (and waiting on an approval) are ringed; ended is still.
+    expect(container.querySelectorAll(".themis-subagent-ring")).toHaveLength(2);
+    // No status text in the chat: that lives in the overview box and Tasks.
+    expect(screen.queryByText(/running|approval|tool call/i)).toBeNull();
+    fireEvent.click(circles[1]!);
+    expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "tasks", subagent: "a2" });
+    fireEvent.click(screen.getByRole("button", { name: "3 subagents" }));
+    expect(dispatch).toHaveBeenLastCalledWith({ type: "ui/diff-panel", open: true, tab: "tasks" });
   });
 
-  it("folds to one result line each once they all ended", () => {
-    render(<SubagentCard runLive={false} agents={[agent({ status: "finished", result: "2 bugs found", seconds: 100, toolCalls: 4 }), agent({ id: "a2", name: "Docs", status: "finished", result: "Docs are current", seconds: 60, toolCalls: 2 })]} />);
-    expect(screen.getByText("2 subagents finished")).toBeInTheDocument();
-    expect(screen.getByText("1:40 · 6 tool calls")).toBeInTheDocument();
-    expect(screen.getByText("2 bugs found")).toBeInTheDocument();
-    expect(screen.queryByText("Read only")).toBeNull();
+  it("stops every ring once they ended, or when Themis closed under them", () => {
+    const { container } = render(<SubagentCard runLive={false} agents={[agent(), agent({ id: "a2", status: "finished", result: "x" })]} />);
+    expect(container.querySelectorAll(".themis-subagent-ring")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "2 subagents" })).toBeInTheDocument();
   });
 });
 

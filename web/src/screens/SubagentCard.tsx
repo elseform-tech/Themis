@@ -1,7 +1,5 @@
-import { useEffect, useState } from "react";
 import type { ApprovalRequest, SubagentEntry } from "../lib/types";
 import { useApp } from "../state/store";
-import { TaskIcon } from "./TaskIcon";
 import "./SubagentCard.css";
 
 /** What a subagent's row says about it now. */
@@ -54,79 +52,34 @@ export function subagentLine(agent: SubagentEntry, state: SubagentState, approva
   }
 }
 
-function StateIcon({ state }: { state: SubagentState }) {
-  if (state === "stopped" || state === "lost") {
-    return <span className="themis-subagent-icon is-ended" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="5" y="5" width="6" height="6" rx="1" /></svg></span>;
-  }
-  const kind = state === "running" ? "running" : state === "finished" ? "finished" : state === "incomplete" ? "scheduled" : "attention";
-  return <span className={`themis-subagent-icon themis-task-row-icon themis-task-row-icon--${kind} is-${kind}`} aria-hidden="true"><TaskIcon kind={kind} /></span>;
-}
+/** Soft tones the circles cycle through, so neighbours differ. */
+const TONES = ["info", "success", "accent", "neutral"] as const;
 
-function useNow(ticking: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!ticking) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [ticking]);
-  return now;
-}
-
-/** The subagents started together in a turn: one row each, opening its detail in Workspace › Tasks. */
+/** The subagents started together in a turn (board 25): overlapping letter circles, ringed
+ *  while they work. Status lives in the overview box, the approval box and Workspace › Tasks;
+ *  a circle opens that subagent there, the count opens the list. */
 export function SubagentCard({ agents, runLive }: { agents: SubagentEntry[]; runLive: boolean }) {
   const { state, dispatch } = useApp();
-  const states = agents.map(agent => subagentState(agent, runLive, state.approvals));
-  const active = states.some(s => s === "running" || s === "approval");
-  const now = useNow(active);
-  const times = agents.map(agent => elapsed(agent, now)).filter((time): time is number => time !== undefined);
-  const total = times.length ? clock(Math.max(...times)) : "";
-  const calls = agents.reduce((sum, agent) => sum + agent.toolCalls, 0);
-  const count = (wanted: SubagentState) => states.filter(s => s === wanted).length;
-  const summary = [
-    count("finished") && `${count("finished")} done`,
-    count("running") && `${count("running")} running`,
-    count("approval") && `${count("approval")} needs approval`,
-    count("stopped") + count("lost") && `${count("stopped") + count("lost")} stopped`,
-    count("failed") && `${count("failed")} failed`,
-  ].filter(Boolean);
-  const allFinished = states.every(s => s === "finished");
-  const noun = agents.length === 1 ? "subagent" : "subagents";
-  const title = active ? `${agents.length} ${noun}` : allFinished ? `${agents.length} ${noun} finished` : `${agents.length} ${noun} ended`;
-  const meta = active ? [...summary, total].filter(Boolean).join(" · ") : [total, `${calls} tool ${calls === 1 ? "call" : "calls"}`].filter(Boolean).join(" · ");
+  const open = (subagent?: string) => dispatch({ type: "ui/diff-panel", open: true, tab: "tasks", ...(subagent ? { subagent } : {}) });
+  const label = `${agents.length} ${agents.length === 1 ? "subagent" : "subagents"}`;
   return (
-    <section className={`themis-subagents${active ? "" : " is-ended"}`} aria-label={title}>
-      <header className="themis-subagents-head">
-        {active ? <SubagentsGlyph /> : <StateIcon state={allFinished ? "finished" : "stopped"} />}
-        <strong>{title}</strong>
-        <span className="themis-subagents-meta">{meta}</span>
-      </header>
-      {agents.map((agent, index) => {
-        const agentState = states[index];
-        const time = elapsed(agent, now);
-        const open = () => dispatch({ type: "ui/diff-panel", open: true, tab: "tasks", subagent: agent.id });
-        if (!active) {
+    <div className="themis-subagents" role="group" aria-label={label}>
+      <span className="themis-subagent-stack">
+        {agents.map((agent, index) => {
+          const agentState = subagentState(agent, runLive, state.approvals);
+          const working = agentState === "running" || agentState === "approval";
           return (
-            <button key={agent.id} type="button" className={`themis-subagent-row is-folded is-${agentState}`} onClick={open}>
-              <strong className="themis-subagent-name">{agent.name}</strong>
-              <span className="themis-subagent-now">{subagentLine(agent, agentState, state.approvals)}</span>
+            <button key={agent.id} type="button" title={agent.name} aria-label={`${agent.name}: opens it in Tasks`}
+              className={`themis-subagent-dot is-${TONES[index % TONES.length]}${working ? " is-working" : ""}`}
+              style={{ zIndex: agents.length - index }} onClick={() => open(agent.id)}>
+              {agent.name.trim().charAt(0).toUpperCase() || "S"}
+              {working && <svg className="themis-subagent-ring" viewBox="0 0 34 34" aria-hidden="true"><path d="M17 2a15 15 0 0 1 15 15" /></svg>}
             </button>
           );
-        }
-        return (
-          <button key={agent.id} type="button" className={`themis-subagent-row is-${agentState}`} onClick={open}>
-            <StateIcon state={agentState} />
-            <span className="themis-subagent-body">
-              <span className="themis-subagent-title"><strong className="themis-subagent-name">{agent.name}</strong><span className="themis-subagent-brief">{agent.brief}</span></span>
-              <span className="themis-subagent-now">{subagentLine(agent, agentState, state.approvals)}</span>
-            </span>
-            <span className="themis-subagent-stats">
-              <span>{[`${agent.toolCalls} tool ${agent.toolCalls === 1 ? "call" : "calls"}`, time === undefined ? "" : clock(time)].filter(Boolean).join(" · ")}</span>
-              <span>Read only</span>
-            </span>
-          </button>
-        );
-      })}
-    </section>
+        })}
+      </span>
+      <button type="button" className="themis-subagents-count" onClick={() => open()}>{label}</button>
+    </div>
   );
 }
 
