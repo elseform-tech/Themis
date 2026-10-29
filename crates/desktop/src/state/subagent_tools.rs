@@ -244,7 +244,12 @@ impl SubagentTool {
                 }
             })
             .collect();
-        Ok(json!({"subagents": subagents}))
+        let reported = subagents.iter().any(|agent| agent.get("result").is_some());
+        let mut output = json!({"subagents": subagents});
+        if reported {
+            output["check"] = themis_core::prompts::SUBAGENT_REVIEW.into();
+        }
+        Ok(output)
     }
 
     fn steer(&self, args: &Value) -> Result<Value, ToolCallError> {
