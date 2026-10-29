@@ -497,10 +497,11 @@ impl AppState {
             .get(thread_id)
             .ok_or_else(|| format!("unknown thread '{thread_id}'"))?
             .running;
+        // The run's own approvals; a subagent's are shown on the subagent.
         let awaiting_approval = self
             .pending_approvals()
             .iter()
-            .any(|request| request.thread_id == thread_id);
+            .any(|request| request.thread_id == thread_id && request.subagent.is_none());
         let live: HashSet<String> = self
             .inner
             .automation_runs

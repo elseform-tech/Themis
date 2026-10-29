@@ -87,7 +87,7 @@ export function TasksView({ threadId }: { threadId: string }) {
       <li key={row.key} className="themis-task-row">
         <span className={`themis-task-row-icon themis-task-row-icon--${icon}`} aria-hidden="true"><TaskIcon kind={icon} /></span>
         <span className="themis-task-row-text">
-          <span className="themis-workspace-list-title">{row.name}<em>{row.tag}</em></span>
+          <span className="themis-workspace-list-title"><span className="themis-task-row-name" title={row.name}>{row.name}</span><em>{row.tag}</em></span>
           <span className="themis-workspace-list-meta">{row.meta}</span>
         </span>
         <span className="themis-task-row-actions">
@@ -106,7 +106,7 @@ export function TasksView({ threadId }: { threadId: string }) {
           ? <SubagentLetter name={agent.name} index={index} working={agentState === "running"} />
           : <span className={`themis-task-row-icon themis-task-row-icon--${icon}`} aria-hidden="true"><TaskIcon kind={icon} /></span>}
         <button type="button" className="themis-task-row-text themis-task-row-open" onClick={() => dispatch({ type: "ui/subagent-focus", id: agent.id })}>
-          <span className="themis-workspace-list-title">{agent.name}<em>Subagent</em></span>
+          <span className="themis-workspace-list-title"><span className="themis-task-row-name">{agent.name}</span><em>Subagent</em></span>
           <span className="themis-workspace-list-meta">{[modelNote(agent, chatModel), subagentLine(agent, agentState, state.approvals)].filter(Boolean).join(" · ")}</span>
         </button>
         <span className="themis-task-row-actions">

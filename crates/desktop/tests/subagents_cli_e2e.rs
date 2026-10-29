@@ -135,6 +135,12 @@ async fn app(
     let data = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join("notes.txt"), "hello from the notes").unwrap();
+    // A git project: elsewhere Themis refuses anything but reads without asking.
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(project.path())
+        .status()
+        .expect("git");
     if let Some(config) = project_config {
         std::fs::create_dir_all(project.path().join(".themis")).unwrap();
         std::fs::write(project.path().join(".themis/config.jsonc"), config).unwrap();
@@ -730,6 +736,61 @@ async fn a_subagent_whose_model_fails_at_once_falls_back_to_the_chat_model() {
             .find(|e| e["kind"] == "subagent_ended")
             .unwrap();
         assert_eq!(ended["model"], "test-model");
+    })
+    .await
+    .unwrap();
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_subagent_waiting_for_approval_does_not_hold_the_reply() {
+    let app = app(None, |body| {
+        if is_subagent(body) {
+            return tools(&[("c1", "shell", json!({"command": "nl", "args": ["-n", "notes.txt"]}))]);
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Lister", "brief": "Number the lines of notes.txt."}]}),
+            )]),
+            _ if mentions(body, NOTE) => reply("Done."),
+            _ => reply("Waiting."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking(move || {
+        call(
+            &data,
+            "set_thread_approval_mode",
+            json!({"threadId": thread, "mode": "custom"}),
+        );
+        call(
+            &data,
+            "send_message",
+            json!({"threadId": thread, "text": "list the files"}),
+        );
+        let mut pending = Value::Null;
+        until("the subagent never asked", || {
+            pending = call(&data, "get_pending_approvals", json!({}));
+            pending.as_array().is_some_and(|list| !list.is_empty())
+        });
+        assert_eq!(pending[0]["subagent"]["name"], "Lister", "{pending}");
+        // Its approval belongs to the subagent; the reply itself is not waiting on you.
+        let tasks = call(&data, "get_thread_tasks", json!({"threadId": thread}));
+        assert_eq!(tasks["run"]["awaiting_approval"], false, "{tasks}");
+        assert_eq!(tasks["run"]["running"], true);
+        let id = call(&data, "list_subagents", json!({"threadId": thread}))[0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        call(
+            &data,
+            "stop_subagent",
+            json!({"threadId": thread, "subagentId": id}),
+        );
+        until("the run never finished", || !running(&data, &thread));
     })
     .await
     .unwrap();
