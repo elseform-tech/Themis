@@ -217,6 +217,8 @@ export type BackgroundTaskState = 'running' | 'exited' | 'stopped' | 'timed_out'
 /** One background shell task in the chat's task feed. */
 export interface ThreadTaskBackground {
   id: string;
+  /** The run that started it, when known. */
+  run_id?: string;
   command: string;
   cwd: string;
   state: BackgroundTaskState;
@@ -332,7 +334,7 @@ export type ThreadEvent =
   | { kind: 'question_asked'; question: Question }
   | { kind: 'question_answered'; id: string; answer: string }
   /** The agent started a read-only subagent for one part of its task. */
-  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean }
+  | { kind: 'subagent_started'; id: string; name: string; brief: string; model: string; confined: boolean; /** RFC 3339. */ at?: string }
   /** What a running subagent is doing now (live only). */
   /** `model`: the one it fell back to when its own could not run. */
   | { kind: 'subagent_status'; id: string; text: string; tool_calls: number; model?: string }
@@ -358,6 +360,8 @@ export interface SubagentEntry {
   startedAt?: number;
   /** The model it fell back to, when `model` could not run. */
   ranOn?: string;
+  /** When it was started (RFC 3339), from the saved event. */
+  at?: string;
 }
 
 /** Settings › Subagents (the `subagents` block of the user runtime.jsonc). */

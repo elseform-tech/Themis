@@ -60,7 +60,17 @@ export function subagentLine(agent: SubagentEntry, state: SubagentState, approva
 }
 
 /** Soft tones the circles cycle through, so neighbours differ. */
-const TONES = ["info", "success", "accent", "neutral"] as const;
+export const TONES = ["info", "success", "accent", "neutral"] as const;
+
+/** A subagent's letter circle; `index` is its place in its reply, so the tone matches the chat. */
+export function SubagentLetter({ name, index, working }: { name: string; index: number; working: boolean }) {
+  return (
+    <span className={`themis-subagent-dot is-small is-${TONES[index % TONES.length]}`} aria-hidden="true">
+      {name.trim().charAt(0).toUpperCase() || "S"}
+      {working && <svg className="themis-subagent-ring" viewBox="0 0 34 34"><path d="M17 2a15 15 0 0 1 15 15" /></svg>}
+    </span>
+  );
+}
 
 /** The subagents started together in a turn (board 25): overlapping letter circles, ringed
  *  while they work. Status lives in the overview box, the approval box and Workspace › Tasks;

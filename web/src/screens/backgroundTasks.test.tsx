@@ -35,6 +35,13 @@ const feed = (background: ThreadTaskBackground[]): ThreadTasks => ({
 beforeEach(() => { appState = { ...initialState }; vi.clearAllMocks(); });
 afterEach(cleanup);
 
+/** Opens the folded Done section (it remembers being open within the session). */
+function openDone() {
+  const fold = screen.getByRole("button", { name: /^Done · / });
+  if (fold.getAttribute("aria-expanded") === "false") fireEvent.click(fold);
+  return screen.getByRole("region", { name: "Done" });
+}
+
 describe("background task grouping", () => {
   it("sorts running, lost or failed, and finished tasks, newest first", () => {
     const groups = groupBackground(feed([
@@ -82,13 +89,15 @@ describe("TasksView background rows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop npm run dev" }));
     await waitFor(() => expect(bridge.stopBackgroundTask).toHaveBeenCalledWith("t1", "bg_a1b2c3"));
   });
-  it("puts failed tasks under Needs attention, lost and finished ones under Earlier, without Stop", () => {
+  it("puts failed tasks under Needs you, lost and finished ones under Done, without Stop", () => {
     appState = { ...initialState, tasks: { t1: feed([task({ id: "bg_l", state: "lost", command: "python3 -m http.server" }), task({ id: "bg_f", state: "stopped", command: "sleep 9" }), task({ id: "bg_x", state: "exited", exit_code: 2, command: "make" })]) } };
     render(<TasksView threadId="t1" />);
-    expect(screen.getByRole("region", { name: "Needs attention" })).toHaveTextContent("make");
-    expect(screen.getByRole("region", { name: "Earlier" })).toHaveTextContent("python3 -m http.server");
-    expect(screen.getByRole("region", { name: "Earlier" })).toHaveTextContent("lost after restart");
-    expect(screen.getByRole("region", { name: "Earlier" })).toHaveTextContent("sleep 9");
+    expect(screen.getByRole("region", { name: "Needs you" })).toHaveTextContent("make");
+    const done = openDone();
+    expect(done).toHaveTextContent("Background tasks");
+    expect(done).toHaveTextContent("python3 -m http.server");
+    expect(done).toHaveTextContent("lost after restart");
+    expect(done).toHaveTextContent("sleep 9");
     expect(screen.queryByRole("button", { name: /^Stop / })).toBeNull();
     expect(screen.queryByText("No tasks in this chat")).toBeNull();
   });

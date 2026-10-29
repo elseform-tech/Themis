@@ -17,6 +17,7 @@ use themis_core::tools::{
 fn spec(thread: &str, script: &str, dir: &Path, timeout_secs: u64) -> StartSpec {
     StartSpec {
         thread_id: thread.to_owned(),
+        run_id: None,
         program: "sh".to_owned(),
         args: vec!["-c".to_owned(), script.to_owned()],
         workdir: dir.to_path_buf(),
@@ -506,4 +507,27 @@ fn a_finished_task_with_a_dangling_character_pages_to_the_end() {
     let (_, chunk) = registry.log("t", &id, Some(0), 100).unwrap();
     assert_eq!(chunk.text, "ok\u{FFFD}");
     assert_eq!(chunk.next_offset, chunk.total);
+}
+
+#[test]
+fn a_task_keeps_the_run_that_started_it_across_a_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = tempfile::tempdir().unwrap();
+    let registry = BackgroundRegistry::open(Some(store.path().to_path_buf()));
+    let mut started = spec("t", "echo hi", dir.path(), 0);
+    started.run_id = Some("run-7".into());
+    let id = registry.start(started).unwrap().record.id;
+    let plain = registry
+        .start(spec("t", "echo hi", dir.path(), 0))
+        .unwrap()
+        .record
+        .id;
+    registry.shutdown(STOP_WAIT);
+    let reloaded = BackgroundRegistry::open(Some(store.path().to_path_buf()));
+    assert_eq!(
+        reloaded.status("t", &id).unwrap().record.run_id.as_deref(),
+        Some("run-7")
+    );
+    // Older records, without a run, still read.
+    assert_eq!(reloaded.status("t", &plain).unwrap().record.run_id, None);
 }

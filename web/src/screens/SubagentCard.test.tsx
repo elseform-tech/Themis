@@ -37,7 +37,7 @@ beforeEach(() => { dispatch.mockClear(); appState = { ...initialState }; });
 afterEach(() => cleanup());
 
 describe("subagent events", () => {
-  it("puts subagents started together on one card and updates each in place", () => {
+  it("puts every subagent of a reply on one card and updates each in place", () => {
     let state = reducer(initialState, envelope({ kind: "subagent_started", id: "a1", name: "Bug hunt", brief: "b1", model: "glm-5", confined: true }));
     state = reducer(state, envelope({ kind: "subagent_started", id: "a2", name: "Docs", brief: "b2", model: "glm-5", confined: false }));
     state = reducer(state, envelope({ kind: "subagent_status", id: "a2", text: "Reading docs", tool_calls: 2 }));
@@ -48,9 +48,11 @@ describe("subagent events", () => {
       ["Bug hunt", "finished", "", 5], ["Docs", "running", "Reading docs", 2],
     ]);
     expect(cards[0]!.subagents![0]!.startedAt).toBeTypeOf("number");
-    // A later spawn after other work gets its own card.
+    // A later spawn in the same reply joins it; the next reply gets its own.
     state = reducer(state, envelope({ kind: "tool_started", tool: "spawn_subagents", summary: "spawn" }));
     state = reducer(state, envelope({ kind: "subagent_started", id: "a3", name: "Tests", brief: "b3", model: "glm-5", confined: true }));
+    expect(state.messages[thread]!.filter(row => row.subagents).map(row => row.subagents!.length)).toEqual([3]);
+    state = reducer(state, envelope({ kind: "subagent_started", id: "a4", name: "Next", brief: "b4", model: "glm-5", confined: true }, "r2"));
     expect(state.messages[thread]!.filter(row => row.subagents)).toHaveLength(2);
   });
 
