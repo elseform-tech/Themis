@@ -1446,7 +1446,77 @@ fn environment_reference(value: &str) -> anyhow::Result<String> {
         None => bail!(LITERAL_REFUSED),
     }
 }
-/// Defaults from `${NAME:-value}` in a URL or header: plain, non-secret values only.
+/// `env` entries: references become keys (with any default), plain non-secret values and
+/// plugin-folder paths are kept as written, and anything else is refused.
+fn import_env(server: &mut McpServer, env: &Value) -> anyhow::Result<()> {
+    for (key, value) in env
+        .as_object()
+        .context("MCP environment must be an object")?
+    {
+        let value = value
+            .as_str()
+            .context("MCP environment must contain strings")?;
+        let names_plugin_root = crate::plugins::keys::PLUGIN_ROOTS
+            .iter()
+            .any(|root| value.contains(root));
+        match crate::plugins::keys::reference(value).filter(|_| !names_plugin_root) {
+            Some((name, default)) => {
+                add_defaults(
+                    server,
+                    default.map(|d| (name.clone(), d)).into_iter().collect(),
+                )?;
+                server.env.insert(key.clone(), name);
+            }
+            None if crate::plugins::keys::safe_plugin_value(key, value) => {
+                server.env_values.insert(key.clone(), value.to_owned());
+            }
+            None => {
+                environment_reference(value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Headers: plain non-secret values are kept, `Authorization: Bearer ${NAME}` becomes the
+/// bearer key, and every other value must be a `prefix${NAME}` template.
+fn import_headers(server: &mut McpServer, headers: &Value) -> anyhow::Result<()> {
+    for (key, value) in headers
+        .as_object()
+        .context("MCP headers must be an object")?
+    {
+        let value = value
+            .as_str()
+            .context("MCP header must reference a key as ${NAME}")?;
+        if !value.contains("${") && !value.contains("{env:") {
+            if !crate::plugins::keys::safe_literal(key, value) {
+                crate::plugins::keys::header_template(value)?;
+            }
+            server.header_values.insert(key.clone(), value.to_owned());
+            continue;
+        }
+        // `{env:NAME}` (OpenCode) and `${env:NAME}` read the same as `${NAME}`.
+        let (template, defaults) = crate::plugins::keys::normalize_references(value)
+            .context("MCP header values must be an optional prefix followed by one ${NAME}")?;
+        add_defaults(server, defaults)?;
+        let bearer = template
+            .strip_prefix("Bearer ")
+            .filter(|token| token.starts_with("${"));
+        match bearer {
+            Some(token)
+                if key.eq_ignore_ascii_case("authorization") && server.bearer_env.is_none() =>
+            {
+                server.bearer_env = Some(environment_reference(token)?);
+            }
+            _ => {
+                crate::plugins::keys::header_template(&template)?;
+                server.headers.insert(key.clone(), template);
+            }
+        }
+    }
+    Ok(())
+}
+/// Defaults from `${NAME:-value}`: plain, non-secret values only.
 fn add_defaults(server: &mut McpServer, defaults: Vec<(String, String)>) -> anyhow::Result<()> {
     for (name, default) in defaults {
         if !crate::plugins::keys::safe_literal(&name, &default) {
@@ -1577,34 +1647,7 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
         add_defaults(&mut server, defaults)?;
     }
     if let Some(env) = raw.get(if opencode { "environment" } else { "env" }) {
-        for (key, value) in env
-            .as_object()
-            .context("MCP environment must be an object")?
-        {
-            let value = value
-                .as_str()
-                .context("MCP environment must contain strings")?;
-            let names_plugin_root = crate::plugins::keys::PLUGIN_ROOTS
-                .iter()
-                .any(|root| value.contains(root));
-            match crate::plugins::keys::reference(value).filter(|_| !names_plugin_root) {
-                Some((name, default)) => {
-                    if let Some(default) = default {
-                        if !crate::plugins::keys::safe_literal(&name, &default) {
-                            bail!(LITERAL_REFUSED);
-                        }
-                        server.defaults.insert(name.clone(), default);
-                    }
-                    server.env.insert(key.clone(), name);
-                }
-                None if crate::plugins::keys::safe_plugin_value(key, value) => {
-                    server.env_values.insert(key.clone(), value.to_owned());
-                }
-                None => {
-                    environment_reference(value)?;
-                }
-            }
-        }
+        import_env(&mut server, env)?;
     }
     if let Some(bearer) = raw.get("bearer_env") {
         server.bearer_env = Some(
@@ -1615,39 +1658,7 @@ fn import_mcp_server(name: &str, raw: &Value, opencode: bool) -> anyhow::Result<
         );
     }
     if let Some(headers) = raw.get("headers") {
-        for (key, value) in headers
-            .as_object()
-            .context("MCP headers must be an object")?
-        {
-            let value = value
-                .as_str()
-                .context("MCP header must reference a key as ${NAME}")?;
-            if !value.contains("${") && !value.contains("{env:") {
-                if !crate::plugins::keys::safe_literal(key, value) {
-                    crate::plugins::keys::header_template(value)?;
-                }
-                server.header_values.insert(key.clone(), value.to_owned());
-                continue;
-            }
-            // `{env:NAME}` (OpenCode) and `${env:NAME}` read the same as `${NAME}`.
-            let (template, defaults) = crate::plugins::keys::normalize_references(value)
-                .context("MCP header values must be an optional prefix followed by one ${NAME}")?;
-            add_defaults(&mut server, defaults)?;
-            let bearer = template
-                .strip_prefix("Bearer ")
-                .filter(|token| token.starts_with("${"));
-            match bearer {
-                Some(token)
-                    if key.eq_ignore_ascii_case("authorization") && server.bearer_env.is_none() =>
-                {
-                    server.bearer_env = Some(environment_reference(token)?);
-                }
-                _ => {
-                    crate::plugins::keys::header_template(&template)?;
-                    server.headers.insert(key.clone(), template);
-                }
-            }
-        }
+        import_headers(&mut server, headers)?;
     }
     if let Some(kind) = raw.get("type").and_then(Value::as_str) {
         if (["local", "stdio"].contains(&kind) && server.command.is_none())

@@ -64,22 +64,7 @@ impl McpServer {
                 check_url(&super::keys::fill(url, |_| "key".into()))?;
             }
         }
-        for (name, value) in self.env_values.iter().chain(&self.header_values) {
-            if !super::keys::safe_plugin_value(name, value) {
-                bail!("MCP value for '{name}' must reference a key as ${{NAME}}; literal values are unsupported");
-            }
-        }
-        for (name, value) in &self.defaults {
-            if !super::keys::valid_name(name) || !super::keys::safe_literal(name, value) {
-                bail!("MCP default for '{name}' must be a plain, non-secret value");
-            }
-        }
-        if self.env_values.keys().any(|name| {
-            self.env.contains_key(name)
-                || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-        }) {
-            bail!("MCP environment names must be unique variable names");
-        }
+        self.validate_plain_values()?;
         if !self.header_values.is_empty() && self.url.is_none() {
             bail!("Only remote MCP servers take headers");
         }
@@ -122,6 +107,26 @@ impl McpServer {
             if !literal {
                 super::keys::header_template(template)?;
             }
+        }
+        Ok(())
+    }
+    /// Plain values and defaults are never credentials, and plain env names are unique.
+    fn validate_plain_values(&self) -> anyhow::Result<()> {
+        for (name, value) in self.env_values.iter().chain(&self.header_values) {
+            if !super::keys::safe_plugin_value(name, value) {
+                bail!("MCP value for '{name}' must reference a key as ${{NAME}}; literal values are unsupported");
+            }
+        }
+        for (name, value) in &self.defaults {
+            if !super::keys::valid_name(name) || !super::keys::safe_literal(name, value) {
+                bail!("MCP default for '{name}' must be a plain, non-secret value");
+            }
+        }
+        if self.env_values.keys().any(|name| {
+            self.env.contains_key(name)
+                || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        }) {
+            bail!("MCP environment names must be unique variable names");
         }
         Ok(())
     }
