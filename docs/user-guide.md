@@ -134,6 +134,7 @@ own brief while the agent carries on, and its result reaches the agent before it
 next step. The agent's turn ends only after every subagent it started has
 reported back.
 
+- **Checked, not trusted.** The agent treats what a subagent reports as claims: before relying on a finding it reads the code itself (you see "Read …" right after the subagents), and its reply opens with what it checked and what it confirmed or rejected.
 - **Read-only.** Subagents read, list and search files and run shell commands, but
   do not change the project. Where the OS sandbox is available their commands may
   write only temporary folders; without it nothing confines them beyond your

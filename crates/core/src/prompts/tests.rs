@@ -234,6 +234,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (TOOL_DEVTOOLS_PAUSED, "tool-devtools-paused", &[]),
     (TOOL_BACKGROUND_NEXT, "tool-background-next", &[]),
     (RUNTIME_SUBAGENT_NOTE, "runtime-subagent-note", &[]),
+    (SUBAGENT_REVIEW, "subagent-review", &[]),
     (SUBAGENT_SYSTEM, "subagent-system", &[]),
     (SUBAGENT_READ_ONLY_NOTE, "subagent-read-only-note", &[]),
     (SUBAGENT_STATUS_FIELD, "subagent-status-field", &[]),

@@ -2938,8 +2938,9 @@ pub fn subagent_note(note: &str) -> String {
         .replace("<<<", "< < <")
         .replace(">>>", "> > >");
     format!(
-        "{}\n<<<subagent-result\n{fenced}\n>>>",
-        crate::prompts::RUNTIME_SUBAGENT_NOTE
+        "{} {}\n<<<subagent-result\n{fenced}\n>>>",
+        crate::prompts::RUNTIME_SUBAGENT_NOTE,
+        crate::prompts::SUBAGENT_REVIEW
     )
 }
 

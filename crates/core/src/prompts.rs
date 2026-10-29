@@ -208,6 +208,8 @@ pub const RUNTIME_STEERED: &str = include_str!("../builtins/prompts/runtime-stee
 /// Header before a subagent's result delivered between steps: data, not the person's words.
 pub const RUNTIME_SUBAGENT_NOTE: &str =
     include_str!("../builtins/prompts/runtime-subagent-note.md");
+/// How the agent treats subagent results: claims it checks before relying on them, and says so.
+pub const SUBAGENT_REVIEW: &str = include_str!("../builtins/prompts/subagent-review.md");
 /// Sent once before a run that read two or more steered messages ends, listing them.
 pub const RUNTIME_STEERS_CHECK: &str = include_str!("../builtins/prompts/runtime-steers-check.md");
 /// Error for a call left out of a batch too large for the context; `{{calls}}`, `{{runnable}}`.
