@@ -658,3 +658,67 @@ fn discover_groups_come_from_the_bundled_map_then_the_category() {
         assert!(groups.contains(&group.as_str()), "{name}: {group}");
     }
 }
+
+#[test]
+fn prompt_and_failure_hooks_import_and_claude_tool_names_map_to_themis_tools() {
+    // Mirrors catalog plugins that guard Bash, react to edits and add prompt context.
+    let plugin = tempfile::tempdir().unwrap();
+    let root = plugin.path();
+    manifest(root, json!({"name": "fixture"}));
+    let command = |text: &str| json!([{"type": "command", "command": text}]);
+    write(
+        root,
+        "hooks/hooks.json",
+        &json!({"hooks": {
+            "UserPromptSubmit": [{"hooks": command("echo context")}],
+            "PostToolUseFailure": [{"matcher": "Bash", "hooks": command("echo failed")}],
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": command("guard")},
+                {"matcher": "Edit|Write|NotebookEdit", "hooks": command("lint")},
+                {"matcher": "mcp__github__create_issue", "hooks": command("audit")}
+            ]
+        }})
+        .to_string(),
+    );
+    let preview = inspect(root);
+    let hooks: Vec<(String, Option<String>, String)> = preview
+        .spec
+        .hooks
+        .iter()
+        .map(|hook| {
+            (
+                hook.event.clone(),
+                hook.matcher.clone(),
+                hook.command.clone(),
+            )
+        })
+        .collect();
+    assert!(
+        hooks.contains(&("PromptSubmit".into(), None, "echo context".into())),
+        "{hooks:?}"
+    );
+    assert!(hooks.contains(&(
+        "ToolCallFailed".into(),
+        Some("shell|background_task".into()),
+        "echo failed".into()
+    )));
+    assert!(hooks.contains(&(
+        "BeforeTool".into(),
+        Some("shell|background_task".into()),
+        "guard".into()
+    )));
+    assert!(hooks.contains(&(
+        "BeforeTool".into(),
+        Some("apply_patch|write_file".into()),
+        "lint".into()
+    )));
+    // A matcher with no Themis tool is not imported; the reason is listed.
+    assert!(!hooks.iter().any(|(_, _, command)| command == "audit"));
+    let notes = preview.spec.unsupported.join("\n");
+    assert!(
+        notes.contains("PreToolUse: matcher NotebookEdit has no Themis tool"),
+        "{notes}"
+    );
+    assert!(notes.contains("PreToolUse: matcher mcp__github__create_issue has no Themis tool"));
+    assert!(!notes.contains("Hook event UserPromptSubmit"));
+}

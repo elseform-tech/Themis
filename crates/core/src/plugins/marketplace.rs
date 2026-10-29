@@ -1817,6 +1817,53 @@ pub fn mcp_server_to_standard(server: &McpServer) -> Value {
     Value::Object(entry)
 }
 
+/// Themis tools for a Claude tool name in a hook matcher.
+fn themis_tools(claude: &str) -> Option<&'static [&'static str]> {
+    Some(match claude {
+        "Bash" => &["shell", "background_task"],
+        "Read" => &["read_file"],
+        "Write" => &["write_file"],
+        "Edit" | "MultiEdit" => &["apply_patch", "write_file"],
+        "Grep" => &["search_file"],
+        "Glob" | "LS" => &["list_dir", "search_file"],
+        "WebFetch" => &["fetch_url"],
+        "WebSearch" => &["web_search"],
+        _ => return None,
+    })
+}
+
+/// A Claude tool matcher ("Edit|Write") as Themis tool names, and the names with no Themis
+/// tool. Themis names already in it are kept.
+fn map_tool_matcher(matcher: &str) -> (Vec<String>, Vec<String>) {
+    let mut mapped: Vec<String> = Vec::new();
+    let mut unmapped = Vec::new();
+    for name in matcher
+        .split('|')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let tools: Vec<&str> = match themis_tools(name) {
+            Some(tools) => tools.to_vec(),
+            None if crate::skills::known_tool_names()
+                .iter()
+                .any(|known| known == name) =>
+            {
+                vec![name]
+            }
+            None => {
+                unmapped.push(name.to_owned());
+                continue;
+            }
+        };
+        for tool in tools {
+            if !mapped.iter().any(|known| known == tool) {
+                mapped.push(tool.to_owned());
+            }
+        }
+    }
+    (mapped, unmapped)
+}
+
 fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
     let events = value
         .get("hooks")
@@ -1830,18 +1877,25 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
             "PostToolUse" => "AfterTool",
             "Stop" => "RunEnd",
             "PreCompact" => "BeforeCompaction",
+            "UserPromptSubmit" => "PromptSubmit",
+            // Fires only when the tool call failed.
+            "PostToolUseFailure" => "ToolCallFailed",
             _ => {
                 spec.unsupported.push(format!("Hook event {event}"));
                 continue;
             }
         };
+        let tool_event = matches!(
+            event.as_str(),
+            "PreToolUse" | "PostToolUse" | "PostToolUseFailure"
+        );
         for group in groups.as_array().context("Invalid hook groups")? {
             for raw in group["hooks"].as_array().context("Invalid hook list")? {
                 if raw["type"] != "command" {
                     spec.unsupported.push(format!("{event}: non-command hook"));
                     continue;
                 }
-                if !matches!(event.as_str(), "PreToolUse" | "PostToolUse")
+                if !tool_event
                     && group["matcher"]
                         .as_str()
                         .is_some_and(|matcher| !matcher.is_empty() && matcher != "*")
@@ -1860,6 +1914,24 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         .push(format!("{event}: hook options require manual mapping"));
                     continue;
                 }
+                // Claude names its tools differently: a `Bash` guard must guard `shell`.
+                let matcher = match group["matcher"]
+                    .as_str()
+                    .filter(|value| !value.is_empty() && !matches!(*value, "*" | ".*"))
+                {
+                    Some(matcher) if tool_event => {
+                        let (mapped_tools, unmapped) = map_tool_matcher(matcher);
+                        for name in &unmapped {
+                            spec.unsupported
+                                .push(format!("{event}: matcher {name} has no Themis tool"));
+                        }
+                        if mapped_tools.is_empty() {
+                            continue;
+                        }
+                        Some(mapped_tools.join("|"))
+                    }
+                    other => other.map(str::to_owned),
+                };
                 spec.hooks.push(Hook {
                     name: format!("imported-{}", spec.hooks.len()),
                     event: mapped.into(),
@@ -1868,10 +1940,7 @@ fn import_hooks(value: &Value, spec: &mut PluginSpec) -> anyhow::Result<()> {
                         .context("Missing hook command")?
                         .into(),
                     enabled: false,
-                    matcher: group["matcher"]
-                        .as_str()
-                        .filter(|value| !value.is_empty() && *value != "*")
-                        .map(str::to_owned),
+                    matcher,
                     failure_policy: None,
                     timeout_seconds: raw["timeout"].as_u64().unwrap_or(10).clamp(1, 60),
                     blocking: event == "PreToolUse" || event == "SessionStart",
