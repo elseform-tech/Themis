@@ -73,7 +73,7 @@ function capabilitySummary(spec: PluginSpec) {
 }
 const compatibilityLabels = { supported: "Compatible", partial: "Partially supported", unsupported: "Unsupported" };
 function compatibilityReasons(spec: PluginSpec) {
-  return [...new Set([...(spec.import_issues ?? []).map(issue => [issue.field || issue.name, issue.reason, issue.remedy].filter(Boolean).join(": ")), ...spec.unsupported.map(feature => feature === "lspServers" ? "Language servers aren’t supported yet." : `Unsupported: ${feature}`)])];
+  return [...new Set([...(spec.import_issues ?? []).map(issue => [issue.field || issue.name, issue.reason, issue.remedy].filter(Boolean).join(": ")), ...spec.unsupported.map(feature => feature === "lspServers" ? "Language servers aren’t supported yet." : `Unsupported: ${feature}`), ...(spec.notices ?? [])])];
 }
 function CompatibilityWarning({ reasons, label = "Compatibility details" }: { reasons: string[]; label?: string }) {
   return reasons.length ? <details className="themis-compatibility-reason">

@@ -19,6 +19,48 @@ pub struct MarketplaceScan {
     refresh: bool,
 }
 
+/// Bumped whenever import rules change, so saved checks are redone with the new rules.
+const SCAN_VERSION: u32 = 4;
+
+/// Counts of a finished check: plugins per status, and how many plugins each reason affects.
+pub fn compatibility_summary(scan: &MarketplaceScan) -> Value {
+    let mut statuses = BTreeMap::<String, usize>::new();
+    let mut reasons = BTreeMap::<String, usize>::new();
+    for preview in scan.checks.values() {
+        *statuses.entry(preview.report.status.clone()).or_default() += 1;
+        let keys: std::collections::BTreeSet<String> = preview
+            .report
+            .components
+            .iter()
+            .filter(|c| !matches!(c.status.as_str(), "supported" | "notice"))
+            .filter_map(|c| c.reason.as_deref().map(reason_key))
+            .collect();
+        for key in keys {
+            *reasons.entry(key).or_default() += 1;
+        }
+    }
+    for error in scan.errors.values() {
+        *statuses.entry("failed".into()).or_default() += 1;
+        *reasons.entry(reason_key(error)).or_default() += 1;
+    }
+    let mut reasons: Vec<_> = reasons.into_iter().collect();
+    reasons.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    serde_json::json!({
+        "total": scan.total,
+        "statuses": statuses,
+        "reasons": reasons.into_iter().map(|(reason, plugins)| serde_json::json!({"reason": reason, "plugins": plugins})).collect::<Vec<_>>(),
+    })
+}
+
+/// Groups reasons that differ only in a path or component name ("Link not followed: a/b").
+fn reason_key(reason: &str) -> String {
+    match reason.split_once(": ") {
+        Some((head, tail)) if head.contains('/') || head.starts_with("mcpServers.") => tail.into(),
+        Some((head, _)) => head.into(),
+        None => reason.into(),
+    }
+}
+
 fn preview_file(name: &str) -> String {
     // Hex keeps distinct catalog names distinct on case-insensitive filesystems.
     let key: String = name.bytes().map(|byte| format!("{byte:02x}")).collect();
@@ -93,11 +135,11 @@ impl PluginStore {
         };
         let mut state = self.scan_state(name).unwrap_or_default();
         let source_changed = state.source != source;
-        if refresh || source_changed || state.version != 3 {
+        if refresh || source_changed || state.version != SCAN_VERSION {
             state = MarketplaceScan {
                 revision: revision(),
                 source,
-                version: 3,
+                version: SCAN_VERSION,
                 refresh: refresh || source_changed,
                 ..Default::default()
             };
@@ -225,7 +267,7 @@ impl PluginStore {
             .context("Unknown marketplace")?
             .source;
         let state = self.scan_state(marketplace)?;
-        if state.status != "ready" || state.source != source || state.version != 3 {
+        if state.status != "ready" || state.source != source || state.version != SCAN_VERSION {
             bail!("Marketplace is not ready; finish its compatibility scan first");
         }
         Ok(state)

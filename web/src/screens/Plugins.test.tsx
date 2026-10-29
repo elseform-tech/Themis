@@ -174,7 +174,7 @@ describe("Integration browsing and lifecycle", () => {
     const previous = vi.mocked(pluginAction).getMockImplementation()!;
     vi.mocked(pluginAction).mockImplementation(async args => {
       if (args.action === "catalog") return { plugins: [{ name: "mixed", description: "Useful review tools" }, { name: "legacy", description: "Legacy tools" }] } as never;
-      if (args.action === "inspect_marketplace") return { spec: { ...installed[0].spec, name: args.name, skills: args.name === "legacy" ? [] : installed[0].spec.skills, mcp: {}, hooks: [], unsupported: ["lspServers"] }, report: { status: args.name === "legacy" ? "unsupported" : "partial", components: [{ kind: "lsp", name: "server", status: "unsupported", reason: "LSP is not supported", remedy: "Use the bundled skill instead" }] } } as never;
+      if (args.action === "inspect_marketplace") return { spec: { ...installed[0].spec, name: args.name, skills: args.name === "legacy" ? [] : installed[0].spec.skills, mcp: {}, hooks: [], unsupported: ["lspServers"], notices: ["File too large: docs/big.json"] }, report: { status: args.name === "legacy" ? "unsupported" : "partial", components: [{ kind: "lsp", name: "server", status: "unsupported", reason: "LSP is not supported", remedy: "Use the bundled skill instead" }] } } as never;
       return previous(args) as never;
     });
     render(<Plugins />);
@@ -186,6 +186,7 @@ describe("Integration browsing and lifecycle", () => {
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveTextContent("Partially supported");
     expect(dialog).toHaveTextContent("Language servers aren’t supported yet.");
+    expect(dialog).toHaveTextContent("File too large: docs/big.json");
     expect(within(dialog).getByRole("button", { name: "Install supported parts" })).toBeEnabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "unsupported" } });

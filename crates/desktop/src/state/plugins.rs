@@ -265,6 +265,7 @@ impl AppState {
                     Value::Null
                 }
                 "catalog" => store.wait_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false)).await?.catalog,
+                "catalog_check" => themis_core::plugins::compatibility_summary(&store.wait_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false)).await?),
                 "preview" => {
                     let marketplace = args["marketplace"].as_str().unwrap_or_default();
                     store.wait_marketplace_scan(marketplace, false).await?;

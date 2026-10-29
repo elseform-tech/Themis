@@ -56,6 +56,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
         ["plugin","marketplace","add",name,source]=>{request["action"]=json!("add_marketplace");request["name"]=json!(name);request["source"]=json!(source);},
         ["plugin","marketplace","remove",name]=>{request["action"]=json!("remove_marketplace");request["name"]=json!(name);},
         ["plugin","marketplace",action,name] if matches!(*action,"browse"|"refresh")=>{request["action"]=json!("catalog");request["name"]=json!(name);request["refresh"]=json!(*action=="refresh");},
+        ["plugin","marketplace","check",name]=>{request["action"]=json!("catalog_check");request["name"]=json!(name);},
         ["plugin","install",target]=>{let(name,market)=target.split_once('@').ok_or("Use plugin@marketplace")?;request["action"]=json!("install");request["name"]=json!(name);request["marketplace"]=json!(market);},
         ["plugin",action,name] if matches!(*action,"show"|"export"|"edit"|"update")=>{
             let plugin=find(client,&request,name).await?;
@@ -101,7 +102,7 @@ pub async fn run(client: &Client, words: &[String], directory: &Path) -> Result<
             } else { return Err("Use skill verify FILE".into()); }
 
         },
-        _=>return Err("Use plugin list|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|add NAME SOURCE|browse NAME|refresh NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
+        _=>return Err("Use plugin list|create NAME|show NAME|edit NAME|save FILE|inspect SOURCE [NAME]|import SOURCE [NAME]|export NAME|install NAME@MARKET|update NAME|enable NAME|disable NAME|uninstall NAME; plugin marketplace list|add NAME SOURCE|browse NAME|refresh NAME|check NAME|remove NAME; skill list|save PLUGIN FILE|verify FILE|delete PLUGIN ID; mcp/hook list PLUGIN|add PLUGIN NAME FILE|update PLUGIN NAME FILE|test PLUGIN NAME|delete PLUGIN NAME. Options: --scope local|global --project PATH --expected REVISION --ref REF --subdirectory PATH --allow-partial. For agent creation: skill create THREAD REQUEST.".into()),
     }
     client.call("plugin_action", request).await
 }
