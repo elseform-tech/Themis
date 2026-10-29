@@ -7,7 +7,7 @@ import { BackgroundTaskRow } from "./BackgroundTaskRow";
 import { groupBackground } from "./backgroundTasks";
 import { TaskIcon } from "./TaskIcon";
 import { groupTasks, type TaskKind, type TaskRow } from "./threadTasks";
-import { subagentLine, subagentState, type SubagentState } from "./SubagentCard";
+import { modelNote, subagentLine, subagentState, type SubagentState } from "./SubagentCard";
 import { SubagentDetail } from "./SubagentDetail";
 
 type SubagentTask = { agent: SubagentEntry; runLive: boolean; state: SubagentState };
@@ -31,6 +31,7 @@ export function TasksView({ threadId }: { threadId: string }) {
   const groups = groupTasks(state.tasks[threadId], state.settings.automations_enabled);
   const background = groupBackground(state.tasks[threadId]);
   const activeRun = state.activeRunIds[threadId];
+  const chatModel = Object.values(state.threadsByProject).flat().find(thread => thread.id === threadId)?.model;
   const subagents: SubagentTask[] = (state.messages[threadId] ?? []).flatMap(row => (row.subagents ?? []).map(agent => {
     const runLive = row.runId !== undefined && row.runId === activeRun;
     return { agent, runLive, state: subagentState(agent, runLive, state.approvals) };
@@ -93,7 +94,7 @@ export function TasksView({ threadId }: { threadId: string }) {
                   <span className={`themis-task-row-icon themis-task-row-icon--${icon}`} aria-hidden="true"><TaskIcon kind={icon} /></span>
                   <button type="button" className="themis-task-row-text themis-task-row-open" onClick={() => dispatch({ type: "ui/subagent-focus", id: agent.id })}>
                     <span className="themis-workspace-list-title">{agent.name}<em>Subagent</em></span>
-                    <span className="themis-workspace-list-meta">{subagentLine(agent, agentState, state.approvals)}</span>
+                    <span className="themis-workspace-list-meta">{[modelNote(agent, chatModel), subagentLine(agent, agentState, state.approvals)].filter(Boolean).join(" · ")}</span>
                   </button>
                   <span className="themis-task-row-actions">
                     {live && <button type="button" aria-label={`Stop ${agent.name}`} disabled={busy !== null} onClick={() => void stopOne(agent)}>Stop</button>}

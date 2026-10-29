@@ -143,6 +143,7 @@ reported back.
   apply to it as usual.
 - **Stop.** Stop on the chat stops its subagents too. The agent can stop one
   subagent; that subagent's partial result still reaches it.
+- **Choosing models.** Name them in your request: "use glm-5 for the review and haiku for the docs". The agent may use the Subagent model (the chat's model unless you set one) and up to three **Other models** you list in Settings › Subagents; it matches your words to them and says so when you name one that isn't listed. If a subagent's model can't start, or its first request fails (a used-up quota, say), it falls back to the Subagent model, then the chat's model; Workspace › Tasks shows "claude-haiku → glm-5".
 - **Limits.** At most three run at once by default (`subagents.max_parallel`);
   more wait their turn. Each has 40 model requests (`subagents.max_turns`).
   `subagents.model` picks a different model for them, and `subagents.enabled:

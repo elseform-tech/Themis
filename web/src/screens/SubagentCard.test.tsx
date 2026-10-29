@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState, reducer } from "../state/reducer";
 import type { ApprovalRequest, SubagentEntry } from "../lib/types";
-import { clock, firstLine, SubagentCard, subagentLine, subagentState } from "./SubagentCard";
+import { clock, firstLine, modelNote, SubagentCard, subagentLine, subagentState } from "./SubagentCard";
 import { stepsOf, SubagentDetail } from "./SubagentDetail";
 import { SubagentSettingsSection } from "./SubagentSettings";
 
@@ -102,6 +102,26 @@ describe("subagent card", () => {
   });
 });
 
+describe("subagent models", () => {
+  it("records a fallback model from status and end events", () => {
+    let state = reducer(initialState, envelope({ kind: "subagent_started", id: "a1", name: "Review", brief: "b", model: "glm-5", confined: true }));
+    state = reducer(state, envelope({ kind: "subagent_status", id: "a1", text: "Reading", tool_calls: 1, model: "beam-free" }));
+    expect(state.messages[thread]!.find(row => row.subagents)!.subagents![0]!.ranOn).toBe("beam-free");
+  });
+
+  it("names the model only when it is not the chat's, and shows a fallback", () => {
+    expect(modelNote(agent({ model: "glm-5" }), "glm-5")).toBe("");
+    expect(modelNote(agent({ model: "claude-haiku" }), "glm-5")).toBe("claude-haiku");
+    expect(modelNote(agent({ model: "claude-haiku", ranOn: "glm-5" }), "glm-5")).toBe("claude-haiku → glm-5");
+  });
+
+  it("says in the detail which model it fell back to", async () => {
+    render(<SubagentDetail threadId={thread} agent={agent({ model: "claude-haiku", ranOn: "glm-5", status: "finished", seconds: 9 })} runLive={false} onBack={() => {}} />);
+    await act(async () => {});
+    expect(screen.getByText(/^glm-5 \(claude-haiku unavailable\) · Read only/)).toBeInTheDocument();
+  });
+});
+
 describe("subagent detail", () => {
   it("groups tool calls between the subagent's own words, without repeating its result", () => {
     expect(stepsOf([
@@ -152,6 +172,13 @@ describe("Settings › Subagents", () => {
     await act(async () => {});
     expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ model: null }, "r2");
     expect(saved).toHaveBeenCalledTimes(3);
+    // Other models: added from the list, at most three, removed one by one.
+    fireEvent.change(screen.getByRole("combobox", { name: "Add a model" }), { target: { value: "glm-5" } });
+    await act(async () => {});
+    expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ models: ["glm-5"] }, "r2");
+    fireEvent.click(screen.getByRole("button", { name: "Remove glm-5" }));
+    await act(async () => {});
+    expect(tauri.updateSubagentSettings).toHaveBeenLastCalledWith({ models: [] }, "r2");
     // No hint lines and no file-writes switch before write paths exist.
     expect(screen.queryByText(/file writes/i)).toBeNull();
   });

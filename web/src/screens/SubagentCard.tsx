@@ -25,6 +25,13 @@ export function firstLine(text: string): string {
   return lines.find(line => !line.endsWith(":")) ?? lines[0] ?? "";
 }
 
+/** Which model it runs on, when that is worth saying: not the chat's own model, and
+ *  "glm-5 → beam-free" after a fallback. Empty otherwise. */
+export function modelNote(agent: SubagentEntry, chatModel: string | undefined): string {
+  if (agent.ranOn) return `${agent.model} → ${agent.ranOn}`;
+  return agent.model === chatModel ? "" : agent.model;
+}
+
 /** How long it has run: its final time once ended, else the time since it started. */
 export function elapsed(agent: SubagentEntry, now: number): number | undefined {
   if (agent.seconds !== undefined) return agent.seconds;
