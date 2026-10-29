@@ -1615,7 +1615,7 @@ fn bounded_read_result(args: &Value, mut result: Value) -> Result<Value, ToolCal
 /// Unknown tool names and malformed args fall back to a capped
 /// ``call `<name>` with <args>`` rendering so the approval UI always shows
 /// something meaningful.
-fn summarize_fs_call(name: &str, args: &Value) -> String {
+pub fn summarize_fs_call(name: &str, args: &Value) -> String {
     fn field<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
         args.get(key).and_then(Value::as_str)
     }

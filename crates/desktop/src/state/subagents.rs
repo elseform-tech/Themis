@@ -568,8 +568,10 @@ pub(super) struct Subagent {
 
 #[derive(Clone, Default)]
 pub(super) struct Progress {
-    /// What it says it is doing, or its latest tool call.
+    /// What it says it is doing, or else its latest action.
     pub(super) status: String,
+    /// Whether `status` came from the subagent itself.
+    pub(super) own_status: bool,
     /// Status and result once it ended.
     pub(super) ended: Option<(String, String)>,
     /// The note its result was delivered as.
@@ -584,13 +586,21 @@ impl Subagent {
             .clone()
     }
 
+    /// The status line the subagent gave.
     pub(super) fn set_status(&self, status: &str) {
         let status: String = status.trim().chars().take(80).collect();
         if !status.is_empty() {
-            self.progress
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .status = status;
+            let mut progress = self.progress.lock().unwrap_or_else(|e| e.into_inner());
+            progress.status = status;
+            progress.own_status = true;
+        }
+    }
+
+    /// Its latest action, shown until it gives a status line of its own.
+    pub(super) fn set_action(&self, action: &str) {
+        let mut progress = self.progress.lock().unwrap_or_else(|e| e.into_inner());
+        if !progress.own_status {
+            progress.status = action.chars().take(80).collect();
         }
     }
 
@@ -673,11 +683,8 @@ async fn pump_events(
                 text.push_str(delta);
                 continue;
             }
-            RunEvent::ToolCallStarted { summary, .. } => {
+            RunEvent::ToolCallStarted { .. } => {
                 agent.tool_calls.fetch_add(1, Ordering::SeqCst);
-                if agent.progress().status.is_empty() {
-                    agent.set_status(summary);
-                }
                 report(&agent);
             }
             RunEvent::Incomplete { .. } => incomplete = true,

@@ -265,12 +265,12 @@ impl std::fmt::Debug for StatusField {
 #[async_trait]
 impl ToolRuntime for StatusField {
     async fn execute(&self, mut args: Value) -> Result<Value, ToolCallError> {
-        if let Some(status) = args.as_object_mut().and_then(|args| args.remove("status")) {
-            if let Some(status) = status.as_str() {
-                self.agent.set_status(status);
-                (self.report)(&self.agent);
-            }
+        let status = args.as_object_mut().and_then(|args| args.remove("status"));
+        match status.as_ref().and_then(Value::as_str) {
+            Some(status) => self.agent.set_status(status),
+            None => self.agent.set_action(&action(self.inner.name(), &args)),
         }
+        (self.report)(&self.agent);
         self.inner.execute(args).await
     }
 }
@@ -288,6 +288,17 @@ impl ToolT for StatusField {
     fn output_schema(&self) -> Option<Value> {
         self.inner.output_schema()
     }
+}
+
+/// A short readable form of a call, for the status line.
+fn action(tool: &str, args: &Value) -> String {
+    if let Some(command) = themis_core::tools::command_display_for_call(tool, args) {
+        return format!("Run `{}`", command.argv.join(" "));
+    }
+    let summary = themis_core::tools::summarize_fs_call(tool, args);
+    let mut chars = summary.chars();
+    let first = chars.next().map(|c| c.to_uppercase().to_string());
+    first.unwrap_or_default() + chars.as_str()
 }
 
 fn with_status(mut schema: Value) -> Value {
@@ -314,6 +325,18 @@ mod tests {
         assert!(parse_briefs(&json!({"subagents": [{"name": "x"}]})).is_err());
         let seven = vec![json!({"brief": "b"}); MAX_PER_CALL + 1];
         assert!(parse_briefs(&json!({ "subagents": seven })).is_err());
+    }
+
+    #[test]
+    fn actions_read_as_short_lines() {
+        assert_eq!(
+            action("read_file", &json!({"file_path": "src/stats.py"})),
+            "Read `src/stats.py`"
+        );
+        assert_eq!(
+            action("shell", &json!({"command": "cargo", "args": ["test"]})),
+            "Run `cargo test`"
+        );
     }
 
     #[test]
