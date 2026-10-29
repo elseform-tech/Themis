@@ -508,10 +508,19 @@ class GraderTests(unittest.TestCase):
                   # A list sent as a JSON string is read as that list, as Themis does.
                   ("shell", denied.format("shell", "shell", r'{"command":"grep","args":"[\"-L\", \"x\", \"out\"]"}'),
                    "ours"),
-                  ("shell", denied.format("shell", "shell", r'{"command":"grep","args":"[\"-n\", \"x\"]"}'), "model")]
+                  ("shell", denied.format("shell", "shell", r'{"command":"grep","args":"[\"-n\", \"x\"]"}'), "model"),
+                  # A string that never was a list: a script with raw line breaks, or a pipe.
+                  ("shell", denied.format("shell", "shell", '{"command":"python3","args":"[\\"-c\\", \\"\nimport os\\"]"}'),
+                   "model"),
+                  ("shell", denied.format("shell", "shell", r'{"command":"grep","args":"[\"-rL\", \"x\", \"out\"] | grep -v IN'),
+                   "model")]
         for tool, text, cause in custom:
             summary = "call `{}` with {}".format(tool, text.split(" with ", 1)[1].rsplit(" The action", 1)[0])
             self.assertEqual(tool_causes.classify(tool, text, mode="custom", summary=summary)[0], cause, text)
+        # A recall kind that does not exist and an ask_user missing its reason are the model's.
+        for tool, text in (("recall", "tool 'recall' failed: recall: unknown kind 'toolresult' (use original, ...)"),
+                           ("ask_user", "tool 'ask_user' failed: ask_user needs `why`: one short line on why")):
+            self.assertEqual(tool_causes.classify(tool, text, mode="custom"), ("model", "bad_arguments"), text)
         # A shell call whose arguments cannot be parsed is left for a person, not attributed.
         self.assertEqual(tool_causes.classify("shell", custom[1][1], mode="custom", summary="call `shell` with ???")[0],
                          "unclassified")
