@@ -212,7 +212,7 @@ is reached; for example `/goal optimize this app to speed up p95`.
   or the Workspace icon to open it as you left it; closing Workspace brings the
   box back. The chevron folds it to icons only, as does a narrow chat. Rows with
   nothing to show are left out, and a chat with nothing to show has no box.
-- **Workspace** in a thread's header opens a read-only monitor of the project:
+- **Workspace** in a thread's header opens a monitor of the project:
   **Changes** (readable changed files and their wrapped, highlighted diff,
   updating live while the agent works; binary and generated files are hidden; a
   change too large to show whole, such as a downloaded dataset, shows its first
