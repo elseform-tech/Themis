@@ -1215,10 +1215,12 @@ impl FileGuard {
             ));
         }
         if let Some(allowed) = &self.only_write {
-            if !allowed
-                .iter()
-                .any(|folder| resolved.starts_with(folder) || path.starts_with(folder))
-            {
+            // Only the resolved path counts, and `..` is never followed, so a path cannot
+            // start inside an allowed folder and step out of it.
+            let climbs = path
+                .components()
+                .any(|part| part == std::path::Component::ParentDir);
+            if climbs || !allowed.iter().any(|folder| resolved.starts_with(folder)) {
                 return Err(format!(
                     "'{}' is outside the folders this read-only run may write",
                     path.display()

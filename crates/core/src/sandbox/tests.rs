@@ -281,6 +281,18 @@ fn a_read_only_plan_keeps_walls_but_writes_only_temp_folders() {
     assert!(guard
         .check_write(&std::env::temp_dir().join("scratch.txt"))
         .is_ok());
+    // Stepping out of a temp folder is refused, however the path is spelled.
+    let escape = std::env::temp_dir()
+        .join("..")
+        .join(fx.root.strip_prefix("/").unwrap_or(&fx.root));
+    assert!(guard.check_write(&escape.join("src/main.rs")).is_err());
+    #[cfg(unix)]
+    {
+        let link = tempfile::tempdir().unwrap();
+        let alias = link.path().join("project");
+        std::os::unix::fs::symlink(&fx.root, &alias).unwrap();
+        assert!(guard.check_write(&alias.join("src/main.rs")).is_err());
+    }
     assert!(guard.check_read(&fx.root.join("src/main.rs")).is_ok());
 
     // A YOLO run's subagent keeps YOLO's reach for reads, and says so in its status.
