@@ -473,3 +473,69 @@ async fn the_person_can_stop_one_subagent_and_the_agent_still_hears_from_it() {
     );
     app.serving.abort();
 }
+
+/// `call` that returns the CLI's error text instead of failing the test.
+fn try_call(data: &Path, command: &str, args: Value) -> Result<Value, String> {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(data)
+        .args(["call", command, &args.to_string()])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .expect("CLI");
+    if output.status.success() {
+        Ok(serde_json::from_slice(&output.stdout).unwrap_or(Value::Null))
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn settings_change_only_their_fields_and_refuse_a_stale_page() {
+    let app = app(None, |_| reply("Done.")).await;
+    let data = app.data.path().to_owned();
+    tokio::task::spawn_blocking(move || {
+        let view = call(&data, "get_subagent_settings", json!({}));
+        assert_eq!(view["settings"]["max_parallel"], 3);
+        let revision = view["revision"].clone();
+        let saved = call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"max_parallel": 2, "model": "glm-5"}, "revision": revision}),
+        );
+        assert_eq!(saved["settings"]["max_parallel"], 2);
+        assert_eq!(saved["settings"]["model"], "glm-5");
+        assert_eq!(saved["settings"]["enabled"], true);
+        // The page that loaded before is stale now.
+        let stale = try_call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"enabled": false}, "revision": revision}),
+        );
+        assert!(stale.unwrap_err().contains("changed in runtime.jsonc"));
+        // "Chat model" clears the field.
+        let cleared = call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"model": null}, "revision": saved["revision"]}),
+        );
+        assert!(cleared["settings"]["model"].is_null());
+        // Only the fields the page shows, within their limits.
+        assert!(try_call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"max_turns": 5}})
+        )
+        .unwrap_err()
+        .contains("max_turns"));
+        assert!(try_call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"max_parallel": 9}})
+        )
+        .is_err());
+    })
+    .await
+    .unwrap();
+    app.serving.abort();
+}

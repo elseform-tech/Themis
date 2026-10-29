@@ -361,6 +361,50 @@ impl AppState {
         Ok(saved)
     }
 
+    /// The person's subagent settings with the revision a later edit must name
+    /// (Settings › Subagents).
+    pub fn user_subagents_view(&self) -> Result<(configuration::SubagentsConfig, String), String> {
+        let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
+        let user = read_optional(&user_path)?;
+        let subagents = configuration::resolve(user.as_deref(), None, None)
+            .map(|resolved| resolved.config.subagents)
+            .map_err(|e| format!("runtime configuration: {e:#}"))?;
+        let revision = revision_of(&subagents);
+        Ok((subagents, revision))
+    }
+
+    /// Saves only the `changes` (Settings › Subagents fields) on top of the file's
+    /// `subagents` block, refusing a stale `revision` like Settings › Browser.
+    pub fn patch_user_subagents_config(
+        &self,
+        changes: serde_json::Map<String, Value>,
+        revision: Option<&str>,
+    ) -> Result<(configuration::SubagentsConfig, String), String> {
+        const EDITABLE: [&str; 3] = ["enabled", "max_parallel", "model"];
+        if let Some(key) = changes.keys().find(|key| !EDITABLE.contains(&key.as_str())) {
+            return Err(format!("Settings › Subagents cannot change `{key}`"));
+        }
+        let saved = self.update_user_block("subagents", |config| {
+            if revision.is_some_and(|expected| expected != revision_of(&config.subagents)) {
+                return Err(STALE_SUBAGENT_SETTINGS.to_owned());
+            }
+            let mut value = serde_json::to_value(&config.subagents).map_err(|e| e.to_string())?;
+            let object = value
+                .as_object_mut()
+                .ok_or("subagent settings are not an object")?;
+            for (key, field) in changes {
+                if field.is_null() {
+                    object.remove(&key);
+                } else {
+                    object.insert(key, field);
+                }
+            }
+            Ok(value)
+        })?;
+        let revision = revision_of(&saved.subagents);
+        Ok((saved.subagents, revision))
+    }
+
     /// The `web` settings from the user `runtime.jsonc` (Settings › Web).
     pub fn user_web_config(&self) -> Result<configuration::WebConfig, String> {
         let user_path = settings_app_dir(self.inner.settings.path()).join("runtime.jsonc");
@@ -533,10 +577,17 @@ pub(crate) const STALE_BROWSER_SETTINGS: &str =
     "Browser settings changed in runtime.jsonc since this page loaded; showing the latest";
 
 /// A short, stable fingerprint of browser settings as resolved from the file.
+pub(crate) const STALE_SUBAGENT_SETTINGS: &str =
+    "Subagent settings changed in runtime.jsonc since this page loaded; showing the latest";
+
 fn browser_revision(browser: &configuration::BrowserConfig) -> String {
+    revision_of(browser)
+}
+
+fn revision_of(settings: &impl serde::Serialize) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    serde_json::to_string(browser)
+    serde_json::to_string(settings)
         .unwrap_or_default()
         .hash(&mut hasher);
     format!("{:016x}", hasher.finish())
