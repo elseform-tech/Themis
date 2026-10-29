@@ -623,3 +623,38 @@ fn commands_become_manual_skills_with_a_note() {
         .iter()
         .any(|reason| reason.contains("commands")));
 }
+
+#[test]
+fn discover_groups_come_from_the_bundled_map_then_the_category() {
+    use themis_core::plugins::catalog_groups;
+    let catalog = json!({"plugins": [
+        {"name": "code-review", "category": "productivity"},
+        {"name": "not-in-the-map", "category": "database"},
+        {"name": "uncategorised"}
+    ]});
+    let official = catalog_groups("claude-plugins-official", &catalog);
+    assert_eq!(official["code-review"], "Coding");
+    assert_eq!(official["not-in-the-map"], "Data & databases");
+    assert_eq!(official["uncategorised"], "Other");
+    let local = catalog_groups(
+        "local",
+        &json!({"plugins": [{"name": "code-review", "category": "security"}]}),
+    );
+    assert_eq!(local["code-review"], "Security");
+
+    let bundled: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>> =
+        serde_json::from_str(include_str!("../builtins/plugin-groups.json")).unwrap();
+    let groups = [
+        "Coding",
+        "Cloud & deploy",
+        "Data & databases",
+        "Monitoring",
+        "Security",
+        "Work apps",
+        "Design",
+        "Other",
+    ];
+    for (name, group) in &bundled["claude-plugins-official"] {
+        assert!(groups.contains(&group.as_str()), "{name}: {group}");
+    }
+}

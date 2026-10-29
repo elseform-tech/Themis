@@ -151,7 +151,13 @@ impl AppState {
                     } else { serde_json::to_value(store.inspect_mcp_json(if name.is_empty(){"imported-mcp"}else{name}, &value.to_string())?)? }
                 },
                 "inspect_repository" => serde_json::to_value(store.inspect_repository(name,args["url"].as_str().unwrap_or_default(),args["reference"].as_str(),args["subdirectory"].as_str()).await?)?,
-                "scan_marketplace" => serde_json::to_value(store.start_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false))?)?,
+                "scan_marketplace" => {
+                    let scan = store.start_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false))?;
+                    let groups = themis_core::plugins::catalog_groups(name, &scan.catalog);
+                    let mut value = serde_json::to_value(scan)?;
+                    value["groups"] = serde_json::to_value(groups)?;
+                    value
+                }
                 "inspect_marketplace" => {
                     let marketplace = args["marketplace"].as_str().unwrap_or_default();
                     store.wait_marketplace_scan(marketplace, false).await?;
@@ -265,7 +271,7 @@ impl AppState {
                     Value::Null
                 }
                 "catalog" => store.wait_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false)).await?.catalog,
-                "catalog_check" => themis_core::plugins::compatibility_summary(&store.wait_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false)).await?),
+                "catalog_check" => themis_core::plugins::compatibility_summary(name, &store.wait_marketplace_scan(name, args["refresh"].as_bool().unwrap_or(false)).await?),
                 "preview" => {
                     let marketplace = args["marketplace"].as_str().unwrap_or_default();
                     store.wait_marketplace_scan(marketplace, false).await?;

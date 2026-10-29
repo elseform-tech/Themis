@@ -421,6 +421,7 @@ async fn marketplace_check_counts_statuses_and_a_formerly_colliding_plugin_insta
     );
     let report = cli(data.path(), &["plugin", "marketplace", "check", "local"]);
     assert_eq!(report["total"], 3);
+    assert_eq!(report["ungrouped"], json!([]), "only hand-sorted catalogs list these");
     assert_eq!(report["statuses"], json!({"failed": 1, "supported": 2}));
     assert_eq!(report["reasons"].as_array().unwrap().len(), 1, "{report}");
     assert_eq!(report["reasons"][0]["plugins"], 1);

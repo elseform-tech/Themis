@@ -6,7 +6,7 @@ pub mod keys;
 mod marketplace;
 pub mod oauth;
 mod scans;
-pub use scans::{compatibility_summary, MarketplaceScan};
+pub use scans::{catalog_groups, compatibility_summary, MarketplaceScan};
 
 use crate::skills::Skill;
 use anyhow::{bail, Context};

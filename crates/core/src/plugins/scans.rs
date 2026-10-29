@@ -22,8 +22,49 @@ pub struct MarketplaceScan {
 /// Bumped whenever import rules change, so saved checks are redone with the new rules.
 const SCAN_VERSION: u32 = 6;
 
+/// Discover groups for catalogs we sort by hand, keyed by marketplace and plugin name.
+const PLUGIN_GROUPS: &str = include_str!("../../builtins/plugin-groups.json");
+
+fn bundled_groups(marketplace: &str) -> Option<BTreeMap<String, String>> {
+    let all: BTreeMap<String, BTreeMap<String, String>> =
+        serde_json::from_str(PLUGIN_GROUPS).expect("bundled plugin groups");
+    all.get(marketplace).cloned()
+}
+
+/// The Discover group of each catalog entry: the bundled map first, then the entry's catalog
+/// `category`, else Other.
+pub fn catalog_groups(marketplace: &str, catalog: &Value) -> BTreeMap<String, String> {
+    let bundled = bundled_groups(marketplace).unwrap_or_default();
+    catalog["plugins"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry["name"].as_str()?;
+            let group = bundled.get(name).cloned().unwrap_or_else(|| {
+                category_group(entry["category"].as_str().unwrap_or_default()).into()
+            });
+            Some((name.to_owned(), group))
+        })
+        .collect()
+}
+
+fn category_group(category: &str) -> &'static str {
+    match category {
+        "development" | "testing" => "Coding",
+        "deployment" | "migration" => "Cloud & deploy",
+        "database" => "Data & databases",
+        "monitoring" => "Monitoring",
+        "security" => "Security",
+        "productivity" => "Work apps",
+        "design" => "Design",
+        _ => "Other",
+    }
+}
+
 /// Counts of a finished check: plugins per status, and how many plugins each reason affects.
-pub fn compatibility_summary(scan: &MarketplaceScan) -> Value {
+/// For a hand-sorted catalog it also lists entries the bundled group map doesn't cover yet.
+pub fn compatibility_summary(marketplace: &str, scan: &MarketplaceScan) -> Value {
     let mut statuses = BTreeMap::<String, usize>::new();
     let mut reasons = BTreeMap::<String, usize>::new();
     for preview in scan.checks.values() {
@@ -45,8 +86,20 @@ pub fn compatibility_summary(scan: &MarketplaceScan) -> Value {
     }
     let mut reasons: Vec<_> = reasons.into_iter().collect();
     reasons.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let ungrouped: Vec<&str> = bundled_groups(marketplace)
+        .map(|bundled| {
+            scan.catalog["plugins"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry["name"].as_str())
+                .filter(|name| !bundled.contains_key(*name))
+                .collect()
+        })
+        .unwrap_or_default();
     serde_json::json!({
         "total": scan.total,
+        "ungrouped": ungrouped,
         "statuses": statuses,
         "reasons": reasons.into_iter().map(|(reason, plugins)| serde_json::json!({"reason": reason, "plugins": plugins})).collect::<Vec<_>>(),
     })
