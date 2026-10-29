@@ -317,6 +317,23 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
             .map(|dir| dir.count())
             .unwrap_or(0);
         assert_eq!(saved, 2);
+        // The read-only detail reads a subagent's own steps.
+        let id = listed[0]["id"].as_str().unwrap();
+        let steps = call(
+            &data,
+            "get_subagent_transcript",
+            json!({"threadId": thread, "subagentId": id}),
+        );
+        let kinds: Vec<&str> = steps
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|event| event["kind"].as_str())
+            .collect();
+        assert!(
+            kinds.contains(&"tool_started") && kinds.contains(&"finished"),
+            "{kinds:?}"
+        );
         // Deleting the chat removes them.
         call(&data, "discard_thread", json!({"threadId": thread}));
         assert!(!data.join("subagents").join(&thread).exists());
@@ -394,5 +411,65 @@ async fn a_project_can_turn_subagents_off() {
         .iter()
         .any(|name| name.contains("subagent"))));
     drop(app.project);
+    app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_can_stop_one_subagent_and_the_agent_still_hears_from_it() {
+    let app = app(None, move |body| {
+        if is_subagent(body) {
+            return tools(&[("c1", "list_dir", json!({"path": "."}))])
+                .set_delay(Duration::from_secs(4));
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Slow", "brief": "Look at everything."}]}),
+            )]),
+            _ if mentions(body, NOTE) => reply("Slow was stopped."),
+            _ => reply("Waiting for Slow."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking({
+        let (data, thread) = (data.clone(), thread.clone());
+        move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": thread, "mode": "yolo"}),
+            );
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": thread, "text": "look around"}),
+            );
+            let mut id = String::new();
+            until("the subagent never started", || {
+                let listed = call(&data, "list_subagents", json!({"threadId": thread}));
+                id = listed[0]["id"].as_str().unwrap_or_default().to_owned();
+                !id.is_empty()
+            });
+            call(
+                &data,
+                "stop_subagent",
+                json!({"threadId": thread, "subagentId": id}),
+            );
+            until("the run never finished", || !running(&data, &thread));
+            let listed = call(&data, "list_subagents", json!({"threadId": thread}));
+            assert_eq!(listed[0]["status"], "stopped");
+        }
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    let main: Vec<&Value> = all.iter().filter(|body| !is_subagent(body)).collect();
+    let last = main.last().unwrap();
+    assert!(
+        mentions(last, NOTE) && mentions(last, "status stopped"),
+        "{last}"
+    );
     app.serving.abort();
 }

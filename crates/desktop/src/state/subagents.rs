@@ -526,29 +526,8 @@ impl SubagentKit {
 
     /// Stops one subagent and denies the approvals it is waiting on.
     pub(super) fn stop(&self, agent: &Subagent) {
-        agent.stop.store(true, Ordering::SeqCst);
-        let mut pending = self
-            .state
-            .inner
-            .pending
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        pending.retain(|approval_id, approval| {
-            let mine = approval.thread_id == self.thread_id
-                && approval
-                    .request
-                    .subagent
-                    .as_ref()
-                    .is_some_and(|label| label.id == agent.id);
-            if mine {
-                let _ = approval.sender.send(Approval::Deny);
-                self.sink.emit_approval_expired(&ApprovalExpired {
-                    thread_id: self.thread_id.clone(),
-                    approval_id: approval_id.clone(),
-                });
-            }
-            !mine
-        });
+        self.state
+            .stop_one_subagent(self.sink.as_ref(), &self.thread_id, agent);
     }
 }
 
@@ -786,6 +765,83 @@ impl AppState {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn stop_one_subagent(&self, sink: &dyn EventSink, thread_id: &str, agent: &Subagent) {
+        agent.stop.store(true, Ordering::SeqCst);
+        let mut pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.retain(|approval_id, approval| {
+            let mine = approval.thread_id == thread_id
+                && approval
+                    .request
+                    .subagent
+                    .as_ref()
+                    .is_some_and(|label| label.id == agent.id);
+            if mine {
+                let _ = approval.sender.send(Approval::Deny);
+                sink.emit_approval_expired(&ApprovalExpired {
+                    thread_id: thread_id.to_owned(),
+                    approval_id: approval_id.clone(),
+                });
+            }
+            !mine
+        });
+    }
+
+    /// Stops one subagent of the chat (Workspace › Tasks); the main agent gets what it
+    /// had so far. Completed work is never undone.
+    pub fn stop_subagent(
+        &self,
+        sink: &dyn EventSink,
+        thread_id: &str,
+        subagent_id: &str,
+    ) -> Result<(), String> {
+        let agent = self
+            .inner
+            .subagents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+            .and_then(|list| list.iter().find(|agent| agent.id == subagent_id).cloned())
+            .ok_or_else(|| "This subagent is not running".to_owned())?;
+        if !agent.ended() {
+            self.stop_one_subagent(sink, thread_id, &agent);
+        }
+        Ok(())
+    }
+
+    /// A subagent's saved steps, oldest first: at most the last 512 KiB, whole lines only.
+    pub fn get_subagent_transcript(
+        &self,
+        thread_id: &str,
+        subagent_id: &str,
+    ) -> Result<Vec<ThreadEvent>, String> {
+        use std::io::{Read, Seek, SeekFrom};
+        const LIMIT: u64 = 512 * 1024;
+        let path = self
+            .subagent_transcript_path(thread_id, subagent_id)
+            .ok_or_else(|| "Unknown subagent".to_owned())?;
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            return Ok(Vec::new());
+        };
+        let length = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let start = length.saturating_sub(LIMIT);
+        file.seek(SeekFrom::Start(start))
+            .map_err(|error| error.to_string())?;
+        let mut bytes = Vec::new();
+        file.take(LIMIT)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        let text = String::from_utf8_lossy(&bytes);
+        let mut lines = text.lines();
+        if start > 0 {
+            // The first line may be cut.
+            lines.next();
+        }
+        Ok(lines
+            .filter_map(|line| serde_json::from_str::<ThreadEventEnvelope>(line).ok())
+            .map(|envelope| envelope.event)
+            .collect())
     }
 
     /// Stops every running subagent of the chat (its run ended).

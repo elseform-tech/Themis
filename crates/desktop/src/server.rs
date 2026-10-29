@@ -952,6 +952,15 @@ async fn dispatch_command(
         ),
         "list_questions" => output!(state.list_questions(arg(&args, "threadId")?).await?),
         "list_subagents" => output!(state.list_subagents(&arg::<String>(&args, "threadId")?)),
+        "get_subagent_transcript" => output!(state.get_subagent_transcript(
+            &arg::<String>(&args, "threadId")?,
+            &arg::<String>(&args, "subagentId")?
+        )?),
+        "stop_subagent" => done!(state.stop_subagent(
+            sink.as_ref(),
+            &arg::<String>(&args, "threadId")?,
+            &arg::<String>(&args, "subagentId")?
+        )),
         "answer_question" => output!(
             state
                 .answer_question(
