@@ -93,8 +93,10 @@ function phrase(kind: Kind, calls: { name: string; summary: string; label?: stri
 
 /** A stretch of tool calls in a few words, in the order they first ran: "Read 4 files ·
  *  Ran python3 check.py". At most three phrases; the rest is counted. Failed calls are
- *  left out (the row counts them); when every call failed, only their number is left. */
-export function describeTools(messages: ChatMessage[]): string {
+ *  left out (the row counts them); when every call failed, only their number is left.
+ *  While the run is `live`, edits and commands none of whose calls has finished read as
+ *  under way ("Editing", "Running"). */
+export function describeTools(messages: ChatMessage[], live = false): string {
   const groups = new Map<Kind, { name: string; summary: string; label?: string }[]>();
   const finished = new Set<Kind>();
   const calls = messages.filter(message => message.tool);
@@ -109,7 +111,7 @@ export function describeTools(messages: ChatMessage[]): string {
     if (message.tool.ok !== undefined) finished.add(kind);
     groups.set(kind, group);
   }
-  const phrases = [...groups].map(([kind, calls]) => phrase(kind, calls, !finished.has(kind)));
+  const phrases = [...groups].map(([kind, calls]) => phrase(kind, calls, live && !finished.has(kind)));
   if (phrases.length <= 3) return phrases.join(" · ");
   return `${phrases.slice(0, 3).join(" · ")} · ${phrases.length - 3} more`;
 }

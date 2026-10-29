@@ -18,12 +18,14 @@ describe("tool rows say what the calls did", () => {
       .toBe("Edited INDEX.md");
   });
 
-  it("says an edit or command is under way until one of its calls finishes", () => {
+  it("says an edit or command is under way until one of its calls finishes, while the run is live", () => {
     // Seen live: a write waiting for approval already read "Edited livecheck.txt".
-    expect(describeTools([call("write_file", "write `livecheck.txt`", undefined, null)])).toBe("Editing livecheck.txt");
-    expect(describeTools([call("shell", 'call `shell` with {"command":"pytest","args":[]}', undefined, null)])).toBe("Running pytest");
-    expect(describeTools([call("write_file", "write `a.txt`"), call("write_file", "write `b.txt`", undefined, null)])).toBe("Edited 2 files");
-    expect(describeTools([call("write_file", "write `livecheck.txt`")])).toBe("Edited livecheck.txt");
+    expect(describeTools([call("write_file", "write `livecheck.txt`", undefined, null)], true)).toBe("Editing livecheck.txt");
+    expect(describeTools([call("shell", 'call `shell` with {"command":"pytest","args":[]}', undefined, null)], true)).toBe("Running pytest");
+    expect(describeTools([call("write_file", "write `a.txt`"), call("write_file", "write `b.txt`", undefined, null)], true)).toBe("Edited 2 files");
+    expect(describeTools([call("write_file", "write `livecheck.txt`")], true)).toBe("Edited livecheck.txt");
+    // Once the run has ended (an interrupted write never finishes), nothing is under way.
+    expect(describeTools([call("write_file", "write `livecheck.txt`", undefined, null)])).toBe("Edited livecheck.txt");
   });
   it("reads arguments from a summary cut at 200 characters", () => {
     const cut = `call \`read_file\` with {"file_path":"src/pale-thistle.txt","offset":0,"limit":${"9".repeat(200)}`.slice(0, 200) + "…";

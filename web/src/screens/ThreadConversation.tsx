@@ -193,7 +193,7 @@ function ToolGroup({ messages, activeRunId, skills, plugins }: { messages: ChatM
     <details className="themis-tool-group" open={running || undefined}>
       <summary>
         <span className="themis-tool-chevron" aria-hidden="true">›</span>
-        <span title={`${messages.length} tool call${messages.length === 1 ? "" : "s"}`}>{describeTools(messages)}</span>
+        <span title={`${messages.length} tool call${messages.length === 1 ? "" : "s"}`}>{describeTools(messages, activeRunId !== undefined)}</span>
         {failed > 0 && <span className="themis-run-meta">{failed} failed</span>}
       </summary>
       <div className="themis-tool-group-body">
