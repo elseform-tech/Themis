@@ -517,6 +517,63 @@ pub struct GoalConfig {
     pub check_model: Option<String>,
 }
 
+/// Subagents (`subagents`): child runs the agent may start; see the subagents design.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SubagentsConfig {
+    /// Offer the subagent tools to the agent.
+    pub enabled: bool,
+    /// Subagents running at once per chat (1-6); more wait their turn.
+    pub max_parallel: usize,
+    /// Model requests per subagent (1-1000).
+    pub max_turns: usize,
+    /// Model for subagents; absent, the chat's model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// `false` keeps every subagent read-only, whatever paths the agent asks for.
+    pub allow_writes: bool,
+}
+impl Default for SubagentsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_parallel: 3,
+            max_turns: 40,
+            model: None,
+            allow_writes: true,
+        }
+    }
+}
+
+/// A project or run layer may only lower subagent limits or turn subagents (or their writes)
+/// off; the model may be set anywhere.
+fn check_subagents_restriction(
+    current: &SubagentsConfig,
+    layer: &Value,
+    origin: &str,
+) -> Result<()> {
+    for field in ["enabled", "allow_writes"] {
+        if let Some(value) = layer.pointer(&format!("/subagents/{field}")) {
+            ensure!(
+                value == &Value::Bool(false),
+                "the {origin} configuration may only set subagents.{field} to false"
+            );
+        }
+    }
+    for (field, limit) in [
+        ("max_parallel", current.max_parallel),
+        ("max_turns", current.max_turns),
+    ] {
+        if let Some(value) = layer.pointer(&format!("/subagents/{field}")) {
+            ensure!(
+                value.as_u64().is_some_and(|value| value as usize <= limit),
+                "the {origin} configuration may only lower subagents.{field} (at most {limit})"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LoggingConfig {
@@ -831,6 +888,8 @@ pub struct RuntimeConfig {
     pub compaction: CompactionConfig,
     /// Goal mode; see [`GoalConfig`].
     pub goal: GoalConfig,
+    /// Subagents; see [`SubagentsConfig`].
+    pub subagents: SubagentsConfig,
     /// `web_search` backend; see [`WebConfig`].
     pub web: WebConfig,
     /// The built-in browser; see [`BrowserConfig`].
@@ -862,6 +921,7 @@ impl Default for RuntimeConfig {
             sandbox: crate::sandbox::SandboxConfig::default(),
             compaction: CompactionConfig::default(),
             goal: GoalConfig::default(),
+            subagents: SubagentsConfig::default(),
             web: WebConfig::default(),
             browser: BrowserConfig::default(),
             providers: Vec::new(),
@@ -1363,6 +1423,9 @@ pub fn resolve(
                     crate::sandbox::check_restriction(&current, sandbox, origin)?;
                 }
                 check_web_restriction(&layer, origin)?;
+                let subagents: SubagentsConfig = serde_json::from_value(value["subagents"].clone())
+                    .context("invalid subagents configuration")?;
+                check_subagents_restriction(&subagents, &layer, origin)?;
                 providers::check_provider_restriction(&layer, origin)?;
                 let current: BrowserConfig = serde_json::from_value(value["browser"].clone())
                     .context("invalid browser configuration")?;
@@ -1521,6 +1584,7 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
     for (field, model) in [
         ("compaction.summary_model", &compaction.summary_model),
         ("goal.check_model", &config.goal.check_model),
+        ("subagents.model", &config.subagents.model),
     ] {
         if let Some(model) = model {
             ensure!(
@@ -1530,6 +1594,14 @@ pub fn validate(config: &RuntimeConfig) -> Result<()> {
             providers::check_model_prefix(&config.providers, field, model, false)?;
         }
     }
+    ensure!(
+        (1..=6).contains(&config.subagents.max_parallel),
+        "subagents.max_parallel must be 1..6"
+    );
+    ensure!(
+        (1..=1000).contains(&config.subagents.max_turns),
+        "subagents.max_turns must be 1..1000"
+    );
     for (name, tokens) in [
         ("section_max_tokens", config.compaction.section_max_tokens),
         ("summary_max_tokens", config.compaction.summary_max_tokens),
@@ -1733,6 +1805,13 @@ fn base_schema() -> Value {
                 "summary_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"Any model a connected provider offers; <provider>/<id> for one from providers"},
                 "prompt_file":{"type":"string"}
             }},
+            "subagents":{"type":"object","additionalProperties":false,"properties":{
+                "enabled":{"type":"boolean","default":true,"description":"Offer the subagent tools to the agent"},
+                "max_parallel":{"type":"integer","minimum":1,"maximum":6,"default":3,"description":"Subagents running at once per chat"},
+                "max_turns":{"type":"integer","minimum":1,"maximum":1000,"default":40,"description":"Model requests per subagent"},
+                "model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"Model for subagents; absent, the chat's model. <provider>/<id> for one from providers"},
+                "allow_writes":{"type":"boolean","default":true,"description":"false keeps every subagent read-only"}
+            }},
             "goal":{"type":"object","additionalProperties":false,"properties":{
                 "check_model":{"type":["string","null"],"minLength":1,"maxLength":256,"default":null,"description":"The model that checks each goal turn; absent, the chat's model. Any model a connected provider offers; <provider>/<id> for one from providers"}
             }}
@@ -1789,6 +1868,7 @@ mod tests {
             "total_turns",
             "summary_model",
             "check_model",
+            "model",
             "prompt_file",
             "command",
             "downloads",
@@ -2057,6 +2137,39 @@ mod tests {
             .is_err());
         }
     }
+    #[test]
+    fn subagent_settings_resolve_and_projects_may_only_lower_them() {
+        let resolved = resolve(
+            Some(r#"{"subagents":{"max_parallel":5,"model":"glm-5.3"}}"#),
+            Some(r#"{"subagents":{"max_parallel":2,"enabled":false,"allow_writes":false}}"#),
+            None,
+        )
+        .unwrap();
+        let subagents = &resolved.config.subagents;
+        assert_eq!(subagents.max_parallel, 2);
+        assert!(!subagents.enabled && !subagents.allow_writes);
+        assert_eq!(subagents.max_turns, 40);
+        assert_eq!(subagents.model.as_deref(), Some("glm-5.3"));
+        assert_eq!(resolved.provenance["subagents.max_parallel"], "project");
+        for project in [
+            r#"{"subagents":{"max_parallel":4}}"#,
+            r#"{"subagents":{"max_turns":41}}"#,
+            r#"{"subagents":{"enabled":true}}"#,
+            r#"{"subagents":{"allow_writes":true}}"#,
+        ] {
+            assert!(resolve(None, Some(project), None).is_err(), "{project}");
+        }
+        for user in [
+            r#"{"subagents":{"max_parallel":0}}"#,
+            r#"{"subagents":{"max_parallel":7}}"#,
+            r#"{"subagents":{"max_turns":0}}"#,
+            r#"{"subagents":{"model":"nope/model"}}"#,
+            r#"{"subagents":{"unknown":1}}"#,
+        ] {
+            assert!(resolve(Some(user), None, None).is_err(), "{user}");
+        }
+    }
+
     #[test]
     fn goal_check_model_follows_precedence_and_needs_a_known_provider_prefix() {
         let user = r#"{"goal":{"check_model":"glm-5.3"}}"#;
