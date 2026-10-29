@@ -504,7 +504,11 @@ class GraderTests(unittest.TestCase):
                   # grep that prints only names or counts is allowed; one that prints contents is not.
                   ("shell", denied.format("shell", "shell", '{"command":"grep","args":["-rL","^- since:","out"]}'), "ours"),
                   ("shell", denied.format("shell", "shell", '{"command":"grep","args":["-r","owner","src"]}'), "model"),
-                  ("search_file", denied.format("search_file", "search_file", '{"pattern":"owner"}'), "model")]
+                  ("search_file", denied.format("search_file", "search_file", '{"pattern":"owner"}'), "model"),
+                  # A list sent as a JSON string is read as that list, as Themis does.
+                  ("shell", denied.format("shell", "shell", r'{"command":"grep","args":"[\"-L\", \"x\", \"out\"]"}'),
+                   "ours"),
+                  ("shell", denied.format("shell", "shell", r'{"command":"grep","args":"[\"-n\", \"x\"]"}'), "model")]
         for tool, text, cause in custom:
             summary = "call `{}` with {}".format(tool, text.split(" with ", 1)[1].rsplit(" The action", 1)[0])
             self.assertEqual(tool_causes.classify(tool, text, mode="custom", summary=summary)[0], cause, text)
