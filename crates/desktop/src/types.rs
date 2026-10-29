@@ -275,6 +275,9 @@ pub enum ThreadEvent {
         model: String,
         /// Whether an OS sandbox confines its shell commands.
         confined: bool,
+        /// When it was started (RFC 3339); groups finished work by request in Tasks.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        at: String,
     },
     /// What a running subagent is doing now. Live only.
     SubagentStatus {

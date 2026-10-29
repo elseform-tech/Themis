@@ -520,7 +520,7 @@ export function applyThreadEvent(
       return { ...state, messages: { ...state.messages, [threadId]: updated } };
     }
     case "subagent_started": {
-      const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined };
+      const entry: SubagentEntry = { id: event.id, name: event.name, brief: event.brief, model: event.model, confined: event.confined, status: "running", text: "", toolCalls: 0, startedAt: measureDuration ? Date.now() : undefined, at: event.at };
       const rows = state.messages[threadId] ?? [];
       const last = rows[rows.length - 1];
       // Subagents started together share one card; a later spawn gets its own.

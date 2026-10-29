@@ -217,6 +217,7 @@ impl SubagentKit {
             brief: agent.brief.clone(),
             model: agent.model.clone(),
             confined: self.sandbox.enabled(),
+            at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         });
         let _ = self.state.inner.diagnostics.append_with_level(
             "subagents",
