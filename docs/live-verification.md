@@ -120,6 +120,7 @@ full tour.
 | `tool:attach_file` | tour | `crates/desktop/src/state/media_tool.rs` | The screenshot is attached to the reply. |
 | `tool:list_plugins` | tour | `crates/desktop/src/state/integration_tools.rs` | Goal lists plugins. |
 | `tool:save_skill` | tour | `crates/desktop/src/state/integration_tools.rs` | `tour-note` appears in Integrations › Skills. |
+| `feature:prompt-hooks` | tour | `crates/core/src/plugins/hooks.rs`, `web/src/screens/HooksByEvent.tsx` | Install a local plugin with a `UserPromptSubmit` hook that prints a ticket number and a `PreToolUse` `Bash` guard: Hooks lists them under Prompt submitted and Before a tool runs (`shell, background_task`); the agent's reply uses the ticket number; a guard that blocks stops the shell call. |
 | `tool:manage_integrations` | tour | `crates/desktop/src/state/integration_tools.rs` | Ask the agent to disable then enable a plugin; Integrations agrees. |
 | `tool:manage_automations` | tour | `crates/desktop/src/state/integration_tools.rs`, `crates/desktop/src/state/automation.rs` | The daily automation appears paused in Automations and Tasks. |
 | `feature:goal` | tour | `crates/desktop/src/state/goal.rs`, `web/src/screens/GoalBar.tsx` | Edit, pause after this turn, resume and remove from the goal bar; the goal continues across turns and ends with one summary. |

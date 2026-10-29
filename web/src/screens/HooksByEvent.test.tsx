@@ -1,0 +1,48 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Plugin } from "../lib/types";
+import { HooksByEvent, hookMeta, skipReason } from "./HooksByEvent";
+
+afterEach(cleanup);
+
+const plugin = (hooks: Plugin["spec"]["hooks"], unsupported: string[] = []): Plugin => ({
+  scope: "global", enabled: true, revision: "r",
+  spec: { name: "guards", description: "", version: "", skills: [], mcp: {}, hooks, files: {}, unsupported },
+} as unknown as Plugin);
+const hook = (name: string, event: string, extra: Partial<Plugin["spec"]["hooks"][number]> = {}) =>
+  ({ name, event, command: "x", enabled: true, timeout_seconds: 10, blocking: false, ...extra });
+
+describe("Hooks by event", () => {
+  it("lists every event in run order, dims empty ones, and says what each hook covers", () => {
+    const guards = plugin([
+      hook("guard", "BeforeTool", { matcher: "shell|background_task", blocking: true }),
+      hook("on-failure", "ToolCallFailed"),
+      hook("ticket-context", "PromptSubmit"),
+    ], ["Hook event SessionEnd", "PreToolUse: matcher NotebookEdit has no Themis tool", "Plugin has an LSP server"]);
+    const rows = guards.spec.hooks.map(item => ({ key: item.name, id: item.name, plugin: guards, enabled: true }));
+    const toggle = vi.fn();
+    render(<HooksByEvent rows={rows} plugins={[guards]} sourceOf={() => "guards"} disabled={() => false} onToggle={toggle} onOpen={() => {}} />);
+    const events = within(screen.getByRole("list", { name: "Hook events in run order" })).getAllByRole("listitem");
+    expect(events.map(item => item.querySelector(".themis-hook-title")!.textContent)).toEqual([
+      "Prompt submitted", "Run starts", "Before a tool runs", "After a tool runs", "Before context is compacted", "Run ends",
+    ]);
+    expect(events[1]).toHaveClass("is-empty");
+    expect(events[1]).toHaveTextContent("None");
+    expect(events[0]).toHaveTextContent("ticket-context");
+    expect(events[2]).toHaveTextContent("guards · shell, background_task · Blocks on failure");
+    expect(events[3]).toHaveTextContent("Only when it fails");
+    // Skipped hooks: one plain line per plugin; other notes stay out.
+    expect(screen.getByRole("note")).toHaveTextContent("2 hooks skipped (guards): unsupported event (SessionEnd); NotebookEdit has no Themis tool.");
+    fireEvent.click(screen.getByRole("switch", { name: "guard enabled" }));
+    expect(toggle).toHaveBeenCalledWith(rows[0]);
+  });
+
+  it("words import notes plainly and ignores ones that are not about hooks", () => {
+    expect(skipReason("Stop: hook options require manual mapping")).toBe("Stop options not supported");
+    expect(skipReason("SessionStart: lifecycle matcher requires manual mapping")).toBe("SessionStart matcher not supported");
+    expect(skipReason("Plugin has an LSP server")).toBeNull();
+    const guards = plugin([hook("guard", "BeforeTool")]);
+    expect(hookMeta({ key: "k", id: "guard", plugin: guards, enabled: true }, "guards")).toBe("guards");
+  });
+});

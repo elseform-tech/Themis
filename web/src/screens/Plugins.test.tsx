@@ -556,10 +556,12 @@ describe("Integration browsing and lifecycle", () => {
     fireEvent.click(screen.getByRole("button", { name: category }));
     const control = screen.getByRole("switch");
     const wasEnabled = control.getAttribute("aria-checked") === "true";
-    expect(control.closest("li")).toHaveTextContent(wasEnabled ? category === "MCP" ? "Connecting…" : "Enabled" : "Disabled");
+    // Hook rows show only their switch (board 24); the others name their state too.
+    const labelled = category !== "Hooks";
+    if (labelled) expect(control.closest("li")).toHaveTextContent(wasEnabled ? category === "MCP" ? "Connecting…" : "Enabled" : "Disabled");
     await act(async () => fireEvent.click(control));
     expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", String(!wasEnabled));
-    expect(screen.getByRole("switch").closest("li")).toHaveTextContent(wasEnabled ? "Disabled" : category === "MCP" ? "Connecting…" : "Enabled");
+    if (labelled) expect(screen.getByRole("switch").closest("li")).toHaveTextContent(wasEnabled ? "Disabled" : category === "MCP" ? "Connecting…" : "Enabled");
     expectNoConfiguration();
   });
   it("keeps disabled bundle children gated but reenables disabled discovered standalone skills", async () => {
