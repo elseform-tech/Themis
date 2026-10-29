@@ -1,7 +1,7 @@
 // Typed Tauri bridge client. All frontend code reaches the backend through
 // these functions — never raw invoke() with stringly-typed payloads elsewhere.
 import { convertFileSrc, invoke as tauriInvoke } from '@tauri-apps/api/core';
-import type { BrowserHistoryEntry, BrowserSettings, BrowserSettingsView } from "./types";
+import type { BrowserHistoryEntry, BrowserSettings, BrowserSettingsView, SubagentSettings } from "./types";
 import type { PromptSkill } from './prompt';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
@@ -36,6 +36,7 @@ import type {
   Settings,
   ThreadComment,
   ThreadTasks,
+  ThreadEvent,
   ThreadEventEnvelope,
   ThreadTaskBackground,
   BackgroundTaskLog,
@@ -276,6 +277,26 @@ export function getThreadTasks(threadId: string): Promise<ThreadTasks> {
 
 export function stopBackgroundTask(threadId: string, taskId: string): Promise<ThreadTaskBackground> {
   return invoke('stop_background_task', { threadId, taskId });
+}
+
+/** A subagent's saved steps, oldest first (bounded). */
+export function getSubagentTranscript(threadId: string, subagentId: string): Promise<ThreadEvent[]> {
+  return invoke('get_subagent_transcript', { threadId, subagentId });
+}
+
+/** Stops one subagent; the main agent gets what it had so far. */
+export function stopSubagent(threadId: string, subagentId: string): Promise<void> {
+  return invoke('stop_subagent', { threadId, subagentId });
+}
+
+/** Settings › Subagents, read from and saved to the user runtime.jsonc (`subagents`). */
+export function getSubagentSettings(): Promise<{ settings: SubagentSettings; revision: string }> {
+  return invoke('get_subagent_settings');
+}
+
+/** Saves only `changes` (`model: null` is the chat's model), refused when the file changed since `revision`. */
+export function updateSubagentSettings(changes: Partial<Pick<SubagentSettings, 'enabled' | 'max_parallel' | 'model'>>, revision: string): Promise<{ settings: SubagentSettings; revision: string }> {
+  return invoke('update_subagent_settings', { changes, revision });
 }
 
 export function getBackgroundTaskLog(threadId: string, taskId: string, offset?: number, maxBytes?: number): Promise<BackgroundTaskLog> {

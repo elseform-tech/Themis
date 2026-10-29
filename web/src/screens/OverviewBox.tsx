@@ -6,6 +6,7 @@ import type { ChatMessage, WorkspaceTab } from "../state/reducer";
 import { readSession, writeSession } from "../state/session";
 import { useApp } from "../state/store";
 import { countTasks } from "./threadTasks";
+import { SubagentsGlyph, subagentState } from "./SubagentCard";
 import "./OverviewBox.css";
 
 const COLLAPSED_KEY = "overviewCollapsed";
@@ -13,6 +14,8 @@ const COLLAPSED_KEY = "overviewCollapsed";
 export interface Overview {
   changes: { files: number; added: number; removed: number } | null;
   tasks: { running: number; attention: number; queued: number } | null;
+  /** Subagents of the current run that are still working. */
+  subagents: { running: number; approval: number } | null;
   browser: { label: string; agent: boolean; activity: string | null } | null;
   media: AttachedMedia[];
   cost: { usd?: number; free: boolean } | null;
@@ -72,13 +75,19 @@ export function useOverview(threadId: string, messages: ChatMessage[]): Overview
   const queued = state.queues[threadId]?.length ?? 0;
   const tasks = counts.running + counts.attention + queued > 0 ? { running: counts.running, attention: counts.attention, queued } : null;
   const changes = diffTotals(state.diffs[threadId]);
+  const activeRun = state.activeRunIds[threadId];
+  const working = messages.flatMap(message => message.runId !== undefined && message.runId === activeRun ? message.subagents ?? [] : [])
+    .map(agent => subagentState(agent, true, state.approvals));
+  const approval = working.filter(s => s === "approval").length;
+  const subagentsRunning = working.filter(s => s === "running").length;
+  const subagents = subagentsRunning + approval > 0 ? { running: subagentsRunning, approval } : null;
   const media = messages.flatMap(message => message.media ?? []);
   const shownBrowser = browser?.open && browser.url !== "about:blank" ? { label: browserLabel(browser), agent: browser.controller === "agent", activity: browser.activity } : null;
   const shownCost = cost && (cost.free || (cost.usd ?? 0) > 0) ? cost : null;
   const setCollapsed = (value: boolean) => { setCollapsedState(value); writeSession(COLLAPSED_KEY, value); };
   return {
-    changes, tasks, browser: shownBrowser, media, cost: shownCost,
-    visible: !!(changes || tasks || shownBrowser || media.length || shownCost),
+    changes, tasks, subagents, browser: shownBrowser, media, cost: shownCost,
+    visible: !!(changes || tasks || subagents || shownBrowser || media.length || shownCost),
     collapsed, setCollapsed,
   };
 }
@@ -138,8 +147,9 @@ function formatUsd(usd: number): string {
  *  the Workspace on its tab; the Workspace's own button and Close bring this box back. */
 export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: string; overview: Overview; onOpenMedia: (path: string) => void }) {
   const { dispatch } = useApp();
-  const { changes, tasks, browser, media, cost, collapsed, setCollapsed } = overview;
+  const { changes, tasks, subagents, browser, media, cost, collapsed, setCollapsed } = overview;
   const open = (tab?: WorkspaceTab) => dispatch({ type: "ui/diff-panel", open: true, ...(tab ? { tab } : {}) });
+  const subagentText = subagents ? [subagents.running ? `${subagents.running} running` : "", subagents.approval ? `${subagents.approval} approval${subagents.approval === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ") : "";
   const taskText = tasks ? [tasks.running ? `${tasks.running} running` : "", tasks.attention ? `${tasks.attention} need you` : "", tasks.queued ? `${tasks.queued} queued` : ""].filter(Boolean).join(" · ") : "";
   return (
     <section className={`themis-overview${collapsed ? " is-collapsed" : ""}`} aria-label="Chat overview">
@@ -157,6 +167,13 @@ export function OverviewBox({ threadId, overview, onOpenMedia }: { threadId: str
           <svg className="themis-overview-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>
           <span className="themis-overview-value">{browser.label}</span>
           {browser.agent && <span className="themis-overview-dot" aria-hidden="true" />}
+        </button>
+      )}
+      {subagents && (
+        <button type="button" className="themis-overview-row themis-icon-tip" data-tooltip="Subagents" aria-label={`Subagents: ${subagentText}`} onClick={() => open("tasks")}>
+          <SubagentsGlyph />
+          <span className="themis-overview-value">{subagentText}</span>
+          {subagents.approval > 0 && <span className="themis-overview-dot is-attention" aria-hidden="true" />}
         </button>
       )}
       {changes && (

@@ -16,6 +16,7 @@ import { readSession, writeSession } from "../state/session";
 import { groupConversation, toolDisplayName, type ConversationRow } from "./conversation";
 import { describeTools } from "./toolActivity";
 import { OverviewBox, type Overview } from "./OverviewBox";
+import { SubagentCard } from "./SubagentCard";
 
 interface ThreadConversationProps {
   threadId: string;
@@ -157,6 +158,9 @@ function ConversationRow({
 }) {
   if (row.kind === "message" && row.message.question) {
     return <QuestionRow question={row.message.question} />;
+  }
+  if (row.kind === "message" && row.message.subagents) {
+    return <SubagentCard agents={row.message.subagents} runLive={row.message.runId !== undefined && row.message.runId === activeRunId} />;
   }
   if (row.kind === "message") {
     const durationMs = row.message.final && row.message.runId ? runDurations[row.message.runId] : undefined;

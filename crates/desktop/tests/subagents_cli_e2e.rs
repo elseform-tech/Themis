@@ -317,6 +317,23 @@ async fn the_turn_ends_after_both_subagents_reported_back() {
             .map(|dir| dir.count())
             .unwrap_or(0);
         assert_eq!(saved, 2);
+        // The read-only detail reads a subagent's own steps.
+        let id = listed[0]["id"].as_str().unwrap();
+        let steps = call(
+            &data,
+            "get_subagent_transcript",
+            json!({"threadId": thread, "subagentId": id}),
+        );
+        let kinds: Vec<&str> = steps
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|event| event["kind"].as_str())
+            .collect();
+        assert!(
+            kinds.contains(&"tool_started") && kinds.contains(&"finished"),
+            "{kinds:?}"
+        );
         // Deleting the chat removes them.
         call(&data, "discard_thread", json!({"threadId": thread}));
         assert!(!data.join("subagents").join(&thread).exists());
@@ -395,4 +412,189 @@ async fn a_project_can_turn_subagents_off() {
         .any(|name| name.contains("subagent"))));
     drop(app.project);
     app.serving.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_person_can_stop_one_subagent_and_the_agent_still_hears_from_it() {
+    let app = app(None, move |body| {
+        if is_subagent(body) {
+            return tools(&[("c1", "list_dir", json!({"path": "."}))])
+                .set_delay(Duration::from_secs(4));
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Slow", "brief": "Look at everything."}]}),
+            )]),
+            _ if mentions(body, NOTE) => reply("Slow was stopped."),
+            _ => reply("Waiting for Slow."),
+        }
+    })
+    .await;
+    let (data, thread) = (app.data.path().to_owned(), app.thread.clone());
+    tokio::task::spawn_blocking({
+        let (data, thread) = (data.clone(), thread.clone());
+        move || {
+            call(
+                &data,
+                "set_thread_approval_mode",
+                json!({"threadId": thread, "mode": "yolo"}),
+            );
+            call(
+                &data,
+                "send_message",
+                json!({"threadId": thread, "text": "look around"}),
+            );
+            let mut id = String::new();
+            until("the subagent never started", || {
+                let listed = call(&data, "list_subagents", json!({"threadId": thread}));
+                id = listed[0]["id"].as_str().unwrap_or_default().to_owned();
+                !id.is_empty()
+            });
+            call(
+                &data,
+                "stop_subagent",
+                json!({"threadId": thread, "subagentId": id}),
+            );
+            until("the run never finished", || !running(&data, &thread));
+            let listed = call(&data, "list_subagents", json!({"threadId": thread}));
+            assert_eq!(listed[0]["status"], "stopped");
+        }
+    })
+    .await
+    .unwrap();
+    let all = bodies(&app.llm).await;
+    let main: Vec<&Value> = all.iter().filter(|body| !is_subagent(body)).collect();
+    let last = main.last().unwrap();
+    assert!(
+        mentions(last, NOTE) && mentions(last, "status stopped"),
+        "{last}"
+    );
+    app.serving.abort();
+}
+
+/// `call` that returns the CLI's error text instead of failing the test.
+fn try_call(data: &Path, command: &str, args: Value) -> Result<Value, String> {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_themis"))
+        .arg("--data-dir")
+        .arg(data)
+        .args(["call", command, &args.to_string()])
+        .env_remove("OPENCODE_KEY")
+        .output()
+        .expect("CLI");
+    if output.status.success() {
+        Ok(serde_json::from_slice(&output.stdout).unwrap_or(Value::Null))
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn settings_change_only_their_fields_and_refuse_a_stale_page() {
+    let app = app(None, |_| reply("Done.")).await;
+    let data = app.data.path().to_owned();
+    tokio::task::spawn_blocking(move || {
+        let view = call(&data, "get_subagent_settings", json!({}));
+        assert_eq!(view["settings"]["max_parallel"], 3);
+        let revision = view["revision"].clone();
+        let saved = call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"max_parallel": 2, "model": "glm-5"}, "revision": revision}),
+        );
+        assert_eq!(saved["settings"]["max_parallel"], 2);
+        assert_eq!(saved["settings"]["model"], "glm-5");
+        assert_eq!(saved["settings"]["enabled"], true);
+        // The page that loaded before is stale now.
+        let stale = try_call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"enabled": false}, "revision": revision}),
+        );
+        assert!(stale.unwrap_err().contains("changed in runtime.jsonc"));
+        // "Chat model" clears the field.
+        let cleared = call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"model": null}, "revision": saved["revision"]}),
+        );
+        assert!(cleared["settings"]["model"].is_null());
+        // Only the fields the page shows, within their limits.
+        assert!(try_call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"max_turns": 5}})
+        )
+        .unwrap_err()
+        .contains("max_turns"));
+        assert!(try_call(
+            &data,
+            "update_subagent_settings",
+            json!({"changes": {"max_parallel": 9}})
+        )
+        .is_err());
+    })
+    .await
+    .unwrap();
+    app.serving.abort();
+}
+
+/// Sends `task` in Custom mode and waits until the run is over.
+fn run_custom(data: &Path, thread: &str, task: &str) {
+    call(
+        data,
+        "set_thread_approval_mode",
+        json!({"threadId": thread, "mode": "custom"}),
+    );
+    call(
+        data,
+        "send_message",
+        json!({"threadId": thread, "text": task}),
+    );
+    until("the run never finished", || !running(data, thread));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_subagents_needs_no_prompt_but_a_deny_rule_still_holds() {
+    let respond = |body: &Value| {
+        if is_subagent(body) {
+            return reply("Nothing to report.");
+        }
+        match tool_results(body) {
+            0 => tools(&[(
+                "s1",
+                "spawn_subagents",
+                json!({"subagents": [{"name": "Quick", "brief": "Say hello."}]}),
+            )]),
+            _ if mentions(body, NOTE) => reply("Quick reported back."),
+            _ if mentions(body, "approval denied") => reply("Subagents are not allowed here."),
+            _ => reply("Waiting."),
+        }
+    };
+    // Custom mode with no rules: no approval prompt holds the spawn up.
+    let app1 = app(None, respond).await;
+    let (data, thread) = (app1.data.path().to_owned(), app1.thread.clone());
+    tokio::task::spawn_blocking(move || run_custom(&data, &thread, "say hello"))
+        .await
+        .unwrap();
+    let all = bodies(&app1.llm).await;
+    assert!(all
+        .iter()
+        .any(|body| !is_subagent(body) && mentions(body, NOTE)));
+    app1.serving.abort();
+    // A project rule that denies the tool refuses it.
+    let app2 = app(
+        Some(r#"{"approval": {"rules": [{"tool": "spawn_subagents", "action": "deny"}]}}"#),
+        respond,
+    )
+    .await;
+    let (data, thread) = (app2.data.path().to_owned(), app2.thread.clone());
+    tokio::task::spawn_blocking(move || run_custom(&data, &thread, "say hello"))
+        .await
+        .unwrap();
+    let all = bodies(&app2.llm).await;
+    assert!(all.iter().all(|body| !is_subagent(body)), "no subagent ran");
+    assert!(all.iter().any(|body| mentions(body, "approval denied")));
+    app2.serving.abort();
 }
