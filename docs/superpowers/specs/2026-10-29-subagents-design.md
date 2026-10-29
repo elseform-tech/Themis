@@ -3,7 +3,7 @@
 Date: 2026-10-29 · Branch: `codex/subagents-design` · Design only; nothing built yet.
 
 Mockups: canvas https://claude.ai/artifact/Em6B9YcQir5EFWhwUN7PEJ, row "Subagents",
-boards 25–27 (`AgentsChat`, `AgentsDetail`, `AgentsStates`).
+boards 25–28 (`AgentsChat`, `AgentsDetail`, `AgentsStates`, `AgentsSettings`).
 
 ## Why
 
@@ -81,9 +81,17 @@ boards 25–27 (`AgentsChat`, `AgentsDetail`, `AgentsStates`).
 ### Events and UI
 
 - New run events carry `agent_id` and the parent run id: `AgentStarted {name, brief, model,
-  write_paths}`, `AgentProgress {text}` (the agent's latest progress sentence), and
+  write_paths}`, `AgentStatus {text}` (see the status line below), and
   `AgentEnded {status, summary, tool_calls, duration, cost}`. Each agent's tool events stream to
   its own transcript, not to the chat.
+- **The live status line** is a dedicated short status from the agent, not its last sentence.
+  - Agents get one extra tool, `agent_status`, that takes a single line of at most 80 characters
+    and returns nothing to the model.
+  - The prompt asks the agent to call it when it starts something new (for example "Checking
+    whether the CLI path has the same bug"), not on every step.
+  - Until the first status, and while the latest one is older than the current tool call, the
+    row shows the running tool call's summary ("Reading crates/core/src/runtime.rs").
+  - A status counts as one short tool call; the soak eval checks it doesn't add noticeable cost.
 - `files_changed` gains an `author` field (`main` or an agent id), so Workspace › Changes can
   filter by who wrote each file.
 - **Chat card (board 25):**
@@ -106,8 +114,27 @@ Captured runtime configuration, new `agents` block (`crates/core/src/configurati
 | `agents.enabled` | `true` | Offer `spawn_agents` to the main agent |
 | `agents.max_parallel` | `3` | Agents running at once per chat |
 | `agents.model` | `null` | Model for agents; `null` uses the chat's model |
+| `agents.allow_writes` | `true` | `false` keeps every agent read-only, whatever `write_paths` the main agent asks for |
 
-The project config may lower `max_parallel` or turn agents off. It cannot add write permissions.
+The project config may lower `max_parallel`, turn agents off or turn writes off. It cannot add
+write permissions.
+
+**Settings › Agents (board 28)** sits after Web in the Settings list. It's the third in-app
+editor after Settings › Browser and Settings › Web, built the same way: it edits only the
+`agents` block of the user `runtime.jsonc` with field-level writes that keep the rest of the file
+and its comments. It has four rows:
+
+- **Let the agent start agents:** a switch for `enabled`.
+- **Agents at once:** 1–6 (`max_parallel`).
+- **Model for agents:** "Same as the chat" or a model from the Models list (`model`).
+- **Let agents write files:** a switch for `allow_writes`. Off means agents only read.
+
+A footer line says agents follow the chat's permissions and that agent profiles come from plugins
+in Integrations. The section shows the usual "Changes apply to your next run" note.
+
+This changes a rule the person set: when it's built, the Settings exception in AGENTS.md
+("except Settings → Browser and Settings → Web…") gains Agents, and `docs/configuration.md` and
+`docs/ui-rules.md` describe the section.
 
 Diagnostics (metadata only) cover agent start and end: status, duration, tool-call count, the
 write-path count and the profile name. They never include briefs, transcripts or results.
@@ -119,6 +146,8 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
 - `agent_system.md`
 - `agent_read_only_note.md`
 - `agent_write_paths_note.md`
+- `agent_status_tool.md` (when to report a status: at the start of each new piece of work, in
+  one plain line)
 - `spawn_agents_tool.md` (when to delegate: independent parts, read-heavy work, and not for
   single-file edits)
 
@@ -132,9 +161,11 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
 
 ## Order of work
 
-1. Read-only agents: the tool, child runs, events, the chat card, the Tasks detail with Stop,
-   named approvals, the overview row, the configuration and diagnostics.
-2. `write_paths`: overlap checks, the sandbox allow-list, and the Changes author filter.
+1. Read-only agents: the tool, child runs, events and the status line, the chat card, the Tasks
+   detail with Stop, named approvals, the overview row, the configuration, Settings › Agents
+   (without the writes row) and diagnostics.
+2. `write_paths`: overlap checks, the sandbox allow-list, the Changes author filter, and the
+   writes row in Settings › Agents.
 3. The steer box through the main agent.
 4. Plugin `agents/` profiles.
 
@@ -151,6 +182,4 @@ New files in `crates/core/builtins/prompts/`, each added to the inventory test:
 
 ## Open questions
 
-- How the progress sentence is chosen: the agent's last assistant sentence (simple), or a
-  dedicated short status line (adds tokens).
 - Whether agents should default to a cheaper model when the chat's model is expensive.
